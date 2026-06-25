@@ -13,6 +13,11 @@ import {
   type CreateExtensionSettingsServiceOptions,
 } from './extensionSettingsService';
 import { runSettingsMigration, getManifestSettingsSchemaVersion } from './extensionSettingsMigration';
+import type {
+  TimelineReader,
+  TimelineSnapshot,
+  TimelineProposalInput,
+} from '@/sdk/video/timeline/reader.ts';
 
 // ---------------------------------------------------------------------------
 // ID validation
@@ -278,36 +283,109 @@ export {
   DETERMINISM_STATUSES,
   RENDER_BLOCKER_REASONS,
   RENDER_ROUTES,
+} from '@/sdk/video/rendering/renderability.ts';
+
+export {
   shaderMissingMaterializerBlockerMessage,
-} from '@/tools/video-editor/runtime/renderability.ts';
+  describeShaderMaterializerRequirementScope,
+} from '@/sdk/video/rendering/capabilities.ts';
+
+export {
+  EXTENSION_PROJECT_DATA_LIMITS,
+  TIMELINE_DIFF_GRANULARITIES,
+  TIMELINE_DIFF_KINDS,
+  TIMELINE_PATCH_ALL_OP_FAMILIES,
+  TIMELINE_PATCH_OP_FAMILIES,
+  TIMELINE_PATCH_RESERVED_OP_FAMILIES,
+} from '@/sdk/video/timeline/patch.ts';
+
+export {
+  TimelineVersionConflictError,
+  isTimelineVersionConflictError,
+} from '@/sdk/video/timeline/errors.ts';
 
 export {
   BUILTIN_CLIP_TYPES,
-  TimelineVersionConflictError,
-  isTimelineVersionConflictError,
-  getStableConfigSignature,
-} from '@/tools/video-editor';
+} from '@/sdk/video/timeline/clipTypes.ts';
 
 export type {
-  ArtifactBoundary,
-  BakeContract,
+  BuiltinClipType,
+} from '@/sdk/video/timeline/clipTypes.ts';
+
+export {
+  getConfigSignature,
+  getStableConfigSignature,
+} from '@/sdk/video/timeline/configSignature.ts';
+
+export type {
+  StableTimelineAssetRegistryInput,
+  StableTimelineConfigSignatureInput,
+  TimelineConfigSignatureInput,
+} from '@/sdk/video/timeline/configSignature.ts';
+
+export type {
   CapabilityFinding,
   CapabilityFindingSeverity,
   ContributionRenderability,
   DeterminismStatus,
-  RenderArtifact,
   RenderBlocker,
   RenderBlockerReason,
   RenderCapability,
   RenderCapabilityStatus,
+  RenderRoute,
+} from '@/sdk/video/rendering/renderability.ts';
+
+export type {
+  ArtifactBoundary,
+  BakeContract,
+  RenderArtifact,
+  RenderArtifactManifest,
+  RenderArtifactSidecarDescriptor,
+  RenderArtifactSidecarKind,
   RenderLocatorKind,
   RenderMaterial,
   RenderMaterialMediaKind,
   RenderMaterialRef,
-  RenderRoute,
   RenderStorageLocator,
+} from '@/sdk/video/rendering/artifacts.ts';
+
+export type {
   ShaderMaterializerRequirementScope,
-} from '@/tools/video-editor/runtime/renderability.ts';
+} from '@/sdk/video/rendering/capabilities.ts';
+
+export type {
+  ProjectDataLimitCode,
+  ProjectDataLimitDetail,
+  TimelineDiff,
+  TimelineDiffEntry,
+  TimelineDiffGranularity,
+  TimelineDiffKind,
+  TimelinePatch,
+  TimelinePatchAnyOpFamily,
+  TimelinePatchDiagnostic,
+  TimelinePatchOpFamily,
+  TimelinePatchOperation,
+  TimelinePatchReservedOpFamily,
+  TimelinePatchValidationResult,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
+
+export type {
+  TimelineEffectSummary,
+  TimelineTransitionSummary,
+  TimelineLiveBindingSummary,
+  TimelineMaterialRefSummary,
+  TimelineRenderPassSummary,
+  TimelineSourceRefSummary,
+  TimelineRenderGroupSummary,
+  TimelineOutputMetadata,
+  TimelineSnapshot,
+  TimelineClipSummary,
+  TimelineTrackSummary,
+  TimelineShaderSummary,
+  TimelineReader,
+  TimelineProposalInput,
+} from '@/sdk/video/timeline/reader.ts';
 
 // ---------------------------------------------------------------------------
 // M4: Commands, Keybindings, Context Menus — target and handler contracts
@@ -4177,17 +4255,35 @@ export interface ProjectExtensionRequirements {
 }
 
 import type {
-  CapabilityFinding,
-  DeterminismStatus,
   RenderArtifact,
-  RenderBlockerReason,
+  RenderArtifactSidecarDescriptor,
+  RenderArtifactSidecarKind,
   RenderMaterial,
   RenderMaterialRef,
-  RenderRoute,
   RenderStorageLocator,
-  ShaderMaterializerRequirementScope,
-} from '@/tools/video-editor/runtime/renderability.ts';
-import { shaderMissingMaterializerBlockerMessage } from '@/tools/video-editor/runtime/renderability.ts';
+} from '@/sdk/video/rendering/artifacts.ts';
+import type {
+  CapabilityFinding,
+  DeterminismStatus,
+  RenderBlockerReason,
+  RenderRoute,
+} from '@/sdk/video/rendering/renderability.ts';
+import type { ShaderMaterializerRequirementScope } from '@/sdk/video/rendering/capabilities.ts';
+import { shaderMissingMaterializerBlockerMessage } from '@/sdk/video/rendering/capabilities.ts';
+import type {
+  TimelineDiff,
+  TimelineDiffGranularity,
+  TimelinePatch,
+  TimelinePatchDiagnostic,
+  TimelinePatchValidationResult,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
+import type {
+  AssetReadSurface,
+  ExportService,
+  MaterialReadSurface,
+  MetadataFacetValueKind,
+} from '@/sdk/video/assets/metadata.ts';
 
 // ---------------------------------------------------------------------------
 // M12: Planner requirement contracts — capability requirements, source refs,
@@ -4307,61 +4403,6 @@ export interface IntegrationCapabilities {
 // M12: Artifact manifest, sidecar, sampling, and process roundtrip contracts
 // ---------------------------------------------------------------------------
 
-export type RenderArtifactSidecarKind =
-  | 'metadata'
-  | 'thumbnail'
-  | 'scene-report'
-  | 'log'
-  | 'provenance'
-  | 'rendered-pass'
-  | 'cue'
-  | 'label'
-  | 'caption'
-  | 'diagnostics'
-  | 'manifest'
-  | 'other';
-
-/** M12: Data-only descriptor for a downloadable or previewable sidecar artifact. */
-export interface RenderArtifactSidecarDescriptor {
-  readonly id?: string;
-  readonly filename: string;
-  readonly mimeType: string;
-  readonly kind: RenderArtifactSidecarKind;
-  readonly data?: Uint8Array;
-  readonly locator?: RenderStorageLocator;
-  readonly byteSize?: number;
-  readonly renderGroupId?: string;
-  readonly passName?: string;
-  readonly diagnostics?: readonly CapabilityFinding[];
-  readonly provenance?: Record<string, unknown>;
-}
-
-/** M12: Stable manifest entry for a final render/export artifact. */
-export interface RenderArtifactManifest {
-  readonly id: string;
-  readonly schemaVersion: 1;
-  readonly artifactId: string;
-  readonly route: RenderRoute;
-  readonly determinism: DeterminismStatus;
-  readonly producerExtensionId?: string;
-  readonly producerVersion?: string;
-  readonly outputFormatId?: string;
-  readonly processId?: string;
-  readonly processVersion?: CapabilityVersion;
-  readonly operationId?: string;
-  readonly locator?: RenderStorageLocator;
-  readonly mediaKind?: RenderMaterial['mediaKind'];
-  readonly consumedMaterialRefs: readonly RenderMaterialRef[];
-  readonly sidecars: readonly RenderArtifactSidecarDescriptor[];
-  readonly diagnostics?: readonly CapabilityFinding[];
-  readonly provenance?: Record<string, unknown>;
-  readonly inputHashes?: Record<string, string>;
-  readonly renderGroupId?: string;
-  readonly passName?: string;
-  readonly createdAt?: string;
-  readonly metadata?: Record<string, unknown>;
-}
-
 export type SamplingStrategy =
   | 'whole-timeline'
   | 'clip-slices'
@@ -4472,102 +4513,6 @@ export interface ProcessRoundtripResult {
 }
 
 // ---------------------------------------------------------------------------
-// M3: TimelinePatch — semantic operation vocabulary
-// ---------------------------------------------------------------------------
-
-/** Top-level operation families supported by TimelinePatch. */
-export type TimelinePatchOpFamily =
-  | 'clip.add'
-  | 'clip.update'
-  | 'clip.remove'
-  | 'clip.move'
-  | 'track.add'
-  | 'track.update'
-  | 'track.remove'
-  | 'asset.update'
-  | 'asset.remove'
-  | 'app.update'
-  | 'project-data.write'
-  | 'project-data.delete'
-  | 'extension.noop';
-
-/** Reserved operation families that are validated but not executed in M3. */
-export type TimelinePatchReservedOpFamily =
-  | 'clip.split'
-  | 'clip.slice';
-
-/** All known operation family strings (active + reserved). */
-export type TimelinePatchAnyOpFamily =
-  | TimelinePatchOpFamily
-  | TimelinePatchReservedOpFamily;
-
-/**
- * A single semantic operation in a TimelinePatch batch.
- *
- * Every operation carries an `op` family, a `target` object identifier
- * (clip ID, track ID, asset key, extension ID, etc.), and an optional
- * `payload` whose shape is family-dependent.
- */
-export interface TimelinePatchOperation {
-  /** Operation family, e.g. "clip.add", "track.update". */
-  op: TimelinePatchAnyOpFamily;
-  /** Object identifier scoped to the operation family. */
-  target: string;
-  /** Family-dependent payload. */
-  payload?: Record<string, unknown>;
-  /**
-   * Sortable anchor for ordering-dependent operations (clip.move, etc.).
-   * Interpreted by the patch compiler; ignored for order-independent ops.
-   */
-  order?: number;
-}
-
-/** A batch of TimelinePatch operations applied atomically. */
-export interface TimelinePatch {
-  /** Monotonically-increasing batch version assigned by the runtime. */
-  version: number;
-  /** Ordered list of operations in this batch. */
-  operations: readonly TimelinePatchOperation[];
-  /** Extension or source that produced this patch. */
-  source?: string;
-  /** Opaque metadata attached by the producer. */
-  meta?: Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
-// M3: TimelinePatch diagnostics
-// ---------------------------------------------------------------------------
-
-/**
- * Structured diagnostic produced by TimelinePatch validation or compilation.
- *
- * Diagnostics are exportable to the host diagnostic panel and carry enough
- * context to navigate from the diagnostic to the offending operation/payload.
- */
-export interface TimelinePatchDiagnostic {
-  severity: DiagnosticSeverity;
-  /** Stable diagnostic code, e.g. "timeline-patch/unknown-op". */
-  code: `timeline-patch/${string}`;
-  message: string;
-  /** Zero-based index into the patch operation list, when applicable. */
-  operationIndex?: number;
-  /** The operation family that triggered the diagnostic. */
-  op?: TimelinePatchAnyOpFamily;
-  /** The target identifier from the offending operation. */
-  target?: string;
-  /** Structured detail (expected type, actual value, constraint, etc.). */
-  detail?: Record<string, unknown>;
-}
-
-/** Result of validating a TimelinePatch batch. */
-export interface TimelinePatchValidationResult {
-  /** True when every operation in the batch passes validation. */
-  valid: boolean;
-  /** Diagnostics produced during validation (empty when valid). */
-  diagnostics: readonly TimelinePatchDiagnostic[];
-}
-
-// ---------------------------------------------------------------------------
 // M3: TimelineOps — atomic mutation interface
 // ---------------------------------------------------------------------------
 
@@ -4624,361 +4569,12 @@ export interface TimelineOps {
 }
 
 // ---------------------------------------------------------------------------
-// M3: TimelineDiff — semantic change description
-// ---------------------------------------------------------------------------
-
-/** Granularity of a diff entry. */
-export type TimelineDiffGranularity =
-  | 'clip'
-  | 'track'
-  | 'asset'
-  | 'app'
-  | 'project-data';
-
-/** The kind of change represented by a diff entry. */
-export type TimelineDiffKind = 'added' | 'removed' | 'modified' | 'reordered';
-
-/** A single entry in a TimelineDiff describing what changed. */
-export interface TimelineDiffEntry {
-  granularity: TimelineDiffGranularity;
-  kind: TimelineDiffKind;
-  /** Object identifier (clip ID, track ID, asset key, extension ID, etc.). */
-  target: string;
-  /** The operation family that produced this change. */
-  op: TimelinePatchAnyOpFamily;
-  /**
-   * Pre-mutation value snapshot (summary). Omitted for 'added' entries.
-   * Never exposes raw internal row/meta shapes.
-   */
-  before?: Record<string, unknown>;
-  /**
-   * Post-mutation value snapshot (summary). Omitted for 'removed' entries.
-   * Never exposes raw internal row/meta shapes.
-   */
-  after?: Record<string, unknown>;
-}
-
-/**
- * Semantic diff describing what a patch batch changed.
- *
- * This is the public change description — it never exposes raw internal
- * timeline row data, provider metadata, or mutation engine internals.
- */
-export interface TimelineDiff {
-  /** The patch version this diff corresponds to. */
-  version: number;
-  /** Ordered list of changes produced by the patch. */
-  entries: readonly TimelineDiffEntry[];
-  /** Set of all object IDs affected by this patch. */
-  affectedObjectIds: readonly string[];
-}
-
-/** Result of previewing a patch batch against current timeline state. */
-export interface TimelinePreviewResult {
-  /** The projected diff if the patch were applied. */
-  diff: TimelineDiff;
-  /**
-   * Whether every operation in the patch is previewable.
-   * Non-previewable operations (e.g. clip.split reserved) still produce
-   * diagnostics but the diff may be incomplete.
-   */
-  fullyPreviewable: boolean;
-  /** Diagnostics for non-previewable or problematic operations. */
-  diagnostics: readonly TimelinePatchDiagnostic[];
-}
-
-// ---------------------------------------------------------------------------
-// M12: Planner inspection contracts — effect, transition, live-binding,
-// material-ref, source-ref, render-group, and output-metadata summaries
-// ---------------------------------------------------------------------------
-
-/**
- * M12: Lightweight effect summary extracted from a clip for planner inspection.
- *
- * Describes an effect applied to a clip without importing provider
- * stores or raw timeline rows.
- */
-export interface TimelineEffectSummary {
-  /** Unique identifier for this effect instance (e.g. `${clipId}.effect.${effectType}`). */
-  id: string;
-  /** The clip this effect belongs to. */
-  clipId: string;
-  /** The effect type identifier (e.g. 'fade_in', 'blur'). */
-  effectType?: string;
-  /** Effect parameters, when available. */
-  params?: Record<string, unknown>;
-  /** Whether this effect is managed by a registered extension. */
-  managed?: boolean;
-  /** Extension ID that manages this effect, if managed. */
-  managedBy?: string;
-}
-
-/**
- * M12: Lightweight transition summary extracted from a clip for planner inspection.
- *
- * Describes a transition applied to a clip without importing provider
- * stores or raw timeline rows.
- */
-export interface TimelineTransitionSummary {
-  /** Unique identifier for this transition (e.g. `${clipId}.transition.${transitionType}`). */
-  id: string;
-  /** The clip this transition belongs to. */
-  clipId: string;
-  /** The transition type identifier (e.g. 'dissolve', 'wipe'). */
-  transitionType?: string;
-  /** Transition duration in seconds. */
-  duration: number;
-  /** Transition parameters, when available. */
-  params?: Record<string, unknown>;
-  /** Whether this transition is managed by a registered extension. */
-  managed?: boolean;
-  /** Extension ID that manages this transition, if managed. */
-  managedBy?: string;
-}
-
-/**
- * M12: Lightweight live-binding summary extracted from clip metadata
- * for planner inspection.
- *
- * Live bindings connect a clip parameter to a live data source.
- * The planner uses these to detect live-unbaked or process-dependent
- * requirements.
- */
-export interface TimelineLiveBindingSummary {
-  /** Unique binding identifier. */
-  bindingId: string;
-  /** The clip this binding belongs to. */
-  clipId: string;
-  /** Source identifier for the live data source. */
-  sourceId: string;
-  /** Kind of live source (e.g. 'webcam', 'generated-frame', 'midi'). */
-  sourceKind: string;
-  /** Target parameter name on the clip, when applicable. */
-  targetParamName?: string;
-  /** Resolution status of the binding, when known. */
-  status?: string;
-}
-
-/**
- * M12: Lightweight material-ref summary extracted from clip data
- * for planner inspection.
- *
- * Material refs point at assets or generated materials consumed by a clip.
- */
-export interface TimelineMaterialRefSummary {
-  /** Unique identifier for this material ref. */
-  id: string;
-  /** The clip that consumes this material. */
-  clipId: string;
-  /** Asset key in the timeline registry, when the material is an asset. */
-  assetKey?: string;
-  /** Media kind of the referenced material. */
-  mediaKind?: string;
-  /** Determinism posture for this material ref. */
-  determinism?: DeterminismStatus;
-  /** Render group this material contributes to, when part of a multi-pass group. */
-  renderGroupId?: string;
-  /** Pass name this material contributes, when known. */
-  passName?: string;
-  /** Whether this material can be composited into a render group. */
-  composable?: boolean;
-}
-
-/** M12: Render pass descriptor used by multi-pass render groups. */
-export interface TimelineRenderPassSummary {
-  /** Stable pass identifier within a render group. */
-  id: string;
-  /** Human-readable or process-declared pass name. */
-  passName: string;
-  /** Whether the group is blocked when this pass is missing or stale. */
-  required: boolean;
-  /** Whether this pass is composable into the final render group. */
-  composable: boolean;
-  /** Material ref currently satisfying this pass, if resolved. */
-  materialRefId?: string;
-  /** Current pass status from the planner/material registry projection. */
-  status?: 'missing' | 'stale' | 'resolved' | 'optional';
-}
-
-/**
- * M12: Lightweight source-ref summary extracted from clip provenance
- * for planner inspection.
- *
- * Source refs identify timeline inputs without exposing provider rows,
- * live registry state, or extension store handles.
- */
-export interface TimelineSourceRefSummary {
-  /** Unique identifier for this source ref. */
-  id: string;
-  /** The clip that carries this source provenance. */
-  clipId: string;
-  /** Kind of source provenance represented by this ref. */
-  sourceKind: 'asset' | 'generation' | 'extension' | 'provider' | 'unknown';
-  /** Raw timeline source UUID, when available. */
-  sourceUuid?: string;
-  /** Generation identifier, when available. */
-  generationId?: string;
-  /** Extension that owns this source ref, when known. */
-  extensionId?: string;
-  /** Determinism posture for this source ref. */
-  determinism?: DeterminismStatus;
-}
-
-/**
- * M12: Lightweight render-group summary extracted from timeline data
- * for planner inspection.
- *
- * Render groups collect clips that should be rendered together
- * (e.g. pinned shot groups).
- */
-export interface TimelineRenderGroupSummary {
-  /** Unique group identifier. */
-  id: string;
-  /** Clip IDs that belong to this render group. */
-  clipIds: readonly string[];
-  /** Type of the render group, when known. */
-  groupType?: string;
-  /** Required and optional passes that make up this render group. */
-  passes?: readonly TimelineRenderPassSummary[];
-  /** Required pass names, mirrored for compact planner checks. */
-  requiredPasses?: readonly string[];
-}
-
-/**
- * M12: Output metadata extracted from the timeline config.
- *
- * Describes the target output resolution, FPS, and file settings
- * so the planner can validate format compatibility.
- */
-export interface TimelineOutputMetadata {
-  /** Output resolution string (e.g. '1920x1080'). */
-  resolution: string;
-  /** Frames per second. */
-  fps: number;
-  /** Target output filename. */
-  file: string;
-  /** Background color or null, when available. */
-  background?: string | null;
-  /** Background scale factor, when available. */
-  backgroundScale?: number | null;
-}
-
-// ---------------------------------------------------------------------------
-// M3: TimelineSnapshot / TimelineReader
-// ---------------------------------------------------------------------------
-
-/**
- * Stable, read-only projection of timeline state for extensions and proposal
- * machinery. Never exposes raw internal rows, provider handles, or mutation
- * engine internals.
- */
-export interface TimelineSnapshot {
-  /** Project identifier, when available. */
-  projectId: string | null;
-  /**
-   * Base version for concurrency control. This is the version the snapshot
-   * was taken at; proposals based on this snapshot must revalidate against
-   * the current reader version before acceptance.
-   */
-  baseVersion: number;
-  /**
-   * Current version at the time the snapshot was taken. Equal to baseVersion
-   * when there are no uncommitted local edits.
-   */
-  currentVersion: number;
-  /** Extensions referenced by this project with version-range constraints. */
-  extensionRequirements: readonly ProjectExtensionRequirement[];
-  /** Ordered list of clip summaries (ID, track, at, clipType, duration). */
-  clips: readonly TimelineClipSummary[];
-  /** Ordered list of track summaries (ID, kind, label, muted). */
-  tracks: readonly TimelineTrackSummary[];
-  /** Asset keys present in the timeline. */
-  assetKeys: readonly string[];
-  /** Extension-owned app data (project-data) keyed by extension ID. */
-  app: Record<string, unknown>;
-  /**
-   * Source-map entries extracted from extension project-data.
-   * Each entry maps a timeline object to a source location.
-   */
-  sourceMapEntries?: readonly SourceMapEntry[];
-  /** M12: Ordered list of effect summaries extracted from clips. */
-  effects?: readonly TimelineEffectSummary[];
-  /** M12: Ordered list of transition summaries extracted from clips. */
-  transitions?: readonly TimelineTransitionSummary[];
-  /** M12: Live-binding summaries extracted from clip metadata. */
-  liveBindings?: readonly TimelineLiveBindingSummary[];
-  /** M12: Material-ref summaries extracted from clip data. */
-  materialRefs?: readonly TimelineMaterialRefSummary[];
-  /** M12: Source-ref summaries extracted from clip provenance. */
-  sourceRefs?: readonly TimelineSourceRefSummary[];
-  /** M13: Shader metadata persisted on clips or timeline postprocess app data. */
-  shaders?: readonly TimelineShaderSummary[];
-  /** M12: Render-group summaries extracted from timeline data. */
-  renderGroups?: readonly TimelineRenderGroupSummary[];
-  /** M12: Output metadata extracted from the timeline config. */
-  outputMetadata?: TimelineOutputMetadata;
-}
-
-/** Lightweight clip summary for TimelineSnapshot projection. */
-export interface TimelineClipSummary {
-  id: string;
-  track: string;
-  at: number;
-  clipType?: string;
-  /** Duration in frames (derived from to-from or hold). */
-  duration: number;
-  /** True when this clip is managed by a registered extension. */
-  managed: boolean;
-  /** Extension ID that manages this clip, if managed. */
-  managedBy?: string;
-  /** Generated-object metadata attached by the owning extension, if any. */
-  generatedMeta?: GeneratedObjectMeta;
-  /** M12: Effects applied to this clip. */
-  effects?: readonly TimelineEffectSummary[];
-  /** M12: Transition applied to this clip, if any. */
-  transition?: TimelineTransitionSummary;
-  /** M12: Live bindings attached to this clip. */
-  liveBindings?: readonly TimelineLiveBindingSummary[];
-  /** M12: Material refs consumed by this clip. */
-  materialRefs?: readonly TimelineMaterialRefSummary[];
-  /** M12: Source refs carried by this clip. */
-  sourceRefs?: readonly TimelineSourceRefSummary[];
-}
-
-/** Lightweight track summary for TimelineSnapshot projection. */
-export interface TimelineTrackSummary {
-  id: string;
-  kind: 'visual' | 'audio';
-  label: string;
-  muted: boolean;
-  /** Extension-owned app data attached to this track. */
-  app?: Record<string, unknown>;
-  /** Generated-object metadata attached by the owning extension, if any. */
-  generatedMeta?: GeneratedObjectMeta;
-}
-
-/** Lightweight shader metadata summary for provider-free planner inspection. */
-export interface TimelineShaderSummary {
-  id: string;
-  shaderId: string;
-  scope: ShaderMaterializerRequirementScope;
-  clipId?: string;
-  extensionId: string;
-  contributionId: string;
-  enabled: boolean;
-}
-
-/**
- * Read-only timeline reader exposed to host and extension code.
- * Provides stable snapshots without exposing internal stores.
- */
-export interface TimelineReader {
-  /** Take a point-in-time snapshot of the current timeline state. */
-  snapshot(): TimelineSnapshot;
-}
-
+// M3 / M12: TimelineSnapshot, summary types, TimelineReader — now in
+// src/sdk/video/timeline/reader.ts (re-exported above)
 // ---------------------------------------------------------------------------
 // M12: getCapabilityRequirements — provider-free capability inspection
+// (TimelineSnapshot, summary types, and TimelineReader are now defined in
+// src/sdk/video/timeline/reader.ts and re-exported above.)
 // ---------------------------------------------------------------------------
 
 /**
@@ -5323,13 +4919,9 @@ export interface TimelineProposal {
   diagnostics?: readonly TimelinePatchDiagnostic[];
 }
 
-/** Input for creating a new proposal. */
-export interface TimelineProposalInput {
-  source: string;
-  rationale?: string;
-  patch: TimelinePatch;
-  baseVersion: number;
-}
+/** Input for creating a new proposal — now defined in
+ * src/sdk/video/timeline/reader.ts and re-exported above. */
+// (TimelineProposalInput is re-exported from reader.ts)
 
 /** Listener callback for proposal state changes. */
 export type ProposalListener = (proposal: TimelineProposal) => void;
@@ -5543,44 +5135,6 @@ export interface GeneratedObjectMeta {
 }
 
 // ---------------------------------------------------------------------------
-// M3: Extension project-data limits
-// ---------------------------------------------------------------------------
-
-/**
- * Hard limits on extension-owned project data stored in TimelineConfig.app.
- *
- * These limits are enforced by the patch compiler and the project-data
- * validation path. Exceeding any limit produces a diagnostic — the host
- * may choose to surface this as a warning or block the write.
- */
-export const EXTENSION_PROJECT_DATA_LIMITS = {
-  /** Maximum size in bytes for a single project-data entry (JSON-serialized). */
-  MAX_ENTRY_BYTES: 64 * 1024, // 64 KB
-  /** Maximum total size in bytes for all entries owned by one extension. */
-  MAX_EXTENSION_TOTAL_BYTES: 1 * 1024 * 1024, // 1 MB
-  /** Maximum number of entries one extension may store. */
-  MAX_ENTRIES_PER_EXTENSION: 128,
-} as const;
-
-/** Diagnostic codes produced when project-data limits are exceeded. */
-export type ProjectDataLimitCode =
-  | 'project-data/entry-size-exceeded'
-  | 'project-data/extension-total-exceeded'
-  | 'project-data/entry-count-exceeded';
-
-/**
- * Structured detail carried in TimelinePatchDiagnostic.detail when a
- * project-data limit is exceeded.
- */
-export interface ProjectDataLimitDetail {
-  extensionId: string;
-  limit: number;
-  actual: number;
-  unit: 'bytes' | 'entries';
-  code: ProjectDataLimitCode;
-}
-
-// ---------------------------------------------------------------------------
 // M3: Host-owned proposal UI contract (surface shape only)
 // ---------------------------------------------------------------------------
 
@@ -5678,544 +5232,37 @@ export interface ProposalImportResult {
 }
 
 // ---------------------------------------------------------------------------
-// M6: Asset metadata types
+// M6: Asset metadata, parser, search, output-format, and read-surface contracts
 // ---------------------------------------------------------------------------
+//
+// All portable asset metadata contracts now live in
+// src/sdk/video/assets/metadata.ts.  This block re-exports them for
+// backward-compatible public consumption through @reigh/editor-sdk.
 
-/**
- * Integrity metadata for an asset (checksum, algorithm, byte size).
- * Host-owned top-level shape under `AssetMetadata.integrity`.
- */
-export interface AssetIntegrityMetadata {
-  /** Checksum algorithm (e.g. 'sha256'). */
-  algorithm: string;
-  /** Hex-encoded checksum digest. */
-  hash: string;
-  /** File size in bytes. */
-  size: number;
-}
-
-/**
- * GPS / geolocation metadata extracted from asset headers.
- * Host-owned top-level shape under `AssetMetadata.gps`.
- */
-export interface AssetGPSMetadata {
-  /** Latitude in decimal degrees (WGS84). */
-  latitude?: number;
-  /** Longitude in decimal degrees (WGS84). */
-  longitude?: number;
-  /** Altitude in metres above WGS84 ellipsoid. */
-  altitude?: number;
-  /** GPS timestamp if available (epoch ms). */
-  timestamp?: number;
-}
-
-/**
- * Consent / rights metadata for an asset.
- * Host-owned top-level shape under `AssetMetadata.consent`.
- */
-export interface AssetConsentMetadata {
-  /** Human-readable source attribution. */
-  source?: string;
-  /** Consent / rights note (e.g. 'CC BY 4.0', 'all rights reserved'). */
-  rightsNote?: string;
-  /** Whether consent has been explicitly recorded. */
-  consentRecorded?: boolean;
-  /** ISO 8601 timestamp when consent was recorded. */
-  consentTimestamp?: string;
-}
-
-/**
- * Provenance metadata describing where an asset came from.
- * Host-owned top-level shape under `AssetMetadata.provenance`.
- */
-export interface AssetProvenanceMetadata {
-  /** Human-readable origin description. */
-  origin?: string;
-  /** ID of the asset this was derived from, if any. */
-  derivedFromAssetId?: string;
-  /** Whether this asset was generated by AI/ML. */
-  generated?: boolean;
-  /** ISO 8601 capture or import timestamp. */
-  capturedAt?: string;
-  /** ISO 8601 import timestamp. */
-  importedAt?: string;
-}
-
-/**
- * Enrichment status lifecycle state machine.
- *
- *   pending   → record created, not yet claimed
- *   claimed   → claimed by an extension/agent for processing
- *   resolving → processing in progress
- *   resolved  → enrichment completed successfully
- *   failed    → enrichment failed with a diagnostic
- *   expired   → enrichment timed out or was cancelled
- */
-export type EnrichmentStatus =
-  | 'pending'
-  | 'claimed'
-  | 'resolving'
-  | 'resolved'
-  | 'failed'
-  | 'expired';
-
-/**
- * A deferred enrichment record persisted inside asset metadata.
- *
- * Parsers that need ML inference may emit deferred enrichment records
- * instead of blocking ingestion.  The record carries an asset reference,
- * enrichment kind, input parameters, status, and owning extension.
- * M6 persists and displays the shape; M10/M12 activate claim/resolve
- * execution through agent/process contracts.
- */
-export interface DeferredEnrichmentRecord {
-  /** Unique record identifier. */
-  id: string;
-  /** The asset this enrichment targets. */
-  assetId: string;
-  /** Enrichment kind (e.g. 'embedding', 'caption', 'object-detection'). */
-  kind: string;
-  /** Input parameters for the enrichment process. */
-  input?: Record<string, unknown>;
-  /** Current lifecycle state. */
-  status: EnrichmentStatus;
-  /** The extension that owns this enrichment record. */
-  extensionId: string;
-  /** Contribution ID within the extension, if any. */
-  contributionId?: string;
-  /** ISO 8601 timestamp when the record was created. */
-  createdAt: string;
-  /** ISO 8601 timestamp when the record was last updated. */
-  updatedAt: string;
-  /** Diagnostic message when status is 'failed' or 'expired'. */
-  diagnostic?: string;
-  /** Enrichment output when status is 'resolved'. */
-  output?: Record<string, unknown>;
-}
-
-/**
- * Top-level asset metadata shape persisted in AssetRegistryEntry.
- *
- * Host-owned keys (integrity, gps, consent, provenance, enrichment) are
- * at the top level.  Extension-owned metadata is namespaced under
- * `extensions[extensionId]`.
- */
-export interface AssetMetadata {
-  /** Integrity / checksum metadata. */
-  integrity?: AssetIntegrityMetadata;
-  /** GPS / geolocation metadata. */
-  gps?: AssetGPSMetadata;
-  /** Consent / rights metadata. */
-  consent?: AssetConsentMetadata;
-  /** Provenance / origin metadata. */
-  provenance?: AssetProvenanceMetadata;
-  /**
-   * Extension-owned metadata namespaced by extension ID.
-   * Extensions may store arbitrary structured data under their own key.
-   */
-  extensions?: Record<string, Record<string, unknown>>;
-  /**
-   * Deferred enrichment records for this asset.
-   * Parsers may enqueue enrichment tasks without blocking ingestion.
-   */
-  enrichment?: readonly DeferredEnrichmentRecord[];
-}
-
-// ---------------------------------------------------------------------------
-// M6: Metadata facet descriptors
-// ---------------------------------------------------------------------------
-
-/**
- * The value kind of a metadata facet field.
- *
- * Determines how the host renders filter/aggregation UI for the facet.
- */
-export type MetadataFacetValueKind =
-  | 'string'
-  | 'number'
-  | 'boolean'
-  | 'date'
-  | 'enum';
-
-/**
- * A descriptor that tells the host how to surface a metadata field
- * as a searchable/filterable facet in the asset panel.
- *
- * The host owns facet rendering and aggregation; extensions provide
- * the descriptor and the metadata values.
- */
-export interface MetadataFacetDescriptor {
-  /**
-   * Dot-separated path to the metadata field.
-   * E.g. 'gps.latitude', 'integrity.algorithm', 'extensions.myExt.tags'.
-   */
-  fieldPath: string;
-  /** Human-readable display name for the facet. */
-  displayName: string;
-  /** The value kind — determines rendering and filtering strategy. */
-  valueKind: MetadataFacetValueKind;
-  /**
-   * Sort order for this facet relative to others (lower = first).
-   * Default 0.
-   */
-  order?: number;
-  /**
-   * Aggregation posture hint for the host.
-   * - `exact` — values should be surfaced individually
-   * - `range` — numeric values can be bucketed
-   * - `presence` — only show whether the field exists
-   */
-  aggregationPosture?: 'exact' | 'range' | 'presence';
-  /**
-   * Allowed values when `valueKind` is 'enum'.
-   * The host uses this for dropdown/checkbox filter UI.
-   */
-  enumValues?: readonly string[];
-}
-
-// ---------------------------------------------------------------------------
-// M6: Asset detail section descriptors
-// ---------------------------------------------------------------------------
-
-/**
- * A descriptor for a named section slot inside the asset detail panel.
- *
- * Asset detail sections are named slots within the asset panel (not whole
- * replacement panels).  The host owns section placement, empty/error states,
- * search result badges, and provenance-chain rendering.  Extensions provide
- * section descriptors to declare what metadata they surface.
- */
-export interface AssetDetailSectionDescriptor {
-  /** Unique section identifier within the extension. */
-  id: string;
-  /** Human-readable section title. */
-  title: string;
-  /**
-   * Placement within the asset detail panel.
-   * - `before-default` — before host-owned metadata sections
-   * - `after-default` — after host-owned metadata sections
-   */
-  placement: 'before-default' | 'after-default';
-  /**
-   * The metadata field paths this section reads.
-   * The host uses these to determine section visibility and data binding.
-   */
-  fieldPaths?: readonly string[];
-  /** Lower values sort first within their placement group. Default 0. */
-  order?: number;
-  /**
-   * Optional visibility predicate (evaluated by host).
-   * E.g. 'asset.metadata.integrity != null'.
-   */
-  when?: string;
-}
-
-// ---------------------------------------------------------------------------
-// M6: Parser runtime types
-// ---------------------------------------------------------------------------
-
-/**
- * Input passed to a parser handler during asset ingestion.
- *
- * Parsers receive metadata about the ingested file but not the raw
- * file bytes — the host validates size/type before invoking the parser
- * and the parser receives only the fields it declares interest in.
- */
-export interface ParserInput {
-  /** Asset key in the registry. */
-  assetKey: string;
-  /** Detected MIME type of the uploaded file. */
-  mimeType: string;
-  /** File extension (without leading dot). */
-  extension: string;
-  /** File size in bytes. */
-  byteSize: number;
-  /** Original filename from the upload. */
-  filename?: string;
-  /**
-   * Any metadata already collected for this asset before this parser runs.
-   * Parsers may read existing metadata to avoid recomputing values.
-   */
-  existingMetadata?: Readonly<AssetMetadata>;
-}
-
-/**
- * Result returned by a parser handler.
- *
- * Parsers return only the metadata they wish to contribute.
- * The host shallow-merges blessed registry fields and deep-merges
- * metadata by namespace.  Unknown top-level fields are rejected with
- * a diagnostic.
- */
-export interface ParserResult {
-  /**
-   * Metadata to merge into the asset's metadata.
-   * Extension-owned fields should be placed under `extensions[extensionId]`.
-   */
-  metadata?: Partial<AssetMetadata>;
-  /** Diagnostics produced by the parser. */
-  diagnostics?: readonly ParserDiagnostic[];
-  /**
-   * Deferred enrichment records the parser wishes to enqueue.
-   * These are persisted alongside the asset and surface in the asset
-   * detail panel; execution is deferred to M10/M12.
-   */
-  enrichment?: readonly DeferredEnrichmentRecord[];
-}
-
-/**
- * A diagnostic produced by a parser during asset ingestion.
- *
- * Parser diagnostics use `parser/`-prefixed codes and carry
- * enough context to identify the asset and the parser that produced
- * the diagnostic.
- */
-export interface ParserDiagnostic {
-  severity: DiagnosticSeverity;
-  /** Stable diagnostic code, e.g. 'parser/unsupported-mime-type'. */
-  code: `parser/${string}`;
-  message: string;
-  /** The asset key that triggered the diagnostic. */
-  assetKey?: string;
-  /** The extension that owns the parser. */
-  extensionId?: string;
-  /** The parser contribution ID. */
-  contributionId?: string;
-  /** Structured detail (expected MIME, actual MIME, size limit, etc.). */
-  detail?: Record<string, unknown>;
-}
-
-/**
- * A parser handler function registered by an extension.
- *
- * Receives a {@link ParserInput} and returns a {@link ParserResult}
- * or a Promise of one.  Thrown errors are caught by the host and
- * published as parser diagnostics.
- */
-export type ParserHandler = (
-  input: ParserInput,
-) => ParserResult | Promise<ParserResult>;
-
-// ---------------------------------------------------------------------------
-// M6: Compile-only output result types
-// ---------------------------------------------------------------------------
-
-/**
- * The result of executing a compile-only output format.
- *
- * Compile-only formats (requiresRender: false) produce an artifact
- * without entering the render pipeline.  The output is a byte buffer
- * plus metadata describing the artifact.
- */
-export interface CompileOnlyOutputResult {
-  /** The output artifact bytes. */
-  data: Uint8Array;
-  /** MIME type of the output artifact. */
-  mimeType: string;
-  /** Suggested filename for the output artifact. */
-  filename: string;
-  /**
-   * Diagnostics produced during compilation.
-   * Non-error diagnostics do not prevent artifact production.
-   */
-  diagnostics?: readonly ParserDiagnostic[];
-  /** Whether the compilation produced blocking errors. */
-  hasBlockingErrors: boolean;
-}
-
-/**
- * A compile-only output format handler registered by an extension.
- *
- * Receives read-only access to timeline and asset data and produces
- * a deterministic artifact.  Must not mutate timeline state.
- */
-export type OutputFormatHandler = (
-  context: OutputFormatContext,
-) => CompileOnlyOutputResult | Promise<CompileOnlyOutputResult>;
-
-/**
- * Context passed to an output format handler.
- *
- * Provides read-only access to timeline snapshot and asset metadata
- * without exposing mutation surfaces.
- */
-export interface OutputFormatContext {
-  /** Read-only snapshot of the current timeline state. */
-  readonly timeline: TimelineSnapshot;
-  /** Read-only map of asset key to asset metadata. */
-  readonly assets: ReadonlyMap<string, Readonly<AssetMetadata>>;
-  /** The extension that registered the handler. */
-  readonly extensionId: string;
-  /** The output format contribution ID. */
-  readonly contributionId: string;
-}
-
-// ---------------------------------------------------------------------------
-// M6: Search provider runtime types
-// ---------------------------------------------------------------------------
-
-/**
- * A single search result match from a search provider.
- */
-export interface SearchMatch {
-  /** Asset or material reference key. */
-  ref: string;
-  /** Kind of the referenced item. */
-  kind: 'asset' | 'material';
-  /**
-   * Relevance score (0–1). Higher = more relevant.
-   * Relative ordering is provider-owned; host may normalize.
-   */
-  score: number;
-  /** Short excerpt or description for display in search results. */
-  excerpt?: string;
-  /** Opaque provider metadata (embedding distance, model version, etc.). */
-  meta?: Record<string, unknown>;
-}
-
-/**
- * Result returned by a search provider for a host query.
- */
-export interface SearchProviderResult {
-  /** Ordered list of matches (highest score first). */
-  matches: readonly SearchMatch[];
-  /** Total number of results available beyond the returned matches. */
-  totalCount?: number;
-  /** Whether the provider has more results available. */
-  hasMore?: boolean;
-  /** Provider-owned diagnostics (indexing errors, etc.). */
-  diagnostics?: readonly ParserDiagnostic[];
-}
-
-/**
- * A search provider handler registered by an extension.
- *
- * Receives a query string and returns scored asset/material refs.
- * Providers own indexing, model choice, and refresh; the host
- * owns query dispatch, result merge, and source labeling.
- */
-export type SearchProviderHandler = (
-  query: string,
-  context: SearchProviderContext,
-) => SearchProviderResult | Promise<SearchProviderResult>;
-
-/**
- * Context passed to a search provider handler.
- */
-export interface SearchProviderContext {
-  /** The extension that registered the handler. */
-  readonly extensionId: string;
-  /** The search provider contribution ID. */
-  readonly contributionId: string;
-  /** Maximum number of results the host will display. */
-  readonly maxResults: number;
-  /** Optional filter scoping the search to asset/material kind. */
-  readonly resultKind?: 'asset' | 'material';
-}
-
-// ---------------------------------------------------------------------------
-// M6: Asset read surface
-// ---------------------------------------------------------------------------
-
-/**
- * Read-only asset metadata surface exposed to extension code.
- *
- * Extensions can query asset metadata by key and list all asset keys
- * known to the registry.  This is a read-only projection — no mutation
- * or persistence surface is exposed.
- */
-export interface AssetReadSurface {
-  /**
-   * Get metadata for a single asset by its registry key.
-   * Returns undefined if the asset is not found.
-   */
-  get(assetKey: string): Readonly<AssetMetadata> | undefined;
-
-  /**
-   * List all asset keys known to the registry.
-   */
-  keys(): readonly string[];
-
-  /**
-   * Check whether an asset key exists in the registry.
-   */
-  has(assetKey: string): boolean;
-
-  /**
-   * Search assets by a metadata field path and value.
-   * Returns matching asset keys.  Bounded to exact field matches
-   * on host-owned metadata fields; extension-owned fields may be
-   * searched only when a search provider is active.
-   */
-  search(fieldPath: string, value: string): readonly string[];
-}
-
-/**
- * Read-only material metadata surface exposed to extension code.
- *
- * Materials reference assets with additional media-specific metadata
- * (resolution, frame rate, codec, etc.).  This is a read-only projection.
- */
-export interface MaterialReadSurface {
-  /**
-   * Get material metadata by its registry key.
-   * Returns undefined if the material is not found.
-   */
-  get(materialKey: string): Readonly<Record<string, unknown>> | undefined;
-
-  /**
-   * List all material keys known to the registry.
-   */
-  keys(): readonly string[];
-
-  /**
-   * Check whether a material key exists in the registry.
-   */
-  has(materialKey: string): boolean;
-}
-
-// ---------------------------------------------------------------------------
-// Updated CreativeContext with M6 types
-// ---------------------------------------------------------------------------
-
-// NOTE: CreativeContext is declared above (line ~590).
-// The `assets`, `materials`, and `export` members are typed here
-// but the runtime stubs still throw ExtensionNotImplementedError
-// until the host provider wires live implementations.
-
-// ---------------------------------------------------------------------------
-// M6: Export service
-// ---------------------------------------------------------------------------
-
-/**
- * Export service available to extensions for registering output format
- * handlers imperatively during activate().
- *
- * Output formats must have a matching `OutputFormatContribution` in the
- * extension manifest.  Handlers are registered via `registerOutputFormat()`
- * and the returned DisposeHandle unregisters them on dispose.
- */
-export interface ExportService {
-  /**
-   * Register a compile-only output format handler.
-   *
-   * The `formatId` must match the `id` of an `OutputFormatContribution`
-   * declared by this extension in its manifest with `requiresRender: false`.
-   *
-   * Returns a DisposeHandle that unregisters the handler when dispose()
-   * is called (safe to call multiple times; idempotent).
-   */
-  registerOutputFormat(
-    formatId: string,
-    handler: OutputFormatHandler,
-    options?: OutputFormatRegistrationOptions,
-  ): DisposeHandle;
-}
-
-/** Options for imperative output format registration. */
-export interface OutputFormatRegistrationOptions {
-  /** Override label for the export UI. */
-  label?: string;
-  /** Override description for the export UI. */
-  description?: string;
-}
+export type {
+  AssetIntegrityMetadata,
+  AssetGPSMetadata,
+  AssetConsentMetadata,
+  AssetProvenanceMetadata,
+  EnrichmentStatus,
+  DeferredEnrichmentRecord,
+  AssetMetadata,
+  MetadataFacetValueKind,
+  MetadataFacetDescriptor,
+  AssetDetailSectionDescriptor,
+  ParserInput,
+  ParserResult,
+  ParserDiagnostic,
+  ParserHandler,
+  CompileOnlyOutputResult,
+  OutputFormatHandler,
+  OutputFormatContext,
+  SearchMatch,
+  SearchProviderResult,
+  SearchProviderHandler,
+  SearchProviderContext,
+  AssetReadSurface,
+  MaterialReadSurface,
+  ExportService,
+  OutputFormatRegistrationOptions,
+} from '@/sdk/video/assets/metadata';

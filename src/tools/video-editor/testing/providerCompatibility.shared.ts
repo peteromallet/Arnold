@@ -19,13 +19,16 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import {
+  TimelineVersionConflictError,
+  isTimelineVersionConflictError,
+} from '@reigh/editor-sdk';
 import type {
   DataProvider,
   LoadedTimeline,
 } from '@/tools/video-editor/data/DataProvider';
 import {
   TimelineNotFoundError,
-  TimelineVersionConflictError,
 } from '@/tools/video-editor/data/DataProvider';
 import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types/index';
 
@@ -199,10 +202,8 @@ export function runProviderCompatibilitySuite(
           const result = await provider.saveTimeline(tid, config3, 1);
           expect(typeof result).toBe('number');
         } else {
-          // Stale version must reject
-          await expect(
-            provider.saveTimeline(tid, config3, 1),
-          ).rejects.toBeInstanceOf(TimelineVersionConflictError);
+          await expect(provider.saveTimeline(tid, config3, 1)).rejects.toBeInstanceOf(TimelineVersionConflictError);
+          await expect(provider.saveTimeline(tid, config3, 1)).rejects.toSatisfy(isTimelineVersionConflictError);
         }
       },
     );

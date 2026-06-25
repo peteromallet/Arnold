@@ -1,4 +1,4 @@
-import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types/index.ts';
+import { BUILTIN_CLIP_TYPES } from '@/sdk/video/timeline/clipTypes.ts';
 import {
   toClipTypeManifest,
   type ClipTypeManifest,

@@ -12,11 +12,11 @@ import {
   serializeTimelinePair,
 } from '@/tools/video-editor/lib/timeline-domain.ts';
 import {
-  TimelineVersionConflictError,
   type DataProvider,
   type LoadedTimeline,
   type UploadAssetOptions,
 } from '@/tools/video-editor/data/DataProvider.ts';
+import { TimelineVersionConflictError } from '@/sdk/video/timeline/errors.ts';
 import {
   loadSyncBookmark,
   saveKeepBothArtifact,

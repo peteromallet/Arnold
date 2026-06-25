@@ -82,6 +82,7 @@
       {
         "id": "flagship-agent-tool-future",
         "kind": "agentTool",
+        "toolId": "com.reigh.examples.flagship-local.agent-tool-future",
         "label": "Flagship agent tool (reserved for M5)"
       }
     ],

@@ -1,0 +1,176 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run
+
+        Brief summary: # M0 — Extract Portable SDK Contracts
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 2 of 22.
+        - Actionable task IDs for this batch: ['T3']
+        - Already completed task IDs available as dependency context: ['T1', 'T2']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Add SDK-owned rendering contract modules under `src/sdk/video/rendering/`: `renderability.ts` for render routes, determinism, blocker reasons, capability findings, and coupled constants; `artifacts.ts` for render artifacts, materials, material refs, storage locators, and related side types; and `capabilities.ts` for `ShaderMaterializerRequirementScope`, `shaderMissingMaterializerBlockerMessage`, and its portable direct callee `describeShaderMaterializerRequirementScope` if present.",
+    "complexity_justification": "These SDK modules become public rendering contracts consumed outside the edited files. A wrong extraction can preserve local tests while breaking external SDK consumers or host/runtime type compatibility.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T2",
+    "depends_on": [],
+    "status": "done",
+    "kind": "audit",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is a repo-wide import audit across `src/sdk/**` whose output drives later module ownership. It is read-only, but classification errors would misroute subsequent extraction work.",
+    "executor_notes": "Ran comprehensive static import/export-from audit across all 13 SDK .ts/.tsx files. Produced structured inventory at sdk_import_inventory.json. Key findings: 3 files have host imports (1 production: src/sdk/index.ts with 5 host import groups from renderability.ts and video-editor barrel; 2 test files: extensionSettingsService.test.ts and extensionSettingsMigration.test.ts importing extensionStateRepository/Provider). All 7 host dependency groups classified with intended owner (SDK for portable renderability/timeline contracts, HOST for test repository fixtures) and disposition (T3/T9/T10/T1...",
+    "files_changed": [],
+    "commands_run": [
+      "node /tmp/sdk_import_audit.mjs"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Create `docs/extensions/pristine-sdk-boundary-audit.md` with the M0 doc/code audit: compare the current repo against `docs/extensions/phase4-readiness.md`, `docs/extensions/foundation-closure-assessment.md`, and the missing `docs/extensions/reigh-extension-layer-foundation-plan.md`; include the discrepancy table, record that `docs/extensions/foundation-contract-ledger.md` exists instead, and avoid rewriting upstream docs unless directly blocking extraction.",
+    "complexity_justification": "This is a documentation artifact grounded in a few named docs and current file anchors. The work needs careful comparison, but it does not change runtime contracts or code behavior.",
+    "executor_notes": "Created docs/extensions/pristine-sdk-boundary-audit.md (113 lines) with: (1) reference document inventory noting the missing reigh-extension-layer-foundation-plan.md and existence of foundation-contract-ledger.md as replacement; (2) 7-row discrepancy table (D1-D7) covering stale contributionFamilies.ts reference, SDK barrel host imports, test file host imports, and Phase 4 gate posture; (3) current code anchors section enumerating all host imports in src/sdk/index.ts and test files; (4) document cross-reference matrix across all 5 extension docs; (5) M0-relevant findings; (6) audit method....",
+    "files_changed": [
+      "docs/extensions/pristine-sdk-boundary-audit.md"
+    ],
+    "commands_run": []
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory quality: skipped file growth for .megaplan/epics/m0-extract-portable-sdk-20260625-1503/events.jsonl: file is binary or not valid UTF-8",
+  "Advisory quality: .megaplan/telemetry/m0-extract-portable-sdk-20260625-1503.ndjson grew by 214 lines (threshold 200).",
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: docs/extensions/pristine-sdk-boundary-audit.md",
+  "Advisory audit finding: Executor claimed changed files not present in git status: docs/extensions/pristine-sdk-boundary-audit.md",
+  "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC19 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC22 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC23 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC3",
+    "task_id": "T3",
+    "verdict": "",
+    "question": "Do the new rendering SDK modules contain only portable data contracts/constants/helpers and no React, runtime service, editor context, DOM/browser, Vite, or host provider dependency?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Canonical SDK ownership for identity-sensitive values (TimelineVersionConflictError, isTimelineVersionConflictError, getStableConfigSignature, BUILTIN_CLIP_TYPES) — host code im... - Resolved in iteration 2 (correctness flag). Prevents instanceof breaks and signature drift. Host code becomes the consumer; SDK is the single source of truth.
+- SD2: Final gate failures without same-signature baseline evidence are treated as M0-caused and must be fixed within M0 scope - Resolved in iteration 4 (criteria_quality flag). Replaces subjective judgment with objective baseline comparison. Prevents ambiguity about whether a failure is pre-existing or introduced.
+- SD3: src/sdk/index.ts remains the public barrel for M0; barrel split into scoped modules is deferred to M2 - Established in initial plan and preserved through all iterations. Keeps M0 focused on extraction and boundary enforcement without expanding into module reorganization.
+
+        ## Plan execution order rationale
+
+        1. Build the audit and dependency inventory first so moves are based on current code.
+2. Move data-only rendering, timeline, and asset metadata contracts into SDK modules.
+3. Move public compatibility values as canonical SDK implementations, then update host consumers to use the same bindings.
+4. Replace the SDK barrel host imports only after the canonical SDK modules exist.
+5. Strengthen the import guard and prove the guard catches negative fixtures.
+6. Add the external consumer validator in three steps: skeleton, compile/import graph checks, runtime value smoke and script wiring.
+7. Add representative family comments.
+8. Run validation incrementally and then final release gates with objective baseline handling for unrelated pre-existing failures.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the listed order. The dependency chain intentionally isolates the c4 contract and guard work so the runtime does not batch unrelated high-risk tasks into one overloaded worker turn. Each task should implement and locally verify its own slice, while the final task runs the broad package gates and applies the approved objective baseline rule.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: full.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run/.megaplan/plans/m0-extract-portable-sdk-20260625-1503/execute_batch_2_output.json
+        - Only produce `task_updates` for these tasks: [T3]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC3]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run/.megaplan/plans/m0-extract-portable-sdk-20260625-1503/execution_batch_2.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T3",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC3",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

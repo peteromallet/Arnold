@@ -26,14 +26,8 @@ import type {
   SettingsMigrationResult,
 } from './extensionSettingsMigration';
 import type { ExtensionManifest, MigrationDeclaration } from './index';
-import type {
-  ExtensionSettingsSnapshot,
-} from '@/tools/video-editor/runtime/extensionStateRepository';
-import {
-  ProviderBackedExtensionStateRepository,
-  InMemoryProviderStore,
-} from '@/tools/video-editor/runtime/extensionStateRepositoryProvider';
-import type { ExtensionStateRepository } from '@/tools/video-editor/runtime/extensionStateRepository';
+import type { SettingsSnapshot } from './contracts';
+import { InMemoryStateRepository } from './__tests__/inMemoryStateRepository';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -85,7 +79,7 @@ function makeSnapshot(
   extensionId: string,
   schemaVersion: number,
   values: Record<string, unknown>,
-): ExtensionSettingsSnapshot {
+): SettingsSnapshot {
   return Object.freeze({
     extensionId,
     schemaVersion,
@@ -94,9 +88,8 @@ function makeSnapshot(
   });
 }
 
-function makeRepo(): { repo: ExtensionStateRepository; cleanup: () => Promise<void> } {
-  const store = new InMemoryProviderStore();
-  const repo = new ProviderBackedExtensionStateRepository(store);
+function makeRepo(): { repo: InMemoryStateRepository; cleanup: () => Promise<void> } {
+  const repo = new InMemoryStateRepository();
   return {
     repo,
     cleanup: async () => {
@@ -617,7 +610,7 @@ describe('runSettingsMigration — chaining', () => {
 describe('runSettingsMigration — repository integration', () => {
   const EXT_ID = 't10.repo.ext';
 
-  let repo: ExtensionStateRepository;
+  let repo: InMemoryStateRepository;
   let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
@@ -651,9 +644,11 @@ describe('runSettingsMigration — repository integration', () => {
     await new Promise((r) => setTimeout(r, 30));
 
     const events = await repo.getLifecycleEvents(EXT_ID);
-    const migrationEvents = events.filter((e) =>
-      ['migration_start', 'migration_success', 'migration_failure', 'migration_reset'].includes(e.kind),
-    );
+    const migrationEvents = events
+      .filter((e) =>
+        ['migration_start', 'migration_success', 'migration_failure', 'migration_reset'].includes(e.kind),
+      )
+      .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 
     expect(migrationEvents).toHaveLength(2);
     expect(migrationEvents[0].kind).toBe('migration_start');

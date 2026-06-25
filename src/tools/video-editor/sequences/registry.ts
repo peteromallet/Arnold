@@ -2,7 +2,7 @@ import {
   THEME_PACKAGE_REGISTRY,
 } from '@banodoco/timeline-composition/registry.generated';
 import { getGeneratedRemotionModuleStatus, type GeneratedLaneClipShape } from '@/tools/video-editor/lib/generated-lanes.ts';
-import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types/index.ts';
+import { BUILTIN_CLIP_TYPES } from '@/sdk/video/timeline/clipTypes.ts';
 import {
   AVAILABLE_TIMELINE_THEME_IDS,
   INSTALLED_TIMELINE_THEMES,

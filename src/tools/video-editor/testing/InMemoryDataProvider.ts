@@ -2,10 +2,10 @@ import {
   type ExtensionPersistenceScope,
   type ExtensionPersistenceService,
   TimelineNotFoundError,
-  TimelineVersionConflictError,
   type DataProvider,
   type LoadedTimeline,
 } from '@/tools/video-editor/data/DataProvider.ts';
+import { TimelineVersionConflictError } from '@/sdk/video/timeline/errors.ts';
 import type { ExtensionDiagnostic } from '@reigh/editor-sdk';
 import {
   createCachedExtensionPersistenceService,

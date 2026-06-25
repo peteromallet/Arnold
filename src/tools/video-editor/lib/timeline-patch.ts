@@ -16,23 +16,27 @@
 
 import type {
   DiagnosticSeverity,
+} from '@/sdk/index';
+import { validateExtensionId } from '@/sdk/index';
+import type {
+  ProjectDataLimitDetail,
+  TimelineDiff,
+  TimelineDiffEntry,
+  TimelineDiffGranularity,
+  TimelineDiffKind,
   TimelinePatch,
   TimelinePatchAnyOpFamily,
   TimelinePatchDiagnostic,
   TimelinePatchOperation,
   TimelinePatchValidationResult,
-  TimelineDiff,
-  TimelineDiffEntry,
-  TimelineDiffGranularity,
-  TimelineDiffKind,
   TimelinePreviewResult,
-  ProjectDataLimitDetail,
-} from '@/sdk/index';
-
+} from '@/sdk/video/timeline/patch.ts';
 import {
-  validateExtensionId,
   EXTENSION_PROJECT_DATA_LIMITS,
-} from '@/sdk/index';
+  TIMELINE_PATCH_ALL_OP_FAMILIES,
+  TIMELINE_PATCH_OP_FAMILIES,
+  TIMELINE_PATCH_RESERVED_OP_FAMILIES,
+} from '@/sdk/video/timeline/patch.ts';
 
 import {
   configToRows,
@@ -60,43 +64,21 @@ import {
   assignTimelinePostprocessShader,
 } from '@/tools/video-editor/lib/timeline-domain';
 
-
-
 // ---------------------------------------------------------------------------
 // Reserved operation families
 // ---------------------------------------------------------------------------
 
 /** Operation families that are validated but deferred (not executed in M3). */
-const RESERVED_OPS: ReadonlySet<TimelinePatchAnyOpFamily> = new Set([
-  'clip.split',
-  'clip.slice',
-]);
+const RESERVED_OPS: ReadonlySet<TimelinePatchAnyOpFamily> = new Set(TIMELINE_PATCH_RESERVED_OP_FAMILIES);
 
 /**
  * Active operation families that the validator must accept.
  * The full set is also defined in the SDK contract; this module mirrors it
  * so validation is self-contained.
  */
-const ACTIVE_OPS: ReadonlySet<TimelinePatchAnyOpFamily> = new Set([
-  'clip.add',
-  'clip.update',
-  'clip.remove',
-  'clip.move',
-  'track.add',
-  'track.update',
-  'track.remove',
-  'asset.update',
-  'asset.remove',
-  'app.update',
-  'project-data.write',
-  'project-data.delete',
-  'extension.noop',
-]);
+const ACTIVE_OPS: ReadonlySet<TimelinePatchAnyOpFamily> = new Set(TIMELINE_PATCH_OP_FAMILIES);
 
-const ALL_KNOWN_OPS: ReadonlySet<TimelinePatchAnyOpFamily> = new Set([
-  ...Array.from(ACTIVE_OPS),
-  ...Array.from(RESERVED_OPS),
-]);
+const ALL_KNOWN_OPS: ReadonlySet<TimelinePatchAnyOpFamily> = new Set(TIMELINE_PATCH_ALL_OP_FAMILIES);
 
 // ---------------------------------------------------------------------------
 // Helpers

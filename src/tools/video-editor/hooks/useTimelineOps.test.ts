@@ -14,7 +14,11 @@ import { configToRows, type TimelineData } from '../lib/timeline-data';
 import { getConfigSignature, getStableConfigSignature } from '../lib/config-utils';
 import type { TimelineConfig } from '../types';
 import type { Checkpoint } from '../types/history';
-import type { TimelineDiff, TimelinePreviewResult, TimelinePatchValidationResult } from '@/sdk/index';
+import type {
+  TimelineDiff,
+  TimelinePatchValidationResult,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers

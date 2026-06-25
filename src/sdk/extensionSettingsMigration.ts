@@ -93,12 +93,12 @@ export interface RunSettingsMigrationOptions {
 export function getManifestSettingsSchemaVersion(manifest: ExtensionManifest): number {
   if (
     manifest.settingsSchema &&
-    typeof (manifest.settingsSchema as Record<string, unknown>).version === 'number'
+    typeof ((manifest.settingsSchema as unknown) as Record<string, unknown>).version === 'number'
   ) {
-    return (manifest.settingsSchema as Record<string, unknown>).version as number;
+    return ((manifest.settingsSchema as unknown) as Record<string, unknown>).version as number;
   }
-  if (typeof (manifest as Record<string, unknown>).settingsSchemaVersion === 'number') {
-    return (manifest as Record<string, unknown>).settingsSchemaVersion as number;
+  if (typeof ((manifest as unknown) as Record<string, unknown>).settingsSchemaVersion === 'number') {
+    return ((manifest as unknown) as Record<string, unknown>).settingsSchemaVersion as number;
   }
   return 1;
 }

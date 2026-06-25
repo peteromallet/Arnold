@@ -81,7 +81,12 @@ export {
   resolveTimelineConfig,
 } from './lib/config-utils.ts';
 
-export type { UrlResolver } from './lib/config-utils.ts';
+export type {
+  StableTimelineAssetRegistryInput,
+  StableTimelineConfigSignatureInput,
+  TimelineConfigSignatureInput,
+  UrlResolver,
+} from './lib/config-utils.ts';
 
 export {
   canonicalizeTimelinePair,

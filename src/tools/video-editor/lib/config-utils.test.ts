@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getConfigSignature,
   getClipTimelineDuration,
   getSanitizedAssetFile,
   getSanitizedMediaSrc,
   getSanitizedMediaTrimProps,
   getSanitizedPlaybackRate,
+  getStableConfigSignature,
   getSanitizedVolume,
   resolveTimelineConfig,
+  type StableTimelineConfigSignatureInput,
+  type TimelineConfigSignatureInput,
 } from '@/tools/video-editor/lib/config-utils';
+import {
+  getConfigSignature as getSdkConfigSignature,
+  getStableConfigSignature as getSdkStableConfigSignature,
+} from '@reigh/editor-sdk';
 import {
   canonicalizeTimelineConfigSnapshot,
   canonicalizeTimelinePair,
@@ -96,6 +104,49 @@ describe('config-utils media sanitizers', () => {
     expect(resolved.theme).toBe('2rp');
     expect(resolved.theme_overrides).toEqual({ visual: { canvas: { fps: 24 } } });
     expect(resolved.generation_defaults).toEqual({ model: 'sequence-v1' });
+  });
+
+  it('keeps host and SDK config signature exports aligned', async () => {
+    const resolved = await resolveTimelineConfig(
+      {
+        output: { file: 'out.mp4', resolution: '1920x1080', fps: 30 },
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual' }],
+        clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 2 }],
+      },
+      { assets: {} },
+      async (file: string) => `https://example.com/${file}`,
+    );
+
+    const hostInput: TimelineConfigSignatureInput = resolved;
+    expect(getConfigSignature(hostInput)).toBe(getSdkConfigSignature(hostInput));
+  });
+
+  it('keeps host and SDK stable config signature exports aligned', () => {
+    const input: StableTimelineConfigSignatureInput = {
+      config: {
+        output: { file: 'out.mp4', resolution: '1920x1080', fps: 30 },
+        tracks: [{ id: 'V1', kind: 'visual', label: 'Visual' }],
+        clips: [{ id: 'clip-1', at: 0, track: 'V1', clipType: 'hold', hold: 2 }],
+      },
+      registry: {
+        assets: {
+          'asset-1': {
+            file: 'asset.mp4',
+            type: 'video/mp4',
+            metadata: {
+              provenance: {
+                sourceProvider: 'demo',
+                sourceUrl: 'https://example.com/asset.mp4',
+              },
+            },
+          },
+        },
+      },
+    };
+
+    expect(getStableConfigSignature(input.config, input.registry)).toBe(
+      getSdkStableConfigSignature(input.config, input.registry),
+    );
   });
 
   it('keeps config-only malformed non-hold trims at zero duration but repairs pair-aware trims from registry duration', () => {

@@ -15,8 +15,6 @@ import type {
   TimelineProposalInput,
   ProposalState,
   ProposalListener,
-  TimelinePreviewResult,
-  TimelineDiff,
   DisposeHandle,
   ProposalExpiryDetail,
   ProposalEnvelope,
@@ -26,6 +24,10 @@ import type {
 } from '@/sdk/index';
 import type { TimelineOps } from '@/sdk/index';
 import type { TimelineReader } from '@/sdk/index';
+import type {
+  TimelineDiff,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
 
 import { validateTimelinePatch } from './timeline-patch';
 

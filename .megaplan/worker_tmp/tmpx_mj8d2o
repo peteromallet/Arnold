@@ -1,0 +1,343 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run
+
+        Brief summary: # M0 — Extract Portable SDK Contracts
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 9 of 22.
+        - Actionable task IDs for this batch: ['T10']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T10",
+    "depends_on": [
+      "T9"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This changes runtime identity for a public error class used across providers and SDK consumers. A duplicate class can pass type checks while failing `instanceof` at runtime, so the risk is non-local.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T2",
+    "depends_on": [],
+    "status": "done",
+    "kind": "audit",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is a repo-wide import audit across `src/sdk/**` whose output drives later module ownership. It is read-only, but classification errors would misroute subsequent extraction work.",
+    "executor_notes": "Ran comprehensive static import/export-from audit across all 13 SDK .ts/.tsx files. Produced structured inventory at sdk_import_inventory.json. Key findings: 3 files have host imports (1 production: src/sdk/index.ts with 5 host import groups from renderability.ts and video-editor barrel; 2 test files: extensionSettingsService.test.ts and extensionSettingsMigration.test.ts importing extensionStateRepository/Provider). All 7 host dependency groups classified with intended owner (SDK for portable renderability/timeline contracts, HOST for test repository fixtures) and disposition (T3/T9/T10/T1...",
+    "files_changed": [],
+    "commands_run": [
+      "node /tmp/sdk_import_audit.mjs"
+    ]
+  },
+  {
+    "id": "T8",
+    "depends_on": [
+      "T7"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This is focused validation for the contract extraction just completed. The executor must choose the local focused scripts, but the work is test execution and failure capture rather than new design.",
+    "executor_notes": "Phase 1 focused validation confirms no new test failures vs. the recorded baseline after T7 asset metadata extraction. Ran 1,769 tests across 17 test files covering all five extraction areas (SDK boundary, rendering, timeline, assets): 0 failures, 0 regressions. SDK import smoke: PASSED (tolerated internal diagnostics for TS2304 in barrel submodule re-exports \u2014 same pre-existing pattern as T3-T7). SDK public exports audit: PASSED (0 violations, 22 obsolete allowlist entries expected from T3 source change). All 3 baseline_test_failures (vendor/timeline-schema Python tests) are pre-existing a...",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts src/tools/video-editor/runtime/effectRegistrationService.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/hooks/useTimelineOps.test.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/lib/proposal-runtime.test.ts src/tools/video-editor/lib/managed-object-guard.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/examples-governance.test.ts src/sdk/boundary.test.ts src/tools/video-editor/data/AstridBridgeDataProvider.test.ts src/tools/video-editor/lib/compiler-canary.test.ts src/tools/video-editor/runtime/liveBake.test.ts",
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Add SDK-owned rendering contract modules under `src/sdk/video/rendering/`: `renderability.ts` for render routes, determinism, blocker reasons, capability findings, and coupled constants; `artifacts.ts` for render artifacts, materials, material refs, storage locators, and related side types; and `capabilities.ts` for `ShaderMaterializerRequirementScope`, `shaderMissingMaterializerBlockerMessage`, and its portable direct callee `describeShaderMaterializerRequirementScope` if present.",
+    "complexity_justification": "These SDK modules become public rendering contracts consumed outside the edited files. A wrong extraction can preserve local tests while breaking external SDK consumers or host/runtime type compatibility.",
+    "executor_notes": "Added SDK-owned renderability, artifact, and shader-materializer capability modules and switched the SDK barrel plus runtime renderability host module to those portable contracts. Verification passed with focused Vitest coverage (579 tests across src/sdk/index.test.ts, src/sdk/__tests__/sdk-boundary.test.ts, and src/tools/video-editor/runtime/renderability.test.ts) and the SDK import smoke check passed; that smoke still reports pre-existing tolerated internal diagnostics outside this task.",
+    "files_changed": [
+      "src/sdk/index.ts",
+      "src/sdk/video/rendering/artifacts.ts",
+      "src/sdk/video/rendering/capabilities.ts",
+      "src/sdk/video/rendering/renderability.ts",
+      "src/tools/video-editor/runtime/renderability.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/renderability.test.ts",
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit"
+    ]
+  },
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "This migrates a known host module and related tests to the new SDK source of truth. The risk is multi-file compatibility, but the failure modes should be visible through import searches and focused tests.",
+    "executor_notes": "Verified T3 rendering contract extraction introduces no new failures. Ran focused tests (579 passed: index.test.ts, sdk-boundary.test.ts, renderability.test.ts), broader rendering tests (132 passed: exportGuard, outputFormatRegistry, renderability), effect registration (48 passed), and liveBake (5 passed). Total 764 tests, 0 failures. SDK import smoke: PASSED (no SDK\u2192host renderability imports). SDK public exports audit: PASSED (0 violations, 22 obsolete allowlist entries expected from source change). Host renderability (src/tools/video-editor/runtime/renderability.ts) is now a pure consume...",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/renderability.test.ts",
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/effectRegistrationService.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/__tests__/sdk-boundary.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/effectRegistrationService.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/liveBake.test.ts"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Extract portable timeline reader contracts into `src/sdk/video/timeline/reader.ts` only for dependencies proven portable, including `TimelineSnapshot`, summaries, `TimelineReader`, and `TimelineProposalInput`; update host reader modules to import SDK-owned types and leave provider/runtime behavior in host code.",
+    "complexity_justification": "This is a multi-file type extraction gated by portability checks. It affects shared timeline data shapes, but the reader subset is narrower than the patch contract move.",
+    "executor_notes": "Created src/sdk/video/timeline/reader.ts (323 lines) with all portable timeline reader contracts: TimelineSnapshot, TimelineClipSummary, TimelineTrackSummary, TimelineShaderSummary, TimelineReader, TimelineProposalInput, and M12 planner inspection summary types (TimelineEffectSummary, TimelineTransitionSummary, TimelineLiveBindingSummary, TimelineMaterialRefSummary, TimelineRenderPassSummary, TimelineSourceRefSummary, TimelineRenderGroupSummary, TimelineOutputMetadata). Imports only from SDK-owned modules (renderability, capabilities, patch, barrel). Removed inline definitions from src/sdk/...",
+    "files_changed": [
+      "src/sdk/video/timeline/reader.ts",
+      "src/sdk/index.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts",
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/proposal-runtime.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/hooks/useTimelineOps.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/managed-object-guard.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts src/tools/video-editor/runtime/effectRegistrationService.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/data/AstridBridgeDataProvider.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/compiler-canary.test.ts"
+    ]
+  },
+  {
+    "id": "T7",
+    "depends_on": [
+      "T6"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Extract portable asset metadata contracts into `src/sdk/video/assets/metadata.ts`, including asset integrity, GPS, consent, provenance, enrichment, parser metadata, and related public SDK shapes; update SDK parser/search/output-format declarations to import these SDK-local types without moving registry/provider/resolver/upload/storage behavior.",
+    "complexity_justification": "The task spans several SDK declarations and asset metadata shapes, but it remains data-oriented and should be verifiable by import checks and type tests. It does not alter storage or provider execution.",
+    "executor_notes": "Created src/sdk/video/assets/metadata.ts (437 lines) with all portable asset metadata contracts: AssetIntegrityMetadata, AssetGPSMetadata, AssetConsentMetadata, AssetProvenanceMetadata, EnrichmentStatus, DeferredEnrichmentRecord, AssetMetadata, MetadataFacetValueKind, MetadataFacetDescriptor, AssetDetailSectionDescriptor, ParserInput, ParserResult, ParserDiagnostic, ParserHandler, CompileOnlyOutputResult, OutputFormatHandler, OutputFormatContext, SearchMatch, SearchProviderResult, SearchProviderHandler, SearchProviderContext, AssetReadSurface, MaterialReadSurface, ExportService, and OutputF...",
+    "files_changed": [
+      "src/sdk/video/assets/metadata.ts",
+      "src/sdk/index.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts",
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/examples-governance.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts src/sdk/boundary.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/data/AstridBridgeDataProvider.test.ts src/tools/video-editor/lib/compiler-canary.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/lib/timeline-patch.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/proposal-runtime.test.ts src/tools/video-editor/hooks/useTimelineOps.test.ts src/tools/video-editor/lib/managed-object-guard.test.ts"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Create `docs/extensions/pristine-sdk-boundary-audit.md` with the M0 doc/code audit: compare the current repo against `docs/extensions/phase4-readiness.md`, `docs/extensions/foundation-closure-assessment.md`, and the missing `docs/extensions/reigh-extension-layer-foundation-plan.md`; include the discrepancy table, record that `docs/extensions/foundation-contract-ledger.md` exists instead, and avoid rewriting upstream docs unless directly blocking extraction.",
+    "complexity_justification": "This is a documentation artifact grounded in a few named docs and current file anchors. The work needs careful comparison, but it does not change runtime contracts or code behavior.",
+    "executor_notes": "Created docs/extensions/pristine-sdk-boundary-audit.md (113 lines) with: (1) reference document inventory noting the missing reigh-extension-layer-foundation-plan.md and existence of foundation-contract-ledger.md as replacement; (2) 7-row discrepancy table (D1-D7) covering stale contributionFamilies.ts reference, SDK barrel host imports, test file host imports, and Phase 4 gate posture; (3) current code anchors section enumerating all host imports in src/sdk/index.ts and test files; (4) document cross-reference matrix across all 5 extension docs; (5) M0-relevant findings; (6) audit method....",
+    "files_changed": [
+      "docs/extensions/pristine-sdk-boundary-audit.md"
+    ],
+    "commands_run": []
+  },
+  {
+    "id": "T9",
+    "depends_on": [
+      "T8"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Move canonical clip type constants into `src/sdk/video/timeline/clipTypes.ts`, including `BUILTIN_CLIP_TYPES` and public `BuiltinClipType` if still exposed; update `src/tools/video-editor/types/index.ts`, `src/tools/video-editor/clip-types/*`, `src/tools/video-editor/runtime/exportGuard.ts`, `src/tools/video-editor/sequences/registry.ts`, and other host consumers to import the SDK-owned constant, with no second host-owned copy left behind.",
+    "complexity_justification": "This is a mechanical but broad constant ownership move across host consumers. The identity risk is real but limited to a stable exported constant with obvious duplicate-copy and import-search checks.",
+    "executor_notes": "Created src/sdk/video/timeline/clipTypes.ts with canonical BUILTIN_CLIP_TYPES and BuiltinClipType. Updated SDK barrel to export from own module instead of host. Updated src/tools/video-editor/types/index.ts to re-export from SDK (no host-owned copy). Updated 5 host consumers (runtime.ts, manifest.ts, TimelineRenderer.tsx, exportGuard.ts, registry.ts) to import from SDK. Removed duplicate BuiltinClipType definition from runtime.ts. Verified: 1,793 tests across all affected test files pass (0 failures), SDK import smoke PASSED, SDK public exports audit PASSED (0 violations, 23 obsolete allowl...",
+    "files_changed": [
+      "src/sdk/video/timeline/clipTypes.ts",
+      "src/sdk/index.ts",
+      "src/tools/video-editor/types/index.ts",
+      "src/tools/video-editor/clip-types/runtime.ts",
+      "src/tools/video-editor/clip-types/manifest.ts",
+      "src/tools/video-editor/compositions/TimelineRenderer.tsx",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/sequences/registry.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/__tests__/sdk-boundary.test.ts src/sdk/index.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/clip-types/registry.test.ts src/tools/video-editor/sequences/registry.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/renderability.test.ts src/tools/video-editor/runtime/outputFormatRegistry.test.ts src/tools/video-editor/runtime/effectRegistrationService.test.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/hooks/useTimelineOps.test.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/lib/proposal-runtime.test.ts src/tools/video-editor/lib/managed-object-guard.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/examples-governance.test.ts src/sdk/boundary.test.ts src/tools/video-editor/data/AstridBridgeDataProvider.test.ts src/tools/video-editor/lib/compiler-canary.test.ts src/tools/video-editor/runtime/liveBake.test.ts",
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit"
+    ]
+  },
+  {
+    "id": "T5",
+    "depends_on": [
+      "T4"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Extract portable timeline patch contracts into `src/sdk/video/timeline/patch.ts`, including `TimelinePatch`, patch operation families, patch diagnostics, `TimelineDiff`, `TimelineDiffGranularity`, and preview result shapes; update host timeline patch modules to consume SDK-owned types while leaving mutation execution, planner behavior, provider behavior, hooks, and editor state operations in host code.",
+    "complexity_justification": "Timeline patch shapes are shared contract data that other code depends on without necessarily executing touched modules. A subtle type ownership or import mistake can leak host internals into the SDK boundary.",
+    "executor_notes": "Verified the current tree already satisfies T5: `src/sdk/video/timeline/patch.ts` owns TimelinePatch/diagnostic/diff/preview/project-data-limit contracts, `src/sdk/index.ts` re-exports them, and host modules continue to own execution/planner/hook/state behavior while importing SDK-owned types. Verification passed with focused Vitest coverage (546 tests across sdk-boundary, timeline-patch, and useTimelineOps), `npm run check:video-editor-sdk-imports`, and `npm run check:sdk-public-exports -- --audit`. The SDK smoke emitted the same pre-existing tolerated diagnostics from `src/tools/video-edi...",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-patch.test.ts src/tools/video-editor/hooks/useTimelineOps.test.ts src/sdk/__tests__/sdk-boundary.test.ts",
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory quality: skipped file growth for .megaplan/epics/m0-extract-portable-sdk-20260625-1503/events.jsonl: file is binary or not valid UTF-8",
+  "Advisory quality: .megaplan/telemetry/m0-extract-portable-sdk-20260625-1503.ndjson grew by 217 lines (threshold 200).",
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/sdk/video/timeline/clipTypes.ts, src/tools/video-editor/clip-types/manifest.ts, src/tools/video-editor/clip-types/runtime.ts, src/tools/video-editor/compositions/TimelineRenderer.tsx, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/sequences/registry.ts, src/tools/video-editor/types/index.ts",
+  "Advisory observation mismatch: git status/content hash delta found unclaimed files: config/contracts/registry.json, src/examples/surface-coverage.ts, src/sdk/extensionSettingsMigration.test.ts, src/sdk/extensionSettingsMigration.ts, src/sdk/video/assets/metadata.ts, src/sdk/video/rendering/artifacts.ts, src/sdk/video/rendering/capabilities.ts, src/sdk/video/rendering/renderability.ts, src/sdk/video/timeline/patch.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json, src/tools/video-editor/hooks/useAgentSession.proposal-vertical.test.tsx, src/tools/video-editor/hooks/useTimelineOps.test.ts, src/tools/video-editor/hooks/useTimelineOps.ts, src/tools/video-editor/lib/proposal-runtime.test.ts, src/tools/video-editor/lib/proposal-runtime.ts, src/tools/video-editor/lib/source-map-runtime.test.ts, src/tools/video-editor/lib/source-map-runtime.ts, src/tools/video-editor/lib/timeline-golden-replay.test.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/lib/timeline-patch.ts, src/tools/video-editor/runtime/renderability.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: docs/extensions/pristine-sdk-boundary-audit.md, src/sdk/video/timeline/clipTypes.ts, src/tools/video-editor/clip-types/manifest.ts, src/tools/video-editor/clip-types/runtime.ts, src/tools/video-editor/compositions/TimelineRenderer.tsx, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/sequences/registry.ts, src/tools/video-editor/types/index.ts",
+  "Advisory audit finding: Git status shows changed files not claimed by any task: config/contracts/registry.json, src/examples/surface-coverage.ts, src/sdk/extensionSettingsMigration.test.ts, src/sdk/extensionSettingsMigration.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/examples/extensions/flagship-local/reigh-extension.json, src/tools/video-editor/hooks/useAgentSession.proposal-vertical.test.tsx, src/tools/video-editor/hooks/useTimelineOps.test.ts, src/tools/video-editor/hooks/useTimelineOps.ts, src/tools/video-editor/lib/proposal-runtime.test.ts, src/tools/video-editor/lib/proposal-runtime.ts, src/tools/video-editor/lib/source-map-runtime.test.ts, src/tools/video-editor/lib/source-map-runtime.ts, src/tools/video-editor/lib/timeline-golden-replay.test.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/lib/timeline-patch.ts",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC19 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC22 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC23 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T10, T11, T12, T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC10",
+    "task_id": "T10",
+    "verdict": "",
+    "question": "Do host provider code and tests use the SDK-owned `TimelineVersionConflictError`, and does a host-thrown conflict satisfy both `instanceof` the SDK class and `isTimelineVersionConflictError`?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: Canonical SDK ownership for identity-sensitive values (TimelineVersionConflictError, isTimelineVersionConflictError, getStableConfigSignature, BUILTIN_CLIP_TYPES) — host code im... - Resolved in iteration 2 (correctness flag). Prevents instanceof breaks and signature drift. Host code becomes the consumer; SDK is the single source of truth.
+- SD2: Final gate failures without same-signature baseline evidence are treated as M0-caused and must be fixed within M0 scope - Resolved in iteration 4 (criteria_quality flag). Replaces subjective judgment with objective baseline comparison. Prevents ambiguity about whether a failure is pre-existing or introduced.
+- SD3: src/sdk/index.ts remains the public barrel for M0; barrel split into scoped modules is deferred to M2 - Established in initial plan and preserved through all iterations. Keeps M0 focused on extraction and boundary enforcement without expanding into module reorganization.
+
+        ## Plan execution order rationale
+
+        1. Build the audit and dependency inventory first so moves are based on current code.
+2. Move data-only rendering, timeline, and asset metadata contracts into SDK modules.
+3. Move public compatibility values as canonical SDK implementations, then update host consumers to use the same bindings.
+4. Replace the SDK barrel host imports only after the canonical SDK modules exist.
+5. Strengthen the import guard and prove the guard catches negative fixtures.
+6. Add the external consumer validator in three steps: skeleton, compile/import graph checks, runtime value smoke and script wiring.
+7. Add representative family comments.
+8. Run validation incrementally and then final release gates with objective baseline handling for unrelated pre-existing failures.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the listed order. The dependency chain intentionally isolates the c4 contract and guard work so the runtime does not batch unrelated high-risk tasks into one overloaded worker turn. Each task should implement and locally verify its own slice, while the final task runs the broad package gates and applies the approved objective baseline rule.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: full.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run/.megaplan/plans/m0-extract-portable-sdk-20260625-1503/execute_batch_9_output.json
+        - Only produce `task_updates` for these tasks: [T10]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC10]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run/.megaplan/plans/m0-extract-portable-sdk-20260625-1503/execution_batch_9.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T10",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC10",
+      "executor_note": ""
+    }
+  ]
+}
+        ```
