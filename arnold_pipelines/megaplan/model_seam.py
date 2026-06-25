@@ -773,6 +773,15 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
             payload.get("success_criteria")
         )
         normalized["assumptions"] = _normalize_plan_assumptions(payload.get("assumptions"))
+        # Pass through changed_surfaces and test_blast_radius if present
+        changed = payload.get("changed_surfaces")
+        if isinstance(changed, list):
+            normalized["changed_surfaces"] = [
+                str(s) for s in changed if isinstance(s, str) and s.strip()
+            ]
+        blast = payload.get("test_blast_radius")
+        if isinstance(blast, dict):
+            normalized["test_blast_radius"] = blast
         return normalized
 
     parts: list[str] = []
@@ -815,6 +824,15 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload.get("success_criteria")
     )
     normalized["assumptions"] = _normalize_plan_assumptions(payload.get("assumptions"))
+    # Pass through changed_surfaces and test_blast_radius if present
+    changed = payload.get("changed_surfaces")
+    if isinstance(changed, list):
+        normalized["changed_surfaces"] = [
+            str(s) for s in changed if isinstance(s, str) and s.strip()
+        ]
+    blast = payload.get("test_blast_radius")
+    if isinstance(blast, dict):
+        normalized["test_blast_radius"] = blast
     return normalized
 
 

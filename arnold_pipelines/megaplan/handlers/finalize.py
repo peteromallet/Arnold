@@ -19,8 +19,13 @@ from arnold_pipelines.megaplan.calibration import (
     query_route_if_enabled,
     write_capability_claim,
 )
-from arnold_pipelines.megaplan.types import MOCK_ENV_VAR, PlanState, StepResponse
-from arnold_pipelines.megaplan.planning.state import STATE_FINALIZED, STATE_GATED, STATE_PLANNED
+from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, PlanState, StepResponse
+from arnold_pipelines.megaplan.planning.state import (
+    STATE_CRITIQUED,
+    STATE_FINALIZED,
+    STATE_GATED,
+    STATE_PLANNED,
+)
 from arnold_pipelines.megaplan.workers import WorkerResult
 from arnold_pipelines.megaplan._core import (
     atomic_write_json,
@@ -30,6 +35,7 @@ from arnold_pipelines.megaplan._core import (
     latest_plan_path,
     load_plan_locked,
     read_json,
+    record_step_failure,
     render_final_md,
     require_state,
     sha256_file,
@@ -41,7 +47,6 @@ from arnold_pipelines.megaplan.runtime.schema_registry_adapter import create_ste
 from arnold_pipelines.megaplan.orchestration.plan_contracts import normalize_contract_payload
 from arnold_pipelines.megaplan.orchestration.test_selection import (
     compute_test_blast_radius,
-    read_plan_blast_radius,
     resolve_baseline_test_selection,
 )
 from arnold_pipelines.megaplan.store import write_plan_artifact_json
@@ -51,9 +56,33 @@ from arnold_pipelines.megaplan.execute.quality import (
     capture_uncommitted_baseline,
 )
 
-from .shared import _finish_step, _raise_step_validation_error, _run_worker
+from .shared import _attach_next_step_runtime, _finish_step, _raise_step_validation_error, _run_worker
 
 LOGGER = logging.getLogger("megaplan")
+
+
+class FinalizeBaselineSelectionError(Exception):
+    """Raised when finalize cannot establish a trusted baseline test scope."""
+
+    def __init__(self, test_selection: dict[str, Any]) -> None:
+        self.test_selection = test_selection
+        super().__init__(_finalize_baseline_contract_message(test_selection))
+
+
+def _finalize_baseline_contract_message(test_selection: dict[str, Any]) -> str:
+    reason = str(test_selection.get("reason") or "scoped baseline selection is unresolved")
+    fallback_reason = test_selection.get("fallback_reason")
+    details = f" Reason: {reason}"
+    if isinstance(fallback_reason, str) and fallback_reason.strip():
+        details += f" Fallback: {fallback_reason.strip()}"
+    return (
+        "Finalize could not resolve a scoped baseline test command. This is a "
+        "plan-contract failure, not a finalize retry: revise the approved plan "
+        "to include machine-readable `test_blast_radius` metadata for code-mode "
+        "work, or explicitly set `test_selection=full` when the full suite is "
+        "intended."
+        + details
+    )
 
 
 def _strict_finalize_validation_enabled() -> bool:
@@ -375,6 +404,23 @@ def _finalize_semantic_postcheck(
             _reject(f"Finalize task {tid} is missing a non-empty `description`.")
         if task.get("status") != "pending":
             _reject(f"Finalize task {tid} must start with status `pending`.")
+        files_changed = task.get("files_changed")
+        if isinstance(files_changed, list):
+            for raw_path in files_changed:
+                if not isinstance(raw_path, str):
+                    continue
+                normalized_path = raw_path.strip().replace("\\", "/")
+                if (
+                    "/.megaplan/plans/" in normalized_path
+                    or normalized_path.startswith(".megaplan/plans/")
+                    or "/.megaplan/worker_tmp/" in normalized_path
+                    or normalized_path.startswith(".megaplan/worker_tmp/")
+                ):
+                    _reject(
+                        f"Finalize task {tid} lists harness artifact path "
+                        f"{raw_path!r} in `files_changed`. Finalize must output "
+                        "pending target-work tasks, not meta-work on plan scratch files."
+                    )
         complexity = task.get("complexity")
         if (
             not isinstance(complexity, int)
@@ -1211,6 +1257,98 @@ def _current_plan_changed_files(project_dir: Path, state: PlanState) -> tuple[li
     return changed, None
 
 
+def _planned_task_changed_files(payload: dict[str, Any]) -> list[str]:
+    """Return planned changed files declared by finalize tasks.
+
+    Baseline capture runs before execution, so the worktree is usually clean.
+    In that state a dirty-tree fallback cannot infer a scoped test command. The
+    finalized task graph is the stable pre-execute declaration of intended file
+    changes; deterministic test-selection code can use it as a floor without
+    letting the model author the final pytest command.
+    """
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+
+    paths: list[str] = []
+    seen: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        raw_files = task.get("files_changed")
+        if not isinstance(raw_files, list):
+            continue
+        for raw_path in raw_files:
+            if not isinstance(raw_path, str):
+                continue
+            path = raw_path.strip().lstrip("./")
+            if not path or path in seen:
+                continue
+            if path == ".megaplan" or path.startswith(".megaplan/"):
+                continue
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _repo_pytest_path_args(command: str) -> list[str]:
+    """Extract repository pytest selectors from one shell command."""
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return []
+
+    pytest_index: int | None = None
+    for index, part in enumerate(parts):
+        if part == "pytest" or part.endswith("/pytest"):
+            pytest_index = index
+            break
+    if pytest_index is None:
+        return []
+
+    paths: list[str] = []
+    for part in parts[pytest_index + 1 :]:
+        if not part or part.startswith("-"):
+            continue
+        path = part.strip().lstrip("./")
+        path_part = path.split("::", 1)[0]
+        if (
+            path_part == "tests"
+            or path_part.startswith("tests/")
+            or path_part.endswith(".py")
+        ):
+            paths.append(path)
+    return paths
+
+
+def _planned_task_pytest_command(payload: dict[str, Any]) -> str | None:
+    """Build one scoped pytest command from finalize task validation commands."""
+    tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return None
+
+    paths: list[str] = []
+    seen: set[str] = set()
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        commands = task.get("commands_run")
+        if not isinstance(commands, list):
+            continue
+        for command in commands:
+            if not isinstance(command, str):
+                continue
+            for path in _repo_pytest_path_args(command):
+                if path in seen:
+                    continue
+                seen.add(path)
+                paths.append(path)
+
+    if not paths:
+        return None
+    return "pytest " + " ".join(shlex.quote(path) for path in paths)
+
+
 def _scoped_command_from_blast_radius(radius: dict[str, Any]) -> str | None:
     if radius.get("strategy") != "scoped":
         return None
@@ -1241,54 +1379,189 @@ def _fallback_baseline_test_selection(
     state: PlanState,
     project_dir: Path,
     resolved: dict[str, Any],
+    planned_files: list[str] | None = None,
+    planned_test_command: str | None = None,
 ) -> dict[str, Any]:
     config = state.get("config", {}) if isinstance(state, dict) else {}
     if config.get("test_selection", "scoped") == "full":
         return resolved
     if resolved.get("command_override"):
         return resolved
-    if read_plan_blast_radius(plan_dir, state).is_present:
-        return resolved
 
-    changed_files, error = _current_plan_changed_files(project_dir, state)
-    if error is not None:
+    if planned_test_command:
         return {
-            **resolved,
-            "fallback_attempted": True,
-            "fallback_reason": f"Could not inspect git status for fallback blast radius: {error}",
-        }
-    if not changed_files:
-        return {
-            **resolved,
-            "fallback_attempted": True,
-            "fallback_reason": "No changed files found for fallback blast-radius computation.",
-        }
-
-    radius = compute_test_blast_radius(changed_files, project_dir)
-    command = _scoped_command_from_blast_radius(radius)
-    if command is None:
-        return {
-            **resolved,
-            "fallback_attempted": True,
-            "fallback_changed_files": changed_files,
-            "fallback_blast_radius": radius,
-            "fallback_reason": (
-                "Fallback blast radius did not produce concrete scoped pytest path selectors."
+            "mode": "scoped",
+            "reason": (
+                f"{resolved.get('reason') or 'Scoped baseline selection is unresolved'}; "
+                "parsed scoped pytest command from finalize task validation commands."
             ),
+            "command_override": planned_test_command,
+            "selectors_used": [],
+            "fallback_attempted": True,
+            "fallback_source": "finalize_task_commands_run",
         }
+
+    planned_files = planned_files or []
+    if planned_files:
+        radius = compute_test_blast_radius(planned_files, project_dir)
+        command = _scoped_command_from_blast_radius(radius)
+        if command is not None:
+            return {
+                "mode": "scoped",
+                "reason": (
+                    f"{resolved.get('reason') or 'Scoped baseline selection is unresolved'}; "
+                    "computed scoped pytest "
+                    f"command from {len(planned_files)} finalize task file(s)."
+                ),
+                "command_override": command,
+                "selectors_used": radius.get("selectors", []),
+                "fallback_attempted": True,
+                "fallback_changed_files": planned_files,
+                "fallback_blast_radius": radius,
+                "fallback_source": "finalize_task_files_changed",
+            }
 
     return {
-        "mode": "scoped",
+        **resolved,
         "reason": (
-            "No test_blast_radius in plan metadata; computed scoped pytest command "
-            f"from {len(changed_files)} current changed file(s)."
+            str(resolved.get("reason") or "Scoped baseline selection is unresolved")
+            + "; no finalize task pytest command or mappable planned files were available"
         ),
-        "command_override": command,
-        "selectors_used": radius.get("selectors", []),
         "fallback_attempted": True,
-        "fallback_changed_files": changed_files,
-        "fallback_blast_radius": radius,
+        "fallback_reason": (
+            "Finalize baseline selection intentionally does not infer scope from "
+            "current git status; tests must come from plan metadata or finalized task declarations."
+        ),
     }
+
+
+def _require_explicit_finalize_baseline_selection(test_selection: dict[str, Any]) -> None:
+    mode = test_selection.get("mode")
+    if mode == "full":
+        return
+    if mode == "scoped" and test_selection.get("command_override"):
+        return
+    raise FinalizeBaselineSelectionError(test_selection)
+
+
+def _route_finalize_baseline_selection_failure_to_revise(
+    plan_dir: Path,
+    state: PlanState,
+    worker: WorkerResult,
+    error: FinalizeBaselineSelectionError,
+) -> StepResponse:
+    message = _finalize_baseline_contract_message(error.test_selection)
+    gate_feedback = {
+        "recommendation": "ITERATE",
+        "passed": False,
+        "rationale": message,
+        "signals_assessment": (
+            "Finalize baseline selection could not establish a trusted scoped "
+            "test command from plan metadata or finalized task declarations."
+        ),
+        "warnings": [
+            "Code-mode plans that require tests must carry machine-readable "
+            "`test_blast_radius` metadata before finalize.",
+            "Finalize refused to infer scope from current git status and refused "
+            "to run the full suite implicitly.",
+        ],
+        "criteria_check": {
+            "finalize_baseline_test_scope": {
+                "passed": False,
+                "message": message,
+                "requires_revise": True,
+            }
+        },
+        "preflight_results": {},
+        "unresolved_flags": [
+            {
+                "id": "finalize-baseline-test-scope",
+                "severity": "significant",
+                "status": "open",
+                "concern": (
+                    "Plan metadata lacks a trusted scoped baseline test contract "
+                    "for code-mode work."
+                ),
+                "evidence": message,
+                "category": "verification_contract",
+            }
+        ],
+        "addressed_flags": [],
+        "flag_resolutions": [],
+        "orchestrator_guidance": (
+            "Run revise. The revised plan must add structured `test_blast_radius` "
+            "metadata with scoped path selectors, or explicitly opt into "
+            "`test_selection=full` if that is intentional."
+        ),
+        "signals": {},
+        "finalize_failure": {
+            "code": "missing_scoped_baseline_test_contract",
+            "test_selection": error.test_selection,
+        },
+    }
+    state["current_state"] = STATE_CRITIQUED
+    state["last_gate"] = gate_feedback
+    meta = state.setdefault("meta", {})
+    if isinstance(meta, dict):
+        meta.setdefault("finalize_revise_feedback", []).append(
+            {
+                "code": "missing_scoped_baseline_test_contract",
+                "message": message,
+                "test_selection": error.test_selection,
+            }
+        )
+    atomic_write_json(plan_dir / "gate.json", gate_feedback)
+    atomic_write_json(
+        plan_dir / "gate_carry.json",
+        {
+            "version": 1,
+            "recommendation": "ITERATE",
+            "passed": False,
+            "rationale_brief": message,
+            "warnings": gate_feedback["warnings"],
+            "orchestrator_guidance": gate_feedback["orchestrator_guidance"],
+            "iteration": state["iteration"],
+            "source": "finalize_baseline_selection",
+        },
+    )
+    atomic_write_json(
+        plan_dir / "finalize_revise_feedback.json",
+        {
+            "code": "missing_scoped_baseline_test_contract",
+            "message": message,
+            "next_step": "revise",
+            "test_selection": error.test_selection,
+        },
+    )
+    record_step_failure(
+        plan_dir,
+        state,
+        step="finalize",
+        iteration=state["iteration"],
+        error=CliError(
+            "missing_scoped_baseline_test_contract",
+            message,
+            valid_next=["revise"],
+            extra={"raw_output": worker.raw_output, "test_selection": error.test_selection},
+        ),
+        duration_ms=worker.duration_ms,
+    )
+    response: StepResponse = {
+        "success": False,
+        "step": "finalize",
+        "result": "plan_contract_revise_needed",
+        "summary": message,
+        "artifacts": ["gate.json", "gate_carry.json", "finalize_revise_feedback.json"],
+        "next_step": "revise",
+        "state": STATE_CRITIQUED,
+        "iteration": state["iteration"],
+        "details": {
+            "code": "missing_scoped_baseline_test_contract",
+            "test_selection": error.test_selection,
+        },
+    }
+    _attach_next_step_runtime(response)
+    return response
 
 
 def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: PlanState) -> str:
@@ -1318,7 +1591,10 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
             state,
             project_dir,
             resolve_baseline_test_selection(plan_dir, state),
+            planned_files=_planned_task_changed_files(payload),
+            planned_test_command=_planned_task_pytest_command(payload),
         )
+        _require_explicit_finalize_baseline_selection(test_selection)
         if test_selection["mode"] == "scoped" and test_selection.get("command_override"):
             _config["test_command"] = test_selection["command_override"]
         payload["test_selection"] = test_selection
@@ -1432,7 +1708,15 @@ def handle_finalize(root: Path, args: argparse.Namespace) -> StepResponse:
         # ────────────────────────────────────────────────────────────
 
         _validate_finalize_payload(plan_dir, state, worker)
-        artifact_hash = _write_finalize_artifacts(plan_dir, worker.payload, state)
+        try:
+            artifact_hash = _write_finalize_artifacts(plan_dir, worker.payload, state)
+        except FinalizeBaselineSelectionError as error:
+            return _route_finalize_baseline_selection_failure_to_revise(
+                plan_dir,
+                state,
+                worker,
+                error,
+            )
         _ensure_execution_baseline(state)
         state["current_state"] = STATE_FINALIZED
         return _finish_step(

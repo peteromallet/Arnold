@@ -194,6 +194,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "assumptions": {"type": "array", "items": {"type": "string"}},
+            "changed_surfaces": {"type": "array", "items": {"type": "string"}},
+            "test_blast_radius": {"type": "object"},
         },
         "required": ["plan", "questions", "success_criteria", "assumptions"],
     },
@@ -418,6 +420,8 @@ SCHEMAS: dict[str, dict[str, Any]] = {
                 },
             },
             "questions": {"type": "array", "items": {"type": "string"}},
+            "changed_surfaces": {"type": "array", "items": {"type": "string"}},
+            "test_blast_radius": {"type": "object"},
         },
         "required": [
             "plan",

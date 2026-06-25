@@ -612,7 +612,7 @@ def resolve_baseline_test_selection(
 
     Returns a dict with:
 
-    * ``mode``: ``"scoped"``, ``"full"``, or ``"none"``
+    * ``mode``: ``"scoped"``, ``"full"``, ``"none"``, or ``"unresolved"``
     * ``reason``: human-readable explanation
     * ``command_override``: scoped pytest command string when *mode* is
       ``"scoped"``, otherwise ``None``
@@ -628,10 +628,10 @@ def resolve_baseline_test_selection(
     config = state.get("config", {}) if isinstance(state, dict) else {}
 
     # 1. Default-ON: scoped selection runs for EVERY plan unless it explicitly
-    #    opts out with test_selection="full". This is safe because the fallback
-    #    ladder below sends any plan WITHOUT a trustworthy blast radius (absent,
-    #    low-confidence, or unresolved selectors) to the full suite — so a plan
-    #    that hasn't earned a scoped run still gets the full suite.
+    #    opts out with test_selection="full". Missing or invalid scoped metadata
+    #    is unresolved, not an implicit full-suite request; callers must either
+    #    recover a scoped command from another trusted pre-execute source or fail
+    #    before invoking the suite runner.
     test_selection = config.get("test_selection", "scoped")
     if test_selection == "full":
         return {
@@ -646,16 +646,16 @@ def resolve_baseline_test_selection(
     blast_radius = read_plan_blast_radius(plan_dir, state)
     if not blast_radius.is_present:
         return {
-            "mode": "full",
-            "reason": "No test_blast_radius in plan metadata; falling back to full suite",
+            "mode": "unresolved",
+            "reason": "No test_blast_radius in plan metadata; scoped baseline selection is unresolved",
             "command_override": None,
         }
 
     value = blast_radius.value
     if not isinstance(value, dict):
         return {
-            "mode": "full",
-            "reason": "test_blast_radius is not a dict; falling back to full suite",
+            "mode": "unresolved",
+            "reason": "test_blast_radius is not a dict; scoped baseline selection is unresolved",
             "command_override": None,
         }
 
@@ -665,20 +665,20 @@ def resolve_baseline_test_selection(
     # 3. Only "scoped" strategy with non-empty selectors produces a scoped command.
     if strategy != "scoped":
         return {
-            "mode": strategy if isinstance(strategy, str) else "full",
+            "mode": "unresolved",
             "reason": (
                 f"test_blast_radius strategy is {strategy!r} "
-                f"(not 'scoped'); falling back to full suite"
+                "(not 'scoped'); scoped baseline selection is unresolved"
             ),
             "command_override": None,
         }
 
     if not isinstance(selectors, list) or not selectors:
         return {
-            "mode": "full",
+            "mode": "unresolved",
             "reason": (
                 "test_blast_radius strategy is 'scoped' but selectors are "
-                "missing or empty; falling back to full suite"
+                "missing or empty; scoped baseline selection is unresolved"
             ),
             "command_override": None,
         }
@@ -700,12 +700,12 @@ def resolve_baseline_test_selection(
         )
         path_detail = "" if has_path_selector else " and no path selectors"
         return {
-            "mode": "full",
+            "mode": "unresolved",
             "reason": (
                 "test_blast_radius includes non-path selector kind(s) "
                 + ", ".join(non_path_kinds)
                 + path_detail
-                + "; falling back to full suite because scoped pytest paths "
+                + "; scoped baseline selection is unresolved because pytest paths "
                 "cannot faithfully express the model's wider intent"
             ),
             "command_override": None,
@@ -721,10 +721,10 @@ def resolve_baseline_test_selection(
 
     if not path_values:
         return {
-            "mode": "full",
+            "mode": "unresolved",
             "reason": (
                 "test_blast_radius strategy is 'scoped' but no path selectors "
-                "with non-empty values; falling back to full suite"
+                "with non-empty values; scoped baseline selection is unresolved"
             ),
             "command_override": None,
         }
