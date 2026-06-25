@@ -17,7 +17,8 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
      - `documented`: Author docs and examples exist.
    - Axis 2 — **Execution maturity**:
      - `not-implemented`: No host runtime behavior.
-     - `runtime-bridged`: Host normalizes/descriptors exist but full integration may be partial.
+     - `legacy-delegated`: Runtime behavior exists but is still owned by a monolithic host helper; a placeholder adapter wraps an extracted projector and reports a conformance gap.
+     - `runtime-bridged`: A real, independent host adapter owns normalization, lifecycle, and diagnostics.
      - `planner-integrated`: Export/render planner participation is real and tested.
      - `public-supported`: Lifecycle, UI, diagnostics, persistence, examples, and conformance tests are complete.
    - `FamilyDefinition` includes:
@@ -49,7 +50,8 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
    - Populate definitions for: surfaces, commands, parser, metadataFacet, assetDetailSection, outputFormat, process, effect, transition, clipType, shader, agentTool, liveSource, searchProvider, etc.
 
 3. **Make the maturity model machine-readable and authoritative.**
-   - Add `config/extensions/family-maturity.json` as the canonical source of truth.
+   - The TypeScript registry in `src/sdk/families/familyDefinitions.ts` is the canonical source of truth.
+   - `config/extensions/family-maturity.json` is a generated release artifact; gates may read it, but it must never be edited by hand.
    - Generate it from `src/sdk/families/familyDefinitions.ts` via `scripts/quality/generate-extension-family-matrix.mjs`.
    - The JSON row per family must include:
      - family id
@@ -83,7 +85,8 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
 ## Locked decisions
 
 - A `ContributionKind` without a `FamilyDefinition` is a bug.
-- `config/extensions/family-maturity.json` is the canonical source of truth; gates read it.
+- `src/sdk/families/familyDefinitions.ts` is the canonical source of truth for family maturity.
+- `config/extensions/family-maturity.json` is a generated release artifact; gates may read it, but it must not be hand-edited.
 - Support levels describe current reality, not aspiration.
 - Public future-family types stay in the SDK but are honestly labeled `typed`/`declarative` until runtime semantics are proven.
 - `config/contracts/reigh-extension.schema.json` is authoritative for manifest schema.

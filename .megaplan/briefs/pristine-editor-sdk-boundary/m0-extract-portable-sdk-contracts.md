@@ -54,12 +54,14 @@ The SDK currently declares it must not depend on editor internals, yet it import
 
 8. **Add an external packagability smoke.**
    - Create a temporary external package fixture under `scripts/quality/fixtures/sdk-consumer-package/` that:
-     - depends only on `@reigh/editor-sdk` (resolved to the local SDK source via a relative path or tsconfig paths),
-     - imports the full public SDK surface,
-     - has no Vite app context,
-     - does not use the `@/` alias to reach app internals.
-   - Run `tsc --noEmit` in that fixture and fail if it emits any diagnostic from `src/sdk/**`.
+     - has its own `tsconfig.json` and `package.json`,
+     - depends only on `@reigh/editor-sdk` resolved to a package-like temp entrypoint (e.g. a generated `dist/sdk-package` or a `src/sdk/index.ts` symlink exposed as the package main),
+     - does **not** have the repo's `@/` alias or any `src/*` path mapping that reaches app internals,
+     - imports the full public SDK surface and a representative `src/sdk/families/*` module,
+     - has no Vite app context.
+   - Run `tsc --noEmit` in that fixture and fail if it emits any diagnostic from SDK files.
    - Do not filter SDK diagnostics; `skipLibCheck` should remain true only for third-party `.d.ts`.
+   - Add a static import-graph assertion that no resolved module path falls under `src/tools/video-editor`.
    - Wire the smoke into `npm run check:video-editor-sdk-imports` or `npm run test:extensions`.
 
 9. **Add a representative family contract sanity check.**
