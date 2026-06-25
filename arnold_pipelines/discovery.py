@@ -338,15 +338,11 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "id": "deliberation",
         "public": True,
         "registry_id": "arnold.deliberation",
-        "docs_path": "docs/archive/m5/pipelines/deliberation/SKILL.md",
+        "docs_path": "arnold/pipelines/deliberation/SKILL.md",
         "disposition": "migrate",
-        "migrated": False,
-        "builder_contract": "deferred-native",
+        "migrated": True,
+        "builder_contract": "native",
         "canonical_builder_path": "arnold.pipelines.deliberation:build_pipeline",
-        "diagnostic": (
-            "Deferred until the deliberation restore task creates the active "
-            "arnold.pipelines.deliberation package."
-        ),
     },
     "arnold/pipelines/_deliberation_example": {
         "id": "legacy._deliberation_example",

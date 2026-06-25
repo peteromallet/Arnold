@@ -61,7 +61,7 @@ This page is generated from the ``arnold.workflow`` manifest contract, the shipp
 
 | stable_id | alias | manifest_hash | package_path | m6_disposition |
 | --- | --- | --- | --- | --- |
-| arnold.deliberation | deliberation | deferred-native | arnold/pipelines/deliberation | keep|
+| arnold.deliberation | deliberation | native:deliberation | arnold/pipelines/deliberation | keep|
 | arnold.folder_audit | folder-audit | native:folder-audit | arnold/pipelines/folder_audit | keep|
 | evidence_pack.verifier | evidence_pack_verifier | sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2 | arnold_pipelines/evidence_pack | keep|
 | megaplan.core | megaplan | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba | arnold_pipelines/megaplan | keep|

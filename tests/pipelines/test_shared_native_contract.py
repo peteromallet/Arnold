@@ -19,11 +19,7 @@ class NativeTarget:
     pipeline_name: str
 
 
-# These are the eight active M3 packages that must already be native-backed.
-# Deliberation is intentionally not listed here yet: the active
-# ``arnold.pipelines.deliberation`` package does not exist until the restore
-# task creates it, and this contract should fail loudly only after that task
-# moves it from DEFERRED_NATIVE_TARGETS into ACTIVE_NATIVE_TARGETS.
+# These are the nine active M3 packages that must already be native-backed.
 ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
     NativeTarget("arnold.pipelines.megaplan.pipelines.creative", "creative"),
     NativeTarget("arnold.pipelines.megaplan.pipelines.doc", "doc"),
@@ -39,11 +35,10 @@ ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
         "select-tournament",
     ),
     NativeTarget("arnold.pipelines.folder_audit", "folder-audit"),
-)
-
-DEFERRED_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
     NativeTarget("arnold.pipelines.deliberation", "deliberation"),
 )
+
+DEFERRED_NATIVE_TARGETS: tuple[NativeTarget, ...] = ()
 
 FORBIDDEN_PUBLIC_GRAPH_BUILDERS = {
     "build_graph_pipeline",
@@ -126,12 +121,12 @@ def test_active_targets_do_not_publish_graph_builders(target: NativeTarget) -> N
     assert public_graph_builders == set()
 
 
-@pytest.mark.parametrize("target", DEFERRED_NATIVE_TARGETS, ids=_target_id)
-def test_deferred_targets_are_not_silently_available(target: NativeTarget) -> None:
-    assert importlib.util.find_spec(target.module_path) is None, (
-        f"{target.module_path} is now importable; move {target.pipeline_name!r} "
-        "into ACTIVE_NATIVE_TARGETS and enforce the same native contract."
-    )
+def test_deferred_targets_are_not_silently_available() -> None:
+    for target in DEFERRED_NATIVE_TARGETS:
+        assert importlib.util.find_spec(target.module_path) is None, (
+            f"{target.module_path} is now importable; move {target.pipeline_name!r} "
+            "into ACTIVE_NATIVE_TARGETS and enforce the same native contract."
+        )
 
 
 def test_contract_target_sets_are_staged_explicitly() -> None:
@@ -147,6 +142,7 @@ def test_contract_target_sets_are_staged_explicitly() -> None:
         "epic-blitz",
         "select-tournament",
         "folder-audit",
+        "deliberation",
     }
-    assert deferred_names == {"deliberation"}
+    assert deferred_names == set()
     assert active_names.isdisjoint(deferred_names)

@@ -39,6 +39,7 @@ def test_discover_migrated_pipelines_have_builders() -> None:
         "my-pipeline",
         "epic-blitz",
         "folder-audit",
+        "deliberation",
     }
     assert ids == expected, f"missing or extra: {ids ^ expected}"
     for info in results:
@@ -114,13 +115,12 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
     assert by_id["creative"].builder_contract == "native"
     assert by_id["creative"].load_state == "loadable-native"
 
-    deferred = by_id["deliberation"]
-    assert deferred.builder_contract == "deferred-native"
-    assert deferred.load_state == "deferred-native"
-    assert deferred.builder is None
-    assert deferred.canonical_builder_path == "arnold.pipelines.deliberation:build_pipeline"
-    assert deferred.docs_path == "docs/archive/m5/pipelines/deliberation/SKILL.md"
-    assert "restore task" in (deferred.diagnostic or "")
+    deliberation = by_id["deliberation"]
+    assert deliberation.builder_contract == "native"
+    assert deliberation.load_state == "loadable-native"
+    assert deliberation.builder is not None
+    assert deliberation.canonical_builder_path == "arnold.pipelines.deliberation:build_pipeline"
+    assert deliberation.docs_path == "arnold/pipelines/deliberation/SKILL.md"
 
 
 def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:

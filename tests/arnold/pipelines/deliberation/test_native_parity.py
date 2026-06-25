@@ -574,27 +574,19 @@ def _enable_native_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class TestDeliberationNativeBundle:
-    def test_build_initial_pipeline_attaches_native_bundle_only_with_profile_and_workers(
+    def test_build_initial_pipeline_attaches_native_program(
         self,
     ) -> None:
         graph = build_initial_pipeline(profile=PROFILE, workers=_workers())
-        native_programs = [
-            bundle
-            for bundle in graph.resource_bundles
-            if isinstance(bundle, NativeProgram)
-        ]
-
-        assert len(native_programs) == 1
-        assert [phase.name for phase in native_programs[0].phases] == list(
+        assert isinstance(graph.native_program, NativeProgram)
+        assert [phase.name for phase in graph.native_program.phases] == list(
             EXPECTED_NATIVE_PHASES
         )
+        assert tuple(graph.resource_bundles) == ()
+
         manifest_graph = build_pipeline()
-        manifest_native_programs = [
-            bundle
-            for bundle in manifest_graph.resource_bundles
-            if isinstance(bundle, NativeProgram)
-        ]
-        assert manifest_native_programs == []
+        assert isinstance(manifest_graph.native_program, NativeProgram)
+        assert tuple(manifest_graph.resource_bundles) == ()
         assert tuple(manifest_graph.stages) == ("manifest_introspection",)
 
     def test_human_gate_uses_native_metadata(self) -> None:
