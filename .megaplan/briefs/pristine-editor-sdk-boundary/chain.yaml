@@ -1,5 +1,8 @@
 base_branch: main
 
+anchors:
+  north_star: north-star.md
+
 on_failure:
   abort: stop_chain
 on_escalate:
