@@ -1,4 +1,4 @@
-base_branch: python-shaped-workflow-authoring-cleanup
+base_branch: native-python-working-tree
 
 milestones:
   - label: m1-component-contract-grammar
@@ -9,7 +9,7 @@ milestones:
     with_prep: true
     branch: python-shaped-workflow-authoring-m1-contract-grammar
     prep_clarify: false
-    prep_direction: "Use .megaplan/briefs/workflow-manifest-runtime-cleanup/python-shaped-authoring-production-polish-plan.md as the source of truth. This milestone freezes the import-first component contract, grammar version, file layout, and source-oriented diagnostics contract before compiler implementation. Do not depend on arnold.pipeline.native or reintroduce _pipeline/stages compatibility surfaces."
+    prep_direction: "Use docs/arnold/python-shaped-authoring-contract.md and the committed python-shaped-workflow-authoring milestone briefs as the source of truth. This milestone freezes the import-first component contract, grammar version, file layout, and source-oriented diagnostics contract before compiler implementation. Do not depend on arnold.pipeline.native or reintroduce _pipeline/stages compatibility surfaces."
     notes: "partnered-5/thorough/high. Establish the extensibility and validation contract that every later milestone consumes."
 
   - label: m2-compiler-core-linear-lowering

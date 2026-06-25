@@ -1,4 +1,4 @@
-base_branch: main
+base_branch: native-python-working-tree
 
 milestones:
   - label: m0-baseline-inventory-ratchets
@@ -9,7 +9,7 @@ milestones:
     depth: high
     branch: cleanup-single-root-m0-baseline-ratchets
     prep_clarify: false
-    prep_direction: "Start from the post-native-completion local main. Verify the cleanup ledger, current git/worktree state, ticket 01KVZZ45DAZW9P5H4JA66JWNY3, and external exceptions. Build the legacy caller/surface inventory and shrink-only ratchets before moving implementation code."
+    prep_direction: "Start from the post-native-completion native-python-working-tree branch. Verify the cleanup ledger, current git/worktree state, ticket 01KVZZ45DAZW9P5H4JA66JWNY3, and external exceptions. Build the legacy caller/surface inventory and shrink-only ratchets before moving implementation code."
     notes: "Baseline plus guardrails. Expected to be days, not two weeks, unless inventory reveals a major unknown."
 
   - label: m1-authority-and-extraction

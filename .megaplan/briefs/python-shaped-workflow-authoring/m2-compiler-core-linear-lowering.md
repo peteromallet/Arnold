@@ -7,8 +7,8 @@ Implement the first production compiler slice: restricted Python source -> valid
 ## Source Material
 
 - M1 component contract and grammar output.
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/python-shaped-authoring-production-polish-plan.md`
-- Existing `arnold.workflow` DSL/compiler/validation/runtime APIs on the cleanup base.
+- `docs/arnold/python-shaped-authoring-contract.md`
+- Existing `arnold.workflow` DSL/compiler/validation/runtime APIs on `native-python-working-tree`.
 
 ## Scope
 

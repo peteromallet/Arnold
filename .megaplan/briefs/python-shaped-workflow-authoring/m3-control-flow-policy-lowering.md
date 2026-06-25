@@ -8,7 +8,8 @@ Add the control-flow forms needed for the real Megaplan planning workflow while 
 
 - M1 grammar/contract.
 - M2 compiler core.
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/codex-end-state-megaplan-planning.py`
+- `docs/arnold/python-shaped-authoring-contract.md`
+- Existing `arnold_pipelines.megaplan.pipeline.build_pipeline()` and current Megaplan tests/goldens.
 - Current explicit-node Megaplan pipeline shape and manifest fixtures.
 
 ## Scope

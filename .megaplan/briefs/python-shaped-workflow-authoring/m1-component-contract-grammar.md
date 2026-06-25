@@ -6,11 +6,11 @@ Freeze the V1 Python-shaped authoring contract before implementation. The result
 
 ## Source Material
 
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/python-shaped-authoring-production-polish-plan.md`
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/m4-5-python-shaped-authoring-frontend-plan.md`
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/codex-end-state-megaplan-planning.py`
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/codex-derived-megaplan-authoring-artifacts.md`
-- `.megaplan/briefs/workflow-manifest-runtime-cleanup/deepseek-workflow-authoring-synthesis.md`
+- `docs/arnold/python-shaped-authoring-contract.md`
+- `.megaplan/briefs/python-shaped-workflow-authoring/chain.yaml`
+- Existing `arnold.workflow` DSL, compiler, manifest, validation, and runtime APIs on `native-python-working-tree`
+
+Older cleanup-branch prep files are not present in this checkout. Do not depend on missing `/tmp` or deleted branch artifacts.
 
 ## Locked Decisions
 

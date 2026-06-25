@@ -1,4 +1,4 @@
-base_branch: main
+base_branch: native-python-working-tree
 
 milestones:
   - label: m1-baseline-manifest-contract
@@ -9,8 +9,8 @@ milestones:
     depth: high
     branch: workflow-manifest-runtime-m1-baseline
     prep_clarify: false
-    prep_direction: "Start from origin/main, not native-python-pipelines. Read the five workflow decision docs in /tmp/workflow_decision_docs when available, but commit or summarize the source material in-repo before relying on it. Inspect only the current mainline guardrails, goldens, conformance checks, and salvage candidates needed to freeze the baseline and define WorkflowManifest v1."
-    notes: "Freeze behavior and define the durable manifest/kernel contract before any package move or runtime rewrite. Use native-python-pipelines only as quarry."
+    prep_direction: "Start from native-python-working-tree. Read the committed workflow decision docs and current mainline guardrails, goldens, conformance checks, and salvage candidates needed to freeze the baseline and define WorkflowManifest v1. Do not rely on uncommitted /tmp source material."
+    notes: "Freeze behavior and define the durable manifest/kernel contract before any package move or runtime rewrite. Use completed native Python work only as quarry."
 
   - label: m2-explicit-node-dsl-compiler
     idea: .megaplan/briefs/workflow-manifest-runtime/m2-explicit-node-dsl-compiler.md

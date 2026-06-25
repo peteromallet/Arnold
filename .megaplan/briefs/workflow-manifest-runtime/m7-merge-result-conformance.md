@@ -21,9 +21,7 @@ Prove the integrated merge result is the clean-break state after M1-M6 have land
 6. Tests do not keep those legacy constructors alive.
 7. The installed wheel proves import, CLI, docs, generated artifact, and package metadata behavior from the merge result.
 
-## Completion evidence
-
-Branch: `workflow-manifest-runtime-cleanup-m7-merge-result-conformance` (based on `workflow-manifest-runtime-cleanup-m5-run`)
+## Expected completion evidence
 
 - `python -m build --wheel --sdist` succeeded (`arnold-0.23.0` wheel + sdist).
 - `python -m pytest -m wheel_smoke tests/installed_wheel tests/arnold_pipelines/megaplan/test_wheel_smoke.py -q` → **16 passed**.
