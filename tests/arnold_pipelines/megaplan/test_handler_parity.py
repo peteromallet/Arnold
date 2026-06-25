@@ -253,7 +253,6 @@ class TestGateOutcomeSemantics:
 class TestFinalizeSemanticChecks:
     def test_finalize_payload_requires_pending_status(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.handlers.finalize import _finalize_semantic_postcheck
-        from arnold_pipelines.megaplan.types import CliError
         from arnold_pipelines.megaplan.workers import WorkerResult
 
         worker = WorkerResult(
@@ -313,6 +312,77 @@ class TestFinalizeSemanticChecks:
 
         _finalize_semantic_postcheck(tmp_path, state, worker, _reject)
         assert errors == []
+
+    def test_write_finalize_uses_task_pytest_command_for_baseline_capture(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers import finalize
+
+        project_dir = tmp_path / "repo"
+        plan_dir = project_dir / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        state: dict[str, Any] = {
+            "name": "p",
+            "idea": "i",
+            "current_state": "gated",
+            "iteration": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "config": {
+                "mode": "code",
+                "project_dir": str(project_dir),
+                "test_selection": "scoped",
+            },
+            "sessions": {},
+            "plan_versions": [],
+            "history": [],
+            "meta": {},
+            "last_gate": {},
+        }
+        payload = {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Update code and run the focused regression tests.",
+                    "depends_on": [],
+                    "status": "pending",
+                    "executor_notes": "",
+                    "reviewer_verdict": "",
+                    "kind": "test",
+                    "complexity": 2,
+                    "complexity_justification": "Focused regression coverage.",
+                    "files_changed": ["tests/test_contract.py"],
+                    "commands_run": ["pytest tests/test_contract.py -q"],
+                }
+            ],
+            "sense_checks": [{"id": "SC1", "question": "Check T1", "task_id": "T1"}],
+            "watch_items": [],
+            "provides": [],
+            "assumes": [],
+            "pre_existing": [],
+        }
+        seen_config: dict[str, Any] = {}
+
+        def fake_capture(
+            captured_plan_dir: Path,
+            captured_project_dir: Path,
+            config: dict[str, Any],
+        ) -> dict[str, Any]:
+            assert captured_plan_dir == plan_dir
+            assert captured_project_dir == project_dir
+            seen_config.update(config)
+            return {
+                "baseline_test_failures": [],
+                "baseline_test_command": config.get("test_command"),
+            }
+
+        monkeypatch.setattr(finalize, "_capture_test_baseline_for_plan", fake_capture)
+
+        finalize._write_finalize_artifacts(plan_dir, payload, state)
+
+        assert seen_config["test_command"] == "pytest tests/test_contract.py"
+        assert payload["test_selection"]["mode"] == "scoped"
+        assert payload["test_selection"]["fallback_source"] == "finalize_task_commands_run"
+        assert payload["baseline_test_command"] == "pytest tests/test_contract.py"
 
 
 class TestReviewPayloadDefaults:
@@ -381,6 +451,207 @@ class TestBlastRadiusFallback:
         # No mirror test file exists, so the default stays on the full-suite path.
         assert result["strategy"] == "full"
         assert result["full_suite_fallback"] is True
+
+
+class TestFinalizeSemanticPostcheck:
+    def test_rejects_finalize_meta_work_as_task_output(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.handlers.finalize import (
+            _finalize_semantic_postcheck,
+        )
+        from arnold_pipelines.megaplan.workers import WorkerResult
+
+        worker = WorkerResult(
+            payload={
+                "tasks": [
+                    {
+                        "id": "T0",
+                        "description": "Finalize the plan artifact.",
+                        "depends_on": [],
+                        "status": "pending",
+                        "kind": "docs",
+                        "executor_notes": "Wrote finalize_output.json.",
+                        "files_changed": [
+                            str(tmp_path / ".megaplan/plans/p/finalize_output.json")
+                        ],
+                        "commands_run": [],
+                        "auto_attributed_files": None,
+                        "evidence_files": [],
+                        "reviewer_verdict": "",
+                        "complexity": 1,
+                        "complexity_justification": "small",
+                    }
+                ],
+                "user_actions": [],
+                "sense_checks": [],
+                "watch_items": [],
+            },
+            raw_output="",
+            duration_ms=0,
+            cost_usd=0.0,
+        )
+
+        def reject(message: str) -> None:
+            raise AssertionError(message)
+
+        with pytest.raises(AssertionError, match="harness artifact path"):
+            _finalize_semantic_postcheck(
+                tmp_path,
+                {"config": {"mode": "code"}},
+                worker,
+                reject,
+            )
+
+
+class TestFinalizeBaselineSelectionRecovery:
+    def _state(self, plan_dir: Path, repo: Path) -> dict[str, Any]:
+        return {
+            "name": "p",
+            "iteration": 1,
+            "current_state": "gated",
+            "config": {"mode": "code", "project_dir": str(repo), "robustness": "extreme"},
+            "meta": {},
+            "history": [],
+            "plan_versions": [
+                {
+                    "version": 1,
+                    "file": "plan_v1.md",
+                    "hash": "sha256:old",
+                    "timestamp": "2026-01-01T00:00:00Z",
+                }
+            ],
+            "last_gate": {"recommendation": "PROCEED", "passed": True},
+            "sessions": {},
+        }
+
+    def _payload(self) -> dict[str, Any]:
+        return {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Touch docs only.",
+                    "depends_on": [],
+                    "status": "pending",
+                    "files_changed": ["docs/notes.md"],
+                    "commands_run": [],
+                    "complexity": 1,
+                    "complexity_justification": "small",
+                }
+            ],
+            "user_actions": [],
+            "sense_checks": [],
+            "watch_items": [],
+        }
+
+    def test_unresolved_finalize_baseline_scope_does_not_capture_full_suite(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers import finalize
+
+        repo = tmp_path / "repo"
+        plan_dir = repo / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan_v1.md").write_text("## Step 1: Docs\n", encoding="utf-8")
+        (plan_dir / "plan_v1.meta.json").write_text("{}", encoding="utf-8")
+        (repo / "docs").mkdir()
+        (repo / "docs" / "notes.md").write_text("notes\n", encoding="utf-8")
+
+        def fail_capture(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("baseline capture must not run")
+
+        monkeypatch.setattr(finalize, "_capture_test_baseline_for_plan", fail_capture)
+
+        with pytest.raises(finalize.FinalizeBaselineSelectionError):
+            finalize._write_finalize_artifacts(plan_dir, self._payload(), self._state(plan_dir, repo))
+
+    def test_none_finalize_baseline_scope_skips_capture(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers import finalize
+
+        repo = tmp_path / "repo"
+        plan_dir = repo / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        (plan_dir / "plan_v1.md").write_text("## Step 1: Docs\n", encoding="utf-8")
+        (plan_dir / "plan_v1.meta.json").write_text(
+            json.dumps(
+                {
+                    "test_blast_radius": {
+                        "strategy": "none",
+                        "confidence": "medium",
+                        "selectors": [],
+                        "changed_surfaces": [],
+                        "always_run": [],
+                        "full_suite_fallback": True,
+                        "rationale": "No code or test surfaces changed.",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def fail_capture(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            raise AssertionError("baseline capture must not run for none scope")
+
+        payload = self._payload()
+        monkeypatch.setattr(finalize, "_capture_test_baseline_for_plan", fail_capture)
+
+        finalize._write_finalize_artifacts(plan_dir, payload, self._state(plan_dir, repo))
+
+        assert payload["test_selection"]["mode"] == "none"
+        assert payload["baseline_test_failures"] == []
+        assert payload["baseline_test_command"] is None
+
+    def test_unresolved_finalize_baseline_scope_routes_to_revise(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold_pipelines.megaplan._core import infer_next_steps
+        from arnold_pipelines.megaplan.handlers import finalize
+        from arnold_pipelines.megaplan.workers import WorkerResult
+
+        repo = tmp_path / "repo"
+        plan_dir = repo / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        state = self._state(plan_dir, repo)
+        (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        worker = WorkerResult(
+            payload=self._payload(),
+            raw_output='{"tasks": []}',
+            duration_ms=12,
+            cost_usd=0.0,
+        )
+        error = finalize.FinalizeBaselineSelectionError(
+            {
+                "mode": "unresolved",
+                "reason": "No test_blast_radius in plan metadata",
+                "command_override": None,
+            }
+        )
+
+        response = finalize._route_finalize_baseline_selection_failure_to_revise(
+            plan_dir,
+            state,
+            worker,
+            error,
+        )
+
+        assert response["success"] is False
+        assert response["result"] == "plan_contract_revise_needed"
+        assert response["next_step"] == "revise"
+        assert state["current_state"] == "critiqued"
+        assert state["last_gate"]["recommendation"] == "ITERATE"
+        assert (plan_dir / "gate.json").exists()
+        assert (plan_dir / "gate_carry.json").exists()
+        assert (plan_dir / "finalize_revise_feedback.json").exists()
+        assert infer_next_steps(state)[0] == "revise"
+
+        persisted = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        assert persisted["current_state"] == "critiqued"
+        assert persisted["last_gate"]["recommendation"] == "ITERATE"
 
 
 class TestExecuteTimeoutHardening:
