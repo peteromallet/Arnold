@@ -239,6 +239,25 @@ def _parse_xml_attrs(attrs: str) -> dict[str, object]:
     }
 
 
+def _has_required_content_tool_args(name: str, args: dict[str, object]) -> bool:
+    normalized_name = _CONTENT_TOOL_ALIASES.get(name, name)
+    for old_key, new_key in _CONTENT_ARG_ALIASES.get(normalized_name, {}).items():
+        if old_key in args and new_key not in args:
+            args[new_key] = args.pop(old_key)
+
+    required_by_tool = {
+        "read_file": "path",
+        "search_files": "pattern",
+        "web_search": "query",
+        "web_extract": "url",
+    }
+    required = required_by_tool.get(normalized_name)
+    if required is None:
+        return True
+    value = args.get(required)
+    return isinstance(value, str) and bool(value.strip())
+
+
 def _parse_dsml_content_tool_calls(content: str) -> list[SimpleNamespace]:
     calls: list[SimpleNamespace] = []
     invoke_pattern = re.compile(
@@ -266,6 +285,8 @@ def _parse_dsml_content_tool_calls(content: str) -> list[SimpleNamespace]:
             if not name_match:
                 continue
             args[name_match.group("name")] = _coerce_xml_tool_value(param.group("value"))
+        if not _has_required_content_tool_args(name, args):
+            continue
         calls.append(_make_content_tool_call(name, args, len(calls)))
     return calls
 
@@ -292,7 +313,10 @@ def _parse_plain_xml_content_tool_calls(content: str) -> list[SimpleNamespace]:
 
     for match in self_closing_pattern.finditer(content):
         name = match.group("name").strip().lower()
-        calls.append(_make_content_tool_call(name, _parse_xml_attrs(match.group("attrs")), len(calls)))
+        args = _parse_xml_attrs(match.group("attrs"))
+        if not _has_required_content_tool_args(name, args):
+            continue
+        calls.append(_make_content_tool_call(name, args, len(calls)))
 
     for match in tool_pattern.finditer(content):
         name = match.group("name").strip().lower()
@@ -301,6 +325,8 @@ def _parse_plain_xml_content_tool_calls(content: str) -> list[SimpleNamespace]:
             child.group("key"): _coerce_xml_tool_value(child.group("value"))
             for child in child_pattern.finditer(match.group("body"))
         })
+        if not _has_required_content_tool_args(name, args):
+            continue
         calls.append(_make_content_tool_call(name, args, len(calls)))
     return calls
 
@@ -1679,6 +1705,11 @@ def clean_parsed_payload(payload: dict, schema: dict, step: str) -> None:
     # "summary" instead of "concern", "detail" instead of "evidence").
     _normalize_nested_aliases(payload, schema)
 
+    # Coerce common model drift in critique flag severity hints so the
+    # structural audit does not reject an otherwise usable payload.
+    if step == "critique":
+        _normalize_critique_flag_severity(payload)
+
 
 def _normalize_flattened_plan_success_criterion(payload: dict) -> None:
     has_flattened_criterion = any(
@@ -1711,6 +1742,37 @@ def _strip_execute_bookkeeping_fields(payload: dict) -> None:
     payload.pop("batch_id", None)
     payload.pop("status", None)
     payload.pop("batch_status", None)
+
+
+_SEVERITY_HINT_CANONICAL = {
+    "likely-significant": "likely-significant",
+    "likely-minor": "likely-minor",
+    "uncertain": "uncertain",
+    "significant": "likely-significant",
+    "major": "likely-significant",
+    "minor": "likely-minor",
+    "minor-concern": "likely-minor",
+    "low": "likely-minor",
+    "cosmetic": "likely-minor",
+}
+
+
+def _normalize_critique_flag_severity(payload: dict) -> None:
+    """Map free-form severity_hint values onto the allowed schema enum."""
+    flags = payload.get("flags")
+    if not isinstance(flags, list):
+        return
+    for flag in flags:
+        if not isinstance(flag, dict):
+            continue
+        hint = flag.get("severity_hint")
+        if not isinstance(hint, str):
+            continue
+        canonical = _SEVERITY_HINT_CANONICAL.get(hint.lower())
+        if canonical is not None:
+            flag["severity_hint"] = canonical
+        else:
+            flag["severity_hint"] = "uncertain"
 
 
 def _resolve_hermes_cost(result: dict) -> tuple[float, int, int, int]:

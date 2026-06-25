@@ -64,6 +64,22 @@ class TestReadFileHandler:
         mock_ops.read_file.assert_called_once_with("/tmp/big.txt", 10, 20)
 
     @patch("tools.file_tools._get_file_ops")
+    def test_handler_rejects_missing_path(self, mock_get):
+        from tools.file_tools import _handle_read_file
+
+        result = json.loads(_handle_read_file({}))
+        assert result["error"] == "read_file requires a non-empty path"
+        mock_get.assert_not_called()
+
+    @patch("tools.file_tools._get_file_ops")
+    def test_handler_rejects_blank_path(self, mock_get):
+        from tools.file_tools import _handle_read_file
+
+        result = json.loads(_handle_read_file({"path": "   "}))
+        assert result["error"] == "read_file requires a non-empty path"
+        mock_get.assert_not_called()
+
+    @patch("tools.file_tools._get_file_ops")
     def test_exception_returns_error_json(self, mock_get):
         mock_get.side_effect = RuntimeError("terminal not available")
 
@@ -309,6 +325,5 @@ class TestSearchHints:
         raw = search_tool(pattern="foo", offset=50, limit=50)
         assert "[Hint:" in raw
         assert "offset=100" in raw
-
 
 

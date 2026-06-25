@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from arnold_pipelines.megaplan.prompts.critique_evaluator import _critique_evaluator_prompt
+from arnold_pipelines.megaplan.prompts.gate import _gate_prompt
+
+
+def _write_json(path: Path, payload: Any) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _minimal_state(tmp_path: Path) -> dict[str, Any]:
+    plan_dir = tmp_path / "plan"
+    project_dir = tmp_path / "project"
+    plan_dir.mkdir()
+    project_dir.mkdir()
+    (plan_dir / "plan_v1.md").write_text("# Plan\n\nDo the work.\n", encoding="utf-8")
+    _write_json(
+        plan_dir / "plan_v1.meta.json",
+        {"tasks": [{"id": "T1", "title": "Do work", "complexity": 1}]},
+    )
+    _write_json(plan_dir / "gate_signals_v1.json", {"signals": {}, "warnings": []})
+    _write_json(plan_dir / "faults.json", {"flags": []})
+
+    state: dict[str, Any] = {
+        "name": "demo",
+        "idea": "Fix the bug.",
+        "iteration": 1,
+        "config": {
+            "project_dir": str(project_dir),
+            "mode": "code",
+            "robustness": "full",
+        },
+        "meta": {},
+        "sessions": {},
+        "plan_versions": [{"version": 1, "file": "plan_v1.md"}],
+        "history": [],
+    }
+    return state
+
+
+def test_gate_prompt_pairs_template_path_with_exact_read_file_call(tmp_path: Path) -> None:
+    state = _minimal_state(tmp_path)
+    plan_dir = tmp_path / "plan"
+
+    prompt = _gate_prompt(state, plan_dir, root=tmp_path)
+    output_path = plan_dir / "gate_output.json"
+
+    assert f"Your output template is at: {output_path}" in prompt
+    assert f"calling `read_file` with `path` exactly `{output_path}`" in prompt
+    assert "If you cannot supply that exact non-empty path, do not call `read_file`." in prompt
+
+
+def test_critique_evaluator_prompt_pairs_template_path_with_exact_read_file_call(
+    tmp_path: Path,
+) -> None:
+    state = _minimal_state(tmp_path)
+    plan_dir = tmp_path / "plan"
+
+    prompt = _critique_evaluator_prompt(state, plan_dir, root=tmp_path)
+    output_path = plan_dir / "critique_evaluator_output.json"
+
+    assert f"Your output template is at: {output_path}" in prompt
+    assert f"calling `read_file` with `path` exactly `{output_path}`" in prompt
+    assert "If you cannot supply that exact non-empty path, do not call `read_file`." in prompt

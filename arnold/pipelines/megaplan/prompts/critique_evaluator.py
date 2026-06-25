@@ -368,7 +368,8 @@ def _critique_evaluator_prompt(
         {intent_block}
 
         Your output template is at: {output_path}
-        Read this file first — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        Read this file first by calling `read_file` with `path` exactly `{output_path}` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
         Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
         If you cannot use file tools, return the populated JSON structure inline as your response instead.
 

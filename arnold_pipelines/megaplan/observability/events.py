@@ -17,6 +17,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import logging
 import os
 import threading
 import time
@@ -60,11 +61,12 @@ def _warn_missing_envelope_ctx_once() -> None:
         if _missing_envelope_ctx_warned:
             return
         _missing_envelope_ctx_warned = True
-    warnings.warn(
+    # Emit as a debug log rather than a warning to avoid spurious stderr
+    # that downstream automation treats as a phase failure.
+    logger = logging.getLogger("megaplan")
+    logger.debug(
         "observability.events: emit() invoked with no RunEnvelope in "
-        "_envelope_ctx; emitting without run_id (M4 T9 WARN_ONCE).",
-        RuntimeWarning,
-        stacklevel=3,
+        "_envelope_ctx; emitting without run_id (M4 T9 WARN_ONCE)."
     )
 
 

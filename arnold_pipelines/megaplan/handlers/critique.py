@@ -59,6 +59,49 @@ from .tiebreaker import _build_tiebreaker_reprompt
 log = logging.getLogger("megaplan")
 _ORIGINAL_VALIDATE_CRITIQUE_CHECKS = validate_critique_checks
 
+
+def _recover_evaluator_payload_from_raw(
+    raw: str,
+    evaluator_model: str,
+    vendor: str | None,
+) -> dict[str, Any] | None:
+    """Recover a usable critique_evaluator payload from the raw transcript.
+
+    The Codex structured-output path occasionally emits a valid JSON verdict
+    in its raw transcript while reporting an empty ``worker.payload``.  When
+    scratch promotion falls back to that empty payload, this helper scans the
+    saved raw output for the last JSON object that looks like a valid evaluator
+    verdict and passes schema validation.
+    """
+    try:
+        from arnold_pipelines.megaplan.workers._impl import (
+            _extract_json_candidates_from_raw,
+        )
+    except Exception:
+        return None
+
+    candidates = _extract_json_candidates_from_raw(raw)
+    from arnold_pipelines.megaplan.audits.critique_evaluator import (
+        validate_evaluator_verdict,
+    )
+
+    for cand in reversed(candidates):
+        if not isinstance(cand, dict):
+            continue
+        if "selections" not in cand or "skipped" not in cand:
+            continue
+        try:
+            validate_evaluator_verdict(
+                cand,
+                evaluator_model=evaluator_model,
+                vendor=vendor if vendor in ("claude", "codex") else None,
+            )
+        except Exception:
+            continue
+        return cand
+    return None
+
+
 # ── T11: Critique-scoped scratch promotion known keys ──────────────────────
 # The model produces only these keys in the scratch template; unknown
 # top-level keys injected by the model are stripped before promotion.
@@ -399,6 +442,27 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                         file_fill_instructed=_file_fill_instructed,
                     )
                     eval_worker.payload = _promoted
+                    # Recovery: the Codex structured-output path sometimes
+                    # returns an empty payload even though the raw transcript
+                    # contains a valid verdict.  Re-parse the saved raw output
+                    # before giving up.
+                    if (
+                        not eval_worker.payload.get("selections")
+                        and _raw_eval
+                    ):
+                        _recovered = _recover_evaluator_payload_from_raw(
+                            _raw_eval,
+                            evaluator_model=evaluator_model,
+                            vendor=state["config"].get("vendor"),
+                        )
+                        if _recovered is not None:
+                            eval_worker.payload = _recovered
+                            print(
+                                "[megaplan] recovered critique_evaluator payload "
+                                "from raw output",
+                                file=sys.stderr,
+                                flush=True,
+                            )
                     # ────────────────────────────────────────────────────
                     _vendor = state["config"].get("vendor")
                     _eval_warnings = validate_evaluator_verdict(
