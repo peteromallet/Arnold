@@ -9,6 +9,7 @@ __pycache__/
 !.megaplan/briefs/
 !.megaplan/briefs/**
 .megaplan/briefs/**/.megaplan/
+.megaplan/worker_tmp/
 .megaplan/.state-locks/
 .megaplan/cloud-chain.log
 .megaplan/debt.json

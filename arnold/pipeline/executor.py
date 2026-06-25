@@ -16,7 +16,7 @@ Hook protocol
 
 Pass an :class:`~arnold.pipeline.hooks.ExecutorHooks` implementation to
 inject behaviour at 12 documented insertion points without importing
-``megaplan`` from inside ``arnold/pipeline/``.  Omitting *hooks* (or
+product-specific pipeline code from inside ``arnold/pipeline/``.  Omitting *hooks* (or
 passing ``None``) produces byte-for-byte identical behaviour to the
 pre-hooks path via :class:`~arnold.pipeline.hooks.NullExecutorHooks`.
 
@@ -37,7 +37,7 @@ envelope.  The halt reason is stashed on the hooks instance.
 Boundary discipline
 -------------------
 
-No ``megaplan`` imports.  No forbidden vocabulary literals.
+No product-specific pipeline imports.  No forbidden vocabulary literals.
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ def _run_native_dispatched(
     if isinstance(native_bundle, NativeProgram):
         return run_native_pipeline(native_bundle, **kwargs)
 
-    # Runner adapter path (e.g. NativeMegaplanRunner) — forward the full
+    # Runner adapter path: forward the full
     # caller context so adapters can reconstruct pipeline-specific context.
     kwargs["program"] = program
     kwargs.setdefault("schema_registry", None)
@@ -269,7 +269,7 @@ def _find_native_bundle(pipeline: Pipeline) -> Any | None:
     ``pipeline.native_program`` is preferred over legacy bare
     :class:`~arnold.pipeline.native.ir.NativeProgram` resource bundles.
     Runner-like adapters remain supported so callers can supply a custom
-    dispatch wrapper (e.g. ``NativeMegaplanRunner``); adapters receive the
+    dispatch wrapper; adapters receive the
     first-class native program explicitly in :func:`_run_native_dispatched`.
     """
     from arnold.pipeline.native.ir import NativeProgram
@@ -712,11 +712,8 @@ def _step_at(
 
         # ── Typed step-IO enforcement (generic executor path) ────────
         # Runs BEFORE the outputs/state merge so state is unchanged when
-        # an enforce-block fires. The megaplan executor
-        # (arnold/pipelines/megaplan/_pipeline/executor.py) has its own
-        # independent enforcement at ``_evaluate_cursor_handoff`` and does
-        # NOT route through this path — the two are mutually exclusive on
-        # any given run, so no double-enforcement guard is required.
+        # an enforce-block fires. Product-specific compatibility executors
+        # can have independent enforcement and do not route through this path.
         _enforce_typed_step_io_handoff(
             pipeline=pipeline,
             stage=stage,

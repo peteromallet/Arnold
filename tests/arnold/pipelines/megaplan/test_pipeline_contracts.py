@@ -58,6 +58,63 @@ def _by_reference_payload(logical_type: str) -> dict:
     }
 
 
+def test_build_pipeline_returns_native_backed_compatibility_shell(monkeypatch) -> None:
+    from arnold.pipeline.native.ir import NativeProgram
+    from arnold.pipelines.megaplan import pipeline as pipeline_module
+
+    pipeline = pipeline_module.build_pipeline()
+
+    assert pipeline.entry == "prep"
+    assert tuple(pipeline.stages) == (
+        "prep",
+        "plan",
+        "critique",
+        "gate",
+        "revise",
+        "tiebreaker",
+        "finalize",
+        "execute",
+        "review",
+    )
+    assert pipeline.resource_bundles == ()
+    assert isinstance(pipeline.native_program, NativeProgram)
+    assert pipeline.native_program.name == "megaplan"
+
+    compiled_program = object()
+    projected_shell = Pipeline(
+        stages=pipeline.stages,
+        entry=pipeline.entry,
+        resource_bundles=("legacy-resource-bundle",),
+        native_program=object(),
+    )
+    calls: dict[str, object] = {}
+
+    def _compile(pipeline_func):
+        calls["compiled_func"] = pipeline_func
+        return compiled_program
+
+    def _project(program, *, key_mode):
+        calls["projected_program"] = program
+        calls["key_mode"] = key_mode
+        return projected_shell
+
+    monkeypatch.setattr(pipeline_module, "compile_pipeline", _compile)
+    monkeypatch.setattr(pipeline_module, "project_graph", _project)
+
+    rebuilt = pipeline_module.build_pipeline()
+
+    assert calls == {
+        "compiled_func": pipeline_module.megaplan,
+        "projected_program": compiled_program,
+        "key_mode": "phase",
+    }
+    assert rebuilt is not projected_shell
+    assert rebuilt.stages is projected_shell.stages
+    assert rebuilt.entry == projected_shell.entry
+    assert rebuilt.native_program is compiled_program
+    assert rebuilt.resource_bundles == ()
+
+
 def test_registers_all_nine_production_planning_payload_contracts(tmp_path) -> None:
     registry = ContractSchemaRegistry(tmp_path)
 

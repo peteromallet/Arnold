@@ -97,11 +97,7 @@ def explicit_runtime_owner(
     return persisted_runtime_owner(artifact_root)
 
 
-def has_native_dispatch_capability(
-    pipeline: Any,
-    *,
-    pipeline_key: str | None = None,
-) -> bool:
+def has_native_dispatch_capability(pipeline: Any) -> bool:
     """Return whether *pipeline* can be executed by the native runtime.
 
     A pipeline is native-capable if it carries a first-class
@@ -111,8 +107,6 @@ def has_native_dispatch_capability(
     """
 
     from arnold.pipeline.native.ir import NativeProgram
-
-    del pipeline_key
 
     if isinstance(getattr(pipeline, "native_program", None), NativeProgram):
         return True
@@ -132,14 +126,13 @@ def select_fresh_runtime_owner(
     *,
     state: Mapping[str, Any] | None = None,
     artifact_root: str | Path | None = None,
-    pipeline_key: str | None = None,
 ) -> RuntimeOwner:
     """Resolve runtime ownership for a fresh dispatch or fresh state file."""
 
     explicit = explicit_runtime_owner(state, artifact_root=artifact_root)
     if explicit is not None:
         return explicit
-    if has_native_dispatch_capability(pipeline, pipeline_key=pipeline_key):
+    if has_native_dispatch_capability(pipeline):
         return RUNTIME_NATIVE
     return RUNTIME_GRAPH
 
@@ -149,7 +142,6 @@ def select_runtime_for_dispatch(
     *,
     state: Mapping[str, Any] | None,
     artifact_root: str | Path,
-    pipeline_key: str,
 ) -> RuntimeDispatchDecision:
     """Resolve dispatch runtime with resume cursors taking precedence."""
 
@@ -163,7 +155,6 @@ def select_runtime_for_dispatch(
         pipeline,
         state=state,
         artifact_root=artifact_root,
-        pipeline_key=pipeline_key,
     )
     if runtime == RUNTIME_NATIVE:
         return RuntimeDispatchDecision(RUNTIME_NATIVE, False, "native_fresh")

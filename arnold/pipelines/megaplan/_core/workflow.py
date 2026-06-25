@@ -699,6 +699,82 @@ def _resolve_resume_phase(
     return None
 
 
+def _resume_cursor_runtime(plan_dir: Path, cursor: Mapping[str, Any]) -> str:
+    """Classify resume ownership from the cursor payload or durable cursor file."""
+
+    from arnold.pipeline.resume import classify_resume_cursor_payload, read_resume_cursor
+
+    payload_kind = classify_resume_cursor_payload(dict(cursor))
+    if payload_kind in {"native", "corrupt_native"}:
+        return payload_kind
+
+    file_kind = classify_resume_cursor_payload(read_resume_cursor(plan_dir))
+    if file_kind in {"native", "corrupt_native", "graph"}:
+        return file_kind
+    return payload_kind
+
+
+def _run_canonical_native_resume(
+    *,
+    plan_dir: Path,
+    previous_state: PlanState,
+    plan: str,
+    pipeline_name: str,
+    root: Path,
+    cursor: Mapping[str, Any],
+) -> tuple[int, str, str]:
+    """Resume the canonical Megaplan native program through dispatch routing."""
+
+    from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+    from arnold.pipelines.megaplan._pipeline.types import StepContext
+    from arnold.pipelines.megaplan.pipeline import build_pipeline
+
+    pipeline = build_pipeline()
+    state = dict(previous_state)
+    state.setdefault("_pipeline_name", pipeline_name)
+    state.setdefault("resume_cursor", dict(cursor))
+    profile = {
+        "root": root,
+        "project_dir": (state.get("config") or {}).get("project_dir", str(root))
+        if isinstance(state.get("config"), Mapping)
+        else str(root),
+    }
+    mode = (
+        (state.get("config") or {}).get("mode", "code")
+        if isinstance(state.get("config"), Mapping)
+        else "code"
+    )
+    ctx = StepContext(
+        plan_dir=plan_dir,
+        state=state,
+        profile=profile,
+        mode=str(mode or "code"),
+        inputs={"_pipeline": pipeline_name},
+    )
+    result = run_pipeline_dispatch(
+        pipeline,
+        ctx,
+        artifact_root=plan_dir,
+        pipeline_key=pipeline_name,
+    )
+    status = result.get("status")
+    return (
+        0 if status in {None, "completed"} else 1,
+        json.dumps(
+            {
+                "success": status in {None, "completed"},
+                "step": "resume",
+                "plan": plan,
+                "runtime": "native",
+                "status": status,
+                "final_stage": result.get("final_stage"),
+            },
+            default=str,
+        ),
+        "",
+    )
+
+
 # `_RESUME_ACTIVE_STATES` is now derived on demand from the realized graph
 # via `topology.predecessors(phase, policy='resume')` — see M3 Step 7.
 
@@ -857,29 +933,50 @@ def resume_plan(
                 del operation_phase, plan, plan_dir
                 return runner(list(argv or args), cwd=cwd)
 
-        operation_result = dispatch_operation_for(
-            pipeline_name,
-            OperationRequest(
-                kind=OperationKind.RESUME,
-                payload={
-                    "cursor": dict(cursor),
-                    "plan": plan,
-                    "root": root,
-                    "plan_dir": plan_dir,
-                    "runner": operation_runner,
-                },
-            ),
-        )
-        bridged = resume_result_from_operation_result(
-            operation_result,
-            plan=plan,
-            phase=phase,
-            resume_cursor=cursor,
-            state=repo.load_state().get("current_state"),
-        )
-        code = int(bridged.get("exit_code", 0 if bridged.get("success") else 1))
-        stdout = str(bridged.get("stdout", ""))
-        stderr = str(bridged.get("stderr", ""))
+        cursor_runtime = _resume_cursor_runtime(plan_dir, cursor)
+        if cursor_runtime == "corrupt_native":
+            raise CliError(
+                "corrupt_native_resume_cursor",
+                f"Plan '{plan}' has a corrupt native resume cursor",
+                extra={"resume_cursor": dict(cursor)},
+            )
+        if (
+            pipeline_name == "megaplan"
+            and runner is None
+            and cursor_runtime == "native"
+        ):
+            code, stdout, stderr = _run_canonical_native_resume(
+                plan_dir=plan_dir,
+                previous_state=repo.load_state(),
+                plan=plan,
+                pipeline_name=pipeline_name,
+                root=root,
+                cursor=cursor,
+            )
+        else:
+            operation_result = dispatch_operation_for(
+                pipeline_name,
+                OperationRequest(
+                    kind=OperationKind.RESUME,
+                    payload={
+                        "cursor": dict(cursor),
+                        "plan": plan,
+                        "root": root,
+                        "plan_dir": plan_dir,
+                        "runner": operation_runner,
+                    },
+                ),
+            )
+            bridged = resume_result_from_operation_result(
+                operation_result,
+                plan=plan,
+                phase=phase,
+                resume_cursor=cursor,
+                state=repo.load_state().get("current_state"),
+            )
+            code = int(bridged.get("exit_code", 0 if bridged.get("success") else 1))
+            stdout = str(bridged.get("stdout", ""))
+            stderr = str(bridged.get("stderr", ""))
     except RevisionConflict as error:
         repo.save_state(rollback_state)
         state = repo.load_state()

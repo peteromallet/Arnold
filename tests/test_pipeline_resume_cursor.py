@@ -149,6 +149,76 @@ def test_resume_plan_prefers_state_resume_cursor_over_typed_contract(
     assert result["phase"] == "critique"
 
 
+def test_resume_plan_routes_native_born_megaplan_cursor_to_canonical_native_dispatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import workflow
+    from arnold.pipelines.megaplan._pipeline import registry
+
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(tmp_path, "resume-native-born", phase="plan")
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    state["resume_cursor"] = {
+        "phase": "plan",
+        "retry_strategy": "fresh_session",
+        "native": {"pc": 1, "version": 1},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
+
+    called: dict[str, object] = {}
+
+    def fake_native_resume(**kwargs):  # noqa: ANN003
+        called.update(kwargs)
+        return 0, '{"ok": true}', ""
+
+    monkeypatch.setattr(workflow, "_run_canonical_native_resume", fake_native_resume)
+    monkeypatch.setattr(
+        registry,
+        "dispatch_operation_for",
+        lambda *_args, **_kwargs: pytest.fail("native-born resume used graph operation"),
+    )
+
+    result = resume_plan(tmp_path, "resume-native-born")
+
+    assert result["success"] is True
+    assert result["phase"] == "plan"
+    assert called["plan_dir"] == plan_dir
+    assert called["plan"] == "resume-native-born"
+
+
+def test_resume_plan_preserves_graph_born_resume_operation_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from arnold.pipelines.megaplan._core import workflow
+    from arnold.pipelines.megaplan._pipeline import registry
+
+    _stub_megaplan_resume(monkeypatch)
+    plan_dir = _write_resume_plan(tmp_path, "resume-graph-born", phase="plan")
+
+    monkeypatch.setattr(
+        workflow,
+        "_run_canonical_native_resume",
+        lambda **_: pytest.fail("graph-born cursor used native dispatch"),
+    )
+    operation_calls: list[object] = []
+
+    def fake_dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+        operation_calls.append((args, kwargs))
+        return {"success": True, "exit_code": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(registry, "dispatch_operation_for", fake_dispatch)
+
+    result = resume_plan(tmp_path, "resume-graph-born")
+
+    assert result["success"] is True
+    assert result["phase"] == "plan"
+    assert len(operation_calls) == 1
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert "resume_cursor" not in state
+
+
 def test_resume_plan_prefers_typed_contract_over_awaiting_user_and_normalizes_envelope_cursor(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
