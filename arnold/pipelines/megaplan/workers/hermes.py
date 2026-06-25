@@ -969,11 +969,88 @@ def _template_has_content(payload: dict, step: str) -> bool:
             if isinstance(sc, dict) and sc.get("verdict", "").strip():
                 return True
         return False
+    if step == "critique_evaluator":
+        # The critique_evaluator seed template is pre-populated with a non-empty
+        # `skipped` array (with empty `why` strings), so the generic "any
+        # non-empty array" check falsely accepts an untouched template. Require
+        # a non-empty evaluator_model, justified skips, and a real selection.
+        evaluator_model = payload.get("evaluator_model", "")
+        if not isinstance(evaluator_model, str) or not evaluator_model.strip():
+            return False
+
+        skipped = payload.get("skipped", [])
+        if not isinstance(skipped, list):
+            return False
+        for entry in skipped:
+            if not isinstance(entry, dict):
+                return False
+            why = entry.get("why", "")
+            if not isinstance(why, str) or not why.strip():
+                return False
+
+        selections = payload.get("selections", [])
+        if not isinstance(selections, list):
+            return False
+        for selection in selections:
+            if not isinstance(selection, dict):
+                continue
+            check_id = selection.get("check_id", "")
+            if not isinstance(check_id, str) or not check_id.strip():
+                continue
+            if check_id != "other":
+                return True
+            # "other" selections need enough filled fields to be real.
+            area = selection.get("area", "")
+            why = selection.get("why", "")
+            complexity = selection.get("complexity")
+            complexity_justification = selection.get("complexity_justification", "")
+            if (
+                isinstance(area, str)
+                and area.strip()
+                and isinstance(why, str)
+                and why.strip()
+                and isinstance(complexity, int)
+                and not isinstance(complexity, bool)
+                and 1 <= complexity <= 5
+                and isinstance(complexity_justification, str)
+                and complexity_justification.strip()
+            ):
+                return True
+        return False
+    if step == "gate":
+        # The gate seed template contains a placeholder accepted_tradeoffs item
+        # with empty fields. The generic array check would falsely accept that
+        # untouched seed as content, which prevents inline/summary fallback JSON
+        # from being used.
+        recommendation = payload.get("recommendation", "")
+        return isinstance(recommendation, str) and bool(recommendation.strip())
     # For other phases: any non-empty array or non-empty string
     return any(
         (isinstance(v, list) and v) or (isinstance(v, str) and v.strip())
         for k, v in payload.items()
     )
+
+
+def _persist_template_fallback_payload(output_path: Path, payload: dict, step: str) -> None:
+    """Write a valid fallback payload back to the template file when needed."""
+    if not _template_has_content(payload, step):
+        return
+
+    try:
+        if output_path.exists():
+            current_text = output_path.read_text(encoding="utf-8")
+            current_payload = json.loads(current_text)
+            if isinstance(current_payload, dict) and _template_has_content(current_payload, step):
+                return
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        pass
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"[hermes-worker] Persisted fallback JSON to template file: {output_path}", file=sys.stderr)
+    except OSError as exc:
+        print(f"[hermes-worker] Failed to persist fallback JSON to template file: {exc}", file=sys.stderr)
 
 
 def _preferred_schema_type(prop: dict) -> str:
@@ -1295,6 +1372,9 @@ def parse_agent_output(
             extra={"raw_output": raw_output, "model_output_parse_error": parse_error is not None},
         )
 
+    if output_path is not None:
+        _persist_template_fallback_payload(output_path, payload, step)
+
     result["final_response"] = raw_output
     result["messages"] = messages
     return payload, raw_output
@@ -1572,7 +1652,35 @@ def run_hermes_step(
     def _append_file_fill_instructions(fpath: Path, *, pre_populated: bool = False) -> None:
         """Append strict scratch-file fill instructions to *prompt*."""
         lines = [f"\n\nOUTPUT FILE: {fpath}"]
-        if pre_populated:
+        if step == "critique_evaluator":
+            lines.append(
+                "This file is your ONLY output. It contains a JSON template PRE-POPULATED with "
+                "all known critique lens IDs in `skipped`."
+            )
+            lines.append(
+                "Workflow:\n"
+                "1. Read the file to see the exact JSON structure and all lens IDs\n"
+                "2. Move every lens you are firing from `skipped` to `selections`\n"
+                "3. Fill `complexity` and `complexity_justification` for every selection\n"
+                "4. Fill a concrete non-empty `why` for every remaining skipped lens\n"
+                "5. Fill `evaluator_model` with your model identifier and `flag_verifications` with [] when absent\n"
+                "6. Write the completed JSON back to the exact output file path above\n\n"
+                "Do NOT put your results in a text response. The file is the only output that matters."
+            )
+        elif step == "gate":
+            lines.append(
+                "This file is your ONLY output. It contains a JSON template with the gate decision structure."
+            )
+            lines.append(
+                "Workflow:\n"
+                "1. Read the file to see the exact JSON structure\n"
+                "2. Fill `recommendation`, `rationale`, `signals_assessment`, `warnings`, "
+                "`flag_resolutions`, `accepted_tradeoffs`, and `settled_decisions`\n"
+                "3. Replace the placeholder `accepted_tradeoffs` item with [] when there are no tradeoffs\n"
+                "4. Write the completed JSON back to the exact output file path above\n\n"
+                "Do NOT put your results in a text response. The file is the only output that matters."
+            )
+        elif pre_populated:
             lines.append(
                 "This file is your ONLY output. It contains a JSON template PRE-POPULATED with "
                 "the task IDs and sense-check IDs you must review."

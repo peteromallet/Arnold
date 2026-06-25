@@ -5,7 +5,6 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -1944,11 +1943,29 @@ def _reset_chain_worktree_target(
     branch: str,
     *,
     worktree_registered: Callable[[Path, Path], bool],
+    protected_paths: list[Path] | None = None,
 ) -> None:
     """Clear the named chain worktree target for an explicit --fresh start."""
-    if not (target.exists() or worktree_registered(invoking_repo, target)):
+    target = target.resolve()
+    protected = [invoking_repo.resolve(), Path.cwd().resolve()]
+    protected.extend(path.resolve() for path in protected_paths or [])
+    if target in protected:
+        raise CliError(
+            "worktree_reset_refused",
+            f"refusing --fresh worktree reset: target path is protected: {target}",
+        )
+    registered = worktree_registered(invoking_repo, target)
+    if not (target.exists() or registered):
         return
-    if worktree_registered(invoking_repo, target):
+    if not registered:
+        raise CliError(
+            "worktree_reset_refused",
+            (
+                f"refusing --fresh worktree reset: target path exists but is not "
+                f"a git worktree registered to {invoking_repo}: {target}"
+            ),
+        )
+    if registered:
         proc = subprocess.run(
             ["git", "worktree", "remove", "--force", str(target)],
             cwd=str(invoking_repo),
@@ -1965,7 +1982,13 @@ def _reset_chain_worktree_target(
                 ),
             )
     if target.exists():
-        shutil.rmtree(target)
+        raise CliError(
+            "worktree_reset_failed",
+            (
+                f"refusing --fresh worktree reset: git worktree remove left "
+                f"{target} on disk; inspect it manually before retrying"
+            ),
+        )
     proc = subprocess.run(
         ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"],
         cwd=str(invoking_repo),
@@ -2086,6 +2109,9 @@ def _setup_chain_worktree(args: argparse.Namespace) -> None:
             target,
             name,
             worktree_registered=worktree_registered,
+            protected_paths=[
+                Path(getattr(args, "spec", "")).expanduser().resolve().parent
+            ],
         )
     if target.exists():
         raise CliError(

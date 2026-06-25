@@ -48,7 +48,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -338,6 +337,7 @@ from .git_ops import (
     _mark_pr_ready,
     _parse_pr_number_from_url,
     _pr_state,
+    _require_git_worktree_root,
     _reconcile_terminal_pr_state,
     _refresh_base_branch,
     _remote_branch_exists,
@@ -490,6 +490,7 @@ def _drive_plan(
     writer,
 ) -> DriverOutcome:
     """Run the auto driver for a single plan."""
+    original_cwd = Path.cwd()
     previous_provider = os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER")
     self_hosted = False
     if not previous_provider:
@@ -513,6 +514,10 @@ def _drive_plan(
             writer=writer,
         )
     finally:
+        try:
+            os.chdir(original_cwd)
+        except FileNotFoundError:
+            pass
         if self_hosted:
             if previous_provider is None:
                 os.environ.pop("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", None)
@@ -2083,6 +2088,7 @@ def run_chain(
     """Drive the full chain. Returns a structured JSON-serializable result."""
     root = root.resolve(strict=False)
     spec_path = spec_path.resolve(strict=False)
+    _require_git_worktree_root(root, operation="chain start")
     spec = chain_spec.load_spec(spec_path)
     anchor_requirement = chain_spec.validate_anchor_requirement(
         spec,
