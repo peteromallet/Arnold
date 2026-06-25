@@ -25,6 +25,8 @@ const FORBIDDEN_NORMAL_PATH_KEYS = new Set([
   "canvas_apply_allowed",
   "applyAllowed",
   "canvasApplyAllowed",
+  "queue_allowed",
+  "queueAllowed",
 ]);
 
 function assertCanonicalNormalPathHasNoLegacyAliases(value, path = "$") {

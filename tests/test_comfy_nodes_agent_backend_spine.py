@@ -9628,6 +9628,324 @@ def test_executor_research_turn_durability_artifacts_written(
         assert forbidden_key not in chat_payload, f"chat artifact must not contain {forbidden_key}"
 
 
+def _assert_public_rehydrate_excludes_internal_values(payload: object) -> None:
+    forbidden_keys = {
+        "session_path",
+        "session_path_resolved",
+        "latest_turn_path",
+        "latest_turn_path_resolved",
+        "detail_json_path",
+        "detail_json_path_resolved",
+        "change_details",
+        "raw_prompt",
+        "debug_payload",
+        "raw_session_state",
+        "provider_diagnostics",
+        "audit_ref",
+        "path",
+        "resolved_path",
+        "batch_turns",
+    }
+    forbidden_values = {
+        "/tmp/internal/session-path",
+        "/tmp/internal/detail.json",
+        "raw prompt sentinel must not leak",
+        "provider diagnostic sentinel must not leak",
+        "raw session state sentinel must not leak",
+        "debug payload sentinel must not leak",
+        "full batch turn sentinel must not leak",
+        "audit path sentinel must not leak",
+        "legacy envelope path sentinel must not leak",
+    }
+
+    def _walk(value: object) -> None:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                assert key not in forbidden_keys, f"public payload leaked internal key {key!r}"
+                _walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                _walk(item)
+        elif isinstance(value, str):
+            assert value not in forbidden_values, f"public payload leaked internal value {value!r}"
+
+    _walk(payload)
+
+
+def test_backend_chat_route_projects_public_rehydrate_without_path_envelope_or_raw_internals(
+    tmp_path: Path,
+) -> None:
+    from vibecomfy.comfy_nodes.agent import routes
+    from vibecomfy.comfy_nodes.agent.edit import read_session_chat
+
+    session_id = "backend-public-rehydrate"
+    turn_id = "0000"
+    session_dir = session_dir_for(tmp_path, session_id)
+    turn_dir = session_dir / "turns" / turn_id
+    turn_dir.mkdir(parents=True, exist_ok=True)
+
+    graph = {"nodes": [{"id": 2, "type": "PreviewImage"}], "links": []}
+    raw_change_details = {
+        "raw_prompt": "raw prompt sentinel must not leak",
+        "raw_session_state": "raw session state sentinel must not leak",
+        "provider_diagnostics": "provider diagnostic sentinel must not leak",
+        "diagnostics": [
+            {
+                "code": "route_compact_diagnostic",
+                "severity": "warning",
+                "message": "Compact diagnostic remains available.",
+                "debug_payload": "debug payload sentinel must not leak",
+            }
+        ],
+        "batch_turns": [
+            {
+                "stage": "queue_validate",
+                "ok": False,
+                "message": "Compact batch diagnostic remains available.",
+                "debug_payload": "full batch turn sentinel must not leak",
+            }
+        ],
+    }
+    audit_ref = {
+        "path": "audit path sentinel must not leak",
+        "resolved_path": "/tmp/internal/detail.json",
+        "sha256": "abc123",
+        "byte_count": 42,
+        "preview": "compact audit preview",
+    }
+    chat_payload = {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "session_path": "/tmp/internal/session-path",
+        "detail_json_path": "/tmp/internal/detail.json",
+        "messages": [
+            {"role": "user", "text": "edit this", "turn_id": turn_id},
+            {
+                "role": "agent",
+                "text": "Candidate ready.",
+                "turn_id": turn_id,
+                "change_details": raw_change_details,
+                "audit_ref": audit_ref,
+                "legacy_envelope": {"path": "legacy envelope path sentinel must not leak"},
+            },
+        ],
+    }
+    response_payload = {
+        "ok": True,
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "message": "Candidate ready.",
+        "graph": graph,
+        "candidate": {"graph": graph, "summary": "public candidate data"},
+        "candidate_graph_hash": "candidate-hash",
+        "candidate_structural_graph_hash": "candidate-structural-hash",
+        "submit_graph_hash": "submit-hash",
+        "submit_structural_graph_hash": "submit-structural-hash",
+        "canvas_apply_allowed": True,
+        "apply_allowed": True,
+        "queue_allowed": False,
+        "apply_eligibility": {
+            "applyable": True,
+            "reason": "queue_blocked_warning",
+            "message": "Apply is allowed, but Queue remains blocked.",
+            "warnings": ["queue_blocked"],
+        },
+        "outcome": {
+            "kind": "candidate",
+            "changes": [
+                {
+                    "uid": "2",
+                    "field_path": "widgets_values.0",
+                    "old": "before",
+                    "new": "after",
+                }
+            ],
+        },
+        "change_details": raw_change_details,
+        "audit_ref": audit_ref,
+        "debug_payload": "debug payload sentinel must not leak",
+    }
+    (turn_dir / "chat.json").write_text(json.dumps(chat_payload), encoding="utf-8")
+    (turn_dir / "request.json").write_text(json.dumps({"task": "edit this"}), encoding="utf-8")
+    (turn_dir / "response.json").write_text(json.dumps(response_payload), encoding="utf-8")
+    (turn_dir / "candidate.ui.json").write_text(json.dumps(graph), encoding="utf-8")
+    (session_dir / "session_state.json").write_text(
+        json.dumps(
+            {
+                "turns": {
+                    turn_id: {
+                        "state": "candidate",
+                        "candidate_graph_hash": "candidate-hash",
+                        "submit_graph_hash": "submit-hash",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    raw_result = read_session_chat(tmp_path, session_id, max_messages=10)
+    assert raw_result["session_path"].endswith(session_id)
+    assert "detail_json_path" in raw_result
+    raw_agent = raw_result["messages"][-1]
+    assert raw_agent["change_details"]["batch_turns"][0]["message"] == (
+        "Compact batch diagnostic remains available."
+    )
+    assert raw_result["latest_candidate"]["change_details"]["raw_prompt"] == (
+        "raw prompt sentinel must not leak"
+    )
+
+    public_result = routes._handle_agent_edit_chat(
+        {"session_id": session_id, "max_messages": 10},
+        session_root=tmp_path,
+    )
+
+    assert public_result["ok"] is True
+    assert public_result["messages"] == [
+        {
+            "role": "user",
+            "text": "edit this",
+            "turn_id": turn_id,
+            "timestamp": public_result["messages"][0]["timestamp"],
+        },
+        {
+            "role": "agent",
+            "text": "Candidate ready.",
+            "turn_id": turn_id,
+            "timestamp": public_result["messages"][1]["timestamp"],
+            "outcome": {
+                "kind": "candidate",
+                "changes": [
+                    {
+                        "uid": "2",
+                        "field_path": "widgets_values.0",
+                        "old": "before",
+                        "new": "after",
+                    }
+                ],
+            },
+        },
+    ]
+    latest = public_result["latest_candidate"]
+    assert latest["turn_id"] == turn_id
+    assert latest["graph"] == graph
+    assert latest["candidate"]["summary"] == "public candidate data"
+    assert latest["outcome"]["kind"] == "candidate"
+    assert latest["candidate_graph_hash"] == "candidate-hash"
+    assert latest["candidate_structural_graph_hash"] == "candidate-structural-hash"
+    assert latest["submit_graph_hash"] == "submit-hash"
+    assert latest["submit_structural_graph_hash"] == "submit-structural-hash"
+    assert latest["apply_eligibility"]["reason"] == "queue_blocked_warning"
+    assert latest["canvas_apply_allowed"] is True
+    assert latest["apply_allowed"] is True
+    assert latest["queue_allowed"] is False
+    assert {
+        "turn_id": turn_id,
+        "source": "messages.change_details.batch_turns[0]",
+        "message": "Compact batch diagnostic remains available.",
+    } in public_result["diagnostics"]
+    assert {
+        "turn_id": turn_id,
+        "source": "latest_candidate.change_details.diagnostics",
+        "code": "route_compact_diagnostic",
+        "severity": "warning",
+        "message": "Compact diagnostic remains available.",
+    } in public_result["diagnostics"]
+    assert {
+        "turn_id": turn_id,
+        "source": "latest_candidate",
+        "sha256": "abc123",
+        "byte_count": 42,
+        "preview": "compact audit preview",
+    } in public_result["audit_artifacts"]
+    _assert_public_rehydrate_excludes_internal_values(public_result)
+
+
+def test_backend_chat_route_replays_legacy_raw_chat_json_without_leaking_internals(
+    tmp_path: Path,
+) -> None:
+    from vibecomfy.comfy_nodes.agent import routes
+    from vibecomfy.comfy_nodes.agent.edit import read_session_chat
+
+    session_id = "legacy-raw-chat-replay"
+    turn_id = "0000"
+    turn_dir = session_dir_for(tmp_path, session_id) / "turns" / turn_id
+    turn_dir.mkdir(parents=True, exist_ok=True)
+    legacy_change_details = {
+        "raw_prompt": "raw prompt sentinel must not leak",
+        "batch_turns": [
+            {
+                "message": "Legacy compact diagnostic remains available.",
+                "stage": "lower",
+                "ok": True,
+                "debug_payload": "full batch turn sentinel must not leak",
+            }
+        ],
+    }
+    legacy_chat_payload = {
+        "session_id": session_id,
+        "turn_id": turn_id,
+        "ok": True,
+        "session_path": "/tmp/internal/session-path",
+        "detail_json_path": "/tmp/internal/detail.json",
+        "raw_envelope": {"provider_diagnostics": "provider diagnostic sentinel must not leak"},
+        "messages": [
+            {
+                "role": "user",
+                "text": "legacy request",
+                "turn_id": turn_id,
+                "change_details": {"raw_prompt": "raw prompt sentinel must not leak"},
+            },
+            {
+                "role": "agent",
+                "text": "legacy response",
+                "turn_id": turn_id,
+                "change_details": legacy_change_details,
+                "audit_ref": {
+                    "path": "audit path sentinel must not leak",
+                    "sha256": "legacyabc",
+                    "byte_count": 17,
+                    "preview": "legacy audit preview",
+                },
+            },
+        ],
+    }
+    (turn_dir / "chat.json").write_text(json.dumps(legacy_chat_payload), encoding="utf-8")
+
+    raw_result = read_session_chat(tmp_path, session_id, max_messages=10)
+    assert raw_result["messages"][-1]["change_details"]["batch_turns"][0]["message"] == (
+        "Legacy compact diagnostic remains available."
+    )
+
+    public_result = routes._handle_agent_edit_chat(
+        {"session_id": session_id, "max_messages": 10},
+        session_root=tmp_path,
+    )
+
+    assert public_result["ok"] is True
+    assert public_result["latest_candidate"] is None
+    assert public_result["messages"] == [
+        {
+            "role": "user",
+            "text": "legacy request",
+            "turn_id": turn_id,
+            "timestamp": public_result["messages"][0]["timestamp"],
+        },
+        {
+            "role": "agent",
+            "text": "legacy response",
+            "turn_id": turn_id,
+            "timestamp": public_result["messages"][1]["timestamp"],
+        },
+    ]
+    assert {
+        "turn_id": turn_id,
+        "source": "messages.change_details.batch_turns[0]",
+        "message": "Legacy compact diagnostic remains available.",
+    } in public_result["diagnostics"]
+    _assert_public_rehydrate_excludes_internal_values(public_result)
+
+
 def test_executor_non_applyable_turns_chronological_append_after_reload(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

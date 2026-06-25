@@ -94,4 +94,3 @@ PYTHONPATH=/Users/peteromalley/Documents/megaplan \
 
 * If anything blocks the run, inspect the relevant files, docs, logs, tests, scripts, chain state, and editable install state. Fix the root cause and continue.
 * Do not stop until the epic is complete and validated.
-

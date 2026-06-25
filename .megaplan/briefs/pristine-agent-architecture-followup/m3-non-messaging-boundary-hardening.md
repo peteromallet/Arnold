@@ -56,4 +56,3 @@ node --test tests/browser/agent_status_poller.test.mjs tests/browser/roundtrip_s
 .venv/bin/python -m pytest -q tests/test_comfy_nodes_agent_backend_spine.py tests/test_cli_debug_contract.py
 git diff --check origin/main...HEAD
 ```
-

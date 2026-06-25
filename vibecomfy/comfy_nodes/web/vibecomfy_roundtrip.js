@@ -48,6 +48,7 @@ import {
 } from "./comfy_adapter.js";
 import {
   createAgentEditState,
+  createAgentStateCompartments,
   RENDER_SECTIONS,
   normalizeDeltaOpsFromSubmit,
   normalizeObligationDirtySections,
@@ -61,6 +62,12 @@ import {
   readRebaselineRecovery,
   readTurnIdentity,
   extractRebaselineRecovery,
+  projectAuditArtifact,
+  projectExecutionEvent,
+  projectResponseDetail,
+  projectTranscriptMessage,
+  selectAuditArtifacts,
+  selectExecutionEvents,
 } from "./agent_edit_response_contract.js";
 
 import {
@@ -2923,7 +2930,10 @@ function scheduleAgentStatusRetry(panel, route, model, { quiet = true } = {}) {
       return;
     }
     panel.state.statusRetry.timerId = null;
-    refreshAgentStatus(panel, { quiet });
+    refreshAgentStatus(panel, { quiet }).catch(() => {
+      // Swallow retry errors: the next scheduled retry or user action will
+      // surface them through the panel state.
+    });
   }, delayMs);
   panel.state.statusRetry = { route, model, attempts, exhausted: false, timerId };
 }
@@ -4079,6 +4089,9 @@ function createAgentPanelShell() {
       ...createAgentEditState(),
       // Non-lifecycle fields (read by store handlers but write-owned elsewhere)
       history: [],
+      // Compatibility mirror: derived execution/diagnostic turn feed owned by
+      // the agent panel frontend compatibility layer. Delete after all normal
+      // consumers/tests read ExecutionEvent selectors directly.
       turns: [],
       undoStack: [],
       settingsMessage: null,
@@ -4100,8 +4113,15 @@ function createAgentPanelShell() {
       previewEnabled: false,
       expandedTurnKeys: {},
       expandedBubbleTurnKeys: {},
+      // Compatibility/debug cache: retained raw-ish detail snapshots for
+      // explicit Audit/Debug/download affordances. Delete after those surfaces
+      // read ResponseDetail/AuditArtifact/debug selectors directly.
       turnDetailSnapshots: {},
       // Chat / session rehydration state (M3)
+      // Compatibility mirror: safe transcript data owned by the agent panel
+      // frontend compatibility layer. Delete after normal consumers/tests read
+      // TranscriptMessage selectors and diagnostics stop using raw transcript
+      // fallbacks.
       chatMessages: [],
       chatLoaded: false,
       chatError: null,
@@ -4587,6 +4607,143 @@ function sortPanelTurns(turns) {
   return [...durable, ...batch, ...other].slice(0, PANEL_TURN_LIMIT);
 }
 
+function executionEventKeyForTurn(entry, index = null) {
+  if (entry?.turn_key) {
+    return `turn:${entry.turn_key}`;
+  }
+  if (entry?.entry_type === "batch") {
+    return `turn:${batchTurnKey(entry.session_id, entry.turn_number)}`;
+  }
+  if (entry?.entry_type === "durable") {
+    return `turn:${durableTurnKey(entry)}`;
+  }
+  const sessionId = stableTurnSessionId(entry?.session_id);
+  const turnId = entry?.turn_id || `entry-${index ?? "new"}`;
+  return `event:${sessionId}:${turnId}:${index ?? "new"}`;
+}
+
+function syncExecutionEventIndexes(panel) {
+  ensureRoundtripBoundaryCompartments(panel);
+  const executionEventsByKey = {};
+  panel.state.executionEvents.forEach((event, index) => {
+    const eventKey = event?.event_key || executionEventKeyForTurn(event?.turnEntry || event, index);
+    if (eventKey) {
+      executionEventsByKey[eventKey] = index;
+    }
+  });
+  panel.state.compartmentIndexes.executionEventsByKey = executionEventsByKey;
+}
+
+function executionEventTurnEntry(event) {
+  if (!event || typeof event !== "object") {
+    return null;
+  }
+  if (event.mirror === false) {
+    return null;
+  }
+  if (event.turnEntry && typeof event.turnEntry === "object") {
+    return clonePlainData(event.turnEntry);
+  }
+  if (event.entry_type === "batch" || event.entry_type === "durable") {
+    return clonePlainData(event);
+  }
+  if (Array.isArray(event.batchTurns) && event.batchTurns.length) {
+    return null;
+  }
+  if (!event.turn_id && !event.status && !event.message) {
+    return null;
+  }
+  const entry = {
+    entry_type: "durable",
+    status: event.status || "done",
+    session_id: event.session_id || null,
+    turn_id: event.turn_id || null,
+    baseline_turn_id: event.baseline_turn_id || null,
+    task: event.task || null,
+    timestamp: event.timestamp || null,
+    failure_kind: event.failure_kind || null,
+    failure_stage: event.failure_stage || null,
+    message: event.message || null,
+    audit_ref: event.audit_ref || event.auditRef || null,
+    raw_payload: event.raw_payload || null,
+  };
+  entry.turn_key = durableTurnKey(entry);
+  return entry;
+}
+
+function syncTurnsCompatibilityMirror(panel) {
+  if (!panel?.state) {
+    return [];
+  }
+  ensureRoundtripBoundaryCompartments(panel);
+  // Compatibility mirror contract: panel.state.turns is a derived
+  // execution/diagnostic mirror owned by the agent panel frontend compatibility
+  // layer. It is not normal renderer input. Delete after diagnostics, reports,
+  // and tests consume selectExecutionEvents/selectAuditArtifacts directly.
+  const turns = [];
+  for (const event of panel.state.executionEvents) {
+    const entry = executionEventTurnEntry(event);
+    if (entry) {
+      turns.push(entry);
+    }
+  }
+  panel.state.turns = sortPanelTurns(turns);
+  return panel.state.turns;
+}
+
+function upsertExecutionEvent(panel, rawEvent, options = {}) {
+  if (!panel?.state || !rawEvent || typeof rawEvent !== "object") {
+    return null;
+  }
+  ensureRoundtripBoundaryCompartments(panel);
+  const turnEntry = options.turnEntry
+    ? clonePlainData(options.turnEntry)
+    : (rawEvent.entry_type === "batch" || rawEvent.entry_type === "durable" ? clonePlainData(rawEvent) : null);
+  const eventKey = options.eventKey || executionEventKeyForTurn(turnEntry || rawEvent);
+  const projected = projectExecutionEvent({
+    ...rawEvent,
+    session_id: rawEvent.session_id || turnEntry?.session_id,
+    turn_id: rawEvent.turn_id || turnEntry?.turn_id,
+    status: rawEvent.status || turnEntry?.status,
+    message: rawEvent.message || turnEntry?.message,
+  });
+  const incoming = {
+    ...(projected ? clonePlainData(projected) : {}),
+    ...clonePlainData(rawEvent),
+    event_key: eventKey,
+    mirror: options.mirror === false ? false : true,
+    turnEntry,
+  };
+  const currentIndex = panel.state.compartmentIndexes.executionEventsByKey?.[eventKey];
+  if (Number.isInteger(currentIndex) && currentIndex >= 0 && currentIndex < panel.state.executionEvents.length) {
+    const existing = panel.state.executionEvents[currentIndex];
+    const existingTurn = executionEventTurnEntry(existing);
+    const mergedTurn = turnEntry?.entry_type === "batch" && existingTurn?.entry_type === "batch"
+      ? mergeBatchTurnEntry(existingTurn, turnEntry)
+      : (turnEntry || existingTurn);
+    panel.state.executionEvents[currentIndex] = {
+      ...existing,
+      ...incoming,
+      turnEntry: mergedTurn,
+      debugPayload: incoming.debugPayload || existing.debugPayload || null,
+      reasoning: Array.isArray(incoming.reasoning) && incoming.reasoning.length ? incoming.reasoning : existing.reasoning,
+      providerDiagnostics:
+        incoming.providerDiagnostics && (
+          (Array.isArray(incoming.providerDiagnostics) && incoming.providerDiagnostics.length)
+          || (!Array.isArray(incoming.providerDiagnostics) && typeof incoming.providerDiagnostics === "object" && Object.keys(incoming.providerDiagnostics).length)
+        )
+          ? incoming.providerDiagnostics
+          : existing.providerDiagnostics,
+      batchTurns: Array.isArray(incoming.batchTurns) && incoming.batchTurns.length ? incoming.batchTurns : existing.batchTurns,
+    };
+  } else {
+    panel.state.executionEvents.push(incoming);
+  }
+  syncExecutionEventIndexes(panel);
+  syncTurnsCompatibilityMirror(panel);
+  return incoming;
+}
+
 function pushTurnStatus(panel, status, extra = {}) {
   const entry = {
     entry_type: "durable",
@@ -4603,13 +4760,14 @@ function pushTurnStatus(panel, status, extra = {}) {
     raw_payload: extra.raw_payload || null,
   };
   entry.turn_key = durableTurnKey(entry);
-  if (status !== "pending") {
-    panel.state.turns = Array.isArray(panel.state.turns)
-      ? panel.state.turns.filter((existing) => !(existing?.entry_type === "durable" && existing.status === "pending"))
-      : [];
+  if (status !== "pending" && Array.isArray(panel?.state?.executionEvents)) {
+    panel.state.executionEvents = panel.state.executionEvents.filter((event) => {
+      const existing = executionEventTurnEntry(event);
+      return !(existing?.entry_type === "durable" && existing.status === "pending");
+    });
+    syncExecutionEventIndexes(panel);
   }
-  panel.state.turns.unshift(entry);
-  panel.state.turns = sortPanelTurns(panel.state.turns);
+  upsertExecutionEvent(panel, entry, { turnEntry: entry, eventKey: executionEventKeyForTurn(entry) });
   markAgentPanelDirty(panel, [RENDER_SECTIONS.THREAD]);
   return entry;
 }
@@ -4955,13 +5113,64 @@ function normalizeFieldChangesFromMessage(message) {
 }
 
 function changeDetailsForMessage(panel, message, snapshot = null) {
-  if (message?.change_details && typeof message.change_details === "object") {
-    return message.change_details;
+  const responseDetail = responseDetailForMessage(panel, message, snapshot);
+  const safeChangeDetails = changeDetailsFromResponseDetail(responseDetail);
+  if (safeChangeDetails) {
+    return safeChangeDetails;
   }
-  if (snapshot?.changeDetails && typeof snapshot.changeDetails === "object") {
+  if (snapshot?.changeDetails && typeof snapshot.changeDetails === "object" && snapshot?.debugPayload == null) {
     return snapshot.changeDetails;
   }
   return panel?.state?.changeDetails || null;
+}
+
+function responseDetailForMessage(panel, message, snapshot = null) {
+  const turnId = turnIdForDetailLookup(panel, message, snapshot);
+  if (!turnId) {
+    return null;
+  }
+  const detailKey = panel?.state?.compartmentIndexes?.responseDetailsByTurnId?.[turnId] || turnId;
+  return panel?.state?.responseDetails?.[detailKey] || null;
+}
+
+function turnIdForDetailLookup(panel, message = null, snapshot = null) {
+  return (
+    (typeof message?.turn_id === "string" && message.turn_id)
+    || (typeof message?.detail_turn_id === "string" && message.detail_turn_id)
+    || (typeof snapshot?.turn_id === "string" && snapshot.turn_id)
+    || (typeof snapshot?.turn?.turnId === "string" && snapshot.turn.turnId)
+    || (typeof panel?.state?.turnId === "string" && panel.state.turnId)
+    || null
+  );
+}
+
+function changeDetailsFromResponseDetail(detail) {
+  if (!detail || typeof detail !== "object") {
+    return null;
+  }
+  const changes = Array.isArray(detail.changes) ? detail.changes : [];
+  const summary =
+    typeof detail.outcome?.summary === "string" && detail.outcome.summary
+      ? detail.outcome.summary
+      : typeof detail.outcome?.question === "string" && detail.outcome.question
+        ? detail.outcome.question
+        : null;
+  if (!changes.length) {
+    return null;
+  }
+  return {
+    landed_operation_count: changes.length,
+    operations: changes.map((change) => ({
+      uid: change.uid,
+      field_path: change.fieldPath || change.field_path,
+      old: Object.prototype.hasOwnProperty.call(change, "old") ? clonePlainData(change.old) : undefined,
+      new: Object.prototype.hasOwnProperty.call(change, "new") ? clonePlainData(change.new) : undefined,
+      summary: change.fieldPath || change.field_path
+        ? `${change.fieldPath || change.field_path} changed`
+        : "field changed",
+    })),
+    done_summary: summary,
+  };
 }
 
 function normalizeBatchTurn(payload, { source = "response", sessionId = null, status = null, parentTurnId = null, canonicalActivity = null } = {}) {
@@ -5091,15 +5300,76 @@ function rememberTurnDetailSnapshot(panel, detail = {}) {
   if (!turnId) {
     return null;
   }
+  ensureRoundtripBoundaryCompartments(panel);
+  const sessionId =
+    typeof detail.session_id === "string" && detail.session_id
+      ? detail.session_id
+      : (typeof panel.state.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null);
+  const safeResponseSource = {
+    turn_id: turnId,
+    session_id: sessionId,
+    status: detail.status || detail.phase || panel.state.phase || null,
+    queueAllowed: detail.queueAllowed ?? panel.state.queueAllowed ?? null,
+    message:
+      detail.message
+      || panel.state.message
+      || panel.state.clarification?.message
+      || panel.state.failure?.user_facing_message
+      || panel.state.failure?.message
+      || panel.state.failure?.error
+      || null,
+    outcome: detail.outcome && typeof detail.outcome === "object"
+      ? detail.outcome
+      : (detail.clarification || panel.state.clarification)
+        ? {
+            kind: "clarify",
+            question: (detail.clarification || panel.state.clarification)?.message || null,
+          }
+        : detail.failure || panel.state.failure
+          ? {
+              kind: "error",
+              summary:
+                detail.failure?.user_facing_message
+                || detail.failure?.message
+                || detail.failure?.error
+                || panel.state.failure?.user_facing_message
+                || panel.state.failure?.message
+                || panel.state.failure?.error
+                || null,
+            }
+          : null,
+    changes: detail.fieldChanges ?? panel.state.lastSubmitFieldChanges ?? null,
+    changeDetails: detail.changeDetails ?? panel.state.changeDetails ?? null,
+    candidate: detail.candidateGraphHash || panel.state.candidateGraphHash
+      ? {
+          graphHash: detail.candidateGraphHash || panel.state.candidateGraphHash,
+          structuralGraphHash: detail.candidateStructuralGraphHash || null,
+          baselineGraphHash: detail.baselineGraphHash || panel.state.baselineGraphHash || null,
+        }
+      : null,
+    eligibility: detail.applyEligibility ?? panel.state.applyEligibility ?? null,
+    report: detail.candidateReport ?? panel.state.candidateReport ?? null,
+    progress: detail.progress || null,
+  };
+  recordRoundtripResponseCompartments(panel, {
+    ...safeResponseSource,
+    auditRef: detail.auditRef ?? panel.state.auditRef ?? null,
+    debugPayload: detail.debugPayload ?? panel.state.debugPayload ?? null,
+  }, {
+    includeSourceAsDebugPayload: false,
+    debugBucket: "detailSnapshots",
+  });
   if (!panel.state.turnDetailSnapshots || typeof panel.state.turnDetailSnapshots !== "object") {
     panel.state.turnDetailSnapshots = {};
   }
+  // Compatibility/debug cache: retained raw detail snapshots are debug/audit
+  // only, owned by the agent panel frontend compatibility layer for explicit
+  // Audit/Debug/download affordances. Delete after those explicit surfaces use
+  // responseDetails plus AuditArtifact/debug selectors and normal consumers no
+  // longer need legacy detail mirrors.
   const snapshot = {
     turn_id: turnId,
-    session_id:
-      typeof detail.session_id === "string" && detail.session_id
-        ? detail.session_id
-        : (typeof panel.state.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null),
+    session_id: sessionId,
     phase: detail.phase || panel.state.phase,
     message:
       detail.message
@@ -5135,6 +5405,8 @@ function detailSnapshotForMessage(panel, message) {
   if (!turnId) {
     return null;
   }
+  // Explicit-surface compatibility only. Normal response detail lookups should
+  // use responseDetails through responseDetailForMessage/changeDetailsForMessage.
   return panel?.state?.turnDetailSnapshots?.[turnId] || null;
 }
 
@@ -5254,14 +5526,19 @@ function buildSyntheticAgentMessage(panel) {
           && (!turnId || msg.turn_id === turnId)
         ))
       : false;
-    return alreadyInThread ? null : synthetic;
+    return alreadyInThread ? null : mutableTranscriptMessage(synthetic);
   }
   return null;
 }
 
+function mutableTranscriptMessage(message) {
+  const projected = projectTranscriptMessage(message);
+  return projected ? clonePlainData(projected) : null;
+}
+
 function makePendingResponseChatMessage(panel, task, progress, submitEpoch) {
   const epoch = submitEpoch || Date.now();
-  return {
+  return mutableTranscriptMessage({
     role: "agent",
     text: "",
     source: "agent-edit",
@@ -5275,7 +5552,91 @@ function makePendingResponseChatMessage(panel, task, progress, submitEpoch) {
     session_id: panel?.state?.sessionId || null,
     task: typeof task === "string" ? task : null,
     timestamp: new Date().toISOString(),
+  });
+}
+
+function ensureRoundtripBoundaryCompartments(panel) {
+  if (!panel?.state) {
+    return;
+  }
+  if (!Array.isArray(panel.state.transcriptMessages)) {
+    panel.state.transcriptMessages = [];
+  }
+  if (!panel.state.responseDetails || typeof panel.state.responseDetails !== "object") {
+    panel.state.responseDetails = {};
+  }
+  if (!Array.isArray(panel.state.executionEvents)) {
+    panel.state.executionEvents = [];
+  }
+  if (!Array.isArray(panel.state.auditArtifacts)) {
+    panel.state.auditArtifacts = [];
+  }
+  if (!panel.state.debugDiagnostics || typeof panel.state.debugDiagnostics !== "object") {
+    panel.state.debugDiagnostics = {};
+  }
+  if (!panel.state.compartmentIndexes || typeof panel.state.compartmentIndexes !== "object") {
+    panel.state.compartmentIndexes = {};
+  }
+  panel.state.compartmentIndexes.responseDetailsByTurnId ||= {};
+  panel.state.compartmentIndexes.executionEventsByKey ||= {};
+  panel.state.compartmentIndexes.auditArtifactsByTurnId ||= {};
+}
+
+function recordRoundtripResponseCompartments(panel, source, options = {}) {
+  if (!source || typeof source !== "object") {
+    return;
+  }
+  const {
+    includeSourceAsDebugPayload = true,
+    debugBucket = "local",
+  } = options;
+  ensureRoundtripBoundaryCompartments(panel);
+  const detail = projectResponseDetail(source);
+  const turnId = detail?.turn?.turnId || source.turn_id || source.turnId || null;
+  if (detail && typeof turnId === "string" && turnId) {
+    panel.state.responseDetails[turnId] = detail;
+    panel.state.compartmentIndexes.responseDetailsByTurnId[turnId] = turnId;
+  }
+  const explicitDebugPayload =
+    source.debugPayload
+    || source.debug_payload
+    || source.debug
+    || (includeSourceAsDebugPayload ? (source.raw || source) : null);
+  const diagnosticSource = {
+    ...source,
+    ...(explicitDebugPayload ? { debugPayload: explicitDebugPayload } : {}),
   };
+  const event = projectExecutionEvent(diagnosticSource);
+  const hasExplicitDiagnosticData = Boolean(
+    explicitDebugPayload
+    || (Array.isArray(event?.reasoning) && event.reasoning.length)
+    || (Array.isArray(event?.providerDiagnostics) && event.providerDiagnostics.length)
+    || (Array.isArray(event?.batchTurns) && event.batchTurns.length),
+  );
+  if (event && hasExplicitDiagnosticData) {
+    const eventKey = `${event.session_id || "session"}:${event.turn_id || `entry-${panel.state.executionEvents.length}`}:diagnostic`;
+    upsertExecutionEvent(panel, event, { eventKey, mirror: false });
+    panel.state.debugDiagnostics[debugBucket] = [
+      ...(Array.isArray(panel.state.debugDiagnostics[debugBucket]) ? panel.state.debugDiagnostics[debugBucket] : []),
+      {
+        key: eventKey,
+        session_id: event.session_id,
+        turn_id: event.turn_id,
+        debugPayload: event.debugPayload,
+        reasoning: event.reasoning,
+        providerDiagnostics: event.providerDiagnostics,
+        batchTurns: event.batchTurns,
+      },
+    ];
+  }
+  const artifact = projectAuditArtifact(source);
+  if (artifact?.auditRef || (Array.isArray(artifact?.artifactRefs) && artifact.artifactRefs.length)) {
+    const index = panel.state.auditArtifacts.length;
+    panel.state.auditArtifacts.push(artifact);
+    if (artifact.turn_id) {
+      panel.state.compartmentIndexes.auditArtifactsByTurnId[artifact.turn_id] = index;
+    }
+  }
 }
 
 function findPendingResponseMessage(panel) {
@@ -5299,7 +5660,12 @@ function updatePendingResponseProgress(panel, progress, label = null, canonicalA
   // Use canonical headline as the progress label.
   pending.progress_label = typeof label === "string" && label ? label : null;
   if (canonicalActivity && typeof canonicalActivity === "object") {
-    pending.canonical_activity = clonePlainData(canonicalActivity);
+    recordRoundtripResponseCompartments(panel, {
+      session_id: panel?.state?.sessionId || null,
+      turn_id: panel?.state?.turnId || null,
+      message: typeof label === "string" && label ? label : null,
+      debugPayload: { canonical_activity: canonicalActivity },
+    });
   }
   // Only blank the text if we have a meaningful progress update to show.
   const hasActivePhase = progress.decide === "active"
@@ -5308,6 +5674,21 @@ function updatePendingResponseProgress(panel, progress, label = null, canonicalA
   if (hasActivePhase || typeof label === "string") {
     pending.text = "";
   }
+  // Mirror the progress update onto the canonical transcript source so that
+  // renderers using selectTranscriptMessages see live websocket progress.
+  const transcriptMessages = Array.isArray(panel?.state?.transcriptMessages)
+    ? panel.state.transcriptMessages
+    : [];
+  const transcriptPending = transcriptMessages.find((message) => (
+    message?.role === "agent" && (message.pending_response === true || message.executor_pending === true)
+  ));
+  if (transcriptPending && transcriptPending !== pending) {
+    transcriptPending.progress = progress;
+    transcriptPending.progress_label = pending.progress_label;
+    if (hasActivePhase || typeof label === "string") {
+      transcriptPending.text = "";
+    }
+  }
   return true;
 }
 
@@ -5315,10 +5696,15 @@ function promotePendingResponseMessage(panel, result, options = {}) {
   if (!Array.isArray(panel?.state?.chatMessages)) {
     return false;
   }
-  const pending = findPendingResponseMessage(panel);
-  if (!pending) {
+  const pendingIndex = panel.state.chatMessages.findIndex((message) => (
+    message?.role === "agent" && (message.pending_response === true || message.executor_pending === true)
+  ));
+  const pendingBase = pendingIndex >= 0 ? panel.state.chatMessages[pendingIndex] : null;
+  if (!pendingBase) {
     return false;
   }
+  const pending = clonePlainData(pendingBase);
+  recordRoundtripResponseCompartments(panel, result);
   const terminalText = options.message
     || result?.message
     || result?.reply
@@ -5370,6 +5756,13 @@ function promotePendingResponseMessage(panel, result, options = {}) {
   if (panel?.state?.applyEligibility && typeof panel.state.applyEligibility === "object") {
     pending.apply_eligibility = clonePlainData(panel.state.applyEligibility);
   }
+  const safePending = mutableTranscriptMessage(pending);
+  if (safePending) {
+    panel.state.chatMessages[pendingIndex] = safePending;
+    panel.state.transcriptMessages = panel.state.chatMessages
+      .map(mutableTranscriptMessage)
+      .filter(Boolean);
+  }
   return true;
 }
 
@@ -5384,6 +5777,10 @@ function clearPendingResponseMessages(panel) {
   ));
   const changed = panel.state.chatMessages.length !== before;
   if (changed && panel?.state) {
+    panel.state.chatMessages = panel.state.chatMessages
+      .map(mutableTranscriptMessage)
+      .filter(Boolean);
+    panel.state.transcriptMessages = panel.state.chatMessages.slice();
     // Clear only the active activity state; terminal progress stays.
     const progress = panel.state.executorProgress;
     if (progress && typeof progress === "object") {
@@ -5433,15 +5830,10 @@ function upsertBatchTurn(panel, payload, options = {}) {
   if (!normalized) {
     return null;
   }
-  const existingIndex = panel.state.turns.findIndex(
-    (entry) => entry?.entry_type === "batch" && entry.turn_key === normalized.turn_key,
-  );
-  if (existingIndex >= 0) {
-    panel.state.turns[existingIndex] = mergeBatchTurnEntry(panel.state.turns[existingIndex], normalized);
-  } else {
-    panel.state.turns.push(normalized);
-  }
-  panel.state.turns = sortPanelTurns(panel.state.turns);
+  upsertExecutionEvent(panel, payload, {
+    turnEntry: normalized,
+    eventKey: executionEventKeyForTurn(normalized),
+  });
   restoreExpandedTurnKeys(panel, previousExpanded);
   markAgentPanelDirty(panel, [RENDER_SECTIONS.THREAD]);
   return normalized;
@@ -5456,12 +5848,12 @@ function reconcileResponseBatchTurns(panel, result) {
     typeof result?.session_id === "string" && result.session_id
       ? result.session_id
       : (typeof panel?.state?.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null);
-  const nextTurns = [];
   // Derive canonical activity feed from current batch turns and merge with response turns.
   const existingBatchByKey = new Map();
-  for (const entry of Array.isArray(panel?.state?.turns) ? panel.state.turns : []) {
+  const existingEvents = Array.isArray(panel?.state?.executionEvents) ? panel.state.executionEvents : [];
+  for (const event of existingEvents) {
+    const entry = executionEventTurnEntry(event);
     if (entry?.entry_type !== "batch") {
-      nextTurns.push(entry);
       continue;
     }
     if (responseSessionId && entry.session_id === responseSessionId) {
@@ -5476,9 +5868,15 @@ function reconcileResponseBatchTurns(panel, result) {
       }
       continue;
     }
-    nextTurns.push(entry);
   }
-  panel.state.turns = nextTurns;
+  if (responseSessionId && Array.isArray(panel?.state?.executionEvents)) {
+    panel.state.executionEvents = panel.state.executionEvents.filter((event) => {
+      const entry = executionEventTurnEntry(event);
+      return !(entry?.entry_type === "batch" && entry.session_id === responseSessionId);
+    });
+    syncExecutionEventIndexes(panel);
+    syncTurnsCompatibilityMirror(panel);
+  }
   const finalIndex = result.batch_turns.length - 1;
   const resultApplyCandidate = (() => {
     try {
@@ -5732,9 +6130,7 @@ function collectThreadMessageEntries(panel) {
 
 function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
   return renderChatBubbleNodeImpl(bubble, panel, msg, messageKey, messageIndex, {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -5743,7 +6139,6 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
     clearNode,
     createBubbleDetailSection,
     createDetails,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
     showIssueModal,
@@ -5753,10 +6148,8 @@ function renderChatBubbleNode(bubble, panel, msg, messageKey, messageIndex) {
 
 function reconcileChatBubbles(panel, messagesMount, displayEntries) {
   return reconcileChatBubblesImpl(panel, messagesMount, displayEntries, {
-    appendAuditDetail,
     appendCandidateDetail,
     appendChildOnce,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -5765,7 +6158,6 @@ function reconcileChatBubbles(panel, messagesMount, displayEntries) {
     clearNode,
     createBubbleDetailSection,
     createDetails,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
     messageSignature,
@@ -5874,12 +6266,11 @@ function installAgentPanelDebugHook() {
 
 function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
   return populateAgentBubbleDetailImpl(target, panel, message, snapshot, {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
+    candidateActionState,
     changeDetailsForMessage,
     clearNode,
     createBubbleDetailSection,
@@ -6624,7 +7015,7 @@ function _computeGhostDimensions(cn, ctx) {
   var PAD_Y = 12;
   var MIN_W = 140;
 
-  var title = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+  var title = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
   var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
   var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
   var widgetValues = readWidgetValues(cn);
@@ -6645,11 +7036,11 @@ function _computeGhostDimensions(cn, ctx) {
 
     var maxSlotW = 0;
     for (var s = 0; s < inputs.length; s += 1) {
-      var lbl = inputs[s] && inputs[s].name;
+      var lbl = safePreviewOverlayText(inputs[s] && inputs[s].name, "");
       if (lbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(lbl, 30)).width);
     }
     for (var t = 0; t < outputs.length; t += 1) {
-      var olbl = outputs[t] && outputs[t].name;
+      var olbl = safePreviewOverlayText(outputs[t] && outputs[t].name, "");
       if (olbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(_trunc(olbl, 30)).width);
     }
 
@@ -6674,10 +7065,28 @@ function _computeGhostDimensions(cn, ctx) {
   }
 }
 
+const FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS = [
+  /\b(?:canvas_apply_allowed|canvasApplyAllowed|queue_allowed|queueAllowed)\b/i,
+  /\b(?:debug_payload|debugPayload|audit_ref|auditRef|raw_path|rawPath|artifact_path|artifactPath)\b/i,
+  /\/(?:real\/)?ComfyUI\/out\/editor_sessions\//i,
+  /\bturns\/\d+\/(?:response|messages|candidate|debug)\.[a-z0-9]+/i,
+  /\b(?:ProviderError|Traceback|stack trace|engine diagnostics|raw diagnostic)\b/i,
+  /\b(?:model prompt|system prompt|prompt messages)\b/i,
+  /\b(?:token budget|exit mode|remaining batches)\b/i,
+];
+
+function safePreviewOverlayText(text, fallback = "") {
+  const value = String(text == null ? "" : text).trim();
+  if (!value) return "";
+  return FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS.some((pattern) => pattern.test(value))
+    ? fallback
+    : value;
+}
+
 // ── Widget-value preview text (T3) ────────────────────────────────────────
 function widgetValuePreviewText(value) {
   if (value == null) return "";
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return safePreviewOverlayText(value, "");
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   if (Array.isArray(value)) return "[…]";
   return "{…}";
@@ -6835,14 +7244,14 @@ export function drawPreviewOverlay(ctx, diff) {
       if (field && field.new_value !== null && field.new_value !== undefined) {
         label += ": " + field.new_value;
       }
-      return _trunc(label, 48);
+      return _trunc(safePreviewOverlayText(label, "field"), 48);
     };
 
     var _fieldNewValueLabel = function (field) {
       if (!field || field.new_value === null || field.new_value === undefined) {
         return "";
       }
-      return String(field.new_value);
+      return safePreviewOverlayText(field.new_value, "");
     };
 
     var editedFieldsByUid = new Map();
@@ -7080,7 +7489,7 @@ export function drawPreviewOverlay(ctx, diff) {
           ctx.textBaseline = "top";
 
           // Title
-          var titleText = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+          var titleText = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
           var displayTitle = _trunc(titleText, 40);
           ctx.fillStyle = addedTextColor;
           ctx.fillText(displayTitle, cx + 10, cy + (TITLE_H - 14) / 2);
@@ -7097,13 +7506,13 @@ export function drawPreviewOverlay(ctx, diff) {
             if (si < inputs.length && inputs[si] && inputs[si].name) {
               ctx.fillStyle = addedTextColor;
               ctx.textAlign = "left";
-              ctx.fillText(_trunc(inputs[si].name, 30), cx + 16, slotY);
+              ctx.fillText(_trunc(safePreviewOverlayText(inputs[si].name, ""), 30), cx + 16, slotY);
             }
             // Output label (right side)
             if (si < outputs.length && outputs[si] && outputs[si].name) {
               ctx.fillStyle = addedTextColor;
               ctx.textAlign = "right";
-              ctx.fillText(_trunc(outputs[si].name, 30), cx + cw - 16, slotY);
+              ctx.fillText(_trunc(safePreviewOverlayText(outputs[si].name, ""), 30), cx + cw - 16, slotY);
             }
           }
 
@@ -7497,6 +7906,7 @@ function installQueueGuard() {
 }
 
 function appendCandidateDetail(body, panel, message = null, snapshot = null) {
+  const normalDetailMode = Boolean(snapshot);
   const candidateGraphPresent = candidateGraphPresentForBubble(message, snapshot)
     || (!message && !snapshot && Boolean(panel.state.candidateGraph));
   const phase = snapshot?.phase || panel.state.phase;
@@ -7543,9 +7953,9 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
     }
     return;
   }
-  const debugPayload = snapshot?.debugPayload || panel.state.debugPayload;
-  const stageInfo = getBackendStageInfo(debugPayload);
-  if (stageInfo) {
+  const debugPayload = normalDetailMode ? null : (snapshot?.debugPayload || panel.state.debugPayload);
+  const stageInfo = debugPayload ? getBackendStageInfo(debugPayload) : null;
+  if (!normalDetailMode && stageInfo) {
     appendTextLine(
       body,
       `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
@@ -7561,11 +7971,13 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
   }
   const actionState = candidateActionState(panel, message, snapshot);
   const eligibility = actionState.eligibility;
-  const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
-  const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
-  appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
+  if (!normalDetailMode) {
+    const canvasApplyAllowed = snapshot?.canvasApplyAllowed ?? panel.state.canvasApplyAllowed;
+    const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
+    appendTextLine(body, `canvas_apply_allowed=${String(canvasApplyAllowed)}`, canvasApplyAllowed ? "#4caf50" : "#ffb86c");
+    appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
+  }
   appendTextLine(body, `apply_eligibility=${eligibility.reason}`, eligibility.applyable ? "#4caf50" : "#ffb86c");
-  appendTextLine(body, `queue_allowed=${String(queueAllowed)}`, queueAllowed ? "#4caf50" : "#ffb86c");
   if (eligibility.message) {
     appendTextLine(body, eligibility.message, "#9ed0ff");
   }
@@ -7620,7 +8032,9 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
       appendTextLine(body, actionState.blockerMessage, "#9ed0ff");
     }
   }
-  const rows = collectDiffRows(snapshot?.candidateReport || message?.report || panel.state.candidateReport);
+  const report = snapshot?.candidateReport || (!normalDetailMode ? (message?.report || panel.state.candidateReport) : null);
+  const queueIssueReport = report;
+  const rows = collectDiffRows(report);
   if (!rows.length) {
     body.appendChild(muted("Candidate returned without report rows."));
   }
@@ -7643,26 +8057,28 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
     lowered: rows.filter((item) => item.text.startsWith("lowered:")).length,
   };
   body.appendChild(createDetails("affected node preview", affected));
-  const issues = collectQueueIssues(snapshot?.candidateReport || message?.report || panel.state.candidateReport);
+  const issues = collectQueueIssues(queueIssueReport);
   if (issues.length) {
     for (const issue of issues) {
       appendTextLine(body, `${issue.code}: ${issue.message}`, issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
-      if (issue.detail && Object.keys(issue.detail).length) {
+      if (!normalDetailMode && issue.detail && Object.keys(issue.detail).length) {
         body.appendChild(createDetails("queue blocker detail", issue.detail));
       }
     }
   }
   const artifacts = debugPayload?.artifacts;
-  if (artifacts && typeof artifacts === "object") {
+  if (!normalDetailMode && artifacts && typeof artifacts === "object") {
     for (const [name, value] of Object.entries(artifacts)) {
       appendCodeLine(body, `${name}: ${value}`);
     }
   }
-  const auditRef = snapshot?.auditRef || panel.state.auditRef;
+  const auditRef = !normalDetailMode ? (snapshot?.auditRef || panel.state.auditRef) : null;
   if (auditRef?.path) {
     appendCodeLine(body, `audit: ${auditRef.path}`, "#9ed0ff");
   }
-  body.appendChild(createDetails("raw report", snapshot?.candidateReport || message?.report || panel.state.candidateReport || {}));
+  if (!normalDetailMode) {
+    body.appendChild(createDetails("raw report", report || {}));
+  }
 }
 
 function renderCandidate(panel) {
@@ -7675,23 +8091,26 @@ function renderCandidate(panel) {
 }
 
 function appendFailureDetail(body, panel, snapshot = null) {
+  const normalDetailMode = Boolean(snapshot);
   const failure = snapshot?.failure || panel.state.failure;
   if (!failure) {
     return;
   }
   appendTextLine(body, `${failure.kind || "Error"} @ ${failure.stage || "unknown"}`, "#ffd6d6");
   appendTextLine(body, failure.user_facing_message || failure.message || failure.error || "Unknown failure", "#edf2f7");
-  appendTextLine(body, `retryable=${String(Boolean(failure.retryable))} graph_unchanged=${String(Boolean(failure.graph_unchanged))}`, "#8d93a1");
-  appendTextLine(body, `canvas_apply_allowed=${String(Boolean(failure.canvas_apply_allowed))} queue_allowed=${String(Boolean(failure.queue_allowed))}`, "#8d93a1");
+  if (!normalDetailMode) {
+    appendTextLine(body, `retryable=${String(Boolean(failure.retryable))} graph_unchanged=${String(Boolean(failure.graph_unchanged))}`, "#8d93a1");
+    appendTextLine(body, `canvas_apply_allowed=${String(Boolean(failure.canvas_apply_allowed))} queue_allowed=${String(Boolean(failure.queue_allowed))}`, "#8d93a1");
+  }
   const stageInfo = getBackendStageInfo(failure);
-  if (stageInfo) {
+  if (!normalDetailMode && stageInfo) {
     appendTextLine(
       body,
       `backend stage: ${stageInfo.stage || "unknown"}${stageInfo.progress != null ? ` (${stageInfo.progress})` : ""}`,
       "#9ed0ff",
     );
   }
-  if (failure.next_action) {
+  if (!normalDetailMode && failure.next_action) {
     appendTextLine(body, `next: ${failure.next_action}`, "#8d93a1");
   }
   if (panel.state.rebaselinePending) {
@@ -7707,14 +8126,14 @@ function appendFailureDetail(body, panel, snapshot = null) {
       appendCodeLine(body, `expected_baseline: ${pending.last_known_baseline_graph_hash}`, "#8d93a1");
     }
   }
-  if (failure.session_id || failure.turn_id || failure.baseline_turn_id) {
+  if (!normalDetailMode && (failure.session_id || failure.turn_id || failure.baseline_turn_id)) {
     appendTextLine(
       body,
       `session=${failure.session_id || "new"} turn=${failure.turn_id || "pending"} baseline=${failure.baseline_turn_id || "none"}`,
       "#8d93a1",
     );
   }
-  if (failure.audit_error) {
+  if (!normalDetailMode && failure.audit_error) {
     appendTextLine(body, `audit_error: ${failure.audit_error}`, "#ffb86c");
   }
   const recovery = panel.state.rebaselineRecovery;
@@ -7724,10 +8143,12 @@ function appendFailureDetail(body, panel, snapshot = null) {
       appendCodeLine(body, `expected_baseline: ${recovery.last_known_baseline_graph_hash}`, "#8d93a1");
     }
   }
-  if (failure.agent_failure_context && Object.keys(failure.agent_failure_context).length) {
+  if (!normalDetailMode && failure.agent_failure_context && Object.keys(failure.agent_failure_context).length) {
     body.appendChild(createDetails("agent failure context", failure.agent_failure_context));
   }
-  body.appendChild(createDetails("raw failure", failure));
+  if (!normalDetailMode) {
+    body.appendChild(createDetails("raw failure", failure));
+  }
 }
 
 function renderFailure(panel) {
@@ -7740,17 +8161,36 @@ function renderFailure(panel) {
 }
 
 function appendQueueDetail(body, panel, snapshot = null) {
+  const normalDetailMode = Boolean(snapshot);
+  if (normalDetailMode) {
+    const queueDisplay = snapshot?.queueDisplay;
+    if (!queueDisplay || typeof queueDisplay !== "object") {
+      return;
+    }
+    if (queueDisplay.message) {
+      appendTextLine(body, queueDisplay.message, queueDisplay.state === "blocked" ? "#ffb86c" : "#4caf50");
+    }
+    if (Array.isArray(queueDisplay.issues) && queueDisplay.issues.length) {
+      for (const issue of queueDisplay.issues) {
+        appendTextLine(body, issue.message || issue.code || "Queue issue", issue.severity === "error" ? "#ffb86c" : "#9ed0ff");
+      }
+    }
+    if (!queueDisplay.message && !queueDisplay.issues?.length && queueDisplay.reason) {
+      appendTextLine(body, queueDisplay.reason, queueDisplay.state === "blocked" ? "#ffb86c" : "#8d93a1");
+    }
+    return;
+  }
   const queueGuard = snapshot?.queueGuard || panel.state.queueGuard || getQueueGuardStateForPanel();
   const issues = collectQueueIssues(snapshot?.candidateReport || panel.state.candidateReport);
   if (queueGuard.fallbackWarning) {
     appendTextLine(body, queueGuard.fallbackWarning, "#ffb86c");
   }
-  if (queueGuard.lastBlockNotice?.message) {
+  if (queueGuard.lastBlockNotice?.message && !normalDetailMode) {
     appendTextLine(body, queueGuard.lastBlockNotice.message, "#ff7f7f");
   }
-  if (queueGuard.hookInstalled) {
+  if (!normalDetailMode && queueGuard.hookInstalled) {
     appendTextLine(body, `native queue guard: active via ${queueGuard.hookPath}`, "#4caf50");
-  } else {
+  } else if (!normalDetailMode) {
     appendTextLine(body, "native queue guard: panel warning fallback only", "#8d93a1");
   }
   const queueAllowed = snapshot?.queueAllowed ?? panel.state.queueAllowed;
@@ -7791,10 +8231,11 @@ function turnIdForBubbleDetail(message = null, snapshot = null) {
 
 function turnEntriesForBubbleDetail(panel, message = null, snapshot = null) {
   const turnId = turnIdForBubbleDetail(message, snapshot);
-  if (!turnId || !Array.isArray(panel?.state?.turns)) {
+  if (!turnId) {
     return [];
   }
-  return panel.state.turns
+  const legacyTurns = Array.isArray(panel?.state?.turns) ? panel.state.turns : [];
+  const matchingLegacy = legacyTurns
     .map((entry, index) => ({ entry, index }))
     .filter(({ entry }) => (
       entry
@@ -7805,6 +8246,55 @@ function turnEntriesForBubbleDetail(panel, message = null, snapshot = null) {
         || entry.raw_payload?.turn_id === turnId
       )
     ));
+  if (matchingLegacy.length) {
+    return matchingLegacy;
+  }
+  const explicitEvents = selectExecutionEvents(panel);
+  const auditArtifacts = selectAuditArtifacts(panel);
+  const explicitEntries = explicitEvents
+    .map((event, index) => {
+      if (!event || typeof event !== "object") {
+        return null;
+      }
+      const eventTurnId = event.turn_id || null;
+      if (eventTurnId !== turnId) {
+        return null;
+      }
+      const artifact = auditArtifacts.find((candidate) => (
+        candidate?.turn_id === eventTurnId
+        && (!event.session_id || !candidate.session_id || candidate.session_id === event.session_id)
+      ));
+      return {
+        index,
+        entry: {
+          entry_type: "durable",
+          turn_id: eventTurnId,
+          session_id: event.session_id || panel?.state?.sessionId || null,
+          status: event.status || "unknown",
+          message: event.message || null,
+          audit_ref: artifact?.auditRef || null,
+          batchTurns: Array.isArray(event.batchTurns) ? event.batchTurns : null,
+          reasoning: Array.isArray(event.reasoning) ? event.reasoning : null,
+          providerDiagnostics: Array.isArray(event.providerDiagnostics) ? event.providerDiagnostics : null,
+          debugPayload: event.debugPayload || null,
+        },
+      };
+    })
+    .filter(Boolean);
+  const seen = new Set();
+  return matchingLegacy.concat(explicitEntries).filter(({ entry }) => {
+    const key = [
+      entry.entry_type || "entry",
+      entry.turn_id || entry.parent_turn_id || "",
+      entry.audit_ref?.path || "",
+      entry.message || "",
+    ].join("|");
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function appendAuditRefLines(body, auditRef) {
@@ -8413,11 +8903,9 @@ function renderThreadSection(panel) {
 
 function agentPanelThreadRenderDeps() {
   return {
-    appendAuditDetail,
     appendChildOnce,
     appendCodeLine,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -8430,7 +8918,6 @@ function agentPanelThreadRenderDeps() {
     createBubbleDetailSection,
     createDetails,
     currentAgentPanel,
-    detailSnapshotForMessage,
     downloadTurnAudit,
     el,
     ensureThreadRenderState,
@@ -8754,6 +9241,7 @@ async function newAgentConversation(panel) {
   const obligations = transition(panel, "NEW_CONVERSATION");
   // Clear chat / session state
   panel.state.chatMessages = [];
+  Object.assign(panel.state, createAgentStateCompartments());
   resetThreadRenderState(panel);
   panel.state.chatLoaded = false;
   panel.state.chatError = null;
@@ -9009,7 +9497,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
     // rehydrate reconciliation can distinguish in-flight optimistic entries
     // from stale/cancelled ones without duplicating or resurrecting messages.
     const idempotencyKey = snapshot?.idempotencyKey || "";
-    panel.state.chatMessages.push({
+    panel.state.chatMessages.push(mutableTranscriptMessage({
       role: "user",
       text: task,
       optimistic: true,
@@ -9017,10 +9505,13 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       submit_epoch: submitEpoch,
       idempotency_key: idempotencyKey || undefined,
       timestamp: new Date().toISOString(),
-    });
+    }));
     const pendingProgress = createExecutorProgressSnapshot({ decide: "active" });
     panel.state.executorProgress = pendingProgress;
     panel.state.chatMessages.push(makePendingResponseChatMessage(panel, task, pendingProgress, submitEpoch));
+    panel.state.transcriptMessages = panel.state.chatMessages
+      .map(mutableTranscriptMessage)
+      .filter(Boolean);
     ensureThreadRenderState(panel).forceScrollOnNextRender = true;
     pushHistory(panel, "pending", pendingMessage);
     pushTurnStatus(panel, "pending", {

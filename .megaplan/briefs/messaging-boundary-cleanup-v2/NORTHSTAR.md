@@ -32,4 +32,3 @@ This epic owns transcript/detail/event safety. The pristine architecture
 follow-up owns non-message architecture hardening: backend contract guardrails,
 status/composer/candidate ownership, docs, artifact hygiene, and compatibility
 ledger policy.
-

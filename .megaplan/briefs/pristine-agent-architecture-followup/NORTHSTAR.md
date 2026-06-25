@@ -38,4 +38,3 @@ session/audit/CLI debug ownership, status/composer/candidate frontend ownership,
 docs, artifact hygiene, and compatibility-ledger policy. Messaging Boundary
 Cleanup V2 owns transcript/detail/event safety and raw execution data exclusion
 from normal UI render paths.
-

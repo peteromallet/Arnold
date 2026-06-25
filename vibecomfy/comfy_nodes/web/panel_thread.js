@@ -11,6 +11,9 @@ import {
   readFieldChanges,
   readStageSnapshot,
   routeAllowsApplyAffordances,
+  projectResponseDetail,
+  selectResponseDetails,
+  selectTranscriptMessages,
 } from "./agent_edit_response_contract.js";
 import { routeStatusState } from "./agent_status_poller.js";
 
@@ -22,16 +25,8 @@ const RATING_PACK_SHARE_DEFAULT_LS_KEY = "vibecomfy_pack_share_default";
 const RATING_WIDGET_DISABLED_LS_KEY = "vibecomfy_rating_widget_disabled";
 
 export function collectThreadMessageEntries(panel, deps = {}) {
-  const { buildSyntheticAgentMessage, messageStableKey } = deps;
-  const threadMessages = Array.isArray(panel?.state?.chatMessages)
-    ? panel.state.chatMessages.slice()
-    : [];
-  const syntheticAgentMessage = typeof buildSyntheticAgentMessage === "function"
-    ? buildSyntheticAgentMessage(panel)
-    : null;
-  if (syntheticAgentMessage) {
-    threadMessages.push(syntheticAgentMessage);
-  }
+  const { messageStableKey } = deps;
+  const threadMessages = selectTranscriptMessages(panel);
   return threadMessages.map((msg, index) => ({
     msg,
     index,
@@ -171,6 +166,9 @@ function applyCandidateForRender(panel, message = null, detailSnapshot = null) {
 }
 
 function fieldChangesForRender(message, detailSnapshot = null) {
+  if (Array.isArray(detailSnapshot?.changes)) {
+    return detailSnapshot.changes;
+  }
   const snapshotChanges = detailSnapshot?.fieldChanges;
   if (snapshotChanges && (typeof snapshotChanges === "object" || Array.isArray(snapshotChanges))) {
     return snapshotChanges;
@@ -217,6 +215,83 @@ function allFieldChangesForRender(message, detailSnapshot = null) {
   return directChanges.concat(outcomeChanges, batchTurnChanges);
 }
 
+function responseDetailForMessage(panel, message = null, snapshot = null) {
+  const turnId =
+    (typeof message?.turn_id === "string" && message.turn_id)
+    || (typeof message?.detail_turn_id === "string" && message.detail_turn_id)
+    || (typeof snapshot?.turn?.turnId === "string" && snapshot.turn.turnId)
+    || (typeof snapshot?.turn_id === "string" && snapshot.turn_id)
+    || null;
+  if (!turnId) {
+    return null;
+  }
+  const details = selectResponseDetails(panel);
+  const detailKey = panel?.state?.compartmentIndexes?.responseDetailsByTurnId?.[turnId] || turnId;
+  return details?.[detailKey]
+    || details?.[turnId]
+    || projectResponseDetail(message?.response || message)
+    || null;
+}
+
+export function normalDetailSnapshotForRender(detail) {
+  if (!detail || typeof detail !== "object") {
+    return null;
+  }
+  const outcomeSummary =
+    (typeof detail.outcome?.summary === "string" && detail.outcome.summary)
+    || (typeof detail.outcome?.question === "string" && detail.outcome.question)
+    || null;
+  return {
+    turn_id: detail.turn?.turnId || null,
+    phase: detail.turn?.status || detail.outcome?.kind || null,
+    message: outcomeSummary,
+    candidateGraphPresent: Boolean(detail.candidate?.graphHash),
+    candidateReport: detail.candidate?.report || null,
+    applyEligibility: detail.eligibility || null,
+    changes: Array.isArray(detail.changes) ? detail.changes : [],
+    changeDetails: changeDetailsFromResponseDetail(detail),
+    progress: detail.progress || null,
+    lastAppliedChanges: detail.lastAppliedChanges || null,
+    queueDisplay: detail.queueDisplay || null,
+    failure: detail.outcome?.kind === "error"
+      ? {
+          kind: "Error",
+          message: outcomeSummary || "The agent could not complete the turn.",
+        }
+      : null,
+    clarification: detail.outcome?.kind === "clarify" && outcomeSummary
+      ? { message: outcomeSummary }
+      : null,
+  };
+}
+
+function changeDetailsFromResponseDetail(detail) {
+  if (!detail || typeof detail !== "object") {
+    return null;
+  }
+  const changes = Array.isArray(detail.changes) ? detail.changes : [];
+  if (!changes.length) {
+    return null;
+  }
+  const summary =
+    (typeof detail.outcome?.summary === "string" && detail.outcome.summary)
+    || (typeof detail.outcome?.question === "string" && detail.outcome.question)
+    || null;
+  return {
+    landed_operation_count: changes.length,
+    operations: changes.map((change) => ({
+      uid: change.uid,
+      field_path: change.fieldPath || change.field_path,
+      old: Object.prototype.hasOwnProperty.call(change, "old") ? change.old : undefined,
+      new: Object.prototype.hasOwnProperty.call(change, "new") ? change.new : undefined,
+      summary: change.fieldPath || change.field_path
+        ? `${change.fieldPath || change.field_path} changed`
+        : "field changed",
+    })),
+    done_summary: summary,
+  };
+}
+
 function routeStatusForRender(panel) {
   return routeStatusState(panel);
 }
@@ -230,68 +305,37 @@ function routeAllowsCandidateDetail(panel, message, detailSnapshot, actionState)
   return routeAllowsApplyAffordances(route) || actionState?.visible === true;
 }
 
-function _bubbleDetailTurnEntries(panel, msg, snapshot) {
-  const turnId =
-    (typeof msg?.turn_id === "string" && msg.turn_id)
-    || (typeof msg?.detail_turn_id === "string" && msg.detail_turn_id)
-    || (typeof snapshot?.turn_id === "string" && snapshot.turn_id)
-    || null;
-  if (!turnId || !Array.isArray(panel?.state?.turns)) {
-    return [];
-  }
-  return panel.state.turns.filter((entry) => (
-    entry
-    && (
-      entry.turn_id === turnId
-      || entry.parent_turn_id === turnId
-      || entry.raw_payload?.turn_id === turnId
-    )
-  ));
-}
-
 function bubbleDetailSignature(panel, msg, detailSnapshot) {
-  const canonicalDetails = Array.isArray(msg?.canonical_activity?.details)
-    ? String(msg.canonical_activity.details.length)
-    : "";
-  const canonicalDiagnostics = Array.isArray(msg?.canonical_activity?.diagnostics)
-    ? String(msg.canonical_activity.diagnostics.length)
-    : "";
-  const turnEntryCount = panel ? String(_bubbleDetailTurnEntries(panel, msg, detailSnapshot).length) : "";
+  const responseDetail = responseDetailForMessage(panel, msg, detailSnapshot);
+  const normalDetail = normalDetailSnapshotForRender(responseDetail) || {};
   const detailSigParts = [
-    stageSnapshotForRender(msg, detailSnapshot)?.stage || detailSnapshot?.phase || "",
-    detailSnapshot?.message || "",
-    detailSnapshot?.auditRef?.path || "",
-    detailSnapshot?.changeDetails?.done_summary || msg?.change_details?.done_summary || "",
-    String(allFieldChangesForRender(msg, detailSnapshot).length),
-    canonicalDetails,
-    canonicalDiagnostics,
+    responseDetail?.turn?.status || responseDetail?.outcome?.kind || "",
+    responseDetail?.outcome?.summary || responseDetail?.outcome?.question || "",
+    normalDetail?.changeDetails?.done_summary || "",
+    String(allFieldChangesForRender(msg, normalDetail).length),
     msg?.turn_id || "",
     msg?.detail_turn_id || "",
     String(msg?.text || "").slice(0, 80),
-    turnEntryCount,
   ];
   return detailSigParts.join("|");
 }
 
 function bubbleRenderSignature(panel, msg, deps = {}) {
-  const { candidateActionState, detailSnapshotForMessage, latestAgentMessageKey, messageKey, messageSignature } = deps;
-  const snapshot = typeof detailSnapshotForMessage === "function"
-    ? detailSnapshotForMessage(panel, msg)
-    : null;
+  const { candidateActionState, latestAgentMessageKey, messageKey, messageSignature } = deps;
+  const responseDetail = responseDetailForMessage(panel, msg, null);
+  const normalDetail = normalDetailSnapshotForRender(responseDetail) || null;
   const actionState = typeof candidateActionState === "function"
-    ? candidateActionState(panel, msg, snapshot)
+    ? candidateActionState(panel, msg, normalDetail)
     : {};
-  const stageSnapshot = stageSnapshotForRender(msg, snapshot);
-  const applyCandidate = applyCandidateForRender(panel, msg, snapshot);
+  const applyCandidate = applyCandidateForRender(panel, msg, normalDetail);
   const responseId = ratingResponseIdForMessage(panel, msg);
   const ratingState = responseId ? getRatingResponseState(panel, responseId) : null;
   const signatureParts = [
     typeof messageSignature === "function" ? messageSignature(msg) : "",
-    stageSnapshot?.stage || snapshot?.phase || "",
-    snapshot?.message || "",
-    snapshot?.auditRef?.path || "",
-    snapshot?.changeDetails?.done_summary || msg?.change_details?.done_summary || "",
-    String(allFieldChangesForRender(msg, snapshot).length),
+    responseDetail?.turn?.status || responseDetail?.outcome?.kind || "",
+    responseDetail?.outcome?.summary || responseDetail?.outcome?.question || "",
+    normalDetail?.changeDetails?.done_summary || "",
+    String(allFieldChangesForRender(msg, normalDetail).length),
     applyCandidate?.turnIdentity?.turnId || actionState.turnId || "",
     applyCandidate?.eligibility?.reason || actionState.eligibility?.reason || "",
     applyCandidate?.eligibility?.message || actionState.eligibility?.message || "",
@@ -308,9 +352,6 @@ function bubbleRenderSignature(panel, msg, deps = {}) {
     isPendingAgentMessage(msg) ? "pending-response" : "",
     msg?.progress ? JSON.stringify(msg.progress) : "",
     msg?.progress_label || "",
-    Array.isArray(msg?.canonical_activity?.details) ? String(msg.canonical_activity.details.length) : "",
-    Array.isArray(msg?.canonical_activity?.diagnostics) ? String(msg.canonical_activity.diagnostics.length) : "",
-    String(_bubbleDetailTurnEntries(panel, msg, snapshot).length),
   ];
   return signatureParts.join("|");
 }
@@ -440,10 +481,6 @@ function renderExecutorProgressRow(msg, panel, deps = {}) {
   if (!isPendingAgentMessage(msg) || typeof el !== "function") {
     return null;
   }
-  // Prefer canonical activity phase_progress from the message (set by
-  // updatePendingResponseProgress in vibecomfy_roundtrip.js), then fall
-  // back to panel.state.executorProgress which is also derived from
-  // canonical activity state.
   const progress = (msg.progress && typeof msg.progress === "object"
     ? msg.progress
     : null)
@@ -459,7 +496,7 @@ function renderExecutorProgressRow(msg, panel, deps = {}) {
     ["Review", progress.review || "pending"],
   ];
   const row = el("div");
-  row.dataset.vibecomfyPhaseSource = "canonical";
+  row.dataset.vibecomfyPhaseSource = "transcript";
   Object.assign(row.style, {
     display: "flex",
     alignItems: "center",
@@ -941,9 +978,7 @@ function appendTurnMeta(target, panel, message, snapshot = null, deps = {}) {
 
 export function populateAgentBubbleDetail(target, panel, message, snapshot = null, deps = {}) {
   const {
-    appendAuditDetail,
     appendCandidateDetail,
-    appendDebugDetail,
     appendFailureDetail,
     appendQueueDetail,
     appendTextLine,
@@ -955,19 +990,26 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
   } = deps;
   clearNode(target);
 
+  const responseDetail = responseDetailForMessage(panel, message, snapshot);
+  const normalSnapshot = normalDetailSnapshotForRender(responseDetail);
+  const ordinarySnapshot = normalSnapshot || null;
   const actionState = typeof deps.candidateActionState === "function"
-    ? deps.candidateActionState(panel, message, snapshot)
+    ? deps.candidateActionState(panel, message, ordinarySnapshot)
     : null;
-  const allowsApply = routeAllowsCandidateDetail(panel, message, snapshot, actionState);
+  const allowsApply = routeAllowsCandidateDetail(panel, message, ordinarySnapshot, actionState);
 
   const isExecutorMessage = isPendingAgentMessage(message) || message?.source === "agent-edit";
   if (!isExecutorMessage) {
     const metaSection = createBubbleDetailSection("Turn");
-    appendTurnMeta(metaSection.body, panel, message, snapshot, { appendTextLine, el });
+    appendTurnMeta(metaSection.body, panel, message, ordinarySnapshot, { appendTextLine, el });
     target.appendChild(metaSection.section);
   }
 
-  const changeDetails = changeDetailsForMessage(panel, message, snapshot);
+  const changeDetails =
+    ordinarySnapshot?.changeDetails
+    || (typeof changeDetailsForMessage === "function"
+      ? changeDetailsForMessage(panel, message, ordinarySnapshot)
+      : null);
   if (changeDetails) {
     const changesSection = createBubbleDetailSection("Changes");
     const count = Number.isFinite(changeDetails.landed_operation_count)
@@ -989,69 +1031,68 @@ export function populateAgentBubbleDetail(target, panel, message, snapshot = nul
       }
       changesSection.body.appendChild(opList);
     }
-    changesSection.body.appendChild(createDetails("full change details", changeDetails));
     target.appendChild(changesSection.section);
   }
 
-  const canonicalActivity = message?.canonical_activity && typeof message.canonical_activity === "object"
-    ? message.canonical_activity
-    : null;
-  if (
-    canonicalActivity
-    && (
-      (Array.isArray(canonicalActivity.details) && canonicalActivity.details.length)
-      || (Array.isArray(canonicalActivity.diagnostics) && canonicalActivity.diagnostics.length)
-    )
-  ) {
-    const activitySection = createBubbleDetailSection("Progress");
-    _renderCanonicalDetails(activitySection.body, canonicalActivity, deps);
-    if (activitySection.body.children.length) {
-      target.appendChild(activitySection.section);
+  if (ordinarySnapshot?.progress && typeof ordinarySnapshot.progress === "object") {
+    const progressSection = createBubbleDetailSection("Progress");
+    const progress = ordinarySnapshot.progress;
+    const headline = typeof progress.headline === "string" && progress.headline
+      ? progress.headline
+      : (typeof message?.progress_label === "string" ? message.progress_label : "");
+    if (headline) {
+      appendTextLine(progressSection.body, headline, "#9ed0ff");
     }
+    const stages = ["decide", "research", "execute", "review"]
+      .filter((key) => typeof progress[key] === "string" && progress[key])
+      .map((key) => `${key}: ${progress[key]}`);
+    if (stages.length) {
+      appendTextLine(progressSection.body, stages.join("; "), "#c4ccd6");
+    }
+    if (progressSection.body.children.length) {
+      target.appendChild(progressSection.section);
+    }
+  }
+
+  // Legacy fallback: pending websocket progress messages may carry a
+  // canonical_activity snapshot. Render its safe details (per-action rows,
+  // counts, diagnostics) when the normalized response detail has no equivalent
+  // statement-level progress to display.
+  if (isPendingAgentMessage(message) && message?.canonical_activity && !ordinarySnapshot?.progress) {
+    _renderCanonicalDetails(target, message.canonical_activity, deps);
   }
 
   // Candidate section: only for applyable routes (revise/adapt/legacy-aliases)
   if (allowsApply) {
     const candidateSection = createBubbleDetailSection("Candidate");
-    appendCandidateDetail(candidateSection.body, panel, message, snapshot);
+    appendCandidateDetail(candidateSection.body, panel, message, ordinarySnapshot);
     if (candidateSection.body.children.length) {
       target.appendChild(candidateSection.section);
     }
   }
 
   // Applied-node feedback is shown on the applied turn bubble even when the
-  // route is no longer applyable.
-  const appliedFeedback = snapshot?.lastAppliedChanges || panel?.state?.lastAppliedChanges || null;
+  // route is no longer applyable. Fallback to panel state when the bubble's
+  // own snapshot does not carry the applied feedback (e.g. after rehydrate).
+  const appliedFeedback = ordinarySnapshot?.lastAppliedChanges || panel.state.lastAppliedChanges || null;
   if (appliedFeedback?.items?.length) {
     const feedbackSection = createBubbleDetailSection("Feedback");
-    appendCandidateDetail(feedbackSection.body, panel, message, snapshot);
+    appendCandidateDetail(feedbackSection.body, panel, message, ordinarySnapshot);
     if (feedbackSection.body.children.length) {
       target.appendChild(feedbackSection.section);
     }
   }
 
   const failureSection = createBubbleDetailSection("Failure");
-  appendFailureDetail(failureSection.body, panel, snapshot);
+  appendFailureDetail(failureSection.body, panel, ordinarySnapshot);
   if (failureSection.body.children.length) {
     target.appendChild(failureSection.section);
   }
 
   const queueSection = createBubbleDetailSection("Queue");
-  appendQueueDetail(queueSection.body, panel, snapshot);
+  appendQueueDetail(queueSection.body, panel, ordinarySnapshot);
   if (queueSection.body.children.length) {
     target.appendChild(queueSection.section);
-  }
-
-  const auditSection = createBubbleDetailSection("Audit");
-  appendAuditDetail(auditSection.body, panel, message, snapshot);
-  if (auditSection.body.children.length) {
-    target.appendChild(auditSection.section);
-  }
-
-  const debugSection = createBubbleDetailSection("Debug");
-  appendDebugDetail(debugSection.body, panel, snapshot);
-  if (debugSection.body.children.length) {
-    target.appendChild(debugSection.section);
   }
 }
 
@@ -1059,7 +1100,6 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
   const {
     candidateActionState,
     clearNode,
-    detailSnapshotForMessage,
     el,
     ensureThreadRenderState,
   } = deps;
@@ -1140,9 +1180,8 @@ export function renderChatBubbleNode(bubble, panel, msg, messageKey, messageInde
       : (typeof msg.detail_turn_id === "string" && msg.detail_turn_id
         ? `turn:${msg.detail_turn_id}:failure:${messageKey || messageIndex}`
         : `agent:${messageKey || messageIndex}:${String(msg.text || "").slice(0, 24)}`);
-  const detailSnapshot = typeof detailSnapshotForMessage === "function"
-    ? detailSnapshotForMessage(panel, msg)
-    : null;
+  const responseDetail = responseDetailForMessage(panel, msg, null);
+  const detailSnapshot = normalDetailSnapshotForRender(responseDetail);
   const detailSignature = bubbleDetailSignature(panel, msg, detailSnapshot);
   const detailRow = el("div");
   Object.assign(detailRow.style, {
@@ -1975,7 +2014,7 @@ function _renderDiagnostics(container, diagnostics, deps = {}) {
 }
 
 function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
-  const { appendCodeLine, appendTextLine, button, el, downloadTurnAudit } = deps;
+  const { appendTextLine, button, el, downloadTurnAudit } = deps;
   const turnCard = el("div");
   turnCard.style.borderLeft = "3px solid #f47f18";
   turnCard.style.paddingLeft = "8px";
@@ -2043,9 +2082,6 @@ function _renderDurableTurnRow(body, panel, entry, index, deps = {}) {
   if (entry.message && !isSubmittingEcho) {
     appendTextLine(turnCard, entry.message, "#9da1ac");
   }
-  if (entry.audit_ref?.path) {
-    appendCodeLine(turnCard, `audit: ${entry.audit_ref.path}`, "#9ed0ff");
-  }
   const relTime = _formatRelativeTime(entry.timestamp);
   if (relTime) {
     const timeLine = el("div", relTime);
@@ -2073,11 +2109,10 @@ function renderActivityRows(panel, deps = {}) {
   if (!mount) {
     return;
   }
-  const hasPendingResponse = Array.isArray(panel?.state?.chatMessages)
-    && panel.state.chatMessages.some((message) => (
-      message?.role === "agent"
-      && isPendingAgentMessage(message)
-    ));
+  const hasPendingResponse = selectTranscriptMessages(panel).some((message) => (
+    message?.role === "agent"
+    && isPendingAgentMessage(message)
+  ));
   if (hasPendingResponse) {
     deps.clearNode?.(mount);
     mount.style.display = "none";

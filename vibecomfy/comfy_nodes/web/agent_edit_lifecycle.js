@@ -14,6 +14,11 @@ import {
   readFieldChanges,
   readStageSnapshot,
   readTurnIdentity,
+  projectAuditArtifact,
+  projectExecutionEvent,
+  projectResponseDetail,
+  projectTranscriptMessage,
+  splitRehydrateProjectionInput,
 } from "./agent_edit_response_contract.js";
 
 // ── Phase taxonomy ─────────────────────────────────────────────────────────
@@ -137,6 +142,14 @@ export const LIFECYCLE_STATE_FIELDS = Object.freeze([
   "lastSubmitFieldChanges",
   "changeDetails",
 
+  // Boundary compartments
+  "transcriptMessages",
+  "responseDetails",
+  "executionEvents",
+  "auditArtifacts",
+  "debugDiagnostics",
+  "compartmentIndexes",
+
   // Epoch
   "chatRehydrateEpoch",
   "chatRehydrateCommittedEpoch",
@@ -152,6 +165,21 @@ export const LIFECYCLE_STATE_FIELDS = Object.freeze([
 // Returns a plain object with every lifecycle field initialized to its
 // default value. The caller (roundtrip.js) spreads this into panel.state
 // alongside non-lifecycle fields (history, chat, UI flags, etc.).
+export function createAgentStateCompartments() {
+  return {
+    transcriptMessages: [],
+    responseDetails: {},
+    executionEvents: [],
+    auditArtifacts: [],
+    debugDiagnostics: {},
+    compartmentIndexes: {
+      responseDetailsByTurnId: {},
+      executionEventsByKey: {},
+      auditArtifactsByTurnId: {},
+    },
+  };
+}
+
 export function createAgentEditState() {
   return {
     phase: PANEL_STATE.IDLE,
@@ -210,6 +238,10 @@ export function createAgentEditState() {
     lastAppliedChanges: null,
     lastSubmitFieldChanges: null,
     changeDetails: null,
+
+    // Boundary compartments. These are the future selector sources for normal
+    // transcript/detail state and explicit execution/audit/debug data.
+    ...createAgentStateCompartments(),
 
     // Epoch
     chatRehydrateEpoch: 0,
@@ -875,6 +907,9 @@ function _handleSubmitFailure(panel, payload) {
   panel.state.phase = payload?.phase || PANEL_STATE.ERROR;
   panel.state.failure = payload?.failure || null;
   panel.state.debugPayload = payload?.debugPayload || panel.state.failure || null;
+  _recordExplicitLocalPayload(panel, panel.state.failure || panel.state.debugPayload, {
+    debugPayload: panel.state.debugPayload,
+  });
   return { render: true };
 }
 
@@ -883,17 +918,23 @@ function _handleSubmitAbort(panel, payload) {
   panel.state.failure = null;
   panel.state.deltaOps = null;
   panel.state.message = payload?.message || "Request cancelled.";
-  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || {
+  panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage || {
     role: "agent",
     text: panel.state.message,
     session_id: panel.state.sessionId || null,
     synthetic: true,
     local_id: `cancelled:${Date.now()}`,
-  };
+  });
   panel.state.debugPayload = payload?.debugPayload || {
     cancelled: true,
     last_submit: panel.state.lastSubmit,
   };
+  _recordExplicitLocalPayload(panel, {
+    session_id: panel.state.sessionId || null,
+    message: panel.state.message,
+    debugPayload: panel.state.debugPayload,
+    cancelled: true,
+  }, { debugPayload: panel.state.debugPayload });
   return { render: true, refreshQueueGuard: true };
 }
 
@@ -906,11 +947,14 @@ function _handleSubmitNetworkFailure(panel, payload) {
   _handleSyncBaseline(panel, failure || {});
   _syncRebaselineRecovery(panel, failure || {});
   panel.state.auditRef = failure?.audit_ref || null;
-  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
+  panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage);
   panel.state.debugPayload = payload?.debugPayload || {
     ...(failure || {}),
     last_submit: panel.state.lastSubmit,
   };
+  _recordExplicitLocalPayload(panel, failure || panel.state.debugPayload, {
+    debugPayload: panel.state.debugPayload,
+  });
   return _obligations({
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
@@ -1097,17 +1141,23 @@ function _handleStopAbort(panel, payload) {
   panel.state.failure = null;
   panel.state.deltaOps = null;
   panel.state.message = payload?.message || "Request cancelled.";
-  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || {
+  panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage || {
     role: "agent",
     text: panel.state.message,
     session_id: panel.state.sessionId || null,
     synthetic: true,
     local_id: `cancelled:${Date.now()}`,
-  };
+  });
   panel.state.debugPayload = payload?.debugPayload || {
     cancelled: true,
     last_submit: panel.state.lastSubmit,
   };
+  _recordExplicitLocalPayload(panel, {
+    session_id: panel.state.sessionId || null,
+    message: panel.state.message,
+    debugPayload: panel.state.debugPayload,
+    cancelled: true,
+  }, { debugPayload: panel.state.debugPayload });
   return { render: true, refreshQueueGuard: true };
 }
 
@@ -1148,6 +1198,7 @@ function _handleChatRehydrateNoSession(panel, payload) {
     return { render: false, stale: true };
   }
   panel.state.chatMessages = [];
+  Object.assign(panel.state, createAgentStateCompartments());
   panel.state.chatLoaded = false;
   panel.state.chatError = null;
   panel.state.chatSessionPath = null;
@@ -1169,6 +1220,7 @@ function _handleChatRehydrateMissingSession(panel, payload) {
     panel.state.sessionId = null;
   }
   panel.state.chatMessages = [];
+  Object.assign(panel.state, createAgentStateCompartments());
   panel.state.chatLoaded = true;
   panel.state.chatError = null;
   panel.state.chatSessionPath = null;
@@ -1191,15 +1243,56 @@ function _handleChatRehydrateSuccess(panel, payload) {
       return { render: false, stale: true };
     }
   }
+  const ingested = ingestChatRehydratePayload(panel.state, payload);
+  // Compatibility mirror contract: chatMessages mirrors only safe
+  // TranscriptMessage output. Raw rehydrate detail is projection input for
+  // responseDetails/executionEvents/auditArtifacts/debugDiagnostics below.
+  // Delete the chatMessages mirror after normal consumers/tests use transcript
+  // selectors and diagnostics/reporting no longer needs legacy transcript
+  // fallback behavior.
   // Reconcile durable backend messages with any in-flight optimistic entries
   // (T9). When the panel is SUBMITTING, unmatched optimistic messages from the
   // current epoch are preserved after canonical messages; otherwise canonical
   // replaces wholesale (backward-compatible with existing behaviour).
-  panel.state.chatMessages = reconcileChatMessages(
-    Array.isArray(panel.state.chatMessages) ? panel.state.chatMessages : [],
-    Array.isArray(payload?.messages) ? payload.messages : [],
-    panel.state,
-  );
+  panel.state.chatMessages = ingested.chatMessages;
+  panel.state.transcriptMessages = panel.state.chatMessages.slice();
+  // Preserve locally-built Queue/detail compartments for turns the backend
+  // rehydrate projection does not repopulate (e.g. queueAllowed/eligibility).
+  // Merge per-turn: ingested fields win, but existing queueDisplay/candidate
+  // compartments are kept when the rehydrate projection drops them.
+  const existingResponseDetails = panel.state.responseDetails || {};
+  const mergedResponseDetails = { ...existingResponseDetails, ...ingested.responseDetails };
+  const PRESERVED_DETAIL_KEYS = ["queueDisplay", "candidate", "eligibility"];
+  for (const turnId of Object.keys(ingested.responseDetails)) {
+    const existingDetail = existingResponseDetails[turnId];
+    const ingestedDetail = ingested.responseDetails[turnId];
+    if (!existingDetail) {
+      continue;
+    }
+    let mergedDetail = null;
+    for (const key of PRESERVED_DETAIL_KEYS) {
+      if (existingDetail?.[key] != null && ingestedDetail?.[key] == null) {
+        mergedDetail ||= { ...ingestedDetail };
+        mergedDetail[key] = existingDetail[key];
+      }
+    }
+    if (mergedDetail) {
+      mergedResponseDetails[turnId] = mergedDetail;
+    }
+  }
+  panel.state.responseDetails = mergedResponseDetails;
+  panel.state.executionEvents = ingested.executionEvents;
+  panel.state.turns = ingested.turns;
+  panel.state.auditArtifacts = ingested.auditArtifacts;
+  panel.state.debugDiagnostics = ingested.debugDiagnostics;
+  panel.state.compartmentIndexes = {
+    ...(panel.state.compartmentIndexes || {}),
+    ...ingested.compartmentIndexes,
+    responseDetailsByTurnId: {
+      ...(panel.state.compartmentIndexes?.responseDetailsByTurnId || {}),
+      ...ingested.compartmentIndexes.responseDetailsByTurnId,
+    },
+  };
   panel.state.chatLoaded = true;
   panel.state.chatError = null;
   panel.state.chatSessionPath = typeof payload?.chatSessionPath === "string" ? payload.chatSessionPath : null;
@@ -1221,6 +1314,318 @@ function _handleChatRehydrateSuccess(panel, payload) {
     dirtySections: sessionId ? META_AND_THREAD_DIRTY_SECTIONS : THREAD_DIRTY_SECTIONS,
     persistSession: sessionId,
   });
+}
+
+function _turnIdFromResponseDetail(detail) {
+  const turn = detail && typeof detail === "object" ? detail.turn : null;
+  return typeof turn?.turnId === "string" && turn.turnId ? turn.turnId : null;
+}
+
+function _turnIdFromEvent(event) {
+  return typeof event?.turn_id === "string" && event.turn_id ? event.turn_id : null;
+}
+
+function _turnIdFromAuditArtifact(artifact) {
+  return typeof artifact?.turn_id === "string" && artifact.turn_id ? artifact.turn_id : null;
+}
+
+function _diagnosticEventKey(event, index) {
+  const sessionId = typeof event?.session_id === "string" && event.session_id ? event.session_id : "session";
+  const turnId = _turnIdFromEvent(event) || `entry-${index}`;
+  return `${sessionId}:${turnId}:${index}`;
+}
+
+function _hasExplicitDebugRecord(event) {
+  return Boolean(
+    event?.debugPayload
+    || (Array.isArray(event?.reasoning) && event.reasoning.length)
+    || (Array.isArray(event?.diagnostics) && event.diagnostics.length)
+    || (Array.isArray(event?.providerDiagnostics) && event.providerDiagnostics.length)
+    || (
+      event?.providerDiagnostics
+      && typeof event.providerDiagnostics === "object"
+      && !Array.isArray(event.providerDiagnostics)
+      && Object.keys(event.providerDiagnostics).length
+    )
+    || (Array.isArray(event?.batchTurns) && event.batchTurns.length)
+  );
+}
+
+function _indexResponseDetails(details) {
+  const responseDetails = {};
+  const responseDetailsByTurnId = {};
+  details.forEach((detail, index) => {
+    const key = _turnIdFromResponseDetail(detail) || `message-${index}`;
+    responseDetails[key] = detail;
+    if (_turnIdFromResponseDetail(detail)) {
+      responseDetailsByTurnId[_turnIdFromResponseDetail(detail)] = key;
+    }
+  });
+  return { responseDetails, responseDetailsByTurnId };
+}
+
+function _indexExecutionEvents(events) {
+  const executionEventsByKey = {};
+  events.forEach((event, index) => {
+    executionEventsByKey[_diagnosticEventKey(event, index)] = index;
+  });
+  return executionEventsByKey;
+}
+
+function _indexAuditArtifacts(artifacts) {
+  const auditArtifactsByTurnId = {};
+  artifacts.forEach((artifact, index) => {
+    const turnId = _turnIdFromAuditArtifact(artifact);
+    if (turnId) {
+      auditArtifactsByTurnId[turnId] = index;
+    }
+  });
+  return auditArtifactsByTurnId;
+}
+
+function _stableTurnSessionId(value) {
+  return typeof value === "string" && value ? value : "none";
+}
+
+function _batchTurnKey(sessionId, turnNumber) {
+  return `batch:${_stableTurnSessionId(sessionId)}:${turnNumber}`;
+}
+
+function _durableTurnKey(entry) {
+  const sessionId = _stableTurnSessionId(entry?.session_id);
+  const status = entry?.status || "unknown";
+  if (entry?.turn_id) {
+    return `durable:${sessionId}:${entry.turn_id}:${status}`;
+  }
+  const fallback = entry?.timestamp || entry?.message || entry?.task || entry?.failure_kind || "pending";
+  return `durable:${sessionId}:${status}:${fallback}`;
+}
+
+function _sortCompatibilityTurns(turns) {
+  const durable = [];
+  const batch = [];
+  const other = [];
+  for (const entry of Array.isArray(turns) ? turns : []) {
+    if (entry?.entry_type === "durable") {
+      durable.push(entry);
+    } else if (entry?.entry_type === "batch") {
+      batch.push(entry);
+    } else {
+      other.push(entry);
+    }
+  }
+  batch.sort((left, right) => {
+    const leftNumber = Number.isFinite(left?.turn_number) ? left.turn_number : -1;
+    const rightNumber = Number.isFinite(right?.turn_number) ? right.turn_number : -1;
+    return rightNumber - leftNumber;
+  });
+  return [...durable, ...batch, ...other].slice(0, 64);
+}
+
+function _compatibilityTurnsFromExecutionEvents(events) {
+  const turns = [];
+  for (const event of Array.isArray(events) ? events : []) {
+    const sessionId = typeof event?.session_id === "string" && event.session_id ? event.session_id : null;
+    const batchTurns = Array.isArray(event?.batchTurns) ? event.batchTurns : [];
+    for (const batchTurn of batchTurns) {
+      if (!batchTurn || typeof batchTurn !== "object") {
+        continue;
+      }
+      const rawTurnNumber = batchTurn.turn_number;
+      const turnNumber = Number.isInteger(rawTurnNumber)
+        ? rawTurnNumber
+        : (typeof rawTurnNumber === "number" && Number.isFinite(rawTurnNumber) ? Math.trunc(rawTurnNumber) : null);
+      if (!sessionId || turnNumber == null) {
+        continue;
+      }
+      const entry = {
+        entry_type: "batch",
+        turn_key: _batchTurnKey(sessionId, turnNumber),
+        session_id: sessionId,
+        turn_id: typeof batchTurn.turn_id === "string" && batchTurn.turn_id ? batchTurn.turn_id : event.turn_id || null,
+        parent_turn_id: event.turn_id || null,
+        turn_number: turnNumber,
+        status:
+          typeof batchTurn.status === "string" && batchTurn.status
+            ? (batchTurn.status === "progress" ? "in_progress" : batchTurn.status)
+            : (batchTurn.batch_ok === true ? "done" : "in_progress"),
+        message: typeof batchTurn.message === "string" ? batchTurn.message : event.message || null,
+        timestamp: typeof batchTurn.timestamp === "string" ? batchTurn.timestamp : null,
+        clarification_required: false,
+        clarification_message: null,
+        batch_ok: typeof batchTurn.batch_ok === "boolean" ? batchTurn.batch_ok : null,
+        statement_count: typeof batchTurn.statement_count === "number" && Number.isFinite(batchTurn.statement_count) ? batchTurn.statement_count : null,
+        landed_op_count: typeof batchTurn.landed_op_count === "number" && Number.isFinite(batchTurn.landed_op_count) ? batchTurn.landed_op_count : null,
+        statements: Array.isArray(batchTurn.statements) ? batchTurn.statements : null,
+        diagnostics: Array.isArray(batchTurn.diagnostics) ? batchTurn.diagnostics : null,
+        budget: batchTurn.budget && typeof batchTurn.budget === "object" ? batchTurn.budget : null,
+        exit_mode: typeof batchTurn.exit_mode === "string" ? batchTurn.exit_mode : null,
+        done_summary: typeof batchTurn.done_summary === "string" ? batchTurn.done_summary : null,
+        audit_ref: batchTurn.audit_ref && typeof batchTurn.audit_ref === "object" ? batchTurn.audit_ref : null,
+        raw_payload: batchTurn,
+        source: "rehydrate",
+        source_priority: 3,
+        canonical_activity: null,
+      };
+      turns.push(entry);
+    }
+    if (!batchTurns.length && (event?.turn_id || event?.status || event?.message)) {
+      const entry = {
+        entry_type: "durable",
+        status: event.status || "done",
+        session_id: sessionId,
+        turn_id: event.turn_id || null,
+        baseline_turn_id: event.baseline_turn_id || null,
+        task: event.task || null,
+        timestamp: event.timestamp || null,
+        failure_kind: event.failure_kind || null,
+        failure_stage: event.failure_stage || null,
+        message: event.message || null,
+        audit_ref: event.auditRef || event.audit_ref || null,
+        raw_payload: null,
+      };
+      entry.turn_key = _durableTurnKey(entry);
+      turns.push(entry);
+    }
+  }
+  return _sortCompatibilityTurns(turns);
+}
+
+function _ensureBoundaryCompartments(panel) {
+  if (!panel?.state) {
+    return;
+  }
+  if (!Array.isArray(panel.state.transcriptMessages)) {
+    panel.state.transcriptMessages = [];
+  }
+  if (!panel.state.responseDetails || typeof panel.state.responseDetails !== "object") {
+    panel.state.responseDetails = {};
+  }
+  if (!Array.isArray(panel.state.executionEvents)) {
+    panel.state.executionEvents = [];
+  }
+  if (!Array.isArray(panel.state.auditArtifacts)) {
+    panel.state.auditArtifacts = [];
+  }
+  if (!panel.state.debugDiagnostics || typeof panel.state.debugDiagnostics !== "object") {
+    panel.state.debugDiagnostics = {};
+  }
+  if (!panel.state.compartmentIndexes || typeof panel.state.compartmentIndexes !== "object") {
+    panel.state.compartmentIndexes = {};
+  }
+  panel.state.compartmentIndexes.responseDetailsByTurnId ||= {};
+  panel.state.compartmentIndexes.executionEventsByKey ||= {};
+  panel.state.compartmentIndexes.auditArtifactsByTurnId ||= {};
+}
+
+function _syncCompartmentIndexes(panel) {
+  if (!panel?.state) {
+    return;
+  }
+  panel.state.compartmentIndexes = {
+    responseDetailsByTurnId: _indexResponseDetails(
+      Object.values(panel.state.responseDetails || {}),
+    ).responseDetailsByTurnId,
+    executionEventsByKey: _indexExecutionEvents(panel.state.executionEvents || []),
+    auditArtifactsByTurnId: _indexAuditArtifacts(panel.state.auditArtifacts || []),
+  };
+}
+
+function _recordExplicitLocalPayload(panel, rawPayload, options = {}) {
+  if (!rawPayload || typeof rawPayload !== "object") {
+    return;
+  }
+  _ensureBoundaryCompartments(panel);
+  const source = {
+    ...rawPayload,
+    debugPayload:
+      options.debugPayload
+      || rawPayload.debugPayload
+      || rawPayload.debug_payload
+      || rawPayload.debug
+      || rawPayload,
+  };
+  const detail = projectResponseDetail(source);
+  const detailTurnId = _turnIdFromResponseDetail(detail);
+  if (detail && detailTurnId) {
+    panel.state.responseDetails[detailTurnId] = detail;
+  }
+  const event = projectExecutionEvent(source);
+  if (event) {
+    panel.state.executionEvents.push(event);
+    panel.state.debugDiagnostics.local = [
+      ...(Array.isArray(panel.state.debugDiagnostics.local) ? panel.state.debugDiagnostics.local : []),
+      {
+        key: _diagnosticEventKey(event, panel.state.executionEvents.length - 1),
+        session_id: event.session_id,
+        turn_id: event.turn_id,
+        debugPayload: event.debugPayload,
+        reasoning: event.reasoning,
+        providerDiagnostics: event.providerDiagnostics,
+        batchTurns: event.batchTurns,
+      },
+    ];
+  }
+  const artifact = projectAuditArtifact(source);
+  if (artifact?.auditRef || (Array.isArray(artifact?.artifactRefs) && artifact.artifactRefs.length)) {
+    panel.state.auditArtifacts.push(artifact);
+  }
+  _syncCompartmentIndexes(panel);
+}
+
+function _projectSyntheticTranscriptMessage(message) {
+  return projectTranscriptMessage(message);
+}
+
+export function ingestChatRehydratePayload(panelState, payload) {
+  const rawMessages = Array.isArray(payload?.messages) ? payload.messages : [];
+  const existingProjection = splitRehydrateProjectionInput({
+    messages: Array.isArray(panelState?.chatMessages) ? panelState.chatMessages : [],
+  });
+  const rehydrateProjection = splitRehydrateProjectionInput({
+    ...payload,
+    messages: rawMessages,
+  });
+  const chatMessages = reconcileChatMessages(
+    existingProjection.normalTranscriptMessage,
+    rehydrateProjection.normalTranscriptMessage,
+    panelState,
+  );
+  const { responseDetails, responseDetailsByTurnId } =
+    _indexResponseDetails(rehydrateProjection.normalResponseDetail);
+  const executionEvents = rehydrateProjection.explicitDiagnosticEvent.slice();
+  const auditArtifacts = rehydrateProjection.explicitAuditArtifact.slice();
+  const debugRecords = executionEvents
+    .filter(_hasExplicitDebugRecord)
+    .map((event, index) => ({
+      key: _diagnosticEventKey(event, index),
+      session_id: event.session_id,
+      turn_id: event.turn_id,
+      reasoning: event.reasoning,
+      diagnostics: event.diagnostics,
+      providerDiagnostics: event.providerDiagnostics,
+      debugPayload: event.debugPayload,
+      batchTurns: event.batchTurns,
+    }));
+
+  return {
+    chatMessages,
+    // Compatibility mirror contract: turns is derived from ExecutionEvent data
+    // for diagnostic/audit compatibility. Delete after diagnostics, reports,
+    // and tests consume execution selectors directly.
+    turns: _compatibilityTurnsFromExecutionEvents(executionEvents),
+    responseDetails,
+    executionEvents,
+    auditArtifacts,
+    debugDiagnostics: {
+      rehydrate: debugRecords,
+    },
+    compartmentIndexes: {
+      responseDetailsByTurnId,
+      executionEventsByKey: _indexExecutionEvents(executionEvents),
+      auditArtifactsByTurnId: _indexAuditArtifacts(auditArtifacts),
+    },
+  };
 }
 
 function _handleChatRehydrateRestoreLatestCandidate(panel, payload) {
@@ -1259,8 +1664,12 @@ function _handleChatRehydrateFailure(panel, payload) {
   // response bubbles) so a failed backend rehydrate does not wipe the thread.
   // Non-optimistic durable messages are cleared as before.
   panel.state.chatMessages = Array.isArray(panel.state.chatMessages)
-    ? panel.state.chatMessages.filter((message) => message?.optimistic === true)
+    ? panel.state.chatMessages
+      .filter((message) => message?.optimistic === true)
+      .map(projectTranscriptMessage)
+      .filter(Boolean)
     : [];
+  panel.state.transcriptMessages = panel.state.chatMessages.slice();
   panel.state.chatLoaded = false;
   panel.state.chatError = payload?.chatError || null;
   panel.state.chatSessionPath = null;
@@ -1306,7 +1715,7 @@ function _handleAcceptRejected(panel, payload) {
   const authoritativeBackendReject = Boolean(payload?.authoritativeBackendReject);
   panel.state.phase = PANEL_STATE.ERROR;
   panel.state.failure = failure;
-  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
+  panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage);
   if (authoritativeBackendReject) {
     panel.state.applyEligibility = payload?.disabledApplyEligibility || null;
     panel.state.applyAllowed = false;
@@ -1330,7 +1739,7 @@ function _handleAcceptRejected(panel, payload) {
 function _handleStaleCanvasApply(panel, payload) {
   panel.state.phase = PANEL_STATE.ERROR;
   panel.state.failure = payload?.failure || null;
-  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
+  panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage);
   _syncRebaselineRecovery(panel, payload);
   _handleInvalidateCandidate(panel, { repaint: false });
   panel.state.debugPayload = payload?.debugPayload || panel.state.failure || null;
@@ -1345,7 +1754,7 @@ function _handleCanvasApplyFailure(panel, payload) {
   const failure = payload?.failure || null;
   panel.state.phase = PANEL_STATE.ERROR;
   panel.state.failure = failure;
-  panel.state.syntheticAgentMessage = payload?.syntheticAgentMessage || null;
+  panel.state.syntheticAgentMessage = _projectSyntheticTranscriptMessage(payload?.syntheticAgentMessage);
   panel.state.auditRef = failure?.audit_ref || panel.state.auditRef;
   panel.state.debugPayload = payload?.debugPayload || {
     ...(failure || {}),
@@ -1744,7 +2153,7 @@ export function reconcileChatMessages(existing, canonical, panelState) {
 
   // Outside of an active submit, canonical is the sole authority.
   if (!panelState || panelState.phase !== PANEL_STATE.SUBMITTING) {
-    return [...safeCanonical];
+    return safeCanonical.map((msg) => (msg && typeof msg === "object" ? { ...msg } : msg));
   }
 
   const currentEpoch = Number.isFinite(panelState.submitEpoch) ? panelState.submitEpoch : null;
@@ -1759,7 +2168,7 @@ export function reconcileChatMessages(existing, canonical, panelState) {
   }
 
   // Start with durable messages (authoritative, ordered first).
-  const result = [...safeCanonical];
+  const result = safeCanonical.map((msg) => (msg && typeof msg === "object" ? { ...msg } : msg));
 
   // Append in-flight optimistic messages from the current epoch that have
   // no canonical counterpart. Stale optimistic entries (from a previous
@@ -1779,7 +2188,7 @@ export function reconcileChatMessages(existing, canonical, panelState) {
       continue;
     }
     if (!canonicalKeys.has(key)) {
-      result.push(msg);
+      result.push(msg && typeof msg === "object" ? { ...msg } : msg);
     }
   }
 

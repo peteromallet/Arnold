@@ -15,6 +15,24 @@ function overlayDrawCacheKey(diff, candidateGraph, deps = {}) {
   return `${candidateHash}:${liveRevision == null ? "unknown" : liveRevision}`;
 }
 
+const FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS = [
+  /\b(?:canvas_apply_allowed|canvasApplyAllowed|queue_allowed|queueAllowed)\b/i,
+  /\b(?:debug_payload|debugPayload|audit_ref|auditRef|raw_path|rawPath|artifact_path|artifactPath)\b/i,
+  /\/(?:real\/)?ComfyUI\/out\/editor_sessions\//i,
+  /\bturns\/\d+\/(?:response|messages|candidate|debug)\.[a-z0-9]+/i,
+  /\b(?:ProviderError|Traceback|stack trace|engine diagnostics|raw diagnostic)\b/i,
+  /\b(?:model prompt|system prompt|prompt messages)\b/i,
+  /\b(?:token budget|exit mode|remaining batches)\b/i,
+];
+
+function safePreviewOverlayText(text, fallback = "") {
+  const value = String(text == null ? "" : text).trim();
+  if (!value) return "";
+  return FORBIDDEN_PREVIEW_OVERLAY_TEXT_PATTERNS.some((pattern) => pattern.test(value))
+    ? fallback
+    : value;
+}
+
 function computeGhostDimensions(cn, ctx, deps = {}) {
   const { readWidgetValues, widgetValuePreviewText } = deps;
   var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
@@ -23,7 +41,7 @@ function computeGhostDimensions(cn, ctx, deps = {}) {
   var PAD_X = 32;
   var PAD_Y = 12;
   var MIN_W = 140;
-  var title = (typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node";
+  var title = safePreviewOverlayText((typeof cn.title === "string" && cn.title) || (typeof cn.type === "string" && cn.type) || "Node", "Node");
   var inputs = Array.isArray(cn.inputs) ? cn.inputs : [];
   var outputs = Array.isArray(cn.outputs) ? cn.outputs : [];
   var widgetValues = readWidgetValues(cn);
@@ -39,11 +57,11 @@ function computeGhostDimensions(cn, ctx, deps = {}) {
     var titleW = ctx.measureText(trunc(title, 40)).width;
     var maxSlotW = 0;
     for (var s = 0; s < inputs.length; s += 1) {
-      var lbl = inputs[s] && inputs[s].name;
+      var lbl = safePreviewOverlayText(inputs[s] && inputs[s].name, "");
       if (lbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(trunc(lbl, 30)).width);
     }
     for (var t = 0; t < outputs.length; t += 1) {
-      var olbl = outputs[t] && outputs[t].name;
+      var olbl = safePreviewOverlayText(outputs[t] && outputs[t].name, "");
       if (olbl) maxSlotW = Math.max(maxSlotW, ctx.measureText(trunc(olbl, 30)).width);
     }
     var maxWidgetW = 0;
@@ -352,14 +370,14 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
       if (field && field.new_value !== null && field.new_value !== undefined) {
         label += ": " + field.new_value;
       }
-      return trunc(label, 48);
+      return trunc(safePreviewOverlayText(label, "field"), 48);
     };
 
     var fieldNewValueLabel = function (field) {
       if (!field || field.new_value === null || field.new_value === undefined) {
         return "";
       }
-      return String(field.new_value);
+      return safePreviewOverlayText(field.new_value, "");
     };
 
     var editedFieldsByUid = new Map();
@@ -556,7 +574,7 @@ export function drawPreviewOverlay(ctx, diff, deps = {}) {
         ctx.font = "12px Arial, sans-serif";
         ctx.textBaseline = "top";
         ctx.fillStyle = addedTextColor;
-        var ghostTitle = trunc((typeof cn.title === "string" && cn.title) || cn.type || "Node", 36);
+        var ghostTitle = trunc(safePreviewOverlayText((typeof cn.title === "string" && cn.title) || cn.type || "Node", "Node"), 36);
         ctx.fillText(ghostTitle, gb.x + 10, gb.y + 8);
       } finally {
         ctx.restore();

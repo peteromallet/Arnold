@@ -57,4 +57,3 @@ make root-clean
 .venv/bin/python -m pytest -q tests/test_pristine_architecture_guardrails.py tests/test_agent_edit_compatibility_ledger.py
 git diff --check origin/main...HEAD
 ```
-

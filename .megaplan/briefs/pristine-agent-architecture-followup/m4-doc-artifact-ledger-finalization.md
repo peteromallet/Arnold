@@ -52,4 +52,3 @@ make browser-smoke
 .venv/bin/python -m pytest -q tests/test_pristine_architecture_guardrails.py tests/test_agent_edit_compatibility_ledger.py tests/test_comfy_nodes_agent_contracts.py tests/test_comfy_nodes_agent_backend_spine.py tests/test_cli_debug_contract.py
 git diff --check origin/main...HEAD
 ```
-
