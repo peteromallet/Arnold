@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, fields
 
+import importlib
+
+import pytest
+
 import arnold.pipeline as pipeline
-import arnold.pipeline.legacy as legacy
 import arnold.pipeline.native as native
 from arnold.pipeline.builder import PipelineBuilder
 from arnold.pipeline.native import NativeInstruction, NativeProgram, project_graph
@@ -35,22 +38,9 @@ def test_native_first_import_surface_is_available_from_pipeline_and_native() -> 
         assert name in native.__all__
 
 
-def test_legacy_namespace_exports_graph_runtime_symbols() -> None:
-    names = (
-        "Pipeline",
-        "Stage",
-        "ParallelStage",
-        "Edge",
-        "StepContext",
-        "StepResult",
-        "PipelineBuilder",
-        "run_pipeline",
-        "run_pipeline_resume",
-    )
-
-    for name in names:
-        assert getattr(legacy, name) is getattr(pipeline, name)
-        assert name in legacy.__all__
+def test_legacy_namespace_is_removed_after_m7_purge() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("arnold.pipeline.legacy")
 
 
 def test_pipeline_native_program_is_preserved_by_dataclass_and_builder_helpers() -> None:

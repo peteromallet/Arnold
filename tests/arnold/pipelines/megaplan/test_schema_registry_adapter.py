@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import (
+from arnold.pipelines.megaplan.schema_registry_adapter import (
     create_contract_schema_registry,
     derive_project_root_from_plan_dir,
     resolve_contract_schema_project_root,

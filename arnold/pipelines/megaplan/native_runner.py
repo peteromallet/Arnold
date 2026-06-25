@@ -34,10 +34,10 @@ class NativeMegaplanRunner:
         from arnold.pipeline.native.runtime import run_native_pipeline
         from arnold.pipeline.step_io_contract import StepIOContractContext
         from arnold.pipeline.step_io_telemetry import TELEMETRY_FILENAME
-        from arnold.pipelines.megaplan._pipeline.schema_registry_adapter import (
+        from arnold.pipelines.megaplan.schema_registry_adapter import (
             create_contract_schema_registry,
         )
-        from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+        from arnold.pipelines.megaplan.step_io_policy_adapter import (
             megaplan_step_io_policy_path,
         )
         from arnold.pipelines.megaplan.native_hooks import MegaplanNativeRuntimeHooks
