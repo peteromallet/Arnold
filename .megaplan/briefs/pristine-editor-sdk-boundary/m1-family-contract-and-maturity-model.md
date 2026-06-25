@@ -65,13 +65,19 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
      - docs/examples coverage flag
      - conformance report path
    - Add a test that fails if `config/extensions/family-maturity.json` is out of sync with the registry.
+   - Add a generator completeness test that fails if a field exists in `FamilyDefinition` but is missing or null in any generated JSON row, unless that field is explicitly optional.
+   - Add a round-trip test that deserializes `config/extensions/family-maturity.json`, compares every row back to the TypeScript registry, and proves every `ContributionKind` is represented.
 
 4. **Move contribution-kind constants into the family module.**
    - Consolidate `ContributionKind`, `CONTRIBUTION_KIND_MILESTONE`, and related helpers under `src/sdk/families/`.
 
-5. **Fix immediate schema/API drift.**
+5. **Fix immediate schema/API drift and establish schema coverage rules.**
    - Compare SDK `RenderRoute`, `DeterminismStatus`, and shader pass/source/uniform types against `config/contracts/reigh-extension.schema.json`.
    - Resolve mismatches; add tests that fail on future drift.
+   - For every `FamilyDefinition.manifestSchemaDefinition`, assert the named schema definition exists in `config/contracts/reigh-extension.schema.json`.
+   - Audit schema definitions that appear to describe contribution families and require each to map to a `FamilyDefinition` or to an explicit host-only/internal note.
+   - Add a release-mode check that fails when a declarative or documented family lacks schema coverage.
+   - Do not attempt a full TypeScript-to-JSON-schema structural diff in this milestone; keep the gate focused on declared family/schema coverage plus the known drift-prone render/shader vocabularies.
 
 6. **Add family conformance infrastructure.**
    - `src/sdk/families/familyDefinitions.test.ts`
@@ -79,7 +85,10 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
    - In `--release` mode, fail if:
      - a `ContributionKind` lacks a `FamilyDefinition`,
      - `config/extensions/family-maturity.json` is out of sync,
-     - declaration maturity and execution maturity are both not set.
+     - declaration maturity and execution maturity are both not set,
+     - execution maturity is `runtime-bridged` or higher while declaration maturity is below `declarative`,
+     - execution maturity is `planner-integrated` or higher while declaration maturity is below `documented`,
+     - a family with declaration maturity `declarative` or `documented` lacks manifest schema coverage.
    - Wire `check:extension-family-conformance` into `package.json`.
 
 ## Locked decisions
@@ -90,12 +99,14 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
 - Support levels describe current reality, not aspiration.
 - Public future-family types stay in the SDK but are honestly labeled `typed`/`declarative` until runtime semantics are proven.
 - `config/contracts/reigh-extension.schema.json` is authoritative for manifest schema.
+- Cross-axis maturity combinations must be coherent. Runtime support cannot outrun the declaration and documentation needed for authors to use it safely.
 
 ## Open questions
 
 - Which families currently have runtime implementations vs. only descriptor types?
 - Does the schema JSON contain contribution definitions that lack SDK counterparts?
 - Which families should be marked `requiresTrustedCode: true`?
+- Are any currently bridged families only `typed` because their manifest schema is incomplete?
 
 ## Constraints
 
@@ -109,8 +120,11 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
 - [ ] `FamilyDefinition`, `FamilyObligations`, declaration/execution maturity, and `FamilyConformanceReport` exist.
 - [ ] Every `ContributionKind` has a `FamilyDefinition`.
 - [ ] `config/extensions/family-maturity.json` exists and is generated from the registry.
+- [ ] Generator completeness and round-trip tests prove the generated JSON has every required registry field and every `ContributionKind`.
 - [ ] `contributionKindNotYetBridged()` is no longer the sole source of truth.
-- [ ] SDK/schema drift for `RenderRoute`, `DeterminismStatus`, and shader types is fixed and guarded.
+- [ ] SDK/schema drift for `RenderRoute`, `DeterminismStatus`, shader types, and declared family schema coverage is fixed and guarded.
+- [ ] Schema contribution definitions are either mapped to a `FamilyDefinition` or explicitly classified as host-only/internal.
+- [ ] Release-mode conformance rejects incoherent cross-axis maturity combinations.
 - [ ] `npm run check:extension-family-conformance -- --release` passes.
 - [ ] All existing tests pass.
 
@@ -129,6 +143,6 @@ M0 removed video-editor imports from the SDK and made it externally compilable. 
 ## Anti-scope (not in this milestone)
 
 - Moving runtime contracts into the SDK (M0).
-- Splitting the SDK barrel (M2).
+- Splitting the SDK barrel (M2a/M2b).
 - Refactoring `extensionSurface.ts` onto host adapters (M3).
 - Governance/docs closure and final release merge (M4).

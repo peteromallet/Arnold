@@ -6,12 +6,16 @@ Proposal-runtime ownership is decided and implemented. `createExtensionContext()
 
 ## Background
 
-M0 made the SDK dependency-clean and externally compilable. M1 defined the family maturity model. M2 split the SDK. M3 built the host adapter registry skeleton and proved it with representative families. M4 closes the loop: final runtime helper ownership, governance/docs alignment, and release merge.
+M0 made the SDK dependency-clean and externally compilable. M1 defined the family maturity model. M2a/M2b split the SDK. M3 built the host adapter registry skeleton and proved it with at least one real family adapter. M4 closes the loop: final runtime helper ownership, governance/docs alignment, and release merge.
 
 ## Scope (in scope)
 
 1. **Decide and implement proposal-runtime ownership.**
    - Determine whether `createProposalRuntime` is public SDK functionality or host implementation.
+   - Use this decision rule:
+     - If it depends on DOM/browser globals, React/provider wiring, DataProvider, timeline contexts, localStorage, console wiring, host diagnostics, editor services, or stateful side effects beyond pure data construction, it is host-only.
+     - If public authors only need its shape, expose `ProposalRuntime` and related portable types from the SDK and keep `createProposalRuntime()` behind a host adapter/factory.
+     - Move implementation into `src/sdk/runtime/proposalRuntime.ts` only if it is pure, package-evaluable, and passes the external SDK runtime smoke without host shims.
    - If public: move to `src/sdk/runtime/proposalRuntime.ts` and update consumers.
    - If host-only: expose only `ProposalRuntime` types from SDK and keep `createProposalRuntime` behind a host adapter.
 
@@ -24,6 +28,8 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
    - Label each as `author-facing`, `host-facing`, or `internal`.
    - Replace author-facing imports with `@reigh/editor-sdk` or scoped SDK modules.
    - Document host-only/internal entries with owner, rationale, and removal condition.
+   - Add a `removalTarget` milestone or explicit `permanentHostBoundary` flag for every remaining entry; release mode fails if an entry has neither.
+   - Release mode also fails if a migration entry's `removalTarget` is M4 or earlier and the entry still exists, unless the milestone notes explicitly re-approve it with a new target.
 
 4. **Update contract registry and governance mapping.**
    - Update `config/contracts/registry.json` so `src/sdk/index.ts` is the extension SDK contract.
@@ -34,10 +40,12 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
    - Update `docs/governance/contracts/compatibility-shims.md` with remaining host-only exceptions.
    - Update `docs/extensions/phase4-readiness.md` and `docs/extensions/foundation-closure-assessment.md` to reflect family maturity and adapter registry.
    - Ensure docs do not overstate Phase 4 runtime support.
+   - Add a lightweight doc/readiness check that compares named family support claims in these docs against generated `config/extensions/family-maturity.json`; fail release mode if a doc claims stronger execution maturity than the registry.
 
 6. **Maintain and re-run the packagability smoke.**
    - Ensure the external SDK-consumer package fixture added in M0 still passes.
    - Add a second smoke that imports representative `src/sdk/families/*` modules directly.
+   - Ensure both smoke fixtures also evaluate the imported SDK entrypoints at runtime, not just compile them.
    - Ensure `npm run quality:check` includes the smoke.
 
 7. **Final validation and manual merge prep.**
@@ -59,7 +67,10 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
 - The SDK owns portable contracts and author-facing descriptor types.
 - The video editor owns host implementations, React/provider wiring, runtime normalization, and editor internals.
 - Remaining allowlist entries must be explicitly host-only and documented.
+- Temporary allowlist entries must expire; keeping one past its target requires explicit re-approval and a new target.
 - Packagability is enforced from M0 onward and maintained through M4.
+- Docs may only describe support levels that are backed by the canonical family maturity registry.
+- Proposal runtime implementation belongs in the SDK only if it is genuinely pure and package-evaluable.
 
 ## Open questions
 
@@ -79,10 +90,12 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
 - [ ] Proposal runtime ownership is decided and implemented.
 - [ ] `createExtensionContext()` is split into SDK contract and host factory.
 - [ ] All author-facing deep imports from `src/tools/video-editor/**` are replaced.
-- [ ] Remaining allowlist entries are classified as host-only/internal with owner/rationale/removal condition.
+- [ ] Remaining allowlist entries are classified as host-only/internal with owner/rationale/removal condition and `removalTarget` or `permanentHostBoundary`.
+- [ ] Expired temporary allowlist entries are removed or explicitly re-approved with a new target.
 - [ ] Contract registry recognizes `src/sdk/index.ts` as the extension SDK boundary.
 - [ ] Docs match the new boundary and do not overstate Phase 4 runtime support.
-- [ ] External SDK-consumer package fixture and family module direct-import smoke pass.
+- [ ] Doc maturity-claim check passes against generated `family-maturity.json`.
+- [ ] External SDK-consumer package fixture and family module direct-import smoke compile and evaluate at runtime.
 - [ ] All release gates pass locally.
 - [ ] Changes are merged to `main` (manually if hooks are unavailable).
 
@@ -101,7 +114,7 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
 
 ## Anti-scope (not in this milestone)
 
-- Splitting the SDK barrel further (M2).
+- Splitting the SDK barrel further (M2a/M2b).
 - Adding new extension families or runtime features.
 - Fixing pre-existing TypeScript errors in host-only video-editor internals.
 - Implementing dynamic extension loading, marketplace, or sandboxing.

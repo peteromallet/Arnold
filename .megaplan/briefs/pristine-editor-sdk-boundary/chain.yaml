@@ -31,14 +31,23 @@ milestones:
     depth: high
     notes: "partnered-5 @codex. Define the two-axis family maturity model and canonical family registry."
 
-  - label: m2-sdk-boundary-and-family-modules
-    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m2-sdk-boundary-and-family-modules.md
-    branch: epic/reigh-pristine-sdk-boundary-m2
+  - label: m2a-core-sdk-boundary-modules
+    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m2a-core-sdk-boundary-modules.md
+    branch: epic/reigh-pristine-sdk-boundary-m2a
     profile: partnered-5
     vendor: codex
     robustness: full
     depth: high
-    notes: "partnered-5 @codex. Split src/sdk/index.ts into scoped family/domain modules; no video-editor imports remain."
+    notes: "partnered-5 @codex. Split core SDK contracts/helpers out of src/sdk/index.ts; establish context contract and type-identity gates."
+
+  - label: m2b-family-modules-and-public-surface
+    idea: .megaplan/briefs/pristine-editor-sdk-boundary/m2b-family-modules-and-public-surface.md
+    branch: epic/reigh-pristine-sdk-boundary-m2b
+    profile: partnered-5
+    vendor: codex
+    robustness: full
+    depth: high
+    notes: "partnered-5 @codex. Extract SDK family, timeline, asset, and export modules; reduce src/sdk/index.ts to a public barrel."
 
   - label: m3-host-family-adapter-registry
     idea: .megaplan/briefs/pristine-editor-sdk-boundary/m3-host-family-adapter-registry.md
