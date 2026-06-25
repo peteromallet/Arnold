@@ -51,7 +51,7 @@ EXPECTED_SELECT_TOURNAMENT_STAGE_ORDER: tuple[str, ...] = (
 # ── epic-blitz baselines (captured 2026-06-19) ─────────────────────────────
 
 EXPECTED_EPIC_BLITZ_TOPOLOGY_HASH: str = (
-    "sha256:f3c882259d646bde6460724377f4ef41ad9d0c6883743e669c346632931aa712"
+    "sha256:b1159ac9935e2d43c4a303ef02d679ffbe97a36be6184c421262b150945c0ff1"
 )
 
 EXPECTED_EPIC_BLITZ_STAGE_ORDER: tuple[str, ...] = (

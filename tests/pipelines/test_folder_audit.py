@@ -104,9 +104,10 @@ def test_build_pipeline_returns_expected_stages() -> None:
 
 def test_emit_step_renders_nested_tree(tmp_path: Path) -> None:
     from arnold.pipelines.folder_audit import EmitStep
-    from arnold.pipelines.megaplan._pipeline.types import StepContext
+    from arnold.pipeline.types import StepContext
 
     ctx = StepContext(
+        artifact_root=str(tmp_path),
         state={
             "target_dir": str(tmp_path),
             "tree": [
@@ -151,8 +152,6 @@ def test_emit_step_renders_nested_tree(tmp_path: Path) -> None:
             },
         },
         inputs={},
-        plan_dir=tmp_path,
-        profile=None,
         mode="code",
     )
     result = EmitStep().run(ctx)
@@ -184,7 +183,7 @@ def test_build_pipeline_passes_worker_to_audit_step() -> None:
 
 def test_audit_step_calls_worker_and_parses_json(tmp_path: Path) -> None:
     from arnold.pipelines.folder_audit import AuditStep
-    from arnold.pipelines.megaplan._pipeline.types import StepContext
+    from arnold.pipeline.types import StepContext
 
     calls: list[tuple[str, str]] = []
 
@@ -209,7 +208,10 @@ def test_audit_step_calls_worker_and_parses_json(tmp_path: Path) -> None:
         _chunk_size=10,
         _max_workers=1,
     )
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir(parents=True, exist_ok=True)
     ctx = StepContext(
+        artifact_root=str(plan_dir),
         state={
             "target_dir": str(tmp_path),
             "tree": [
@@ -219,13 +221,11 @@ def test_audit_step_calls_worker_and_parses_json(tmp_path: Path) -> None:
                     "children": [{"name": "a.txt", "type": "file"}],
                 }
             ],
+            "profile": {"audit": "codex:gpt-5.5"},
         },
         inputs={"chunk_size": "10", "max_workers": "1"},
-        plan_dir=tmp_path / "plan",
-        profile={"audit": "codex:gpt-5.5"},
         mode="code",
     )
-    ctx.plan_dir.mkdir(parents=True, exist_ok=True)
     result = step.run(ctx)
 
     assert len(calls) == 1
@@ -233,22 +233,21 @@ def test_audit_step_calls_worker_and_parses_json(tmp_path: Path) -> None:
     assert result.next == "done"
     assert result.state_patch["audit"]["folders"][0]["path"] == "."
     assert result.state_patch["audit"]["summary"]["total_folders"] == 1
-    assert (ctx.plan_dir / "audit_raw" / "v1.md").exists()
+    assert (plan_dir / "audit_raw" / "v1.md").exists()
 
 
 def test_audit_step_without_worker_raises() -> None:
     from arnold.pipelines.folder_audit import AuditStep
-    from arnold.pipelines.megaplan._pipeline.types import StepContext
+    from arnold.pipeline.types import StepContext
 
     step = AuditStep(_pipeline_name="folder-audit")
     ctx = StepContext(
+        artifact_root=str("/tmp/folder-audit-test-plan"),
         state={
             "target_dir": "/tmp",
             "tree": [{"path": ".", "level": 0, "children": []}],
         },
         inputs={},
-        plan_dir=Path("/tmp/folder-audit-test-plan"),
-        profile=None,
         mode="code",
     )
     with pytest.raises(RuntimeError, match="no worker"):

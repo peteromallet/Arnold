@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from arnold.pipelines.megaplan._pipeline.types import StepContext
+from arnold.pipeline.types import StepContext
 from arnold.pipeline.native.decorators import phase, pipeline  # type: ignore[import-untyped]
 from arnold.pipelines.folder_audit.steps import (
     AuditStep,
@@ -38,17 +38,15 @@ _pipeline_name: str = "folder-audit"
 
 
 def _build_step_ctx(native_ctx: dict[str, Any]) -> StepContext:
-    """Build a Megaplan :class:`StepContext` from a native-runtime context dict.
+    """Build a neutral :class:`StepContext` from a native-runtime context dict.
 
     The native runtime passes a lightweight dict with ``state``, ``inputs``,
-    and ``artifact_root``.  This function maps those fields — plus optional
-    ``profile`` and ``mode`` keys carried in ``state`` — onto the fields that
-    the folder-audit steps actually read:
+    and ``artifact_root``.  This function maps those fields onto the fields
+    that the folder-audit steps actually read:
 
-    * ``plan_dir`` ← ``artifact_root``
+    * ``artifact_root`` ← ``ctx["artifact_root"]``
     * ``state`` ← ``ctx["state"]``
     * ``inputs`` ← ``ctx.get("inputs", ctx["state"])``
-    * ``profile`` ← ``state.get("profile")`` (or ``None``)
     * ``mode`` ← ``state.get("mode", "default")``
     """
     state: dict[str, Any] = dict(native_ctx.get("state", {}))
@@ -58,10 +56,9 @@ def _build_step_ctx(native_ctx: dict[str, Any]) -> StepContext:
     artifact_root = native_ctx.get("artifact_root", ".")
 
     return StepContext(
-        plan_dir=Path(artifact_root),
+        artifact_root=str(artifact_root),
         state=state,
         inputs=raw_inputs,  # type: ignore[arg-type]  # Mapping[str, Any] compatible at runtime
-        profile=state.get("profile"),
         mode=str(state.get("mode", "default")),
     )
 

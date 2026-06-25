@@ -308,7 +308,6 @@ def _run_pipeline(args: argparse.Namespace) -> int:
                 runtime_owner = select_fresh_runtime_owner(
                     pipeline,
                     state=state,
-                    pipeline_key=pipeline_name,
                 )
             runtime_envelope = _runtime_identity_block(
                 pipeline_name=pipeline_name,
@@ -484,7 +483,7 @@ def _validate_runtime_selection(
 
     if runtime != RUNTIME_NATIVE:
         return
-    if has_native_dispatch_capability(pipeline, pipeline_key=pipeline_name):
+    if has_native_dispatch_capability(pipeline):
         return
     raise CliError(
         "native_runtime_unavailable",

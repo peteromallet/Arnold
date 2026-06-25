@@ -43,7 +43,12 @@ def test_run_describe_returns_description() -> None:
         capture_output=True, text=True,
     )
     assert proc.returncode == 0
-    assert "megaplan" in proc.stdout.lower() or "production" in proc.stdout.lower()
+    assert "Pipeline: megaplan" in proc.stdout
+    assert "Canonical Megaplan planning pipeline" in proc.stdout
+    assert "Manifest: sha256:" in proc.stdout
+    assert "Driver:   native / megaplan" in proc.stdout
+    assert "Registration: native" in proc.stdout
+    assert "Modes:           code, doc, creative, joke, plan, native" in proc.stdout
 
 
 def test_run_doc_critique_demo_module_drives_to_done(tmp_path: Path) -> None:
@@ -596,9 +601,10 @@ def test_run_persists_native_runtime_identity_for_native_capable_fresh_runs(
     from arnold.pipelines.megaplan._pipeline import registry as registry_module
     from arnold.pipelines.megaplan._pipeline import run_cli as run_cli_module
     from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
-    from arnold.pipelines.megaplan.native_runner import NativeMegaplanRunner
 
     plan_dir = tmp_path / "native-identity-run"
+    pipeline = _native_capable_megaplan_pipeline()
+    captured: dict[str, object] = {}
 
     monkeypatch.setattr(preflight_module, "preflight_or_raise", lambda *a, **kw: None)
     monkeypatch.setattr(
@@ -613,22 +619,35 @@ def test_run_persists_native_runtime_identity_for_native_capable_fresh_runs(
     monkeypatch.setattr(
         run_cli_module,
         "_build_pipeline_for_run",
-        lambda args: _native_capable_megaplan_pipeline(),
+        lambda args: pipeline,
     )
-    monkeypatch.setattr(
-        NativeMegaplanRunner,
-        "run_native_pipeline",
-        lambda self, **kwargs: SimpleNamespace(
+
+    def fake_run_native(program, **kwargs):  # noqa: ANN001
+        captured["program"] = program
+        captured["resume"] = kwargs.get("resume")
+        return SimpleNamespace(
             state=dict(kwargs.get("initial_state") or {}),
             stages=["megaplan__prep__pc0"],
             suspended=False,
             envelope=None,
+        )
+
+    monkeypatch.setattr(
+        "arnold.pipeline.native.runtime.run_native_pipeline",
+        fake_run_native,
+    )
+    monkeypatch.setattr(
+        "arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline",
+        lambda *args, **kwargs: pytest.fail(
+            "fresh canonical native_program runs must use the generic native runtime"
         ),
     )
 
     rc = cli_run(_run_args(pipeline_name="megaplan", plan_dir=plan_dir))
 
     assert rc == 0
+    assert captured["program"] is pipeline.native_program
+    assert captured["resume"] is False
     state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
     assert state["runtime_envelope"]["runtime"] == "native"
     assert state["meta"]["executor"] == "native"
@@ -643,7 +662,6 @@ def test_run_runtime_native_override_persists_native_for_native_capable_pipeline
     from arnold.pipelines.megaplan._pipeline import registry as registry_module
     from arnold.pipelines.megaplan._pipeline import run_cli as run_cli_module
     from arnold.pipelines.megaplan._pipeline.run_cli import cli_run
-    from arnold.pipelines.megaplan.native_runner import NativeMegaplanRunner
 
     plan_dir = tmp_path / "runtime-native-override"
     captured: dict[str, object] = {}
@@ -664,7 +682,8 @@ def test_run_runtime_native_override_persists_native_for_native_capable_pipeline
         lambda args: _native_capable_megaplan_pipeline(),
     )
 
-    def fake_run_native(self, **kwargs):  # noqa: ANN001
+    def fake_run_native(program, **kwargs):  # noqa: ANN001
+        captured["program"] = program
         captured["state"] = dict(kwargs.get("initial_state") or {})
         return SimpleNamespace(
             state=dict(kwargs.get("initial_state") or {}),
@@ -673,7 +692,7 @@ def test_run_runtime_native_override_persists_native_for_native_capable_pipeline
             envelope=None,
         )
 
-    monkeypatch.setattr(NativeMegaplanRunner, "run_native_pipeline", fake_run_native)
+    monkeypatch.setattr("arnold.pipeline.native.runtime.run_native_pipeline", fake_run_native)
 
     rc = cli_run(
         _run_args(
@@ -691,6 +710,7 @@ def test_run_runtime_native_override_persists_native_for_native_capable_pipeline
     assert isinstance(captured_state, dict)
     assert captured_state["runtime_envelope"]["runtime"] == "native"
     assert captured_state["meta"]["executor"] == "native"
+    assert isinstance(captured["program"], NativeProgram)
 
 
 def test_run_runtime_graph_override_persists_graph_for_native_capable_pipeline(

@@ -527,7 +527,6 @@ def run_pipeline_dispatch(
         pipeline,
         state=state,
         artifact_root=artifact_root,
-        pipeline_key=pipeline_key,
     )
 
     if decision.runtime == RUNTIME_NATIVE:
@@ -627,10 +626,9 @@ def _run_native_dispatched(
 
     Converted pipelines that carry their own native bundle run through the
     generic neutral native runtime (the same path as
-    :mod:`arnold.pipeline.executor`).  The canonical ``megaplan`` pipeline,
-    whose graph does not carry a native bundle, is wrapped in the
-    Megaplan-specific :class:`~arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner`
-    to preserve plan-dir, policy, and schema-registry wiring.
+    :mod:`arnold.pipeline.executor`).  Transitional Megaplan dispatch without
+    a first-class native program is wrapped in the Megaplan-specific
+    :class:`~arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner`.
     """
     from arnold.pipeline.native.ir import NativeProgram
     from arnold.pipeline.native.runtime import run_native_pipeline
@@ -639,12 +637,11 @@ def _run_native_dispatched(
 
     adapter, program = _find_pipeline_native_bundle(pipeline)
 
-    # Generic neutral native path: used by converted pipelines (doc, creative,
-    # jokes, ...) that attach a NativeProgram or custom adapter.
-    if (
-        pipeline_key != "megaplan"
-        and (program is not None or (adapter is not None and not isinstance(adapter, NativeProgram)))
-    ) or adapter is not None:
+    # Generic neutral native path: pipeline.native_program is the canonical
+    # payload for fresh runs and native-born resumes alike.  The compatibility
+    # runner remains only for transitional shells without a first-class program.
+    should_run_generic_native = adapter is not None or program is not None
+    if should_run_generic_native:
         initial_envelope = RuntimeEnvelope(artifact_root=str(artifact_root))
         if hasattr(ctx, "envelope") and ctx.envelope is not None:
             initial_envelope = ctx.envelope
