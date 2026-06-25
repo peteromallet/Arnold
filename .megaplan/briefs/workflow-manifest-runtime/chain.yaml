@@ -1,5 +1,8 @@
 base_branch: native-python-working-tree
 
+anchors:
+  north_star: NORTHSTAR.md
+
 milestones:
   - label: m1-baseline-manifest-contract
     idea: .megaplan/briefs/workflow-manifest-runtime/m1-baseline-manifest-contract.md
