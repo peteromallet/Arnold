@@ -662,7 +662,16 @@ def resolve_baseline_test_selection(
     strategy = value.get("strategy")
     selectors = value.get("selectors")
 
-    # 3. Only "scoped" strategy with non-empty selectors produces a scoped command.
+    # 3. Only "scoped" strategy with non-empty selectors produces a scoped
+    # command. Explicit "none" is a valid no-baseline declaration for plans
+    # with no test-relevant surfaces.
+    if strategy == "none":
+        return {
+            "mode": "none",
+            "reason": "test_blast_radius strategy is 'none'; no baseline tests apply",
+            "command_override": None,
+            "selectors_used": [],
+        }
     if strategy != "scoped":
         return {
             "mode": "unresolved",
