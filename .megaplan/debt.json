@@ -3605,6 +3605,108 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-213",
+      "subsystem": "plan-step-sizing-search-provider-and-parser-family-runtime-extractions",
+      "concern": "steps 14 and 15 each create two modules in one step (dual-module pattern), inconsistent with the output-format precedent of splitting into separate steps.",
+      "flag_ids": [
+        "scope-1"
+      ],
+      "plan_ids": [
+        "m2b-family-modules-and-public-20260626-0014"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-25T22:36:10Z",
+      "updated_at": "2026-06-25T22:36:10Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-214",
+      "subsystem": "plan-step-sizing-ui-surface-family-declarations",
+      "concern": "step 16 groups 8 ui families into one step with ambiguity about how to handle 5 slot-based families that have no inline contracts.",
+      "flag_ids": [
+        "scope-2"
+      ],
+      "plan_ids": [
+        "m2b-family-modules-and-public-20260626-0014"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-25T22:36:10Z",
+      "updated_at": "2026-06-25T22:36:10Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-215",
+      "subsystem": "governance-infrastructure-npm-scripts-and-contract-surface-map-consistency",
+      "concern": "quality:check npm script does not include check:sdk-no-barrel-imports; the plan updates the surface map but not the npm script.",
+      "flag_ids": [
+        "all_locations-1"
+      ],
+      "plan_ids": [
+        "m2b-family-modules-and-public-20260626-0014"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-25T22:36:10Z",
+      "updated_at": "2026-06-25T22:36:10Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-216",
+      "subsystem": "governance-infrastructure-extension-family-conformance-validation",
+      "concern": "family conformance gate does not validate sdkmodules paths exist on disk; typos in moved paths would not be caught.",
+      "flag_ids": [
+        "all_locations-2"
+      ],
+      "plan_ids": [
+        "m2b-family-modules-and-public-20260626-0014"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-25T22:36:10Z",
+      "updated_at": "2026-06-25T22:36:10Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-217",
+      "subsystem": "governance-infrastructure-quality-check-npm-script-and-release-mode-enforcement",
+      "concern": "quality:check runs gates without --release (audit/warning mode), so it cannot enforce must-pass criteria that require release-mode hard failures.",
+      "flag_ids": [
+        "all_locations-3"
+      ],
+      "plan_ids": [
+        "m2b-family-modules-and-public-20260626-0014"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-25T22:36:10Z",
+      "updated_at": "2026-06-25T22:36:10Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-218",
+      "subsystem": "plan-documentation-execution-order-fallback-policy-wording",
+      "concern": "execution order item 7 has wording tension between 'continue' and 'blocked' paths for blocked family extractions.",
+      "flag_ids": [
+        "prerequisite_ordering"
+      ],
+      "plan_ids": [
+        "m2b-family-modules-and-public-20260626-0014"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-06-25T22:36:10Z",
+      "updated_at": "2026-06-25T22:36:10Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }
