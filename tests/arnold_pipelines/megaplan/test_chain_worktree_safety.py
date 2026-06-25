@@ -12,8 +12,10 @@ from arnold_pipelines.megaplan.chain import _drive_plan
 from arnold_pipelines.megaplan.chain.git_ops import (
     _clean_worktree_for_chain,
     _commit_phase,
+    _ensure_milestone_pr,
     _require_git_worktree_root,
 )
+from arnold_pipelines.megaplan.chain.spec import MilestoneSpec
 from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
 from arnold_pipelines.megaplan.types import CliError
 
@@ -126,6 +128,31 @@ def test_chain_commit_refuses_non_git_directory_without_deleting_files(
 
     assert exc_info.value.code == "chain_git_worktree_required"
     assert keep.read_text(encoding="utf-8") == "print('keep')\n"
+
+
+def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
+    messages: list[str] = []
+    milestone = MilestoneSpec(
+        label="m1",
+        idea=Path("m1.md"),
+        branch="test/m1",
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops.shutil.which",
+        lambda name: None if name == "gh" else "/bin/other",
+    )
+
+    assert (
+        _ensure_milestone_pr(
+            Path.cwd(),
+            milestone,
+            base_branch="main",
+            writer=messages.append,
+        )
+        is None
+    )
+    assert any("gh executable not found" in message for message in messages)
 
 
 def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monkeypatch) -> None:
