@@ -7,6 +7,9 @@ import {
   validateInstalledPackage,
   contributionKindNotYetBridged,
   CONTRIBUTION_KIND_MILESTONE,
+  getVideoFamilyDefinition,
+  getVideoFamilyConformanceReport,
+  getVideoFamilyLegacyBridgeStatus,
   createExtensionContext,
   createCreativeContextStubs,
   ExtensionNotImplementedError,
@@ -323,7 +326,8 @@ describe('contributionKindNotYetBridged', () => {
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
     expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
     expect(contributionKindNotYetBridged('agentTool')).toBeNull();
-    expect(contributionKindNotYetBridged('agent')).toBeNull();
+    // agent is delegated (no host adapter) — returns milestone, not null
+    expect(contributionKindNotYetBridged('agent')).toBe('M10');
   });
 
   it('parser is M6-active (returns null)', () => {
@@ -346,13 +350,16 @@ describe('contributionKindNotYetBridged', () => {
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
+    // shader is runtime-bridged in the registry — bridged, returns null
     expect(contributionKindNotYetBridged('shader')).toBeNull();
     expect(contributionKindNotYetBridged('agentTool')).toBeNull();
-    expect(contributionKindNotYetBridged('agent')).toBeNull();
+    // agent is delegated — not bridged, returns M10
+    expect(contributionKindNotYetBridged('agent')).toBe('M10');
   });
 
-  it('shader is M13-active as its own contribution kind', () => {
+  it('shader is runtime-bridged (schema-backed, active in runtime normalization)', () => {
     expect(CONTRIBUTION_KIND_MILESTONE.shader).toBe('M13');
+    // Registry-derived: shader has executionMaturity 'runtime-bridged', so it IS bridged
     expect(contributionKindNotYetBridged('shader')).toBeNull();
   });
 
@@ -362,7 +369,7 @@ describe('contributionKindNotYetBridged', () => {
     expect(CONTRIBUTION_KIND_MILESTONE.searchProvider).toBe('M6');
   });
 
-  it('existing bridged M1/M2/M4 kinds remain unchanged', () => {
+  it('existing bridged M1/M2/M4 kinds remain unchanged (registry-derived)', () => {
     expect(contributionKindNotYetBridged('slot')).toBeNull();
     expect(contributionKindNotYetBridged('dialog')).toBeNull();
     expect(contributionKindNotYetBridged('panel')).toBeNull();
@@ -370,6 +377,81 @@ describe('contributionKindNotYetBridged', () => {
     expect(contributionKindNotYetBridged('command')).toBeNull();
     expect(contributionKindNotYetBridged('keybinding')).toBeNull();
     expect(contributionKindNotYetBridged('contextMenuItem')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Registry-derived family helpers
+// ---------------------------------------------------------------------------
+
+describe('registry-derived family helpers', () => {
+  it('getVideoFamilyDefinition returns the registry entry for a known kind', () => {
+    const def = getVideoFamilyDefinition('slot');
+    expect(def).toBeDefined();
+    expect(def!.kind).toBe('slot');
+    expect(def!.legacyMilestone).toBe('M1');
+    expect(def!.executionMaturity).toBe('public-supported');
+  });
+
+  it('getVideoFamilyDefinition returns undefined for an unknown kind', () => {
+    const def = getVideoFamilyDefinition('nonexistent' as any);
+    expect(def).toBeUndefined();
+  });
+
+  it('getVideoFamilyConformanceReport returns a report for a known kind', () => {
+    const report = getVideoFamilyConformanceReport('parser');
+    expect(report).toBeDefined();
+    expect(report!.kind).toBe('parser');
+    expect(report!.gaps).toBeInstanceOf(Array);
+  });
+
+  it('getVideoFamilyConformanceReport returns undefined for unknown kind', () => {
+    const report = getVideoFamilyConformanceReport('bogus' as any);
+    expect(report).toBeUndefined();
+  });
+
+  it('getVideoFamilyLegacyBridgeStatus returns null for bridged kinds', () => {
+    expect(getVideoFamilyLegacyBridgeStatus('slot')).toBeNull();
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
+    expect(getVideoFamilyLegacyBridgeStatus('effect')).toBeNull();
+    expect(getVideoFamilyLegacyBridgeStatus('agentTool')).toBeNull();
+  });
+
+  it('getVideoFamilyLegacyBridgeStatus returns milestone for delegated/absent kinds', () => {
+    expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
+    expect(getVideoFamilyLegacyBridgeStatus('searchProvider')).toBe('M6');
+    expect(getVideoFamilyLegacyBridgeStatus('agent')).toBe('M10');
+    expect(getVideoFamilyLegacyBridgeStatus('process')).toBe('M12');
+  });
+
+  it('getVideoFamilyLegacyBridgeStatus returns null for runtime-bridged shader', () => {
+    expect(getVideoFamilyLegacyBridgeStatus('shader')).toBeNull();
+  });
+
+  it('CONTRIBUTION_KIND_MILESTONE is derived from the registry', () => {
+    // Verify that the exported map matches the registry's legacy milestone map
+    expect(CONTRIBUTION_KIND_MILESTONE.slot).toBe('M1');
+    expect(CONTRIBUTION_KIND_MILESTONE.parser).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.shader).toBe('M13');
+    expect(CONTRIBUTION_KIND_MILESTONE.agent).toBe('M10');
+    // All known kinds should have entries
+    const allKinds = Object.keys(CONTRIBUTION_KIND_MILESTONE);
+    expect(allKinds.length).toBeGreaterThanOrEqual(21); // all 21 video contribution kinds
+  });
+
+  it('contributionKindNotYetBridged uses execution maturity from registry', () => {
+    // runtime-bridged → bridged
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    expect(contributionKindNotYetBridged('effect')).toBeNull();
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
+    // host-integrated → bridged
+    expect(contributionKindNotYetBridged('slot')).toBeNull();
+    expect(contributionKindNotYetBridged('command')).toBeNull();
+    // public-supported → bridged (slot only)
+    // delegated → NOT bridged
+    expect(contributionKindNotYetBridged('agent')).toBe('M10');
+    expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
+    // runtime-bridged → bridged
     expect(contributionKindNotYetBridged('shader')).toBeNull();
   });
 });
@@ -689,19 +771,17 @@ describe('M6: defineExtension accepts M6 contribution types', () => {
   });
 
   it('unsupported contribution behavior is explicit in CONTRIBUTION_KIND_MILESTONE', () => {
-    // clipType is now M9-bridged, so it returns null from contributionKindNotYetBridged.
-    // Verify the milestone map still records the owning milestone.
+    // clipType is M9-bridged (executionMaturity 'runtime-bridged'), so it returns null.
     expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)['clipType']).toBe('M9');
     expect(contributionKindNotYetBridged('clipType' as any)).toBeNull();
 
-    const reservedKinds = [
-      { kind: 'agentTool', expectedMilestone: 'M10' },
-      { kind: 'agent', expectedMilestone: 'M10' },
-    ];
-    for (const { kind, expectedMilestone } of reservedKinds) {
-      expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)[kind]).toBe(expectedMilestone);
-      expect(contributionKindNotYetBridged(kind as any)).toBeNull();
-    }
+    // agentTool is bridged (executionMaturity 'runtime-bridged')
+    expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)['agentTool']).toBe('M10');
+    expect(contributionKindNotYetBridged('agentTool' as any)).toBeNull();
+
+    // agent is NOT bridged (executionMaturity 'delegated' — no host adapter)
+    expect((CONTRIBUTION_KIND_MILESTONE as Record<string, string>)['agent']).toBe('M10');
+    expect(contributionKindNotYetBridged('agent' as any)).toBe('M10');
   });
 });
 
@@ -3322,11 +3402,13 @@ describe('M10: agent tool type constructability (index)', () => {
 
 describe('M10: defineExtension rejects reserved agent contributions', () => {
   it('rejects agent contribution kind as not yet bridged', () => {
-    // 'agent' kind is reserved; the bridge func returns null because
-    // agent and agentTool are currently bridged (returning null).
-    // CONTRIBUTION_KIND_MILESTONE still records the owning milestone.
-    expect(contributionKindNotYetBridged('agent')).toBeNull();
+    // Registry-derived: agent has executionMaturity 'delegated', so it is NOT bridged.
+    // agentTool has executionMaturity 'runtime-bridged', so it IS bridged.
+    // CONTRIBUTION_KIND_MILESTONE still records the owning milestone for both.
+    expect(contributionKindNotYetBridged('agent')).toBe('M10');
     expect(CONTRIBUTION_KIND_MILESTONE.agent).toBe('M10');
+    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    expect(CONTRIBUTION_KIND_MILESTONE.agentTool).toBe('M10');
   });
 });
 
@@ -4061,12 +4143,13 @@ describe('semver-sensitive SDK exports (index)', () => {
     expect(Array.isArray(RENDER_ROUTES)).toBe(true);
   });
 
-  it('SDK exports contribution kind bridging gate', () => {
+  it('SDK exports contribution kind bridging gate (registry-derived)', () => {
     expect(typeof contributionKindNotYetBridged).toBe('function');
     expect(contributionKindNotYetBridged('slot')).toBeNull();
-    // agent/agentTool return null because they are in the bridged set
-    expect(contributionKindNotYetBridged('agent')).toBeNull();
+    // agentTool is bridged (executionMaturity 'runtime-bridged')
     expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    // agent is NOT bridged (executionMaturity 'delegated')
+    expect(contributionKindNotYetBridged('agent')).toBe('M10');
   });
 });
 

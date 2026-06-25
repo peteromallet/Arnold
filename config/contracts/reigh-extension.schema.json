@@ -308,7 +308,7 @@
         "target": {
           "type": "string",
           "description": "Target context where this item appears.",
-          "enum": ["clip", "track", "timeline", "selection", "asset", "canvas"]
+          "enum": ["clip", "clip-selection", "track", "timeline-area"]
         },
         "when": { "type": "string" },
         "order": { "type": "number" },
@@ -386,12 +386,12 @@
     "RenderRoute": {
       "type": "string",
       "description": "Render route identifier.",
-      "enum": ["browser-main", "browser-worker", "browser-offscreen", "server", "edge-function"]
+      "enum": ["preview", "browser-export", "worker-export", "sidecar-export"]
     },
 
     "DeterminismStatus": {
       "type": "string",
-      "enum": ["deterministic", "non-deterministic", "external-dependent", "unknown"]
+      "enum": ["deterministic", "preview-only", "live-unbaked", "process-dependent", "unknown"]
     },
 
     "SamplingConfig": {
@@ -565,7 +565,7 @@
 
     "ShaderContribution": {
       "type": "object",
-      "description": "M13: Shader/WebGL contribution.",
+      "description": "M13: Shader/WebGL contribution — pass, source, uniform, texture, fallback, and materializer descriptors aligned with SDK ShaderContribution.",
       "required": ["id", "kind", "shaderId", "label", "pass"],
       "additionalProperties": false,
       "properties": {
@@ -576,75 +576,121 @@
         "description": { "type": "string" },
         "pass": {
           "oneOf": [
-            { "type": "string", "enum": ["color", "alpha", "effect", "post-process", "compute"] },
+            { "type": "string", "enum": ["clip", "overlay", "postprocess"] },
             {
               "type": "object",
               "additionalProperties": false,
+              "required": ["kind"],
               "properties": {
-                "kind": { "type": "string", "enum": ["color", "alpha", "effect", "post-process", "compute"] },
-                "colorAttachment": { "type": "string" },
-                "alphaAttachment": { "type": "string" },
-                "inputAttachments": {
-                  "type": "array",
-                  "items": { "type": "string" }
-                }
+                "kind": { "type": "string", "enum": ["clip", "overlay", "postprocess"] },
+                "inputTextureUniform": { "type": "string" },
+                "colorSpace": { "type": "string", "enum": ["srgb", "linear"] },
+                "alpha": { "type": "string", "enum": ["preserve", "opaque"] }
               }
             }
           ]
         },
         "source": {
-          "type": "object",
-          "description": "Shader source descriptor.",
-          "additionalProperties": false,
-          "properties": {
-            "language": { "type": "string", "enum": ["glsl", "wgsl"] },
-            "vertex": { "type": "string" },
-            "fragment": { "type": "string" },
-            "compute": { "type": "string" }
-          }
+          "oneOf": [
+            {
+              "type": "object",
+              "description": "Inline shader source supplied directly in the manifest.",
+              "required": ["kind", "fragment"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "const": "inline" },
+                "fragment": { "type": "string" },
+                "vertex": { "type": "string" }
+              }
+            },
+            {
+              "type": "object",
+              "description": "Module-resolved shader source from an extension export.",
+              "required": ["kind", "specifier"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "const": "module" },
+                "specifier": { "type": "string" },
+                "exportName": { "type": "string" }
+              }
+            }
+          ]
         },
         "uniforms": {
-          "type": "object",
-          "description": "Shader uniform schema.",
-          "additionalProperties": {
+          "type": "array",
+          "description": "Ordered shader uniform definitions (ShaderUniformSchema).",
+          "items": {
             "type": "object",
+            "required": ["name", "label", "type"],
             "additionalProperties": false,
             "properties": {
-              "type": { "type": "string", "enum": ["float", "vec2", "vec3", "vec4", "int", "ivec2", "ivec3", "ivec4", "bool", "mat3", "mat4", "sampler2D"] },
+              "name": { "type": "string" },
+              "label": { "type": "string" },
+              "description": { "type": "string" },
+              "type": {
+                "type": "string",
+                "enum": ["float", "int", "bool", "vec2", "vec3", "vec4", "color", "enum", "textureRef", "frame", "time"]
+              },
               "default": {},
               "min": { "type": "number" },
-              "max": { "type": "number" }
+              "max": { "type": "number" },
+              "step": { "type": "number" },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["label", "value"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "label": { "type": "string" },
+                    "value": { "type": "string" }
+                  }
+                }
+              }
             }
           }
         },
         "textures": {
-          "type": "object",
-          "description": "Shader texture schema.",
-          "additionalProperties": {
+          "type": "array",
+          "description": "Ordered shader texture binding definitions (ShaderTextureSchema).",
+          "items": {
             "type": "object",
+            "required": ["name", "sourceKind"],
             "additionalProperties": false,
             "properties": {
-              "type": { "type": "string", "enum": ["2d", "cube", "3d"] },
-              "format": { "type": "string" },
-              "defaultSource": { "type": "string" }
+              "name": { "type": "string" },
+              "label": { "type": "string" },
+              "description": { "type": "string" },
+              "uniform": { "type": "string" },
+              "sourceKind": { "type": "string", "enum": ["clip-frame", "static-image-asset", "live-generated-frame"] },
+              "required": { "type": "boolean" },
+              "colorSpace": { "type": "string", "enum": ["srgb", "linear"] },
+              "filter": { "type": "string", "enum": ["nearest", "linear"] },
+              "wrap": { "type": "string", "enum": ["clamp-to-edge", "repeat", "mirrored-repeat"] }
             }
           }
         },
         "fallback": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "strategy": { "type": "string", "enum": ["skip", "passthrough", "solid-color", "error-texture"] },
-            "color": { "type": "string" }
-          }
+          "type": "string",
+          "description": "Host-owned fallback posture when a shader cannot compile or preview.",
+          "enum": ["bypass", "transparent", "solid-black"]
         },
         "materializer": {
           "type": "object",
+          "description": "Optional materializer metadata advertising planner route capability.",
           "additionalProperties": false,
           "properties": {
-            "platform": { "type": "string" },
-            "entrypoint": { "type": "string" },
-            "timeoutMs": { "type": "number" }
+            "routes": {
+              "type": "array",
+              "items": { "$ref": "#/definitions/RenderRoute" }
+            },
+            "requiredCapabilities": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "processId": { "type": "string" },
+            "operationId": { "type": "string" },
+            "unavailableMessage": { "type": "string" }
           }
         },
         "order": { "type": "number" },

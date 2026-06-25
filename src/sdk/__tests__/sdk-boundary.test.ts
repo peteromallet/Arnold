@@ -105,6 +105,9 @@ import {
   ExtensionNotImplementedError,
   contributionKindNotYetBridged,
   CONTRIBUTION_KIND_MILESTONE,
+  getVideoFamilyDefinition,
+  getVideoFamilyConformanceReport,
+  getVideoFamilyLegacyBridgeStatus,
 } from '@reigh/editor-sdk';
 import type {
   // M4 commands / keybindings / context menus
@@ -1217,15 +1220,16 @@ describe('M6: contribution kind bridging for parser/output/search', () => {
     expect(contributionKindNotYetBridged('parser')).toBeNull();
   });
 
-  it('unsupported contribution behavior remains explicit (each returns its milestone)', () => {
+  it('unsupported contribution behavior remains explicit (registry-derived)', () => {
     // Each reserved/unsupported kind returns its owning milestone name,
     // so consumers get a clear diagnostic rather than silent ignorance.
-    // M9 clipType and automation are now bridged, returning null.
-    // M10 agentTool and agent are also bridged, returning null.
+    // M9 clipType and automation are bridged (executionMaturity runtime-bridged).
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('automation')).toBeNull();
+    // agentTool is bridged (executionMaturity runtime-bridged).
     expect(contributionKindNotYetBridged('agentTool')).toBeNull();
-    expect(contributionKindNotYetBridged('agent')).toBeNull();
+    // agent is NOT bridged (executionMaturity delegated — no host adapter).
+    expect(contributionKindNotYetBridged('agent')).toBe('M10');
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps M6 kinds to M6 milestone', () => {
@@ -3797,5 +3801,80 @@ describe('semver-sensitive SDK export snapshot', () => {
     // Updated ceiling to account for expanded legitimate public surface
     expect(valueCount).toBeLessThan(200);
     expect(valueCount).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Registry-derived family helpers (sdk-boundary)
+// ---------------------------------------------------------------------------
+
+describe('registry-derived family helpers', () => {
+  it('getVideoFamilyDefinition returns registry data for known kinds', () => {
+    const slotDef = getVideoFamilyDefinition('slot');
+    expect(slotDef).toBeDefined();
+    expect(slotDef!.kind).toBe('slot');
+    expect(slotDef!.executionMaturity).toBe('public-supported');
+    expect(slotDef!.legacyMilestone).toBe('M1');
+
+    const parserDef = getVideoFamilyDefinition('parser');
+    expect(parserDef).toBeDefined();
+    expect(parserDef!.executionMaturity).toBe('runtime-bridged');
+    expect(parserDef!.legacyMilestone).toBe('M6');
+  });
+
+  it('getVideoFamilyDefinition returns undefined for unknown kind', () => {
+    expect(getVideoFamilyDefinition('nonexistent' as any)).toBeUndefined();
+  });
+
+  it('getVideoFamilyConformanceReport returns report from registry', () => {
+    const report = getVideoFamilyConformanceReport('slot');
+    expect(report).toBeDefined();
+    expect(report!.kind).toBe('slot');
+    expect(Array.isArray(report!.gaps)).toBe(true);
+    expect(typeof report!.coherent).toBe('boolean');
+  });
+
+  it('getVideoFamilyLegacyBridgeStatus matches registry execution maturity', () => {
+    // Bridged
+    expect(getVideoFamilyLegacyBridgeStatus('slot')).toBeNull();
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
+    expect(getVideoFamilyLegacyBridgeStatus('agentTool')).toBeNull();
+    // Not bridged (delegated)
+    expect(getVideoFamilyLegacyBridgeStatus('agent')).toBe('M10');
+    expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
+    expect(getVideoFamilyLegacyBridgeStatus('shader')).toBe('M13');
+  });
+
+  it('CONTRIBUTION_KIND_MILESTONE is derived from the family registry', () => {
+    // Spot-check key mappings
+    expect(CONTRIBUTION_KIND_MILESTONE.slot).toBe('M1');
+    expect(CONTRIBUTION_KIND_MILESTONE.command).toBe('M4');
+    expect(CONTRIBUTION_KIND_MILESTONE.parser).toBe('M6');
+    expect(CONTRIBUTION_KIND_MILESTONE.effect).toBe('M7');
+    expect(CONTRIBUTION_KIND_MILESTONE.transition).toBe('M8');
+    expect(CONTRIBUTION_KIND_MILESTONE.clipType).toBe('M9');
+    expect(CONTRIBUTION_KIND_MILESTONE.agent).toBe('M10');
+    expect(CONTRIBUTION_KIND_MILESTONE.process).toBe('M12');
+    expect(CONTRIBUTION_KIND_MILESTONE.shader).toBe('M13');
+    // All 21 kinds must be present
+    expect(Object.keys(CONTRIBUTION_KIND_MILESTONE).length).toBeGreaterThanOrEqual(21);
+  });
+
+  it('contributionKindNotYetBridged uses execution maturity from registry', () => {
+    // runtime-bridged → bridged
+    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    expect(contributionKindNotYetBridged('effect')).toBeNull();
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
+    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    // host-integrated → bridged
+    expect(contributionKindNotYetBridged('command')).toBeNull();
+    expect(contributionKindNotYetBridged('dialog')).toBeNull();
+    // public-supported → bridged
+    expect(contributionKindNotYetBridged('slot')).toBeNull();
+    // delegated → NOT bridged
+    expect(contributionKindNotYetBridged('agent')).toBe('M10');
+    expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
+    expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
+    expect(contributionKindNotYetBridged('shader')).toBe('M13');
   });
 });

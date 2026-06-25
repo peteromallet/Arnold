@@ -1,18 +1,18 @@
 /**
  * stage-canary-example — M2 stage canary example.
  *
- * Demonstrates the stage surface canary using contribution kind bridging,
- * CONTRIBUTION_KIND_MILESTONE, contributionKindNotYetBridged, and the
- * stage creative context stub.  Exercises reserved/inactive contribution
- * declarations and diagnostic reporting for not-yet-bridged kinds.
+ * Demonstrates the stage surface canary using the registry-derived family
+ * compatibility helpers and the stage creative context stub. Exercises
+ * active, delegated, and absent family diagnostics without treating legacy
+ * milestone metadata as the authority.
  *
  * @publicContract
  */
 
 import {
   defineExtension,
-  contributionKindNotYetBridged,
-  CONTRIBUTION_KIND_MILESTONE,
+  getVideoFamilyDefinition,
+  getVideoFamilyLegacyBridgeStatus,
 } from '@reigh/editor-sdk';
 import type {
   ReighExtension,
@@ -56,31 +56,42 @@ export const stageCanaryExample: ReighExtension = defineExtension({
   },
 
   activate(ctx: ExtensionContext): DisposeHandle {
-    // Demonstrate contribution kind bridging — which kinds are active?
+    // Demonstrate registry-derived family status across active, delegated,
+    // and absent compatibility cases.
     const kinds: ContributionKind[] = [
       'slot',
-      'dialog',
-      'panel',
-      'inspectorSection',
       'timelineOverlay',
-      'effect',
-      'transition',
-      'clipType',
-      'parser',
-      'agentTool',
       'agent',
+      'process',
+      'futureStageSurface' as ContributionKind,
     ];
 
     for (const kind of kinds) {
-      const notBridged = contributionKindNotYetBridged(kind);
-      const milestone = CONTRIBUTION_KIND_MILESTONE[kind];
+      const family = getVideoFamilyDefinition(kind);
+      const legacyBridgeStatus = getVideoFamilyLegacyBridgeStatus(kind);
+
+      if (!family) {
+        ctx.services.diagnostics.report({
+          severity: 'warning',
+          code: `stage/kind-${kind}-absent`,
+          message:
+            `Kind "${kind}" is absent from the family registry; ` +
+            'legacy milestone metadata is unavailable.',
+        });
+        continue;
+      }
+
+      const compatibilityMilestone = family.legacyMilestone ?? legacyBridgeStatus ?? undefined;
+      const isActive = legacyBridgeStatus === null;
       ctx.services.diagnostics.report({
-        severity: notBridged ? 'warning' : 'info',
-        code: `stage/kind-${kind}`,
-        message: notBridged
-          ? `Kind "${kind}" is not yet bridged (target: ${milestone}).`
-          : `Kind "${kind}" is active (milestone: ${milestone}).`,
-        milestone: milestone ?? undefined,
+        severity: isActive ? 'info' : 'warning',
+        code: `stage/kind-${kind}-${isActive ? 'active' : family.executionMaturity}`,
+        message: isActive
+          ? `Kind "${kind}" is active with ${family.executionMaturity} execution maturity; ` +
+            `legacy milestone ${compatibilityMilestone ?? 'unknown'} is compatibility metadata only.`
+          : `Kind "${kind}" is ${family.executionMaturity} in the current host; ` +
+            `legacy milestone ${compatibilityMilestone ?? 'unknown'} is a compatibility hint, not the authority.`,
+        milestone: compatibilityMilestone,
       });
     }
 

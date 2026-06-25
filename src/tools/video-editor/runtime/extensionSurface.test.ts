@@ -9,7 +9,11 @@ import type {
   InactiveReservedContribution,
   TimelineOverlayRenderProps,
 } from '@/tools/video-editor/runtime/extensionSurface.ts';
-import { defineExtension } from '@reigh/editor-sdk';
+import {
+  defineExtension,
+  getVideoFamilyDefinition,
+  getVideoFamilyLegacyBridgeStatus,
+} from '@reigh/editor-sdk';
 import type { ReighExtension, ExtensionDiagnostic } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -387,6 +391,23 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
     expect(search.milestone).toBe('M6');
     const process = rt.inactiveReserved.find((r) => r.kind === 'process')!;
     expect(process.milestone).toBe('M12');
+  });
+
+  it('tracks reserved-vs-active families from the registry maturity helpers', () => {
+    const rt = normalizeExtensionRuntime([withReserved]);
+    expect(getVideoFamilyDefinition('parser')?.executionMaturity).toBe('runtime-bridged');
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
+    expect(getVideoFamilyDefinition('outputFormat')?.executionMaturity).toBe('delegated');
+    expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
+    expect(getVideoFamilyDefinition('searchProvider')?.executionMaturity).toBe('delegated');
+    expect(getVideoFamilyLegacyBridgeStatus('searchProvider')).toBe('M6');
+    expect(getVideoFamilyDefinition('process')?.executionMaturity).toBe('delegated');
+    expect(getVideoFamilyLegacyBridgeStatus('process')).toBe('M12');
+    expect(rt.inactiveReserved.map((item) => item.kind).sort()).toEqual([
+      'outputFormat',
+      'process',
+      'searchProvider',
+    ]);
   });
 });
 

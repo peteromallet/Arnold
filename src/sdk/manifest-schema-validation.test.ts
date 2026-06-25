@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import Ajv from 'ajv';
+import { RENDER_ROUTES, DETERMINISM_STATUSES } from '@/sdk/index.ts';
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -353,6 +354,123 @@ describe('T5: Manifest schema validation (Ajv-backed)', () => {
       expect(allowedKeys).not.toContain('effects');
       expect(allowedKeys).not.toContain('transitions');
       expect(allowedKeys).not.toContain('agentTools');
+    });
+  });
+
+  // -- Schema enum ↔ SDK constant alignment ---------------------------------
+
+  /**
+   * Test-local TargetContext value list mirroring the sealed union in
+   * src/sdk/index.ts (export type TargetContext = 'clip' | 'clip-selection' |
+   * 'track' | 'timeline-area').  There is no exported runtime constant for
+   * this union, so we define the canonical set here for alignment checking.
+   */
+  const TARGET_CONTEXT_VALUES = ['clip', 'clip-selection', 'track', 'timeline-area'] as const;
+
+  describe('Schema enum ↔ SDK constant alignment', () => {
+    it('RenderRoute schema enum exactly matches RENDER_ROUTES', () => {
+      const defs = schema.definitions as Record<string, unknown>;
+      const renderRouteDef = defs['RenderRoute'] as Record<string, unknown>;
+      expect(renderRouteDef).toBeDefined();
+      const schemaEnum = renderRouteDef['enum'] as string[];
+      expect(schemaEnum).toBeDefined();
+      expect(schemaEnum.length).toBeGreaterThan(0);
+
+      // Same values (order-independent)
+      expect([...schemaEnum].sort()).toEqual([...RENDER_ROUTES].sort());
+
+      // Same length (no extra / missing entries)
+      expect(schemaEnum.length).toBe(RENDER_ROUTES.length);
+
+      // Every schema value exists in SDK
+      for (const v of schemaEnum) {
+        expect(RENDER_ROUTES).toContain(v);
+      }
+      // Every SDK value exists in schema
+      for (const v of RENDER_ROUTES) {
+        expect(schemaEnum).toContain(v);
+      }
+    });
+
+    it('DeterminismStatus schema enum exactly matches DETERMINISM_STATUSES', () => {
+      const defs = schema.definitions as Record<string, unknown>;
+      const detStatusDef = defs['DeterminismStatus'] as Record<string, unknown>;
+      expect(detStatusDef).toBeDefined();
+      const schemaEnum = detStatusDef['enum'] as string[];
+      expect(schemaEnum).toBeDefined();
+      expect(schemaEnum.length).toBeGreaterThan(0);
+
+      // Same values (order-independent)
+      expect([...schemaEnum].sort()).toEqual([...DETERMINISM_STATUSES].sort());
+
+      // Same length
+      expect(schemaEnum.length).toBe(DETERMINISM_STATUSES.length);
+
+      // Bidirectional membership
+      for (const v of schemaEnum) {
+        expect(DETERMINISM_STATUSES).toContain(v);
+      }
+      for (const v of DETERMINISM_STATUSES) {
+        expect(schemaEnum).toContain(v);
+      }
+    });
+
+    it('ContextMenuItemContribution.target schema enum exactly matches TargetContext values', () => {
+      const defs = schema.definitions as Record<string, unknown>;
+      const ctxMenuItemDef = defs['ContextMenuItemContribution'] as Record<string, unknown>;
+      expect(ctxMenuItemDef).toBeDefined();
+      const props = ctxMenuItemDef['properties'] as Record<string, unknown>;
+      expect(props).toBeDefined();
+      const targetProp = props['target'] as Record<string, unknown>;
+      expect(targetProp).toBeDefined();
+      const schemaEnum = targetProp['enum'] as string[];
+      expect(schemaEnum).toBeDefined();
+      expect(schemaEnum.length).toBeGreaterThan(0);
+
+      const sdkValues = [...TARGET_CONTEXT_VALUES];
+
+      // Same values (order-independent)
+      expect([...schemaEnum].sort()).toEqual([...sdkValues].sort());
+
+      // Same length
+      expect(schemaEnum.length).toBe(sdkValues.length);
+
+      // Bidirectional membership
+      for (const v of schemaEnum) {
+        expect(sdkValues).toContain(v);
+      }
+      for (const v of sdkValues) {
+        expect(schemaEnum).toContain(v);
+      }
+    });
+
+    it('RenderRoute schema enum has no extra values beyond RENDER_ROUTES', () => {
+      const defs = schema.definitions as Record<string, unknown>;
+      const renderRouteDef = defs['RenderRoute'] as Record<string, unknown>;
+      const schemaEnum = renderRouteDef['enum'] as string[];
+      const schemaSet = new Set(schemaEnum);
+      const sdkSet = new Set(RENDER_ROUTES);
+      expect(schemaSet.size).toBe(sdkSet.size);
+    });
+
+    it('DeterminismStatus schema enum has no extra values beyond DETERMINISM_STATUSES', () => {
+      const defs = schema.definitions as Record<string, unknown>;
+      const detStatusDef = defs['DeterminismStatus'] as Record<string, unknown>;
+      const schemaEnum = detStatusDef['enum'] as string[];
+      const schemaSet = new Set(schemaEnum);
+      const sdkSet = new Set(DETERMINISM_STATUSES);
+      expect(schemaSet.size).toBe(sdkSet.size);
+    });
+
+    it('ContextMenuItemContribution.target schema enum has no extra values beyond TargetContext', () => {
+      const defs = schema.definitions as Record<string, unknown>;
+      const ctxMenuItemDef = defs['ContextMenuItemContribution'] as Record<string, unknown>;
+      const props = ctxMenuItemDef['properties'] as Record<string, unknown>;
+      const targetProp = props['target'] as Record<string, unknown>;
+      const schemaEnum = targetProp['enum'] as string[];
+      const schemaSet = new Set(schemaEnum);
+      const sdkSet = new Set(TARGET_CONTEXT_VALUES);
+      expect(schemaSet.size).toBe(sdkSet.size);
     });
   });
 });

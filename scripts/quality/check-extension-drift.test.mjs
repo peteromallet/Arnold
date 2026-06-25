@@ -39,6 +39,7 @@ import {
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const fixturesDir = resolve(moduleDir, '__fixtures__');
+const repoRoot = resolve(moduleDir, '..', '..');
 
 function fixturePath(category, file) {
   return resolve(fixturesDir, category, file);
@@ -52,6 +53,28 @@ function readFixture(category, file) {
   const p = fixturePath(category, file);
   if (!existsSync(p)) throw new Error(`Fixture not found: ${p}`);
   return readFileSync(p, 'utf8');
+}
+
+function readRepoFile(relativePath) {
+  const p = resolve(repoRoot, relativePath);
+  if (!existsSync(p)) throw new Error(`Repo file not found: ${p}`);
+  return readFileSync(p, 'utf8');
+}
+
+function extractStringUnion(source, typeName) {
+  const block = source.match(new RegExp(`export type ${typeName}\\s*=\\s*([\\s\\S]*?);`));
+  if (!block) return [];
+  return [...block[1].matchAll(/'([^']+)'/g)].map((match) => match[1]);
+}
+
+function loadCurrentSchema() {
+  return JSON.parse(readRepoFile('config/contracts/reigh-extension.schema.json'));
+}
+
+function loadFamilyMatrixRows() {
+  const rows = JSON.parse(readRepoFile('config/extensions/family-maturity.json'));
+  assert.ok(Array.isArray(rows), 'family-maturity.json should be an array');
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +447,135 @@ export function contributionKindNotYetBridged(k:any){return null;}`;
         ['header', 'toolbar'],
       );
       assert.strictEqual(warnings.length, 0, 'Matching slots should have no warnings');
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 8. Real schema vocabulary drift guards
+  // -----------------------------------------------------------------------
+  describe('Current schema vocabulary drift guards', () => {
+    const schema = loadCurrentSchema();
+    const schemaDefs = schema.definitions || {};
+    const renderingSource = readRepoFile('src/sdk/video/rendering/renderability.ts');
+    const sdkIndexSource = readRepoFile('src/sdk/index.ts');
+
+    it('keeps RenderRoute enum aligned to the SDK RenderRoute union', () => {
+      const schemaEnum = schemaDefs.RenderRoute?.enum || [];
+      const sdkUnion = extractStringUnion(renderingSource, 'RenderRoute');
+      assert.deepStrictEqual(schemaEnum, sdkUnion);
+    });
+
+    it('keeps DeterminismStatus enum aligned to the SDK DeterminismStatus union', () => {
+      const schemaEnum = schemaDefs.DeterminismStatus?.enum || [];
+      const sdkUnion = extractStringUnion(renderingSource, 'DeterminismStatus');
+      assert.deepStrictEqual(schemaEnum, sdkUnion);
+    });
+
+    it('keeps ContextMenuItemContribution.target aligned to the SDK TargetContext union', () => {
+      const schemaEnum = schemaDefs.ContextMenuItemContribution?.properties?.target?.enum || [];
+      const sdkUnion = extractStringUnion(sdkIndexSource, 'TargetContext');
+      assert.deepStrictEqual(schemaEnum, sdkUnion);
+    });
+
+    it('keeps shader pass/source/fallback vocabulary aligned to SDK unions', () => {
+      const passEnum = schemaDefs.ShaderContribution?.properties?.pass?.oneOf?.[0]?.enum || [];
+      const sourceKinds = schemaDefs.ShaderContribution?.properties?.source?.oneOf?.map(
+        (entry) => entry?.properties?.kind?.const,
+      ) || [];
+      const fallbackEnum = schemaDefs.ShaderContribution?.properties?.fallback?.enum || [];
+
+      assert.deepStrictEqual(passEnum, extractStringUnion(sdkIndexSource, 'ShaderPassKind'));
+      assert.deepStrictEqual(sourceKinds, ['inline', 'module']);
+      assert.deepStrictEqual(fallbackEnum, extractStringUnion(sdkIndexSource, 'ShaderFallbackBehavior'));
+    });
+
+    it('keeps shader texture and uniform vocabulary aligned to SDK unions', () => {
+      const uniformTypeEnum =
+        schemaDefs.ShaderContribution?.properties?.uniforms?.items?.properties?.type?.enum || [];
+      const textureSourceKindEnum =
+        schemaDefs.ShaderContribution?.properties?.textures?.items?.properties?.sourceKind?.enum || [];
+      const textureFilterEnum =
+        schemaDefs.ShaderContribution?.properties?.textures?.items?.properties?.filter?.enum || [];
+      const textureWrapEnum =
+        schemaDefs.ShaderContribution?.properties?.textures?.items?.properties?.wrap?.enum || [];
+      const passColorSpaceEnum =
+        schemaDefs.ShaderContribution?.properties?.pass?.oneOf?.[1]?.properties?.colorSpace?.enum || [];
+
+      assert.deepStrictEqual(uniformTypeEnum, extractStringUnion(sdkIndexSource, 'ShaderUniformType'));
+      assert.deepStrictEqual(textureSourceKindEnum, extractStringUnion(sdkIndexSource, 'ShaderTextureSourceKind'));
+      assert.deepStrictEqual(textureFilterEnum, extractStringUnion(sdkIndexSource, 'ShaderTextureFilter'));
+      assert.deepStrictEqual(textureWrapEnum, extractStringUnion(sdkIndexSource, 'ShaderTextureWrap'));
+      assert.deepStrictEqual(passColorSpaceEnum, extractStringUnion(sdkIndexSource, 'ShaderColorSpace'));
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // 9. Contribution schema ↔ family mapping guards
+  // -----------------------------------------------------------------------
+  describe('Current contribution schema-to-family mapping guards', () => {
+    const schema = loadCurrentSchema();
+    const matrixRows = loadFamilyMatrixRows();
+    const schemaDefs = schema.definitions || {};
+    const contributionRefs = (schemaDefs.Contribution?.oneOf || []).map((entry) =>
+      String(entry?.$ref || '').replace('#/definitions/', ''),
+    );
+
+    const familyByKind = new Map(matrixRows.map((row) => [row.kind, row]));
+    const familyBySchemaDefinition = new Map(
+      matrixRows.map((row) => [row.manifestSchemaDefinition, row]),
+    );
+
+    // Known many-to-one or host-owned schema aliases are explicit here so future
+    // additions do not silently bypass coverage.
+    const explicitDefinitionKinds = new Map([
+      ['AutomationContribution', 'automation'],
+    ]);
+    const explicitHostOnlyDefinitions = new Set([]);
+
+    it('maps every contribution-like schema definition to a family or explicit host-only classification', () => {
+      const unmapped = [];
+
+      for (const defName of contributionRefs) {
+        if (familyBySchemaDefinition.has(defName) || explicitHostOnlyDefinitions.has(defName)) {
+          continue;
+        }
+
+        const explicitKind = explicitDefinitionKinds.get(defName);
+        if (explicitKind) {
+          assert.ok(
+            familyByKind.has(explicitKind),
+            `${defName} explicit kind '${explicitKind}' should exist in family matrix`,
+          );
+          continue;
+        }
+
+        const kindConst = schemaDefs[defName]?.properties?.kind?.const;
+        if (typeof kindConst === 'string' && familyByKind.has(kindConst)) {
+          continue;
+        }
+
+        unmapped.push(defName);
+      }
+
+      assert.deepStrictEqual(unmapped, []);
+    });
+
+    it('keeps every family definition anchored to declared contribution schema coverage', () => {
+      const contributionRefSet = new Set(contributionRefs);
+      const missing = [];
+
+      for (const row of matrixRows) {
+        const hasDeclaredDefinition = contributionRefSet.has(row.manifestSchemaDefinition);
+        const hasExplicitAlias = [...explicitDefinitionKinds.entries()].some(
+          ([defName, kind]) => kind === row.kind && contributionRefSet.has(defName),
+        );
+
+        if (!hasDeclaredDefinition && !hasExplicitAlias) {
+          missing.push(`${row.kind}:${row.manifestSchemaDefinition}`);
+        }
+      }
+
+      assert.deepStrictEqual(missing, []);
     });
   });
 });

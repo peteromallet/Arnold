@@ -34,6 +34,8 @@ import {
   buildAutomationClipParams,
   canaryApplyAutomationOverrides,
 } from '../examples/automation-recording-canary';
+import { overlayExample } from '../examples/overlay-example';
+import { stageCanaryExample } from '../examples/stage-canary-example';
 import type {
   AssetMetadata,
   AutomationClipParams,
@@ -44,6 +46,8 @@ import type {
   CompileOnlyOutputResult,
   ContextMenuItemContribution,
   DeferredEnrichmentRecord,
+  ExtensionContext,
+  ExtensionDiagnostic,
   KeybindingContribution,
   Keyframe,
   OutputFormatContribution,
@@ -92,6 +96,38 @@ function walkTsFiles(dir: string): string[] {
     }
   }
   return files;
+}
+
+function createExampleContext(messages?: Record<string, string>) {
+  const diagnostics: ExtensionDiagnostic[] = [];
+  const toasts: Array<{ message: string; severity: string }> = [];
+  const interpolate = (template: string, params?: Record<string, unknown>) =>
+    template.replace(/\{\{(\w+)\}\}/g, (_match, key: string) =>
+      String(params?.[key] ?? ''),
+    );
+
+  const ctx = {
+    services: {
+      diagnostics: {
+        report(diagnostic: ExtensionDiagnostic) {
+          diagnostics.push(diagnostic);
+        },
+      },
+      i18n: {
+        t(key: string, params?: Record<string, unknown>) {
+          const template = messages?.[key] ?? key;
+          return interpolate(template, params);
+        },
+      },
+    },
+    chrome: {
+      toast(message: string, severity: string) {
+        toasts.push({ message, severity });
+      },
+    },
+  } as unknown as ExtensionContext;
+
+  return { ctx, diagnostics, toasts };
 }
 
 /** Check if a specifier resolves into src/tools/video-editor internals. */
@@ -389,10 +425,18 @@ describe('Extension example import governance', () => {
       matrixRows,
     );
 
-    // Exports that are internal helpers not expected in consumer examples
+    // Exports that are internal helpers or new infrastructure not yet in consumer examples
     const INTERNAL_EXPORTS = new Set([
       'CONTEXT_DISPOSE_SYMBOL',    // Symbol key, not intended for direct consumer use
       'disposeExtensionContextServices', // Internal lifecycle, not consumer-facing
+      // Registry-derived family helpers (T6) — new infrastructure, examples pending
+      'getVideoFamilyDefinition',
+      'getVideoFamilyConformanceReport',
+      'getVideoFamilyLegacyBridgeStatus',
+      // Legacy compatibility exports remain public, but examples should prefer
+      // the registry-derived family helpers over milestone-oriented APIs.
+      'CONTRIBUTION_KIND_MILESTONE',
+      'contributionKindNotYetBridged',
     ]);
 
     it('has SDK exports to validate', () => {
@@ -498,6 +542,82 @@ describe('M4 command extension example contract', () => {
     expect(source).not.toMatch(/\bDataProvider\b/);
     expect(source).not.toMatch(/\buseTimelineStore\b/);
     expect(source).not.toMatch(/\bTimelineEditMutation\b/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M2 stage/overlay compatibility example contract
+// ---------------------------------------------------------------------------
+
+describe('M2 stage and overlay example contract', () => {
+  it('stage canary compiles against registry-derived family helpers', () => {
+    expect(stageCanaryExample.manifest.id).toBe('com.reigh.examples.stage-canary-m2');
+    expect(typeof stageCanaryExample.activate).toBe('function');
+
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, 'src', 'examples', 'stage-canary-example.ts'),
+      'utf8',
+    );
+    expect(source).toContain('getVideoFamilyDefinition');
+    expect(source).toContain('getVideoFamilyLegacyBridgeStatus');
+    expect(source).not.toContain('CONTRIBUTION_KIND_MILESTONE');
+    expect(source).not.toContain('contributionKindNotYetBridged');
+  });
+
+  it('stage canary emits active, delegated, and absent family diagnostics', () => {
+    const { ctx, diagnostics, toasts } = createExampleContext(
+      stageCanaryExample.manifest.messages,
+    );
+
+    const handle = stageCanaryExample.activate(ctx);
+    handle.dispose();
+
+    const byCode = new Map(diagnostics.map((diagnostic) => [diagnostic.code, diagnostic]));
+    expect(byCode.get('stage/kind-slot-active')).toMatchObject({
+      severity: 'info',
+      milestone: 'M1',
+    });
+    expect(byCode.get('stage/kind-agent-delegated')).toMatchObject({
+      severity: 'warning',
+      milestone: 'M10',
+    });
+    expect(byCode.get('stage/kind-process-delegated')).toMatchObject({
+      severity: 'warning',
+      milestone: 'M12',
+    });
+    expect(byCode.get('stage/kind-futureStageSurface-absent')).toMatchObject({
+      severity: 'warning',
+    });
+    expect(byCode.get('stage/kind-futureStageSurface-absent')?.message).toContain(
+      'absent from the family registry',
+    );
+    expect(toasts.map((toast) => toast.message)).toEqual([
+      'M2 Stage Canary example activated.',
+      'M2 Stage Canary example disposed.',
+    ]);
+  });
+
+  it('overlay example reports active registry status without milestone-authority wording', () => {
+    const { ctx, diagnostics, toasts } = createExampleContext(
+      overlayExample.manifest.messages,
+    );
+
+    const handle = overlayExample.activate(ctx);
+    handle.dispose();
+
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toMatchObject({
+      severity: 'info',
+      code: 'overlay/family-status',
+    });
+    expect(diagnostics[0].message).toContain('timelineOverlay is active');
+    expect(diagnostics[0].message).toContain('host-integrated');
+    expect(diagnostics[0].message).toContain('legacy milestone M2 is compatibility metadata');
+    expect(diagnostics[0].message).not.toContain('bridged at milestone');
+    expect(toasts.map((toast) => toast.message)).toEqual([
+      'M2 Timeline Overlay example activated.',
+      'M2 Timeline Overlay example disposed.',
+    ]);
   });
 });
 

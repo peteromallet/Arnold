@@ -1,0 +1,824 @@
+[
+  {
+    "kind": "agent",
+    "label": "Agent",
+    "description": "Agent contributions expose a tool dispatch surface and generation session contract. Execution is host-mediated via proposal-backed tool invocation.",
+    "declarationMaturity": "typed",
+    "executionMaturity": "delegated",
+    "sdkModules": [
+      "src/sdk/video/agent/"
+    ],
+    "hostAdapter": null,
+    "requiresTrustedCode": true,
+    "manifestSchemaDefinition": "AgentContribution",
+    "coverage": {
+      "manifestSchema": null,
+      "normalizedDescriptor": false,
+      "registrationApi": false,
+      "lifecycleCleanup": null,
+      "diagnostics": null,
+      "hostCapabilityProjection": null,
+      "uiIntegration": null,
+      "persistencePosture": null,
+      "examples": null,
+      "tests": null
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 10,
+      "coherent": true,
+      "schemaCovered": false,
+      "metRequirementCount": 0,
+      "unmetRequirementCount": 2,
+      "unassessedRequirementCount": 8
+    },
+    "legacyCompatibility": {
+      "milestone": "M10",
+      "bridged": false
+    },
+    "hostIntegrationNotes": "Agent contributions are proposal-backed; the host mediates tool dispatch and generation sessions. No standalone host adapter exists yet — execution is delegated through the agent-tool registration service."
+  },
+  {
+    "kind": "agentTool",
+    "label": "Agent Tool",
+    "description": "Agent tool contributions expose host-mediated tool handlers with input schemas, proposal-backed mutations, and host-owned invocation lifecycle. Registered imperatively via ctx.agentTools.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/agentToolAdapter.ts",
+    "requiresTrustedCode": true,
+    "manifestSchemaDefinition": "AgentToolContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": false,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 6,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 4,
+      "unmetRequirementCount": 6,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M10",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Agent tool contributions are host-mediated: the host owns invocation, progress, cancellation, proposal creation, and UI. Extensions register tool handlers imperatively via ctx.agentTools. Evidence: AgentToolContribution interface, AgentToolRegistrationService, and manifest schema oneOf coverage."
+  },
+  {
+    "kind": "assetDetailSection",
+    "label": "Asset Detail Section",
+    "description": "Asset detail section contributions add custom sections to the asset detail panel with placement control and title validation. Bridged at M6.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/metadataAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "AssetDetailSectionContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": false,
+      "lifecycleCleanup": false,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 7,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 3,
+      "unmetRequirementCount": 7,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M6",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Asset detail section contributions add custom sections to the asset detail panel with title and placement validation. Bridged at M6. Evidence: manifest validation enforces non-empty title and valid placement (before-default, after-default)."
+  },
+  {
+    "kind": "automation",
+    "label": "Automation",
+    "description": "Automation clips are host-owned timeline clips that apply baked keyframe curves to override target extension parameters. Bridged at M9 as a built-in clip type.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/video/timeline/clipTypes.ts",
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/clipTypeAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "AutomationContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": false,
+      "lifecycleCleanup": false,
+      "diagnostics": false,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 8,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 2,
+      "unmetRequirementCount": 8,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M9",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Automation clips are host-owned timeline clips (built-in clip type) with baked keyframe curves that override target extension parameter values during preview and export. Bridged at M9 alongside clipType. Evidence: BUILTIN_CLIP_TYPES includes automation; AutomationClipTarget and AutomationClipParams types exist; contributionKindNotYetBridged returns null for automation at M9."
+  },
+  {
+    "kind": "clipType",
+    "label": "Clip Type",
+    "description": "Clip types define the compositional and dispatch contract for timeline clips. The host owns keyframes, render planning, and export projection.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/video/timeline/clipTypes.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/clipTypeAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "ClipTypeContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": false,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 5,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 5,
+      "unmetRequirementCount": 5,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M9",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Clip-type contributions are dispatched through the timeline composition registry. The host adapter normalizes clip-type descriptors and owns lifecycle. Keyframe interpolation is host-owned."
+  },
+  {
+    "kind": "command",
+    "label": "Command",
+    "description": "Commands are palette-invocable actions with optional target context dispatch (clip, clip-selection, track, timeline-area). Fully bridged with host adapter, keybinding, and context-menu wiring.",
+    "declarationMaturity": "documented",
+    "executionMaturity": "host-integrated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "CommandContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": true,
+      "persistencePosture": false,
+      "examples": true,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 2,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 8,
+      "unmetRequirementCount": 2,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M4",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Commands are fully bridged with palette, context-menu dispatch, keybinding wiring, and export-scoped guard participation."
+  },
+  {
+    "kind": "contextMenuItem",
+    "label": "Context Menu Item",
+    "description": "Context menu item contributions add items to context menus for clip, track, and timeline-area surfaces with target filtering.",
+    "declarationMaturity": "documented",
+    "executionMaturity": "host-integrated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "ContextMenuItemContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": true,
+      "persistencePosture": false,
+      "examples": true,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 2,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 8,
+      "unmetRequirementCount": 2,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M4",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Context menu item contributions add items to clip, track, and timeline-area context menus. Fully bridged at M4 through the command dispatch system. Evidence: command-extension.ts example includes a clip-target context menu item."
+  },
+  {
+    "kind": "dialog",
+    "label": "Dialog",
+    "description": "Dialog contributions render into named dialog layers (modal or overlay) with order control and when-clause filtering. Bridged at M1.",
+    "declarationMaturity": "documented",
+    "executionMaturity": "host-integrated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "DialogContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": true,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 4,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 6,
+      "unmetRequirementCount": 4,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M1",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Dialog contributions render into named dialog layers (modal, overlay). Bridged at M1 through the slot extension surface. Schema: DialogContribution with layer enum validation."
+  },
+  {
+    "kind": "effect",
+    "label": "Effect",
+    "description": "Effect contributions register trusted local render components that execute in the browser preview. Blocked from export unless allowBrowserExport or allowWorkerExport is declared. Bridged at M7.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/effectAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "EffectContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": false,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 6,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 4,
+      "unmetRequirementCount": 6,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M7",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Effect contributions are trusted local browser-preview components. Extensions register effect components imperatively via ctx.effects. Evidence: EffectContribution interface, EffectRegistrationService, manifest schema oneOf coverage, and kind enum inclusion."
+  },
+  {
+    "kind": "inspectorSection",
+    "label": "Inspector Section",
+    "description": "Inspector section contributions add custom sections to the inspector panel with placement control (before-default, after-default).",
+    "declarationMaturity": "documented",
+    "executionMaturity": "host-integrated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "InspectorSectionContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": true,
+      "persistencePosture": false,
+      "examples": true,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 2,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 8,
+      "unmetRequirementCount": 2,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M1",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Inspector section contributions add custom sections to the inspector panel. Placement can be before-default or after-default. Evidence: dedicated inspector-example.ts with both placement values."
+  },
+  {
+    "kind": "keybinding",
+    "label": "Keybinding",
+    "description": "Keybinding contributions bind keyboard shortcuts to commands with platform-aware key notation and when-clause filtering.",
+    "declarationMaturity": "documented",
+    "executionMaturity": "host-integrated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "KeybindingContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": true,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 3,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 7,
+      "unmetRequirementCount": 3,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M4",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Keybinding contributions bind keyboard shortcuts to commands with platform-aware key notation. Bridged at M4 through the command dispatch system. Evidence: command-extension.ts example includes a CtrlOrCmd+Alt+R keybinding."
+  },
+  {
+    "kind": "metadataFacet",
+    "label": "Metadata Facet",
+    "description": "Metadata facet contributions surface metadata fields as searchable and filterable facets in the asset panel with dot-separated field paths. Bridged at M6.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/index.ts",
+      "src/sdk/video/assets/metadata.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/metadataAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "MetadataFacetContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": false,
+      "lifecycleCleanup": false,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 7,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 3,
+      "unmetRequirementCount": 7,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M6",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Metadata facet contributions tell the host how to surface a metadata field as a searchable/filterable facet in the asset panel. Bridged at M6. Evidence: MetadataFacetContribution interface, kind enum inclusion, and M6-active bridging status in contributionKindNotYetBridged."
+  },
+  {
+    "kind": "outputFormat",
+    "label": "Output Format",
+    "description": "Output format contributions declare compile-only or render-dependent output pipelines. Types exist but runtime execution is reserved.",
+    "declarationMaturity": "typed",
+    "executionMaturity": "delegated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": null,
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "OutputFormatContribution",
+    "coverage": {
+      "manifestSchema": false,
+      "normalizedDescriptor": false,
+      "registrationApi": false,
+      "lifecycleCleanup": null,
+      "diagnostics": null,
+      "hostCapabilityProjection": null,
+      "uiIntegration": null,
+      "persistencePosture": null,
+      "examples": null,
+      "tests": null
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 10,
+      "coherent": true,
+      "schemaCovered": false,
+      "metRequirementCount": 0,
+      "unmetRequirementCount": 3,
+      "unassessedRequirementCount": 7
+    },
+    "legacyCompatibility": {
+      "milestone": "M6",
+      "bridged": false
+    },
+    "hostIntegrationNotes": "Output format types are declared but runtime execution is reserved. The host provides compile-only and render-dependent output stubs."
+  },
+  {
+    "kind": "panel",
+    "label": "Panel",
+    "description": "Panel contributions render into the asset panel region. Placement is limited to asset-panel. Bridged at M1.",
+    "declarationMaturity": "documented",
+    "executionMaturity": "host-integrated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "PanelContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": true,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 3,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 7,
+      "unmetRequirementCount": 3,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M1",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Panel contributions render into the asset panel region. Placement is limited to asset-panel. Bridged at M1 through the slot extension surface. Evidence: panel placement validation in SDK tests."
+  },
+  {
+    "kind": "parser",
+    "label": "Parser",
+    "description": "Parsers convert assets from import formats into editor-native representations. Fully bridged at M6 with host adapter, diagnostics, and lifecycle.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/parserAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "ParserContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 4,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 6,
+      "unmetRequirementCount": 4,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M6",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Parser contributions are bridged through the asset ingestion pipeline. The host adapter normalizes parser descriptors, owns lifecycle, and produces diagnostics for parse failures."
+  },
+  {
+    "kind": "process",
+    "label": "Process",
+    "description": "Process contributions declare trusted local process descriptors that the host manages (install, start, stop, restart). Types and manifest declaration exist; runtime execution is reserved for M12.",
+    "declarationMaturity": "typed",
+    "executionMaturity": "delegated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": null,
+    "requiresTrustedCode": true,
+    "manifestSchemaDefinition": "ProcessContribution",
+    "coverage": {
+      "manifestSchema": false,
+      "normalizedDescriptor": false,
+      "registrationApi": false,
+      "lifecycleCleanup": null,
+      "diagnostics": null,
+      "hostCapabilityProjection": null,
+      "uiIntegration": null,
+      "persistencePosture": null,
+      "examples": null,
+      "tests": null
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 10,
+      "coherent": true,
+      "schemaCovered": false,
+      "metRequirementCount": 0,
+      "unmetRequirementCount": 3,
+      "unassessedRequirementCount": 7
+    },
+    "legacyCompatibility": {
+      "milestone": "M12",
+      "bridged": false
+    },
+    "hostIntegrationNotes": "Process contributions declare trusted local process descriptors with installation posture, lifecycle, and capability requirements. Execution is reserved for M12 — processes are declarable in manifests but not yet bridged for runtime. Evidence: ProcessContribution interface, ProcessSpec, ProcessLifecycleState types; contributionKindNotYetBridged returns M12."
+  },
+  {
+    "kind": "searchProvider",
+    "label": "Search Provider",
+    "description": "Search provider contributions supply search results to the host search surface with configurable result kinds and ordering. Types exist; runtime execution is reserved.",
+    "declarationMaturity": "typed",
+    "executionMaturity": "delegated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": null,
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "SearchProviderContribution",
+    "coverage": {
+      "manifestSchema": false,
+      "normalizedDescriptor": false,
+      "registrationApi": false,
+      "lifecycleCleanup": null,
+      "diagnostics": null,
+      "hostCapabilityProjection": null,
+      "uiIntegration": null,
+      "persistencePosture": null,
+      "examples": null,
+      "tests": null
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 10,
+      "coherent": true,
+      "schemaCovered": false,
+      "metRequirementCount": 0,
+      "unmetRequirementCount": 3,
+      "unassessedRequirementCount": 7
+    },
+    "legacyCompatibility": {
+      "milestone": "M6",
+      "bridged": false
+    },
+    "hostIntegrationNotes": "Search provider contributions supply asset/material search results to the host search surface. The provider owns indexing, model choice, and refresh; the host owns query dispatch, result merge, and source labeling. Typed but execution is reserved (declarable, not yet bridged for runtime). Evidence: SearchProviderContribution interface; contributionKindNotYetBridged returns M6."
+  },
+  {
+    "kind": "shader",
+    "label": "Shader",
+    "description": "Shader contributions declare WebGL/WebGPU materializer contracts for custom rendering passes. Types exist; runtime execution is delegated.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/video/rendering/capabilities.ts",
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/shaderAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "ShaderContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": false,
+      "lifecycleCleanup": false,
+      "diagnostics": false,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 8,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 2,
+      "unmetRequirementCount": 8,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M13",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Shader contributions declare WebGL materializer descriptors. The host projects shader capabilities into the render planner. Materializer requirements are validated at export time."
+  },
+  {
+    "kind": "slot",
+    "label": "Slot",
+    "description": "Slots are the primary extension surface — header, toolbar, panels, and other host chrome regions. Fully supported with lifecycle, diagnostics, and persistence.",
+    "declarationMaturity": "documented",
+    "executionMaturity": "public-supported",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "SlotContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": true,
+      "uiIntegration": true,
+      "persistencePosture": true,
+      "examples": true,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": true,
+      "gapCount": 0,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 10,
+      "unmetRequirementCount": 0,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M1",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Slot contributions are the original extension surface. Fully bridged with lifecycle, diagnostics, UI, persistence, examples, and tests."
+  },
+  {
+    "kind": "timelineOverlay",
+    "label": "Timeline Overlay",
+    "description": "Timeline overlay contributions render over the timeline surface with order control and when-clause filtering. Bridged at M2.",
+    "declarationMaturity": "documented",
+    "executionMaturity": "host-integrated",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "TimelineOverlayContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": true,
+      "hostCapabilityProjection": false,
+      "uiIntegration": true,
+      "persistencePosture": false,
+      "examples": true,
+      "tests": true
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 2,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 8,
+      "unmetRequirementCount": 2,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M2",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Timeline overlay contributions render over the timeline surface with order control and when-clause filtering. Bridged at M2. Evidence: dedicated overlay-example.ts."
+  },
+  {
+    "kind": "transition",
+    "label": "Transition",
+    "description": "Transition contributions register trusted local renderers for cross-clip transitions. Blocked from export unless allowBrowserExport or allowWorkerExport is declared. Bridged at M8.",
+    "declarationMaturity": "schema-backed",
+    "executionMaturity": "runtime-bridged",
+    "sdkModules": [
+      "src/sdk/index.ts"
+    ],
+    "hostAdapter": "src/video-editor/adapters/transitionAdapter.ts",
+    "requiresTrustedCode": false,
+    "manifestSchemaDefinition": "TransitionContribution",
+    "coverage": {
+      "manifestSchema": true,
+      "normalizedDescriptor": true,
+      "registrationApi": true,
+      "lifecycleCleanup": true,
+      "diagnostics": false,
+      "hostCapabilityProjection": false,
+      "uiIntegration": false,
+      "persistencePosture": false,
+      "examples": false,
+      "tests": false
+    },
+    "conformance": {
+      "fullyConformant": false,
+      "gapCount": 6,
+      "coherent": true,
+      "schemaCovered": true,
+      "metRequirementCount": 4,
+      "unmetRequirementCount": 6,
+      "unassessedRequirementCount": 0
+    },
+    "legacyCompatibility": {
+      "milestone": "M8",
+      "bridged": true
+    },
+    "hostIntegrationNotes": "Transition contributions are trusted local browser-preview renderers for cross-clip transitions. Extensions register transition renderers imperatively via ctx.transitions. Evidence: TransitionContribution interface, TransitionRegistrationService, manifest schema oneOf coverage, and kind enum inclusion."
+  }
+]
