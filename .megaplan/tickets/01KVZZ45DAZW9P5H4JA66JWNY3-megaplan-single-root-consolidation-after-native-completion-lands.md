@@ -12,7 +12,8 @@ tags:
 codebase_id: null
 created_at: '2026-06-25T18:01:55.882992+00:00'
 last_edited_at: '2026-06-25T18:01:55.882992+00:00'
-epics: []
+epics:
+- arnold-complete-cleanup-single-root
 ---
 
 Problem
@@ -25,6 +26,9 @@ The correct direction is to make `arnold_pipelines.megaplan` the single implemen
 
 Recommended direction
 Do this as a dedicated follow-up cleanup from the post-`native-python-pipelines-completion-thread2` base, not mixed into the completion epic merge. Keep the planning document `docs/arnold/megaplan-single-implementation-root-fix.md`, but do not land the current dirty root-consolidation implementation as-is.
+
+Runnable epic
+This ticket is now covered by `.megaplan/briefs/arnold-complete-cleanup-single-root/chain.yaml`. That epic supersedes the rough phase list below where it is more specific: it treats `_pipeline` extraction, import-order side effects, packaging/discovery parity, docs/skills cleanup, final deletion, and merge-result closeout as first-class milestones.
 
 Sequencing
 1. Land the completed `native-python-pipelines-completion-thread2` branch first.
