@@ -5,14 +5,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useEffect, type ReactNode } from 'react';
 import type {
   ProposalRuntime,
-  TimelineDiff,
-  TimelinePatch,
-  TimelinePreviewResult,
   TimelineProposal,
   TimelineReader,
   TimelineSnapshot,
   TimelineOps,
 } from '@/sdk/index';
+import type {
+  TimelineDiff,
+  TimelinePatch,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
 import type { ProposalImportDiagnosticsState } from '@/tools/video-editor/hooks/timelineStore';
 import type { VideoEditorRenderContext } from '@/tools/video-editor/runtime/extensionSurface';
 

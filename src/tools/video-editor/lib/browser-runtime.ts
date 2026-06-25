@@ -3,9 +3,9 @@ import {
   type AssetProfile,
   type SilenceRegion,
   TimelineNotFoundError,
-  TimelineVersionConflictError,
   type DataProvider,
 } from '@/tools/video-editor/data/DataProvider.ts';
+import { TimelineVersionConflictError } from '@/sdk/video/timeline/errors.ts';
 import type { AssetRegistry, AssetRegistryEntry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
 

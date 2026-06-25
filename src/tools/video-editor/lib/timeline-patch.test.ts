@@ -13,10 +13,10 @@ import {
 import { TIMELINE_POSTPROCESS_SHADER_APP_KEY } from '@/tools/video-editor/lib/timeline-domain';
 import type { PatchMergeMode } from '@/tools/video-editor/lib/timeline-patch';
 import type {
+  TimelinePatchAnyOpFamily,
   TimelinePatch,
   TimelinePatchOperation,
-  TimelinePatchAnyOpFamily,
-} from '@/sdk/index';
+} from '@/sdk/video/timeline/patch.ts';
 import type {
   TimelineClipShaderMetadata,
   TimelinePostprocessShaderMetadata,

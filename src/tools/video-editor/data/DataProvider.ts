@@ -1,3 +1,7 @@
+export {
+  TimelineVersionConflictError,
+  isTimelineVersionConflictError,
+} from '@/sdk/video/timeline/errors.ts';
 import type { AssetRegistry, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import type { Checkpoint } from '@/tools/video-editor/types/history.ts';
 import type { AssetResolver } from '@/tools/video-editor/data/AssetResolver.ts';
@@ -11,20 +15,6 @@ export type {
 export interface LoadedTimeline {
   config: TimelineConfig;
   configVersion: number;
-}
-
-export class TimelineVersionConflictError extends Error {
-  code = 'timeline_version_conflict' as const;
-
-  constructor(message = 'Timeline version conflict') {
-    super(message);
-    this.name = 'TimelineVersionConflictError';
-  }
-}
-
-export function isTimelineVersionConflictError(error: unknown): error is TimelineVersionConflictError {
-  return error instanceof TimelineVersionConflictError
-    || (error instanceof Error && error.name === 'TimelineVersionConflictError');
 }
 
 export class TimelineNotFoundError extends Error {

@@ -19,6 +19,16 @@ import {
   setEditorShellRoot,
   getEditorShellRoot,
   createExtensionContext,
+  DIAGNOSTIC_SOURCE_EXTENSION,
+  DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY,
+  KNOWN_CONTRIBUTION_KINDS,
+  KNOWN_CONTRIBUTION_KINDS_SET,
+  KNOWN_SLOT_NAMES,
+  KNOWN_SLOT_NAMES_SET,
+  INSPECTOR_SECTION_PLACEMENTS,
+  PANEL_PLACEMENTS,
+  ASSET_DETAIL_SECTION_PLACEMENTS,
+  ALL_VALID_PLACEMENTS,
 } from '@reigh/editor-sdk';
 import type {
   ReighExtension,
@@ -38,6 +48,13 @@ import type {
   ExtensionPermissionDeclaration,
   ProjectExtensionRequirement,
   ProjectExtensionRequirements,
+  DiagnosticSource,
+  CreateDiagnosticCollectionOptions,
+  ProposalExpiryDetail,
+  ProposalEnvelope,
+  ProposalImportStatus,
+  ProposalImportDiagnostic,
+  ProposalImportResult,
 } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -181,6 +198,36 @@ export function activateCoverageExtension(
   void examplePermission;
   void exampleProcessSpawn;
   void exampleProjectReqs;
+
+  // ---- Public constants / coverage-only surface (compile-time references) --
+  const _diagnosticSource: DiagnosticSource = DIAGNOSTIC_SOURCE_EXTENSION;
+  const _capacity = DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY;
+  const _knownKinds = KNOWN_CONTRIBUTION_KINDS;
+  const _knownKindsSet = KNOWN_CONTRIBUTION_KINDS_SET;
+  const _knownSlots = KNOWN_SLOT_NAMES;
+  const _knownSlotsSet = KNOWN_SLOT_NAMES_SET;
+  const _placements = [
+    ...INSPECTOR_SECTION_PLACEMENTS,
+    ...PANEL_PLACEMENTS,
+    ...ASSET_DETAIL_SECTION_PLACEMENTS,
+    ...ALL_VALID_PLACEMENTS,
+  ];
+  void _diagnosticSource;
+  void _capacity;
+  void _knownKinds;
+  void _knownKindsSet;
+  void _knownSlots;
+  void _knownSlotsSet;
+  void _placements;
+
+  // ---- Proposal import lifecycle types (compile-time coverage only) --------
+  type _ProposalExpiry = ProposalExpiryDetail;
+  type _ProposalEnv = ProposalEnvelope;
+  type _ProposalStatus = ProposalImportStatus;
+  type _ProposalDiag = ProposalImportDiagnostic;
+  type _ProposalResult = ProposalImportResult;
+  type _CreateDiagOptions = CreateDiagnosticCollectionOptions;
+  void 0 as unknown as [_ProposalExpiry, _ProposalEnv, _ProposalStatus, _ProposalDiag, _ProposalResult, _CreateDiagOptions];
 
   return {
     dispose(): void {

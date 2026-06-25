@@ -14,12 +14,14 @@ import type {
   TimelineProposal,
   TimelineProposalInput,
   TimelineOps,
-  TimelinePatch,
-  TimelineDiff,
-  TimelinePreviewResult,
-  TimelinePatchValidationResult,
   DisposeHandle,
 } from '@/sdk/index';
+import type {
+  TimelineDiff,
+  TimelinePatch,
+  TimelinePatchValidationResult,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
 import type { TimelineConfig } from '@/tools/video-editor/types/index';
 import type { ProposalPersistenceProvider, ProposalPersistenceRecord } from '@/tools/video-editor/lib/proposal-runtime';
 

@@ -16,7 +16,7 @@ import type {
   ExtensionContribution,
 } from '@reigh/editor-sdk';
 import { contributionKindNotYetBridged } from '@reigh/editor-sdk';
-import { BUILTIN_CLIP_TYPES } from '@/tools/video-editor/types/index.ts';
+import { BUILTIN_CLIP_TYPES } from '@/sdk/video/timeline/clipTypes.ts';
 import type { ResolvedTimelineClip, ResolvedTimelineConfig, TimelineConfig } from '@/tools/video-editor/types/index.ts';
 import {
   scanTimelineLiveBindings,

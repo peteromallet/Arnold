@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
+  TimelineVersionConflictError,
+  isTimelineVersionConflictError,
+} from '@reigh/editor-sdk';
+import {
   InMemoryDataProvider,
   createLocalAssetResolver,
 } from '@/tools/video-editor/lib/browser-runtime';
 import {
   TimelineNotFoundError,
-  TimelineVersionConflictError,
   type TimelineConfig,
 } from '@/tools/video-editor';
 
@@ -85,6 +88,7 @@ describe('InMemoryDataProvider', () => {
 
     await expect(provider.loadTimeline('missing')).rejects.toBeInstanceOf(TimelineNotFoundError);
     await expect(provider.saveTimeline('timeline-1', buildConfig(), 999)).rejects.toBeInstanceOf(TimelineVersionConflictError);
+    await expect(provider.saveTimeline('timeline-1', buildConfig(), 999)).rejects.toSatisfy(isTimelineVersionConflictError);
   });
 
   it('supports local/file asset resolution through the public resolver seam', async () => {
