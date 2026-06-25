@@ -18,15 +18,18 @@ Provenance:
 | item | value |
 | --- | --- |
 | Package | arnold_pipelines/megaplan/pipelines/planning|
-| Manifest and builder | arnold_pipelines/megaplan/pipelines/planning/__init__.py|
+| Builder target | arnold_pipelines.megaplan.pipelines.planning:build_pipeline|
 | Steps | arnold_pipelines/megaplan/pipelines/planning/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/planning/__init__.py|
 | Skill | arnold_pipelines/megaplan/pipelines/planning/SKILL.md|
 | Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.planning:build_pipeline`|
-| Manifest hash | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba|
+| Contract | workflow|
+| Load state | workflow|
+| Identity | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba|
 
 ## Builder Surface
 
-The following snippet is extracted verbatim from the pack's `__init__.py`.
+The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
 def build_pipeline():

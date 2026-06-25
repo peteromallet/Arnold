@@ -6,7 +6,15 @@ from unittest.mock import patch
 
 import pytest
 
-from arnold.pipeline import Port, PortRef
+from arnold.pipeline import (
+    Edge,
+    ParallelStage,
+    Pipeline,
+    Port,
+    PortRef,
+    Stage,
+    run_pipeline,
+)
 from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
     RuntimeTopologyProjectionError,
     capsule_definition_identity_projection,
@@ -14,15 +22,9 @@ from arnold.pipelines.megaplan._pipeline.behavioral_manifest import (
 )
 from arnold.pipelines.megaplan._pipeline import registry
 from arnold.pipeline.discovery.manifest import Manifest, read_manifest
-from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
-from arnold.pipelines.megaplan._pipeline.types import (
-    Edge,
-    Pipeline,
-    ParallelStage,
-    Stage,
-    StepContext,
-)
-from arnold.pipelines.megaplan._pipeline.contracts import PortBindError
+from arnold.pipeline.contracts import PortBindError
+from arnold.pipeline.native import NativeProgram
+from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.pipelines.megaplan.pipelines.select_tournament.pipeline import (
     _bind_or_raise,
 )
@@ -72,6 +74,8 @@ def test_select_tournament_declares_ports_for_every_cross_stage_boundary(
     module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
     pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
 
+    assert isinstance(pipeline, Pipeline)
+    assert isinstance(pipeline.native_program, NativeProgram)
     assert pipeline.binding_map == {
         ("pairwise_bracket", "candidate_scores"): (
             "score_candidates",
@@ -176,12 +180,14 @@ def test_select_tournament_runs_through_declared_ports(monkeypatch, tmp_path) ->
     module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
     pipeline = module.build_pipeline(candidates=("a", "b", "c", "d"))
     plan_dir = tmp_path / "select-tournament"
-    ctx = StepContext(plan_dir=plan_dir, state={}, profile={}, mode="select")
 
-    result = run_pipeline(pipeline, ctx, artifact_root=plan_dir)
+    result = run_pipeline(
+        pipeline,
+        initial_state={},
+        envelope=RuntimeEnvelope(artifact_root=str(plan_dir)),
+    )
 
-    assert result["final_stage"] == "winner"
-    assert result["state"]["select_tournament_winner"] == "d"
+    assert result.state["select_tournament_winner"] == "d"
     winner = json.loads((plan_dir / "winner" / "v1.json").read_text())
     assert winner == {
         "score": 1.0,
@@ -189,6 +195,55 @@ def test_select_tournament_runs_through_declared_ports(monkeypatch, tmp_path) ->
         "source_port": "bracket_result",
         "winner": "d",
     }
+
+
+def test_select_tournament_non_default_candidates_drive_native_program(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("MEGAPLAN_TYPED_PORTS", "1")
+    import importlib
+
+    module = importlib.import_module("arnold.pipelines.megaplan.pipelines.select_tournament")
+    pipeline = module.build_pipeline(candidates=("red", "green", "blue"))
+    plan_dir = tmp_path / "select-tournament-custom"
+
+    assert pipeline.native_program is not None
+    parallel_block = pipeline.native_program.parallel_blocks[0]
+    assert parallel_block.branches == (
+        "candidate_score_0",
+        "candidate_score_1",
+        "candidate_score_2",
+    )
+    assert pipeline.stages["score_candidates"].max_workers == 3
+
+    result = run_pipeline(
+        pipeline,
+        initial_state={},
+        envelope=RuntimeEnvelope(artifact_root=str(plan_dir)),
+    )
+
+    assert result.state["select_tournament_winner"] == "blue"
+    winner = json.loads((plan_dir / "winner" / "v1.json").read_text())
+    assert winner["winner"] == "blue"
+    scores = json.loads((plan_dir / "score_candidates" / "v1.json").read_text())
+    assert [candidate["candidate"] for candidate in scores["candidates"]] == [
+        "red",
+        "green",
+        "blue",
+    ]
+
+
+def test_select_tournament_mirror_is_compatibility_shim() -> None:
+    import arnold.pipelines.megaplan.pipelines.select_tournament as canonical
+    import arnold.pipelines.megaplan.pipelines.select_tournament.pipeline as canonical_pipeline
+    import arnold_pipelines.megaplan.pipelines.select_tournament as mirror
+    import arnold_pipelines.megaplan.pipelines.select_tournament.pipeline as mirror_pipeline
+
+    assert mirror.build_pipeline is canonical.build_pipeline
+    assert mirror_pipeline.build_pipeline is canonical_pipeline.build_pipeline
+    assert mirror.__all__ == canonical.__all__
+    assert not hasattr(mirror, "_build_legacy_graph_pipeline")
 
 
 def test_select_tournament_runtime_topology_projection_is_stable(monkeypatch) -> None:

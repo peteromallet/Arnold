@@ -1,18 +1,13 @@
 # creative pipeline — skill reference
 
-**Runtime**: native-default converted pipeline<br>
+**Runtime**: native-backed pipeline<br>
 **Arnold API version**: `1.0`<br>
 **Run surface**: `megaplan run creative ...` or `arnold pipelines run creative ...`<br>
 **Supported modes**: form-controlled with `--form`
 
-Fresh `creative` runs use the native runtime by default and persist runtime
-ownership in `state.json.runtime_envelope.runtime` and
-`state.json.meta.executor`. During the M7 deprecation window, the derived graph
-remains available as a compatibility fallback: pass `--runtime graph` (or the
-deprecated `--executor graph`) for a fresh run that must use the graph executor.
-Existing graph-born plan directories keep resuming on graph. Native-born runs
-resume on native, and corrupt native cursors fail closed rather than silently
-falling back to graph.
+Fresh `creative` runs use the native runtime and persist runtime ownership in
+`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. Native
+resume cursors resume on native, and corrupt native cursors fail closed.
 
 ## Purpose
 
@@ -21,7 +16,7 @@ Form-aware creative-writing pipeline. Accepts a `--form` (validated against
 then produces a finished creative artifact via a single prep→execute→critique
 →revise→finalize pass.
 
-## Topology
+## Native Order
 
 ```
 prep (form-aware) → execute_creative → critique_creative → revise_creative → finalize

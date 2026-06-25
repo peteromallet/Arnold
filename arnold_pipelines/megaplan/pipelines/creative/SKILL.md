@@ -1,8 +1,12 @@
 # creative pipeline — skill reference
 
-**Driver**: `subprocess_isolated`<br>
+**Driver**: compatibility mirror for the native canonical package<br>
 **Arnold API version**: `1.0`<br>
-**Supported modes**: *(none — invoked directly, not via `megaplan run`)*
+**Supported modes**: `native`
+
+This mirror delegates to
+`arnold.pipelines.megaplan.pipelines.creative`. New runtime and discovery
+surfaces should import the canonical package directly.
 
 ## Purpose
 
@@ -11,7 +15,7 @@ Form-aware creative-writing pipeline. Accepts a `--form` (validated against
 then produces a finished creative artifact via a single prep→execute→critique
 →revise→finalize pass.
 
-## Topology
+## Native Order
 
 ```
 prep (form-aware) → execute_creative → critique_creative → revise_creative → finalize

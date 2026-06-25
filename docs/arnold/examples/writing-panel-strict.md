@@ -4,8 +4,8 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold_pipelines/megaplan/pipelines/writing_panel_strict
-- manifest_hash: sha256:5162f36a03c859978f9dfb7332a4742c6462518d2df67a730262e8c59925c14f
+- source_package: arnold/pipelines/megaplan/pipelines/writing_panel_strict
+- manifest_hash: native:writing-panel-strict
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -17,15 +17,19 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold_pipelines/megaplan/pipelines/writing_panel_strict|
-| Manifest and builder | arnold_pipelines/megaplan/pipelines/writing_panel_strict/__init__.py|
-| Skill | arnold_pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md|
-| Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline`|
-| Manifest hash | sha256:5162f36a03c859978f9dfb7332a4742c6462518d2df67a730262e8c59925c14f|
+| Package | arnold/pipelines/megaplan/pipelines/writing_panel_strict|
+| Builder target | arnold.pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline|
+| Steps | arnold/pipelines/megaplan/pipelines/writing_panel_strict/steps.py|
+| Builder source | arnold/pipelines/megaplan/pipelines/writing_panel_strict/__init__.py|
+| Skill | arnold/pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
+| Contract | native|
+| Load state | loadable-native|
+| Identity | native:writing-panel-strict|
 
 ## Builder Surface
 
-The following snippet is extracted verbatim from the pack's `__init__.py`.
+The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
 name: str = "writing-panel-strict"
@@ -34,167 +38,124 @@ description: str = (
     "Not for code."
 )
 
-driver: tuple[str, str] = ("graph", "dispatch+emit")
+driver: tuple[str, str] = ("native", "panel")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("writing", "critique", "revise")
+```
 
-def build_pipeline() -> Pipeline:
-    """Return the canonical ``writing-panel-strict`` explicit-node pipeline."""
+## Step Surface
 
-    panel_review = Step(
-        id="panel_review",
-        kind="fanout",
-        label="Adversarial panel review",
-        inputs=(Input(name="draft"),),
-        outputs=(Output(name="review_batch"),),
-        capabilities=(Capability(id="writing", route="critique"),),
-        policy=WorkflowPolicy(
-            fanout=FanoutPolicy(
-                mode="static",
-                width=len(REVIEWERS),
-                reducer_ref="writing_panel_strict:merge_reviews",
-            ),
-        ),
-        metadata={
-            "reviewers": [
-                {"name": name, "prompt_path": path}
-                for name, path in REVIEWERS
-            ],
-            "merge": "none",
+The following snippet is extracted verbatim from the pack's `steps.py`.
+
+```python
+def _copy_panel_order(
+    order: Mapping[str, Sequence[str]],
+) -> dict[str, list[str]]:
+    return {panel: list(reviewers) for panel, reviewers in order.items()}
+
+def _dict_to_step_context(ctx: object) -> StepContext:
+    """Adapt native-runtime contexts to Megaplan's StepContext."""
+
+    if isinstance(ctx, StepContext):
+        return ctx
+    if hasattr(ctx, "plan_dir") and hasattr(ctx, "state") and hasattr(ctx, "profile"):
+        return ctx  # type: ignore[return-value]
+
+    if isinstance(ctx, dict):
+        raw_state = ctx.get("state") or {}
+        raw_inputs = ctx.get("inputs") or {}
+        root = ctx.get("artifact_root") or ctx.get("plan_dir") or "."
+        envelope = ctx.get("envelope") or EMPTY_ENVELOPE
+        mode = str(ctx.get("mode") or "polish")
+        profile = ctx.get("profile") or {}
+    else:
+        raw_state = getattr(ctx, "state", {}) or {}
+        raw_inputs = getattr(ctx, "inputs", {}) or {}
+        root = getattr(ctx, "artifact_root", None) or getattr(ctx, "plan_dir", ".")
+        envelope = getattr(ctx, "envelope", None) or EMPTY_ENVELOPE
+        mode = str(getattr(ctx, "mode", "polish") or "polish")
+        profile = getattr(ctx, "profile", {}) or {}
+
+    state = dict(raw_state) if isinstance(raw_state, Mapping) else {}
+    inputs: dict[str, Any] = {}
+    if isinstance(raw_inputs, Mapping):
+        inputs.update(
+            {
+                str(key): value
+                for key, value in raw_inputs.items()
+                if not str(key).startswith("_")
+            }
+        )
+    stored_inputs = state.get("_inputs")
+    if isinstance(stored_inputs, Mapping):
+        inputs.update({str(key): value for key, value in stored_inputs.items()})
+
+    return StepContext(
+        plan_dir=Path(root),
+        state=state if isinstance(raw_state, Mapping) else raw_state,
+        profile=profile,
+        mode=mode,
+        inputs={
+            key: Path(value) if isinstance(value, str) else value
+            for key, value in inputs.items()
         },
-    )
-    synth = Step(
-        id="synth",
-        kind="agent",
-        label="Synthesize panel critiques",
-        inputs=(Input(name="review_batch", value_ref="panel_review.review_batch"),),
-        outputs=(Output(name="synth_artifact"),),
-        capabilities=(Capability(id="writing", route="critique"),),
-        metadata={
-            "prompt_path": str(_PROMPTS / "synth.md"),
-        },
-    )
-    revise = Step(
-        id="revise",
-        kind="agent",
-        label="Revise draft from synthesis",
-        inputs=(
-            Input(name="draft"),
-            Input(name="synth_artifact", value_ref="synth.synth_artifact"),
-        ),
-        outputs=(Output(name="revised_draft"),),
-        capabilities=(Capability(id="writing", route="revise"),),
-        metadata={
-            "prompt_path": str(_PROMPTS / "revise.md"),
-        },
-    )
-    human_decide = Step(
-        id="human_decide",
-        kind="human_gate",
-        label="Human decision: continue or stop",
-        inputs=(Input(name="revised_draft", value_ref="revise.revised_draft"),),
-        outputs=(Output(name="decision"),),
-        capabilities=(Capability(id="human", route="decision"),),
-        policy=WorkflowPolicy(
-            loop=LoopPolicy(max_iterations=8, until_ref="human_decide:stop"),
-            suspension_routes=(
-                SuspensionRoute(route_id="human_decide:loop", reentry_id="continue"),
-            ),
-            control_transitions=(
-                ControlTransitionSlot(
-                    transition_id="human_decide:continue",
-                    transition_type="override",
-                    trigger_ref="human_decide.decision",
-                    target_ref="panel_review",
-                    policy_ref="writing_panel_strict:human_decide",
-                ),
-                ControlTransitionSlot(
-                    transition_id="human_decide:stop",
-                    transition_type="override",
-                    trigger_ref="human_decide.decision",
-                    target_ref="halt",
-                    policy_ref="writing_panel_strict:human_decide",
-                ),
-            ),
-        ),
-        metadata={
-            "options": ("continue", "stop"),
-        },
-    )
-    halt = Step(
-        id="halt",
-        kind="halt",
-        label="Terminal halt",
-        outputs=(Output(name="status"),),
-        metadata={"terminal": True},
+        envelope=envelope,
     )
 
-    return Pipeline(
-        id="writing-panel-strict",
-        version="m5-phase3",
-        steps=(panel_review, synth, revise, human_decide, halt),
-        routes=(
-            Route(id="panel_review:synth", source="panel_review", target="synth", label="default"),
-            Route(id="synth:revise", source="synth", target="revise", label="default"),
-            Route(id="revise:human_decide", source="revise", target="human_decide", label="default"),
-            Route(id="human_decide:panel_review", source="human_decide", target="panel_review", label="continue", condition_ref="continue"),
-            Route(id="human_decide:halt", source="human_decide", target="halt", label="stop", condition_ref="stop"),
-        ),
-        capabilities=(
-            Capability(id="writing", route="critique"),
-            Capability(id="writing", route="revise"),
-            Capability(id="human", route="decision", required=False),
-        ),
-        metadata={
-            "name": name,
-            "description": description,
-            "driver": driver,
-            "entrypoint": entrypoint,
-            "arnold_api_version": arnold_api_version,
-            "capabilities": capabilities,
-            "default_profile": default_profile,
-            "supported_modes": supported_modes,
-            "recommended_profiles": recommended_profiles,
-            "pipeline_dir": str(_PIPELINE_DIR),
-        },
+def _make_panel_reviewer_step(
+    reviewer_id: str,
+    prompt_ref: str,
+) -> PanelReviewerStep:
+    return PanelReviewerStep(
+        name=f"panel_review.{reviewer_id}",
+        kind="produce",
+        prompt_key=None,
+        slot=None,
+        _prompt_ref=prompt_ref,
+        _pipeline_dir=_PIPELINE_DIR,
+        _pipeline_name=_PIPELINE_NAME,
+        _input_refs=["draft"],
+        _reviewer_id=reviewer_id,
+        _panel_reviewer_order=_copy_panel_order(_EMPTY_PANEL_ORDER),
+        _mode="",
+    )
+
+def _make_agent_step(
+    stage_name: str,
+    prompt_ref: str,
+    inputs: Sequence[str],
+    panel_reviewer_order: Mapping[str, Sequence[str]],
+) -> AgentStep:
+    return AgentStep(
+        name=stage_name,
+        kind="produce",
+        prompt_key=None,
+        slot=None,
+        _prompt_ref=prompt_ref,
+        _pipeline_dir=_PIPELINE_DIR,
+        _pipeline_name=_PIPELINE_NAME,
+        _input_refs=list(inputs),
+        _produces="markdown",
+        _panel_reviewer_order=_copy_panel_order(panel_reviewer_order),
+        _mode="",
+    )
+
+def _json_safe_step_result(result: StepResult) -> StepResult:
+    return replace(
+        result,
+        outputs={key: str(value) for key, value in result.outputs.items()},
     )
 ```
 
-## Dry-run report
+## Native builder report
 
 ```yaml
-edge_count: 5
+entry: panel_review
 id: writing-panel-strict
-manifest_hash: sha256:5c872d9f3a953478a5fd71de3840e3d7c700426dd3c2e8818842348f0943502a
-node_count: 5
-possible_routes:
-- condition_ref: stop
-  label: stop
-  source: human_decide
-  target: halt
-- condition_ref: continue
-  label: continue
-  source: human_decide
-  target: panel_review
-- condition_ref: null
-  label: default
-  source: panel_review
-  target: synth
-- condition_ref: null
-  label: default
-  source: revise
-  target: human_decide
-- condition_ref: null
-  label: default
-  source: synth
-  target: revise
-suspension_point_count: 1
-unresolved_inputs:
-  panel_review:
-  - draft
-  revise:
-  - draft
+instruction_count: 9
+native_program: writing-panel-strict
+stage_count: 4
 ```
 
 ## Package Skill
@@ -214,6 +175,19 @@ reviewers (pessimist, optimist, structuralist) critique a draft in parallel,
 a synthesis editor reconciles their feedback into a revision brief, and a
 revision editor produces the updated draft. A human gate lets you review
 the result and loop back for another round or stop.
+
+## Runtime
+
+`writing-panel-strict` is a native-default converted pipeline. Fresh runs
+through `megaplan run writing-panel-strict ...` or
+`arnold pipelines run writing-panel-strict ...` persist runtime ownership in
+`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. During
+the M7 deprecation window, the derived graph remains available as a
+compatibility fallback: pass `--runtime graph` (or the deprecated
+`--executor graph`) for a fresh run that must use the graph executor. Existing
+graph-born plan directories keep resuming on graph. Native-born runs resume on
+native, and corrupt native cursors fail closed rather than silently falling
+back to graph.
 
 ## Modes
 

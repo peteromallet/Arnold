@@ -4,8 +4,8 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold_pipelines/megaplan/pipelines/doc
-- manifest_hash: sha256:24d157216c83c61765a047ae14d8207b6831eccda9f7492fd1dfb9760fd9cda5
+- source_package: arnold/pipelines/megaplan/pipelines/doc
+- manifest_hash: native:doc
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -17,113 +17,31 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold_pipelines/megaplan/pipelines/doc|
-| Manifest and builder | arnold_pipelines/megaplan/pipelines/doc/__init__.py|
-| Steps | arnold_pipelines/megaplan/pipelines/doc/steps.py|
-| Skill | arnold_pipelines/megaplan/pipelines/doc/SKILL.md|
-| Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.doc:build_pipeline`|
-| Manifest hash | sha256:24d157216c83c61765a047ae14d8207b6831eccda9f7492fd1dfb9760fd9cda5|
+| Package | arnold/pipelines/megaplan/pipelines/doc|
+| Builder target | arnold.pipelines.megaplan.pipelines.doc:build_pipeline|
+| Steps | arnold/pipelines/megaplan/pipelines/doc/steps.py|
+| Builder source | arnold/pipelines/megaplan/pipelines/doc/__init__.py|
+| Skill | arnold/pipelines/megaplan/pipelines/doc/SKILL.md|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
+| Contract | native|
+| Load state | loadable-native|
+| Identity | native:doc|
 
 ## Builder Surface
 
-The following snippet is extracted verbatim from the pack's `__init__.py`.
+The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
 name: str = "doc"
 description: str = (
-    "Linear doc pipeline: outline → per-section drafts (dynamic fanout) "
-    "→ critique → revise → assembly. Single-pass; no gate."
+    "Linear doc pipeline: outline -> per-section drafts (dynamic fanout) "
+    "-> critique -> revise -> assembly. Single-pass; no gate."
 )
 
-driver: tuple[str, str] = ("subprocess_isolated", "dynamic-fanout")
+driver: tuple[str, str] = ("native", "dynamic-fanout")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("doc",)
-
-def build_pipeline() -> Pipeline:
-    """Return the canonical ``doc`` explicit-node pipeline."""
-
-    outline = Step(
-        id="outline",
-        kind="agent",
-        label="Outline document sections",
-        inputs=(Input(name="brief"),),
-        outputs=(Output(name="sections"), Output(name="outline_prompt")),
-        capabilities=(Capability(id="doc", route="outline"),),
-        metadata={"prompt_key": "outline_doc", "stage": "outline"},
-    )
-    section_drafts = Step(
-        id="section_drafts",
-        kind="fanout",
-        label="Draft each section in parallel",
-        inputs=(Input(name="sections", value_ref="outline.sections"),),
-        outputs=(Output(name="draft_chunks"),),
-        capabilities=(Capability(id="doc", route="execute"),),
-        policy=WorkflowPolicy(
-            fanout=FanoutPolicy(mode="dynamic", reducer_ref="doc:concat_sections"),
-            reducers=(ReducerRef(reducer_id="doc:concat_sections"),),
-        ),
-        metadata={
-            "prompt_key": "execute_doc",
-            "generator_ref": "doc:outline_artifact_reader",
-            "stage": "section_drafts",
-        },
-    )
-    critique = Step(
-        id="critique",
-        kind="agent",
-        label="Critique the assembled draft",
-        inputs=(Input(name="draft_chunks", value_ref="section_drafts.draft_chunks"),),
-        outputs=(Output(name="critique_artifact"), Output(name="critique_prompt")),
-        capabilities=(Capability(id="doc", route="critique"),),
-        metadata={"prompt_key": "critique_doc", "stage": "critique"},
-    )
-    revise = Step(
-        id="revise",
-        kind="agent",
-        label="Revise from critique",
-        inputs=(
-            Input(name="draft_chunks", value_ref="section_drafts.draft_chunks"),
-            Input(name="critique_artifact", value_ref="critique.critique_artifact"),
-        ),
-        outputs=(Output(name="revised_draft"), Output(name="revise_prompt")),
-        capabilities=(Capability(id="doc", route="revise"),),
-        metadata={"prompt_key": "revise_doc", "stage": "revise"},
-    )
-    assembly = Step(
-        id="assembly",
-        kind="emit",
-        label="Assemble final document",
-        inputs=(Input(name="revised_draft", value_ref="revise.revised_draft"),),
-        outputs=(Output(name="document"), Output(name="assembly_prompt")),
-        capabilities=(Capability(id="doc", route="assemble"),),
-        metadata={"prompt_key": "assemble_doc", "stage": "assembly", "terminal": True},
-    )
-
-    return Pipeline(
-        id="doc",
-        version="m5-phase3",
-        steps=(outline, section_drafts, critique, revise, assembly),
-        routes=(
-            Route(id="outline:section_drafts", source="outline", target="section_drafts", label="section_drafts"),
-            Route(id="section_drafts:critique", source="section_drafts", target="critique", label="critique"),
-            Route(id="critique:revise", source="critique", target="revise", label="revise"),
-            Route(id="revise:assembly", source="revise", target="assembly", label="assembly"),
-        ),
-        capabilities=(Capability(id="doc", route="default"),),
-        metadata={
-            "name": name,
-            "description": description,
-            "driver": driver,
-            "entrypoint": entrypoint,
-            "arnold_api_version": arnold_api_version,
-            "capabilities": capabilities,
-            "default_profile": default_profile,
-            "supported_modes": supported_modes,
-            "recommended_profiles": recommended_profiles,
-            "resource_bundles": ("doc",),
-        },
-    )
 ```
 
 ## Step Surface
@@ -245,34 +163,14 @@ class AssemblyStep:
         return StepResult(outputs={"final": out}, next="halt")
 ```
 
-## Dry-run report
+## Native builder report
 
 ```yaml
-edge_count: 4
+entry: outline
 id: doc
-manifest_hash: sha256:24d157216c83c61765a047ae14d8207b6831eccda9f7492fd1dfb9760fd9cda5
-node_count: 5
-possible_routes:
-- condition_ref: null
-  label: revise
-  source: critique
-  target: revise
-- condition_ref: null
-  label: section_drafts
-  source: outline
-  target: section_drafts
-- condition_ref: null
-  label: assembly
-  source: revise
-  target: assembly
-- condition_ref: null
-  label: critique
-  source: section_drafts
-  target: critique
-suspension_point_count: 0
-unresolved_inputs:
-  outline:
-  - brief
+instruction_count: 6
+native_program: doc
+stage_count: 5
 ```
 
 ## Package Skill
@@ -282,9 +180,19 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 # doc pipeline — skill reference
 
-**Driver**: `subprocess_isolated`<br>
+**Runtime**: native-default converted pipeline<br>
 **Arnold API version**: `1.0`<br>
-**Supported modes**: *(none — invoked directly, not via `megaplan run`)*
+**Run surface**: `megaplan run doc ...` or `arnold pipelines run doc ...`<br>
+**Supported modes**: *(none)*
+
+Fresh `doc` runs use the native runtime by default and persist runtime
+ownership in `state.json.runtime_envelope.runtime` and
+`state.json.meta.executor`. During the M7 deprecation window, the derived graph
+remains available as a compatibility fallback: pass `--runtime graph` (or the
+deprecated `--executor graph`) for a fresh run that must use the graph executor.
+Existing graph-born plan directories keep resuming on graph. Native-born runs
+resume on native, and corrupt native cursors fail closed rather than silently
+falling back to graph.
 
 ## Purpose
 

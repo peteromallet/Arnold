@@ -25,15 +25,16 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from arnold.pipeline import StepContext
+from arnold.pipelines.megaplan._pipeline.types import StepContext
 from arnold.pipeline.native.decorators import phase, pipeline  # type: ignore[import-untyped]
-from arnold.pipelines.folder_audit import (
+from arnold.pipelines.folder_audit.steps import (
     AuditStep,
     EmitStep,
     IngestStep,
     _default_worker,
 )
-from arnold.pipelines.folder_audit import name as _pipeline_name
+
+_pipeline_name: str = "folder-audit"
 
 
 def _build_step_ctx(native_ctx: dict[str, Any]) -> StepContext:
@@ -128,7 +129,7 @@ def emit(ctx: dict[str, Any]) -> dict[str, Any]:
 # ── Native pipeline generator ───────────────────────────────────────────
 
 
-@pipeline(name="folder_audit", description="Native linear folder-audit pipeline")
+@pipeline(name="folder-audit", description="Native linear folder-audit pipeline")
 def folder_audit_native(ctx):
     """Linear native pipeline: ingest → audit → emit."""
     state = yield ingest(ctx)

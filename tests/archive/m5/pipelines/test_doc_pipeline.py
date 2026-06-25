@@ -73,8 +73,7 @@ def test_doc_pipeline_metadata_surfaces_through_registry() -> None:
 
     assert "doc" in registered_pipelines()
     meta = pipeline_metadata("doc")
-    # supported_modes is the empty tuple; doc has no mode variants.
-    assert tuple(meta.get("supported_modes", ()) or ()) == ()
+    assert tuple(meta.get("supported_modes", ()) or ()) == ("native",)
     description = meta.get("description") or ""
     assert isinstance(description, str) and description.strip(), description
     # Sanity: description mentions the pipeline shape.

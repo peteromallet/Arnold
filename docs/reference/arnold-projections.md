@@ -61,15 +61,18 @@ This page is generated from the ``arnold.workflow`` manifest contract, the shipp
 
 | stable_id | alias | manifest_hash | package_path | m6_disposition |
 | --- | --- | --- | --- | --- |
+| arnold.deliberation | deliberation | deferred-native | arnold/pipelines/deliberation | keep|
+| arnold.folder_audit | folder-audit | native:folder-audit | arnold/pipelines/folder_audit | keep|
 | evidence_pack.verifier | evidence_pack_verifier | sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2 | arnold_pipelines/evidence_pack | keep|
 | megaplan.core | megaplan | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba | arnold_pipelines/megaplan | keep|
-| megaplan.creative | creative | sha256:43d30d31c2eb11de4ad7216c930a3311dd6cfd5bd6b8b2e8926aa304bee7cfe9 | arnold_pipelines/megaplan/pipelines/creative | keep|
-| megaplan.doc | doc | sha256:24d157216c83c61765a047ae14d8207b6831eccda9f7492fd1dfb9760fd9cda5 | arnold_pipelines/megaplan/pipelines/doc | keep|
-| megaplan.jokes | jokes | sha256:3a49d0895f747685fdaaf40b3435ced81e653b8cd9f0ffdd6242150e15a0f3d5 | arnold_pipelines/megaplan/pipelines/jokes | keep|
-| megaplan.live_supervisor | live-supervisor | sha256:15c141b2d40bb116002e2638eb469b9f7f47cff8f7101b28582f34d115876c66 | arnold_pipelines/megaplan/pipelines/live_supervisor | keep|
+| megaplan.creative | creative | native:creative | arnold/pipelines/megaplan/pipelines/creative | keep|
+| megaplan.doc | doc | native:doc | arnold/pipelines/megaplan/pipelines/doc | keep|
+| megaplan.epic_blitz | epic-blitz | native:epic-blitz | arnold/pipelines/megaplan/pipelines/epic_blitz.py | keep|
+| megaplan.jokes | jokes | native:jokes | arnold/pipelines/megaplan/pipelines/jokes | keep|
+| megaplan.live_supervisor | live-supervisor | native:live-supervisor | arnold/pipelines/megaplan/pipelines/live_supervisor | keep|
 | megaplan.planning | megaplan | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba | arnold_pipelines/megaplan/pipelines/planning | keep|
-| megaplan.select_tournament | select-tournament | sha256:2b133a69d3265834ae8e9094ee32bd58c14ebde7ad0d08be451eed4d5b220c77 | arnold_pipelines/megaplan/pipelines/select_tournament | keep|
-| megaplan.writing_panel_strict | writing-panel-strict | sha256:5162f36a03c859978f9dfb7332a4742c6462518d2df67a730262e8c59925c14f | arnold_pipelines/megaplan/pipelines/writing_panel_strict | keep|
+| megaplan.select_tournament | select-tournament | native:select-tournament | arnold/pipelines/megaplan/pipelines/select_tournament | keep|
+| megaplan.writing_panel_strict | writing-panel-strict | native:writing-panel-strict | arnold/pipelines/megaplan/pipelines/writing_panel_strict | keep|
 
 ## Workflow CLI Subcommands
 

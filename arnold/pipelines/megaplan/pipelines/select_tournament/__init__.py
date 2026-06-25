@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from arnold.pipelines.megaplan._pipeline.types import Pipeline
+from arnold.pipeline import Pipeline
 
 from .pipeline import (
     DEFAULT_CANDIDATES,
-    _build_legacy_graph_pipeline,
     build_pipeline as _build_pipeline,
-    select_tournament,
 )
 
 
@@ -39,7 +37,6 @@ def build_pipeline(
 __all__ = [
     "DEFAULT_CANDIDATES",
     "build_pipeline",
-    "_build_legacy_graph_pipeline",
     "name",
     "description",
     "default_profile",
@@ -49,5 +46,4 @@ __all__ = [
     "entrypoint",
     "arnold_api_version",
     "capabilities",
-    "select_tournament",
 ]
