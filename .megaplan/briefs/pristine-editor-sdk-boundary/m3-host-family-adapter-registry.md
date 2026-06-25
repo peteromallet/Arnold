@@ -26,32 +26,37 @@ M2 split the SDK into family modules. M3 inverts the host side so that adding a 
 2. **Create the host adapter registry.**
    - `src/tools/video-editor/runtime/families/familyAdapterRegistry.ts` maps `ContributionKind` to adapters and provides `normalizeAll`, `disposeExtension`, `projectCapabilities`, `auditConformance`.
 
-3. **Build the host adapter registry skeleton and prove it with representative families.**
-   - Do not migrate every runtime family in this milestone; prove the pattern deeply across three risk types:
-     - **Metadata family:** `metadataFacet` or `assetDetailSection`.
+3. **Build the host adapter registry skeleton and prove it with one family first.**
+   - Pick the lowest-risk runtime family that already has clean normalization in `extensionSurface.ts` (e.g. `metadataFacet` or `assetDetailSection`).
+   - Implement a `HostFamilyAdapter` for that family that owns normalization, disposal, planner projection, and conformance report.
+   - Remove the corresponding switch cases from `extensionSurface.ts`.
+   - Add tests that fail if the adapter regresses.
+   - Do not proceed to other families until this single adapter is demonstrably independent and conformance-tested.
+
+4. **Expand to representative families across risk types.**
+   - After the first family is proven, add adapters for:
      - **Render-relevant family:** `shader` or `effect`.
      - **Execution/process-like family:** `process` or `agentTool`.
-   - For each representative family:
-     - implement a `HostFamilyAdapter` that owns normalization, disposal, planner projection, and conformance report,
-     - remove the corresponding switch cases from `extensionSurface.ts`,
-     - add tests that fail if the adapter regresses.
+   - For each, follow the same pattern: own normalization/lifecycle/planner/conformance, remove switch cases, add regression tests.
+
+5. **Register placeholder adapters for remaining runtime families.**
    - For all other families with execution maturity >= `runtime-bridged`, register a placeholder adapter that:
      - delegates to the existing `extensionSurface.ts` logic,
      - reports a conformance gap,
      - does not block this milestone from passing.
 
-4. **Refactor `extensionSurface.ts`.**
+6. **Refactor `extensionSurface.ts`.**
    - Replace family switch cases with adapter registry calls.
    - `extensionSurface.ts` orchestrates: collect contributions, sort, normalize, aggregate diagnostics, freeze output.
    - Keep host-only types like `VideoEditorRuntimeSlices` in the host.
 
-5. **Add adapter registry tests.**
+7. **Add adapter registry tests.**
    - `src/tools/video-editor/runtime/families/familyAdapterRegistry.test.ts`
    - `src/tools/video-editor/runtime/families/familyConformance.test.ts`
    - Assert every family with execution maturity >= `runtime-bridged` has a registered host adapter.
    - Assert `extensionSurface.ts` does not add new family switch cases.
 
-6. **Tighten family conformance check.**
+8. **Tighten family conformance check.**
    - Update `scripts/quality/check-extension-family-conformance.mjs` so release mode fails if:
      - A `ContributionKind` lacks a `FamilyDefinition`.
      - A family with execution maturity `runtime-bridged` or higher lacks a host adapter.

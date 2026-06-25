@@ -2,7 +2,7 @@
 
 ## Outcome
 
-Every portable contract that `@reigh/editor-sdk` needs is owned by the SDK and has no import from `src/tools/video-editor/*`. `src/sdk/index.ts` no longer re-exports video-editor internals. `npm run check:video-editor-sdk-imports` becomes the first required gate and passes.
+Every portable contract that `@reigh/editor-sdk` needs is owned by the SDK and has no import from `src/tools/video-editor/*`. `src/sdk/index.ts` no longer re-exports video-editor internals. An external SDK-consumer package fixture compiles cleanly. Doc/code discrepancies are recorded so later milestones align with canonical truth.
 
 ## Background
 
@@ -10,10 +10,16 @@ The SDK currently declares it must not depend on editor internals, yet it import
 
 ## Scope (in scope)
 
-1. **Audit every import from `src/tools/video-editor/*` inside `src/sdk/**`.**
+1. **Reconcile docs/code state before churn.**
+   - Read `docs/extensions/phase4-readiness.md`, `docs/extensions/reigh-extension-layer-foundation-plan.md`, and `docs/extensions/foundation-closure-assessment.md`.
+   - Record every place where docs disagree with current code (e.g. stale references to `runtime/contributionFamilies.ts`, claims about `src/sdk/index.ts` existence, Phase 4 promotion status).
+   - Produce `docs/extensions/pristine-sdk-boundary-audit.md` with a table of discrepancies, owner, and proposed resolution.
+   - Do not rewrite all docs yet; just establish the canonical truth that later milestones will align with.
+
+2. **Audit every import from `src/tools/video-editor/*` inside `src/sdk/**`.**
    - List files, imported symbols, and whether each symbol is truly portable or host-only.
 
-2. **Move renderability contracts into the SDK.**
+3. **Move renderability contracts into the SDK.**
    - Create `src/sdk/rendering/renderability.ts` with data-only types:
      - `RenderRoute`
      - `DeterminismStatus`
@@ -29,24 +35,24 @@ The SDK currently declares it must not depend on editor internals, yet it import
      - `shaderMissingMaterializerBlockerMessage`
    - Update `src/tools/video-editor/runtime/renderability.ts` to depend on SDK-owned contracts.
 
-3. **Move timeline primitives needed by the SDK into SDK-owned modules.**
+4. **Move timeline primitives needed by the SDK into SDK-owned modules.**
    - Identify which timeline patch/diff/ops/reader types the SDK re-exports only because host code needs them.
    - Move truly portable shapes (e.g. `TimelinePatch`, `TimelineDiff`, `TimelineDiffGranularity`, `TimelineProposalInput`) into `src/sdk/timeline/patch.ts` and `src/sdk/timeline/reader.ts`.
    - Keep host-only planner execution details in `src/tools/video-editor`.
 
-4. **Move asset metadata contracts into the SDK.**
+5. **Move asset metadata contracts into the SDK.**
    - Move `AssetMetadata`, `AssetIntegrityMetadata`, `AssetGPSMetadata`, etc. into `src/sdk/assets/metadata.ts` if they are referenced by SDK public types.
 
-5. **Update `src/sdk/index.ts`.**
+6. **Update `src/sdk/index.ts`.**
    - Replace all `@/tools/video-editor/*` imports with SDK-local imports.
    - Keep the file as a barrel; do not do the full module split yet (that is M2).
 
-6. **Strengthen and run the SDK import guard.**
+7. **Strengthen and run the SDK import guard.**
    - Ensure `scripts/quality/check-video-editor-sdk-imports.mjs` fails if any `src/sdk/**` file imports from `src/tools/video-editor/*` or `@/tools/video-editor/*`.
    - Run the check; fix all failures.
    - Add a negative test: a deliberately introduced SDK import from video-editor internals fails the guard.
 
-7. **Add an external packagability smoke.**
+8. **Add an external packagability smoke.**
    - Create a temporary external package fixture under `scripts/quality/fixtures/sdk-consumer-package/` that:
      - depends only on `@reigh/editor-sdk` (resolved to the local SDK source via a relative path or tsconfig paths),
      - imports the full public SDK surface,
@@ -56,7 +62,7 @@ The SDK currently declares it must not depend on editor internals, yet it import
    - Do not filter SDK diagnostics; `skipLibCheck` should remain true only for third-party `.d.ts`.
    - Wire the smoke into `npm run check:video-editor-sdk-imports` or `npm run test:extensions`.
 
-8. **Add a representative family contract sanity check.**
+9. **Add a representative family contract sanity check.**
    - Pick three families of different risk types: one metadata family (e.g. `metadataFacet`), one render-relevant family (e.g. `shader`), and one execution/process-like family (e.g. `process`).
    - For each, document in code comments:
      - what is portable vs. host-only today,
@@ -69,6 +75,7 @@ The SDK currently declares it must not depend on editor internals, yet it import
 - After M0, no file under `src/sdk/**` may import from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - Host code may still import from the SDK; the dependency direction is one-way.
 - Portable contracts are data-only shapes, not host behavior or React components.
+- The external SDK-consumer fixture must compile with no diagnostics from SDK files.
 
 ## Open questions
 
@@ -84,6 +91,7 @@ The SDK currently declares it must not depend on editor internals, yet it import
 
 ## Done criteria
 
+- [ ] `docs/extensions/pristine-sdk-boundary-audit.md` records doc/code discrepancies.
 - [ ] `src/sdk/**` has zero imports from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - [ ] `npm run check:video-editor-sdk-imports` passes and catches deliberate violations.
 - [ ] The external SDK-consumer package fixture compiles with `tsc --noEmit` and emits no diagnostics from `src/sdk/**`.
@@ -99,6 +107,8 @@ The SDK currently declares it must not depend on editor internals, yet it import
 - New `src/sdk/timeline/*` modules
 - New `src/sdk/assets/*` modules
 - `scripts/quality/check-video-editor-sdk-imports.mjs`
+- `scripts/quality/fixtures/sdk-consumer-package/` (new)
+- `docs/extensions/pristine-sdk-boundary-audit.md` (new)
 
 ## Anti-scope (not in this milestone)
 
