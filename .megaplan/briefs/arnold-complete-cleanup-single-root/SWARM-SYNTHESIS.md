@@ -33,12 +33,9 @@ The safe direction is stricter:
 
 ## Resulting Epic Shape
 
-This prep splits the work into seven sprint-sized milestones:
+This prep splits the work into four capped milestones. These are not meant to be four guaranteed two-week blocks; each milestone is the largest safe unit of work for the harness.
 
-1. Close remaining loose-work decisions and freeze the baseline.
-2. Inventory all legacy callers/surfaces and add ratchets.
-3. Make canonical imports and side effects deterministic.
-4. Extract `_pipeline` and runtime responsibilities into canonical modules.
-5. Prove CLI, chain, resume, worker, discovery, docs, and wheel parity.
-6. Delete the legacy root and purge stale generated/source artifacts.
-7. Run merge-result conformance and close external cleanup exceptions.
+1. Baseline loose-work disposition, inventory all legacy surfaces, and add shrink-only ratchets.
+2. Make canonical import/side-effect behavior authoritative and extract `_pipeline`/runtime responsibilities.
+3. Prove CLI, chain, resume, worker, discovery, docs, skills, editable, and wheel parity; then delete the legacy root.
+4. Run merge-result conformance and close external cleanup exceptions.
