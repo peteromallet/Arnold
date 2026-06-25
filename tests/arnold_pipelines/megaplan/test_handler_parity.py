@@ -565,7 +565,7 @@ class TestFinalizeBaselineSelectionRecovery:
         with pytest.raises(finalize.FinalizeBaselineSelectionError):
             finalize._write_finalize_artifacts(plan_dir, self._payload(), self._state(plan_dir, repo))
 
-    def test_none_finalize_baseline_scope_skips_capture(
+    def test_none_finalize_baseline_scope_is_revise_contract_failure(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -599,11 +599,8 @@ class TestFinalizeBaselineSelectionRecovery:
         payload = self._payload()
         monkeypatch.setattr(finalize, "_capture_test_baseline_for_plan", fail_capture)
 
-        finalize._write_finalize_artifacts(plan_dir, payload, self._state(plan_dir, repo))
-
-        assert payload["test_selection"]["mode"] == "none"
-        assert payload["baseline_test_failures"] == []
-        assert payload["baseline_test_command"] is None
+        with pytest.raises(finalize.FinalizeBaselineSelectionError):
+            finalize._write_finalize_artifacts(plan_dir, payload, self._state(plan_dir, repo))
 
     def test_unresolved_finalize_baseline_scope_routes_to_revise(
         self,

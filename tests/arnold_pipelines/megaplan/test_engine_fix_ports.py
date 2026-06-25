@@ -181,6 +181,11 @@ def test_structured_plan_payload_normalizes_to_canonical_schema() -> None:
             "questions": [{"question": "Any blockers?"}],
             "success_criteria": [{"criterion": "Tests pass", "priority": "must"}],
             "assumptions": [{"assumption": "Repo is clean"}],
+            "changed_surfaces": ["src/thing.py"],
+            "test_blast_radius": {
+                "strategy": "scoped",
+                "selectors": [{"kind": "path", "value": "tests/test_thing.py"}],
+            },
         }
     )
 
@@ -191,3 +196,5 @@ def test_structured_plan_payload_normalizes_to_canonical_schema() -> None:
         {"criterion": "Tests pass", "priority": "must", "requires": ["run_tests"]}
     ]
     assert normalized["assumptions"] == ["Repo is clean"]
+    assert normalized["changed_surfaces"] == ["src/thing.py"]
+    assert normalized["test_blast_radius"]["strategy"] == "scoped"
