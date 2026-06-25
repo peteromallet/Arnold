@@ -10,11 +10,13 @@ import type {
   SourceMapRuntime,
   SourceMapEntry,
   TimelineOps,
-  TimelinePatch,
-  TimelineDiff,
   TimelineReader,
 } from '@/sdk/index';
-import type { TimelineDiffGranularity } from '@/sdk/index';
+import type {
+  TimelineDiff,
+  TimelineDiffGranularity,
+  TimelinePatch,
+} from '@/sdk/video/timeline/patch.ts';
 
 // ---------------------------------------------------------------------------
 // Helpers

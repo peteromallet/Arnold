@@ -14,11 +14,13 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type {
   TimelineOps,
+} from '@/sdk/index';
+import type {
+  TimelineDiff,
   TimelinePatch,
   TimelinePatchValidationResult,
   TimelinePreviewResult,
-  TimelineDiff,
-} from '@/sdk/index';
+} from '@/sdk/video/timeline/patch.ts';
 import {
   validateTimelinePatch,
   compileTimelinePatch,

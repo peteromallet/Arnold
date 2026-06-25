@@ -278,8 +278,21 @@ export {
   DETERMINISM_STATUSES,
   RENDER_BLOCKER_REASONS,
   RENDER_ROUTES,
+} from '@/sdk/video/rendering/renderability.ts';
+
+export {
   shaderMissingMaterializerBlockerMessage,
-} from '@/tools/video-editor/runtime/renderability.ts';
+  describeShaderMaterializerRequirementScope,
+} from '@/sdk/video/rendering/capabilities.ts';
+
+export {
+  EXTENSION_PROJECT_DATA_LIMITS,
+  TIMELINE_DIFF_GRANULARITIES,
+  TIMELINE_DIFF_KINDS,
+  TIMELINE_PATCH_ALL_OP_FAMILIES,
+  TIMELINE_PATCH_OP_FAMILIES,
+  TIMELINE_PATCH_RESERVED_OP_FAMILIES,
+} from '@/sdk/video/timeline/patch.ts';
 
 export {
   BUILTIN_CLIP_TYPES,
@@ -289,25 +302,51 @@ export {
 } from '@/tools/video-editor';
 
 export type {
-  ArtifactBoundary,
-  BakeContract,
   CapabilityFinding,
   CapabilityFindingSeverity,
   ContributionRenderability,
   DeterminismStatus,
-  RenderArtifact,
   RenderBlocker,
   RenderBlockerReason,
   RenderCapability,
   RenderCapabilityStatus,
+  RenderRoute,
+} from '@/sdk/video/rendering/renderability.ts';
+
+export type {
+  ArtifactBoundary,
+  BakeContract,
+  RenderArtifact,
+  RenderArtifactManifest,
+  RenderArtifactSidecarDescriptor,
+  RenderArtifactSidecarKind,
   RenderLocatorKind,
   RenderMaterial,
   RenderMaterialMediaKind,
   RenderMaterialRef,
-  RenderRoute,
   RenderStorageLocator,
+} from '@/sdk/video/rendering/artifacts.ts';
+
+export type {
   ShaderMaterializerRequirementScope,
-} from '@/tools/video-editor/runtime/renderability.ts';
+} from '@/sdk/video/rendering/capabilities.ts';
+
+export type {
+  ProjectDataLimitCode,
+  ProjectDataLimitDetail,
+  TimelineDiff,
+  TimelineDiffEntry,
+  TimelineDiffGranularity,
+  TimelineDiffKind,
+  TimelinePatch,
+  TimelinePatchAnyOpFamily,
+  TimelinePatchDiagnostic,
+  TimelinePatchOpFamily,
+  TimelinePatchOperation,
+  TimelinePatchReservedOpFamily,
+  TimelinePatchValidationResult,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
 
 // ---------------------------------------------------------------------------
 // M4: Commands, Keybindings, Context Menus — target and handler contracts
@@ -4177,17 +4216,29 @@ export interface ProjectExtensionRequirements {
 }
 
 import type {
-  CapabilityFinding,
-  DeterminismStatus,
   RenderArtifact,
-  RenderBlockerReason,
+  RenderArtifactSidecarDescriptor,
+  RenderArtifactSidecarKind,
   RenderMaterial,
   RenderMaterialRef,
-  RenderRoute,
   RenderStorageLocator,
-  ShaderMaterializerRequirementScope,
-} from '@/tools/video-editor/runtime/renderability.ts';
-import { shaderMissingMaterializerBlockerMessage } from '@/tools/video-editor/runtime/renderability.ts';
+} from '@/sdk/video/rendering/artifacts.ts';
+import type {
+  CapabilityFinding,
+  DeterminismStatus,
+  RenderBlockerReason,
+  RenderRoute,
+} from '@/sdk/video/rendering/renderability.ts';
+import type { ShaderMaterializerRequirementScope } from '@/sdk/video/rendering/capabilities.ts';
+import { shaderMissingMaterializerBlockerMessage } from '@/sdk/video/rendering/capabilities.ts';
+import type {
+  TimelineDiff,
+  TimelineDiffGranularity,
+  TimelinePatch,
+  TimelinePatchDiagnostic,
+  TimelinePatchValidationResult,
+  TimelinePreviewResult,
+} from '@/sdk/video/timeline/patch.ts';
 
 // ---------------------------------------------------------------------------
 // M12: Planner requirement contracts — capability requirements, source refs,
@@ -4307,61 +4358,6 @@ export interface IntegrationCapabilities {
 // M12: Artifact manifest, sidecar, sampling, and process roundtrip contracts
 // ---------------------------------------------------------------------------
 
-export type RenderArtifactSidecarKind =
-  | 'metadata'
-  | 'thumbnail'
-  | 'scene-report'
-  | 'log'
-  | 'provenance'
-  | 'rendered-pass'
-  | 'cue'
-  | 'label'
-  | 'caption'
-  | 'diagnostics'
-  | 'manifest'
-  | 'other';
-
-/** M12: Data-only descriptor for a downloadable or previewable sidecar artifact. */
-export interface RenderArtifactSidecarDescriptor {
-  readonly id?: string;
-  readonly filename: string;
-  readonly mimeType: string;
-  readonly kind: RenderArtifactSidecarKind;
-  readonly data?: Uint8Array;
-  readonly locator?: RenderStorageLocator;
-  readonly byteSize?: number;
-  readonly renderGroupId?: string;
-  readonly passName?: string;
-  readonly diagnostics?: readonly CapabilityFinding[];
-  readonly provenance?: Record<string, unknown>;
-}
-
-/** M12: Stable manifest entry for a final render/export artifact. */
-export interface RenderArtifactManifest {
-  readonly id: string;
-  readonly schemaVersion: 1;
-  readonly artifactId: string;
-  readonly route: RenderRoute;
-  readonly determinism: DeterminismStatus;
-  readonly producerExtensionId?: string;
-  readonly producerVersion?: string;
-  readonly outputFormatId?: string;
-  readonly processId?: string;
-  readonly processVersion?: CapabilityVersion;
-  readonly operationId?: string;
-  readonly locator?: RenderStorageLocator;
-  readonly mediaKind?: RenderMaterial['mediaKind'];
-  readonly consumedMaterialRefs: readonly RenderMaterialRef[];
-  readonly sidecars: readonly RenderArtifactSidecarDescriptor[];
-  readonly diagnostics?: readonly CapabilityFinding[];
-  readonly provenance?: Record<string, unknown>;
-  readonly inputHashes?: Record<string, string>;
-  readonly renderGroupId?: string;
-  readonly passName?: string;
-  readonly createdAt?: string;
-  readonly metadata?: Record<string, unknown>;
-}
-
 export type SamplingStrategy =
   | 'whole-timeline'
   | 'clip-slices'
@@ -4472,102 +4468,6 @@ export interface ProcessRoundtripResult {
 }
 
 // ---------------------------------------------------------------------------
-// M3: TimelinePatch — semantic operation vocabulary
-// ---------------------------------------------------------------------------
-
-/** Top-level operation families supported by TimelinePatch. */
-export type TimelinePatchOpFamily =
-  | 'clip.add'
-  | 'clip.update'
-  | 'clip.remove'
-  | 'clip.move'
-  | 'track.add'
-  | 'track.update'
-  | 'track.remove'
-  | 'asset.update'
-  | 'asset.remove'
-  | 'app.update'
-  | 'project-data.write'
-  | 'project-data.delete'
-  | 'extension.noop';
-
-/** Reserved operation families that are validated but not executed in M3. */
-export type TimelinePatchReservedOpFamily =
-  | 'clip.split'
-  | 'clip.slice';
-
-/** All known operation family strings (active + reserved). */
-export type TimelinePatchAnyOpFamily =
-  | TimelinePatchOpFamily
-  | TimelinePatchReservedOpFamily;
-
-/**
- * A single semantic operation in a TimelinePatch batch.
- *
- * Every operation carries an `op` family, a `target` object identifier
- * (clip ID, track ID, asset key, extension ID, etc.), and an optional
- * `payload` whose shape is family-dependent.
- */
-export interface TimelinePatchOperation {
-  /** Operation family, e.g. "clip.add", "track.update". */
-  op: TimelinePatchAnyOpFamily;
-  /** Object identifier scoped to the operation family. */
-  target: string;
-  /** Family-dependent payload. */
-  payload?: Record<string, unknown>;
-  /**
-   * Sortable anchor for ordering-dependent operations (clip.move, etc.).
-   * Interpreted by the patch compiler; ignored for order-independent ops.
-   */
-  order?: number;
-}
-
-/** A batch of TimelinePatch operations applied atomically. */
-export interface TimelinePatch {
-  /** Monotonically-increasing batch version assigned by the runtime. */
-  version: number;
-  /** Ordered list of operations in this batch. */
-  operations: readonly TimelinePatchOperation[];
-  /** Extension or source that produced this patch. */
-  source?: string;
-  /** Opaque metadata attached by the producer. */
-  meta?: Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
-// M3: TimelinePatch diagnostics
-// ---------------------------------------------------------------------------
-
-/**
- * Structured diagnostic produced by TimelinePatch validation or compilation.
- *
- * Diagnostics are exportable to the host diagnostic panel and carry enough
- * context to navigate from the diagnostic to the offending operation/payload.
- */
-export interface TimelinePatchDiagnostic {
-  severity: DiagnosticSeverity;
-  /** Stable diagnostic code, e.g. "timeline-patch/unknown-op". */
-  code: `timeline-patch/${string}`;
-  message: string;
-  /** Zero-based index into the patch operation list, when applicable. */
-  operationIndex?: number;
-  /** The operation family that triggered the diagnostic. */
-  op?: TimelinePatchAnyOpFamily;
-  /** The target identifier from the offending operation. */
-  target?: string;
-  /** Structured detail (expected type, actual value, constraint, etc.). */
-  detail?: Record<string, unknown>;
-}
-
-/** Result of validating a TimelinePatch batch. */
-export interface TimelinePatchValidationResult {
-  /** True when every operation in the batch passes validation. */
-  valid: boolean;
-  /** Diagnostics produced during validation (empty when valid). */
-  diagnostics: readonly TimelinePatchDiagnostic[];
-}
-
-// ---------------------------------------------------------------------------
 // M3: TimelineOps — atomic mutation interface
 // ---------------------------------------------------------------------------
 
@@ -4621,70 +4521,6 @@ export interface TimelineOps {
    * Returns the diff describing which tracks were affected.
    */
   setAllTracksMuted(muted: boolean): TimelineDiff;
-}
-
-// ---------------------------------------------------------------------------
-// M3: TimelineDiff — semantic change description
-// ---------------------------------------------------------------------------
-
-/** Granularity of a diff entry. */
-export type TimelineDiffGranularity =
-  | 'clip'
-  | 'track'
-  | 'asset'
-  | 'app'
-  | 'project-data';
-
-/** The kind of change represented by a diff entry. */
-export type TimelineDiffKind = 'added' | 'removed' | 'modified' | 'reordered';
-
-/** A single entry in a TimelineDiff describing what changed. */
-export interface TimelineDiffEntry {
-  granularity: TimelineDiffGranularity;
-  kind: TimelineDiffKind;
-  /** Object identifier (clip ID, track ID, asset key, extension ID, etc.). */
-  target: string;
-  /** The operation family that produced this change. */
-  op: TimelinePatchAnyOpFamily;
-  /**
-   * Pre-mutation value snapshot (summary). Omitted for 'added' entries.
-   * Never exposes raw internal row/meta shapes.
-   */
-  before?: Record<string, unknown>;
-  /**
-   * Post-mutation value snapshot (summary). Omitted for 'removed' entries.
-   * Never exposes raw internal row/meta shapes.
-   */
-  after?: Record<string, unknown>;
-}
-
-/**
- * Semantic diff describing what a patch batch changed.
- *
- * This is the public change description — it never exposes raw internal
- * timeline row data, provider metadata, or mutation engine internals.
- */
-export interface TimelineDiff {
-  /** The patch version this diff corresponds to. */
-  version: number;
-  /** Ordered list of changes produced by the patch. */
-  entries: readonly TimelineDiffEntry[];
-  /** Set of all object IDs affected by this patch. */
-  affectedObjectIds: readonly string[];
-}
-
-/** Result of previewing a patch batch against current timeline state. */
-export interface TimelinePreviewResult {
-  /** The projected diff if the patch were applied. */
-  diff: TimelineDiff;
-  /**
-   * Whether every operation in the patch is previewable.
-   * Non-previewable operations (e.g. clip.split reserved) still produce
-   * diagnostics but the diff may be incomplete.
-   */
-  fullyPreviewable: boolean;
-  /** Diagnostics for non-previewable or problematic operations. */
-  diagnostics: readonly TimelinePatchDiagnostic[];
 }
 
 // ---------------------------------------------------------------------------
@@ -5540,44 +5376,6 @@ export interface GeneratedObjectMeta {
   generatedAt?: number;
   /** Source-map entry ID that maps this object to its source, if any. */
   sourceMapEntryId?: string;
-}
-
-// ---------------------------------------------------------------------------
-// M3: Extension project-data limits
-// ---------------------------------------------------------------------------
-
-/**
- * Hard limits on extension-owned project data stored in TimelineConfig.app.
- *
- * These limits are enforced by the patch compiler and the project-data
- * validation path. Exceeding any limit produces a diagnostic — the host
- * may choose to surface this as a warning or block the write.
- */
-export const EXTENSION_PROJECT_DATA_LIMITS = {
-  /** Maximum size in bytes for a single project-data entry (JSON-serialized). */
-  MAX_ENTRY_BYTES: 64 * 1024, // 64 KB
-  /** Maximum total size in bytes for all entries owned by one extension. */
-  MAX_EXTENSION_TOTAL_BYTES: 1 * 1024 * 1024, // 1 MB
-  /** Maximum number of entries one extension may store. */
-  MAX_ENTRIES_PER_EXTENSION: 128,
-} as const;
-
-/** Diagnostic codes produced when project-data limits are exceeded. */
-export type ProjectDataLimitCode =
-  | 'project-data/entry-size-exceeded'
-  | 'project-data/extension-total-exceeded'
-  | 'project-data/entry-count-exceeded';
-
-/**
- * Structured detail carried in TimelinePatchDiagnostic.detail when a
- * project-data limit is exceeded.
- */
-export interface ProjectDataLimitDetail {
-  extensionId: string;
-  limit: number;
-  actual: number;
-  unit: 'bytes' | 'entries';
-  code: ProjectDataLimitCode;
 }
 
 // ---------------------------------------------------------------------------

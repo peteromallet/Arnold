@@ -19,10 +19,10 @@ import {
   type TimelinePatchCompileResult,
 } from '@/tools/video-editor/lib/timeline-patch';
 import type {
+  TimelinePatchAnyOpFamily,
   TimelinePatch,
   TimelinePatchOperation,
-  TimelinePatchAnyOpFamily,
-} from '@/sdk/index';
+} from '@/sdk/video/timeline/patch.ts';
 import type { TimelineData } from '@/tools/video-editor/lib/timeline-data';
 import { serializeForDisk } from '@/tools/video-editor/lib/serialize';
 
