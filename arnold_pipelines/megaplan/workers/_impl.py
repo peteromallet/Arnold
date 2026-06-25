@@ -109,6 +109,18 @@ _RETIRED_VALIDATE_PAYLOAD_STEPS = frozenset({
 })
 
 
+def _project_local_tmp_dir(base: Path) -> Path:
+    """Return a writable temp directory inside the project tree.
+
+    Codex's read-only sandbox is scoped to the repo root, so prompt and output
+    temp files passed via ``@/path`` must live under ``base`` (typically the
+    project root or the plan directory) rather than the system temp directory.
+    """
+    tmp = base / ".megaplan" / "worker_tmp"
+    tmp.mkdir(parents=True, exist_ok=True)
+    return tmp
+
+
 @dataclass
 class CommandResult:
     command: list[str]
@@ -693,7 +705,9 @@ def run_command(
     # stdin with DEVNULL.  This applies to any command whose last argument is "-".
     stdin_path: Path | None = None
     if stdin_text is not None and command and command[-1] == "-":
-        stdin_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+        stdin_handle = tempfile.NamedTemporaryFile(
+            "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(cwd))
+        )
         stdin_handle.write(stdin_text)
         stdin_handle.flush()
         stdin_handle.close()
@@ -759,7 +773,9 @@ def run_command(
                 # started draining stdin. Writing the prompt to a temp file and
                 # letting the child read directly from that file avoids the
                 # pipe-buffer race entirely.
-                stdin_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+                stdin_handle = tempfile.NamedTemporaryFile(
+                    "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(cwd))
+                )
                 stdin_handle.write(stdin_text)
                 stdin_handle.flush()
                 stdin_handle.close()
@@ -2859,7 +2875,9 @@ def _run_codex_step_uncapped(
             session = {}
             fresh = True
     if output_path is None:
-        out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+        out_handle = tempfile.NamedTemporaryFile(
+            "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(plan_dir))
+        )
         out_handle.close()
         output_path = Path(out_handle.name)
     else:
@@ -3516,7 +3534,9 @@ def run_codex_prep_step(
             prompt_kwargs=prompt_kwargs,
         )
 
-    out_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+    out_handle = tempfile.NamedTemporaryFile(
+        "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(plan_dir))
+    )
     out_handle.close()
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
