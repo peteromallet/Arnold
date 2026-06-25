@@ -1,79 +1,62 @@
-"""Template package for Arnold workflow pipeline authors.
+"""Template package for Arnold pipeline authors.
 
 Copy this directory, rename it (without a leading underscore), fill in the
 contract fields, and replace the skeleton pipeline with real logic. The
-``build_pipeline()`` entrypoint returns an :class:`arnold.workflow.dsl.Pipeline`
-using explicit ``Step`` and ``Route`` nodes.
+``build_pipeline()`` entrypoint returns a native-first :class:`arnold.pipeline.Pipeline`
+with a compiled :class:`arnold.pipeline.native.NativeProgram` attached.
 """
 
 from __future__ import annotations
 
-from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
+from typing import Any
+
+from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline.types import Pipeline
 
 
 name: str = "my-pipeline"
 description: str = (
-    "A new Arnold workflow pipeline (replace this description with a meaningful one-liner)."
+    "A new Arnold pipeline (replace this description with a meaningful one-liner)."
 )
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ()
+supported_modes: tuple[str, ...] = ("native",)
 recommended_profiles: tuple[str, ...] = ()
-driver: tuple[str, str] = ("in_process", "linear")
+driver: tuple[str, str] = ("native", "linear")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("skeleton",)
 
 
-def build_pipeline(name: str = "my-pipeline", description: str = "") -> Pipeline:
-    """Build a skeleton explicit-node workflow pipeline.
+@phase(name="start")
+def _start(ctx: Any) -> dict[str, Any]:
+    """Skeleton start phase — replace with real logic."""
+    return {"intermediate": "TODO"}
 
-    Replace the steps, routes, inputs, outputs, and capabilities with the real
-    shape of your pipeline. Each ``Step`` must have a stable ``id`` and a
-    ``kind`` string that your execution backend recognizes.
+
+@phase(name="finish")
+def _finish(ctx: Any) -> dict[str, Any]:
+    """Skeleton finish phase — replace with real logic."""
+    return {"result": "TODO"}
+
+
+@pipeline("my-pipeline", description=description)
+def _my_pipeline(ctx: Any) -> Any:
+    """Skeleton native pipeline — replace phases with real workflow logic."""
+    yield _start(ctx)
+    yield _finish(ctx)
+    return {}
+
+
+def build_pipeline(name: str = "my-pipeline", description: str = "") -> Pipeline:
+    """Build a skeleton native-first pipeline.
+
+    Replace the phases and pipeline body with the real shape of your pipeline.
+    The returned :class:`arnold.pipeline.Pipeline` carries the compiled native
+    program so the native runtime can execute it directly.
     """
 
-    resolved_name = name or "my-pipeline"
-    resolved_description = description or "Skeleton workflow pipeline — replace with real logic."
-
-    start = Step(
-        id="start",
-        kind="agent",
-        label="Start",
-        inputs=(Input(name="input"),),
-        outputs=(Output(name="intermediate"),),
-        capabilities=(Capability(id="skeleton", route="default"),),
-        metadata={"stage": "start"},
-    )
-    finish = Step(
-        id="finish",
-        kind="emit",
-        label="Finish",
-        inputs=(Input(name="intermediate", value_ref="start.intermediate"),),
-        outputs=(Output(name="result"),),
-        capabilities=(Capability(id="skeleton", route="default"),),
-        metadata={"stage": "finish", "terminal": True},
-    )
-
-    return Pipeline(
-        id=resolved_name,
-        version="m5-phase3",
-        steps=(start, finish),
-        routes=(
-            Route(id="start:finish", source="start", target="finish", label="default"),
-        ),
-        capabilities=(Capability(id="skeleton", route="default"),),
-        metadata={
-            "name": resolved_name,
-            "description": resolved_description,
-            "driver": driver,
-            "entrypoint": entrypoint,
-            "arnold_api_version": arnold_api_version,
-            "capabilities": capabilities,
-            "default_profile": default_profile,
-            "supported_modes": supported_modes,
-            "recommended_profiles": recommended_profiles,
-        },
-    )
+    program = compile_pipeline(_my_pipeline)
+    return project_graph(program, key_mode="phase")
 
 
 __all__ = [

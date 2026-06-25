@@ -38,10 +38,10 @@ arnold pipelines new my-module
 ```
 
 The command creates a Python module under `megaplan/pipelines/` and a sibling
-`SKILL.md` directory. The default scaffold is native-authored: it uses
-`@pipeline`, `@phase`, `@decision`, `parallel(...)`, and a derived graph
-projection. Pass `--driver graph` only when intentionally creating a deprecated
-hand-built graph fallback for an old plan or parity baseline.
+`SKILL.md` directory. The scaffold is native-first: it uses `@pipeline`,
+`@phase`, `@decision`, `parallel(...)`, and a derived graph projection. Do not
+add `_legacy.py`, graph fallback builders, compatibility namespaces, or
+temporary wrapper modules for new packages.
 
 The generated module should keep module-level metadata accurate enough for
 no-import discovery, then implement workflow behavior in native declarations.
@@ -132,14 +132,12 @@ reviewer panels whose outputs should be prefixed by reviewer id. Use
 `run_subpipeline(...)` inside a phase when a child pipeline owns a distinct
 workflow and resume boundary.
 
-`build_pipeline()` should return the derived graph projection so discovery,
-`arnold pipelines check`, and graph fallback validate the public topology that
-the native runtime will execute. Fresh converted/native-capable runs default to
-native; `--runtime graph` remains the compatibility fallback.
+`build_pipeline()` should return the derived graph projection so discovery and
+`arnold pipelines check` validate the public topology that the native runtime
+will execute.
 
-Hand-built graph builders are still supported for old plans and parity
-baselines, but they are no longer the default authoring style for new converted
-pipelines.
+Hand-built graph builders are retained only for existing plans that have not yet
+migrated. New packages must be native-first.
 
 ### Typed Ports
 
@@ -211,10 +209,10 @@ the graph stage maps ambiguously to native reentry.
 
 ## Keep Metadata Boring
 
-Discovery reads manifest-like module metadata without importing the module when
-manifest-first discovery is enabled. Keep top-level metadata simple literals:
-strings, tuples, and dict/list values that can be parsed statically. Do not hide
-metadata behind function calls, environment reads, or imports.
+Discovery reads manifest-like module metadata without importing the module.
+Keep top-level metadata simple literals: strings, tuples, and dict/list values
+that can be parsed statically. Do not hide metadata behind function calls,
+environment reads, or imports.
 
 If the module needs dynamic inputs at runtime, declare the stable facts anyway
 and let unresolved dynamic inputs show up in the static behavioral manifest. An

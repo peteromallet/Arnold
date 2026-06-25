@@ -1672,10 +1672,10 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             print("pipelines new: missing pipeline name", file=sys.stderr)
             return 1
         driver = getattr(args, "driver", "native")
-        if driver not in {"native", "graph"}:
+        if driver != "native":
             print(
                 "pipelines new: unsupported driver "
-                f"{driver!r}; expected 'native' or deprecated 'graph'",
+                f"{driver!r}; only 'native' is supported",
                 file=sys.stderr,
             )
             return 1
@@ -1742,8 +1742,8 @@ def _pipeline_scaffold_module_content(
     module_stem: str,
     driver: str,
 ) -> str:
-    if driver == "graph":
-        return _deprecated_graph_scaffold_module_content(cli_name=cli_name)
+    if driver != "native":
+        raise ValueError(f"unsupported driver {driver!r}; only 'native' is supported")
     return _native_scaffold_module_content(cli_name=cli_name, module_stem=module_stem)
 
 
@@ -1770,7 +1770,7 @@ def _native_scaffold_module_content(*, cli_name: str, module_stem: str) -> str:
         f'name: str = "{cli_name}"\n'
         f'description: str = "TODO: add a description"\n'
         f"default_profile: str | None = None\n"
-        f"supported_modes: tuple[str, ...] = ()\n"
+        f"supported_modes: tuple[str, ...] = (\"native\",)\n"
         f'driver: tuple[str, str] = ("native", "project+validate")\n'
         f'entrypoint: str = "build_pipeline"\n'
         f'arnold_api_version: str = "1.0"\n'
@@ -1850,61 +1850,6 @@ def _native_scaffold_module_content(*, cli_name: str, module_stem: str) -> str:
         f'    graph = project_graph(program, key_mode="phase")\n'
         f"    _validate_derived_graph(graph)\n"
         f"    return graph\n"
-        f"\n"
-        f"\n"
-        f"__all__ = [\n"
-        f'    "build_pipeline",\n'
-        f'    "name",\n'
-        f'    "description",\n'
-        f'    "default_profile",\n'
-        f'    "supported_modes",\n'
-        f'    "driver",\n'
-        f'    "entrypoint",\n'
-        f'    "arnold_api_version",\n'
-        f'    "capabilities",\n'
-        f"]\n"
-    )
-
-
-def _deprecated_graph_scaffold_module_content(*, cli_name: str) -> str:
-    return (
-        f'"""Deprecated hand-built graph scaffold for ``{cli_name}``.\n'
-        f"\n"
-        f"New converted pipelines should use the default native scaffold so the\n"
-        f"authored @pipeline/@phase declarations project to a validated graph.\n"
-        f'"""\n'
-        f"\n"
-        f"from __future__ import annotations\n"
-        f"\n"
-        f"from pathlib import Path\n"
-        f"\n"
-        f"from arnold.pipelines.megaplan._pipeline.types import Pipeline\n"
-        f"\n"
-        f"\n"
-        f'_PIPELINE_DIR: Path = Path(__file__).parent / "{cli_name}"\n'
-        f"\n"
-        f'\n'
-        f'name: str = "{cli_name}"\n'
-        f'description: str = "TODO: add a description"\n'
-        f"default_profile: str | None = None\n"
-        f"supported_modes: tuple[str, ...] = ()\n"
-        f'driver: tuple[str, str] = (\'graph\', "dispatch+emit")\n'
-        f'entrypoint: str = "build_pipeline"\n'
-        f'arnold_api_version: str = "1.0"\n'
-        f"capabilities: tuple[str, ...] = ()\n"
-        f"\n"
-        f"\n"
-        f"def build_pipeline() -> Pipeline:\n"
-        f'    """Return the deprecated hand-built graph ``{cli_name}`` pipeline."""\n'
-        f"    return (\n"
-        f"        Pipeline.builder(\n"
-        f'            "{cli_name}",\n'
-        f"            description=description,\n"
-        f"            pipeline_dir=_PIPELINE_DIR,\n"
-        f"        )\n"
-        f'        .agent("run", prompt="TODO: add your prompt file path")\n'
-        f"        .build()\n"
-        f"    )\n"
         f"\n"
         f"\n"
         f"__all__ = [\n"

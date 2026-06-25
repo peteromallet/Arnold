@@ -1,23 +1,22 @@
-"""End-to-end tests for the migrated ``arnold_pipelines/_template`` package.
+"""End-to-end tests for the native-first ``arnold_pipelines/_template`` package.
 
-Covers three concerns from the M5 Phase 3 scaffold plan:
+Covers three concerns from the M6 native-first scaffold plan:
 
 1. **Scanner exclusion** — the legacy megaplan-side pipeline discovery scanner
    must skip ``_template`` because its leading-underscore directory name
    triggers the skip rule.
-2. **Workflow compile/dry-run/fake-run** — the skeleton ``build_pipeline()``
-   returns an :class:`arnold.workflow.dsl.Pipeline` that compiles, dry-runs,
-   and fake-runs to completion.
-3. **Determinism** — repeated builds produce the same ``manifest_hash``.
+2. **Native-first build** — the skeleton ``build_pipeline()`` returns an
+   :class:`arnold.pipeline.Pipeline` with a compiled :class:`NativeProgram`
+   attached.
+3. **Determinism** — repeated builds produce the same native program identity.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from arnold.execution import run
-from arnold.execution.backend import SkeletalBackend
-from arnold.workflow import Pipeline, compile_pipeline, dry_run
+import arnold.pipeline as native_pipeline
+from arnold.pipeline.native import NativeProgram
 from arnold_pipelines._template import build_pipeline
 from arnold_pipelines.megaplan.runtime.discovery import _scan_dir_for_pipeline_modules
 
@@ -40,40 +39,24 @@ def test_template_excluded_by_legacy_scanner() -> None:
     assert not any("_template" in p for p in found_paths)
 
 
-def test_template_builds_workflow_pipeline() -> None:
+def test_template_builds_native_pipeline() -> None:
     pipeline = build_pipeline()
-    assert isinstance(pipeline, Pipeline)
-    assert pipeline.id == "my-pipeline"
+    assert isinstance(pipeline, native_pipeline.Pipeline)
+    assert pipeline.native_program is not None
+    assert isinstance(pipeline.native_program, NativeProgram)
 
 
-def test_template_compiles() -> None:
-    manifest = compile_pipeline(build_pipeline())
-    assert manifest.id == "my-pipeline"
-    assert manifest.manifest_hash
-    assert manifest.topology_hash
+def test_template_native_program_has_expected_phases() -> None:
+    pipeline = build_pipeline()
+    assert pipeline.native_program is not None
+    phase_names = {phase.name for phase in pipeline.native_program.phases}
+    assert "start" in phase_names
+    assert "finish" in phase_names
 
 
-def test_template_dry_run() -> None:
-    manifest = compile_pipeline(build_pipeline())
-    report = dry_run(manifest)
-    assert report["id"] == manifest.id
-    assert report["manifest_hash"] == manifest.manifest_hash
-    assert report["node_count"] == 2
-    assert report["edge_count"] == 1
-
-
-def test_template_fake_runs(tmp_path: Path) -> None:
-    manifest = compile_pipeline(build_pipeline())
-    result = run(
-        manifest,
-        artifact_root=tmp_path / "template-run",
-        backend=SkeletalBackend(),
-    )
-    assert result.state.value == "completed"
-    assert result.manifest_hash == manifest.manifest_hash
-
-
-def test_template_manifest_hash_is_deterministic() -> None:
-    m1 = compile_pipeline(build_pipeline())
-    m2 = compile_pipeline(build_pipeline())
-    assert m1.manifest_hash == m2.manifest_hash
+def test_template_manifest_identity_is_deterministic() -> None:
+    p1 = build_pipeline()
+    p2 = build_pipeline()
+    assert p1.native_program is not None
+    assert p2.native_program is not None
+    assert p1.native_program.name == p2.native_program.name

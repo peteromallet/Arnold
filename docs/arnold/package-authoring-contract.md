@@ -62,11 +62,14 @@ packages omit them at the module level. Making them required would force
 changes to existing reference packages.
 
 **Practical rule for authors:** Declare `default_profile` (even as `None`) and
-`supported_modes` (even as an empty tuple or `("native",)`) so the package
-passes manifest-first discovery. Packages that skip these fields will still
-work at runtime (the runtime validator uses `import` + `getattr` and reports
-their absence as informational), but will be rejected by the static manifest
-reader.
+`supported_modes` (for native-first packages, a non-empty tuple that includes
+`"native"`, e.g. `("native",)`) so the package passes manifest-first discovery.
+Packages that skip these fields will still work at runtime (the runtime
+validator uses `import` + `getattr` and reports their absence as informational),
+but will be rejected by the static manifest reader.
+
+New packages must be native-first. Do not create `_legacy.py`, graph fallback
+builders, compatibility namespaces, or temporary wrapper modules for new work.
 
 ## Registry Discovery: Underscore Skip Rule
 

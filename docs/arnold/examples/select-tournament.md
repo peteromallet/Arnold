@@ -275,16 +275,11 @@ score_candidates (fanout) -> pairwise_bracket -> winner
 
 ## Runtime
 
-`select-tournament` is a native-default converted pipeline. Fresh runs through
+`select-tournament` is a native-first pipeline. Fresh runs through
 `megaplan run select-tournament ...` or
-`arnold pipelines run select-tournament ...` persist runtime ownership in
-`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. During
-the M7 deprecation window, the derived graph remains available as a
-compatibility fallback: pass `--runtime graph` (or the deprecated
-`--executor graph`) for a fresh run that must use the graph executor. Existing
-graph-born plan directories keep resuming on graph. Native-born runs resume on
-native, and corrupt native cursors fail closed rather than silently falling
-back to graph.
+`arnold pipelines run select-tournament ...` execute on the native runtime.
+Native-born runs resume on native, and corrupt native cursors fail closed
+rather than silently falling back to graph.
 
 ## Verdict Semantics
 

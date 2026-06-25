@@ -84,6 +84,7 @@ def test_pipelines_new_creates_module_and_skill(clean_scaffold: list[Path]):
     assert "parallel(" in content
     assert "project_graph(" in content
     assert 'driver: tuple[str, str] = ("native", "project+validate")' in content
+    assert 'supported_modes: tuple[str, ...] = ("native",)' in content
 
     skill_content = skill_path.read_text()
     assert f"name: {name}" in skill_content
@@ -117,10 +118,10 @@ def test_pipelines_new_emitted_package_passes_check(clean_scaffold: list[Path]):
     assert name in check_result.stdout
 
 
-def test_arnold_pipelines_new_driver_graph_emits_checkable_module(
+def test_arnold_pipelines_new_emits_native_only_module(
     clean_scaffold: list[Path],
 ):
-    """The documented Arnold scaffold command exists and emits a checkable module."""
+    """The documented Arnold scaffold command emits only the native-first shape."""
     name = "t14-arnold-scaffold-check"
     module_stem = name.replace("-", "_")
     module_path = _PIPELINES_DIR / f"{module_stem}.py"
@@ -133,12 +134,13 @@ def test_arnold_pipelines_new_driver_graph_emits_checkable_module(
     if skill_dir.exists():
         shutil.rmtree(skill_dir)
 
-    result = _run_arnold_pipelines("new", name, "--driver", "graph")
+    result = _run_arnold_pipelines("new", name)
     assert result.returncode == 0, f"new failed: {result.stderr}"
     assert module_path.exists(), f"module not created at {module_path}"
     content = module_path.read_text(encoding="utf-8")
-    assert 'driver: tuple[str, str] = (\'graph\', "dispatch+emit")' in content
-    assert "Deprecated hand-built graph scaffold" in content
+    assert 'driver: tuple[str, str] = ("native", "project+validate")' in content
+    assert "Deprecated hand-built graph scaffold" not in content
+    assert 'driver: tuple[str, str] = (\'graph\',' not in content
 
     check_result = _run_pipelines("check", name)
     assert check_result.returncode == 0, (

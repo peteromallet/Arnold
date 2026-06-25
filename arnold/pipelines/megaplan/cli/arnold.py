@@ -193,12 +193,11 @@ def _handle_pipelines(argv: list[str]) -> int:
     new_parser.add_argument("module")
     new_parser.add_argument(
         "--driver",
-        choices=["native", "graph"],
+        choices=["native"],
         default="native",
         help=(
-            "Scaffold authoring style. 'native' uses @pipeline/@phase with "
-            "derived graph validation; 'graph' emits the deprecated hand-built "
-            "graph fallback shape."
+            "Scaffold authoring style. 'native' is the only supported style; "
+            "it uses @pipeline/@phase declarations with a derived graph shell."
         ),
     )
     ns = parser.parse_args(argv)
@@ -240,8 +239,6 @@ def _handle_pipelines(argv: list[str]) -> int:
                 "pipelines",
                 "new",
                 canonical_pipeline_name(ns.module),
-                "--driver",
-                ns.driver,
             ]
         )
     return 2

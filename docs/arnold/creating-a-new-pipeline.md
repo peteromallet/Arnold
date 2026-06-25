@@ -11,14 +11,8 @@ From the repo root:
 arnold pipelines new my-planning-pipeline
 ```
 
-This creates a native-authored module and a sibling `SKILL.md` stub. The
+This creates a native-first module and a sibling `SKILL.md` stub. The
 CLI-visible name is the hyphenated form: `my-planning-pipeline`.
-
-Use the graph scaffold only for deprecated fallback work:
-
-```bash
-arnold pipelines new my-planning-pipeline --driver graph
-```
 
 ## 2. Replace the Skeleton
 
@@ -141,13 +135,7 @@ arnold pipelines list
 arnold pipelines run my-planning-pipeline "Implement a dark mode toggle"
 ```
 
-Fresh converted/native-capable runs default to native and persist
-`state.json.runtime_envelope.runtime` plus `state.json.meta.executor`. To force
-the deprecation-window fallback:
-
-```bash
-arnold pipelines run my-planning-pipeline --runtime graph
-```
+Fresh runs execute on the native runtime.
 
 ## 4. Profiles and Prompts
 
@@ -187,8 +175,8 @@ reentry point.
 - Use `parallel(...)` and `native_panel(...)` only for fixed branch sets.
 - Keep runtime-sized fanout or profile-sized panels inside a delegating phase
   until the native compiler/runtime explicitly supports that shape.
-- Graph scaffolds are compatibility fallback tools, not the default path for
-  new converted pipelines.
+- Graph scaffolds are not available for new packages; new work must use the
+  native-first scaffold.
 
 ## 7. Reference Implementations
 
