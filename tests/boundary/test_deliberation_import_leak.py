@@ -5,16 +5,16 @@ Design
 Uses the same subprocess + ``sys.meta_path`` blocker pattern as
 ``tests/boundary/test_import_leak.py``.  A fresh Python interpreter
 with a MetaPathFinder that raises ``ModuleNotFoundError`` for any
-``arnold_pipelines.megaplan.*`` or ``megaplan.*`` import attempts to
-import ``arnold.pipelines.deliberation`` and
+``arnold.pipelines.megaplan.*``, ``arnold_pipelines.megaplan.*``, or
+``megaplan.*`` import attempts to import ``arnold.pipelines.deliberation`` and
 ``arnold.pipelines.deliberation.pipelines.build_initial_pipeline``.
 If the import chain is clean the subprocess exits 0; otherwise it
 exits non-zero with the blocking module name in stderr.
 
 Additionally, a static git-grep check scoped to
 ``arnold/pipelines/deliberation/`` verifies that zero
-``from arnold_pipelines.megaplan`` or
-``import arnold_pipelines.megaplan`` statements exist in the
+``from arnold.pipelines.megaplan`` or
+``import arnold.pipelines.megaplan`` statements exist in the
 deliberation source tree.
 """
 
@@ -57,11 +57,13 @@ import sys
 
 class _BlockMegaplanFinder:
     def find_spec(self, fullname, path, target=None):
-        # Block arnold_pipelines.megaplan.* AND megaplan.*
+        # Block canonical/mirrored Megaplan packages and legacy bare imports.
         if (fullname == "arnold_pipelines.megaplan"
                 or fullname.startswith("arnold_pipelines.megaplan.")
+                or fullname == "arnold.pipelines.megaplan"
+                or fullname.startswith("arnold.pipelines.megaplan.")
                 or fullname == "megaplan"
-                or fullname.startswith("arnold_pipelines.megaplan.")):
+                or fullname.startswith("megaplan.")):
             raise ModuleNotFoundError(
                 f"megaplan import blocked by deliberation leak gate: {fullname}"
             )
