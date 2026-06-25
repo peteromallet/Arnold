@@ -38,8 +38,9 @@
  * migration_reset) are emitted through the optional repository.
  */
 
-import type { ExtensionSettingsService, DisposeHandle } from '@/sdk/index';
-import type { ExtensionManifest } from '@/sdk/index';
+import type { ExtensionSettingsService } from './settings';
+import type { ExtensionManifest } from './manifest';
+import type { DisposeHandle } from './dispose';
 import type {
   StateRepository,
   SettingsSnapshot,

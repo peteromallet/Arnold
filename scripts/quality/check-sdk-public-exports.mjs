@@ -22,6 +22,7 @@
  * Internal paths resolved via the `@/` tsconfig alias (`@/` → `src/`).
  */
 
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
@@ -125,14 +126,26 @@ function isInternalPath(resolvedPath) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Map from ts.SyntaxKind to a human-readable declaration kind string.
+ */
+const DECLARATION_KIND_MAP = {
+  [ts.SyntaxKind.TypeAliasDeclaration]: 'type',
+  [ts.SyntaxKind.InterfaceDeclaration]: 'interface',
+  [ts.SyntaxKind.FunctionDeclaration]: 'function',
+  [ts.SyntaxKind.VariableStatement]: 'const',
+  [ts.SyntaxKind.ClassDeclaration]: 'class',
+  [ts.SyntaxKind.EnumDeclaration]: 'enum',
+};
+
+/**
  * Extract all export declarations from a TypeScript source file.
  *
  * Returns an array of export descriptors:
- *   - Declared exports:       { name, kind: 'declared' }
+ *   - Declared exports:       { name, kind: 'declared', declarationKind }
  *   - Re-exports from path:   { name, kind: 'value'|'type', source: absolutePath }
  */
 function walkExports(sourceFile) {
-  /** @type {Array<{ name: string, kind: 'declared' | 'value' | 'type', source?: string }>} */
+  /** @type {Array<{ name: string, kind: 'declared' | 'value' | 'type', source?: string, declarationKind?: string }>} */
   const exports = [];
 
   ts.forEachChild(sourceFile, function visit(node) {
@@ -146,25 +159,25 @@ function walkExports(sourceFile) {
       ts.isTypeAliasDeclaration(node) &&
       hasExportModifier(node)
     ) {
-      exports.push({ name: node.name.text, kind: 'declared' });
+      exports.push({ name: node.name.text, kind: 'declared', declarationKind: 'type' });
     } else if (
       ts.isInterfaceDeclaration(node) &&
       hasExportModifier(node)
     ) {
-      exports.push({ name: node.name.text, kind: 'declared' });
+      exports.push({ name: node.name.text, kind: 'declared', declarationKind: 'interface' });
     } else if (
       ts.isFunctionDeclaration(node) &&
       hasExportModifier(node) &&
       node.name
     ) {
-      exports.push({ name: node.name.text, kind: 'declared' });
+      exports.push({ name: node.name.text, kind: 'declared', declarationKind: 'function' });
     } else if (
       ts.isVariableStatement(node) &&
       hasExportModifier(node)
     ) {
       for (const decl of node.declarationList.declarations) {
         if (ts.isIdentifier(decl.name)) {
-          exports.push({ name: decl.name.text, kind: 'declared' });
+          exports.push({ name: decl.name.text, kind: 'declared', declarationKind: 'const' });
         }
       }
     } else if (
@@ -172,12 +185,12 @@ function walkExports(sourceFile) {
       hasExportModifier(node) &&
       node.name
     ) {
-      exports.push({ name: node.name.text, kind: 'declared' });
+      exports.push({ name: node.name.text, kind: 'declared', declarationKind: 'class' });
     } else if (
       ts.isEnumDeclaration(node) &&
       hasExportModifier(node)
     ) {
-      exports.push({ name: node.name.text, kind: 'declared' });
+      exports.push({ name: node.name.text, kind: 'declared', declarationKind: 'enum' });
     }
 
     // export { A, B } from './foo';
@@ -232,8 +245,9 @@ function hasExportModifier(node) {
 
 /**
  * Load and validate the allowlist config.
- * Returns { allowlist, errors }. allowlist is a Map<string, Set<string>> from
- * source path to set of allowed export names.
+ * Returns { allowlist, inlineDeclarations, errors }.
+ *   - allowlist: Map<string, Set<string>> from source path to set of allowed export names.
+ *   - inlineDeclarations: Map<string, { symbol, owner, rationale, expiration }> from symbol name to entry.
  */
 function loadAllowlist() {
   /** @type {string[]} */
@@ -241,7 +255,7 @@ function loadAllowlist() {
 
   if (!fs.existsSync(ALLOWLIST_PATH)) {
     errors.push(`Allowlist config not found: ${path.relative(REPO_ROOT, ALLOWLIST_PATH)}`);
-    return { allowlist: null, errors };
+    return { allowlist: null, inlineDeclarations: null, errors };
   }
 
   let raw;
@@ -249,12 +263,12 @@ function loadAllowlist() {
     raw = JSON.parse(fs.readFileSync(ALLOWLIST_PATH, 'utf8'));
   } catch (err) {
     errors.push(`Allowlist config is not valid JSON: ${err.message}`);
-    return { allowlist: null, errors };
+    return { allowlist: null, inlineDeclarations: null, errors };
   }
 
   if (!Array.isArray(raw.allowlist)) {
     errors.push(`Allowlist config is missing the 'allowlist' array.`);
-    return { allowlist: null, errors };
+    return { allowlist: null, inlineDeclarations: null, errors };
   }
 
   /** @type {Map<string, Set<string>>} */
@@ -295,7 +309,42 @@ function loadAllowlist() {
     map.set(resolvedSource, existing);
   }
 
-  return { allowlist: map, errors };
+  // ---- Parse inlineDeclarations ----
+  /** @type {Map<string, { symbol: string, owner: string, rationale: string, expiration: string }>} */
+  const inlineMap = new Map();
+
+  if (Array.isArray(raw.inlineDeclarations)) {
+    for (let i = 0; i < raw.inlineDeclarations.length; i++) {
+      const entry = raw.inlineDeclarations[i];
+      const idx = `inlineDeclarations[${i}]`;
+
+      if (typeof entry.symbol !== 'string' || entry.symbol.length === 0) {
+        errors.push(`${idx}: missing or empty 'symbol'.`);
+        continue;
+      }
+      if (typeof entry.owner !== 'string' || entry.owner.length === 0) {
+        errors.push(`${idx}: missing or empty 'owner'.`);
+        continue;
+      }
+      if (typeof entry.rationale !== 'string' || entry.rationale.length === 0) {
+        errors.push(`${idx}: missing or empty 'rationale'.`);
+        continue;
+      }
+      if (typeof entry.expiration !== 'string' || entry.expiration.length === 0) {
+        errors.push(`${idx}: missing or empty 'expiration'.`);
+        continue;
+      }
+
+      inlineMap.set(entry.symbol, {
+        symbol: entry.symbol,
+        owner: entry.owner,
+        rationale: entry.rationale,
+        expiration: entry.expiration,
+      });
+    }
+  }
+
+  return { allowlist: map, inlineDeclarations: inlineMap, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +360,7 @@ if (!fs.existsSync(SDK_ENTRY)) {
 }
 
 // ---- Load allowlist ----
-const { allowlist, errors: allowlistErrors } = loadAllowlist();
+const { allowlist, inlineDeclarations, errors: allowlistErrors } = loadAllowlist();
 
 if (allowlistErrors.length > 0) {
   console.error(`${LABEL} Allowlist config errors:`);
@@ -439,6 +488,40 @@ if (allowlist) {
   }
 }
 
+// ---- Inline declaration gate ----
+/** @type {Array<{ name: string, declarationKind: string }>} */
+const inlineDeclarations_all = [];
+for (const exp of allExports) {
+  if (exp.kind === 'declared' && exp.declarationKind) {
+    inlineDeclarations_all.push({
+      name: exp.name,
+      declarationKind: exp.declarationKind,
+    });
+  }
+}
+
+/** @type {Array<{ name: string, declarationKind: string }>} */
+const unlistedInlineDeclarations = [];
+
+if (inlineDeclarations && inlineDeclarations.size > 0) {
+  for (const decl of inlineDeclarations_all) {
+    if (!inlineDeclarations.has(decl.name)) {
+      unlistedInlineDeclarations.push(decl);
+    }
+  }
+}
+
+// ---- Check for obsolete inline declaration entries ----
+const obsoleteInlineEntries = [];
+if (inlineDeclarations) {
+  const actualInlineNames = new Set(inlineDeclarations_all.map((d) => d.name));
+  for (const [symbol] of inlineDeclarations) {
+    if (!actualInlineNames.has(symbol)) {
+      obsoleteInlineEntries.push(symbol);
+    }
+  }
+}
+
 // ---- Report ----
 if (violations.length > 0) {
   const header =
@@ -469,6 +552,43 @@ if (obsoleteAllowlistEntries.length > 0) {
   }
 }
 
+// ---- Inline declaration report ----
+console.log(
+  `${LABEL} Inline declarations: ${inlineDeclarations_all.length} total ` +
+    `(${[...new Set(inlineDeclarations_all.map((d) => d.declarationKind))].sort().join(', ')}).`,
+);
+
+if (unlistedInlineDeclarations.length > 0) {
+  const header =
+    mode === 'release'
+      ? 'INLINE DECLARATION GATE:'
+      : 'INLINE DECLARATION NOTE:';
+  console.warn(
+    `${LABEL} ${header} ${unlistedInlineDeclarations.length} inline export(s) ` +
+      `not listed in inlineDeclarations:`,
+  );
+  for (const d of unlistedInlineDeclarations) {
+    console.warn(
+      `${LABEL}   - ${d.name} (${d.declarationKind})`,
+    );
+  }
+  console.warn(
+    `${LABEL} Add these to the 'inlineDeclarations' array in ` +
+      `${path.relative(REPO_ROOT, ALLOWLIST_PATH)} ` +
+      `with symbol, owner, rationale, and expiration fields.`,
+  );
+}
+
+if (obsoleteInlineEntries.length > 0) {
+  console.warn(
+    `${LABEL} NOTE: ${obsoleteInlineEntries.length} inline declaration entry/entries ` +
+      `reference symbols no longer present:`,
+  );
+  for (const e of obsoleteInlineEntries) {
+    console.warn(`${LABEL}   - ${e}`);
+  }
+}
+
 // ---- Exit decision ----
 if (mode === 'release' && violations.length > 0) {
   console.error(
@@ -490,6 +610,46 @@ console.log(
   `${LABEL} ${mode.toUpperCase()} PASSED. ` +
     `${allExports.length} export(s) reviewed, ` +
     `${violations.length} violation(s), ` +
-    `${obsoleteAllowlistEntries.length} obsolete allowlist entry/entries.`,
+    `${obsoleteAllowlistEntries.length} obsolete allowlist entry/entries, ` +
+    `${unlistedInlineDeclarations.length} unlisted inline declaration(s), ` +
+    `${obsoleteInlineEntries.length} obsolete inline declaration entry/entries.`,
 );
+
+// ---------------------------------------------------------------------------
+// Invoke the SDK-internal no-barrel-import gate (M2a T4).
+// ---------------------------------------------------------------------------
+
+const noBarrelImportScript = path.join(
+  REPO_ROOT,
+  'scripts',
+  'quality',
+  'check-sdk-no-barrel-imports.mjs',
+);
+
+if (fs.existsSync(noBarrelImportScript)) {
+  console.log(`${LABEL} Running SDK-internal no-barrel-import gate…`);
+  try {
+    const passThroughFlag = mode === 'release' ? ' --release' : ' --audit';
+    execSync(`node ${noBarrelImportScript}${passThroughFlag}`, {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+      timeout: 60_000,
+      stdio: ['pipe', 'inherit', 'inherit'],
+    });
+  } catch (err) {
+    if (mode === 'release') {
+      console.error(
+        `${LABEL} SDK-internal barrel import(s) found — release blocked.`,
+      );
+      process.exit(1);
+    }
+    // In audit mode, tolerate failures from the sub-script (it exits 1 on
+    // release mode only, but just in case).
+  }
+} else {
+  console.warn(
+    `${LABEL} No-barrel-import gate not found at ${path.relative(REPO_ROOT, noBarrelImportScript)}; skipping.`,
+  );
+}
+
 process.exit(0);

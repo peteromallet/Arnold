@@ -11,7 +11,8 @@
  * @publicContract
  */
 
-import type { DiagnosticSeverity, DisposeHandle } from '@/sdk/index';
+import type { DiagnosticSeverity } from '../../diagnostics';
+import type { DisposeHandle } from '../../dispose';
 import type { TimelineSnapshot } from '@/sdk/video/timeline/reader';
 
 // ---------------------------------------------------------------------------

@@ -23,7 +23,8 @@ import {
 } from './extensionSettingsService';
 import type { ExtensionSettingsServiceFactoryResult } from './extensionSettingsService';
 import { defineExtension, createExtensionContext, CONTEXT_DISPOSE_SYMBOL } from './index';
-import type { ExtensionManifest, ExtensionSettingsService } from './index';
+import type { ExtensionManifest } from './index';
+import type { ExtensionSettingsService } from './settings';
 import type { SettingsSnapshot, StateRepository } from './contracts';
 import { InMemoryStateRepository } from './__tests__/inMemoryStateRepository';
 

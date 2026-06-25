@@ -57,6 +57,8 @@
     "check:deferred-claims:release": "node scripts/quality/check-extension-deferred-claims.mjs --release",
     "check:sdk-public-exports": "node scripts/quality/check-sdk-public-exports.mjs --audit",
     "check:sdk-public-exports:release": "node scripts/quality/check-sdk-public-exports.mjs --release",
+    "check:sdk-no-barrel-imports": "node scripts/quality/check-sdk-no-barrel-imports.mjs --audit",
+    "check:sdk-no-barrel-imports:release": "node scripts/quality/check-sdk-no-barrel-imports.mjs --release",
     "check:frontend-closure": "node scripts/quality/check-frontend-closure-matrix.mjs --audit",
     "check:frontend-closure:release": "node scripts/quality/check-frontend-closure-matrix.mjs --release",
     "check:example-readiness": "node scripts/quality/check-extension-example-readiness.mjs --audit",

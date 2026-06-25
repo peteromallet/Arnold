@@ -1,0 +1,121 @@
+{
+  "$schema": "../../config/schemas/sdk-public-api-approvals.schema.json",
+  "description": "Human-edited approvals for intentional changes to the SDK public API manifest. Entries are keyed by export name. When the manifest check detects a change, it consults this file before failing. Remove entries once the manifest baseline has been updated with --write-baseline.",
+  "approvedChanges": {},
+  "_m2aExtractionRecord": {
+    "milestone": "M2a — Core SDK Boundary Modules",
+    "baselineUpdatedAt": "2026-06-25T23:39:00.000Z",
+    "changeKind": "relocation",
+    "compatibility": "source-compatible",
+    "description": "84 exports relocated from inline declarations in src/sdk/index.ts to dedicated canonical modules (ids.ts, dispose.ts, diagnostics.ts, manifest.ts, packaging.ts, settings.ts, commands.ts, chrome.ts, context.ts, lifecycle.ts, capabilities.ts). Each export retains identical type/value identity; only the source location changed from inline to re-export. The baseline manifest was rewritten with --write-baseline to accept all M2a extraction changes. No API shape, name, or behavior changed — only the module organization. All 84 signature hashes changed because the declaration text normalized by the manifest checker differs between inline declarations and re-exports (the re-export text is just the name, while the inline text was the full declaration).",
+    "changedExportCount": 84,
+    "exportChangesByModule": {
+      "src/sdk/ids.ts": [
+        { "name": "ExtensionId", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ContributionId", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "validateExtensionId", "kind": "function", "namespace": "value", "change": "inline→reexport" },
+        { "name": "validateContributionId", "kind": "function", "namespace": "value", "change": "inline→reexport" }
+      ],
+      "src/sdk/dispose.ts": [
+        { "name": "DisposeHandle", "kind": "interface", "namespace": "type", "change": "inline→reexport" }
+      ],
+      "src/sdk/diagnostics.ts": [
+        { "name": "DiagnosticSeverity", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "DiagnosticSource", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "DIAGNOSTIC_SOURCE_EXTENSION", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "ExtensionDiagnostic", "kind": "interface", "namespace": "type", "change": "inline→reexport" },
+        { "name": "DiagnosticSourceRange", "kind": "interface", "namespace": "type", "change": "inline→reexport" },
+        { "name": "Diagnostic", "kind": "interface", "namespace": "type", "change": "inline→reexport" },
+        { "name": "DiagnosticCollection", "kind": "interface", "namespace": "type", "change": "inline→reexport" },
+        { "name": "DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "CreateDiagnosticCollectionOptions", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "createDiagnosticCollection", "kind": "function", "namespace": "value", "change": "inline→reexport" },
+        { "name": "ExportDiagnostic", "kind": "type", "namespace": "type", "change": "inline→reexport" }
+      ],
+      "src/sdk/manifest.ts": [
+        { "name": "ContributionKind", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "VideoEditorSlotName", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ExtensionContribution", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "KNOWN_CONTRIBUTION_KINDS", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "KNOWN_CONTRIBUTION_KINDS_SET", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "KNOWN_SLOT_NAMES", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "KNOWN_SLOT_NAMES_SET", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "INSPECTOR_SECTION_PLACEMENTS", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "PANEL_PLACEMENTS", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "ASSET_DETAIL_SECTION_PLACEMENTS", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "ALL_VALID_PLACEMENTS", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "ManifestValidationMode", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ManifestValidationResult", "kind": "type", "namespace": "type", "change": "inline→reexport" }
+      ],
+      "src/sdk/packaging.ts": [
+        { "name": "DependencyPosture", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ExtensionDependency", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "IntegrityAlgorithm", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "IntegrityHash", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "MigrationHookKind", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "MigrationDeclaration", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "InstalledExtensionMetadata", "kind": "type", "namespace": "type", "change": "inline→reexport" }
+      ],
+      "src/sdk/settings.ts": [
+        { "name": "ExtensionSettingsSchema", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ExtensionSettingsService", "kind": "type", "namespace": "type", "change": "inline→reexport" }
+      ],
+      "src/sdk/commands.ts": [
+        { "name": "TargetContext", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "TargetContextPayload", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "CommandRunContext", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "CommandHandler", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "CommandRegistrationOptions", "kind": "type", "namespace": "type", "change": "inline→reexport" }
+      ],
+      "src/sdk/chrome.ts": [
+        { "name": "ExtensionChromeService", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ChromeEvent", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ChromeToastPayload", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ChromeProgressPayload", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ChromeSavePayload", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ChromeRenderStatusPayload", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ChromeEventPayload", "kind": "type", "namespace": "type", "change": "inline→reexport" }
+      ],
+      "src/sdk/context.ts": [
+        { "name": "ExtensionI18nService", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ExtensionDiagnosticsService", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "CreativeContext", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ExtensionCommandService", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ExtensionContext", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "createCreativeContext", "kind": "function", "namespace": "value", "change": "inline→reexport" },
+        { "name": "createCreativeContextStubs", "kind": "function", "namespace": "value", "change": "inline→reexport" },
+        { "name": "disposeExtensionContextServices", "kind": "function", "namespace": "value", "change": "inline→reexport" },
+        { "name": "CONTEXT_DISPOSE_SYMBOL", "kind": "const", "namespace": "value", "change": "inline→reexport" },
+        { "name": "ExtensionNotImplementedError", "kind": "class", "namespace": "value", "change": "inline→reexport" },
+        { "name": "CREATIVE_MEMBER_MILESTONE", "kind": "const", "namespace": "value", "change": "inline→reexport" }
+      ],
+      "src/sdk/lifecycle.ts": [
+        { "name": "ExtensionActivateFn", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ReighExtension", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "DefineExtensionOptions", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "defineExtension", "kind": "function", "namespace": "value", "change": "inline→reexport" }
+      ],
+      "src/sdk/capabilities.ts": [
+        { "name": "CapabilityVersion", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "CapabilitySourceRef", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "RouteFitMetadata", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "CapabilityRequirement", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "IntegrationCapabilities", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingStrategy", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingSourceRef", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingRange", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingAttachmentKind", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingAttachmentRule", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingConfig", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingResultItem", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "SamplingResult", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ProcessRoundtripRequest", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ProcessRoundtripAction", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ProcessRoundtripResult", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ProcessProgressEvent", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "ProcessLogSummary", "kind": "type", "namespace": "type", "change": "inline→reexport" },
+        { "name": "getCapabilityRequirements", "kind": "function", "namespace": "value", "change": "inline→reexport" }
+      ]
+    }
+  }
+}
