@@ -24,15 +24,8 @@ import {
 import type { ExtensionSettingsServiceFactoryResult } from './extensionSettingsService';
 import { defineExtension, createExtensionContext, CONTEXT_DISPOSE_SYMBOL } from './index';
 import type { ExtensionManifest, ExtensionSettingsService } from './index';
-import {
-  ProviderBackedExtensionStateRepository,
-  InMemoryProviderStore,
-} from '@/tools/video-editor/runtime/extensionStateRepositoryProvider';
-import type {
-  ExtensionStateRepository,
-  ExtensionSettingsSnapshot,
-} from '@/tools/video-editor/runtime/extensionStateRepository';
 import type { SettingsSnapshot, StateRepository } from './contracts';
+import { InMemoryStateRepository } from './__tests__/inMemoryStateRepository';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -79,7 +72,7 @@ function makeSnapshot(
   extensionId: string,
   schemaVersion: number,
   values: Record<string, unknown>,
-): ExtensionSettingsSnapshot {
+): SettingsSnapshot {
   return Object.freeze({
     extensionId,
     schemaVersion,
@@ -88,9 +81,8 @@ function makeSnapshot(
   });
 }
 
-function makeRepo(): { repo: ExtensionStateRepository; cleanup: () => void } {
-  const store = new InMemoryProviderStore();
-  const repo = new ProviderBackedExtensionStateRepository(store);
+function makeRepo(): { repo: InMemoryStateRepository; cleanup: () => void } {
+  const repo = new InMemoryStateRepository();
   return {
     repo,
     cleanup: () => { /* InMemory needs no cleanup */ },
@@ -692,13 +684,11 @@ describe('T9: Legacy localStorage read-through', () => {
 describe('T9: Reload-equivalent repository reinitialization', () => {
   const EXT_ID = 't9.reload.ext';
 
-  let store: InMemoryProviderStore;
-  let repo: ExtensionStateRepository;
+  let repo: InMemoryStateRepository;
 
   beforeEach(async () => {
     cleanupLocalStorage(EXT_ID);
-    store = new InMemoryProviderStore();
-    repo = new ProviderBackedExtensionStateRepository(store);
+    repo = new InMemoryStateRepository();
     await repo.initialize();
   });
 
@@ -1154,13 +1144,11 @@ describe('M3: Repository-backed runtime write-through', () => {
 describe('T9: Legacy key migration with repository', () => {
   const EXT_ID = 't9.migrate.ext';
 
-  let store: InMemoryProviderStore;
-  let repo: ExtensionStateRepository;
+  let repo: InMemoryStateRepository;
 
   beforeEach(async () => {
     cleanupLocalStorage(EXT_ID);
-    store = new InMemoryProviderStore();
-    repo = new ProviderBackedExtensionStateRepository(store);
+    repo = new InMemoryStateRepository();
     await repo.initialize();
   });
 
@@ -1709,8 +1697,7 @@ describe('T10: Settings migration during service creation', () => {
   // ---- Dispose writes migrated schema version to repository ----------------
 
   it('dispose writes migrated schema version to repository', async () => {
-    const store = new InMemoryProviderStore();
-    const repo = new ProviderBackedExtensionStateRepository(store);
+    const repo = new InMemoryStateRepository();
     await repo.initialize();
 
     const manifest = {
