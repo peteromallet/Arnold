@@ -76,21 +76,21 @@ def test_examples_are_split_aware_for_different_canonical_and_docs_paths() -> No
     assert "| Load state | loadable-native|" in rendered
 
 
-def test_deferred_native_deliberation_renders_diagnostics_without_builder_import() -> None:
+def test_loadable_native_deliberation_renders_builder_report() -> None:
     generator = _load_generator()
     info = _by_id()["deliberation"]
 
-    assert info.builder is None
-    assert info.load_state == "deferred-native"
+    assert info.builder is not None
+    assert info.load_state == "loadable-native"
 
     rendered_path, rendered = generator._render_example(info)
     assert rendered_path == _example_path(generator, "deliberation")
-    assert "## Deferred native diagnostic" in rendered
-    assert "restore task" in rendered
+    assert "## Native builder report" in rendered
+    assert "`build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`" in rendered
     assert "| Builder target | arnold.pipelines.deliberation:build_pipeline|" in rendered
 
 
-def test_required_public_examples_render_for_workflow_native_and_deferred_sources() -> None:
+def test_required_public_examples_render_for_workflow_and_native_sources() -> None:
     generator = _load_generator()
     examples = generator.render_examples()
 
@@ -118,5 +118,5 @@ def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> N
 
     assert first == second
     assert "| megaplan.creative | creative | native:creative | arnold/pipelines/megaplan/pipelines/creative | keep|" in first
-    assert "| arnold.deliberation | deliberation | deferred-native | arnold/pipelines/deliberation | keep|" in first
+    assert "| arnold.deliberation | deliberation | native:deliberation | arnold/pipelines/deliberation | keep|" in first
     assert "| evidence_pack.verifier | evidence_pack_verifier | sha256:" in first
