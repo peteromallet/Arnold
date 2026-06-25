@@ -14,16 +14,6 @@
 
 * Preserve the North Star anchor. Use it as durable alignment context for prep, planning, critique, execution, and review. Do not narrow milestone scope in a way that contradicts the North Star.
 
-## Megaplan Prep Setup
-
-Overall plan difficulty: 5/5; selected profile: `partnered-5`; because a bad plan could pass local tests while deleting or weakening architecture artifacts, public contracts, compatibility ledgers, or ownership boundaries.
-
-Planning complexity: `full`; because the work crosses backend contracts, frontend ownership, docs, Makefile policy, and compatibility tests, but it is a follow-up on current-main artifacts rather than a new unknown architecture.
-
-Depth: `high`; because each milestone needs substantial repository reading and structural reasoning to preserve useful existing work while avoiding overlap with the messaging-boundary epic.
-
-Venue: run the epic inside a subagent and use Codex subagents aggressively for investigation and fixes. Keep the main thread for supervision and status.
-
 ## Epic Chain File
 
 ```text
@@ -73,7 +63,7 @@ Venue: run the epic inside a subagent and use Codex subagents aggressively for i
 * Use the editable Arnold/Megaplan checkout first on `PYTHONPATH`:
 
 ```bash
-export PYTHONPATH=/Users/peteromalley/Documents/megaplan${PYTHONPATH:+:$PYTHONPATH}
+export PYTHONPATH=/Users/peteromalley/Documents/Arnold${PYTHONPATH:+:$PYTHONPATH}
 ```
 
 * Verify the launcher before start:
@@ -85,7 +75,7 @@ export PYTHONPATH=/Users/peteromalley/Documents/megaplan${PYTHONPATH:+:$PYTHONPA
 * Start command:
 
 ```bash
-PYTHONPATH=/Users/peteromalley/Documents/megaplan \
+PYTHONPATH=/Users/peteromalley/Documents/Arnold \
   /Users/peteromalley/Documents/reigh-workspace/vibecomfy/.venv/bin/python -m arnold_pipelines.megaplan chain start \
   --project-dir "$PWD" \
   --require-anchor \

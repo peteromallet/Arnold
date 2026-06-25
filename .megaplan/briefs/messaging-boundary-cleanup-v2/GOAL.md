@@ -73,7 +73,7 @@ Venue: run the epic inside a subagent and use Codex subagents aggressively for i
 * Use the editable Arnold/Megaplan checkout first on `PYTHONPATH`:
 
 ```bash
-export PYTHONPATH=/Users/peteromalley/Documents/megaplan${PYTHONPATH:+:$PYTHONPATH}
+export PYTHONPATH=/Users/peteromalley/Documents/Arnold${PYTHONPATH:+:$PYTHONPATH}
 ```
 
 * Verify the launcher before start:
