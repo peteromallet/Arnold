@@ -1,4 +1,4 @@
-import { BUILTIN_CLIP_TYPES, type BuiltinClipType } from '@/sdk/video/timeline/clipTypes.ts';
+import { type BuiltinClipType } from '@/sdk/video/timeline/clipTypes.ts';
 import { type ResolvedTimelineClip, type TimelineClip, type TrackDefinition } from '@/tools/video-editor/types/index.ts';
 import {
   defineClipType,

@@ -4278,6 +4278,12 @@ import type {
   TimelinePatchValidationResult,
   TimelinePreviewResult,
 } from '@/sdk/video/timeline/patch.ts';
+import type {
+  AssetReadSurface,
+  ExportService,
+  MaterialReadSurface,
+  MetadataFacetValueKind,
+} from '@/sdk/video/assets/metadata.ts';
 
 // ---------------------------------------------------------------------------
 // M12: Planner requirement contracts — capability requirements, source refs,

@@ -1,3 +1,17 @@
+/**
+ * Timeline patch contracts — portable public contracts.
+ *
+ * Representative execution/process-like family boundary (M0 sanity check):
+ * - Portable: operation-family vocabulary, patch/diff/preview shapes,
+ *   diagnostics, and project-data limit contracts. These are data-only
+ *   descriptions of intended timeline mutations; they do not execute.
+ * - Host-only: the patch planner, runtime validation against actual timeline
+ *   state, proposal execution, source-map resolution, React hooks/providers,
+ *   and any behavior that needs DataProvider or browser APIs.
+ *
+ * @publicContract
+ */
+
 import type { DiagnosticSeverity } from '@/sdk/index';
 
 /** Top-level operation families supported by TimelinePatch. */
