@@ -2,7 +2,7 @@
 
 ## Outcome
 
-A canonical, machine-readable family maturity registry exists. Every `ContributionKind` maps to a `FamilyDefinition` with a two-axis maturity model (declaration + execution) and an obligation checklist. `config/extensions/family-maturity.json` is the source of truth; gates read it. Immediate schema/API drift between SDK constants and `config/contracts/reigh-extension.schema.json` is fixed.
+A canonical, machine-readable family maturity registry exists in `src/sdk/families/familyDefinitions.ts`. Every `ContributionKind` maps to a `FamilyDefinition` with a two-axis maturity model (declaration + execution) and an obligation checklist. `config/extensions/family-maturity.json` is generated from the TypeScript registry and used by gates, but it is not hand-edited. Immediate schema/API drift between SDK constants and `config/contracts/reigh-extension.schema.json` is fixed.
 
 ## Background
 
