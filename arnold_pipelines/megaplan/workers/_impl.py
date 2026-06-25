@@ -687,6 +687,21 @@ def run_command(
     progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
+    # Codex CLI interprets a trailing "-" as "read the prompt from stdin".  When
+    # stdin is a pipe/file this reliably wedges (the CLI blocks reading forever).
+    # Write the prompt to a temp file and pass "@/path/to/file" instead, sealing
+    # stdin with DEVNULL.  This applies to any command whose last argument is "-".
+    stdin_path: Path | None = None
+    if stdin_text is not None and command and command[-1] == "-":
+        stdin_handle = tempfile.NamedTemporaryFile("w+", encoding="utf-8", delete=False)
+        stdin_handle.write(stdin_text)
+        stdin_handle.flush()
+        stdin_handle.close()
+        stdin_path = Path(stdin_handle.name)
+        command = list(command)
+        command[-1] = f"@{stdin_path}"
+        stdin_text = None
+
     try:
         started = time.monotonic()
         timeout = timeout or get_effective("execution", "worker_timeout_seconds")
@@ -723,6 +738,9 @@ def run_command(
                     "agent_not_found",
                     f"Command not found: {command[0]}",
                 ) from exc
+            finally:
+                if stdin_path is not None:
+                    stdin_path.unlink(missing_ok=True)
             return CommandResult(
                 command=command,
                 cwd=cwd,
@@ -732,7 +750,7 @@ def run_command(
                 duration_ms=int((time.monotonic() - started) * 1000),
             )
 
-        stdin_path: Path | None = None
+        stdin_path = None
         stdin_file: Any | None = None
         try:
             if stdin_text is not None:
