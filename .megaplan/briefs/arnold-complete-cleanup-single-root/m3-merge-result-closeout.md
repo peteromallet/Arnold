@@ -1,4 +1,4 @@
-# M6: Merge Result Closeout
+# M3: Merge Result Closeout
 
 ## Outcome
 
@@ -18,11 +18,6 @@ Out:
 
 - Do not repair new unrelated failures by loosening gates.
 - Do not leave "review later" cleanup buckets unless an external process or remote failure makes deletion impossible in this milestone.
-
-## Locked Decisions
-
-- Complete means every cleanup artifact is resolved, not merely planned.
-- Rare exceptions need a concrete trigger and owner.
 
 ## Done Criteria
 

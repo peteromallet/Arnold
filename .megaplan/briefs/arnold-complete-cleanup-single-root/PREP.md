@@ -4,7 +4,7 @@ Date: 2026-06-25
 
 ## Prep Decision
 
-This should run as an epic, not a single megaplan. The current cleanup is bigger than one two-week sprint because it combines:
+This should run as a short epic, not a single megaplan. The current cleanup is probably too risky for one plan because it combines:
 
 - final loose-work disposition after the native Python completion merge;
 - a public/import contract migration;
@@ -19,6 +19,8 @@ Planning complexity: `thorough`; because this is a public API/package-root migra
 Depth: `high`; because the planner must reason across import surfaces, side effects, chain/resume state, wheel packaging, and historical cleanup disposition.
 
 Recommended shorthand for every milestone unless a later prep explicitly lowers it: `partnered-5/thorough/high`.
+
+Important sizing correction: these milestones are capped at roughly two weeks each; they are not intended to be six or seven two-week sprints. The expected shape is one baseline/ratchet sprint, one load-bearing extraction sprint, one parity/deletion sprint, and one short merge-result closeout.
 
 ## Subagent Swarm Input
 
