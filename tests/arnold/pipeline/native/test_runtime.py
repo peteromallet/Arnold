@@ -417,6 +417,22 @@ class TestMaxPhasesAndResume:
         result = run_native_pipeline(prog, resume=True)
         assert result.state == {"result": "done"}
 
+    def test_resume_with_corrupt_cursor_fails_closed(self, tmp_path: Path) -> None:
+        @phase
+        def step(ctx: dict) -> dict:
+            return {"result": "done"}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            s = yield step(ctx)
+            return s
+
+        (tmp_path / "resume_cursor.json").write_text("{", encoding="utf-8")
+
+        prog = compile_pipeline(my_pipe)
+        with pytest.raises(NativeRuntimeError, match="Cannot resume native pipeline"):
+            run_native_pipeline(prog, artifact_root=tmp_path, resume=True)
+
     def test_max_phases_multiple_suspensions(self, tmp_path: Path) -> None:
         @phase
         def a(ctx: dict) -> dict:
@@ -2354,3 +2370,239 @@ class TestHumanGateSuspension:
         assert result.suspended is True
         # Envelope should have been accumulated
         assert result.envelope is not None
+
+
+class TestPhaseContractSuspension:
+    """Shared ContractStatus.SUSPENDED handling for ordinary phases."""
+
+    def test_phase_suspension_persists_same_pc_cursor_without_completion(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        completed: list[str] = []
+
+        class Hooks(NullNativeRuntimeHooks):
+            def on_stage_complete(self, instr, ctx, result, state, owned_keys):
+                completed.append(instr.name)
+
+        @phase
+        def human_review(ctx: dict) -> StepResult:
+            suspension = Suspension(
+                kind="human",
+                awaitable="review",
+                prompt="Review",
+                resume_cursor="pack-1.human_review",
+            )
+            return StepResult(
+                outputs={"review_status": "waiting"},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=suspension,
+                    payload={"checkpoint": "human_review"},
+                ),
+            )
+
+        @phase
+        def after(ctx: dict) -> dict:
+            return {"after": True}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            s = yield human_review(ctx)
+            s = yield after(ctx)
+            return s
+
+        prog = compile_pipeline(my_pipe)
+        result = run_native_pipeline(prog, artifact_root=tmp_path, hooks=Hooks())
+
+        assert result.suspended is True
+        assert result.pc == 0
+        assert result.stages == []
+        assert completed == []
+        cursor = json.loads((tmp_path / "resume_cursor.json").read_text(encoding="utf-8"))
+        assert cursor["stage"].endswith("__human_review__pc0")
+        assert cursor["native"]["pc"] == 0
+        assert cursor["native"]["suspension_kind"] == "phase_suspended"
+        assert cursor["resume_cursor"] == "pack-1.human_review"
+        assert cursor["stages"] == []
+        assert cursor["frames"]["__state__"]["review_status"] == "waiting"
+        assert cursor["contract_result"]["status"] == "suspended"
+        assert cursor["suspension"]["resume_cursor"] == "pack-1.human_review"
+
+    def test_phase_suspension_resume_merges_initial_state_over_restored_state(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        @phase
+        def human_review(ctx: dict) -> StepResult:
+            if ctx["state"].get("approved"):
+                return StepResult(
+                    outputs={
+                        "approved": ctx["state"]["approved"],
+                        "review_status": "done",
+                    },
+                    contract_result=ContractResult(
+                        status=ContractStatus.COMPLETED,
+                        payload={"status": "passed"},
+                    ),
+                )
+            return StepResult(
+                outputs={"approved": False, "review_status": "waiting"},
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(
+                        kind="human",
+                        awaitable="review",
+                        prompt="Review",
+                        resume_cursor="review-cursor",
+                    ),
+                ),
+            )
+
+        @phase
+        def after(ctx: dict) -> dict:
+            return {"after": ctx["state"]["review_status"]}
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            s = yield human_review(ctx)
+            s = yield after(ctx)
+            return s
+
+        prog = compile_pipeline(my_pipe)
+        first = run_native_pipeline(prog, artifact_root=tmp_path)
+        assert first.suspended is True
+        resumed = run_native_pipeline(
+            prog,
+            artifact_root=tmp_path,
+            resume=True,
+            initial_state={"approved": True},
+        )
+
+        assert resumed.suspended is False
+        assert resumed.state["approved"] is True
+        assert resumed.state["review_status"] == "done"
+        assert resumed.state["after"] == "done"
+
+    def test_phase_suspension_resume_rejects_malformed_saved_state(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        @phase
+        def human_review(ctx: dict) -> StepResult:
+            return StepResult(
+                contract_result=ContractResult(
+                    status=ContractStatus.SUSPENDED,
+                    suspension=Suspension(kind="human", resume_cursor="review-cursor"),
+                )
+            )
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            s = yield human_review(ctx)
+            return s
+
+        prog = compile_pipeline(my_pipe)
+        run_native_pipeline(prog, artifact_root=tmp_path)
+        cursor_path = tmp_path / "resume_cursor.json"
+        cursor = json.loads(cursor_path.read_text(encoding="utf-8"))
+        cursor["frames"]["__state__"] = "not-an-object"
+        cursor_path.write_text(json.dumps(cursor), encoding="utf-8")
+
+        with pytest.raises(NativeRuntimeError, match="frames.__state__"):
+            run_native_pipeline(prog, artifact_root=tmp_path, resume=True)
+
+    def test_phase_suspension_preserves_composite_child_suspensions(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        import json
+
+        from arnold.pipeline.contract_reduce import reduce_contract_results
+        from arnold.pipeline.types import (
+            ContractResult,
+            ContractStatus,
+            StepResult,
+            Suspension,
+        )
+
+        left = ContractResult(
+            status=ContractStatus.SUSPENDED,
+            suspension=Suspension(
+                kind="human",
+                awaitable="review",
+                prompt="Review left",
+                resume_cursor="left-cursor",
+            ),
+        )
+        right = ContractResult(
+            status=ContractStatus.SUSPENDED,
+            suspension=Suspension(
+                kind="human",
+                awaitable="review",
+                prompt="Review right",
+                resume_cursor="right-cursor",
+            ),
+        )
+        composite = reduce_contract_results(
+            (left, right),
+            child_ids=("left_child", "right_child"),
+        )
+
+        @phase
+        def composite_review(ctx: dict) -> StepResult:
+            return StepResult(
+                outputs={"review_status": "waiting"},
+                contract_result=composite,
+            )
+
+        @pipeline
+        def my_pipe(ctx: dict) -> dict:
+            s = yield composite_review(ctx)
+            return s
+
+        prog = compile_pipeline(my_pipe)
+        result = run_native_pipeline(prog, artifact_root=tmp_path)
+
+        assert result.suspended is True
+        cursor = json.loads((tmp_path / "resume_cursor.json").read_text(encoding="utf-8"))
+        assert cursor["native"]["suspension_kind"] == "phase_suspended"
+        assert cursor["resume_cursor"] is None
+        assert cursor["suspension"]["kind"] == "composite_suspension"
+        assert cursor["suspension"]["resume_cursor"] is None
+
+        pending = cursor["contract_result"]["payload"]["pending_suspensions"]
+        assert [entry["child_id"] for entry in pending] == ["left_child", "right_child"]
+        assert [entry["cursor"] for entry in pending] == ["left-cursor", "right-cursor"]
+        assert [
+            entry["suspension"]["resume_cursor"] for entry in pending
+        ] == ["left-cursor", "right-cursor"]
+        assert set(cursor["suspension"]["resume_input_schema"]["required"]) == {
+            "left_child",
+            "right_child",
+        }

@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from arnold.pipeline.native.checkpoint import (
     NATIVE_CURSOR_VERSION,
+    NativeCursorCorruptError,
     persist_native_cursor,
     read_native_cursor,
 )
@@ -309,7 +310,16 @@ def run_native_pipeline(
     resume_cursor_data: dict[str, Any] | None = None
 
     if resume:
-        resume_cursor_data = read_native_cursor(artifact_root)
+        try:
+            resume_cursor_data = read_native_cursor(artifact_root)
+        except NativeCursorCorruptError as exc:
+            raise NativeRuntimeError(
+                f"Cannot resume native pipeline from corrupt cursor at "
+                f"{exc.cursor_path or Path(artifact_root) / 'resume_cursor.json'}: "
+                f"{exc.detail}"
+            ) from exc
+        # A missing cursor or graph-owned cursor is explicit: native resume starts
+        # from pc 0 only when there is no valid native cursor to restore.
         if resume_cursor_data is not None:
             start_pc = resume_cursor_data["native"]["pc"]
             stages = list(resume_cursor_data.get("stages", []))
@@ -317,8 +327,15 @@ def run_native_pipeline(
             frames = dict(resume_cursor_data.get("frames", {}))
             # Restore working state from cursor if present
             saved_state = frames.pop("__state__", None)
-            if isinstance(saved_state, dict):
-                state = saved_state
+            if saved_state is not None:
+                if not isinstance(saved_state, dict):
+                    raise NativeRuntimeError(
+                        "Cannot resume native pipeline from malformed cursor: "
+                        "frames.__state__ must be an object"
+                    )
+                restored_state = dict(saved_state)
+                restored_state.update(initial_state or {})
+                state = restored_state
             # Restore envelope from cursor frames if present
             saved_envelope = frames.pop("__envelope__", None)
             if saved_envelope is not None:
@@ -455,6 +472,62 @@ def run_native_pipeline(
             elif isinstance(result, dict):
                 step_envelope = result.get("envelope")
             envelope = _hooks.join_envelope(instr, envelope, step_envelope)
+
+            # A phase can return a suspended ContractResult directly.  Persist a
+            # same-pc cursor and leave completion bookkeeping untouched so resume
+            # re-enters the suspending phase.
+            if _contract_result_is_suspended(contract_result):
+                _phase_resume_cursor = _contract_resume_cursor(contract_result)
+                _phase_contract_payload = _serialize_contract_result(contract_result)
+                _phase_suspension_payload = _serialize_contract_suspension(
+                    contract_result
+                )
+                _phase_frames = dict(frames)
+                _phase_frames["__state__"] = _jsonable_value(dict(state))
+                if envelope is not None:
+                    _phase_frames["__envelope__"] = _serialize_envelope(envelope)
+                _phase_extra = {
+                    "suspension_kind": "phase_suspended",
+                    "contract_result": _phase_contract_payload,
+                    "suspension": _phase_suspension_payload,
+                }
+                persist_native_cursor(
+                    artifact_root,
+                    stage=stage_id,
+                    pc=pc,
+                    stages=list(stages),
+                    reentry_stage=stage_id,
+                    loops=dict(loops),
+                    frames=_phase_frames,
+                    resume_cursor=_phase_resume_cursor,
+                    cursor_id=_cursor_id,
+                    stage_reentry_points=_stage_reentry_points_for(stages),
+                    native_extra={"suspension_kind": "phase_suspended"},
+                    **_phase_extra,
+                )
+                _phase_cursor = _build_cursor_dict(
+                    stage=stage_id,
+                    pc=pc,
+                    reentry_stage=stage_id,
+                    stages=list(stages),
+                    loops=dict(loops),
+                    frames=_phase_frames,
+                    state=state,
+                    envelope=envelope,
+                    cursor_id=_cursor_id,
+                    resume_cursor=_phase_resume_cursor,
+                    native_extra={"suspension_kind": "phase_suspended"},
+                    extra=_phase_extra,
+                )
+                _hooks.on_checkpoint(_phase_cursor, dict(state))
+                return NativeExecutionResult(
+                    state=dict(state),
+                    stages=list(stages),
+                    pc=pc,
+                    suspended=True,
+                    cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
+                    envelope=envelope,
+                )
 
             # ── Hook: should_suspend (terminal exit) ────────────────
             do_suspend, suspend_reason = _hooks.should_suspend(instr, state, result)
@@ -1478,6 +1551,57 @@ def _extract_state_patch(result: Any) -> dict[str, Any]:
     return {}
 
 
+def _contract_result_is_suspended(contract_result: Any) -> bool:
+    """Return True when *contract_result* carries ContractStatus.SUSPENDED."""
+    if contract_result is None:
+        return False
+    status = getattr(contract_result, "status", None)
+    return status == "suspended" or getattr(status, "value", None) == "suspended"
+
+
+def _serialize_contract_result(contract_result: Any) -> Any:
+    """Return a JSON-compatible representation of a ContractResult-like object."""
+    if contract_result is None:
+        return None
+    if hasattr(contract_result, "to_json"):
+        raw = contract_result.to_json()
+        return _jsonable_value(raw)
+    if isinstance(contract_result, Mapping):
+        return _jsonable_value(dict(contract_result))
+    return _jsonable_value(contract_result)
+
+
+def _serialize_contract_suspension(contract_result: Any) -> Any:
+    """Return the serialized suspension payload from a ContractResult-like object."""
+    if contract_result is None:
+        return None
+    suspension = getattr(contract_result, "suspension", None)
+    if suspension is None and isinstance(contract_result, Mapping):
+        suspension = contract_result.get("suspension")
+    if suspension is None:
+        return None
+    if hasattr(suspension, "to_json"):
+        return _jsonable_value(suspension.to_json())
+    if isinstance(suspension, Mapping):
+        return _jsonable_value(dict(suspension))
+    return _jsonable_value(suspension)
+
+
+def _contract_resume_cursor(contract_result: Any) -> str | None:
+    """Extract an opaque resume cursor from a suspended contract if present."""
+    suspension = getattr(contract_result, "suspension", None)
+    if suspension is None and isinstance(contract_result, Mapping):
+        suspension = contract_result.get("suspension")
+    resume_cursor = None
+    if suspension is not None:
+        resume_cursor = getattr(suspension, "resume_cursor", None)
+        if resume_cursor is None and isinstance(suspension, Mapping):
+            resume_cursor = suspension.get("resume_cursor")
+    if resume_cursor is None:
+        return None
+    return str(resume_cursor)
+
+
 def _serialize_envelope(envelope: Any) -> Any:
     """Return a JSON-serializable representation of *envelope*."""
     if envelope is None:
@@ -1499,6 +1623,8 @@ def _jsonable_value(value: Any) -> Any:
     """Return a JSON-serializable native cursor payload value."""
     if isinstance(value, Path):
         return str(value)
+    if hasattr(value, "to_json"):
+        return _jsonable_value(value.to_json())
     if isinstance(value, Mapping):
         return {str(key): _jsonable_value(item) for key, item in value.items()}
     if isinstance(value, tuple):

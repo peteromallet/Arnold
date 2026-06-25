@@ -3,10 +3,11 @@
 M4 replaces the legacy continuation-pipeline resume with a thin wrapper around
 :func:`arnold.pipeline.native.runtime.run_native_pipeline`.  The wrapper:
 
-* validates that a native resume cursor exists and points at ``human_review``;
+* validates that a native resume cursor exists, is valid, and points at
+  ``human_review``;
 * optionally runs resume re-verification when a ``Suspension`` is supplied;
-* seeds the resumed run with persisted ``evidence_pack`` / ``verdict`` paths
-  plus the caller's ``human_input``;
+* seeds the resumed run with the caller's ``human_input`` plus optional
+  caller-supplied state;
 * returns an :class:`EvidencePackResumeResult` matching the legacy contract.
 """
 
@@ -16,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold.pipeline.native.checkpoint import read_native_cursor
+from arnold.pipeline.native.checkpoint import NativeCursorCorruptError, read_native_cursor
 from arnold.pipeline.native.runtime import run_native_pipeline
 from arnold.pipeline.resume_validation import (
     ResumeReverifyResult,
@@ -69,12 +70,7 @@ def resume_evidence_pack(
     root = Path(artifact_root)
 
     cursor = _resolve_resume_cursor(root, resume_cursor)
-    stage = cursor.get("stage")
-    # Native cursors store a stable stage id like "evidence_pack__human_review__pc{N}".
-    if stage is None or "human_review" not in str(stage):
-        raise EvidencePackResumeError(
-            f"evidence-pack resumes can only re-enter 'human_review'; got {stage!r}"
-        )
+    _validate_human_review_cursor(cursor)
 
     if not isinstance(human_input, Mapping):
         raise EvidencePackResumeError("human_input must be a mapping")
@@ -103,7 +99,7 @@ def resume_evidence_pack(
                 reverify=reverify,
             )
 
-    state = _continuation_state(root, human_input=human_input, extra_state=extra_state)
+    state = _resume_initial_state(human_input=human_input, extra_state=extra_state)
     program = build_pipeline().native_program
     if program is None:
         raise EvidencePackResumeError("evidence-pack pipeline has no native program")
@@ -128,32 +124,55 @@ def _resolve_resume_cursor(
     artifact_root: Path,
     resume_cursor: Mapping[str, Any] | str | None,
 ) -> dict[str, Any]:
-    if resume_cursor is not None:
-        if isinstance(resume_cursor, str):
-            return {"stage": resume_cursor, "resume_cursor": None}
-        return dict(resume_cursor)
-
-    cursor = read_native_cursor(artifact_root)
+    try:
+        cursor = read_native_cursor(artifact_root)
+    except NativeCursorCorruptError as exc:
+        raise EvidencePackResumeError(str(exc)) from exc
     if cursor is None:
         raise EvidencePackResumeError(f"missing native resume cursor under {artifact_root}")
-    return dict(cursor)
+    resolved = dict(cursor)
+
+    if resume_cursor is not None:
+        if not isinstance(resume_cursor, Mapping):
+            raise EvidencePackResumeError("resume_cursor must be a native cursor mapping")
+        supplied = dict(resume_cursor)
+        _validate_native_cursor_shape(supplied)
+        supplied_stage = supplied.get("stage")
+        resolved_stage = resolved.get("stage")
+        if supplied_stage != resolved_stage:
+            raise EvidencePackResumeError(
+                "supplied resume_cursor does not match the persisted native cursor"
+            )
+
+    return resolved
 
 
-def _continuation_state(
-    artifact_root: Path,
-    *,
+def _validate_human_review_cursor(cursor: Mapping[str, Any]) -> None:
+    _validate_native_cursor_shape(cursor)
+    stage = cursor.get("stage")
+    # Native cursors store a stable stage id like "evidence_pack__human_review__pc{N}".
+    if stage is None or "human_review" not in str(stage):
+        raise EvidencePackResumeError(
+            f"evidence-pack resumes can only re-enter 'human_review'; got {stage!r}"
+        )
+
+
+def _validate_native_cursor_shape(cursor: Mapping[str, Any]) -> None:
+    native = cursor.get("native")
+    if not isinstance(native, Mapping):
+        raise EvidencePackResumeError("resume_cursor must be a valid native cursor")
+    if not isinstance(native.get("pc"), int):
+        raise EvidencePackResumeError("resume_cursor native.pc must be an int")
+    if not isinstance(native.get("version"), int):
+        raise EvidencePackResumeError("resume_cursor native.version must be an int")
+
+
+def _resume_initial_state(
     human_input: Mapping[str, Any],
     extra_state: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    state: dict[str, Any] = {
-        "human_input": dict(human_input),
-    }
-    evidence_pack = artifact_root / "evidence_pack.json"
-    verdict = artifact_root / "verdict.json"
-    if evidence_pack.exists():
-        state["evidence_pack"] = str(evidence_pack)
-    if verdict.exists():
-        state["verdict"] = str(verdict)
+    state: dict[str, Any] = {}
     if extra_state:
         state.update(dict(extra_state))
+    state["human_input"] = dict(human_input)
     return state

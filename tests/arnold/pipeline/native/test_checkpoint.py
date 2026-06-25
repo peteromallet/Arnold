@@ -3,7 +3,7 @@
 Covers:
 - Round-trip persist/read of the native cursor
 - Required native fields (pc, version) are validated on read
-- Graceful handling of missing, malformed, or non-native cursors
+- Explicit handling of missing, malformed, or non-native cursors
 - Additive shape does not break the base read_resume_cursor path
 - Top-level fields (stage, resume_cursor, stages, loops, frames, native)
   are present and correctly typed
@@ -19,6 +19,7 @@ import pytest
 from arnold.pipeline.native.checkpoint import (
     CursorUpgradeError,
     NATIVE_CURSOR_VERSION,
+    NativeCursorCorruptError,
     classify_resume_cursor,
     persist_native_cursor,
     read_native_cursor,
@@ -282,13 +283,15 @@ class TestValidation:
     def test_missing_file_returns_none(self, tmp_path: Path) -> None:
         assert read_native_cursor(tmp_path) is None
 
-    def test_non_dict_json_returns_none(self, tmp_path: Path) -> None:
+    def test_non_dict_json_raises_corrupt_error(self, tmp_path: Path) -> None:
         (tmp_path / RESUME_CURSOR_FILENAME).write_text("[1, 2, 3]", encoding="utf-8")
-        assert read_native_cursor(tmp_path) is None
+        with pytest.raises(NativeCursorCorruptError, match="expected JSON object"):
+            read_native_cursor(tmp_path)
 
-    def test_malformed_json_returns_none(self, tmp_path: Path) -> None:
+    def test_malformed_json_raises_corrupt_error(self, tmp_path: Path) -> None:
         (tmp_path / RESUME_CURSOR_FILENAME).write_text("{", encoding="utf-8")
-        assert read_native_cursor(tmp_path) is None
+        with pytest.raises(NativeCursorCorruptError, match="could not be decoded"):
+            read_native_cursor(tmp_path)
 
     def test_missing_native_key_returns_none(self, tmp_path: Path) -> None:
         payload = {
@@ -301,7 +304,7 @@ class TestValidation:
         )
         assert read_native_cursor(tmp_path) is None
 
-    def test_native_not_a_dict_returns_none(self, tmp_path: Path) -> None:
+    def test_native_not_a_dict_raises_corrupt_error(self, tmp_path: Path) -> None:
         payload = {
             "stage": "s",
             "resume_cursor": None,
@@ -310,9 +313,10 @@ class TestValidation:
         (tmp_path / RESUME_CURSOR_FILENAME).write_text(
             json.dumps(payload), encoding="utf-8"
         )
-        assert read_native_cursor(tmp_path) is None
+        with pytest.raises(NativeCursorCorruptError, match="not a JSON object"):
+            read_native_cursor(tmp_path)
 
-    def test_native_missing_pc_returns_none(self, tmp_path: Path) -> None:
+    def test_native_missing_pc_raises_corrupt_error(self, tmp_path: Path) -> None:
         payload = {
             "stage": "s",
             "resume_cursor": None,
@@ -321,9 +325,10 @@ class TestValidation:
         (tmp_path / RESUME_CURSOR_FILENAME).write_text(
             json.dumps(payload), encoding="utf-8"
         )
-        assert read_native_cursor(tmp_path) is None
+        with pytest.raises(NativeCursorCorruptError, match="required 'pc'"):
+            read_native_cursor(tmp_path)
 
-    def test_native_missing_version_returns_none(self, tmp_path: Path) -> None:
+    def test_native_missing_version_raises_corrupt_error(self, tmp_path: Path) -> None:
         payload = {
             "stage": "s",
             "resume_cursor": None,
@@ -332,9 +337,10 @@ class TestValidation:
         (tmp_path / RESUME_CURSOR_FILENAME).write_text(
             json.dumps(payload), encoding="utf-8"
         )
-        assert read_native_cursor(tmp_path) is None
+        with pytest.raises(NativeCursorCorruptError, match="required 'version'"):
+            read_native_cursor(tmp_path)
 
-    def test_native_pc_not_int_returns_none(self, tmp_path: Path) -> None:
+    def test_native_pc_not_int_raises_corrupt_error(self, tmp_path: Path) -> None:
         payload = {
             "stage": "s",
             "resume_cursor": None,
@@ -343,9 +349,10 @@ class TestValidation:
         (tmp_path / RESUME_CURSOR_FILENAME).write_text(
             json.dumps(payload), encoding="utf-8"
         )
-        assert read_native_cursor(tmp_path) is None
+        with pytest.raises(NativeCursorCorruptError, match="native.pc"):
+            read_native_cursor(tmp_path)
 
-    def test_native_version_not_int_returns_none(self, tmp_path: Path) -> None:
+    def test_native_version_not_int_raises_corrupt_error(self, tmp_path: Path) -> None:
         payload = {
             "stage": "s",
             "resume_cursor": None,
@@ -354,7 +361,8 @@ class TestValidation:
         (tmp_path / RESUME_CURSOR_FILENAME).write_text(
             json.dumps(payload), encoding="utf-8"
         )
-        assert read_native_cursor(tmp_path) is None
+        with pytest.raises(NativeCursorCorruptError, match="native.version"):
+            read_native_cursor(tmp_path)
 
     def test_non_native_cursor_from_base_persist_returns_none(self, tmp_path: Path) -> None:
         """A cursor persisted by the base persist_resume_cursor (no native key)
