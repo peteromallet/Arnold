@@ -18,6 +18,7 @@ arnold workflow check --module <package.module>:build_pipeline
 
 ## Shipped pipelines
 
+- `arnold.deliberation` -> `arnold workflow check --module arnold.pipelines.deliberation:build_pipeline`
 - `arnold.folder_audit` -> `arnold workflow check --module arnold.pipelines.folder_audit:build_pipeline`
 - `megaplan.creative` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.creative:build_pipeline`
 - `megaplan.doc` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.doc:build_pipeline`

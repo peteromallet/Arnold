@@ -64,12 +64,13 @@ class TestDeliberationManifest:
     def test_manifest_supported_modes(self) -> None:
         manifest = read_manifest(_DELIBERATION_INIT)
         assert isinstance(manifest, Manifest)
-        assert manifest.supported_modes == ("default",)
+        assert "native" in tuple(manifest.supported_modes)
 
     def test_manifest_driver(self) -> None:
         manifest = read_manifest(_DELIBERATION_INIT)
         assert isinstance(manifest, Manifest)
-        assert manifest.driver == "in_process"
+        assert isinstance(manifest.driver, tuple)
+        assert manifest.driver[0] == "native"
 
     def test_manifest_entrypoint_is_bare_symbol(self) -> None:
         manifest = read_manifest(_DELIBERATION_INIT)
@@ -130,13 +131,15 @@ class TestBuildPipelineSymbol:
         assert callable(build_pipeline)
 
     def test_build_pipeline_is_callable(self) -> None:
-        """Placeholder pipeline raises because no stages are wired yet.
-        Downstream tasks (T6-T10) add the full DAG; the callable exists."""
+        """The public entrypoint returns a native-backed pipeline shell."""
+        from arnold.pipeline.native.ir import NativeProgram
         from arnold.pipelines.deliberation import build_pipeline
         import inspect
         assert callable(build_pipeline)
         sig = inspect.signature(build_pipeline)
         assert "name" in sig.parameters
+        pipeline = build_pipeline()
+        assert isinstance(pipeline.native_program, NativeProgram)
 
     def test_build_pipeline_accepts_name_kwarg(self) -> None:
         """When called without workers/profile the manifest-introspection
