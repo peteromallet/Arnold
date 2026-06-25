@@ -12,8 +12,8 @@ M0 removed video-editor imports and made the SDK externally compilable. M1 defin
 
 1. **Snapshot the current SDK export and declaration surface.**
    - Run `npm run check:sdk-public-exports -- --release` and record the baseline.
-   - Generate a declaration baseline with the repo's existing TypeScript toolchain (`tsc --emitDeclarationOnly` or an existing declaration build path). Do not add new dependencies.
-   - Any approved public shape change must be recorded in the milestone notes with the exact export/type affected, the compatibility impact, and the approving owner.
+   - Generate a public API manifest/diff with the repo's existing TypeScript toolchain (`tsc --emitDeclarationOnly` or an existing declaration build path). Do not add new dependencies.
+   - The gate should report structured API changes by export/type and change kind. Governance notes, not the gate itself, record the compatibility impact and approving owner for any accepted change.
 
 2. **Split core SDK modules out of `src/sdk/index.ts`.**
    - Move clusters into scoped modules, preserving exported names:
@@ -36,25 +36,27 @@ M0 removed video-editor imports and made the SDK externally compilable. M1 defin
    - Any field that represents host wiring, DOM, provider services, storage, console behavior, timeline contexts, or React lifecycle must be an explicit host-provided capability or opaque type in the SDK contract.
 
 4. **Reduce `src/sdk/index.ts` to a core barrel plus family-registry re-exports.**
-   - Re-export the new core modules and the M1 family registry.
+   - Re-export the new core modules and the M1 family maturity types/registry as named exports only.
    - Keep family descriptor implementations in `src/sdk/index.ts` only as a temporary migration budget for M2b.
    - No new inline implementation should be added to `src/sdk/index.ts`.
+   - Do not add namespace exports, default exports, or inline public type/value declarations to the barrel.
 
-5. **Add TypeScript identity assertions for core exports.**
-   - Add a compile-time test that imports each moved public core type/value through `@reigh/editor-sdk` and through its canonical direct module path.
-   - Assert mutual assignability for types and equivalent value importability for constants/helpers.
-   - Wire the test into the same gate as the SDK public export check.
+5. **Add a structural barrel-identity gate.**
+   - Add a small AST-level check that walks `src/sdk/index.ts` and fails if the barrel declares public `interface`, `type`, `class`, `function`, `const`, or `enum` symbols inline.
+   - Require public symbols in `src/sdk/index.ts` to be re-exported from canonical SDK modules.
+   - Keep a focused compatibility smoke that imports representative moved core types/values through both `@reigh/editor-sdk` and their canonical direct module paths, but do not require one hand-written assertion per export.
+   - Wire the structural check into the same gate as the SDK public export check.
 
 6. **Update contract registry and allowlist for core moves.**
    - Update `config/contracts/registry.json` for moved core module locations.
    - Ensure `config/governance/video-editor-sdk-import-allowlist.json` no longer contains SDK-internal entries.
-   - Treat `config/governance/sdk-public-export-allowlist.json` as a shrinking migration budget: remove entries fixed by M0/M2a and document remaining entries with owner/removal condition.
+   - Treat `config/governance/sdk-public-export-allowlist.json` as a shrinking migration budget: remove entries fixed by M0/M2a and document remaining entries with owner, rationale, and `expiration` (`"M3"`, `"M4"`, or `"permanent"`).
 
 ## Locked decisions
 
 - SDK modules may not import from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - Public exported names from `@reigh/editor-sdk` must remain compatible unless explicitly approved in the milestone notes.
-- Public API approvals must name the affected export/type and the owner accepting the compatibility change.
+- Public API approvals must name the affected export/type, compatibility impact, and the owner accepting the change in milestone notes.
 - Internal SDK modules use relative imports, not barrel imports through `src/sdk/index.ts`.
 - `ExtensionContext` is an SDK-owned contract; constructing a host-wired context remains host-owned.
 - Allowlists are migration budgets, not permanent escape hatches.
@@ -80,8 +82,8 @@ M0 removed video-editor imports and made the SDK externally compilable. M1 defin
 - [ ] `src/sdk/**` has no imports from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - [ ] `npm run check:video-editor-sdk-imports` passes and a deliberate violation is caught.
 - [ ] `npm run check:sdk-public-exports -- --release` passes.
-- [ ] Core type-identity assertions pass for barrel and direct-module imports.
-- [ ] Declaration output for moved core exports has no unapproved public shape changes.
+- [ ] The structural barrel-identity gate passes and representative barrel/direct-module compatibility smoke passes.
+- [ ] Public API manifest diff for moved core exports has no unapproved public shape changes.
 - [ ] `npm run quality:check` passes.
 - [ ] `npm run test:readiness` passes.
 

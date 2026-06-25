@@ -38,7 +38,7 @@ milestones:
     vendor: codex
     robustness: full
     depth: high
-    notes: "partnered-5 @codex. Split core SDK contracts/helpers out of src/sdk/index.ts; establish context contract and type-identity gates."
+    notes: "partnered-5 @codex. Split core SDK contracts/helpers out of src/sdk/index.ts; establish context contract and structural barrel/API gates."
 
   - label: m2b-family-modules-and-public-surface
     idea: .megaplan/briefs/pristine-editor-sdk-boundary/m2b-family-modules-and-public-surface.md
@@ -56,7 +56,7 @@ milestones:
     vendor: codex
     robustness: full
     depth: high
-    notes: "partnered-5 @codex. Refactor extensionSurface.ts onto a host family adapter registry."
+    notes: "partnered-5 @codex. Refactor extensionSurface.ts onto a host family adapter registry plus coordinator; extract delegated projector helpers before placeholder adapters."
 
   - label: m4-runtime-helpers-governance-and-readiness
     idea: .megaplan/briefs/pristine-editor-sdk-boundary/m4-runtime-helpers-governance-and-readiness.md
@@ -65,4 +65,4 @@ milestones:
     vendor: codex
     robustness: full
     depth: high
-    notes: "partnered-5 @codex. Strict packagability smoke, runtime helper ownership, governance/docs closure, release readiness."
+    notes: "partnered-5 @codex. Strict external SDK import validation, runtime helper ownership, governance/docs closure, release readiness."

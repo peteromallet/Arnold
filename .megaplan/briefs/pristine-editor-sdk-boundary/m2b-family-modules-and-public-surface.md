@@ -6,7 +6,7 @@ Family-specific SDK types live under `src/sdk/families/*`, timeline and asset co
 
 ## Background
 
-M2a split the core SDK modules and established type-identity checks. M2b finishes the physical SDK split by moving family, timeline, asset, and export contracts into their canonical modules using the M1 family registry as the map.
+M2a split the core SDK modules and established the structural barrel gate. M2b finishes the physical SDK split by moving family, timeline, asset, and export contracts into their canonical modules using the M1 family registry as the map.
 
 ## Scope (in scope)
 
@@ -19,7 +19,7 @@ M2a split the core SDK modules and established type-identity checks. M2b finishe
      - move descriptor types, manifest types, constants, and helper contracts from `src/sdk/index.ts`,
      - update `src/sdk/index.ts` to re-export from the new module,
      - ensure the family module imports only from other SDK modules,
-     - add tests and type-identity assertions for barrel vs. direct-module imports.
+     - add conformance tests, examples where the family is `public-supported`, and representative barrel vs. direct-module compatibility coverage.
 
 2. **Split remaining family-specific modules using the template.**
    - Move into:
@@ -51,23 +51,25 @@ M2a split the core SDK modules and established type-identity checks. M2b finishe
 4. **Reduce `src/sdk/index.ts` to a public barrel.**
    - File should be a small set of exports plus docs.
    - No inline implementation beyond re-exports.
+   - No namespace exports or default exports.
    - No barrel import cycles: internal SDK modules use relative imports to canonical modules.
 
-5. **Broaden type identity and declaration checks.**
-   - Extend the M2a type-identity assertion file to every family, timeline, asset, and export module moved in M2b.
-   - Compare declaration output after the split against the M2a baseline and require explicit notes for any public shape change.
-   - Any approved public shape change must name the affected export/type, the compatibility impact, and the approving owner.
+5. **Broaden barrel and public API checks.**
+   - Extend the M2a structural barrel-identity gate to the final public barrel and any scoped SDK barrels introduced in M2b.
+   - Add representative direct-import compatibility coverage for each moved module category: family, timeline, asset, and export.
+   - Compare public API manifest output after the split against the M2a baseline and require explicit notes for any public shape change.
+   - Any approved public shape change must name the affected export/type, the compatibility impact, and the approving owner in milestone notes.
 
 6. **Update contract registry and allowlist.**
    - Update `config/contracts/registry.json` to reflect new module locations.
    - Remove clean SDK re-export entries from `config/governance/sdk-public-export-allowlist.json`.
-   - Any remaining allowlist entry must have owner, rationale, and a concrete removal milestone or condition.
+   - Any remaining allowlist entry must have owner, rationale, and `expiration` (`"M3"`, `"M4"`, or `"permanent"`).
 
 ## Locked decisions
 
 - SDK modules may not import from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - Public exported names from `@reigh/editor-sdk` must remain compatible unless explicitly approved.
-- Public API approvals must name the affected export/type and the owner accepting the compatibility change.
+- Public API approvals must name the affected export/type, compatibility impact, and the owner accepting the compatibility change in milestone notes.
 - Family-specific types stay public but are classified by the M1 registry.
 - The family module path declared in `FamilyDefinition.sdkModules` is the canonical direct-import path.
 - Allowlists are migration budgets, not permanent escape hatches.
@@ -94,8 +96,8 @@ M2a split the core SDK modules and established type-identity checks. M2b finishe
 - [ ] `src/sdk/**` has no imports from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - [ ] `npm run check:video-editor-sdk-imports` passes and a deliberate violation is caught.
 - [ ] `npm run check:sdk-public-exports -- --release` passes.
-- [ ] Barrel/direct-module type-identity assertions pass for every moved public export.
-- [ ] Declaration output has no unapproved public shape changes.
+- [ ] Structural barrel-identity gates pass and representative direct-import compatibility coverage exists for each moved module category.
+- [ ] Public API manifest output has no unapproved public shape changes.
 - [ ] `npm run quality:check` passes.
 - [ ] `npm run test:readiness` passes.
 

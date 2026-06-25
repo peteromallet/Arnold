@@ -54,18 +54,17 @@ The SDK currently declares it must not depend on editor internals, yet it import
    - Run the check; fix all failures.
    - Add negative tests: a direct SDK import, an SDK export-from, a literal dynamic import, and an alias-resolved import from video-editor internals all fail the guard.
 
-8. **Add an external packagability smoke.**
-   - Create a temporary external package fixture under `scripts/quality/fixtures/sdk-consumer-package/` that:
-     - has its own `tsconfig.json` and `package.json`,
-     - depends only on `@reigh/editor-sdk` resolved to a package-like temp entrypoint (e.g. a generated `dist/sdk-package` or a `src/sdk/index.ts` symlink exposed as the package main),
-     - does **not** have the repo's `@/` alias or any `src/*` path mapping that reaches app internals,
-     - imports the full public SDK surface and representative family/contribution symbols available from the public barrel,
-     - has no Vite app context.
-   - Run `tsc --noEmit` in that fixture and fail if it emits any diagnostic from SDK files.
+8. **Add an external SDK import validator.**
+   - Replace the current repo-alias smoke with a temp external consumer that:
+     - has its own `tsconfig.json` and minimal `package.json`,
+     - resolves `@reigh/editor-sdk` through a package-like temp entrypoint generated from the SDK, not through the repo's `@/*` path alias,
+     - has no `@/` alias, no `src/*` path mapping, and no Vite app context,
+     - imports the full public SDK surface and representative family/contribution symbols available from the public barrel.
+   - Run `tsc --noEmit` in that temp consumer and fail if it emits any diagnostic from SDK files.
    - Do not filter SDK diagnostics; `skipLibCheck` should remain true only for third-party `.d.ts`.
-   - Add a static import-graph assertion that no resolved module path falls under `src/tools/video-editor`.
-   - Add a runtime evaluation smoke for value exports: build or transpile the fixture enough to run `node -e "require('@reigh/editor-sdk')"` or the ESM equivalent, and fail if module evaluation requires browser globals, Vite aliases, or video-editor internals.
-   - Wire the smoke into `npm run check:video-editor-sdk-imports` or `npm run test:extensions`.
+   - Add a static import-graph assertion over the temp consumer and SDK entrypoint that no resolved module path falls under `src/tools/video-editor`.
+   - Add a runtime evaluation smoke for value exports: build or transpile the temp consumer enough to import the SDK package entrypoint in Node, enumerate the exported namespace, touch each value export, and report the specific binding that requires browser globals, Vite aliases, lazy host imports, or video-editor internals.
+   - Wire the validator into `npm run check:video-editor-sdk-imports` or `npm run test:extensions`.
 
 9. **Add a representative family contract sanity check.**
    - Pick three families of different risk types: one metadata family (e.g. `metadataFacet`), one render-relevant family (e.g. `shader`), and one execution/process-like family (e.g. `process`).
@@ -80,7 +79,7 @@ The SDK currently declares it must not depend on editor internals, yet it import
 - After M0, no file under `src/sdk/**` may import from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - Host code may still import from the SDK; the dependency direction is one-way.
 - Portable contracts are data-only shapes, not host behavior or React components.
-- The external SDK-consumer fixture must compile with no diagnostics from SDK files.
+- The external SDK import validator must compile with no diagnostics from SDK files and must not rely on repo path aliases.
 - The SDK must evaluate in a package-like Node consumer without importing host/editor internals. Runtime behavior that needs DOM, React providers, DataProvider, timeline contexts, localStorage, or editor services is host-owned.
 
 ## Open questions
@@ -100,7 +99,7 @@ The SDK currently declares it must not depend on editor internals, yet it import
 - [ ] `docs/extensions/pristine-sdk-boundary-audit.md` records doc/code discrepancies.
 - [ ] `src/sdk/**` has zero imports from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
 - [ ] `npm run check:video-editor-sdk-imports` passes and catches deliberate direct, re-export, dynamic, and alias-resolved violations.
-- [ ] The external SDK-consumer package fixture compiles with `tsc --noEmit`, emits no diagnostics from `src/sdk/**`, and evaluates the SDK entrypoint at runtime.
+- [ ] The external SDK import validator compiles with `tsc --noEmit`, emits no diagnostics from `src/sdk/**`, has no repo aliases, and evaluates/touches SDK value exports at runtime.
 - [ ] Representative family sanity check documents portable vs. host-only boundaries for one metadata, one render-relevant, and one execution/process-like family.
 - [ ] All existing public SDK exports remain available from `@reigh/editor-sdk` with compatible types.
 - [ ] `npm run quality:check` and `npm run test:readiness` pass.
@@ -113,7 +112,7 @@ The SDK currently declares it must not depend on editor internals, yet it import
 - New `src/sdk/timeline/*` modules
 - New `src/sdk/assets/*` modules
 - `scripts/quality/check-video-editor-sdk-imports.mjs`
-- `scripts/quality/fixtures/sdk-consumer-package/` (new)
+- External SDK import validator under `scripts/quality/` or `scripts/quality/fixtures/sdk-consumer-package/`
 - `docs/extensions/pristine-sdk-boundary-audit.md` (new)
 
 ## Anti-scope (not in this milestone)
