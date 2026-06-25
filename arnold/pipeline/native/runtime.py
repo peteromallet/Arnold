@@ -727,6 +727,16 @@ def run_native_pipeline(
                                 f"{_resume_label!r}, but could not clear "
                                 f"{_hg_checkpoint_path}: {exc}"
                             ) from exc
+                    _hg_cursor_path = Path(artifact_root) / "resume_cursor.json"
+                    if _hg_cursor_path.exists():
+                        try:
+                            _hg_cursor_path.unlink()
+                        except OSError as exc:
+                            raise NativeRuntimeError(
+                                "Accepted native human-gate resume label "
+                                f"{_resume_label!r}, but could not clear "
+                                f"{_hg_cursor_path}: {exc}"
+                            ) from exc
 
                     state.pop("_pipeline_paused", None)
                     state.pop("_pipeline_paused_stage", None)
@@ -1345,7 +1355,7 @@ def _build_cursor_dict(
     from arnold.pipeline.native.checkpoint import NATIVE_CURSOR_VERSION
 
     frames_with_state = dict(frames)
-    frames_with_state["__state__"] = dict(state)
+    frames_with_state["__state__"] = _jsonable_value(dict(state))
     if envelope is not None:
         frames_with_state["__envelope__"] = _serialize_envelope(envelope)
 
@@ -1426,7 +1436,7 @@ def _persist_suspension(
     """
     try:
         frames_with_state = dict(frames)
-        frames_with_state["__state__"] = dict(state)
+        frames_with_state["__state__"] = _jsonable_value(dict(state))
         if envelope is not None:
             frames_with_state["__envelope__"] = _serialize_envelope(envelope)
 
@@ -1483,6 +1493,19 @@ def _serialize_envelope(envelope: Any) -> Any:
         if isinstance(raw, str):
             return {"__runtime_envelope_json__": raw}
     return envelope
+
+
+def _jsonable_value(value: Any) -> Any:
+    """Return a JSON-serializable native cursor payload value."""
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_jsonable_value(item) for item in value]
+    if isinstance(value, list):
+        return [_jsonable_value(item) for item in value]
+    return value
 
 
 def _deserialize_envelope(payload: Any) -> Any:

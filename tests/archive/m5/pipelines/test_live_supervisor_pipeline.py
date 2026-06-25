@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from arnold.pipeline import Pipeline
 from arnold.pipeline.executor import run_pipeline
-from arnold.pipelines._authoring import validate_package_module
+from arnold.pipeline.discovery.manifest import Manifest, read_manifest
+from arnold.pipeline.native import NativeProgram
 from arnold.pipelines.megaplan.pipelines.live_supervisor import build_pipeline
 from arnold.pipelines.megaplan.pipelines.live_supervisor.model import (
     HealthCategory,
@@ -17,7 +19,6 @@ from arnold.pipelines.megaplan.pipelines.live_supervisor.model import (
     Triage,
 )
 from arnold.runtime.envelope import RuntimeEnvelope
-from importlib import import_module
 
 
 def _snapshot_with_false_stall() -> Snapshot:
@@ -43,32 +44,38 @@ def _snapshot_with_false_stall() -> Snapshot:
     return Snapshot.now(plans=(entry,), incidents=(incident,))
 
 
-def test_package_module_validates():
-    mod = import_module("arnold.pipelines.megaplan.pipelines.live_supervisor")
-    errors = validate_package_module(mod)
-    assert not any(e.startswith("error:") for e in errors), errors
+def test_live_supervisor_manifest_is_static_and_discoverable():
+    pipeline_init = (
+        Path(__file__).resolve().parents[4]
+        / "arnold"
+        / "pipelines"
+        / "megaplan"
+        / "pipelines"
+        / "live_supervisor"
+        / "__init__.py"
+    )
+
+    result = read_manifest(pipeline_init)
+
+    assert isinstance(result, Manifest)
+    assert result.name == "live-supervisor"
+    assert result.driver == ("native", "linear")
+    assert result.entrypoint == "build_pipeline"
 
 
 def test_pipeline_accepts_snapshot_and_produces_action_report(tmp_path):
-    import os
-
     snapshot = _snapshot_with_false_stall()
     envelope = RuntimeEnvelope(artifact_root=str(tmp_path))
     pipeline = build_pipeline()
 
-    previous_runtime = os.environ.get("ARNOLD_PIPELINE_RUNTIME")
-    os.environ["ARNOLD_PIPELINE_RUNTIME"] = "graph"
-    try:
-        result_envelope = run_pipeline(
-            pipeline,
-            initial_state={"snapshot": snapshot.to_dict()},
-            envelope=envelope,
-        )
-    finally:
-        if previous_runtime is None:
-            os.environ.pop("ARNOLD_PIPELINE_RUNTIME", None)
-        else:
-            os.environ["ARNOLD_PIPELINE_RUNTIME"] = previous_runtime
+    assert isinstance(pipeline, Pipeline)
+    assert isinstance(pipeline.native_program, NativeProgram)
+    assert tuple(pipeline.resource_bundles) == ()
+    result_envelope = run_pipeline(
+        pipeline,
+        initial_state={"snapshot": snapshot.to_dict()},
+        envelope=envelope,
+    )
 
     assert result_envelope is envelope
 

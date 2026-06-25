@@ -1,14 +1,10 @@
-"""Package entrypoint for the ``writing-panel-strict`` pipeline."""
+"""Native-backed public surface for ``writing-panel-strict``."""
 
 from __future__ import annotations
 
-from dataclasses import replace
-
-from arnold.pipelines.megaplan._pipeline.types import Pipeline
-
-from .pipeline import _build_graph_pipeline, _native_bundle, writing_panel_strict_native
-from .steps import _make_agent_step, _make_panel_reviewer_step
-
+from arnold.pipelines.megaplan.pipelines.writing_panel_strict.pipeline import (
+    build_pipeline,
+)
 
 name: str = "writing-panel-strict"
 description: str = (
@@ -27,43 +23,15 @@ entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("writing", "critique", "revise")
 
-
-def build_pipeline() -> Pipeline:
-    """Return the native-backed ``writing-panel-strict`` :class:`Pipeline`.
-
-    The graph shell remains available for explicit legacy execution; the
-    canonical runtime dispatches through the attached ``native_program``.
-    """
-
-    graph = _build_graph_pipeline(
-        name=name,
-        description=description,
-        default_profile=default_profile,
-        supported_modes=supported_modes,
-    )
-    return replace(
-        graph,
-        native_program=_native_bundle(),
-        resource_bundles=(),
-    )
-
-
-def build_writing_panel_strict_pipeline() -> Pipeline:
-    """Return the canonical ``writing-panel-strict`` pipeline."""
-
-    return build_pipeline()
-
-
 __all__ = [
+    "arnold_api_version",
     "build_pipeline",
-    "build_writing_panel_strict_pipeline",
-    "description",
+    "capabilities",
     "default_profile",
-    "supported_modes",
-    "recommended_profiles",
+    "description",
     "driver",
     "entrypoint",
-    "arnold_api_version",
-    "capabilities",
-    "writing_panel_strict_native",
+    "name",
+    "recommended_profiles",
+    "supported_modes",
 ]

@@ -299,7 +299,7 @@ def test_native_pipeline_generator_is_discoverable() -> None:
     )
     meta = get_pipeline_meta(folder_audit_native)
     assert meta is not None
-    assert meta["name"] == "folder_audit"
+    assert meta["name"] == "folder-audit"
     assert "Native linear folder-audit pipeline" in meta["description"]
 
 
@@ -316,7 +316,7 @@ def test_native_pipeline_compiles_to_sequential_program() -> None:
     # The compiler resolves phase/decision names from the calling frame's
     # globals/locals, so the phase callables must be importable in this scope.
     program = compile_pipeline(folder_audit_native)
-    assert program.name == "folder_audit"
+    assert program.name == "folder-audit"
 
     # Should have 4 instructions: ingest, audit, emit, halt
     assert len(program.instructions) == 4
@@ -338,13 +338,19 @@ def test_native_pipeline_compiles_to_sequential_program() -> None:
     assert [p.name for p in program.phases] == ["ingest", "audit", "emit"]
 
 
-def test_build_pipeline_unchanged_for_graph_execution() -> None:
-    """Prove ``build_pipeline()`` still returns graph stages for default execution."""
+def test_build_pipeline_is_native_backed() -> None:
+    """``build_pipeline()`` returns a native-backed projected shell."""
+    from arnold.pipeline import Pipeline
+    from arnold.pipeline.native import NativeProgram
     from arnold.pipelines.folder_audit import build_pipeline
 
     pipeline = build_pipeline()
+    assert isinstance(pipeline, Pipeline)
     assert set(pipeline.stages.keys()) == {"ingest", "audit", "emit"}
     assert pipeline.entry == "ingest"
+    assert isinstance(pipeline.native_program, NativeProgram)
+    assert pipeline.native_program.name == "folder-audit"
+    assert tuple(pipeline.resource_bundles) == ()
 
     # Verify edges form a linear chain: ingest → audit → emit → halt
     ingest_stage = pipeline.stages["ingest"]
@@ -361,25 +367,19 @@ def test_build_pipeline_unchanged_for_graph_execution() -> None:
     assert emit_stage.edges[0].target == "halt"
 
 
-def test_package_metadata_still_advertises_graph_execution() -> None:
-    """Prove default package metadata still advertises graph execution."""
+def test_package_metadata_advertises_native_execution() -> None:
+    """Package metadata advertises native execution."""
     from arnold.pipelines import folder_audit as pkg
 
-    # Driver must advertise graph execution.
-    assert "graph" in pkg.driver, (
-        f"driver should contain 'graph', got {pkg.driver!r}"
-    )
-
-    # Entrypoint must resolve to build_pipeline.
+    assert pkg.driver[0] == "native"
+    assert "native" in pkg.supported_modes
     assert pkg.entrypoint == "build_pipeline"
-
-    # build_pipeline must be callable and return a pipeline-like object.
     assert callable(pkg.build_pipeline)
-    result = pkg.build_pipeline()
-    assert hasattr(result, "stages"), "build_pipeline() result should have stages"
-    assert hasattr(result, "entry"), "build_pipeline() result should have entry"
 
-    # Capabilities and name unchanged.
+    result = pkg.build_pipeline()
+    assert hasattr(result, "stages")
+    assert hasattr(result, "entry")
+
     assert pkg.name == "folder-audit"
     assert "audit" in pkg.capabilities
 
@@ -389,31 +389,16 @@ def test_package_metadata_still_advertises_graph_execution() -> None:
     )
 
 
-# ── Native opt-in entrypoint tests (T8) ──────────────────────────────────
+# ── Native runtime tests ─────────────────────────────────────────────────
 
 
-def test_run_native_raises_when_opted_out(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_run_native_succeeds(
+    tmp_path: Path,
 ) -> None:
-    """``run_native()`` raises when ARNOLD_NATIVE_RUNTIME=0 (opt-out)."""
-    monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "0")
-    from arnold.pipeline.native.context import NativeRuntimeDisabledError
-    from arnold.pipelines.folder_audit.native import run_native
-
-    with pytest.raises(NativeRuntimeDisabledError) as exc_info:
-        run_native(target_dir=tmp_path)
-    assert "ARNOLD_NATIVE_RUNTIME" in str(exc_info.value)
-
-
-def test_run_native_succeeds_when_flag_on(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """``run_native()`` succeeds with ARNOLD_NATIVE_RUNTIME=1 and per-call opt-in."""
-    monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
+    """``run_native()`` executes the native program end-to-end."""
     from arnold.pipelines.folder_audit.native import run_native
     from arnold.pipeline.native import NativeExecutionResult
 
-    # Create a minimal directory so ingest has something to walk
     sample = tmp_path / "sample"
     sample.mkdir()
     (sample / "README.md").write_text("# test")
@@ -423,55 +408,47 @@ def test_run_native_succeeds_when_flag_on(
     assert isinstance(result, NativeExecutionResult)
     assert not result.suspended
     assert len(result.stages) == 3
-    # Check stages follow ingest → audit → emit order
     assert any("ingest" in s for s in result.stages)
     assert any("audit" in s for s in result.stages)
     assert any("emit" in s for s in result.stages)
 
-    # Verify artifacts were created
     native_dir = sample / ".arnold" / "folder-audit" / "native"
     assert (native_dir / "audit.json").exists()
     assert (native_dir / "audit.md").exists()
 
 
-def test_build_pipeline_unchanged_when_flag_off(
+def test_build_pipeline_unchanged_regardless_of_native_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Graph ``build_pipeline()`` works normally without the env flag."""
+    """``build_pipeline()`` returns the same native-backed shell regardless of env."""
+    from arnold.pipelines.folder_audit import build_pipeline
+
     monkeypatch.delenv("ARNOLD_NATIVE_RUNTIME", raising=False)
-    from arnold.pipelines.folder_audit import build_pipeline
+    pipeline_off = build_pipeline()
+    assert set(pipeline_off.stages.keys()) == {"ingest", "audit", "emit"}
+    assert pipeline_off.entry == "ingest"
+    assert pipeline_off.native_program is not None
 
-    pipeline = build_pipeline()
-    assert set(pipeline.stages.keys()) == {"ingest", "audit", "emit"}
-    assert pipeline.entry == "ingest"
-
-
-def test_build_pipeline_unchanged_when_flag_on(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Graph ``build_pipeline()`` works normally even with the env flag set."""
     monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
-    from arnold.pipelines.folder_audit import build_pipeline
+    pipeline_on = build_pipeline()
+    assert set(pipeline_on.stages.keys()) == {"ingest", "audit", "emit"}
+    assert pipeline_on.entry == "ingest"
+    assert pipeline_on.native_program is not None
 
-    pipeline = build_pipeline()
-    assert set(pipeline.stages.keys()) == {"ingest", "audit", "emit"}
-    assert pipeline.entry == "ingest"
 
-
-def test_package_metadata_unchanged_regardless_of_flag(
+def test_package_metadata_advertises_native_regardless_of_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Package entrypoint/driver remain graph-execution regardless of flag."""
-    # Test with flag off
+    """Package metadata is native-first regardless of the native-runtime env flag."""
+    import importlib
+
     monkeypatch.delenv("ARNOLD_NATIVE_RUNTIME", raising=False)
     from arnold.pipelines import folder_audit as pkg_off
-    assert "graph" in pkg_off.driver
+    assert pkg_off.driver[0] == "native"
     assert pkg_off.entrypoint == "build_pipeline"
 
-    # Test with flag on
     monkeypatch.setenv("ARNOLD_NATIVE_RUNTIME", "1")
-    import importlib
     importlib.reload(pkg_off)
     from arnold.pipelines import folder_audit as pkg_on
-    assert "graph" in pkg_on.driver
+    assert pkg_on.driver[0] == "native"
     assert pkg_on.entrypoint == "build_pipeline"

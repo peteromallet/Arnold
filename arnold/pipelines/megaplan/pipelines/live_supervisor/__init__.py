@@ -8,8 +8,8 @@ a recheck request for the outer daemon.
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.live_supervisor.pipelines import (
-    build_pipeline as _build_pipeline,
+from arnold.pipelines.megaplan.pipelines.live_supervisor.pipeline import (
+    build_pipeline,
 )
 
 
@@ -20,6 +20,7 @@ description: str = (
 )
 default_profile: str | None = None
 supported_modes: tuple[str, ...] = ("supervise", "native")
+recommended_profiles: tuple[str, ...] = ()
 driver: tuple[str, str] = ("native", "linear")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
@@ -29,15 +30,13 @@ capabilities: tuple[str, ...] = (
     "repair_dispatch",
 )
 
-build_pipeline = _build_pipeline
-
-
 __all__ = [
     "build_pipeline",
     "name",
     "description",
     "default_profile",
     "supported_modes",
+    "recommended_profiles",
     "driver",
     "entrypoint",
     "arnold_api_version",

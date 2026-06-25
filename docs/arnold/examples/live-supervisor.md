@@ -4,8 +4,8 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold_pipelines/megaplan/pipelines/live_supervisor
-- manifest_hash: sha256:15c141b2d40bb116002e2638eb469b9f7f47cff8f7101b28582f34d115876c66
+- source_package: arnold/pipelines/megaplan/pipelines/live_supervisor
+- manifest_hash: native:live-supervisor
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -17,16 +17,19 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold_pipelines/megaplan/pipelines/live_supervisor|
-| Manifest and builder | arnold_pipelines/megaplan/pipelines/live_supervisor/__init__.py|
-| Steps | arnold_pipelines/megaplan/pipelines/live_supervisor/steps.py|
-| Skill | arnold_pipelines/megaplan/pipelines/live_supervisor/SKILL.md|
-| Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline`|
-| Manifest hash | sha256:15c141b2d40bb116002e2638eb469b9f7f47cff8f7101b28582f34d115876c66|
+| Package | arnold/pipelines/megaplan/pipelines/live_supervisor|
+| Builder target | arnold.pipelines.megaplan.pipelines.live_supervisor:build_pipeline|
+| Steps | arnold/pipelines/megaplan/pipelines/live_supervisor/steps.py|
+| Builder source | arnold/pipelines/megaplan/pipelines/live_supervisor/__init__.py|
+| Skill | arnold/pipelines/megaplan/pipelines/live_supervisor/SKILL.md|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
+| Contract | native|
+| Load state | loadable-native|
+| Identity | native:live-supervisor|
 
 ## Builder Surface
 
-The following snippet is extracted verbatim from the pack's `__init__.py`.
+The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
 name: str = "live-supervisor"
@@ -35,75 +38,14 @@ description: str = (
     "safe repair actions for likely-live Megaplan/Arnold runs."
 )
 
-driver: tuple[str, str] = ("graph", "dispatch+emit")
+driver: tuple[str, str] = ("native", "linear")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("supervisor", "repair")
-
-def build_pipeline() -> Pipeline:
-    """Build the classify→diagnose→repair_decision→recheck_emit pipeline."""
-
-    classify = Step(
-        id="classify",
-        kind="agent",
-        label="Classify snapshot",
-        inputs=(Input(name="snapshot"),),
-        outputs=(Output(name="classification"),),
-        capabilities=(Capability(id="supervisor", route="classify"),),
-        metadata={"stage": "classify"},
-    )
-    diagnose = Step(
-        id="diagnose",
-        kind="agent",
-        label="Diagnose root cause",
-        inputs=(Input(name="classification", value_ref="classify.classification"),),
-        outputs=(Output(name="diagnosis"),),
-        capabilities=(Capability(id="supervisor", route="diagnose"),),
-        metadata={"stage": "diagnose"},
-    )
-    repair_decision = Step(
-        id="repair_decision",
-        kind="agent",
-        label="Select safe repair",
-        inputs=(Input(name="diagnosis", value_ref="diagnose.diagnosis"),),
-        outputs=(Output(name="repair_plan"),),
-        capabilities=(Capability(id="supervisor", route="repair"),),
-        metadata={"stage": "repair_decision"},
-    )
-    recheck_emit = Step(
-        id="recheck_emit",
-        kind="emit",
-        label="Recheck and emit report",
-        inputs=(
-            Input(name="repair_plan", value_ref="repair_decision.repair_plan"),
-        ),
-        outputs=(Output(name="report"),),
-        capabilities=(Capability(id="supervisor", route="report"),),
-        metadata={"stage": "recheck_emit", "terminal": True},
-    )
-
-    return Pipeline(
-        id="live-supervisor",
-        version="m5-phase3",
-        steps=(classify, diagnose, repair_decision, recheck_emit),
-        routes=(
-            Route(id="classify:diagnose", source="classify", target="diagnose", label="diagnose"),
-            Route(id="diagnose:repair_decision", source="diagnose", target="repair_decision", label="repair_decision"),
-            Route(id="repair_decision:recheck_emit", source="repair_decision", target="recheck_emit", label="recheck_emit"),
-        ),
-        capabilities=(Capability(id="supervisor", route="default"),),
-        metadata={
-            "name": name,
-            "description": description,
-            "driver": driver,
-            "entrypoint": entrypoint,
-            "arnold_api_version": arnold_api_version,
-            "capabilities": capabilities,
-            "default_profile": default_profile,
-            "supported_modes": supported_modes,
-            "recommended_profiles": recommended_profiles,
-        },
-    )
+capabilities: tuple[str, ...] = (
+    "plan_supervision",
+    "incident_classification",
+    "repair_dispatch",
+)
 ```
 
 ## Step Surface
@@ -509,30 +451,14 @@ class RecheckEmitStep:
         )
 ```
 
-## Dry-run report
+## Native builder report
 
 ```yaml
-edge_count: 3
+entry: classify
 id: live-supervisor
-manifest_hash: sha256:15c141b2d40bb116002e2638eb469b9f7f47cff8f7101b28582f34d115876c66
-node_count: 4
-possible_routes:
-- condition_ref: null
-  label: diagnose
-  source: classify
-  target: diagnose
-- condition_ref: null
-  label: repair_decision
-  source: diagnose
-  target: repair_decision
-- condition_ref: null
-  label: recheck_emit
-  source: repair_decision
-  target: recheck_emit
-suspension_point_count: 0
-unresolved_inputs:
-  classify:
-  - snapshot
+instruction_count: 5
+native_program: live-supervisor
+stage_count: 4
 ```
 
 ## Package Skill
@@ -541,6 +467,17 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 
 ````markdown
 # live-supervisor
+
+Runtime: `live-supervisor` is a native-default converted pipeline. Fresh runs
+through `megaplan run live-supervisor ...` or
+`arnold pipelines run live-supervisor ...` persist runtime ownership in
+`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. During
+the M7 deprecation window, the derived graph remains available as a
+compatibility fallback: pass `--runtime graph` (or the deprecated
+`--executor graph`) for a fresh run that must use the graph executor. Existing
+graph-born plan directories keep resuming on graph. Native-born runs resume on
+native, and corrupt native cursors fail closed rather than silently falling
+back to graph.
 
 Input: a Snapshot dict passed as `initial_state={"snapshot": <dict>}`. The
 snapshot contains a `scan_ts_utc` ISO timestamp and a list of `incidents`, each

@@ -18,14 +18,17 @@ Provenance:
 | item | value |
 | --- | --- |
 | Package | arnold_pipelines/evidence_pack|
-| Manifest and builder | arnold_pipelines/evidence_pack/__init__.py|
+| Builder target | arnold_pipelines.evidence_pack:build_pipeline|
+| Builder source | arnold_pipelines/evidence_pack/__init__.py|
 | Skill | arnold_pipelines/evidence_pack/SKILL.md|
 | Validation | `arnold workflow check --module arnold_pipelines.evidence_pack:build_pipeline`|
-| Manifest hash | sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2|
+| Contract | workflow|
+| Load state | workflow|
+| Identity | sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2|
 
 ## Builder Surface
 
-The following snippet is extracted verbatim from the pack's `__init__.py`.
+The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
 name: str = "evidence-pack"

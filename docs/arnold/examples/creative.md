@@ -4,8 +4,8 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold_pipelines/megaplan/pipelines/creative
-- manifest_hash: sha256:43d30d31c2eb11de4ad7216c930a3311dd6cfd5bd6b8b2e8926aa304bee7cfe9
+- source_package: arnold/pipelines/megaplan/pipelines/creative
+- manifest_hash: native:creative
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -17,110 +17,32 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold_pipelines/megaplan/pipelines/creative|
-| Manifest and builder | arnold_pipelines/megaplan/pipelines/creative/__init__.py|
-| Steps | arnold_pipelines/megaplan/pipelines/creative/steps.py|
-| Skill | arnold_pipelines/megaplan/pipelines/creative/SKILL.md|
-| Validation | `arnold workflow check --module arnold_pipelines.megaplan.pipelines.creative:build_pipeline`|
-| Manifest hash | sha256:43d30d31c2eb11de4ad7216c930a3311dd6cfd5bd6b8b2e8926aa304bee7cfe9|
+| Package | arnold/pipelines/megaplan/pipelines/creative|
+| Builder target | arnold.pipelines.megaplan.pipelines.creative:build_pipeline|
+| Steps | arnold/pipelines/megaplan/pipelines/creative/steps.py|
+| Builder source | arnold/pipelines/megaplan/pipelines/creative/__init__.py|
+| Skill | arnold/pipelines/megaplan/pipelines/creative/SKILL.md|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
+| Contract | native|
+| Load state | loadable-native|
+| Identity | native:creative|
 
 ## Builder Surface
 
-The following snippet is extracted verbatim from the pack's `__init__.py`.
+The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
 name: str = "creative"
 description: str = (
-    "Creative-form pipeline: form-aware prep → execute → critique → "
-    "revise → finalize. Forms registry validates --form; "
+    "Creative-form pipeline: form-aware prep -> execute -> critique -> "
+    "revise -> finalize. Forms registry validates --form; "
     "--primary-criterion threads through as a first-class input."
 )
 
-driver: tuple[str, str] = ("subprocess_isolated", "linear")
+driver: tuple[str, str] = ("native", "linear")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("creative",)
-
-def build_pipeline(
-    form: str = "joke",
-    primary_criterion: str | None = None,
-) -> Pipeline:
-    """Return the canonical ``creative`` explicit-node pipeline for *form*.
-
-    *form* is validated against :func:`available_form_ids` so the CLI surface
-    and any registry discovery stay aligned. The default ``form='joke'`` keeps
-    :func:`build_pipeline` callable with zero arguments.
-    """
-
-    valid_forms = available_form_ids()
-    if form not in valid_forms:
-        raise CliError(
-            "invalid_args",
-            f"Unknown creative form: {form!r}. Available: "
-            f"{', '.join(valid_forms)}",
-            exit_code=2,
-        )
-
-    stage_meta: tuple[tuple[str, str | None, str], ...] = (
-        ("prep", "prep", "execute_creative"),
-        ("execute_creative", "execute_creative", "critique_creative"),
-        ("critique_creative", "critique_creative", "revise_creative"),
-        ("revise_creative", "revise_creative", "finalize"),
-        ("finalize", None, "halt"),
-    )
-
-    steps: list[Step] = []
-    routes: list[Route] = []
-    for index, (step_id, prompt_key, next_label) in enumerate(stage_meta):
-        is_terminal = next_label == "halt"
-        resolved_prompt = _prompt_key(prompt_key, form)
-        step = Step(
-            id=step_id,
-            kind="agent" if step_id != "finalize" else "emit",
-            label=step_id.replace("_", " ").title(),
-            inputs=() if index == 0 else (Input(name="previous_artifact"),),
-            outputs=(Output(name=f"{step_id}_artifact"), Output(name=f"{step_id}_prompt")),
-            capabilities=(Capability(id="creative", route=form or "default"),),
-            metadata={
-                "prompt_key": resolved_prompt,
-                "form": form,
-                "primary_criterion": primary_criterion,
-                "stage": step_id,
-                "terminal": is_terminal,
-            },
-        )
-        steps.append(step)
-        if not is_terminal:
-            routes.append(
-                Route(
-                    id=f"{step_id}:{next_label}",
-                    source=step_id,
-                    target=next_label,
-                    label=next_label,
-                )
-            )
-
-    return Pipeline(
-        id="creative",
-        version="m5-phase3",
-        steps=tuple(steps),
-        routes=tuple(routes),
-        capabilities=(Capability(id="creative", route=form or "default"),),
-        metadata={
-            "name": name,
-            "description": description,
-            "driver": driver,
-            "entrypoint": entrypoint,
-            "arnold_api_version": arnold_api_version,
-            "capabilities": capabilities,
-            "default_profile": default_profile,
-            "supported_modes": supported_modes,
-            "recommended_profiles": recommended_profiles,
-            "form": form,
-            "primary_criterion": primary_criterion,
-            "resource_bundles": ("creative",),
-        },
-    )
 ```
 
 ## Step Surface
@@ -269,40 +191,14 @@ def _artifact_text(
     )
 ```
 
-## Dry-run report
+## Native builder report
 
 ```yaml
-edge_count: 4
+entry: prep
 id: creative
-manifest_hash: sha256:43d30d31c2eb11de4ad7216c930a3311dd6cfd5bd6b8b2e8926aa304bee7cfe9
-node_count: 5
-possible_routes:
-- condition_ref: null
-  label: revise_creative
-  source: critique_creative
-  target: revise_creative
-- condition_ref: null
-  label: critique_creative
-  source: execute_creative
-  target: critique_creative
-- condition_ref: null
-  label: execute_creative
-  source: prep
-  target: execute_creative
-- condition_ref: null
-  label: finalize
-  source: revise_creative
-  target: finalize
-suspension_point_count: 0
-unresolved_inputs:
-  critique_creative:
-  - previous_artifact
-  execute_creative:
-  - previous_artifact
-  finalize:
-  - previous_artifact
-  revise_creative:
-  - previous_artifact
+instruction_count: 6
+native_program: creative
+stage_count: 5
 ```
 
 ## Package Skill
@@ -312,9 +208,14 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 # creative pipeline — skill reference
 
-**Driver**: `subprocess_isolated`<br>
+**Runtime**: native-backed pipeline<br>
 **Arnold API version**: `1.0`<br>
-**Supported modes**: *(none — invoked directly, not via `megaplan run`)*
+**Run surface**: `megaplan run creative ...` or `arnold pipelines run creative ...`<br>
+**Supported modes**: form-controlled with `--form`
+
+Fresh `creative` runs use the native runtime and persist runtime ownership in
+`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. Native
+resume cursors resume on native, and corrupt native cursors fail closed.
 
 ## Purpose
 
@@ -323,7 +224,7 @@ Form-aware creative-writing pipeline. Accepts a `--form` (validated against
 then produces a finished creative artifact via a single prep→execute→critique
 →revise→finalize pass.
 
-## Topology
+## Native Order
 
 ```
 prep (form-aware) → execute_creative → critique_creative → revise_creative → finalize

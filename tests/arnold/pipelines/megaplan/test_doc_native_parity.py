@@ -1,8 +1,7 @@
-"""Native/graph parity coverage for the dynamic-width ``doc`` pipeline."""
+"""Native coverage for the dynamic-width ``doc`` pipeline."""
 
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 from dataclasses import dataclass
@@ -11,27 +10,15 @@ from typing import Any
 
 import pytest
 
-from arnold.pipeline import StepResult
-from arnold.pipeline.executor import run_pipeline
-from arnold.pipeline.hooks import NullExecutorHooks
 from arnold.pipeline.native import run_native_pipeline
 from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
 from arnold.pipeline.native.ir import NativeProgram
-from arnold.pipeline.topology import compute_topology_hash
-from arnold.pipelines.megaplan.pipelines.doc import _native_bundle, build_pipeline
-from arnold.runtime.envelope import RuntimeEnvelope
+from arnold.pipelines.megaplan.pipelines.doc import build_pipeline
+from arnold.pipelines.megaplan.pipelines.doc.steps import SectionDraftStep
 from arnold.runtime.event_journal import NdjsonEventJournal, read_event_journal
 from arnold.runtime.wal_fold import fold_journal, last_state_snapshot_projector
-from tests.arnold.pipelines.megaplan.parity_harness import (
-    MegaplanParityHarness,
-    normalize_cursor_narrow,
-    normalize_state_narrow,
-)
 
 
-EXPECTED_DOC_TOPOLOGY_HASH = (
-    "sha256:4f7945027fc5d1a035f24779e3cfb733eadb9d41cf6b3334b60b8d56c158e666"
-)
 EXPECTED_STAGE_SEQUENCE = (
     "outline",
     "section_drafts",
@@ -51,52 +38,10 @@ _CHECKPOINT_SKIP_NAMES = frozenset({
 
 @dataclass(frozen=True)
 class _DocTrace:
-    topology_hash: str
     stage_sequence: tuple[str, ...]
     state: dict[str, Any] | None
     event_fold: dict[str, Any] | None
-    resume_cursor: dict[str, Any] | None
     artifacts: dict[str, str]
-
-    def as_harness_dict(self) -> dict[str, Any]:
-        return {
-            "topology_hash": self.topology_hash,
-            "stage_sequence": list(self.stage_sequence),
-            "state": self.state,
-            "envelope": None,
-            "resume_cursor": self.resume_cursor,
-            "artifact_inventory": self.artifacts,
-            "event_fold": self.event_fold,
-        }
-
-
-class _GraphTraceHooks(NullExecutorHooks):
-    def __init__(self, root: Path) -> None:
-        super().__init__()
-        self.stage_sequence: list[str] = []
-        self.final_state: dict[str, Any] | None = None
-        self._root = root
-        self._journal = NdjsonEventJournal(root)
-
-    def on_stage_complete(
-        self,
-        stage: Any,
-        ctx: Any,
-        result: StepResult,
-        state: Any,
-        owned_keys: frozenset[str],
-    ) -> None:
-        del ctx, result, owned_keys
-        json_state = _jsonable(state) if isinstance(state, dict) else {}
-        assert isinstance(json_state, dict)
-        self.stage_sequence.append(stage.name)
-        self.final_state = json_state
-        _write_json(self._root / "state.json", json_state)
-        self._journal.emit(
-            "state_written",
-            payload={"stage": stage.name, "state": json_state},
-            phase=stage.name,
-        )
 
 
 class _NativeTraceHooks(NullNativeRuntimeHooks):
@@ -156,44 +101,6 @@ def _seed_sections(root: Path, sections: list[dict[str, str]] | None) -> None:
     outline.write_text(json.dumps(sections), encoding="utf-8")
 
 
-def _run_graph_trace(
-    root: Path,
-    sections: list[dict[str, str]] | None,
-) -> _DocTrace:
-    root.mkdir(parents=True, exist_ok=True)
-    _seed_sections(root, sections)
-
-    pipeline = build_pipeline()
-    hooks = _GraphTraceHooks(root)
-    envelope = RuntimeEnvelope(
-        plugin_id="doc_native_parity",
-        run_id="graph",
-        artifact_root=str(root),
-    )
-    import os
-
-    previous_runtime = os.environ.get("ARNOLD_PIPELINE_RUNTIME")
-    os.environ["ARNOLD_PIPELINE_RUNTIME"] = "graph"
-    try:
-        run_pipeline(
-            pipeline,
-            initial_state=copy.deepcopy(_initial_state()),
-            envelope=envelope,
-            hooks=hooks,
-        )
-    finally:
-        if previous_runtime is None:
-            os.environ.pop("ARNOLD_PIPELINE_RUNTIME", None)
-        else:
-            os.environ["ARNOLD_PIPELINE_RUNTIME"] = previous_runtime
-
-    return _trace_from_root(
-        root,
-        stage_sequence=tuple(hooks.stage_sequence),
-        state=hooks.final_state,
-    )
-
-
 def _run_native_trace(
     root: Path,
     sections: list[dict[str, str]] | None,
@@ -201,7 +108,8 @@ def _run_native_trace(
     resume: bool = False,
     max_phases: int | None = None,
 ) -> _DocTrace:
-    program = _native_bundle()
+    pipeline = build_pipeline()
+    program = pipeline.native_program
     assert isinstance(program, NativeProgram)
 
     root.mkdir(parents=True, exist_ok=True)
@@ -220,7 +128,7 @@ def _run_native_trace(
         result = run_native_pipeline(
             program,
             artifact_root=root,
-            initial_state=copy.deepcopy(_initial_state()),
+            initial_state=_initial_state(),
             max_phases=max_phases,
             hooks=hooks,
         )
@@ -254,19 +162,10 @@ def _trace_from_root(
         projector=last_state_snapshot_projector,
         initial=None,
     )
-    cursor_path = root / "resume_cursor.json"
-    resume_cursor = (
-        json.loads(cursor_path.read_text(encoding="utf-8"))
-        if cursor_path.exists()
-        else None
-    )
-
     return _DocTrace(
-        topology_hash=compute_topology_hash(build_pipeline()),
         stage_sequence=stage_sequence,
-        state=normalize_state_narrow(state),
-        event_fold=normalize_state_narrow(folded),
-        resume_cursor=normalize_cursor_narrow(resume_cursor),
+        state=_normalize_state(state, root),
+        event_fold=_normalize_state(folded, root),
         artifacts=_artifact_inventory(root),
     )
 
@@ -285,6 +184,16 @@ def _content_digest(path: Path, root: Path) -> str:
     raw = path.read_bytes()
     data = raw.replace(str(root).encode("utf-8"), b"<artifact-root>")
     return hashlib.sha256(data).hexdigest()
+
+
+def _normalize_state(value: Any, root: Path) -> Any:
+    if isinstance(value, str):
+        return value.replace(str(root), "<artifact-root>")
+    if isinstance(value, dict):
+        return {str(key): _normalize_state(item, root) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_normalize_state(item, root) for item in value]
+    return value
 
 
 def _jsonable(value: Any) -> Any:
@@ -325,43 +234,56 @@ def _enable_native_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("MEGAPLAN_TYPED_PORTS", raising=False)
 
 
-class TestDocNativeParity:
-    def test_topology_hash_and_native_bundle(self) -> None:
-        pipeline = build_pipeline()
+class TestDocNative:
+    def test_split_public_surface_and_native_bundle(self) -> None:
+        import arnold.pipelines.megaplan.pipelines.doc as doc
+        import arnold.pipelines.megaplan.pipelines.doc.pipeline as doc_pipeline
+        import arnold_pipelines.megaplan.pipelines.doc as mirror
+        import arnold_pipelines.megaplan.pipelines.doc.pipeline as mirror_pipeline
+
+        pipeline = doc.build_pipeline()
         native_program = pipeline.native_program
 
-        assert compute_topology_hash(pipeline) == EXPECTED_DOC_TOPOLOGY_HASH
+        assert doc.build_pipeline is doc_pipeline.build_pipeline
+        assert mirror.build_pipeline is doc.build_pipeline
+        assert mirror_pipeline.build_pipeline is doc_pipeline.build_pipeline
+        assert doc.supported_modes == ("native",)
+        assert doc.driver == ("native", "dynamic-fanout")
+        assert not hasattr(doc, "_build_graph_pipeline")
         assert isinstance(native_program, NativeProgram)
+        assert native_program.name == "doc"
         assert [phase.name for phase in native_program.phases] == list(
             EXPECTED_STAGE_SEQUENCE
         )
+        assert tuple(pipeline.resource_bundles) == ()
 
     @pytest.mark.parametrize("section_count", [0, 1, 3])
-    def test_graph_native_parity_for_dynamic_section_widths(
+    def test_native_section_fanout_artifacts_and_final_assembly(
         self,
         tmp_path: Path,
         section_count: int,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        sections = None if section_count == 0 else _sections(section_count)
-        expected_sections = [] if sections is None else sections
+        sections = [] if section_count == 0 else _sections(section_count)
+        call_section_ids: list[str] = []
+        original_run = SectionDraftStep.run
 
-        graph = _run_graph_trace(tmp_path / "graph", sections)
-        native = _run_native_trace(tmp_path / "native", sections)
-        report = MegaplanParityHarness().compare_native_to_graph(
-            native.as_harness_dict(),
-            graph.as_harness_dict(),
-            topology_hash=EXPECTED_DOC_TOPOLOGY_HASH,
-        )
+        def spy_run(self: SectionDraftStep, ctx: Any) -> Any:
+            call_section_ids.append(self.section_id)
+            return original_run(self, ctx)
 
-        assert graph.stage_sequence == native.stage_sequence == EXPECTED_STAGE_SEQUENCE
-        assert report["topology_hash"] == "match"
-        assert report["stage_sequence"] == "match"
-        assert report["state"] == "match"
-        assert report["resume_cursor"] == "match"
-        assert report["artifact_inventory"] == "match"
-        assert report["event_fold"] == "match"
-        _assert_section_artifacts(tmp_path / "graph", expected_sections)
-        _assert_section_artifacts(tmp_path / "native", expected_sections)
+        monkeypatch.setattr(SectionDraftStep, "run", spy_run)
+
+        trace = _run_native_trace(tmp_path / "native", sections)
+
+        assert trace.stage_sequence == EXPECTED_STAGE_SEQUENCE
+        assert call_section_ids == [section["section_id"] for section in sections]
+        _assert_section_artifacts(tmp_path / "native", sections)
+        final = tmp_path / "native" / "assembly" / "final.md"
+        assert final.exists()
+        assert "assembly/final.md" in trace.artifacts
+        assert trace.state is not None
+        assert trace.event_fold == trace.state
 
     @pytest.mark.parametrize(
         ("max_phases", "expected_first_sequence", "expected_reentry_suffix"),

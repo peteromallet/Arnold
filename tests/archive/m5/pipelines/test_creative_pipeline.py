@@ -1,13 +1,13 @@
-"""T9 — tests for the ``creative`` pipeline (0.23 sprint).
+"""Tests for the native-backed ``creative`` pipeline.
 
-Exercises the new first-class ``creative`` pipeline through the same
-``megaplan run`` code path the Step 19 real-model smoke uses:
+Exercises the first-class ``creative`` pipeline through the same
+``megaplan run`` code path the real-model smoke uses:
 :func:`megaplan._pipeline.run_cli.cli_run` →
 :func:`megaplan._pipeline.run_cli._run_pipeline`.
 
-Required assertions (per the batch sense check, SC9):
+Required assertions:
 
-(a) Form dispatch wires joke-specific prompts when ``--form joke`` —
+(a) Form dispatch wires joke-specific prompts when ``--form joke`` -
     the stage shells carry ``prompt_key=f"<base>:joke"`` and those
     slots are owned by the creative prompt bundle. ``--form poem``
     routes to the generic creative slots while carrying poem metadata
@@ -33,6 +33,51 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+
+def test_creative_package_init_is_thin_metadata_surface() -> None:
+    import arnold.pipelines.megaplan.pipelines.creative as package
+    from arnold.pipelines.megaplan.pipelines.creative import pipeline as pipeline_module
+
+    assert package.build_pipeline is pipeline_module.build_pipeline
+    assert package.name == "creative"
+    assert package.driver[0] == "native"
+    assert "native" in package.supported_modes
+    assert "creative_native" not in package.__all__
+    assert not hasattr(package, "creative_native")
+
+
+def test_creative_mirror_is_compatibility_shim() -> None:
+    import arnold.pipelines.megaplan.pipelines.creative as canonical
+    import arnold.pipelines.megaplan.pipelines.creative.pipeline as canonical_pipeline
+    import arnold_pipelines.megaplan.pipelines.creative as mirror
+    import arnold_pipelines.megaplan.pipelines.creative.pipeline as mirror_pipeline
+
+    assert mirror.build_pipeline is canonical.build_pipeline
+    assert mirror_pipeline.build_pipeline is canonical_pipeline.build_pipeline
+    assert mirror.__all__ == canonical.__all__
+
+
+def test_creative_build_pipeline_returns_native_backed_projected_shell() -> None:
+    from arnold.pipeline import Pipeline
+    from arnold.pipeline.native import NativeProgram
+    from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
+
+    pipeline = build_pipeline(form="poem", primary_criterion="image pressure")
+
+    assert isinstance(pipeline, Pipeline)
+    assert isinstance(pipeline.native_program, NativeProgram)
+    assert pipeline.native_program.name == "creative"
+    assert tuple(pipeline.stages) == (
+        "prep",
+        "execute_creative",
+        "critique_creative",
+        "revise_creative",
+        "finalize",
+    )
+    assert tuple(pipeline.resource_bundles) == ()
+    assert pipeline.stages["execute_creative"].step.form == "poem"
+    assert pipeline.stages["execute_creative"].step.primary_criterion == "image pressure"
 
 
 def _make_run_args(
@@ -440,6 +485,66 @@ def test_creative_pipeline_cli_run_threads_form_and_primary_criterion(
     assert "most surprising exact image" in prompt
     assert "finalize.json" not in prompt
     assert "gate.json" not in prompt
+
+
+def test_creative_native_runtime_persists_artifacts_and_resumes(
+    tmp_path: Path,
+) -> None:
+    from arnold.pipeline.native import run_native_pipeline
+    from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
+
+    plan_dir = tmp_path / "creative-native-resume"
+    pipeline = build_pipeline(
+        form="poem",
+        primary_criterion="most surprising exact image",
+    )
+    initial_state: dict[str, Any] = {
+        "idea": "write a small poem about a blue door",
+        "config": {
+            "mode": "creative",
+            "form": "poem",
+            "project_dir": str(tmp_path),
+            "primary_criterion": "most surprising exact image",
+        },
+    }
+
+    suspended = run_native_pipeline(
+        pipeline.native_program,
+        artifact_root=plan_dir,
+        initial_state=initial_state,
+        max_phases=2,
+    )
+    assert suspended.suspended is True
+    assert (plan_dir / "resume_cursor.json").exists()
+    assert (plan_dir / "prep" / "v1.md").exists()
+    assert (plan_dir / "execute_creative" / "v1.md").exists()
+    assert not (plan_dir / "critique_creative" / "v1.md").exists()
+
+    resumed = run_native_pipeline(
+        pipeline.native_program,
+        artifact_root=plan_dir,
+        initial_state={},
+        resume=True,
+    )
+
+    assert resumed.suspended is False
+    assert resumed.state["config"]["form"] == "poem"
+    assert (
+        resumed.state["config"]["primary_criterion"]
+        == "most surprising exact image"
+    )
+    assert set(resumed.state["_creative_artifacts"]) == {
+        "prep",
+        "execute_creative",
+        "critique_creative",
+        "revise_creative",
+        "finalize",
+    }
+    assert (plan_dir / "critique_creative" / "v1.md").exists()
+    assert (plan_dir / "revise_creative" / "v1.md").exists()
+    final_artifact = plan_dir / "finalize" / "v1.md"
+    assert final_artifact.exists()
+    assert "most surprising exact image" in final_artifact.read_text()
 
 
 def test_creative_run_builder_receives_cli_parameters() -> None:

@@ -9,7 +9,7 @@ from typing import Any, Mapping
 
 # M3a: structural port/result shapes route through the Megaplan bridge here
 # because this package is executed by the Megaplan pipeline executor.
-from arnold.pipelines.megaplan._pipeline.types import (
+from arnold.pipeline import (
     PipelineVerdict,
     Port,
     PortRef,
@@ -34,10 +34,10 @@ def _root_dir(ctx: StepContext) -> Path:
     Arnold StepContext has ``artifact_root``; Megaplan has ``plan_dir``.
     This bridge helper keeps the select-tournament pipeline compatible with both runtimes.
     """
-    root = getattr(ctx, 'artifact_root', None)
+    root = getattr(ctx, "artifact_root", None)
     if root is not None:
         return Path(root)
-    return getattr(ctx, 'plan_dir')  # type: ignore[no-any-return]
+    return Path(getattr(ctx, "plan_dir"))  # type: ignore[arg-type]
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:

@@ -18,14 +18,17 @@ Provenance:
 | item | value |
 | --- | --- |
 | Package | arnold_pipelines/_template|
-| Manifest and builder | arnold_pipelines/_template/__init__.py|
+| Builder target | arnold_pipelines._template:build_pipeline|
+| Builder source | arnold_pipelines/_template/__init__.py|
 | Skill | arnold_pipelines/_template/SKILL.md|
 | Validation | `arnold workflow check --module arnold_pipelines._template:build_pipeline`|
-| Manifest hash | sha256:0b462b2025e1744272e2372bdda7e11ac72b443cc93c007e17de6ab846d4017c|
+| Contract | workflow|
+| Load state | workflow|
+| Identity | sha256:0b462b2025e1744272e2372bdda7e11ac72b443cc93c007e17de6ab846d4017c|
 
 ## Builder Surface
 
-The following snippet is extracted verbatim from the pack's `__init__.py`.
+The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
 name: str = "my-pipeline"

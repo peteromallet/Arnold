@@ -1,10 +1,11 @@
-"""Native declaration and graph builder for ``writing-panel-strict``."""
+"""Native declaration and builder for ``writing-panel-strict``."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
+from arnold.pipeline import Pipeline as ArnoldPipeline
 from arnold.pipeline.native import compile_pipeline, decision, phase, pipeline
 from arnold.pipelines.megaplan._pipeline.types import Pipeline, StepResult
 
@@ -18,16 +19,33 @@ from .steps import (
     _SYNTH_PROMPT,
     _dict_to_step_context,
     _json_safe_step_result,
+    _make_agent_step,
+    _make_panel_reviewer_step,
 )
 
 
 _PIPELINE_DIR: Path = Path(__file__).parent
 
+name: str = "writing-panel-strict"
+description: str = (
+    "Adversarial review of prose drafts by N reviewers, then revise. "
+    "Not for code."
+)
+default_profile: str = "@writing-panel-strict:standard"
+supported_modes: tuple[str, ...] = ("native",)
+recommended_profiles: tuple[str, ...] = (
+    "@writing-panel-strict:premium",
+    "@writing-panel-strict:standard",
+    "@writing-panel-strict:cheap",
+)
+driver: tuple[str, str] = ("native", "panel")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ("writing", "critique", "revise")
+
 
 @phase(name="panel_review")
 def _native_panel_review(ctx: object) -> StepResult:
-    from . import _make_panel_reviewer_step
-
     step_ctx = _dict_to_step_context(ctx)
     outputs: dict[str, str] = {}
     for reviewer_id, prompt_ref in _PANEL_REVIEWERS:
@@ -39,8 +57,6 @@ def _native_panel_review(ctx: object) -> StepResult:
 
 @phase(name="synth")
 def _native_synth(ctx: object) -> StepResult:
-    from . import _make_agent_step
-
     result = _make_agent_step(
         "synth",
         _SYNTH_PROMPT,
@@ -52,8 +68,6 @@ def _native_synth(ctx: object) -> StepResult:
 
 @phase(name="revise")
 def _native_revise(ctx: object) -> StepResult:
-    from . import _make_agent_step
-
     result = _make_agent_step(
         "revise",
         _REVISE_PROMPT,
@@ -136,3 +150,36 @@ def _build_graph_pipeline(
         )
         .build()
     )
+
+
+def build_pipeline() -> ArnoldPipeline:
+    """Return the native-backed ``writing-panel-strict`` pipeline."""
+
+    graph = _build_graph_pipeline(
+        name=name,
+        description=description,
+        default_profile=default_profile,
+        supported_modes=supported_modes,
+    )
+    return ArnoldPipeline(
+        stages=graph.stages,
+        entry=graph.entry,
+        binding_map=getattr(graph, "binding_map", None),
+        resource_bundles=(),
+        native_program=_native_bundle(),
+    )
+
+
+__all__ = [
+    "arnold_api_version",
+    "build_pipeline",
+    "capabilities",
+    "default_profile",
+    "description",
+    "driver",
+    "entrypoint",
+    "name",
+    "recommended_profiles",
+    "supported_modes",
+    "writing_panel_strict_native",
+]

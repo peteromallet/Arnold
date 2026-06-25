@@ -24,6 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import arnold.pipeline as native_pipeline
 import arnold.workflow as workflow
 from arnold.cli.workflow import build_parser as build_workflow_parser
 from arnold.execution import ExecutionLogger, ExecutionRegistries, SkeletalBackend, run
@@ -32,10 +33,12 @@ from arnold.manifest.manifests import (
     WorkflowManifest,
     WorkflowNode,
 )
+from arnold.pipeline import NativeProgram
 from arnold.workflow import compile_pipeline, dry_run, inspect_manifest, to_dot, to_yaml
 from arnold_pipelines.discovery import (
     ShippedPipelineInfo,
     discover_migrated_pipelines,
+    discover_shipped_pipelines,
     load_builder,
 )
 
@@ -198,13 +201,28 @@ def _extract_step_symbols(steps_path: Path) -> tuple[str, ...]:
 
 
 def _builder_target(info: ShippedPipelineInfo) -> str:
+    if info.canonical_builder_path:
+        return info.canonical_builder_path
     module = info.package_path.replace("/", ".")
     if module.endswith(".py"):
         module = module[:-3]
     return f"{module}:build_pipeline"
 
 
-def _compile_and_validate(info: ShippedPipelineInfo) -> WorkflowManifest:
+def _builder_source_path(info: ShippedPipelineInfo) -> Path:
+    module = _builder_target(info).split(":", 1)[0]
+    module_path = REPO_ROOT / module.replace(".", "/")
+    file_path = module_path.with_suffix(".py")
+    if file_path.is_file():
+        return file_path
+    return module_path / "__init__.py"
+
+
+def _compile_and_validate_workflow(info: ShippedPipelineInfo) -> WorkflowManifest:
+    if info.builder_contract != "workflow" or info.load_state != "workflow":
+        raise RuntimeError(
+            f"pipeline {info.id!r} is {info.builder_contract}/{info.load_state}, expected workflow"
+        )
     builder = info.builder
     if builder is None:
         raise RuntimeError(f"pipeline {info.id!r} has no builder")
@@ -214,6 +232,33 @@ def _compile_and_validate(info: ShippedPipelineInfo) -> WorkflowManifest:
             f"builder for {info.id!r} returned {type(pipeline).__name__}, expected Pipeline"
         )
     return compile_pipeline(pipeline)
+
+
+def _validate_native_builder(info: ShippedPipelineInfo) -> native_pipeline.Pipeline:
+    if info.builder_contract != "native" or info.load_state != "loadable-native":
+        raise RuntimeError(
+            f"pipeline {info.id!r} is {info.builder_contract}/{info.load_state}, expected loadable-native"
+        )
+    builder = info.builder
+    if builder is None:
+        raise RuntimeError(f"pipeline {info.id!r} has no builder")
+    pipeline = builder()
+    if not isinstance(pipeline, native_pipeline.Pipeline):
+        raise RuntimeError(
+            f"builder for {info.id!r} returned {type(pipeline).__module__}.{type(pipeline).__name__}, "
+            "expected arnold.pipeline.Pipeline"
+        )
+    if not isinstance(pipeline.native_program, NativeProgram):
+        raise RuntimeError(f"native builder for {info.id!r} did not attach NativeProgram")
+    return pipeline
+
+
+def _pipeline_identity(info: ShippedPipelineInfo) -> str:
+    if info.builder_contract == "workflow" and info.load_state == "workflow":
+        return _compile_and_validate_workflow(info).manifest_hash or ""
+    if info.builder_contract == "native" and info.load_state == "loadable-native":
+        return f"native:{_validate_native_builder(info).native_program.name}"
+    return info.load_state
 
 
 def _fake_run(manifest: WorkflowManifest) -> None:
@@ -238,37 +283,57 @@ def _render_example(info: ShippedPipelineInfo) -> Path | None:
         return None
 
     package_path = REPO_ROOT / info.package_path
-    if package_path.is_file():
-        # Sibling-file module (e.g. select_tournament.py)
-        package_dir = package_path.parent
-        init_path = package_path
-    else:
-        package_dir = package_path
-        init_path = package_dir / "__init__.py"
-    if not init_path.is_file():
+    builder_path = _builder_source_path(info)
+    if not builder_path.is_file() and info.load_state not in {"deferred-native", "not-loadable"}:
         return None
 
-    manifest = _compile_and_validate(info)
-    dry_report = dry_run(manifest)
-    _fake_run(manifest)
+    package_dir = package_path.parent if package_path.is_file() else package_path
+    if not package_dir.exists() and builder_path.is_file():
+        package_dir = builder_path.parent
 
     steps_path = package_dir / "steps.py"
     step_symbols = _extract_step_symbols(steps_path) if steps_path.is_file() else ()
+    manifest_hash = ""
+    dry_report: dict[str, Any] | None = None
+    native_pipeline_obj: native_pipeline.Pipeline | None = None
+
+    if info.builder_contract == "workflow" and info.load_state == "workflow":
+        manifest = _compile_and_validate_workflow(info)
+        dry_report = dry_run(manifest)
+        _fake_run(manifest)
+        manifest_hash = manifest.manifest_hash or ""
+    elif info.builder_contract == "native" and info.load_state == "loadable-native":
+        native_pipeline_obj = _validate_native_builder(info)
+        manifest_hash = f"native:{native_pipeline_obj.native_program.name}"
 
     source_rows = [
         ("Package", _relative(package_path)),
-        ("Manifest and builder", _relative(init_path)),
+        ("Builder target", _builder_target(info)),
+        ("Builder source", _relative(builder_path)),
         ("Skill", _relative(skill_path)),
-        ("Validation", f"`arnold workflow check --module {_builder_target(info)}`"),
-        ("Manifest hash", manifest.manifest_hash or ""),
+        ("Contract", info.builder_contract),
+        ("Load state", info.load_state),
+        ("Identity", manifest_hash or info.load_state),
     ]
+    if info.builder_contract == "workflow" and info.load_state == "workflow":
+        source_rows.insert(4, ("Validation", f"`arnold workflow check --module {_builder_target(info)}`"))
+    elif info.builder_contract == "native" and info.load_state == "loadable-native":
+        source_rows.insert(
+            4,
+            (
+                "Validation",
+                "`build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`",
+            ),
+        )
+    elif info.diagnostic:
+        source_rows.insert(4, ("Diagnostic", info.diagnostic))
     if step_symbols:
         source_rows.insert(2, ("Steps", _relative(steps_path)))
 
     lines: list[str] = [
         _provenance_header(
             source_package=info.package_path,
-            manifest_hash=manifest.manifest_hash or "",
+            manifest_hash=manifest_hash,
             m6_disposition="keep",
         ).rstrip(),
         "",
@@ -280,10 +345,10 @@ def _render_example(info: ShippedPipelineInfo) -> Path | None:
         "",
         "## Builder Surface",
         "",
-        "The following snippet is extracted verbatim from the pack's `__init__.py`.",
+        "The following snippet is extracted verbatim from the pack's canonical builder source.",
         "",
         "```python",
-        _source_lines_for_symbols(init_path, INIT_SYMBOLS).rstrip(),
+        _source_lines_for_symbols(builder_path, INIT_SYMBOLS).rstrip() if builder_path.is_file() else "",
         "```",
         "",
     ]
@@ -302,14 +367,41 @@ def _render_example(info: ShippedPipelineInfo) -> Path | None:
             ]
         )
 
+    if dry_report is not None:
+        lines.extend(
+            [
+                "## Dry-run report",
+                "",
+                "```yaml",
+                to_yaml(dry_report).rstrip(),
+                "```",
+                "",
+            ]
+        )
+    elif native_pipeline_obj is not None:
+        lines.extend(
+            [
+                "## Native builder report",
+                "",
+                "```yaml",
+                to_yaml(
+                    {
+                        "id": info.id,
+                        "entry": native_pipeline_obj.entry,
+                        "stage_count": len(native_pipeline_obj.stages),
+                        "native_program": native_pipeline_obj.native_program.name,
+                        "instruction_count": len(native_pipeline_obj.native_program.instructions),
+                    }
+                ).rstrip(),
+                "```",
+                "",
+            ]
+        )
+    elif info.diagnostic:
+        lines.extend(["## Deferred native diagnostic", "", info.diagnostic, ""])
+
     lines.extend(
         [
-            "## Dry-run report",
-            "",
-            "```yaml",
-            to_yaml(dry_report).rstrip(),
-            "```",
-            "",
             "## Package Skill",
             "",
             "The following module instructions are extracted verbatim from the pack's `SKILL.md`.",
@@ -328,8 +420,8 @@ def _render_example(info: ShippedPipelineInfo) -> Path | None:
 
 def render_examples() -> dict[Path, str]:
     rendered: dict[Path, str] = {}
-    for info in discover_migrated_pipelines():
-        if not info.public or info.docs_path is None:
+    for info in discover_shipped_pipelines():
+        if not info.public or info.disposition != "migrate" or info.docs_path is None:
             continue
         result = _render_example(info)
         if result is None:
@@ -366,15 +458,14 @@ def _edge_field_rows() -> list[tuple[str, str, str]]:
 
 def _pipeline_registry_rows() -> list[tuple[str, str, str, str, str]]:
     rows = []
-    for info in discover_migrated_pipelines():
+    for info in discover_shipped_pipelines():
         if info.registry_id is None:
             continue
-        manifest = _compile_and_validate(info)
         rows.append(
             (
                 info.registry_id,
                 info.id,
-                manifest.manifest_hash or "",
+                _pipeline_identity(info),
                 _relative(REPO_ROOT / info.package_path),
                 "keep",
             )
@@ -456,7 +547,24 @@ def render_reference() -> str:
 
 def _render_skill(info: ShippedPipelineInfo) -> str:
     target = _builder_target(info)
-    manifest = _compile_and_validate(info)
+    identity = _pipeline_identity(info)
+    if info.builder_contract == "workflow" and info.load_state == "workflow":
+        surface = "workflow-only"
+        commands = [
+            f"- Validate: `arnold workflow check --module {target}`",
+            f"- Inspect: `arnold workflow describe --module {target}`",
+            f"- Dry-run: `arnold workflow dry-run --module {target}`",
+            f"- Run (fake backend): `arnold workflow run --module {target} --backend fake`",
+        ]
+    elif info.builder_contract == "native" and info.load_state == "loadable-native":
+        surface = "native"
+        commands = [
+            f"- Validate import: `{target}`",
+            "- Contract: `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`",
+        ]
+    else:
+        surface = info.builder_contract
+        commands = [f"- Load state: `{info.load_state}`"]
     lines = [
         "---",
         f"name: {info.id}",
@@ -465,27 +573,26 @@ def _render_skill(info: ShippedPipelineInfo) -> str:
         "",
         f"# {info.id}",
         "",
-        "This skill describes the workflow-only surface for the shipped pipeline.",
-        "It does not reference legacy Megaplan CLI commands or native graph builders.",
+        f"This skill describes the {surface} surface for the shipped pipeline.",
+        "It does not reference legacy Megaplan CLI commands.",
         "",
         "## Builder target",
         "",
-        f"```text\narnold workflow check --module {target}\n```",
+        f"```text\n{target}\n```",
         "",
-        "## CLI commands",
+        "## Validation",
         "",
-        f"- Validate: `arnold workflow check --module {target}`",
-        f"- Inspect: `arnold workflow describe --module {target}`",
-        f"- Dry-run: `arnold workflow dry-run --module {target}`",
-        f"- Run (fake backend): `arnold workflow run --module {target} --backend fake`",
+        *commands,
         "",
-        "## Manifest identity",
+        "## Pipeline identity",
         "",
         f"- stable_id: `{info.registry_id or info.id}`",
-        f"- manifest_hash: `{manifest.manifest_hash}`",
+        f"- identity: `{identity}`",
         f"- package_path: `{info.package_path}`",
         "",
     ]
+    if info.diagnostic:
+        lines.extend(["## Diagnostic", "", info.diagnostic, ""])
     if info.docs_path:
         skill_path = REPO_ROOT / info.docs_path
         if skill_path.is_file():
@@ -502,8 +609,8 @@ def _render_skill(info: ShippedPipelineInfo) -> str:
 
 def render_codex_skills() -> dict[Path, str]:
     rendered: dict[Path, str] = {}
-    for info in discover_migrated_pipelines():
-        if not info.public:
+    for info in discover_shipped_pipelines():
+        if not info.public or info.disposition != "migrate":
             continue
         slug = info.id.replace(".", "-").replace("_", "-")
         rendered[SKILLS_DIR / slug / "SKILL.md"] = _render_skill(info)
@@ -596,7 +703,7 @@ def render_registries() -> dict[Path, str]:
     for path, infos in _registries_to_update().items():
         data = _load_registry(path)
         hashes_by_stable_id = {
-            info.registry_id: (_compile_and_validate(info).manifest_hash or "")
+            info.registry_id: (_compile_and_validate_workflow(info).manifest_hash or "")
             for info in infos
             if info.registry_id
         }

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+import arnold.pipeline as native_pipeline
 import arnold.workflow as workflow
 
 
@@ -30,6 +31,13 @@ class ShippedPipelineInfo:
       - ``docs_path``: path to the package SKILL.md or docs file, or ``None``.
       - ``generated_asset_path``: path to generated data directory, or ``None``.
       - ``disposition``: one of ``migrate``, ``archive``, ``delete``, ``whitelist``.
+      - ``builder_contract``: expected builder family: ``workflow``, ``native``,
+        or ``deferred-native``.
+      - ``load_state``: actual discovery load state: ``workflow``,
+        ``loadable-native``, ``deferred-native``, or ``not-loadable``.
+      - ``canonical_builder_path``: import target for canonical builders, or
+        ``None`` for deferred/deleted rows.
+      - ``diagnostic``: operator-readable reason for deferred or failed load.
       - ``builder``: the canonical ``build_pipeline`` callable, or ``None``.
     """
 
@@ -40,7 +48,11 @@ class ShippedPipelineInfo:
     docs_path: str | None
     generated_asset_path: str | None
     disposition: str
-    builder: Callable[..., workflow.Pipeline] | None = None
+    builder_contract: str
+    load_state: str
+    canonical_builder_path: str | None
+    diagnostic: str | None = None
+    builder: Callable[..., Any] | None = None
 
 
 # Mapping from final package path (relative to repo root) to discovery metadata.
@@ -66,51 +78,123 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
     },
     "arnold_pipelines/megaplan/pipelines/doc": {
         "id": "doc",
-        "public": True,
-        "registry_id": "megaplan.doc",
-        "docs_path": "arnold_pipelines/megaplan/pipelines/doc/SKILL.md",
-        "disposition": "migrate",
-        "migrated": True,
+        "public": False,
+        "registry_id": None,
+        "docs_path": None,
+        "disposition": "delete",
+        "migrated": False,
     },
     "arnold_pipelines/megaplan/pipelines/creative": {
         "id": "creative",
-        "public": True,
-        "registry_id": "megaplan.creative",
-        "docs_path": "arnold_pipelines/megaplan/pipelines/creative/SKILL.md",
-        "disposition": "migrate",
-        "migrated": True,
+        "public": False,
+        "registry_id": None,
+        "docs_path": None,
+        "disposition": "delete",
+        "migrated": False,
     },
     "arnold_pipelines/megaplan/pipelines/jokes": {
         "id": "jokes",
-        "public": True,
-        "registry_id": "megaplan.jokes",
-        "docs_path": "arnold_pipelines/megaplan/pipelines/jokes/SKILL.md",
-        "disposition": "migrate",
-        "migrated": True,
+        "public": False,
+        "registry_id": None,
+        "docs_path": None,
+        "disposition": "delete",
+        "migrated": False,
     },
     "arnold_pipelines/megaplan/pipelines/live_supervisor": {
         "id": "live-supervisor",
-        "public": True,
-        "registry_id": "megaplan.live_supervisor",
-        "docs_path": "arnold_pipelines/megaplan/pipelines/live_supervisor/SKILL.md",
-        "disposition": "migrate",
-        "migrated": True,
+        "public": False,
+        "registry_id": None,
+        "docs_path": None,
+        "disposition": "delete",
+        "migrated": False,
     },
     "arnold_pipelines/megaplan/pipelines/select_tournament": {
         "id": "select-tournament",
-        "public": True,
-        "registry_id": "megaplan.select_tournament",
-        "docs_path": "arnold_pipelines/megaplan/pipelines/select_tournament/SKILL.md",
-        "disposition": "migrate",
-        "migrated": True,
+        "public": False,
+        "registry_id": None,
+        "docs_path": None,
+        "disposition": "delete",
+        "migrated": False,
     },
     "arnold_pipelines/megaplan/pipelines/writing_panel_strict": {
         "id": "writing-panel-strict",
+        "public": False,
+        "registry_id": None,
+        "docs_path": None,
+        "disposition": "delete",
+        "migrated": False,
+    },
+    "arnold/pipelines/megaplan/pipelines/doc": {
+        "id": "doc",
         "public": True,
-        "registry_id": "megaplan.writing_panel_strict",
-        "docs_path": "arnold_pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md",
+        "registry_id": "megaplan.doc",
+        "docs_path": "arnold/pipelines/megaplan/pipelines/doc/SKILL.md",
         "disposition": "migrate",
         "migrated": True,
+        "builder_contract": "native",
+    },
+    "arnold/pipelines/megaplan/pipelines/creative": {
+        "id": "creative",
+        "public": True,
+        "registry_id": "megaplan.creative",
+        "docs_path": "arnold/pipelines/megaplan/pipelines/creative/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+    },
+    "arnold/pipelines/megaplan/pipelines/jokes": {
+        "id": "jokes",
+        "public": True,
+        "registry_id": "megaplan.jokes",
+        "docs_path": "arnold/pipelines/megaplan/pipelines/jokes/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+    },
+    "arnold/pipelines/megaplan/pipelines/live_supervisor": {
+        "id": "live-supervisor",
+        "public": True,
+        "registry_id": "megaplan.live_supervisor",
+        "docs_path": "arnold/pipelines/megaplan/pipelines/live_supervisor/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+    },
+    "arnold/pipelines/megaplan/pipelines/epic_blitz.py": {
+        "id": "epic-blitz",
+        "public": True,
+        "registry_id": "megaplan.epic_blitz",
+        "docs_path": "arnold/pipelines/megaplan/pipelines/epic-blitz/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+    },
+    "arnold/pipelines/megaplan/pipelines/select_tournament": {
+        "id": "select-tournament",
+        "public": True,
+        "registry_id": "megaplan.select_tournament",
+        "docs_path": "arnold/pipelines/megaplan/pipelines/select_tournament/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+    },
+    "arnold/pipelines/megaplan/pipelines/writing_panel_strict": {
+        "id": "writing-panel-strict",
+        "public": True,
+        "registry_id": "megaplan.writing_panel_strict",
+        "docs_path": "arnold/pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+    },
+    "arnold/pipelines/folder_audit": {
+        "id": "folder-audit",
+        "public": True,
+        "registry_id": "arnold.folder_audit",
+        "docs_path": "arnold/pipelines/folder_audit/SKILL.md",
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
     },
     "arnold_pipelines/evidence_pack": {
         "id": "evidence_pack_verifier",
@@ -250,21 +334,19 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "disposition": "archive",
         "migrated": False,
     },
-    "arnold/pipelines/folder_audit": {
-        "id": "legacy.folder_audit",
-        "public": False,
-        "registry_id": None,
-        "docs_path": None,
-        "disposition": "archive",
-        "migrated": False,
-    },
     "arnold/pipelines/deliberation": {
-        "id": "legacy.deliberation",
-        "public": False,
-        "registry_id": None,
-        "docs_path": None,
-        "disposition": "archive",
+        "id": "deliberation",
+        "public": True,
+        "registry_id": "arnold.deliberation",
+        "docs_path": "docs/archive/m5/pipelines/deliberation/SKILL.md",
+        "disposition": "migrate",
         "migrated": False,
+        "builder_contract": "deferred-native",
+        "canonical_builder_path": "arnold.pipelines.deliberation:build_pipeline",
+        "diagnostic": (
+            "Deferred until the deliberation restore task creates the active "
+            "arnold.pipelines.deliberation package."
+        ),
     },
     "arnold/pipelines/_deliberation_example": {
         "id": "legacy._deliberation_example",
@@ -300,7 +382,16 @@ def _package_path_to_module(package_path: str) -> str:
     return normalized.replace("/", ".")
 
 
-def _load_builder(package_path: str) -> Callable[..., workflow.Pipeline] | None:
+def _builder_target(package_path: str, info: dict[str, Any]) -> str | None:
+    explicit = info.get("canonical_builder_path")
+    if explicit is not None:
+        return explicit
+    if info.get("disposition", "migrate") != "migrate":
+        return None
+    return f"{_package_path_to_module(package_path)}:build_pipeline"
+
+
+def _load_builder(package_path: str) -> Callable[..., Any] | None:
     """Import *package_path* and return its ``build_pipeline`` callable if valid."""
 
     module_name = _package_path_to_module(package_path)
@@ -312,6 +403,35 @@ def _load_builder(package_path: str) -> Callable[..., workflow.Pipeline] | None:
     if not callable(builder):
         return None
     return builder
+
+
+def _classify_load_state(
+    builder: Callable[..., Any] | None,
+    builder_contract: str,
+) -> tuple[str, str | None]:
+    """Return the actual load state plus any diagnostic for a discovered row."""
+
+    if builder_contract == "deferred-native":
+        return "deferred-native", None
+    if builder is None:
+        return "not-loadable", "No callable canonical build_pipeline could be imported."
+    try:
+        built = builder()
+    except Exception as exc:
+        return "not-loadable", f"build_pipeline raised {type(exc).__name__}: {exc}"
+    if isinstance(built, workflow.Pipeline):
+        return "workflow", None
+    if isinstance(built, native_pipeline.Pipeline):
+        if getattr(built, "native_program", None) is not None:
+            return "loadable-native", None
+        return (
+            "not-loadable",
+            "Builder returned arnold.pipeline.Pipeline without native_program.",
+        )
+    return (
+        "not-loadable",
+        f"Builder returned unsupported {type(built).__module__}.{type(built).__name__}.",
+    )
 
 
 def discover_shipped_pipelines(
@@ -336,9 +456,17 @@ def discover_shipped_pipelines(
         if disposition == "whitelist" and not include_whitelist:
             continue
 
-        builder: Callable[..., workflow.Pipeline] | None = None
-        if info.get("migrated") and disposition == "migrate":
+        builder: Callable[..., Any] | None = None
+        builder_contract = info.get("builder_contract", "workflow")
+        canonical_builder_path = _builder_target(package_path, info)
+        if (
+            info.get("migrated")
+            and disposition == "migrate"
+            and builder_contract != "deferred-native"
+        ):
             builder = _load_builder(package_path)
+        load_state, load_diagnostic = _classify_load_state(builder, builder_contract)
+        diagnostic = info.get("diagnostic") or load_diagnostic
 
         docs_path = info.get("docs_path")
         generated_asset_path = info.get("generated_asset_path")
@@ -351,6 +479,10 @@ def discover_shipped_pipelines(
                 docs_path=docs_path,
                 generated_asset_path=generated_asset_path,
                 disposition=disposition,
+                builder_contract=builder_contract,
+                load_state=load_state,
+                canonical_builder_path=canonical_builder_path,
+                diagnostic=diagnostic,
                 builder=builder,
             )
         )

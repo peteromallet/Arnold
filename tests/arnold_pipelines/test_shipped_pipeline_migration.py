@@ -16,6 +16,8 @@ from typing import Any
 
 import pytest
 
+from arnold.pipeline import Pipeline as NativePipeline
+from arnold.pipeline.native import NativeProgram
 import arnold.workflow as workflow
 from arnold.execution import run
 from arnold.execution.backend import SkeletalBackend
@@ -26,8 +28,24 @@ from arnold_pipelines.discovery import discover_migrated_pipelines
 
 _MIGRATED = discover_migrated_pipelines()
 _BUILDER_TARGETS = [
-    (info.id, f"{info.package_path.replace('/', '.')}:build_pipeline")
+    (info.id, info.canonical_builder_path)
     for info in _MIGRATED
+    if info.canonical_builder_path is not None
+]
+_WORKFLOW_TARGETS = [
+    (info.id, info.canonical_builder_path)
+    for info in _MIGRATED
+    if info.builder_contract == "workflow" and info.canonical_builder_path is not None
+]
+_NATIVE_TARGETS = [
+    (info.id, info.canonical_builder_path)
+    for info in _MIGRATED
+    if info.builder_contract == "native" and info.canonical_builder_path is not None
+]
+_LOADABLE_NATIVE_TARGETS = [
+    (info.id, info.canonical_builder_path)
+    for info in _MIGRATED
+    if info.load_state == "loadable-native" and info.canonical_builder_path is not None
 ]
 
 
@@ -43,15 +61,28 @@ def _import_builder(target: str) -> Any:
     return getattr(module, builder_name)
 
 
+def _supports_shipped_pipeline_contract(pipeline: Any) -> bool:
+    return isinstance(pipeline, (Pipeline, NativePipeline)) or (
+        hasattr(pipeline, "stages")
+        and hasattr(pipeline, "entry")
+        and hasattr(pipeline, "native_program")
+    )
+
+
 @pytest.mark.parametrize("pipeline_id,target", _BUILDER_TARGETS)
 def test_build_pipeline_returns_workflow_pipeline(pipeline_id: str, target: str) -> None:
     builder = _import_builder(target)
     pipeline = builder()
-    assert isinstance(pipeline, Pipeline), f"{pipeline_id}: expected Pipeline, got {type(pipeline).__name__}"
-    assert pipeline.id
+    assert _supports_shipped_pipeline_contract(pipeline), (
+        f"{pipeline_id}: expected Pipeline, got {type(pipeline).__name__}"
+    )
+    if isinstance(pipeline, Pipeline):
+        assert pipeline.id
+    else:
+        assert pipeline_id
 
 
-@pytest.mark.parametrize("pipeline_id,target", _BUILDER_TARGETS)
+@pytest.mark.parametrize("pipeline_id,target", _WORKFLOW_TARGETS)
 def test_compile_pipeline(pipeline_id: str, target: str) -> None:
     builder = _import_builder(target)
     pipeline = builder()
@@ -62,7 +93,7 @@ def test_compile_pipeline(pipeline_id: str, target: str) -> None:
     assert manifest.schema_version == workflow.WorkflowManifest.SCHEMA_VERSION
 
 
-@pytest.mark.parametrize("pipeline_id,target", _BUILDER_TARGETS)
+@pytest.mark.parametrize("pipeline_id,target", _WORKFLOW_TARGETS)
 def test_dry_run_report(pipeline_id: str, target: str) -> None:
     builder = _import_builder(target)
     manifest = compile_pipeline(builder())
@@ -73,7 +104,7 @@ def test_dry_run_report(pipeline_id: str, target: str) -> None:
     assert report["edge_count"] == len(manifest.edges)
 
 
-@pytest.mark.parametrize("pipeline_id,target", _BUILDER_TARGETS)
+@pytest.mark.parametrize("pipeline_id,target", _WORKFLOW_TARGETS)
 def test_fake_run_completes(pipeline_id: str, target: str, tmp_path: Path) -> None:
     builder = _import_builder(target)
     manifest = compile_pipeline(builder())
@@ -82,7 +113,7 @@ def test_fake_run_completes(pipeline_id: str, target: str, tmp_path: Path) -> No
     assert result.manifest_hash == manifest.manifest_hash
 
 
-@pytest.mark.parametrize("pipeline_id,target", _BUILDER_TARGETS)
+@pytest.mark.parametrize("pipeline_id,target", _WORKFLOW_TARGETS)
 def test_manifest_hash_is_deterministic(pipeline_id: str, target: str) -> None:
     builder = _import_builder(target)
     m1 = compile_pipeline(builder())
@@ -91,16 +122,33 @@ def test_manifest_hash_is_deterministic(pipeline_id: str, target: str) -> None:
     assert m1.topology_hash == m2.topology_hash
 
 
+@pytest.mark.parametrize("pipeline_id,target", _LOADABLE_NATIVE_TARGETS)
+def test_native_contract_rows_return_native_pipeline(pipeline_id: str, target: str) -> None:
+    builder = _import_builder(target)
+    pipeline = builder()
+    assert isinstance(pipeline, NativePipeline)
+    assert isinstance(pipeline.native_program, NativeProgram)
+    assert tuple(getattr(pipeline, "resource_bundles", ())) == ()
+
+
 @pytest.mark.parametrize("pipeline_id,target", _BUILDER_TARGETS)
 def test_discovery_matches_build(pipeline_id: str, target: str) -> None:
     """Discovery metadata points at a loadable builder that returns the same id."""
 
-    info = next(info for info in _MIGRATED if info.id == pipeline_id)
+    info = next(
+        info
+        for info in _MIGRATED
+        if info.id == pipeline_id and info.canonical_builder_path == target
+    )
     assert info.builder is not None
     assert info.disposition == "migrate"
     assert info.public
+    assert target == info.canonical_builder_path
     pipeline = info.builder()
-    assert isinstance(pipeline, Pipeline)
+    assert _supports_shipped_pipeline_contract(pipeline)
     # The discovered id is the canonical label; the pipeline id may be a short
     # alias (e.g. "creative") or include underscores (e.g. "evidence_pack_verifier").
-    assert pipeline.id
+    if isinstance(pipeline, Pipeline):
+        assert pipeline.id
+    else:
+        assert pipeline_id

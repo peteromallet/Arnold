@@ -13,10 +13,13 @@ Three-round adversarial critique + revision of an epic draft:
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from arnold.pipeline import Pipeline as ArnoldPipeline
 from arnold.pipeline.native import (
+    NativeProgram,
     compile_pipeline,
     native_panel,
     phase,
@@ -30,7 +33,7 @@ from arnold.pipelines.megaplan._pipeline.steps.panel import PanelReviewerStep
 from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     ParallelStage,
-    Pipeline,
+    Pipeline as MegaplanPipeline,
     Stage,
     Step,
     StepContext,
@@ -48,11 +51,11 @@ description: str = (
     "chain-ready revised epic."
 )
 default_profile: str = "@epic-blitz:standard"
-supported_modes: tuple[str, ...] = ("graph",)
+supported_modes: tuple[str, ...] = ("native",)
 recommended_profiles: tuple[str, ...] = (
     "@epic-blitz:standard",
 )
-driver: tuple[str, str] = ("graph", "dispatch+emit")
+driver: tuple[str, str] = ("native", "panel")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("epic", "critique", "revise")
@@ -558,10 +561,15 @@ def _make_agent_stage(
     )
 
 
-def _project_native_pipeline() -> Pipeline:
-    """Compile/project the native declaration, then specialize Megaplan steps."""
+def _compile_native_program() -> NativeProgram:
+    return compile_pipeline(epic_blitz)
 
-    projected = project_graph(compile_pipeline(epic_blitz), key_mode="phase")
+
+def _project_native_pipeline(program: NativeProgram | None = None) -> ArnoldPipeline:
+    """Compile/project the native declaration into the canonical Arnold shell."""
+
+    native_program = program if program is not None else _compile_native_program()
+    projected = project_graph(native_program, key_mode="phase")
     actual_order = tuple(projected.stages.keys())
     if actual_order != _EPIC_BLITZ_STAGE_ORDER:
         raise RuntimeError(
@@ -573,59 +581,14 @@ def _project_native_pipeline() -> Pipeline:
             "epic-blitz native projection entry mismatch: "
             f"expected 'high_panel', got {projected.entry!r}"
         )
-
-    stages: dict[str, Stage | ParallelStage] = {
-        "high_panel": _make_panel_stage(
-            "high_panel",
-            _HIGH_REVIEWERS,
-            inputs=("draft",),
-            panel_reviewer_order=_EMPTY_PANEL_ORDER,
-            edge=Edge("next", "high_revise"),
-        ),
-        "high_revise": _make_agent_stage(
-            "high_revise",
-            _HIGH_REVISE_PROMPT,
-            inputs=("draft", "high_panel.*"),
-            panel_reviewer_order=_HIGH_PANEL_ORDER,
-            edges=(Edge("done", "mid_panel"),),
-        ),
-        "mid_panel": _make_panel_stage(
-            "mid_panel",
-            _MID_REVIEWERS,
-            inputs=("high_revise",),
-            panel_reviewer_order=_HIGH_PANEL_ORDER,
-            edge=Edge("next", "mid_revise"),
-        ),
-        "mid_revise": _make_agent_stage(
-            "mid_revise",
-            _MID_REVISE_PROMPT,
-            inputs=("high_revise", "mid_panel.*"),
-            panel_reviewer_order=_MID_PANEL_ORDER,
-            edges=(Edge("done", "low_panel"),),
-        ),
-        "low_panel": _make_panel_stage(
-            "low_panel",
-            _LOW_REVIEWERS,
-            inputs=("mid_revise",),
-            panel_reviewer_order=_MID_PANEL_ORDER,
-            edge=Edge("next", "readiness"),
-        ),
-        "readiness": _make_agent_stage(
-            "readiness",
-            _READINESS_PROMPT,
-            inputs=("mid_revise", "low_panel.*"),
-            panel_reviewer_order=_LOW_PANEL_ORDER,
-            edges=(Edge("done", "halt"),),
-        ),
-    }
-    return Pipeline(stages=stages, entry=projected.entry)
+    return replace(projected, native_program=native_program, resource_bundles=())
 
 
-def _build_legacy_graph_pipeline() -> Pipeline:
+def _build_legacy_graph_pipeline() -> MegaplanPipeline:
     """Return the pre-native hand-built graph for parity baselines."""
 
     pipeline = (
-        Pipeline.builder(
+        MegaplanPipeline.builder(
             "epic-blitz",
             description=description,
             default_profile=default_profile,
@@ -686,15 +649,15 @@ def _build_legacy_graph_pipeline() -> Pipeline:
         )
     stages = dict(pipeline.stages)
     stages["readiness"] = fixed
-    return Pipeline(
+    return MegaplanPipeline(
         stages=stages,
         entry=pipeline.entry,
         overlays=pipeline.overlays,
     )
 
 
-def build_pipeline() -> Pipeline:
-    """Return the canonical native-projected ``epic-blitz`` Pipeline."""
+def build_pipeline() -> ArnoldPipeline:
+    """Return the canonical native-backed ``epic-blitz`` Pipeline."""
 
     return _project_native_pipeline()
 
