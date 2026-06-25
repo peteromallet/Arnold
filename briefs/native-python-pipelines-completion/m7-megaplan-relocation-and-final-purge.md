@@ -7,7 +7,7 @@ Finish the migration by inventorying every remaining legacy import and flag, mov
 ## Files To Change And Instructions
 
 - `docs/arnold/pipelines/migration-final-import-inventory.md`
-  Create this file and record the exact `rg` results for `arnold.pipeline.legacy`, `arnold/pipelines/megaplan/_pipeline`, `ARNOLD_NATIVE_RUNTIME`, `MEGAPLAN_M6_MANIFEST_DISCOVERY`, `MEGAPLAN_PIPELINE_AUTO`, and `--driver graph`; keep it as the decision log for what is deleted vs shimmed.
+  Create this file and record the exact `rg` results for `arnold.pipeline.legacy`, `arnold/pipelines/megaplan/_pipeline`, `arnold.pipelines.megaplan`, `arnold_pipelines.megaplan`, `ARNOLD_NATIVE_RUNTIME`, `MEGAPLAN_M6_MANIFEST_DISCOVERY`, `MEGAPLAN_PIPELINE_AUTO`, and `--driver graph`; keep it as the decision log for what is deleted vs removed from the authoring/runtime surface. The inventory must distinguish graph-era compatibility shims from legitimate internal projection/interface boundaries.
 - `arnold/pipelines/megaplan/_pipeline/__init__.py`
   Reduce to a minimal compatibility surface or delete it if the import inventory proves nothing still needs it.
 - `arnold/pipelines/megaplan/_pipeline/types.py`
@@ -65,16 +65,38 @@ Finish the migration by inventorying every remaining legacy import and flag, mov
 - `tests/arnold/pipelines/megaplan/test_step_io_policy_adapter.py`
   Repoint the suite to the final canonical module locations.
 - `tests/characterization/test_import_surface.py`
-  Update or narrow the public import-surface contract to the final intended survivors.
+  Update or narrow the public import-surface contract to the final intended
+  survivors. This suite is a hard gate for de-facto public Megaplan surfaces,
+  including `arnold_pipelines.megaplan` store, workers, cli, chain, execute,
+  agent runtime, cloud modules, and private-but-used chain helpers.
 - `tests/test_pipeline_run_cli.py`
-  Prove CLI describe still works after `_pipeline/run_cli.py` is deleted or shimmed.
+  The full suite must pass or each intentional compatibility break must be
+  recorded in the inventory with migration guidance. Do not limit this to CLI
+  describe: preserve run behavior for runtime/executor flags, vendor/profile
+  options, manifest/runtime identity, registered non-Megaplan pipelines, and
+  creative-only argument validation.
 
 ## Verifiable Completion Criterion
 
 - `docs/arnold/pipelines/migration-final-import-inventory.md` exists and shows the final status of every legacy import and flag family.
+- The inventory covers both `arnold.pipelines.megaplan.*` and
+  `arnold_pipelines.megaplan.*` import surfaces, not only `_pipeline`.
 - No file named above is deleted unless the inventory proves it has no remaining callers or can safely be reduced to a shim.
 - `_pipeline/` no longer owns active runtime behavior; anything that remains is explicitly documented as compatibility only.
 - `arnold.pipeline.legacy` remains only if the inventory shows a justified caller; otherwise it is removed in this milestone.
+- `_pipeline/resume.py` is not deleted until existing Megaplan resume file
+  surfaces pass through `arnold.pipeline.resume` or have explicit migration
+  diagnostics covered by tests.
+- Chain import contracts and PR helper behavior remain covered by
+  `tests/characterization/test_import_surface.py`; destructive relocation must
+  not break `ChainState`, `save_chain_state`, `load_chain_state`,
+  `_capture_sync_state`, `_ensure_milestone_pr`, `_commit_and_push_phase`, or
+  `_enable_auto_merge` without a deliberate compatibility decision.
+- The purge does not delete legitimate internal projection/interface boundaries
+  that implement the native contract. "No shims" means no graph-era fallback,
+  `_legacy.py`, `_pipeline`, opt-in flag, or compatibility authoring pattern;
+  it does not forbid an internal facade/projection layer when that layer is the
+  canonical way to expose the native interface.
 
 ## Risks And Blockers
 
