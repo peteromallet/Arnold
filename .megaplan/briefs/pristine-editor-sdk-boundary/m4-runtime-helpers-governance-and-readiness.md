@@ -2,7 +2,7 @@
 
 ## Outcome
 
-Proposal-runtime ownership is decided and implemented. `createExtensionContext()` is split into a pure SDK contract plus host wiring. Remaining author-facing deep imports are replaced. Contract governance recognizes `src/sdk/index.ts` as the extension SDK boundary. Docs and readiness checks reflect the new boundary, family maturity model, and adapter architecture. The SDK passes all release gates and is merged to `main`.
+Proposal-runtime ownership is decided and implemented. `createExtensionContext()` is split into a pure SDK contract plus host wiring. Remaining author-facing deep imports are replaced. Contract governance recognizes `src/sdk/index.ts` as the current editor SDK boundary, with core-neutral modules separated from video-owned modules. Docs and readiness checks reflect the new boundary, family maturity model, and adapter architecture. The SDK passes all release gates and is merged to `main`.
 
 ## Background
 
@@ -42,11 +42,19 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
    - Ensure docs do not overstate Phase 4 runtime support.
    - Generate any family maturity tables or checklist blocks in author-facing docs from `config/extensions/family-maturity.json` where practical.
    - Add a lightweight `docs-maturity-sync` check that compares named family support claims in these docs against generated `config/extensions/family-maturity.json`; fail release mode if docs either overstate or understate the registry for named families.
-   - Add `docs/extensions/ADDING_A_FAMILY.md` with the canonical checklist: one SDK family module, one host adapter, one conformance report, examples, tests, and the required maturity registry row.
+   - Add `docs/extensions/ADDING_A_FAMILY.md` with the canonical checklist: one modality-owned SDK family module, plus only generic core changes if the family abstraction itself changes, one host adapter, one conformance report, examples, tests, and the required maturity registry row.
+   - Add this block to the checklist document:
+     ```md
+     ## Portability Check
+
+     Before adding a family, decide whether it belongs to core or to a modality package. Core SDK modules may define only modality-neutral primitives: IDs, diagnostics, lifecycle, manifests, settings, packaging, maturity/conformance, and generic adapter shapes. Families that mention video timelines, renders, clips, tracks, shaders, asset panels, document selections, citations, annotations, grammar providers, or other editor-specific concepts must live under a modality-owned namespace such as `video/*` or a future `writing/*`.
+
+     `FamilyDefinition` is generic over the family kind. Do not make core depend on the video `ContributionKind`; use `FamilyDefinition<VideoContributionKind>` for video families and a separate kind union for future writing families.
+     ```
 
 6. **Maintain and re-run the external SDK import validator.**
    - Ensure the external SDK import validator added in M0 still passes.
-   - Add a second smoke that imports representative `src/sdk/families/*` modules directly.
+   - Add a second smoke that imports representative `src/sdk/core/*` and `src/sdk/video/families/*` modules directly.
    - Ensure both smoke fixtures also evaluate the imported SDK entrypoints at runtime, not just compile them.
    - Ensure `npm run quality:check` includes the smoke.
 
@@ -73,6 +81,7 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
 - Packagability is enforced from M0 onward and maintained through M4.
 - Docs may only describe support levels that are backed by the canonical family maturity registry.
 - Proposal runtime implementation belongs in the SDK only if it is genuinely pure and package-evaluable.
+- Core SDK modules are modality-neutral; video-specific families and contracts live under `src/sdk/video/*`.
 
 ## Open questions
 
@@ -81,7 +90,7 @@ M0 made the SDK dependency-clean and externally compilable. M1 defined the famil
 
 ## Constraints
 
-- Preserve runtime behavior for extension loading, manifest validation, settings, diagnostics, proposal runtime, planner metadata, and video editor public entrypoints.
+- Preserve runtime behavior for extension loading, manifest validation, settings, diagnostics, proposal runtime, host integration metadata (e.g. video planner metadata), and video editor public entrypoints.
 - `npm run quality:check`, `npm run test:readiness`, `npm run test:extensions`, and family conformance checks must stay green.
 - Do not install new dependencies.
 - Do not alter profile/model selections in megaplan configs.

@@ -35,8 +35,8 @@ M0 removed video-editor imports and made the SDK externally compilable. M1 defin
    - Keep `createExtensionContext()` implementation in place until M4 unless it can move without pulling host wiring forward.
    - Any field that represents host wiring, DOM, provider services, storage, console behavior, timeline contexts, or React lifecycle must be an explicit host-provided capability or opaque type in the SDK contract.
 
-4. **Reduce `src/sdk/index.ts` to a core barrel plus family-registry re-exports.**
-   - Re-export the new core modules and the M1 family maturity types/registry as named exports only.
+4. **Reduce `src/sdk/index.ts` to a core barrel plus generic family maturity/conformance re-exports plus video registry compatibility re-exports.**
+   - Re-export the new core modules and the M1 family maturity types/video registry as named exports only.
    - Keep family descriptor implementations in `src/sdk/index.ts` only as a temporary migration budget for M2b.
    - No new inline implementation should be added to `src/sdk/index.ts`.
    - Do not add namespace exports, default exports, or inline public type/value declarations to the barrel.
@@ -55,6 +55,7 @@ M0 removed video-editor imports and made the SDK externally compilable. M1 defin
 ## Locked decisions
 
 - SDK modules may not import from `src/tools/video-editor/**` or `@/tools/video-editor/**`.
+- Core SDK modules (`src/sdk/ids.ts`, `src/sdk/dispose.ts`, `src/sdk/diagnostics.ts`, etc.) must remain modality-neutral. They may not mention render, timeline, clip, track, shader, asset panel, DataProvider, or VideoEditorRuntimeSlices.
 - Public exported names from `@reigh/editor-sdk` must remain compatible unless explicitly approved in the milestone notes.
 - Public API approvals must name the affected export/type, compatibility impact, and the owner accepting the change in milestone notes.
 - Internal SDK modules use relative imports, not barrel imports through `src/sdk/index.ts`.
@@ -68,7 +69,7 @@ M0 removed video-editor imports and made the SDK externally compilable. M1 defin
 
 ## Constraints
 
-- Preserve runtime behavior: extension loading, manifest validation, settings, diagnostics, proposal runtime, planner metadata, and video editor public entrypoints.
+- Preserve runtime behavior: extension loading, manifest validation, settings, diagnostics, proposal runtime, host integration metadata (e.g. video planner metadata), and video editor public entrypoints.
 - `npm run quality:check` and `npm run test:readiness` must stay green.
 - Do not install new dependencies.
 - Do not alter profile/model selections in megaplan configs.

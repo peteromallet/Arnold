@@ -20,7 +20,7 @@ milestones:
     vendor: codex
     robustness: full
     depth: high
-    notes: "partnered-5 @codex. Hard prerequisite: remove all src/tools/video-editor imports from the SDK and move portable contracts into SDK-owned modules."
+    notes: "partnered-5 @codex. Hard prerequisite: remove all src/tools/video-editor imports from the SDK and move portable core contracts into SDK-owned core modules and video-editor contracts into SDK-owned video modules."
 
   - label: m1-family-contract-and-maturity-model
     idea: .megaplan/briefs/pristine-editor-sdk-boundary/m1-family-contract-and-maturity-model.md
@@ -47,7 +47,7 @@ milestones:
     vendor: codex
     robustness: full
     depth: high
-    notes: "partnered-5 @codex. Extract SDK family, timeline, asset, and export modules; reduce src/sdk/index.ts to a public barrel."
+    notes: "partnered-5 @codex. Extract SDK video family, video timeline, video asset, and video export modules; reduce src/sdk/index.ts to a public barrel."
 
   - label: m3-host-family-adapter-registry
     idea: .megaplan/briefs/pristine-editor-sdk-boundary/m3-host-family-adapter-registry.md

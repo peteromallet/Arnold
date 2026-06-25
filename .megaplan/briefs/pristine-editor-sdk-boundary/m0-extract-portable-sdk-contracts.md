@@ -19,29 +19,29 @@ The SDK currently declares it must not depend on editor internals, yet it import
 2. **Audit every import from `src/tools/video-editor/*` inside `src/sdk/**`.**
    - List files, imported symbols, and whether each symbol is truly portable or host-only.
 
-3. **Move renderability contracts into the SDK.**
-   - Create `src/sdk/rendering/renderability.ts` with data-only types:
-     - `RenderRoute`
-     - `DeterminismStatus`
+3. **Move video renderability contracts into SDK-owned video modules.**
+   - Create `src/sdk/video/rendering/renderability.ts` with data-only types:
+     - `RenderRoute` (video-specific)
+     - `DeterminismStatus` (video-specific)
      - `RenderBlockerReason`
      - `CapabilityFinding`
-   - Create `src/sdk/rendering/artifacts.ts` with:
-     - `RenderArtifact`
-     - `RenderMaterial`
+   - Create `src/sdk/video/rendering/artifacts.ts` with:
+     - `RenderArtifact` (video-specific)
+     - `RenderMaterial` (video-specific)
      - `RenderMaterialRef`
      - `RenderStorageLocator`
-   - Create `src/sdk/rendering/capabilities.ts` with:
+   - Create `src/sdk/video/rendering/capabilities.ts` with:
      - `ShaderMaterializerRequirementScope`
-     - `shaderMissingMaterializerBlockerMessage`
+     - `shaderMissingMaterializerBlockerMessage` (video-specific)
    - Update `src/tools/video-editor/runtime/renderability.ts` to depend on SDK-owned contracts.
 
-4. **Move timeline primitives needed by the SDK into SDK-owned modules.**
+4. **Move video timeline primitives needed by the video SDK surface into SDK-owned video modules.**
    - Identify which timeline patch/diff/ops/reader types the SDK re-exports only because host code needs them.
-   - Move truly portable shapes (e.g. `TimelinePatch`, `TimelineDiff`, `TimelineDiffGranularity`, `TimelineProposalInput`) into `src/sdk/timeline/patch.ts` and `src/sdk/timeline/reader.ts`.
+   - Move truly portable shapes (e.g. `TimelinePatch` (video-specific), `TimelineDiff` (video-specific), `TimelineDiffGranularity`, `TimelineProposalInput`) into `src/sdk/video/timeline/patch.ts` and `src/sdk/video/timeline/reader.ts`.
    - Keep host-only planner execution details in `src/tools/video-editor`.
 
-5. **Move asset metadata contracts into the SDK.**
-   - Move `AssetMetadata`, `AssetIntegrityMetadata`, `AssetGPSMetadata`, etc. into `src/sdk/assets/metadata.ts` if they are referenced by SDK public types.
+5. **Move video asset metadata contracts into SDK-owned video modules.**
+   - Move `AssetMetadata`, `AssetIntegrityMetadata`, `AssetGPSMetadata`, etc. into `src/sdk/video/assets/metadata.ts` if they are referenced by SDK public types.
 
 6. **Update `src/sdk/index.ts`.**
    - Replace all `@/tools/video-editor/*` imports with SDK-local imports.
@@ -67,7 +67,7 @@ The SDK currently declares it must not depend on editor internals, yet it import
    - Wire the validator into `npm run check:video-editor-sdk-imports` or `npm run test:extensions`.
 
 9. **Add a representative family contract sanity check.**
-   - Pick three families of different risk types: one metadata family (e.g. `metadataFacet`), one render-relevant family (e.g. `shader`), and one execution/process-like family (e.g. `process`).
+   - Pick three families of different risk types: one video metadata family (e.g. `metadataFacet`), one video render-relevant family (e.g. `shader`), and one video execution/process-like family (e.g. `process`).
    - For each, document in code comments:
      - what is portable vs. host-only today,
      - which SDK types are declaration-only,
@@ -108,9 +108,9 @@ The SDK currently declares it must not depend on editor internals, yet it import
 
 - `src/sdk/index.ts`
 - `src/tools/video-editor/runtime/renderability.ts`
-- New `src/sdk/rendering/*` modules
-- New `src/sdk/timeline/*` modules
-- New `src/sdk/assets/*` modules
+- New `src/sdk/video/rendering/*` modules
+- New `src/sdk/video/timeline/*` modules
+- New `src/sdk/video/assets/*` modules
 - `scripts/quality/check-video-editor-sdk-imports.mjs`
 - External SDK import validator under `scripts/quality/` or `scripts/quality/fixtures/sdk-consumer-package/`
 - `docs/extensions/pristine-sdk-boundary-audit.md` (new)

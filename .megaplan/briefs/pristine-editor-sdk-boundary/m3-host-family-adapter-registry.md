@@ -2,7 +2,7 @@
 
 ## Outcome
 
-`src/tools/video-editor/runtime/extensionSurface.ts` becomes a thin coordinator, not the owner of every family projection. A host-side family adapter registry under `src/tools/video-editor/runtime/families/*` maps contribution kinds to adapters; a separate coordinator normalizes, disposes, projects planner capabilities, and asks conformance helpers for reports. Families marked `runtime-bridged` have real adapters. Families not yet ready are classified `delegated`: their projection logic is extracted into per-family helpers and wrapped in placeholder adapters that report conformance gaps.
+`src/tools/video-editor/runtime/extensionSurface.ts` becomes a thin coordinator, not the owner of every family projection. A host-side family adapter registry under `src/tools/video-editor/runtime/families/*` maps family kinds to adapters; a separate coordinator normalizes, disposes, projects host capabilities (e.g. video planner projection), and asks conformance helpers for reports. Families marked `runtime-bridged` have real adapters. Families not yet ready are classified `delegated`: their projection logic is extracted into per-family helpers and wrapped in placeholder adapters that report conformance gaps.
 
 ## Background
 
@@ -13,23 +13,23 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 1. **Define the host family adapter interface.**
    - Create `src/tools/video-editor/runtime/families/hostFamilyAdapter.ts`:
      ```ts
-     interface HostFamilyAdapter<C, D> {
-       readonly kind: ContributionKind;
+     interface HostFamilyAdapter<Kind extends string, C, D> {
+       readonly kind: Kind;
        normalize(input: NormalizeFamilyInput<C>): FamilyNormalizeResult<D>;
        disposeExtension?(extensionId: string): void;
-       projectPlannerCapabilities?(input: FamilyPlannerInput<D>): readonly CapabilityRequirement[];
+       projectHostCapabilities?(input: FamilyCapabilityInput<D>): readonly CapabilityRequirement[];
        conformanceReport(): FamilyConformanceReport;
      }
      ```
-   - SDK-owned contract types live in `src/sdk/families/familyAdapter.ts`.
+   - SDK-owned contract types live in `src/sdk/core/families/familyAdapter.ts`.
    - Add optional capability-specific interfaces instead of forcing all runtime behavior through `normalize()`:
-     - `RenderPhaseHooks` for render-relevant families that need compile/materialize/teardown hooks.
-     - `ExecutionPhaseHooks` for process-like families that need execute/cancel/progress hooks.
+     - `RenderPhaseHooks` lives in `src/sdk/video/rendering/renderPhaseHooks.ts` as a video-specific extension for render-relevant families that need compile/materialize/teardown hooks, not in the core family adapter contract.
+     - `ExecutionPhaseHooks` remains a generic core interface for process-like families that need execute/cancel/progress hooks unless a family needs video-specific fields; in that case it moves under `src/sdk/video/families/`.
    - Families implement these optional interfaces only when their M1 requirements require them.
 
 2. **Create the host adapter registry and coordinator.**
    - `src/tools/video-editor/runtime/families/familyAdapterRegistry.ts` is a passive lookup table: `get(kind)`, `require(kind)`, and `kinds()`.
-   - `src/tools/video-editor/runtime/families/familyAdapterCoordinator.ts` owns bulk operations: normalize all contributions, dispose an extension, and project planner capabilities.
+   - `src/tools/video-editor/runtime/families/familyAdapterCoordinator.ts` owns bulk operations: normalize all contributions, dispose an extension, and project host capabilities.
    - `src/tools/video-editor/runtime/families/familyConformance.ts` owns conformance aggregation; do not put `auditConformance` on the registry.
 
 3. **Extract focused orchestration primitives before extracting adapters.**
@@ -50,7 +50,7 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 
 5. **Prove the pattern with one low-risk family first.**
    - Pick the lowest-risk runtime family with clean normalization (e.g. `metadataFacet` or `assetDetailSection`).
-   - Implement a real `HostFamilyAdapter` that owns normalization, disposal, planner projection, and conformance report.
+   - Implement a real `HostFamilyAdapter` that owns normalization, disposal, host capability projection (e.g. video planner projection), and conformance report.
    - Remove the corresponding switch cases from `extensionSurface.ts`.
    - Add regression tests.
    - Do not proceed to other families until this single adapter is demonstrably independent and conformance-tested.
@@ -87,9 +87,9 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 
 10. **Tighten family conformance check.**
    - Update `scripts/quality/check-extension-family-conformance.mjs` so release mode fails if:
-     - A `ContributionKind` lacks a `FamilyDefinition`.
+     - A family kind lacks a `FamilyDefinition`.
      - A family marked `runtime-bridged` lacks a real host adapter.
-     - A family marked `planner-integrated` or higher lacks planner projection tests.
+     - A family marked `host-integrated` with planner participation lacks host capability projection tests (e.g. video planner projection).
      - `extensionSurface.ts` contains inline projection logic for a `runtime-bridged` family.
      - A delegated projector imports forbidden broad host modules.
    - Audit mode reports `delegated` gaps without failing.
@@ -100,7 +100,7 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 
 ## Locked decisions
 
-- Host adapters own runtime normalization, lifecycle cleanup, and planner projection.
+- Host adapters own runtime normalization, lifecycle cleanup, and host capability projection (e.g. video planner projection).
 - The SDK owns the family contract, descriptor types, and conformance report shape.
 - `extensionSurface.ts` is a thin coordinator, not a family implementation.
 - Placeholder adapters must not delegate back to the monolithic switch; they wrap extracted per-family helpers.
@@ -115,7 +115,7 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 
 ## Constraints
 
-- Preserve runtime behavior for extension loading, manifest validation, settings, diagnostics, proposal runtime, planner metadata, and video editor public entrypoints.
+- Preserve runtime behavior for extension loading, manifest validation, settings, diagnostics, proposal runtime, host integration metadata (e.g. video planner metadata), and video editor public entrypoints.
 - `npm run quality:check` and `npm run test:readiness` must stay green.
 - Do not install new dependencies.
 - Do not alter profile/model selections in megaplan configs.
@@ -123,8 +123,8 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 
 ## Done criteria
 
-- [ ] `HostFamilyAdapter` interface exists and the registry can dispatch adapters by `ContributionKind`.
-- [ ] Optional render and execution phase hook interfaces exist for families that need more than normalization.
+- [ ] `HostFamilyAdapter` interface exists and the registry can dispatch adapters by family kind.
+- [ ] Optional video render and generic execution phase hook interfaces exist for families that need more than normalization.
 - [ ] Focused orchestration primitives and tests preserve sort, duplicate, diagnostics, aggregation, and freeze behavior.
 - [ ] `delegated` execution maturity is defined and applied to families not yet migrated.
 - [ ] One low-risk family has a real adapter that replaces its `extensionSurface.ts` switch cases.
@@ -132,7 +132,7 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 - [ ] Delegated projector helpers use narrow data inputs, do not accept full host context objects, and do not import from forbidden broad host modules.
 - [ ] `extensionSurface.ts` has no inline projection logic.
 - [ ] Adapter registry tests pass.
-- [ ] Family conformance check reports `delegated` gaps in audit mode and fails release mode for invalid maturity claims, missing required real adapters, or delegated gaps without owner/expiration.
+- [ ] Family conformance check reports `delegated` gaps in audit mode and fails release mode for invalid maturity claims, missing required real adapters, missing host capability projection tests (e.g. video planner projection), or delegated gaps without owner/expiration.
 - [ ] `npm run quality:check` and `npm run test:readiness` pass.
 
 ## Touchpoints
@@ -144,8 +144,9 @@ M2a/M2b split the SDK into core and family modules. M3 inverts the host side so 
 - `src/tools/video-editor/runtime/families/familyConformance.ts` (new)
 - `src/tools/video-editor/runtime/families/*Adapter.ts` (new)
 - `src/tools/video-editor/runtime/families/projectors/*.ts` (new)
-- `src/sdk/families/familyAdapter.ts` (new SDK contract)
-- `src/sdk/families/familyDefinitions.ts` (update maturity levels)
+- `src/sdk/core/families/familyAdapter.ts` (new SDK contract)
+- `src/sdk/video/rendering/renderPhaseHooks.ts` (new video-specific extension)
+- `src/sdk/video/families/familyDefinitions.ts` (update maturity levels)
 - `scripts/quality/check-extension-family-conformance.mjs`
 
 ## Anti-scope (not in this milestone)
