@@ -577,7 +577,7 @@ def _run_planning_phase(
     if plan is None:
         return 1, "", "missing --plan"
     from arnold.runtime.operations import OperationKind, OperationRequest
-    from arnold.pipelines.megaplan._pipeline.registry import (
+    from arnold.pipelines.megaplan.registry import (
         CANONICAL_BUILTIN_PIPELINE,
         dispatch_operation_for,
         phase_tuple_from_operation_result,
@@ -637,7 +637,7 @@ def _run_override_command(
         from arnold.pipelines.megaplan.cli import load_plan
         from arnold.pipelines.megaplan._core.io import json_dump
         from arnold.runtime.operations import OperationKind, OperationRequest
-        from arnold.pipelines.megaplan._pipeline.registry import (
+        from arnold.pipelines.megaplan.registry import (
             CANONICAL_BUILTIN_PIPELINE,
             dispatch_operation_for,
         )

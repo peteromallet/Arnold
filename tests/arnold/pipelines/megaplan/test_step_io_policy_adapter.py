@@ -11,7 +11,7 @@ from arnold.pipeline.step_io_policy import (
     CONTRACT_MODE_WARN,
     StepIOPolicy,
 )
-from arnold.pipelines.megaplan._pipeline.step_io_policy_adapter import (
+from arnold.pipelines.megaplan.step_io_policy_adapter import (
     STEP_IO_POLICY_ENV,
     STEP_IO_READ_LENIENT_ENV,
     has_megaplan_step_io_self_validation_marker,

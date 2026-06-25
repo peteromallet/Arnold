@@ -10,6 +10,10 @@ from arnold.runtime.errors import ArnoldError
 # so that identity holds across the megaplan/arnold.agent boundary.
 from arnold.agent.contracts import AgentMode, AgentSpec, format_agent_spec, parse_agent_spec
 
+# Pinned default models for claude: and codex: agent specs.
+CLAUDE_DEFAULT_MODEL: str = "claude-opus-4-7"
+CODEX_DEFAULT_MODEL: str = "gpt-5.5"
+
 if TYPE_CHECKING:
     from arnold.pipelines.megaplan.planning.state import PlanCurrentState
 
@@ -437,8 +441,6 @@ def resolved_default_model_for_agent(agent: str) -> str | None:
     >>> resolved_default_model_for_agent("hermes") is None
     True
     """
-    from arnold.pipelines.megaplan._pipeline.defaults import CLAUDE_DEFAULT_MODEL, CODEX_DEFAULT_MODEL
-
     if agent == "claude":
         return CLAUDE_DEFAULT_MODEL
     if agent == "codex":

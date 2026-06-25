@@ -9,8 +9,8 @@ import re
 from typing import Any, Literal, Mapping
 
 from arnold.pipelines.megaplan._core.canonical import canonical_projection_bytes, sha256_hex, sha256_uri
+from arnold.pipeline.contracts import is_legal_coercion
 from arnold.pipelines.megaplan._pipeline.behavioral_manifest import capsule_definition_identity_projection
-from arnold.pipelines.megaplan._pipeline.contracts import is_legal_coercion
 from arnold.pipelines.megaplan.schemas import (
     Capsule,
     CapsuleContract,
