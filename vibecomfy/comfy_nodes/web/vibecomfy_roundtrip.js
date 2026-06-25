@@ -17,6 +17,7 @@ import {
   noteAgentPanelCommit,
   scheduleRenderAgentPanel,
   setRenderGateway,
+  SETTINGS_STATUS_RENDER_SECTIONS,
 } from "./panel_scheduler.js";
 import {
   collectThreadMessageEntries as collectThreadMessageEntriesImpl,
@@ -36,6 +37,8 @@ import {
   renderComposerActions as renderComposerActionsImpl,
   renderComposerNotice as renderComposerNoticeImpl,
   renderComposerNoticeSection as renderComposerNoticeSectionImpl,
+  renderDeveloperSection as composerRenderDeveloperSection,
+  renderSettingsSection as composerRenderSettingsSection,
   submitReadinessState as submitReadinessStateImpl,
   syncComposerButtons as syncComposerButtonsImpl,
 } from "./panel_composer.js";
@@ -102,8 +105,34 @@ import {
   isTerminalAgentTurnStatus,
 } from "./agent_turn_feed.js";
 import {
-  projectRouteStatus,
+  AGENT_STATUS_RETRY_DELAYS_MS,
+  CANONICAL_AGENT_PROVIDERS,
+  ROUTE_ALIASES,
+  ROUTE_LABELS,
+  ROUTE_STATUS_KIND,
+  _lsGet,
+  _lsRemove,
+  _lsSet,
+  getRouteDescriptor,
+  getPersistedAgentProvider,
+  normalizeModelPreference,
+  normalizeRoutePreference,
+  persistAgentSettings,
+  populateRouteSelect as pollerPopulateRouteSelect,
+  refreshAgentStatus as pollerRefreshAgentStatus,
+  routeStatusState,
+  scheduleAgentStatusRetry as pollerScheduleAgentStatusRetry,
+  setPersistedAgentProvider,
+  storeOpenRouterCredential,
+  syncChooseEngineGate as pollerSyncChooseEngineGate,
+  testAgentSettings as testAgentSettingsImpl,
 } from "./agent_status_poller.js";
+import {
+  APPLY_ELIGIBILITY_REASON,
+  applyEligibility,
+  disabledApplyEligibility,
+  candidateActionState,
+} from "./agent_candidate_actions.js";
 
 // Re-export diagnostics functions for tests and external callers.
 export {
@@ -267,26 +296,7 @@ const PANEL_STATE = Object.freeze({
   ERROR: "ERROR",
 });
 
-const APPLY_ELIGIBILITY_REASON = Object.freeze({
-  APPLYABLE: "applyable",
-  NO_CANDIDATE: "no_candidate",
-  MISSING_CONTRACT: "missing_contract",
-  MISSING_DURABLE_TURN_METADATA: "missing_durable_turn_metadata",
-  NOT_LATEST: "not_latest",
-  SUPERSEDED: "superseded",
-  SERVER_BLOCKED: "server_blocked",
-  STALE_CANVAS: "stale_canvas",
-  QUEUE_BLOCKED_WARNING: "queue_blocked_warning",
-});
-
 const ALL_AGENT_PANEL_RENDER_SECTIONS = Object.freeze(Object.values(RENDER_SECTIONS));
-const SETTINGS_STATUS_RENDER_SECTIONS = Object.freeze([
-  RENDER_SECTIONS.THREAD,
-  RENDER_SECTIONS.SETTINGS,
-  RENDER_SECTIONS.COMPOSER,
-  RENDER_SECTIONS.NOTICE,
-]);
-const AGENT_STATUS_RETRY_DELAYS_MS = Object.freeze([250, 1000, 3000]);
 const AGENT_PANEL_SECTION_RENDER_ERROR_LIMIT = 20;
 const AGENT_PANEL_SECTION_RENDER_RETRY_LIMIT = 3;
 const AGENT_SIDEBAR_TAB_ID = "vibecomfy.agent-edit";
@@ -332,33 +342,6 @@ const PANEL_IDS = Object.freeze({
   welcomeOverlay: "vibecomfy-agent-panel-welcome-overlay",
 });
 
-const ROUTE_ALIASES = Object.freeze({
-  auto: "auto",
-  arnold: "auto",
-  deepseek: "deepseek",
-  openrouter: "openrouter",
-  anthropic: "anthropic",
-  claude: "anthropic",
-  "openai-codex": "openai-codex",
-  codex: "openai-codex",
-});
-
-const ROUTE_LABELS = Object.freeze({
-  auto: "auto",
-  deepseek: "deepseek",
-  openrouter: "openrouter",
-  anthropic: "anthropic",
-  "openai-codex": "openai-codex",
-});
-
-const ROUTE_STATUS_KIND = Object.freeze({
-  LOADING: "loading_status",
-  READY: "ready",
-  MISSING_OPTIONS: "missing_route_options",
-  MALFORMED: "malformed_status",
-  UNAVAILABLE: "status_unavailable",
-});
-
 const INTENT_NODE_CLASS_TYPES = new Set(["vibecomfy.code", "vibecomfy.exec", "vibecomfy.loop"]);
 const INTENT_KIND_BY_CLASS_TYPE = Object.freeze({
   "vibecomfy.code": "code",
@@ -390,7 +373,6 @@ const LOWERED_BADGE = "lowered";
 
 // ── localStorage helpers (safe wrappers — tolerate missing/throwing storage) ─
 const LS_ACTIVE_SESSION_KEY = "vibecomfy_active_session_id";
-const LS_AGENT_PROVIDER_KEY = "vibecomfy_agent_provider";
 
 function resolveModuleAssetUrl(path) {
   try {
@@ -404,65 +386,6 @@ function resolveModuleAssetUrl(path) {
 }
 
 const VIBECOMFY_LOGO_URL = resolveModuleAssetUrl("./vibecomfy_agent_icon_cream.png");
-
-function _lsGet(key) {
-  try {
-    const storage = typeof localStorage !== "undefined" && localStorage !== null
-      ? localStorage
-      : globalThis?.localStorage;
-    if (!storage) {
-      return null;
-    }
-    return storage.getItem(key);
-  } catch (_e) {
-    return null;
-  }
-}
-
-function _lsSet(key, value) {
-  try {
-    const storage = typeof localStorage !== "undefined" && localStorage !== null
-      ? localStorage
-      : globalThis?.localStorage;
-    if (!storage) {
-      return;
-    }
-    storage.setItem(key, value);
-  } catch (_e) {
-    // Best-effort: silently swallow set errors (private browsing, quota, etc.)
-  }
-}
-
-function _lsRemove(key) {
-  try {
-    const storage = typeof localStorage !== "undefined" && localStorage !== null
-      ? localStorage
-      : globalThis?.localStorage;
-    if (!storage) {
-      return;
-    }
-    storage.removeItem(key);
-  } catch (_e) {
-    // Best-effort.
-  }
-}
-
-const CANONICAL_AGENT_PROVIDERS = new Set(["anthropic", "deepseek", "openai-codex", "openrouter"]);
-
-function getPersistedAgentProvider() {
-  const raw = _lsGet(LS_AGENT_PROVIDER_KEY);
-  if (raw == null) return null;
-  if (CANONICAL_AGENT_PROVIDERS.has(raw)) return raw;
-  return null;
-}
-
-function setPersistedAgentProvider(value) {
-  if (value == null) {
-    _lsRemove(LS_AGENT_PROVIDER_KEY);
-    return;
-  }
-  _lsSet(LS_AGENT_PROVIDER_KEY, String(value));
-}
 
 // ── Default execution mode (settings combo + localStorage fallback) ─────────
 const DEFAULT_EXECUTION_MODE_LS_KEY = "vibecomfy.defaultExecutionMode";
@@ -2564,18 +2487,6 @@ function captureLiveCanvasToken(_graphHash, structuralHash) {
   return structuralHash ? `structure:${structuralHash}` : `hash:${_graphHash}`;
 }
 
-function normalizeRoutePreference(value) {
-  const normalized = String(value || "")
-    .trim()
-    .toLowerCase();
-  return ROUTE_ALIASES[normalized] || "deepseek";
-}
-
-function normalizeModelPreference(value) {
-  const normalized = String(value || "").trim();
-  return normalized ? normalized : null;
-}
-
 function buildSubmitIdempotencyKey({ sessionId, graphHash, route, model }) {
   const unique = typeof crypto.randomUUID === "function"
     ? crypto.randomUUID()
@@ -2860,254 +2771,26 @@ function getBackendStageInfo(payload) {
   return { stage, progress };
 }
 
-function buildStatusUrl(route, model) {
-  const params = new URLSearchParams();
-  if (route) {
-    params.set("route", route);
-  }
-  if (model) {
-    params.set("model", model);
-  }
-  const query = params.toString();
-  return query ? `/vibecomfy/agent/status?${query}` : "/vibecomfy/agent/status";
-}
-
-function routeStatusState(panel) {
-  return panel?.state?.routeStatus || { kind: ROUTE_STATUS_KIND.LOADING };
-}
-
-function routeOptionsFromStatus(status) {
-  if (!status || typeof status !== "object" || Array.isArray(status)) {
-    return null;
-  }
-  const options = status.route_options;
-  if (!options || typeof options !== "object" || Array.isArray(options)) {
-    return null;
-  }
-  return options;
-}
-
-function getRouteOptions(panel) {
-  return routeOptionsFromStatus(panel.state.statusSnapshot);
-}
-
-function getRouteDescriptor(panel, route = panel.fields.route.value) {
-  const normalized = normalizeRoutePreference(route);
-  return getRouteOptions(panel)?.[normalized] || null;
-}
-
 function nextMacrotask() {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function clearAgentStatusRetry(panel) {
-  const retry = panel?.state?.statusRetry;
-  if (retry?.timerId) {
-    clearTimeout(retry.timerId);
-  }
-  if (panel?.state) {
-    panel.state.statusRetry = null;
-  }
-}
-
-function scheduleAgentStatusRetry(panel, route, model, { quiet = true } = {}) {
-  if (!panel?.state) {
-    return;
-  }
-  const prior = panel.state.statusRetry;
-  const priorAttempts =
-    prior?.route === route && prior?.model === model && Number.isFinite(prior?.attempts)
-      ? prior.attempts
-      : 0;
-  const attempts = priorAttempts + 1;
-  if (attempts > AGENT_STATUS_RETRY_DELAYS_MS.length) {
-    panel.state.statusRetry = { route, model, attempts: priorAttempts, exhausted: true, timerId: null };
-    return;
-  }
-  const delayMs = AGENT_STATUS_RETRY_DELAYS_MS[attempts - 1];
-  const timerId = setTimeout(() => {
-    if (!panel?.state?.statusRetry || panel.state.statusRetry.timerId !== timerId) {
-      return;
-    }
-    panel.state.statusRetry.timerId = null;
-    refreshAgentStatus(panel, { quiet }).catch(() => {
-      // Swallow retry errors: the next scheduled retry or user action will
-      // surface them through the panel state.
-    });
-  }, delayMs);
-  panel.state.statusRetry = { route, model, attempts, exhausted: false, timerId };
-}
-
-function populateRouteSelect(selectNode, routeOptions, {
-  placeholderLabel = "Loading route/model status…",
-  selectedRoute = selectNode.value,
-} = {}) {
-  const ownerDocument = selectNode?.ownerDocument || (typeof document !== "undefined" ? document : null);
-  if (!ownerDocument) {
-    return;
-  }
-  const preferredRoute = normalizeRoutePreference(selectedRoute);
-  const knownRoutes = Object.keys(ROUTE_LABELS).filter((route) => routeOptions?.[route]);
-  const extraRoutes = Object.keys(routeOptions || {}).filter((route) => !ROUTE_LABELS[route]);
-  const desired = [...knownRoutes, ...extraRoutes];
-  clearNode(selectNode);
-  if (!desired.length) {
-    const node = option(preferredRoute, placeholderLabel, ownerDocument);
-    node.disabled = true;
-    node.selected = true;
-    selectNode.appendChild(node);
-    selectNode.value = preferredRoute;
-    return;
-  }
-  for (const route of desired) {
-    const descriptor = routeOptions?.[route] || null;
-    const label = ROUTE_LABELS[route] || route;
-    const node = option(route, label, ownerDocument);
-    if (descriptor?.normalized_route && descriptor.normalized_route !== route) {
-      node.title = `${label} → ${descriptor.normalized_route}`;
-    }
-    selectNode.appendChild(node);
-  }
-  selectNode.value = desired.includes(preferredRoute) ? preferredRoute : desired[0];
-}
-
-async function refreshAgentStatus(panel, { quiet = false } = {}) {
-  const route = normalizeRoutePreference(panel.fields.route.value);
-  const model = normalizeModelPreference(panel.fields.model.value);
-  const requestEpoch =
-    (Number.isFinite(panel.state.statusRequestEpoch) ? panel.state.statusRequestEpoch : 0) + 1;
-  panel.state.statusRequestEpoch = requestEpoch;
-  const priorRetry = panel.state.statusRetry;
-  const retryAttempts =
-    priorRetry?.route === route && priorRetry?.model === model && Number.isFinite(priorRetry?.attempts)
-      ? priorRetry.attempts
-      : 0;
-  if (priorRetry?.timerId) {
-    clearTimeout(priorRetry.timerId);
-  }
-  panel.state.statusRetry = retryAttempts > 0
-    ? { route, model, attempts: retryAttempts, exhausted: false, timerId: null }
-    : null;
-  panel.state.routeStatus = {
-    kind: ROUTE_STATUS_KIND.LOADING,
-    requestedRoute: route,
-    model,
+function agentStatusDeps() {
+  const deps = {
+    clearCredentialInput,
+    closeChooseEngineOverlay,
+    markAgentPanelDirtyAfterCommit,
+    nextMacrotask,
+    openChooseEngineOverlay,
+    renderAgentPanel,
+    refreshAgentStatus: (panel, opts) => pollerRefreshAgentStatus(panel, opts, deps),
+    scheduleAgentStatusRetry: (panel, route, model, opts) =>
+      pollerScheduleAgentStatusRetry(panel, route, model, opts, deps),
+    SETTINGS_STATUS_RENDER_SECTIONS,
+    RENDER_SECTIONS,
+    syncChooseEngineGate: (panel) => pollerSyncChooseEngineGate(panel, deps),
   };
-  panel.fields.route.disabled = true;
-  panel.fields.model.disabled = true;
-  if (typeof document !== "undefined") {
-    renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-  }
-  try {
-    // Keep the initial "loading" paint observable, then let tests/users observe
-    // the completed state after the request has actually been issued.
-    await nextMacrotask();
-    const statusUrl = buildStatusUrl(route, model);
-    console.log("[vibecomfy] refreshAgentStatus fetching", statusUrl, "current route value:", panel.fields.route.value);
-    const res = await fetch(statusUrl);
-    console.log("[vibecomfy] refreshAgentStatus response status", res.status, "content-type", res.headers.get("content-type"));
-    let status = null;
-    let rawText = "";
-    try {
-      rawText = await res.text();
-      status = JSON.parse(rawText);
-      console.log("[vibecomfy] refreshAgentStatus parsed status", status);
-    } catch (error) {
-      if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
-        return;
-      }
-      console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", error, "raw text:", rawText.substring(0, 500));
-      panel.state.statusSnapshot = null;
-      panel.state.routeStatus = {
-        kind: ROUTE_STATUS_KIND.MALFORMED,
-        requestedRoute: route,
-        model,
-        detail: String(error),
-      };
-      panel.state.settingsMessage = "Malformed status payload; route/model controls disabled.";
-      populateRouteSelect(panel.fields.route, null, {
-        placeholderLabel: "Malformed status payload",
-        selectedRoute: route,
-      });
-      panel.fields.route.value = route;
-      if (typeof document !== "undefined") {
-        markAgentPanelDirtyAfterCommit(panel, SETTINGS_STATUS_RENDER_SECTIONS, "status");
-      }
-      return;
-    }
-    if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
-      console.log("[vibecomfy] refreshAgentStatus stale epoch, dropping response");
-      return;
-    }
-    if (!res.ok) {
-      console.error("[vibecomfy] refreshAgentStatus HTTP error", res.status);
-      throw new Error(`HTTP ${res.status}`);
-    }
-    clearAgentStatusRetry(panel);
-    panel.state.statusSnapshot = status;
-    const projected = projectRouteStatus(status, { route, model, quiet });
-    const requestedRoute = projected.routeStatus.requestedRoute;
-    console.log("[vibecomfy] refreshAgentStatus requestedRoute=", requestedRoute, "routeOptions keys=", Object.keys(projected.routeOptions || {}), "res.ok=", res.ok);
-    if (projected.issue === "malformed_status") {
-      console.warn("[vibecomfy] malformed /vibecomfy/agent/status payload", status);
-    } else if (projected.issue === "missing_route_options") {
-      console.warn("[vibecomfy] status payload missing route_options", status);
-    } else if (projected.issue === "missing_route_descriptor") {
-      console.warn("[vibecomfy] status payload missing descriptor for requested route", {
-        requestedRoute,
-        routeOptions: projected.routeOptions,
-      });
-    }
-    panel.state.routeStatus = projected.routeStatus;
-    if (projected.settingsMessage != null) {
-      panel.state.settingsMessage = projected.settingsMessage;
-    }
-    if (projected.routeOptions) {
-      populateRouteSelect(panel.fields.route, projected.routeOptions, {
-        selectedRoute: requestedRoute,
-      });
-    } else {
-      populateRouteSelect(panel.fields.route, null, {
-        placeholderLabel: projected.placeholderLabel || "Status unavailable",
-        selectedRoute: requestedRoute,
-      });
-    }
-    panel.fields.route.value = requestedRoute;
-    if (typeof status?.model === "string" && !panel.fields.model.value.trim()) {
-      panel.fields.model.value = status.model;
-    }
-  } catch (e) {
-    if (Number.isFinite(requestEpoch) && panel.state.statusRequestEpoch !== requestEpoch) {
-      return;
-    }
-    console.error("[vibecomfy] refreshAgentStatus caught exception", e);
-    panel.state.settingsMessage = `Status unavailable: ${String(e)}`;
-    panel.state.statusSnapshot = null;
-    panel.state.routeStatus = {
-      kind: ROUTE_STATUS_KIND.UNAVAILABLE,
-      requestedRoute: route,
-      model,
-      detail: String(e),
-    };
-    populateRouteSelect(panel.fields.route, null, {
-      placeholderLabel: "Status unavailable",
-      selectedRoute: route,
-    });
-    panel.fields.route.value = route;
-    scheduleAgentStatusRetry(panel, route, model, { quiet: true });
-  }
-  if (typeof document === "undefined") {
-    return;
-  }
-  syncChooseEngineGate(panel);
-  if (typeof panel?.state?.chooseEngineRefresh === "function") {
-    panel.state.chooseEngineRefresh();
-  }
-  const statusDirtySections = Array.isArray(panel?.state?.chatMessages) && panel.state.chatMessages.length
-    ? [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD]
-    : SETTINGS_STATUS_RENDER_SECTIONS;
-  console.log("[vibecomfy] refreshAgentStatus final routeStatus=", panel.state.routeStatus?.kind, "settingsMessage=", panel.state.settingsMessage);
-  markAgentPanelDirtyAfterCommit(panel, statusDirtySections, "status");
+  return deps;
 }
 
 function submitReadinessState(panel) {
@@ -3123,6 +2806,10 @@ function clearCredentialInput(panel) {
 
 function hasStoredBrowserCredential(panel, route = panel?.fields?.route?.value) {
   const presence = panel?.state?.statusSnapshot?.credential_presence || {};
+  const requestedRoute = String(route || "").trim().toLowerCase();
+  if (requestedRoute === "deepseek") {
+    return Boolean(presence.deepseek_api_key);
+  }
   const normalizedRoute = normalizeRoutePreference(route);
   if (normalizedRoute === "deepseek") {
     return Boolean(presence.deepseek_api_key);
@@ -3147,119 +2834,17 @@ function closeChooseEngineOverlay(panel) {
   }
 }
 
-function storedReadyProviderFromStatus(panel) {
-  const status = panel?.state?.statusSnapshot;
-  const routeStatus = routeStatusState(panel);
-  if (!status || routeStatus.kind !== ROUTE_STATUS_KIND.READY || status.provider_available === false) {
-    return null;
-  }
-  const resolvedRoute = normalizeRoutePreference(
-    status.route || status.route_metadata?.normalized_route || status.requested_route,
+function normalizeCandidateApplyEligibility(candidateGraph, eligibility) {
+  return applyEligibility(
+    {
+      state: {
+        candidateGraph,
+        applyEligibility: eligibility,
+      },
+    },
+    null,
+    { missingContractAsNull: true },
   );
-  if (resolvedRoute === "deepseek" && status.credential_presence?.deepseek_api_key) {
-    return "deepseek";
-  }
-  if (resolvedRoute === "openrouter" && (status.credential_presence?.openrouter_api_key || status.credential_presence?.deepseek_api_key)) {
-    return "openrouter";
-  }
-  return null;
-}
-
-function syncChooseEngineGate(panel) {
-  if (!panel?.shell || typeof document === "undefined") {
-    return;
-  }
-  const persisted = getPersistedAgentProvider();
-  if (persisted) {
-    closeChooseEngineOverlay(panel);
-    return;
-  }
-  const readyProvider = storedReadyProviderFromStatus(panel);
-  if (readyProvider) {
-    setPersistedAgentProvider(readyProvider);
-    populateRouteSelect(panel.fields.route, routeOptionsFromStatus(panel.state.statusSnapshot), {
-      selectedRoute: readyProvider,
-    });
-    panel.fields.route.value = readyProvider;
-    panel.state.routeStatus = {
-      kind: ROUTE_STATUS_KIND.READY,
-      requestedRoute: readyProvider,
-      model: normalizeModelPreference(panel.fields.model.value),
-    };
-    panel.state.settingsMessage = `${readyProvider} → ${panel.state.statusSnapshot?.route || readyProvider} (provider ready)`;
-    closeChooseEngineOverlay(panel);
-    return;
-  }
-  if (routeStatusState(panel).kind !== ROUTE_STATUS_KIND.LOADING) {
-    openChooseEngineOverlay(panel, { onResolved: () => {} });
-  }
-}
-
-function normalizeApplyEligibility(payload) {
-  if (!payload || typeof payload !== "object") {
-    return null;
-  }
-  if (!Object.values(APPLY_ELIGIBILITY_REASON).includes(payload.reason)) {
-    return null;
-  }
-  return {
-    applyable: payload.applyable !== false,
-    reason: payload.reason,
-    message: typeof payload.message === "string" ? payload.message : "",
-    warnings: Array.isArray(payload.warnings) ? payload.warnings.slice() : [],
-  };
-}
-
-function noCandidateApplyEligibility() {
-  return {
-    applyable: false,
-    reason: APPLY_ELIGIBILITY_REASON.NO_CANDIDATE,
-    message: "No candidate is available to apply.",
-    warnings: [],
-  };
-}
-
-function ensureMissingEligibilityWarning(panel, detail) {
-  if (!panel?.state) {
-    console.warn(`[vibecomfy] ${detail.message}`);
-    return;
-  }
-  const warningKey = [
-    detail.reason,
-    panel.state.turnId || "no-turn",
-    panel.state.candidateGraphHash || "no-candidate-hash",
-  ].join(":");
-  if (panel.state.applyEligibilityWarningKey === warningKey) {
-    return;
-  }
-  panel.state.applyEligibilityWarningKey = warningKey;
-  panel.state.applyEligibilityWarning = detail;
-  panel.state.debugPayload = {
-    ...(panel.state.debugPayload && typeof panel.state.debugPayload === "object"
-      ? panel.state.debugPayload
-      : {}),
-    apply_eligibility_warning: detail,
-  };
-  console.warn(`[vibecomfy] ${detail.message}`);
-}
-
-function missingContractApplyEligibility(panel, detail = {}) {
-  const message = typeof detail.message === "string" && detail.message
-    ? detail.message
-    : "Backend response omitted canonical eligibility for this candidate. Apply is disabled until the contract is present.";
-  const warning = {
-    reason: APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT,
-    message,
-    turn_id: panel?.state?.turnId || null,
-    candidate_graph_hash: panel?.state?.candidateGraphHash || null,
-  };
-  ensureMissingEligibilityWarning(panel, warning);
-  return {
-    applyable: false,
-    reason: APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT,
-    message,
-    warnings: ["missing_contract"],
-  };
 }
 
 export function syncBaselineFromResponse(panel, payload) {
@@ -3362,129 +2947,6 @@ function recoveryForPanelState(recovery) {
         : typeof recovery.clientStructuralGraphHash === "string"
           ? recovery.clientStructuralGraphHash
           : null,
-  };
-}
-
-function applyEligibility(panel, liveCanvasSnapshot = null) {
-  if (!panel?.state?.candidateGraph) {
-    return noCandidateApplyEligibility();
-  }
-  const canonicalEligibility = normalizeApplyEligibility(panel.state.applyEligibility);
-  if (canonicalEligibility) {
-    panel.state.applyEligibilityWarning = null;
-    panel.state.applyEligibilityWarningKey = null;
-    return canonicalEligibility;
-  }
-  return missingContractApplyEligibility(panel);
-}
-
-function disabledApplyEligibility(reason, message, warnings = []) {
-  return {
-    applyable: false,
-    reason,
-    message: typeof message === "string" ? message : "",
-    warnings: Array.isArray(warnings) ? warnings.slice() : [],
-  };
-}
-
-function candidateTurnId(message, snapshot = null) {
-  if (typeof snapshot?.turn_id === "string" && snapshot.turn_id) {
-    return snapshot.turn_id;
-  }
-  if (typeof message?.turn_id === "string" && message.turn_id) {
-    return message.turn_id;
-  }
-  return null;
-}
-
-function candidateGraphPresentForBubble(message, snapshot = null) {
-  if (snapshot && Object.prototype.hasOwnProperty.call(snapshot, "candidateGraphPresent")) {
-    return Boolean(snapshot.candidateGraphPresent);
-  }
-  const candidateGraph = message?.candidateGraph
-    || message?.candidate?.graph
-    || message?.response?.candidateGraph
-    || message?.response?.candidate?.graph
-    || null;
-  return Boolean(candidateGraph && typeof candidateGraph === "object");
-}
-
-function snapshotEligibilityForBubble(message, snapshot = null) {
-  const normalizedSnapshot = normalizeApplyEligibility(snapshot?.applyEligibility);
-  if (normalizedSnapshot) {
-    return normalizedSnapshot;
-  }
-  const normalizedMessage = normalizeApplyEligibility(
-    message?.eligibility
-      || message?.response?.eligibility
-      || message?.apply_eligibility
-      || message?.response?.apply_eligibility
-      || null,
-  );
-  if (normalizedMessage) {
-    return normalizedMessage;
-  }
-  return null;
-}
-
-function candidateActionState(panel, message = null, snapshot = null) {
-  const submitting = panel?.state?.phase === PANEL_STATE.SUBMITTING;
-  const applying = panel?.state?.phase === PANEL_STATE.APPLYING;
-  const activeTurnId =
-    panel?.state?.candidateGraph && typeof panel.state.turnId === "string" && panel.state.turnId
-      ? panel.state.turnId
-      : null;
-  const turnId = candidateTurnId(message, snapshot) || activeTurnId;
-  const candidatePresent = message || snapshot
-    ? candidateGraphPresentForBubble(message, snapshot)
-    : Boolean(panel?.state?.candidateGraph);
-
-  if (!candidatePresent) {
-    return {
-      visible: false,
-      active: false,
-      turnId,
-      eligibility: noCandidateApplyEligibility(),
-      applyDisabled: true,
-      rejectDisabled: true,
-    };
-  }
-
-  const active =
-    !message && !snapshot
-      ? Boolean(candidatePresent && activeTurnId)
-      : Boolean(activeTurnId && turnId && activeTurnId === turnId);
-  let eligibility;
-  if (!message && !snapshot) {
-    eligibility = applyEligibility(panel);
-  } else if (active) {
-    eligibility = applyEligibility(panel);
-  } else {
-    const historicalEligibility = snapshotEligibilityForBubble(message, snapshot);
-    if (historicalEligibility?.reason === APPLY_ELIGIBILITY_REASON.SUPERSEDED) {
-      eligibility = historicalEligibility;
-    } else {
-      eligibility = disabledApplyEligibility(
-        APPLY_ELIGIBILITY_REASON.NOT_LATEST,
-        "Only the latest candidate can be applied.",
-        ["not_latest"],
-      );
-    }
-  }
-
-  const blockerMessage =
-    !eligibility.applyable
-      ? (eligibility.message || (Array.isArray(eligibility.warnings) ? eligibility.warnings[0] : "") || "")
-      : "";
-
-  return {
-    visible: true,
-    active,
-    turnId,
-    eligibility,
-    blockerMessage,
-    applyDisabled: applying || !active || !eligibility.applyable,
-    rejectDisabled: submitting || applying || !active,
   };
 }
 
@@ -3864,7 +3326,7 @@ function createAgentPanelShell() {
     fontSize: "12px",
     boxSizing: "border-box",
   });
-  populateRouteSelect(routeSelect, null, { selectedRoute: "auto" });
+  pollerPopulateRouteSelect(routeSelect, null, { selectedRoute: "auto" }, agentStatusDeps());
   routeSelect.value = "auto";
   const modelInput = document.createElement("input");
   modelInput.id = PANEL_IDS.model;
@@ -3911,12 +3373,13 @@ function createAgentPanelShell() {
     gap: "8px",
     flexWrap: "wrap",
   });
-  const settingsTest = button("Test Provider", () => testAgentSettings(currentAgentPanel()));
+  const settingsTest = button("Test Provider", () =>
+    testAgentSettingsImpl(currentAgentPanel(), agentStatusDeps()));
   settingsTest.id = PANEL_IDS.settingsTest;
   routeSelect.onchange = () => {
     const panel = currentAgentPanel();
     if (panel) {
-      panel.fields.route.value = normalizeRoutePreference(routeSelect.value);
+      panel.fields.route.value = routeSelect.value;
       return autoSaveAgentSettings(panel);
     }
     return undefined;
@@ -3978,7 +3441,7 @@ function createAgentPanelShell() {
       return;
     }
     panel.state.developerExpanded = !panel.state.developerExpanded;
-    renderDeveloperDisclosure(panel);
+    composerRenderDeveloperSection(panel, composerRenderDeps());
   });
   developerToggle.id = PANEL_IDS.developerToggle;
   Object.assign(developerToggle.style, {
@@ -4378,7 +3841,7 @@ function restoreLatestCandidateFromChat(panel, payload) {
     return;
   }
   const eligibility = latestApplyCandidate?.eligibility;
-  const normalizedEligibility = normalizeApplyEligibility(eligibility);
+  const normalizedEligibility = normalizeCandidateApplyEligibility(candidateGraph, eligibility);
   const restoredActionAllowed = Boolean(
     candidateGraph
     && (latestApplyCandidate?.applyable === true || normalizedEligibility?.applyable === true),
@@ -4496,9 +3959,9 @@ function openAgentPanel({ mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = nu
   const persisted = getPersistedAgentProvider();
   if (persisted) {
     panel.fields.route.value = persisted;
-    populateRouteSelect(panel.fields.route, null, { selectedRoute: persisted });
+    pollerPopulateRouteSelect(panel.fields.route, null, { selectedRoute: persisted }, agentStatusDeps());
   }
-  refreshAgentStatus(panel, { quiet: true });
+  pollerRefreshAgentStatus(panel, { quiet: true }, agentStatusDeps());
   ensureScheduledAgentPanelDirtyFlush(panel, "open-backstop");
   return panel;
 }
@@ -7907,7 +7370,7 @@ function installQueueGuard() {
 
 function appendCandidateDetail(body, panel, message = null, snapshot = null) {
   const normalDetailMode = Boolean(snapshot);
-  const candidateGraphPresent = candidateGraphPresentForBubble(message, snapshot)
+  const candidateGraphPresent = candidateActionState(panel, message, snapshot).visible
     || (!message && !snapshot && Boolean(panel.state.candidateGraph));
   const phase = snapshot?.phase || panel.state.phase;
   const clarification = snapshot?.clarification || panel.state.clarification;
@@ -8608,234 +8071,28 @@ function adapterCapabilitySnapshot() {
   };
 }
 
-function renderDeveloper(panel) {
-  const body = panel?.sections?.developer;
-  if (!body) {
-    return;
-  }
-  clearNode(body);
-
-  const caps = adapterCapabilitySnapshot();
-
-  const devData = el("div");
-  Object.assign(devData.style, {
-    display: "grid",
-    gap: "4px",
-    fontSize: "10px",
-    color: "#8d93a1",
-    lineHeight: "1.4",
-  });
-
-  // ── Adapter capability state ──────────────────────────────────────────
-  const adapterSection = renderDeveloperSubsection("Adapter Capabilities");
-  const capLines = [
-    `graphApply: ${caps.graphApply.available ? "✓" : "✗"} (${caps.graphApply.detail})`,
-    `previewForeground: ${caps.previewForeground.available ? "✓" : "✗"} (${caps.previewForeground.detail})`,
-    caps.previewStrategy ? `preview strategy: ${caps.previewStrategy}${caps.previewPolling ? " (polling fallback)" : ""}` : null,
-    `queueGuard: ${caps.queueGuard.available ? "✓" : "✗"} (${caps.queueGuard.detail})`,
-    caps.queueGuard.fallbackWarning ? `queueGuard fallback: ${caps.queueGuard.fallbackWarning}` : null,
-    `supportsAll: ${caps.supportsAll ? "yes" : "no"} (frontend ${caps.frontendVersion})`,
-  ].filter(Boolean);
-  for (const line of capLines) {
-    const div = el("div", line);
-    div.style.color = line.startsWith("graphApply: ✗") || line.startsWith("previewForeground: ✗") || line.startsWith("queueGuard: ✗") ? "#ff8d8d" : "#8d93a1";
-    adapterSection.appendChild(div);
-  }
-  devData.appendChild(adapterSection);
-
-  // ── Queue guard state ─────────────────────────────────────────────────
-  const qgSection = renderDeveloperSubsection("Queue Guard State");
-  const qgState = getQueueGuardStateForPanel();
-  const runtime = getAgentPanelRuntime();
-  const qgLines = [
-    `hookInstalled: ${qgState.hookInstalled}`,
-    `hookPath: ${qgState.hookPath || "none"}`,
-    qgState.fallbackWarning ? `fallbackWarning: ${qgState.fallbackWarning}` : null,
-    qgState.activeContext ? `activeContext: turn=${qgState.activeContext.turnId || "?"} queueAllowed=${qgState.activeContext.queueAllowed}` : "activeContext: none",
-    qgState.lastBlockNotice ? `lastBlock: ${qgState.lastBlockNotice.at || "?"} — ${qgState.lastBlockNotice.message}` : "lastBlockNotice: none",
-    `blockedTurnKeys: ${runtime.queueGuardBlockedTurnKeys.size}`,
-  ].filter(Boolean);
-  for (const line of qgLines) {
-    qgSection.appendChild(el("div", line));
-  }
-  devData.appendChild(qgSection);
-
-  // ── Hashes ────────────────────────────────────────────────────────────
-  const hashSection = renderDeveloperSubsection("Hashes");
-  const hashLines = [
-    `baselineGraphHash: ${panel.state.baselineGraphHash || "none"}`,
-    panel.state.baselineGraphHashKind ? `baselineGraphHashKind: ${panel.state.baselineGraphHashKind}` : null,
-    panel.state.baselineGraphHashVersion != null ? `baselineGraphHashVersion: ${panel.state.baselineGraphHashVersion}` : null,
-    `candidateGraphHash: ${panel.state.candidateGraphHash || "none"}`,
-    `serverSubmitGraphHash: ${panel.state.serverSubmitGraphHash || "none"}`,
-    panel.state.lastSubmit?.client_graph_hash ? `lastSubmit.client_graph_hash: ${panel.state.lastSubmit.client_graph_hash}` : null,
-    panel.state.lastSubmit?.client_structural_graph_hash ? `lastSubmit.client_structural_graph_hash: ${panel.state.lastSubmit.client_structural_graph_hash}` : null,
-  ].filter(Boolean);
-  for (const line of hashLines) {
-    hashSection.appendChild(el("div", line));
-  }
-  devData.appendChild(hashSection);
-
-  // ── Raw booleans ──────────────────────────────────────────────────────
-  const boolSection = renderDeveloperSubsection("Raw Booleans");
-  const boolLines = [
-    `canvasApplyAllowed: ${panel.state.canvasApplyAllowed}`,
-    `queueAllowed: ${panel.state.queueAllowed}`,
-    `applyAllowed: ${panel.state.applyAllowed}`,
-    `applyEligibility: ${JSON.stringify(panel.state.applyEligibility)}`,
-    panel.state.applyEligibilityWarning ? `applyEligibilityWarning: ${JSON.stringify(panel.state.applyEligibilityWarning)}` : null,
-  ].filter(Boolean);
-  for (const line of boolLines) {
-    boolSection.appendChild(el("div", line));
-  }
-  devData.appendChild(boolSection);
-
-  // ── Missing-contract warning ──────────────────────────────────────────
-  if (panel.state.applyEligibilityWarning && panel.state.applyEligibilityWarning.reason === APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT) {
-    const mcSection = renderDeveloperSubsection("Missing Contract");
-    mcSection.style.color = "#ffc107";
-    mcSection.appendChild(el("div", `turn_id: ${panel.state.applyEligibilityWarning.turn_id || "?"}`));
-    mcSection.appendChild(el("div", `message: ${panel.state.applyEligibilityWarning.message}`));
-    if (panel.state.applyEligibilityWarning.candidate_graph_hash) {
-      mcSection.appendChild(el("div", `candidate_graph_hash: ${panel.state.applyEligibilityWarning.candidate_graph_hash}`));
-    }
-    devData.appendChild(mcSection);
-  }
-
-  // ── Raw JSON ──────────────────────────────────────────────────────────
-  const rawSection = renderDeveloperSubsection("Raw JSON");
-  const statusSnapshot = scrubDebugPayload(panel.state.statusSnapshot);
-  const debugPayload = scrubDebugPayload(panel.state.debugPayload);
-  if (statusSnapshot || debugPayload) {
-    if (statusSnapshot) {
-      rawSection.appendChild(createDetails("Status snapshot", statusSnapshot));
-    }
-    if (debugPayload) {
-      rawSection.appendChild(createDetails("Debug payload", debugPayload));
-    }
-    devData.appendChild(rawSection);
-  }
-
-  body.appendChild(devData);
-  if (Object.prototype.hasOwnProperty.call(body, "textContent")) {
-    const summaryText = [
-      "Adapter Capabilities",
-      ...capLines,
-      "Queue Guard State",
-      ...qgLines,
-      "Raw Booleans",
-      ...boolLines,
-    ].join("\n");
-    body.textContent = summaryText;
-    if (body.parentNode && Object.prototype.hasOwnProperty.call(body.parentNode, "textContent")) {
-      body.parentNode.textContent = summaryText;
-    }
-  }
-}
-
-function renderDeveloperDisclosure(panel) {
-  const body = panel?.sections?.developer;
-  const toggle = getPanelElementById(panel, PANEL_IDS.developerToggle);
-  const expanded = Boolean(panel?.state?.developerExpanded);
-  if (toggle) {
-    toggle.textContent = expanded ? "▾ Developer" : "▸ Developer";
-    toggle.ariaExpanded = expanded ? "true" : "false";
-    if (typeof toggle.setAttribute === "function") {
-      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    } else if (toggle.attributes && typeof toggle.attributes === "object") {
-      toggle.attributes["aria-expanded"] = expanded ? "true" : "false";
-    }
-  }
-  if (body) {
-    body.style.display = expanded ? "grid" : "none";
-  }
-}
-
-function renderDeveloperSubsection(title) {
-  const section = el("div");
-  Object.assign(section.style, {
-    border: "1px solid #282a32",
-    borderRadius: "4px",
-    padding: "6px",
-    background: "#0d0f14",
-  });
-  const heading = el("div", title);
-  Object.assign(heading.style, {
-    fontSize: "10px",
-    fontWeight: "700",
-    color: "#9da1ac",
-    textTransform: "uppercase",
-    letterSpacing: "0.06em",
-    marginBottom: "4px",
-  });
-  section.appendChild(heading);
-  return section;
-}
-
-function renderSettings(panel) {
-  const routeStatus = routeStatusState(panel);
-  const descriptor = getRouteDescriptor(panel);
-  const controlsReady =
-    Boolean(descriptor)
-    && routeStatus.kind === ROUTE_STATUS_KIND.READY;
-  const apiKeyVisible = controlsReady && Boolean(descriptor.browser_api_key_allowed);
-  panel.fields.route.disabled = !controlsReady;
-  panel.fields.model.disabled = !controlsReady;
-  setVisible(panel.fields.apiKey, apiKeyVisible, "");
-  const storedBrowserKey = hasStoredBrowserCredential(panel, panel.fields.route.value);
-  const browserKeyLabel = normalizeRoutePreference(panel.fields.route.value) === "deepseek" ? "DeepSeek" : "OpenRouter";
-  panel.fields.apiKey.placeholder = apiKeyVisible
-    ? (storedBrowserKey ? `Saved ${browserKeyLabel} key present; paste a new key to replace` : `${browserKeyLabel} API key`)
-    : "Browser API keys are not accepted for this route";
-  if (!apiKeyVisible) {
-    clearCredentialInput(panel);
-  }
-
-  const statusNode = getPanelElementById(panel, PANEL_IDS.settingsStatus);
-  const guidanceNode = getPanelElementById(panel, PANEL_IDS.settingsGuidance);
-  if (!statusNode || !guidanceNode) {
-    return;
-  }
-  statusNode.style.color =
-    panel.state.settingsMessageKind === "success"
-      ? "#7ee787"
-      : panel.state.settingsMessageKind === "error"
-        ? "#ff8d8d"
-        : panel.state.settingsMessageKind === "pending"
-          ? "#f2cc60"
-          : "#8d93a1";
-  if (!controlsReady) {
-    if (routeStatus.kind === ROUTE_STATUS_KIND.LOADING) {
-      statusNode.textContent = panel.state.settingsMessage || "Loading route/model status…";
-      guidanceNode.textContent = "Waiting for /vibecomfy/agent/status before enabling route/model controls.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MISSING_OPTIONS) {
-      statusNode.textContent = panel.state.settingsMessage || "Status missing route options; route/model controls disabled.";
-      guidanceNode.textContent = "The backend returned status without route_options. Check /vibecomfy/agent/status and retry.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MALFORMED) {
-      statusNode.textContent = panel.state.settingsMessage || "Malformed status payload; route/model controls disabled.";
-      guidanceNode.textContent = "The backend status payload is malformed. Fix /vibecomfy/agent/status and retry.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.UNAVAILABLE) {
-      statusNode.textContent = panel.state.settingsMessage || "Status unavailable.";
-      guidanceNode.textContent = "Could not reach /vibecomfy/agent/status. Retry with Test Provider after restoring the backend.";
-    } else {
-      statusNode.textContent = panel.state.settingsMessage || "Route/model controls unavailable.";
-      guidanceNode.textContent = "";
-    }
-    return;
-  }
-
-  const normalizedRoute = descriptor.normalized_route || normalizeRoutePreference(panel.fields.route.value);
-  const providerAvailable = panel.state.statusSnapshot?.provider_available;
-  const availability = providerAvailable === false ? "provider unavailable" : "provider ready";
-  statusNode.textContent = panel.state.settingsMessage
-    || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
-  guidanceNode.textContent = descriptor.guidance || "";
-  if (apiKeyVisible && storedBrowserKey) {
-    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved ${browserKeyLabel} key present. Paste a new key only if you want to replace it.`;
-  }
-  if (descriptor.requested_route === "anthropic") {
-    guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
-  }
+function composerRenderDeps() {
+  return {
+    adapterCapabilitySnapshot,
+    APPLY_ELIGIBILITY_REASON,
+    clearCredentialInput,
+    clearNode,
+    createDetails,
+    el,
+    getAgentPanelRuntime,
+    getPanelElementById,
+    getQueueGuardStateForPanel,
+    getRouteDescriptor,
+    hasStoredBrowserCredential,
+    normalizeRoutePreference,
+    PANEL_IDS,
+    recordAgentPanelRenderCount,
+    RENDER_SECTIONS,
+    routeStatusState,
+    ROUTE_STATUS_KIND,
+    scrubDebugPayload,
+    setVisible,
+  };
 }
 
 function syncComposerButtons(panel, {
@@ -8966,17 +8223,6 @@ function renderComposerNoticeSection(panel) {
   });
 }
 
-function renderSettingsSection(panel) {
-  recordAgentPanelRenderCount(panel, RENDER_SECTIONS.SETTINGS);
-  renderSettings(panel);
-}
-
-function renderDeveloperSection(panel) {
-  recordAgentPanelRenderCount(panel, RENDER_SECTIONS.DEVELOPER);
-  renderDeveloper(panel);
-  renderDeveloperDisclosure(panel);
-}
-
 function recordAgentPanelRenderError(panel, section, err) {
   if (!panel || typeof section !== "string" || !section) {
     return 0;
@@ -9079,11 +8325,21 @@ function renderAgentPanelSections(panel, dirtySections = ALL_AGENT_PANEL_RENDER_
         setButtonEmphasis,
       }), result);
     } else if (section === RENDER_SECTIONS.SETTINGS) {
-      if (runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.SETTINGS, renderSettingsSection, result)) {
+      if (runAgentPanelSectionRenderer(
+        panel,
+        RENDER_SECTIONS.SETTINGS,
+        (nextPanel) => composerRenderSettingsSection(nextPanel, composerRenderDeps()),
+        result,
+      )) {
         panel.__sectionsEverRendered.SETTINGS = true;
       }
     } else if (section === RENDER_SECTIONS.DEVELOPER) {
-      if (runAgentPanelSectionRenderer(panel, RENDER_SECTIONS.DEVELOPER, renderDeveloperSection, result)) {
+      if (runAgentPanelSectionRenderer(
+        panel,
+        RENDER_SECTIONS.DEVELOPER,
+        (nextPanel) => composerRenderDeveloperSection(nextPanel, composerRenderDeps()),
+        result,
+      )) {
         panel.__sectionsEverRendered.DEVELOPER = true;
       }
     }
@@ -9132,54 +8388,8 @@ function agentPanelFailure(kind, message, extra = {}) {
   };
 }
 
-async function saveAgentSettings(panel) {
-  if (!panel) {
-    return;
-  }
-  const route = normalizeRoutePreference(panel.fields.route.value);
-  const model = normalizeModelPreference(panel.fields.model.value);
-  const descriptor = getRouteDescriptor(panel, route);
-  if (routeStatusState(panel).kind !== ROUTE_STATUS_KIND.READY || !descriptor) {
-    panel.state.settingsMessage = "Route/model controls are unavailable until /vibecomfy/agent/status returns a valid payload.";
-    panel.state.settingsMessageKind = "error";
-    renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-    return;
-  }
-  const apiKey = panel.fields.apiKey.value;
-
-  setPersistedAgentProvider(route);
-  let savedMessage = `✓ Saved ${route}${model ? ` / ${model}` : " / default model"}.`;
-  panel.state.settingsMessage = savedMessage;
-  panel.state.settingsMessageKind = "success";
-  if (apiKey && !descriptor.browser_api_key_allowed) {
-    savedMessage = descriptor.guidance || "Browser credential was not stored.";
-    panel.state.settingsMessage = savedMessage;
-    panel.state.settingsMessageKind = "error";
-    clearCredentialInput(panel);
-  } else if (apiKey) {
-    try {
-      const res = await fetch("/vibecomfy/agent/credentials", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: route, api_key: apiKey }),
-      });
-      const result = await res.json();
-      savedMessage = result?.stored
-        ? `✓ Stored browser credential for ${result.provider || route}.`
-        : (result?.reason || descriptor.guidance || "Browser credential was not stored.");
-      panel.state.settingsMessage = savedMessage;
-      panel.state.settingsMessageKind = result?.stored ? "success" : "error";
-    } catch (e) {
-      savedMessage = `Credential save failed: ${String(e)}`;
-      panel.state.settingsMessage = savedMessage;
-      panel.state.settingsMessageKind = "error";
-    } finally {
-      clearCredentialInput(panel);
-    }
-  }
-  await refreshAgentStatus(panel, { quiet: Boolean(apiKey) });
-  panel.state.settingsMessage = savedMessage;
-  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+async function saveAgentSettings(panel, { includeCredential = false } = {}) {
+  return persistAgentSettings(panel, { includeCredential }, agentStatusDeps());
 }
 
 async function autoSaveAgentSettings(panel, { includeCredential = false } = {}) {
@@ -9191,44 +8401,11 @@ async function autoSaveAgentSettings(panel, { includeCredential = false } = {}) 
   panel.state.settingsMessage = includeCredential ? "Saving credential…" : "Saving settings…";
   panel.state.settingsMessageKind = "pending";
   renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-  await saveAgentSettings(panel);
+  await saveAgentSettings(panel, { includeCredential });
   if (panel.state.settingsAutosaveToken !== token) {
     return;
   }
   renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-}
-
-async function testAgentSettings(panel) {
-  if (!panel) {
-    return;
-  }
-  const route = normalizeRoutePreference(panel.fields.route.value);
-  const model = normalizeModelPreference(panel.fields.model.value);
-  panel.state.providerTestInFlight = true;
-  panel.state.settingsMessage = "Testing provider status…";
-  panel.state.settingsMessageKind = "pending";
-  renderAgentPanel(panel, { dirtySections: [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.COMPOSER] });
-  try {
-    await refreshAgentStatus(panel, { quiet: true });
-    const routeStatus = routeStatusState(panel);
-    const status = panel.state.statusSnapshot;
-    if (routeStatus.kind === ROUTE_STATUS_KIND.READY && status?.provider_available !== false) {
-      const resolvedRoute = String(status?.route_metadata?.normalized_route || status?.route || route);
-      const requestedRoute = String(status?.requested_route || route);
-      const modelLabel = status?.model || model || "default";
-      panel.state.settingsMessage =
-        `Provider test passed: ${requestedRoute} \u2192 ${resolvedRoute} (${modelLabel}).`;
-      panel.state.settingsMessageKind = "success";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.READY) {
-      const resolvedRoute = String(status?.route_metadata?.normalized_route || status?.route || route);
-      panel.state.settingsMessage =
-        `Provider test failed: ${route} \u2192 ${resolvedRoute} is unavailable.`;
-      panel.state.settingsMessageKind = "error";
-    }
-  } finally {
-    panel.state.providerTestInFlight = false;
-    renderAgentPanel(panel, { dirtySections: [...SETTINGS_STATUS_RENDER_SECTIONS, RENDER_SECTIONS.COMPOSER] });
-  }
 }
 
 async function newAgentConversation(panel) {
@@ -9828,7 +9005,7 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       transition(panel, "SUBMIT_STALE_EPOCH", { submitEpoch });
       return;
     }
-    const normalizedEligibility = normalizeApplyEligibility(eligibility);
+    const normalizedEligibility = normalizeCandidateApplyEligibility(candidateGraph, eligibility);
     const changeDetails = result.raw?.change_details && typeof result.raw.change_details === "object"
       ? clonePlainData(result.raw.change_details)
       : null;
@@ -11197,8 +10374,8 @@ function openChooseEngineOverlay(panel, { onResolved }) {
   function commitRoute(route) {
     setPersistedAgentProvider(route);
     panel.fields.route.value = route;
-    populateRouteSelect(panel.fields.route, null, { selectedRoute: route });
-    refreshAgentStatus(panel, { quiet: true });
+    pollerPopulateRouteSelect(panel.fields.route, null, { selectedRoute: route }, agentStatusDeps());
+    pollerRefreshAgentStatus(panel, { quiet: true }, agentStatusDeps());
   }
 
   // ── card colors ──
@@ -11513,18 +10690,10 @@ function openChooseEngineOverlay(panel, { onResolved }) {
 
         let stored = false;
         try {
-          const res = await fetch("/vibecomfy/agent/credentials", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ provider: "openrouter", api_key: apiKey }),
-          });
-          const result = await res.json();
-          if (result && result.stored) {
-            stored = true;
-          } else {
-            openrouterErrorNode.textContent = (result && result.reason) || "Failed to store key.";
-            openrouterErrorNode.style.display = "block";
-          }
+          const result = await storeOpenRouterCredential(panel, apiKey);
+          stored = Boolean(result?.stored);
+          openrouterErrorNode.textContent = result?.message || "Failed to store key.";
+          openrouterErrorNode.style.display = stored ? "none" : "block";
         } catch (e) {
           openrouterErrorNode.textContent = "Credential save failed: " + String(e);
           openrouterErrorNode.style.display = "block";

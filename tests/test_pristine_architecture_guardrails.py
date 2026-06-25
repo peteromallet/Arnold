@@ -90,6 +90,57 @@ def test_public_outcome_never_leaks_internal_kind() -> None:
         assert public["kind"] not in {"edit", "edit+clarify", "failure"}
 
 
+def test_auth_error_failure_payload_is_public_and_sentinel_free() -> None:
+    assert FailureKind.AUTH_ERROR.value == "AuthError"
+
+    envelope = failure_envelope(
+        FailureKind.AUTH_ERROR,
+        stage="agent_response",
+        context=TurnContext(session_id="s", turn_id="t"),
+        agent_failure_context={"explanation": "HTTP 401"},
+    )
+    data = envelope.to_dict()
+
+    json.dumps(data)
+    assert data["kind"] == "AuthError"
+    assert data["outcome"]["kind"] == "error"
+    assert data["outcome"]["failure_kind"] == "AuthError"
+    assert data["outcome"]["stage"] == "agent_response"
+    assert data["outcome"]["retryable"] is False
+    assert data["outcome"]["graph_unchanged"] is True
+    assert data["message"] == data["user_facing_message"]
+    assert "***" not in json.dumps(data)
+
+
+def test_turn_envelope_keeps_public_json_key_shape() -> None:
+    eligibility = ApplyEligibility(
+        applyable=False,
+        reason="server_blocked",
+        message="Server validation gates blocked Apply.",
+    )
+    payload = turn_envelope(
+        message="  Candidate emitted.  ",
+        outcome={"kind": "candidate", "changes": []},
+        candidate={"state": "candidate", "graph_hash": "abc123"},
+        eligibility=eligibility,
+        debug={"stage": "ui_emit"},
+    )
+
+    json.dumps(payload)
+    assert set(payload) == {
+        "contract_version",
+        "message",
+        "outcome",
+        "candidate",
+        "eligibility",
+        "audit_ref",
+        "debug",
+    }
+    assert payload["message"] == "Candidate emitted."
+    assert payload["outcome"]["kind"] in PUBLIC_OUTCOME_KINDS
+    assert payload["eligibility"] == eligibility.to_dict()
+
+
 # ---------------------------------------------------------------------------
 # 2. Stage display still shows the correct user-facing stage
 # ---------------------------------------------------------------------------
@@ -148,6 +199,37 @@ def test_apply_eligibility_payload_is_consistent() -> None:
     assert payload["queue_allowed"] is True
 
 
+def test_partial_rehydrated_gates_normalize_apply_and_queue_eligibility() -> None:
+    rehydrated_context = TurnContext(
+        session_id="s",
+        turn_id="t",
+        gate_results={
+            "python_load_ok": True,
+            "lower_ok": True,
+            "ir_validate_ok": GateResult(name="ir_validate_ok", ok=True),
+            "ui_emit_ok": True,
+            "ui_fidelity_ok": True,
+            "ui_load_safe_ok": True,
+            "state_match_ok": True,
+        },
+    )
+
+    assert tuple(rehydrated_context.gate_results) == DEFAULT_GATE_NAMES
+    assert rehydrated_context.gate_results["queue_validate_ok"].ok is False
+    assert rehydrated_context.canvas_apply_allowed is True
+    assert rehydrated_context.queue_allowed is False
+
+    eligibility = rehydrated_context.apply_eligibility
+    assert eligibility.applyable is True
+    assert eligibility.reason == "queue_blocked_warning"
+    assert eligibility.warnings == ("queue_blocked",)
+
+    rehydrated_context.set_gate("queue_validate_ok", True)
+    assert rehydrated_context.canvas_apply_allowed is True
+    assert rehydrated_context.queue_allowed is True
+    assert rehydrated_context.apply_eligibility.reason == "applyable"
+
+
 # ---------------------------------------------------------------------------
 # 4. Session rehydrate safety
 # ---------------------------------------------------------------------------
@@ -161,6 +243,106 @@ def test_read_state_normalizes_empty_baseline(tmp_path: Path) -> None:
     assert isinstance(state["turns"], dict)
     assert isinstance(state["idempotency_records"], dict)
     assert isinstance(state["next_turn_index"], int)
+
+
+def test_read_state_returns_default_for_corrupt_json(tmp_path: Path) -> None:
+    session_dir = tmp_path / "corrupt"
+    session_dir.mkdir()
+    (session_dir / "session_state.json").write_text("{not json", encoding="utf-8")
+
+    assert read_state(session_dir) == default_state()
+
+
+def test_read_state_returns_default_for_invalid_utf8(tmp_path: Path) -> None:
+    session_dir = tmp_path / "invalid-utf8"
+    session_dir.mkdir()
+    (session_dir / "session_state.json").write_bytes(b"\xff\xfe\xfa")
+
+    assert read_state(session_dir) == default_state()
+
+
+def test_read_state_returns_default_for_unreadable_state_path(tmp_path: Path) -> None:
+    session_dir = tmp_path / "unreadable"
+    (session_dir / "session_state.json").mkdir(parents=True)
+
+    assert read_state(session_dir) == default_state()
+
+
+@pytest.mark.parametrize("payload", [None, [], "state", 7])
+def test_read_state_returns_default_for_non_dict_json(
+    tmp_path: Path, payload: object
+) -> None:
+    session_dir = tmp_path / "non-dict"
+    session_dir.mkdir()
+    (session_dir / "session_state.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    assert read_state(session_dir) == default_state()
+
+
+def test_read_state_normalizes_schema_mismatched_containers_and_indexes(
+    tmp_path: Path,
+) -> None:
+    session_dir = tmp_path / "schema-mismatch"
+    session_dir.mkdir()
+    (session_dir / "session_state.json").write_text(
+        json.dumps(
+            {
+                "turns": ["not", "a", "dict"],
+                "idempotency_records": None,
+                "next_turn_index": 0,
+                "next_rebaseline_index": "bad",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = read_state(session_dir)
+
+    assert state["turns"] == {}
+    assert state["idempotency_records"] == {}
+    assert state["next_turn_index"] == 1
+    assert state["next_rebaseline_index"] == 1
+    assert state["schema_version"] == 1
+
+
+def test_read_state_preserves_partial_dict_and_normalizes_baseline(
+    tmp_path: Path,
+) -> None:
+    session_dir = tmp_path / "partial-valid"
+    session_dir.mkdir()
+    (session_dir / "session_state.json").write_text(
+        json.dumps(
+            {
+                "next_turn_index": 5,
+                "next_rebaseline_index": 3,
+                "baseline_turn_id": "0001",
+                "turns": {
+                    "0001": {
+                        "state": "accepted",
+                        "candidate_graph_hash": "legacy-candidate-hash",
+                    },
+                },
+                "idempotency_records": {
+                    "accept:key": {"turn_id": "0001", "response_hash": "abc"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = read_state(session_dir)
+
+    assert state["turns"]["0001"]["state"] == "accepted"
+    assert state["idempotency_records"]["accept:key"]["turn_id"] == "0001"
+    assert state["next_turn_index"] == 5
+    assert state["next_rebaseline_index"] == 3
+    assert state["baseline_turn_id"] is None
+    assert state["baseline_graph_hash"] == "legacy-candidate-hash"
+    assert state["baseline_graph_hash_kind"] == "raw"
+    assert state["baseline_source"] == "legacy"
+    assert state["schema_version"] == 1
 
 
 def test_default_state_has_required_keys() -> None:

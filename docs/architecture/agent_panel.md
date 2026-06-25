@@ -45,18 +45,26 @@ No other module may define competing shapes for these concepts.
 
 - `vibecomfy_roundtrip.js` is an orchestration shell.  It owns event wiring,
   lifecycle coordination, and dependency assembly.  It no longer implements
-  status polling, settings rendering, or candidate eligibility logic locally,
-  although a legacy status-polling code path is retained until the extraction is
-  complete (see Compatibility Ledger).
+  status polling, settings rendering, candidate eligibility, diagnostics
+  reporting, or response-shape normalization locally.
 - `agent_status_poller.js` owns status polling and route/provider readiness.
 - `panel_composer.js` owns settings and developer renderer bodies.
 - `panel_thread.js` owns thread rendering and expanded bubble details.
+- `agent_candidate_actions.js` owns candidate apply/reject eligibility
+  selectors and candidate bubble action state.  `vibecomfy_roundtrip.js`
+  imports this module for current-candidate controls instead of reimplementing
+  eligibility locally.
 - `agent_edit_lifecycle.js` owns durable session/turn lifecycle state and
   chat-rehydrate ingestion.
 - `agent_edit_response_contract.js` owns frontend projection of backend
-  response payloads into normalized transcript/detail/diagnostic buckets.
+  response payloads into normalized transcript/detail/diagnostic buckets.  Lifecycle,
+  thread, and roundtrip code consume its normalized readers instead of reaching
+  into raw backend payload variants directly.
 - `panel_overlay.js` owns preview-overlay rendering and alias blocking.
-- `diagnostics_reporting.js` owns explicit audit/debug reporting surfaces.
+- `diagnostics_reporting.js` owns browser diagnostics capture, issue report
+  assembly, audit export/download, issue ZIP bundling, rating submission, and
+  the Having issues modal.  `vibecomfy_roundtrip.js` configures its injected
+  browser dependencies and re-exports the public diagnostics helpers.
 
 ## Allowed data flow
 
@@ -67,9 +75,11 @@ HTTP (routes.py)
     -> audit.py diagnostic write
     -> contracts.py envelope builders / public projection
   -> frontend facade
-    -> selector modules (lifecycle, status poller, response contract)
-      -> renderer modules (composer, thread, overlay)
-        -> vibecomfy_roundtrip.js orchestration / event wiring
+    -> response adapter (agent_edit_response_contract.js)
+      -> selector modules (lifecycle, status poller, candidate actions)
+        -> renderer modules (composer, thread, overlay)
+          -> vibecomfy_roundtrip.js orchestration / event wiring
+    -> diagnostics/export boundary (diagnostics_reporting.js)
 ```
 
 Normal UI render paths must consume data through selectors.  Raw session
@@ -82,6 +92,12 @@ Backend routes that serve normal UI payloads (`/agent-edit/chat`,
 `contracts.py` before JSON serialization.  The frontend's
 `agent_edit_response_contract.js` is a second line of defense, not the
 primary safety boundary.
+
+The diagnostics/export boundary is an adaptor surface only.  Its ownership of
+diagnostics capture, issue bundles, audit downloads, ratings, and the Having
+issues modal does not change normal UI transcript, detail, or event render
+semantics; those paths still flow through the response adapter, selector
+modules, and renderer modules above.
 
 ## Boundaries enforced by tests
 

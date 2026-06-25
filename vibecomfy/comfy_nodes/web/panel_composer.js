@@ -631,6 +631,7 @@ export function renderSettings(panel, deps = {}) {
     clearCredentialInput,
     getPanelElementById,
     getRouteDescriptor,
+    hasStoredBrowserCredential,
     normalizeRoutePreference,
     PANEL_IDS,
     routeStatusState,
@@ -641,16 +642,22 @@ export function renderSettings(panel, deps = {}) {
   const descriptor = getRouteDescriptor(panel);
   const controlsReady =
     Boolean(descriptor)
-    && (
-      routeStatus.kind === ROUTE_STATUS_KIND.READY
-      || routeStatus.kind === ROUTE_STATUS_KIND.LOADING
-    );
-  const apiKeyVisible = descriptor && Boolean(descriptor.browser_api_key_allowed);
+    && routeStatus.kind === ROUTE_STATUS_KIND.READY;
+  const apiKeyVisible = controlsReady && Boolean(descriptor.browser_api_key_allowed);
   panel.fields.route.disabled = !controlsReady;
   panel.fields.model.disabled = !controlsReady;
   setVisible(panel.fields.apiKey, apiKeyVisible, "");
+  const storedBrowserKey = typeof hasStoredBrowserCredential === "function"
+    ? hasStoredBrowserCredential(panel, panel.fields.route.value)
+    : false;
+  const requestedRoute = String(panel.fields.route.value || "").trim().toLowerCase();
+  const descriptorRoute = String(descriptor?.requested_route || "").trim().toLowerCase();
+  const browserKeyLabel =
+    requestedRoute === "deepseek" || descriptorRoute === "deepseek" || normalizeRoutePreference(panel.fields.route.value) === "deepseek"
+      ? "DeepSeek"
+      : "OpenRouter";
   panel.fields.apiKey.placeholder = apiKeyVisible
-    ? "OpenRouter API key"
+    ? (storedBrowserKey ? `Saved ${browserKeyLabel} key present; paste a new key to replace` : `${browserKeyLabel} API key`)
     : "Browser API keys are not accepted for this route";
   if (!apiKeyVisible) {
     clearCredentialInput(panel);
@@ -695,6 +702,9 @@ export function renderSettings(panel, deps = {}) {
   statusNode.textContent = panel.state.settingsMessage
     || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
   guidanceNode.textContent = descriptor.guidance || "";
+  if (apiKeyVisible && storedBrowserKey) {
+    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved ${browserKeyLabel} key present. Paste a new key only if you want to replace it.`;
+  }
   if (descriptor.requested_route === "anthropic") {
     guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
   }
