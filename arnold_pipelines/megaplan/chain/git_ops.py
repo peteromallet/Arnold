@@ -409,7 +409,7 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, base_branch: s
     """Create or reuse the draft PR for a milestone branch."""
     if not milestone.branch:
         raise CliError("missing_branch", f"milestone {milestone.label!r} has no branch")
-    if _compat().shutil.which("gh") is None:
+    if shutil.which("gh") is None:
         writer(
             "[chain] gh executable not found; continuing with branch commits/pushes "
             f"but skipping PR creation for {milestone.branch}\n"
