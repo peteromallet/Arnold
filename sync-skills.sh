@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Sync megaplan codex skills from this directory into ~/.claude and ~/.codex.
 #
-# For each top-level directory under arnold/pipelines/megaplan/data/_codex_skills
+# For each top-level directory under arnold_pipelines/megaplan/data/_codex_skills
 # (except _underscore ones), create a symlink in each target skills directory,
 # ONLY IF nothing exists at that path yet. Never deletes or overwrites existing entries.
 #
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC_DIR="$REPO_ROOT/arnold/pipelines/megaplan/data/_codex_skills"
+SRC_DIR="$REPO_ROOT/arnold_pipelines/megaplan/data/_codex_skills"
 SKILL_TARGETS=(
   "$HOME/.claude/skills"
   "$HOME/.codex/skills"

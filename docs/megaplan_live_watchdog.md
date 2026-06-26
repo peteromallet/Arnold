@@ -85,11 +85,11 @@ launchctl load ~/Library/LaunchAgents/com.megaplan.live-watchdog.plist
 - **Daemon/CLI** (`scripts/megaplan_live_watchdog.py`) owns scanning, registry
   persistence, retry timing, and report emission. It never performs its own
   classification or allowlist decisions.
-- **Discovery engine** (`arnold/pipelines/megaplan/watchdog/`) reads
+- **Discovery engine** (`arnold_pipelines/megaplan/watchdog/`) reads
   `state.json` and `events.ndjson` directly from the filesystem, scans `ps`
   for process signatures, and correlates processes to plans. It works even
   when the installed `megaplan` CLI is broken.
-- **Pipeline** (`arnold/pipelines/megaplan/pipelines/live_supervisor/`) is an
+- **Pipeline** (`arnold_pipelines/megaplan/pipelines/live_supervisor/`) is an
   Arnold neutral pipeline invoked in-process via `run_pipeline()` with a
   `RuntimeEnvelope`. It classifies, diagnoses, decides repairs, and emits a
   recheck request.

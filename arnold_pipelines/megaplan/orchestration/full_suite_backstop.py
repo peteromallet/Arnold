@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import json
 from pathlib import Path
 from typing import Any, Callable, Literal
 
@@ -117,18 +118,26 @@ def run_full_suite_backstop(
     baseline: Path | dict[str, Any] | None = None,
     writer: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Run one full-suite backstop and return a JSON-serializable summary.
+    """Run one suite backstop and return a JSON-serializable summary.
 
-    The caller's config is never mutated. The copied config forces full test
-    selection and removes any scoped ``test_command`` override so
-    ``suite_runner.run_suite`` invokes the full configured/default command.
-    Runner exceptions are captured as non-blocking ``error`` results.
+    The caller's config is never mutated. The copied config preserves an
+    explicit ``test_command`` or backfills one from ``finalize.json``. If no
+    scoped/recorded command exists, the backstop records ``not_applicable`` and
+    does not invoke pytest; it must never silently fall back to a bare full
+    suite.
     """
     del writer
     full_config = dict(config)
-    full_config["test_selection"] = "full"
-    full_config.pop("test_command", None)
+    full_config["test_selection"] = full_config.get("test_selection") or "recorded"
     full_config["plan_dir"] = str(plan_dir)
+    if not full_config.get("test_command"):
+        command = _recorded_test_command_from_finalize(plan_dir)
+        if command:
+            full_config["test_command"] = command
+    if not full_config.get("test_command"):
+        return _not_applicable_result(
+            "no recorded test_command in config or finalize.json; not running bare full-suite fallback"
+        )
 
     timeout = full_config.get("test_baseline_timeout", 900)
     if not isinstance(timeout, (int, float)) or timeout <= 0:
@@ -222,6 +231,46 @@ def run_full_suite_backstop(
         }
     )
     return summary
+
+
+def _recorded_test_command_from_finalize(plan_dir: Path) -> str | None:
+    finalize_path = plan_dir / "finalize.json"
+    try:
+        finalize = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(finalize, dict):
+        return None
+    baseline_command = finalize.get("baseline_test_command")
+    test_selection = finalize.get("test_selection")
+    selected_command = (
+        test_selection.get("command_override")
+        if isinstance(test_selection, dict)
+        else None
+    )
+    for candidate in (baseline_command, selected_command):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return None
+
+
+def _not_applicable_result(note: str) -> dict[str, Any]:
+    return {
+        "status": "not_applicable",
+        "passed": None,
+        "failed": None,
+        "failing_tests": [],
+        "collected_ids": [],
+        "command": "",
+        "duration_s": None,
+        "ran": False,
+        "note": note,
+        "newly_failing": [],
+        "deleted_tests": [],
+        "baseline_failing_count": 0,
+        "current_failing_count": 0,
+        "delta_computed": False,
+    }
 
 
 def evaluate_full_suite_backstop(result: dict[str, Any], mode: str) -> dict[str, Any]:

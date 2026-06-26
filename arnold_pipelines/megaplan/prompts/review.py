@@ -39,6 +39,10 @@ LARGE_REVIEW_DIFF_MAX_BYTES = 120 * 1024
 LARGE_REVIEW_DIFF_MAX_FILES = 40
 COMPACT_REVIEW_PLAN_MAX_CHARS = 20_000
 COMPACT_REVIEW_CONTEXT_MAX_CHARS = 60_000
+REVIEW_EVIDENCE_PROMPT_MAX_CHARS = 100_000
+REVIEW_EVIDENCE_MAX_REFS = 80
+REVIEW_EVIDENCE_DETAIL_MAX_CHARS = 1_200
+REVIEW_EVIDENCE_ARTIFACT_MAX_REFS = 8
 
 
 def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
@@ -101,20 +105,154 @@ def _review_evidence_block(plan_dir: Path) -> str:
             "Fresh review-time evidence (`review_evidence.json`): degraded. "
             f"{degraded_reason} Treat stale execution-time artifacts as advisory and inspect the repository directly."
         )
+    evidence_text = json_dump(_project_review_evidence_for_prompt(review_evidence)).strip()
+    # Review evidence can enumerate thousands of changed files and long test logs.
+    # Keep the prompt bounded; the durable full file remains on disk.
+    evidence_text = _truncate_prompt_block(evidence_text, limit=REVIEW_EVIDENCE_PROMPT_MAX_CHARS)
     if degraded_reason:
         return textwrap.dedent(
             f"""
             Fresh review-time evidence (`review_evidence.json`): degraded.
             {degraded_reason}
-            {json_dump(review_evidence).strip()}
+            {evidence_text}
             """
         ).strip()
     return textwrap.dedent(
         f"""
         Fresh review-time evidence (`review_evidence.json`):
-        {json_dump(review_evidence).strip()}
+        {evidence_text}
         """
     ).strip()
+
+
+def _project_review_evidence_for_prompt(review_evidence: dict[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {
+        "projection": "bounded_prompt_summary",
+        "full_artifact": REVIEW_EVIDENCE_FILENAME,
+    }
+    for key in (
+        "schema",
+        "schema_version",
+        "evidence_contract_version",
+        "mode",
+        "subject",
+        "accepted",
+        "would_block",
+        "failures",
+        "providers_used",
+        "legacy_evidence_count",
+        "unknown_evidence_count",
+        "would_block_reasons",
+        "artifact",
+        "generated_at",
+        "phase",
+        "iteration",
+        "base_sha",
+        "head_sha",
+        "invocation_id",
+        "provider_diagnostics",
+        "diagnostics",
+    ):
+        if key in review_evidence:
+            projected[key] = _bounded_json_value(review_evidence[key])
+
+    evidence = review_evidence.get("evidence")
+    if isinstance(evidence, list):
+        projected["evidence"] = [
+            _project_evidence_ref_for_prompt(ref)
+            for ref in evidence[:REVIEW_EVIDENCE_MAX_REFS]
+            if isinstance(ref, dict)
+        ]
+        projected["evidence_count"] = len(evidence)
+        omitted = len(evidence) - len(projected["evidence"])
+        if omitted > 0:
+            projected["evidence_refs_omitted"] = omitted
+
+    green_suite = review_evidence.get("green_suite")
+    if isinstance(green_suite, dict):
+        projected["green_suite"] = _project_green_suite_for_prompt(green_suite)
+    return projected
+
+
+def _project_evidence_ref_for_prompt(ref: dict[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    for key in (
+        "kind",
+        "status",
+        "summary",
+        "trust_class",
+        "provider",
+        "provider_version",
+        "source",
+        "subject",
+        "observed_at",
+        "code_hash",
+    ):
+        if key in ref:
+            projected[key] = _bounded_json_value(ref[key])
+    artifact = ref.get("artifact")
+    if isinstance(artifact, dict):
+        projected["artifact"] = _project_artifact_ref_for_prompt(artifact)
+    artifacts = ref.get("artifacts")
+    if isinstance(artifacts, list):
+        projected["artifacts"] = [
+            _project_artifact_ref_for_prompt(item)
+            for item in artifacts[:REVIEW_EVIDENCE_ARTIFACT_MAX_REFS]
+            if isinstance(item, dict)
+        ]
+        omitted = len(artifacts) - len(projected["artifacts"])
+        if omitted > 0:
+            projected["artifacts_omitted"] = omitted
+    if "details" in ref:
+        projected["details_preview"] = _bounded_json_value(
+            ref["details"], max_chars=REVIEW_EVIDENCE_DETAIL_MAX_CHARS
+        )
+        projected["details_full_location"] = REVIEW_EVIDENCE_FILENAME
+    return projected
+
+
+def _project_artifact_ref_for_prompt(artifact: dict[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    for key in ("path", "sha256", "artifact_type", "description"):
+        if key in artifact:
+            projected[key] = _bounded_json_value(artifact[key])
+    return projected
+
+
+def _project_green_suite_for_prompt(green_suite: dict[str, Any]) -> dict[str, Any]:
+    projected: dict[str, Any] = {}
+    for key, value in green_suite.items():
+        if key == "delta" and isinstance(value, dict):
+            projected[key] = {
+                delta_key: len(delta_value)
+                if isinstance(delta_value, list)
+                else _bounded_json_value(delta_value)
+                for delta_key, delta_value in value.items()
+            }
+        else:
+            projected[key] = _bounded_json_value(value)
+    return projected
+
+
+def _bounded_json_value(value: Any, *, max_chars: int = REVIEW_EVIDENCE_DETAIL_MAX_CHARS) -> Any:
+    if isinstance(value, str):
+        return _truncate_prompt_block(value, limit=max_chars)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        preview = [_bounded_json_value(item, max_chars=max_chars) for item in value[:20]]
+        if len(value) > len(preview):
+            preview.append({"omitted_items": len(value) - len(preview)})
+        return preview
+    if isinstance(value, dict):
+        text = json_dump(value)
+        if len(text) > max_chars:
+            return {
+                "preview": _truncate_prompt_block(text, limit=max_chars),
+                "full_location": REVIEW_EVIDENCE_FILENAME,
+            }
+        return {str(k): _bounded_json_value(v, max_chars=max_chars) for k, v in value.items()}
+    return _truncate_prompt_block(str(value), limit=max_chars)
 
 
 def _changed_files_from_patch(patch: str) -> list[str]:
@@ -159,7 +297,11 @@ def _truncate_prompt_block(text: str, *, limit: int) -> str:
     if len(text) <= limit:
         return text
     omitted = len(text) - limit
-    return f"{text[:limit]}\n\n[truncated {omitted:,} characters for compact review prompt]"
+    return (
+        f"{text[:limit]}\n\n"
+        f"[truncated {omitted:,} characters for review prompt; full data remains in "
+        f"`{REVIEW_EVIDENCE_FILENAME}`]"
+    )
 
 
 def _compact_changed_files(files: list[str]) -> list[str]:

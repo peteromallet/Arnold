@@ -97,28 +97,29 @@ builders, compatibility namespaces, or temporary wrapper modules for new work.
 ## Example
 
 ```python
-from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
-from arnold.pipeline.types import Pipeline
+from arnold import pipeline
 
 
-@phase(name="start")
+@pipeline.native.phase(name="start")
 def start(ctx):
     return {"intermediate": "TODO"}
 
 
-@phase(name="finish")
+@pipeline.native.phase(name="finish")
 def finish(ctx):
     return {"result": "TODO"}
 
 
-@pipeline("my-pipeline")
+@pipeline.native.pipeline("my-pipeline")
 def my_pipeline(ctx):
     yield start(ctx)
     yield finish(ctx)
 
 
-def build_pipeline() -> Pipeline:
-    return project_graph(compile_pipeline(my_pipeline), key_mode="phase")
+def build_pipeline() -> pipeline.Pipeline:
+    return pipeline.native.project_graph(
+        pipeline.native.compile_pipeline(my_pipeline), key_mode="phase"
+    )
 ```
 
 ## Validation
@@ -126,9 +127,9 @@ def build_pipeline() -> Pipeline:
 - Validate import: `arnold_pipelines.my_pipeline:build_pipeline`
 - Contract: `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram` set.
 
-Run through the Arnold pipeline checker:
+Run through the Arnold workflow checker:
 
 ```bash
-arnold pipelines check my-pipeline
+arnold workflow check my-pipeline
 ```
 ````

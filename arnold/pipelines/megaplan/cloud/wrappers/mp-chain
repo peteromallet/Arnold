@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated — use arnold-chain instead.
-echo "mp-chain: this wrapper is deprecated, use arnold-chain instead." >&2
-exec "$(dirname "$0")/arnold-chain" "$@"

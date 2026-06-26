@@ -20,31 +20,30 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PLANNING_IMPLEMENTATION_FILES = {
-    "arnold/pipelines/megaplan/planning/__init__.py",
-    "arnold/pipelines/megaplan/planning/control_binding.py",
-    "arnold/pipelines/megaplan/planning/operations.py",
+    "arnold_pipelines/megaplan/planning/__init__.py",
+    "arnold_pipelines/megaplan/planning/control_binding.py",
+    "arnold_pipelines/megaplan/planning/operations.py",
 }
 
 MIGRATED_CONSUMER_FILES = {
-    "arnold/pipelines/megaplan/auto.py",
-    "arnold/pipelines/megaplan/control_interface.py",
-    "arnold/pipelines/megaplan/control.py",
-    "arnold/pipelines/megaplan/handlers/override.py",
-    "arnold/pipelines/megaplan/observability/introspect.py",
-    "arnold/pipelines/megaplan/cli/status_view.py",
-    "arnold/pipelines/megaplan/cli/arnold.py",
-    "arnold/pipelines/megaplan/_core/workflow.py",
-    "arnold/pipelines/megaplan/_pipeline/run_cli.py",
-    "arnold/pipelines/megaplan/supervisor/ladder.py",
-    "arnold/pipelines/megaplan/supervisor/chain_runner.py",
+    "arnold_pipelines/megaplan/auto.py",
+    "arnold_pipelines/megaplan/control_interface.py",
+    "arnold_pipelines/megaplan/control.py",
+    "arnold_pipelines/megaplan/handlers/override.py",
+    "arnold_pipelines/megaplan/observability/introspect.py",
+    "arnold_pipelines/megaplan/cli/status_view.py",
+    "arnold_pipelines/megaplan/cli/arnold.py",
+    "arnold_pipelines/megaplan/_core/workflow.py",
+    "arnold_pipelines/megaplan/supervisor/ladder.py",
+    "arnold_pipelines/megaplan/supervisor/chain_runner.py",
 }
 
 CORE_NO_PARK_FILES = {
-    "arnold/pipelines/megaplan/control.py",
-    "arnold/pipelines/megaplan/control_interface.py",
-    "arnold/pipelines/megaplan/handlers/override.py",
-    "arnold/pipelines/megaplan/observability/introspect.py",
-    "arnold/pipelines/megaplan/cli/status_view.py",
+    "arnold_pipelines/megaplan/control.py",
+    "arnold_pipelines/megaplan/control_interface.py",
+    "arnold_pipelines/megaplan/handlers/override.py",
+    "arnold_pipelines/megaplan/observability/introspect.py",
+    "arnold_pipelines/megaplan/cli/status_view.py",
 }
 
 PARKED_ANNOTATION = "# m2b-parked:"
@@ -135,9 +134,9 @@ def test_migrated_consumers_do_not_directly_import_planning_control_surface() ->
 
 def test_read_valid_targets_callers_pass_explicit_binding_or_plugin_id() -> None:
     caller_files = (
-        "arnold/pipelines/megaplan/cli/status_view.py",
-        "arnold/pipelines/megaplan/observability/introspect.py",
-        "arnold/pipelines/megaplan/supervisor/ladder.py",
+        "arnold_pipelines/megaplan/cli/status_view.py",
+        "arnold_pipelines/megaplan/observability/introspect.py",
+        "arnold_pipelines/megaplan/supervisor/ladder.py",
     )
     violations: list[str] = []
     for rel_path in caller_files:
@@ -148,21 +147,20 @@ def test_read_valid_targets_callers_pass_explicit_binding_or_plugin_id() -> None
 
 def test_migrated_consumers_do_not_reintroduce_privileged_dispatch_literals() -> None:
     forbidden_literals = {
-        "arnold/pipelines/megaplan/auto.py": (
+        "arnold_pipelines/megaplan/auto.py": (
             "PipelineRegistry(",
             ".run_phase(",
             "handle_override(",
             "_override_abort(",
             "_override_force_proceed(",
         ),
-        "arnold/pipelines/megaplan/control_interface.py": (
+        "arnold_pipelines/megaplan/control_interface.py": (
             'binding="planning"',
             "binding='planning'",
             'plugin_id="planning"',
             "plugin_id='planning'",
         ),
-        "arnold/pipelines/megaplan/_core/workflow.py": ("PipelineRegistry(", ".run_phase("),
-        "arnold/pipelines/megaplan/_pipeline/run_cli.py": ("PipelineRegistry(", ".run_phase("),
+        "arnold_pipelines/megaplan/_core/workflow.py": ("PipelineRegistry(", ".run_phase("),
     }
 
     violations: list[str] = []

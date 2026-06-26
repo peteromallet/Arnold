@@ -20,17 +20,16 @@ arnold workflow check --module <package.module>:build_pipeline
 
 - `arnold.deliberation` -> `arnold workflow check --module arnold.pipelines.deliberation:build_pipeline`
 - `arnold.folder_audit` -> `arnold workflow check --module arnold.pipelines.folder_audit:build_pipeline`
-- `megaplan.creative` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.creative:build_pipeline`
-- `megaplan.doc` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.doc:build_pipeline`
-- `megaplan.epic_blitz` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.epic_blitz:build_pipeline`
-- `megaplan.jokes` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.jokes:build_pipeline`
-- `megaplan.live_supervisor` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.live_supervisor:build_pipeline`
-- `megaplan.select_tournament` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.select_tournament:build_pipeline`
-- `megaplan.writing_panel_strict` -> `arnold workflow check --module arnold.pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline`
 - `evidence_pack.verifier` -> `arnold workflow check --module arnold_pipelines.evidence_pack:build_pipeline`
 - `megaplan.core` -> `arnold workflow check --module arnold_pipelines.megaplan:build_pipeline`
+- `megaplan.creative` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.creative:build_pipeline`
+- `megaplan.doc` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.doc:build_pipeline`
+- `megaplan.jokes` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.jokes:build_pipeline`
+- `megaplan.live_supervisor` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline`
 - `megaplan.planning` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.planning:build_pipeline`
+- `megaplan.select_tournament` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline`
+- `megaplan.writing_panel_strict` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline`
 
 ## Disallowed surfaces
 
-Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, hand-built graph fallback builders, or ``arnold.pipelines.megaplan`` imports.  New packages must be native-first: use native declarations and return an ``arnold.pipeline.Pipeline`` with ``native_program`` set.
+Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, hand-built graph fallback builders, or deleted Megaplan-root imports.  New packages must be native-first: use native declarations and return an ``arnold.pipeline.Pipeline`` with ``native_program`` set.

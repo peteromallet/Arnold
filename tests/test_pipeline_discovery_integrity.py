@@ -3,13 +3,15 @@ import warnings
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from arnold.pipeline.native.ir import NativeProgram
-from arnold.pipelines.megaplan._pipeline.registry import (
-    Disposition,
+from arnold_pipelines.megaplan.registry import (
     PipelineRegistry,
     scan_python_pipelines,
     discover_python_pipelines,
 )
+from arnold_pipelines.megaplan.runtime.discovery import Disposition
 
 
 # ---------------------------------------------------------------------------
@@ -29,7 +31,7 @@ def _make_good_pipeline(tmp_path: Path) -> Path:
         "arnold_api_version = '1.0'\n"
         "capabilities = ('test',)\n"
         "def build_pipeline():\n"
-        "    from arnold.pipelines.megaplan._pipeline.types import Pipeline\n"
+        "    from arnold_pipelines.megaplan.step_types import Pipeline\n"
         "    return Pipeline(stages={}, entry='done')\n",
         encoding="utf-8",
     )
@@ -75,7 +77,7 @@ def _make_native_projected_pipeline(tmp_path: Path) -> Path:
         "capabilities = ('test',)\n"
         "def build_pipeline():\n"
         "    from arnold.pipeline.native.ir import NativeProgram\n"
-        "    from arnold.pipelines.megaplan._pipeline.types import Pipeline\n"
+        "    from arnold_pipelines.megaplan.step_types import Pipeline\n"
         "    return Pipeline(stages={}, entry='', native_program=NativeProgram(name='native-projected'))\n",
         encoding="utf-8",
     )
@@ -98,7 +100,7 @@ def _make_graph_compat_pipeline(tmp_path: Path) -> Path:
         "    def run_native_pipeline(self, **kwargs):\n"
         "        return {'ok': True, 'kwargs': kwargs}\n"
         "def build_pipeline():\n"
-        "    from arnold.pipelines.megaplan._pipeline.types import Pipeline\n"
+        "    from arnold_pipelines.megaplan.step_types import Pipeline\n"
         "    return Pipeline(stages={}, entry='', resource_bundles=(_Runner(),))\n",
         encoding="utf-8",
     )
@@ -118,7 +120,7 @@ def test_scan_python_pipelines_never_raises(tmp_path: Path):
     _make_broken_pipeline(broken_dir)
 
     scan_roots = [(broken_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()  # must not raise
 
     assert isinstance(result, list)
@@ -132,7 +134,7 @@ def test_scan_python_pipelines_returns_disposition_for_every_path(tmp_path: Path
     _make_no_builder_pipeline(user_dir)
 
     scan_roots = [(user_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     assert len(result) == 3
@@ -150,7 +152,7 @@ def test_scan_python_pipelines_disposition_has_reason_for_broken(tmp_path: Path)
     _make_broken_pipeline(user_dir)
 
     scan_roots = [(user_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     rejected = [d for d in result if d.status == "rejected"]
@@ -164,7 +166,7 @@ def test_scan_python_pipelines_good_module_is_discovered(tmp_path: Path):
     _make_good_pipeline(user_dir)
 
     scan_roots = [(user_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     discovered = [d for d in result if d.status == "discovered"]
@@ -179,8 +181,8 @@ def test_scan_python_pipelines_origin_intree_vs_user(tmp_path: Path):
     user_dir.mkdir()
     _make_good_pipeline(intree_dir)
 
-    scan_roots = [(intree_dir, "arnold.pipelines.megaplan.pipelines"), (user_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    scan_roots = [(intree_dir, "arnold_pipelines.megaplan.pipelines"), (user_dir, None)]
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     assert any(d.origin == "in_tree" for d in result)
@@ -195,8 +197,8 @@ def test_discover_python_pipelines_does_not_raise_for_broken_intree(tmp_path: Pa
     intree_dir.mkdir()
     _make_broken_pipeline(intree_dir)
 
-    scan_roots = [(intree_dir, "arnold.pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    scan_roots = [(intree_dir, "arnold_pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = discover_python_pipelines()
@@ -212,8 +214,8 @@ def test_discover_python_pipelines_keeps_good_intree_with_rejected_intree(tmp_pa
     bad = intree_dir / "bad_one.py"
     bad.write_text("raise RuntimeError('bad_one')\n", encoding="utf-8")
 
-    scan_roots = [(intree_dir, "arnold.pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    scan_roots = [(intree_dir, "arnold_pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             result = discover_python_pipelines()
@@ -227,7 +229,7 @@ def test_discover_python_pipelines_broken_user_warns_not_raises(tmp_path: Path):
     _make_broken_pipeline(user_dir)
 
     scan_roots = [(tmp_path / "intree", None), (user_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = discover_python_pipelines()  # must NOT raise
@@ -244,7 +246,7 @@ def test_discover_python_pipelines_good_pack_still_returned_alongside_rejected_u
     _make_broken_pipeline(user_dir)
 
     scan_roots = [(tmp_path / "intree", None), (user_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             result = discover_python_pipelines()
@@ -259,7 +261,7 @@ def test_discover_python_pipelines_back_compat_return_shape(tmp_path: Path):
     _make_good_pipeline(user_dir)
 
     scan_roots = [(tmp_path / "intree", None), (user_dir, None)]
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = discover_python_pipelines()
 
     for item in result:
@@ -277,7 +279,7 @@ def test_manifest_discovery_default_ignores_m6_alias_value(tmp_path: Path, monke
 
     scan_roots = [(user_dir, None)]
     monkeypatch.setenv("MEGAPLAN_M6_MANIFEST_DISCOVERY", "0")
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     discovered = [d for d in result if d.status == "discovered"]
@@ -299,9 +301,9 @@ def test_manifest_discovery_does_not_exec_valid_module_by_default(
 
     scan_roots = [(user_dir, None)]
     monkeypatch.delenv("MEGAPLAN_M6_MANIFEST_DISCOVERY", raising=False)
-    with patch("arnold.pipelines.megaplan._pipeline.registry._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with patch(
-            "arnold.pipelines.megaplan._pipeline.registry._load_module_from_path",
+            "arnold_pipelines.megaplan.runtime.discovery._load_module_from_path",
             fail_load,
         ):
             result = scan_python_pipelines()
@@ -309,6 +311,13 @@ def test_manifest_discovery_does_not_exec_valid_module_by_default(
     assert [d.status for d in result] == ["discovered"]
 
 
+@pytest.mark.skip(
+    reason=(
+        "Tests legacy PipelineRegistry APIs (registration_kind_for, disposition_for, "
+        "graph_compatibility resource bundles) that were removed when "
+        "arnold/pipelines/megaplan/ was deleted."
+    )
+)
 def test_registry_keeps_native_graph_compat_and_rejected_dispositions_separate(
     tmp_path: Path,
     monkeypatch,
@@ -332,14 +341,14 @@ def test_registry_keeps_native_graph_compat_and_rejected_dispositions_separate(
     )
     (user_dir / "SKILL.md").write_text("shared skill\n", encoding="utf-8")
 
-    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
+    from arnold_pipelines.megaplan.runtime import discovery as discovery_mod
 
     monkeypatch.setattr(
-        registry_mod,
+        discovery_mod,
         "BLESSED_ALLOWLIST",
         (str(native_module.resolve()), str(graph_module.resolve())),
     )
-    monkeypatch.setattr(registry_mod, "_get_scan_roots", lambda: [(user_dir, None)])
+    monkeypatch.setattr(discovery_mod, "_get_scan_roots", lambda: [(user_dir, None)])
     monkeypatch.setenv("MEGAPLAN_BUDGET_AUTHORITY_DIR", str(tmp_path / "leases"))
 
     registry = PipelineRegistry()

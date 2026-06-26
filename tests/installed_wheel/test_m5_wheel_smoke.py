@@ -90,7 +90,7 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
                     "workflow",
                     subcommand,
                     "--module",
-                    "arnold_pipelines.megaplan.pipelines.jokes:build_pipeline",
+                    "arnold_pipelines.evidence_pack:build_pipeline",
                 ],
                 capture_output=True,
                 text=True,

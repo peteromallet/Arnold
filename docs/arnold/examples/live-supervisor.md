@@ -4,7 +4,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/live_supervisor
+- source_package: arnold_pipelines/megaplan/pipelines/live_supervisor
 - manifest_hash: native:live-supervisor
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
@@ -17,11 +17,11 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/live_supervisor|
-| Builder target | arnold.pipelines.megaplan.pipelines.live_supervisor:build_pipeline|
-| Steps | arnold/pipelines/megaplan/pipelines/live_supervisor/steps.py|
-| Builder source | arnold/pipelines/megaplan/pipelines/live_supervisor/__init__.py|
-| Skill | arnold/pipelines/megaplan/pipelines/live_supervisor/SKILL.md|
+| Package | arnold_pipelines/megaplan/pipelines/live_supervisor|
+| Builder target | arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline|
+| Steps | arnold_pipelines/megaplan/pipelines/live_supervisor/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/live_supervisor/__init__.py|
+| Skill | arnold_pipelines/megaplan/pipelines/live_supervisor/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
 | Load state | loadable-native|
@@ -32,20 +32,13 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "live-supervisor"
-description: str = (
-    "Megaplan Live Watchdog Supervisor: classify, diagnose, and decide "
-    "safe repair actions for likely-live Megaplan/Arnold runs."
-)
+name: str = 'live-supervisor'
+description: str = 'Megaplan Live Watchdog Supervisor: classify, diagnose, and decide safe repair actions for likely-live Megaplan/Arnold runs.'
 
-driver: tuple[str, str] = ("native", "linear")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = (
-    "plan_supervision",
-    "incident_classification",
-    "repair_dispatch",
-)
+driver: tuple[str, str] = ('native', 'linear')
+entrypoint: str = 'build_pipeline'
+arnold_api_version: str = '1.0'
+capabilities: tuple[str, ...] = ('plan_supervision', 'incident_classification', 'repair_dispatch')
 ```
 
 ## Step Surface
@@ -467,17 +460,6 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 
 ````markdown
 # live-supervisor
-
-Runtime: `live-supervisor` is a native-default converted pipeline. Fresh runs
-through `megaplan run live-supervisor ...` or
-`arnold pipelines run live-supervisor ...` persist runtime ownership in
-`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. During
-the M7 deprecation window, the derived graph remains available as a
-compatibility fallback: pass `--runtime graph` (or the deprecated
-`--executor graph`) for a fresh run that must use the graph executor. Existing
-graph-born plan directories keep resuming on graph. Native-born runs resume on
-native, and corrupt native cursors fail closed rather than silently falling
-back to graph.
 
 Input: a Snapshot dict passed as `initial_state={"snapshot": <dict>}`. The
 snapshot contains a `scan_ts_utc` ISO timestamp and a list of `incidents`, each

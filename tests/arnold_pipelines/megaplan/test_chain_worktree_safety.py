@@ -11,9 +11,12 @@ from arnold_pipelines.megaplan.auto import DriverOutcome
 from arnold_pipelines.megaplan.chain import _drive_plan
 from arnold_pipelines.megaplan.chain.git_ops import (
     _clean_worktree_for_chain,
+    _commit_and_push_phase,
     _commit_phase,
+    _ensure_milestone_pr,
     _require_git_worktree_root,
 )
+from arnold_pipelines.megaplan.chain.spec import MilestoneSpec
 from arnold_pipelines.megaplan.cli import _reset_chain_worktree_target
 from arnold_pipelines.megaplan.types import CliError
 
@@ -126,6 +129,80 @@ def test_chain_commit_refuses_non_git_directory_without_deleting_files(
 
     assert exc_info.value.code == "chain_git_worktree_required"
     assert keep.read_text(encoding="utf-8") == "print('keep')\n"
+
+
+def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
+    messages: list[str] = []
+    milestone = MilestoneSpec(
+        label="m1",
+        idea=Path("m1.md"),
+        branch="test/m1",
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops.shutil.which",
+        lambda name: None if name == "gh" else "/bin/other",
+    )
+
+    assert (
+        _ensure_milestone_pr(
+            Path.cwd(),
+            milestone,
+            base_branch="main",
+            writer=messages.append,
+        )
+        is None
+    )
+    assert any("gh executable not found" in message for message in messages)
+
+
+def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+    subprocess_calls: list[list[str]] = []
+    run_command_calls: list[list[str]] = []
+
+    def fake_commit_phase(*_args, **_kwargs) -> str:
+        return "abc123"
+
+    def fake_run(cmd, **_kwargs):
+        subprocess_calls.append(list(cmd))
+        if cmd[:3] == ["git", "fetch", "origin"]:
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        if cmd[:2] == ["git", "rebase"] and cmd[2] != "--abort":
+            return subprocess.CompletedProcess(cmd, 1, "", "conflict")
+        if cmd == ["git", "rebase", "--abort"]:
+            return subprocess.CompletedProcess(cmd, 128, "", "No rebase in progress?")
+        raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        run_command_calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._commit_phase",
+        fake_commit_phase,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=SimpleNamespace(
+                run=fake_run,
+                TimeoutExpired=subprocess.TimeoutExpired,
+            ),
+            _run_command=fake_run_command,
+        ),
+    )
+
+    _commit_and_push_phase(root, "branch-x", "plan-x", "finalize", writer=messages.append)
+
+    assert ["git", "rebase", "--abort"] in subprocess_calls
+    assert ["git", "push", "--no-verify", "--force-with-lease", "origin", "branch-x"] in run_command_calls
+    assert any("warning: git rebase --abort failed" in message for message in messages)
 
 
 def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monkeypatch) -> None:

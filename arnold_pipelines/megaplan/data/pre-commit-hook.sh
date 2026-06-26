@@ -16,7 +16,7 @@ LAUNCHERS=(
 run_regen() {
   local cmd="$1"
   # shellcheck disable=SC2086
-  eval "$cmd -m arnold.pipelines.megaplan setup --regen-composed"
+  eval "$cmd -m arnold_pipelines.megaplan setup --regen-composed"
 }
 
 rc=127
@@ -36,7 +36,7 @@ for launcher in "${LAUNCHERS[@]}"; do
 done
 
 if [ "$rc" = "1" ]; then
-  git add arnold/pipelines/megaplan/data/_composed/
+  git add arnold_pipelines/megaplan/data/_composed/
   echo 'megaplan: regenerated composed bundles — re-run git commit' >&2
   exit 1
 fi

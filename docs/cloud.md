@@ -1,8 +1,8 @@
 # Megaplan Cloud
 
-`python -m arnold.pipelines.megaplan cloud` keeps cloud orchestration thin. Core megaplan owns plan, auto, and chain behavior; cloud subcommands stage files, pick a transport, and run the core commands remotely.
+`python -m arnold_pipelines.megaplan cloud` keeps cloud orchestration thin. Core megaplan owns plan, auto, and chain behavior; cloud subcommands stage files, pick a transport, and run the core commands remotely.
 
-Examples below use `python -m arnold.pipelines.megaplan ...`; reuse that verified module launcher for every cloud command. Add `--cloud-yaml /path/to/cloud.yaml` when `cloud.yaml` is not at the project root.
+Examples below use `python -m arnold_pipelines.megaplan ...`; reuse that verified module launcher for every cloud command. Add `--cloud-yaml /path/to/cloud.yaml` when `cloud.yaml` is not at the project root.
 
 ## Providers
 
@@ -19,7 +19,7 @@ Examples below use `python -m arnold.pipelines.megaplan ...`; reuse that verifie
 1. Scaffold:
 
 ```bash
-python -m arnold.pipelines.megaplan cloud init
+python -m arnold_pipelines.megaplan cloud init
 ```
 
 2. Edit `cloud.yaml` for repo, provider, mode, secrets, and optional toolchains.
@@ -37,24 +37,24 @@ export ANTHROPIC_API_KEY=...   # optional
 4. Build and deploy:
 
 ```bash
-python -m arnold.pipelines.megaplan cloud build
-python -m arnold.pipelines.megaplan cloud deploy
+python -m arnold_pipelines.megaplan cloud build
+python -m arnold_pipelines.megaplan cloud deploy
 ```
 
 5. Start work remotely:
 
 ```bash
-python -m arnold.pipelines.megaplan cloud bootstrap .megaplan/briefs/tiny-plan.md
-python -m arnold.pipelines.megaplan cloud chain .megaplan/briefs/my-epic/chain.yaml
+python -m arnold_pipelines.megaplan cloud bootstrap .megaplan/briefs/tiny-plan.md
+python -m arnold_pipelines.megaplan cloud chain .megaplan/briefs/my-epic/chain.yaml
 ```
 
 6. Inspect and connect:
 
 ```bash
-python -m arnold.pipelines.megaplan cloud status
-python -m arnold.pipelines.megaplan cloud status --chain
-python -m arnold.pipelines.megaplan cloud logs
-python -m arnold.pipelines.megaplan cloud attach
+python -m arnold_pipelines.megaplan cloud status
+python -m arnold_pipelines.megaplan cloud status --chain
+python -m arnold_pipelines.megaplan cloud logs
+python -m arnold_pipelines.megaplan cloud attach
 ```
 
 ## `cloud.yaml` Reference
@@ -65,7 +65,7 @@ python -m arnold.pipelines.megaplan cloud attach
 |---|---|---:|---|
 | `provider` | no | `railway` | One of `railway`, `local`, or `ssh`. |
 | `mode` | no | `idle` | Runner mode: `auto`, `chain`, or `idle`. |
-| `secrets` | no | `[]` | Local env var names uploaded during `python -m arnold.pipelines.megaplan cloud deploy` and redacted from cloud log output where possible. |
+| `secrets` | no | `[]` | Local env var names uploaded during `python -m arnold_pipelines.megaplan cloud deploy` and redacted from cloud log output where possible. |
 | `toolchains` | no | `[]` | Extra language toolchains layered into the image. Use aliases `rust`, `go`, `java`, or `{name, install}` mappings. |
 
 ### `repo`
@@ -99,7 +99,7 @@ Used only when `mode: auto`.
 
 | Field | Required in `auto` mode | Default | Meaning |
 |---|---|---:|---|
-| `auto.plan_name` | yes | none | Remote plan name for boot-time `python -m arnold.pipelines.megaplan auto --plan ...`. |
+| `auto.plan_name` | yes | none | Remote plan name for boot-time `python -m arnold_pipelines.megaplan auto --plan ...`. |
 | `auto.idea_file` | yes | none | Absolute remote path to the idea file already staged on the workspace volume. |
 | `auto.robustness` | no | `standard` | Robustness for the boot-time init fallback. |
 
@@ -166,17 +166,17 @@ toolchains:
 
 ## Wrapper Workflows
 
-### `python -m arnold.pipelines.megaplan cloud bootstrap <idea-file>`
+### `python -m arnold_pipelines.megaplan cloud bootstrap <idea-file>`
 
 `cloud bootstrap` uploads a local idea file to `<repo.workspace>/idea.txt`, then runs:
 
 ```bash
-python -m arnold.pipelines.megaplan init --project-dir <workspace> --idea-file <workspace>/idea.txt --auto-start --robustness <level>
+python -m arnold_pipelines.megaplan init --project-dir <workspace> --idea-file <workspace>/idea.txt --auto-start --robustness <level>
 ```
 
 `--plan-name` is optional. If omitted, cloud does **not** pass `--name`; core megaplan chooses the default slug from the idea text.
 
-### `python -m arnold.pipelines.megaplan cloud chain <spec> [--idea-dir <dir>]`
+### `python -m arnold_pipelines.megaplan cloud chain <spec> [--idea-dir <dir>]`
 
 `cloud chain` is the preferred path for remote chain runs. It:
 
@@ -184,7 +184,7 @@ python -m arnold.pipelines.megaplan init --project-dir <workspace> --idea-file <
 2. Resolves each milestone idea file from `--idea-dir` or, by default, the local spec's parent directory.
 3. Uploads each idea file to the remote path named in the chain spec.
 4. Uploads the chain spec to `<repo.workspace>/chain.yaml`.
-5. Starts remote `python -m arnold.pipelines.megaplan chain start --spec <repo.workspace>/chain.yaml` in tmux session `megaplan-chain`, logging to `<repo.workspace>/.megaplan/cloud-chain.log`.
+5. Starts remote `python -m arnold_pipelines.megaplan chain start --spec <repo.workspace>/chain.yaml` in tmux session `megaplan-chain`, logging to `<repo.workspace>/.megaplan/cloud-chain.log`.
 
 After upload + dispatch, cloud writes a provider-independent marker:
 
@@ -194,7 +194,7 @@ After upload + dispatch, cloud writes a provider-independent marker:
 
 That marker survives Railway's ephemeral deploy dir and is used by `cloud status --chain`.
 
-### `python -m arnold.pipelines.megaplan cloud status --chain`
+### `python -m arnold_pipelines.megaplan cloud status --chain`
 
 `cloud status --chain` fetches remote `chain_state.json`, then reuses core chain status formatting. Remote spec resolution precedence is:
 
@@ -203,13 +203,13 @@ That marker survives Railway's ephemeral deploy dir and is used by `cloud status
 3. `spec.chain.spec` from `cloud.yaml` when `mode: chain`
 4. Otherwise `missing_remote_spec`
 
-The command prints the structured payload on stdout and the same human-readable chain summary block that local `python -m arnold.pipelines.megaplan chain status --spec ...` prints on stderr.
+The command prints the structured payload on stdout and the same human-readable chain summary block that local `python -m arnold_pipelines.megaplan chain status --spec ...` prints on stderr.
 
-### `python -m arnold.pipelines.megaplan cloud status`
+### `python -m arnold_pipelines.megaplan cloud status`
 
-Without `--chain`, `cloud status` still runs remote `python -m arnold.pipelines.megaplan status` and prints that JSON payload unchanged.
+Without `--chain`, `cloud status` still runs remote `python -m arnold_pipelines.megaplan status` and prints that JSON payload unchanged.
 
-### `python -m arnold.pipelines.megaplan cloud supervise --chain`
+### `python -m arnold_pipelines.megaplan cloud supervise --chain`
 
 `cloud supervise --chain` runs a **one-shot supervisor tick** against the remote chain. It observes the chain, refreshes branch/PR sync state, and makes safe progress decisions. It never invents approvals, bypasses quality gates, or runs destructive git operations.
 
@@ -261,7 +261,7 @@ Same resolution order as `cloud status --chain`:
 
 #### Canonical session
 
-The supervisor targets the same `megaplan-chain` tmux session used by `cloud chain`. All mutations use the canonical `MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold.pipelines.megaplan chain start --spec <path> --one` command, appending to `<workspace>/.megaplan/cloud-chain.log`.
+The supervisor targets the same `megaplan-chain` tmux session used by `cloud chain`. All mutations use the canonical `MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold_pipelines.megaplan chain start --spec <path> --one` command, appending to `<workspace>/.megaplan/cloud-chain.log`.
 
 #### Safe actions
 
@@ -278,7 +278,7 @@ The supervisor **refuses to act** and returns `acted: false` with a `refused_rea
 |---|---|
 | `running` | Chain is running; nothing to do. |
 | `complete` | All milestones processed; chain is done. |
-| `human_prerequisite` | Prerequisite policy is `required` and unmet; requires human operator resolution via `python -m arnold.pipelines.megaplan user-action resolve` or `python -m arnold.pipelines.megaplan chain override`. |
+| `human_prerequisite` | Prerequisite policy is `required` and unmet; requires human operator resolution via `python -m arnold_pipelines.megaplan user-action resolve` or `python -m arnold_pipelines.megaplan chain override`. |
 | `quality_gate` | Validation policy is `required` and quality gate is failing; requires human operator resolution. |
 | `awaiting_pr_merge` (PR unmerged) | PR is still open; supervisor will not advance until merged. |
 | `stale_bookkeeping` (runner alive) | Bookkeeping is stale but runner is alive; supervisor will not force-restart a live runner. |
@@ -288,7 +288,7 @@ The supervisor **refuses to act** and returns `acted: false` with a `refused_rea
 
 The supervisor is **not** a destructive repair tool and does **not** replace:
 
-- **Human approval** of prerequisites — use `python -m arnold.pipelines.megaplan user-action resolve` or `python -m arnold.pipelines.megaplan chain override`.
+- **Human approval** of prerequisites — use `python -m arnold_pipelines.megaplan user-action resolve` or `python -m arnold_pipelines.megaplan chain override`.
 - **PR review** — the supervisor only advances when the PR is already merged.
 - **Quality-gate resolution** — failing gates must be resolved by a human operator.
 
@@ -302,7 +302,7 @@ Use `cloud bootstrap` and `cloud chain` when you want cloud to stage the local i
 
 ## Logs, Redaction, And Attach
 
-`python -m arnold.pipelines.megaplan cloud logs` redacts:
+`python -m arnold_pipelines.megaplan cloud logs` redacts:
 
 - literal values for secret names listed under `secrets:` when those values are present locally
 - `NAME=value` and `NAME: value` patterns for those secret names
@@ -310,11 +310,11 @@ Use `cloud bootstrap` and `cloud chain` when you want cloud to stage the local i
 
 This redaction applies to:
 
-- `python -m arnold.pipelines.megaplan cloud logs`
-- `python -m arnold.pipelines.megaplan cloud exec`
+- `python -m arnold_pipelines.megaplan cloud logs`
+- `python -m arnold_pipelines.megaplan cloud exec`
 - wrapper-dispatched output from `cloud bootstrap`, `cloud chain`, and `cloud resume`
 
-`python -m arnold.pipelines.megaplan cloud attach` is different. It opens a raw interactive PTY, so line-buffered redaction is not applied there. Treat attach sessions as trusted terminals.
+`python -m arnold_pipelines.megaplan cloud attach` is different. It opens a raw interactive PTY, so line-buffered redaction is not applied there. Treat attach sessions as trusted terminals.
 
 ## Provider Notes
 

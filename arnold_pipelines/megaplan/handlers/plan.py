@@ -8,7 +8,7 @@ from typing import Any
 from arnold_pipelines.megaplan import handlers as _pkg
 from arnold_pipelines.megaplan.types import CliError, MOCK_ENV_VAR, StepResponse
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_HUMAN, STATE_INITIALIZED, STATE_PLANNED, STATE_PREPPED
-from arnold_pipelines.megaplan._core import load_plan_locked, require_state
+from arnold_pipelines.megaplan._core import load_plan_locked, read_json, require_state
 
 from .shared import (
     _finish_step,
@@ -43,6 +43,100 @@ def _apply_prep_clarify_gate(state: dict, payload: dict) -> str:
     return STATE_AWAITING_HUMAN
 
 
+def _criteria_require_tests(success_criteria: list[dict[str, Any]]) -> bool:
+    for criterion in success_criteria:
+        if not isinstance(criterion, dict):
+            continue
+        requires = criterion.get("requires")
+        if isinstance(requires, list) and "run_tests" in requires:
+            return True
+    return False
+
+
+def _prep_relevant_code_surfaces(plan_dir: Path) -> list[str]:
+    try:
+        prep = read_json(plan_dir / "prep.json")
+    except Exception:
+        return []
+    if not isinstance(prep, dict):
+        return []
+    relevant_code = prep.get("relevant_code")
+    if not isinstance(relevant_code, list):
+        return []
+    surfaces: list[str] = []
+    for item in relevant_code:
+        if not isinstance(item, dict):
+            continue
+        file_path = item.get("file_path")
+        if isinstance(file_path, str) and file_path.strip():
+            surfaces.append(file_path.strip())
+    return surfaces
+
+
+def _derive_plan_test_blast_radius(
+    *,
+    plan_dir: Path,
+    state: dict[str, Any],
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if state["config"].get("mode", "code") != "code":
+        return None
+
+    from arnold_pipelines.megaplan.orchestration.test_selection import (
+        compute_default_blast_radius,
+        merge_blast_radius_floor,
+        sanitize_blast_radius_paths,
+    )
+
+    repo_root = Path(state["config"]["project_dir"])
+    changed_surfaces = payload.get("changed_surfaces")
+    if not isinstance(changed_surfaces, list):
+        model_proposed = payload.get("test_blast_radius")
+        if isinstance(model_proposed, dict):
+            proposed_changed_surfaces = model_proposed.get("changed_surfaces")
+            if isinstance(proposed_changed_surfaces, list):
+                changed_surfaces = proposed_changed_surfaces
+    if not isinstance(changed_surfaces, list):
+        changed_surfaces = _prep_relevant_code_surfaces(plan_dir)
+    changed_surfaces = [
+        surface.strip()
+        for surface in changed_surfaces
+        if isinstance(surface, str) and surface.strip()
+    ]
+
+    deterministic_floor = compute_default_blast_radius(changed_surfaces, repo_root)
+    if (
+        deterministic_floor.get("strategy") == "none"
+        and _criteria_require_tests(payload.get("success_criteria", []))
+    ):
+        deterministic_floor = {
+            **deterministic_floor,
+            "strategy": "full",
+            "confidence": "low",
+            "rationale": (
+                str(deterministic_floor.get("rationale") or "")
+                + " Success criteria require tests, but the plan did not declare "
+                "any concrete changed_surfaces; revise must add scoped metadata or "
+                "explicitly opt into full-suite validation."
+            ).strip(),
+        }
+
+    model_proposed = payload.get("test_blast_radius")
+    if isinstance(model_proposed, dict):
+        final_blast_radius = merge_blast_radius_floor(
+            deterministic_floor,
+            model_proposed,
+        )
+    else:
+        final_blast_radius = deterministic_floor
+
+    if final_blast_radius is not None:
+        final_blast_radius = sanitize_blast_radius_paths(final_blast_radius, repo_root)
+    if final_blast_radius is not None and "changed_surfaces" not in final_blast_radius:
+        final_blast_radius["changed_surfaces"] = list(changed_surfaces)
+    return final_blast_radius
+
+
 def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
     with load_plan_locked(root, args.plan, step="plan") as (plan_dir, state):
         require_state(state, "plan", {STATE_INITIALIZED, STATE_PREPPED, STATE_PLANNED})
@@ -67,6 +161,18 @@ def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
                 state,
                 payload["success_criteria"],
             )
+            meta_fields: dict[str, Any] = {
+                "questions": payload["questions"],
+                "success_criteria": payload["success_criteria"],
+                "assumptions": payload["assumptions"],
+            }
+            final_blast_radius = _derive_plan_test_blast_radius(
+                plan_dir=plan_dir,
+                state=state,
+                payload=payload,
+            )
+            if final_blast_radius is not None:
+                meta_fields["test_blast_radius"] = final_blast_radius
             plan_filename, meta_filename, meta = _write_plan_version(
                 plan_dir=plan_dir,
                 state=state,
@@ -74,11 +180,7 @@ def handle_plan(root: Path, args: argparse.Namespace) -> StepResponse:
                 version=version,
                 worker=worker,
                 plan_text=payload["plan"].rstrip() + "\n",
-                meta_fields={
-                    "questions": payload["questions"],
-                    "success_criteria": payload["success_criteria"],
-                    "assumptions": payload["assumptions"],
-                },
+                meta_fields=meta_fields,
             )
             state["iteration"], state["current_state"] = version, STATE_PLANNED
             state["meta"].pop("user_approved_gate", None)

@@ -71,7 +71,6 @@ agent = []
 
 [tool.hatch.build]
 exclude = [
-    "arnold/pipelines/**",
     "docs/archive/**",
     "tests/archive/**",
     ".megaplan/**",
@@ -86,7 +85,6 @@ artifacts = [
     "agentbox/systemd/*.service",
 ]
 exclude = [
-    "arnold/pipelines/**",
     "arnold_pipelines/megaplan/cloud/_reference/**",
     "arnold_pipelines/megaplan/agent/pyproject.toml",
     "docs/archive/**",

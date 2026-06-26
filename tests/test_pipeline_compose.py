@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from arnold.pipelines.megaplan._pipeline import (
+from arnold_pipelines.megaplan.step_types import (
     Edge,
     Pipeline,
     Stage,
@@ -18,7 +18,7 @@ from arnold.pipelines.megaplan._pipeline import (
     StepContext,
     StepResult,
 )
-from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold_pipelines.megaplan.runtime.bridge import run_pipeline
 
 
 class _BaseStep:
@@ -126,12 +126,11 @@ def test_compose_four_stage_pipeline(tmp_path: Path) -> None:
         tmp_path / "critique_a" / "critique.json",
         tmp_path / "critique_b" / "critique.json",
         tmp_path / "finalize" / "final.md",
-        tmp_path / "state.json",
     ]:
         assert expected.exists(), f"missing artifact: {expected}"
 
     assert result.get("final_stage") == "finalize"
-    state = json.loads((tmp_path / "state.json").read_text())
+    state = result["state"]
     assert state.get("finalized") is True
     assert state.get("prepped") is True
     assert state.get("critique_a_done") is True

@@ -60,7 +60,7 @@ Never do these things:
 
 ## 2. Startup
 Start the run like this:
-1. Resolve and verify a working `<launcher>` with a harmless config call. Prefer `python -m arnold.pipelines.megaplan config show`; do not use the removed `megaplan` module or console entrypoint.
+1. Resolve and verify a working `<launcher>` with a harmless config call. Prefer `python -m arnold_pipelines.megaplan config show`; do not use the removed `megaplan` module or console entrypoint.
 2. Use empty-string expansion for `{AUTO_APPROVE_FLAG}` and `{ROBUSTNESS_FLAG}` whenever the corresponding `raw_config.execution` key is explicitly set.
 3. Run `<launcher> init --project-dir "{PROJECT_DIR}" {AUTO_APPROVE_FLAG} {ROBUSTNESS_FLAG} "{IDEA}"`.
 4. Capture the returned plan name.

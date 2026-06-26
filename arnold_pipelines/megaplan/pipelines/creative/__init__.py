@@ -1,22 +1,18 @@
-"""Compatibility mirror for the canonical ``creative`` pipeline package."""
+"""Canonical public surface for the ``creative`` pipeline package."""
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
+from .pipeline import build_pipeline
 
-name: str = "creative"
-description: str = (
-    "Creative-form pipeline: form-aware prep -> execute -> critique -> "
-    "revise -> finalize. Forms registry validates --form; "
-    "--primary-criterion threads through as a first-class input."
-)
+name: str = 'creative'
+description: str = 'Creative-form pipeline: form-aware prep -> execute -> critique -> revise -> finalize. Forms registry validates --form; --primary-criterion threads through as a first-class input.'
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("native",)
+supported_modes: tuple[str, ...] = ('native',)
 recommended_profiles: tuple[str, ...] = ()
-driver: tuple[str, str] = ("native", "linear")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("creative",)
+driver: tuple[str, str] = ('native', 'linear')
+entrypoint: str = 'build_pipeline'
+arnold_api_version: str = '1.0'
+capabilities: tuple[str, ...] = ('creative',)
 
 __all__ = [
     "arnold_api_version",

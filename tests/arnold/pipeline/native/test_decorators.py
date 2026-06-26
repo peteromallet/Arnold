@@ -615,35 +615,14 @@ class TestNativePanel:
         assert block.reducer is not None
 
 
-# ── Synthetic comparison against panel_parallel output shape ────────────
+# ── native_panel output shape ───────────────────────────────────────────
 
 
-class TestNativePanelVsPanelParallel:
-    """Verify native_panel matches panel_parallel(merge="none") output shape."""
+class TestNativePanelShape:
+    """Verify native_panel branch/reducer output shape."""
 
     def test_same_cardinality(self) -> None:
-        """Both produce the same number of reviewer branches."""
-        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
-        from arnold.pipeline.types import Step, StepContext, StepResult
-
-        # Build equivalent reviewers for both APIs
-        class _ReviewerStep:
-            def __init__(self, name: str, outputs: dict | None = None):
-                self.name = name
-                self.kind = "review"
-                self._outputs = outputs or {}
-
-            def run(self, ctx: StepContext) -> StepResult:
-                return StepResult(outputs=self._outputs, next="halt")
-
-        rs1 = _ReviewerStep("rs1", {"draft": "/tmp/r1.md"})
-        rs2 = _ReviewerStep("rs2", {"draft": "/tmp/r2.md"})
-
-        # panel_parallel (non-native)
-        pp_stage = panel_parallel("panel", (("alice", rs1), ("bob", rs2)))
-        assert len(pp_stage.steps) == 2
-
-        # native_panel
+        """native_panel produces the declared number of reviewer branches."""
         @phase
         def r1(ctx: object) -> dict:
             return {"draft": "/tmp/r1.md"}
@@ -656,26 +635,7 @@ class TestNativePanelVsPanelParallel:
         assert len(np_result) == 2
 
     def test_same_reviewer_ordering(self) -> None:
-        """Both preserve reviewer declaration order."""
-        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
-        from arnold.pipeline.types import Step, StepContext, StepResult
-
-        class _ReviewerStep:
-            def __init__(self, name: str):
-                self.name = name
-                self.kind = "review"
-
-            def run(self, ctx: StepContext) -> StepResult:
-                return StepResult(outputs={}, next="halt")
-
-        rs_a = _ReviewerStep("a")
-        rs_b = _ReviewerStep("b")
-        rs_c = _ReviewerStep("c")
-
-        pp_stage = panel_parallel("p", (("z", rs_a), ("y", rs_b), ("x", rs_c)))
-        pp_names = [s.name for s in pp_stage.steps]
-        assert pp_names == ["a", "b", "c"]
-
+        """native_panel preserves reviewer declaration order."""
         @phase
         def ra(ctx: object) -> dict:
             return {}
@@ -692,36 +652,8 @@ class TestNativePanelVsPanelParallel:
         np_names = [f.__name__ for f in np_result]
         assert np_names == ["ra", "rb", "rc"]
 
-    def test_same_collation_shape(self) -> None:
-        """Reducer collation matches panel_parallel join output shape."""
-        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
-        from arnold.pipeline.types import Step, StepContext, StepResult
-
-        class _ReviewerStep:
-            def __init__(self, name: str, outputs: dict | None = None):
-                self.name = name
-                self.kind = "review"
-                self._outputs = outputs or {}
-
-            def run(self, ctx: StepContext) -> StepResult:
-                return StepResult(outputs=self._outputs, next="halt")
-
-        rs1 = _ReviewerStep("rs1", {"draft": "/tmp/d1.md", "score": 0.8})
-        rs2 = _ReviewerStep("rs2", {"draft": "/tmp/d2.md"})
-
-        pp_stage = panel_parallel("panel", (("alice", rs1), ("bob", rs2)))
-        ctx = StepContext(artifact_root="/tmp", state={})
-        pp_result = pp_stage.join([
-            StepResult(outputs={"draft": "/tmp/d1.md", "score": 0.8}, next="halt"),
-            StepResult(outputs={"draft": "/tmp/d2.md"}, next="halt"),
-        ], ctx)
-        pp_outputs = pp_result.outputs
-        # panel_parallel prefixes outputs with reviewer_id
-        assert pp_outputs["alice.draft"] == "/tmp/d1.md"
-        assert pp_outputs["alice.score"] == 0.8
-        assert pp_outputs["bob.draft"] == "/tmp/d2.md"
-
-        # native_panel reducer should produce same shape
+    def test_collation_shape(self) -> None:
+        """Reducer prefixes outputs with reviewer_id."""
         @phase
         def r1(ctx: object) -> dict:
             return {"draft": "/tmp/d1.md", "score": 0.8}
@@ -736,34 +668,12 @@ class TestNativePanelVsPanelParallel:
             {"draft": "/tmp/d1.md", "score": 0.8},
             {"draft": "/tmp/d2.md"},
         ])
-        # Same shape: reviewer_id.label -> value
-        assert np_reduced == dict(pp_outputs)
         assert np_reduced["alice.draft"] == "/tmp/d1.md"
         assert np_reduced["alice.score"] == 0.8
         assert np_reduced["bob.draft"] == "/tmp/d2.md"
 
     def test_single_reviewer_shape(self) -> None:
-        """Single-reviewer panel produces same shape in both APIs."""
-        from arnold.pipelines.megaplan._pipeline.pattern_topology import panel_parallel
-        from arnold.pipeline.types import Step, StepContext, StepResult
-
-        class _ReviewerStep:
-            def __init__(self, name: str, outputs: dict | None = None):
-                self.name = name
-                self.kind = "review"
-                self._outputs = outputs or {}
-
-            def run(self, ctx: StepContext) -> StepResult:
-                return StepResult(outputs=self._outputs, next="halt")
-
-        rs = _ReviewerStep("rs", {"x": 1})
-        pp_stage = panel_parallel("p", (("only", rs),))
-        ctx = StepContext(artifact_root="/tmp", state={})
-        pp_result = pp_stage.join(
-            [StepResult(outputs={"x": 1}, next="halt")], ctx
-        )
-        assert pp_result.outputs == {"only.x": 1}
-
+        """Single-reviewer panel prefixes the sole output."""
         @phase
         def r(ctx: object) -> dict:
             return {"x": 1}

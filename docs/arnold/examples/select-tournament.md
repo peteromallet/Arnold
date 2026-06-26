@@ -4,7 +4,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/select_tournament
+- source_package: arnold_pipelines/megaplan/pipelines/select_tournament
 - manifest_hash: native:select-tournament
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
@@ -17,11 +17,11 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/select_tournament|
-| Builder target | arnold.pipelines.megaplan.pipelines.select_tournament:build_pipeline|
-| Steps | arnold/pipelines/megaplan/pipelines/select_tournament/steps.py|
-| Builder source | arnold/pipelines/megaplan/pipelines/select_tournament/__init__.py|
-| Skill | arnold/pipelines/megaplan/pipelines/select_tournament/SKILL.md|
+| Package | arnold_pipelines/megaplan/pipelines/select_tournament|
+| Builder target | arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline|
+| Steps | arnold_pipelines/megaplan/pipelines/select_tournament/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/select_tournament/__init__.py|
+| Skill | arnold_pipelines/megaplan/pipelines/select_tournament/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
 | Load state | loadable-native|
@@ -62,10 +62,10 @@ def _root_dir(ctx: StepContext) -> Path:
     Arnold StepContext has ``artifact_root``; Megaplan has ``plan_dir``.
     This bridge helper keeps the select-tournament pipeline compatible with both runtimes.
     """
-    root = getattr(ctx, "artifact_root", None)
+    root = getattr(ctx, 'artifact_root', None)
     if root is not None:
         return Path(root)
-    return Path(getattr(ctx, "plan_dir"))  # type: ignore[arg-type]
+    return getattr(ctx, 'plan_dir')  # type: ignore[no-any-return]
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -275,11 +275,16 @@ score_candidates (fanout) -> pairwise_bracket -> winner
 
 ## Runtime
 
-`select-tournament` is a native-first pipeline. Fresh runs through
+`select-tournament` is a native-default converted pipeline. Fresh runs through
 `megaplan run select-tournament ...` or
-`arnold pipelines run select-tournament ...` execute on the native runtime.
-Native-born runs resume on native, and corrupt native cursors fail closed
-rather than silently falling back to graph.
+`arnold pipelines run select-tournament ...` persist runtime ownership in
+`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. During
+the M7 deprecation window, the derived graph remains available as a
+compatibility fallback: pass `--runtime graph` (or the deprecated
+`--executor graph`) for a fresh run that must use the graph executor. Existing
+graph-born plan directories keep resuming on graph. Native-born runs resume on
+native, and corrupt native cursors fail closed rather than silently falling
+back to graph.
 
 ## Verdict Semantics
 

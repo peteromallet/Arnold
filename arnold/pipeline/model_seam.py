@@ -448,7 +448,7 @@ _FAMILY_BUDGET_DEFAULTS: dict[ModelFamily, ModelBudgetDefaults] = {
         max_input_tokens=180_000, tokenizer_source="claude_conservative_estimate"
     ),
     ModelFamily.DEEPSEEK: ModelBudgetDefaults(
-        max_input_tokens=120_000, tokenizer_source="hf:auto"
+        max_input_tokens=140_000, tokenizer_source="hf:auto"
     ),
     ModelFamily.KIMI: ModelBudgetDefaults(
         max_input_tokens=120_000, tokenizer_source="hf:auto"

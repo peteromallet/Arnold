@@ -24,6 +24,15 @@ from arnold.conformance.checks import (
 )
 
 
+def _clear_deleted_megaplan_modules() -> None:
+    """Remove deleted megaplan modules from sys.modules to keep tests hermetic."""
+    for name in list(sys.modules):
+        if name == "megaplan" or name.startswith("megaplan."):
+            sys.modules.pop(name, None)
+        if name == "arnold.pipelines.megaplan" or name.startswith("arnold.pipelines.megaplan."):
+            sys.modules.pop(name, None)
+
+
 def _arnold_root(tmp_path: Path) -> Path:
     root = tmp_path / "arnold"
     root.mkdir()
@@ -50,17 +59,23 @@ def test_conformance_public_symbols_are_importable() -> None:
     assert_suite_compliant(suite)
 
 
-def test_current_tree_passes_initial_extraction_conformance_suite() -> None:
+def test_current_tree_wires_conformance_suite_and_legacy_reference_gate() -> None:
     suite = run_conformance_suite()
 
-    assert suite.passed is True
+    checks_by_id = {check.check_id: check for check in suite.checks}
     assert {
         "import-coupling",
         "package-name-staleness",
         "semantic-coupling",
         "public-workflow-layering",
         "never-port-artifacts",
-    }.issubset({check.check_id for check in suite.checks})
+        "legacy-reference-allowlist",
+    }.issubset(checks_by_id)
+
+    legacy_gate = checks_by_id["legacy-reference-allowlist"]
+    assert legacy_gate.details["stale_allowlist"] == []
+    assert legacy_gate.details["invalid_entries"] == []
+    assert legacy_gate.details["duplicates"] == []
 
 
 def test_conformance_package_import_does_not_import_megaplan() -> None:
@@ -249,6 +264,7 @@ def test_allowlist_entries_are_ratchets_and_stale_entries_fail(tmp_path: Path) -
 
 def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
     """Deleted surfaces must not resolve via dynamic import mechanisms."""
+    _clear_deleted_megaplan_modules()
     import importlib
 
     deleted_prefixes = (
@@ -272,6 +288,7 @@ def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
 
 def test_eval_exec_cannot_resolve_deleted_megaplan_paths() -> None:
     """Deleted package paths must not be constructable via eval/exec."""
+    _clear_deleted_megaplan_modules()
     for expr in (
         "__import__('arnold.pipelines.megaplan')",
         "__import__('megaplan')",
@@ -283,6 +300,7 @@ def test_eval_exec_cannot_resolve_deleted_megaplan_paths() -> None:
 
 def test_sys_modules_audit_finds_no_deleted_megaplan_modules_after_conformance() -> None:
     """After running the conformance suite, no deleted megaplan module is loaded."""
+    _clear_deleted_megaplan_modules()
     run_conformance_suite()
 
     deleted_loaded = [

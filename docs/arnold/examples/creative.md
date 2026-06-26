@@ -4,7 +4,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/creative
+- source_package: arnold_pipelines/megaplan/pipelines/creative
 - manifest_hash: native:creative
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
@@ -17,11 +17,11 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/creative|
-| Builder target | arnold.pipelines.megaplan.pipelines.creative:build_pipeline|
-| Steps | arnold/pipelines/megaplan/pipelines/creative/steps.py|
-| Builder source | arnold/pipelines/megaplan/pipelines/creative/__init__.py|
-| Skill | arnold/pipelines/megaplan/pipelines/creative/SKILL.md|
+| Package | arnold_pipelines/megaplan/pipelines/creative|
+| Builder target | arnold_pipelines.megaplan.pipelines.creative:build_pipeline|
+| Steps | arnold_pipelines/megaplan/pipelines/creative/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/creative/__init__.py|
+| Skill | arnold_pipelines/megaplan/pipelines/creative/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
 | Load state | loadable-native|
@@ -32,17 +32,13 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "creative"
-description: str = (
-    "Creative-form pipeline: form-aware prep -> execute -> critique -> "
-    "revise -> finalize. Forms registry validates --form; "
-    "--primary-criterion threads through as a first-class input."
-)
+name: str = 'creative'
+description: str = 'Creative-form pipeline: form-aware prep -> execute -> critique -> revise -> finalize. Forms registry validates --form; --primary-criterion threads through as a first-class input.'
 
-driver: tuple[str, str] = ("native", "linear")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("creative",)
+driver: tuple[str, str] = ('native', 'linear')
+entrypoint: str = 'build_pipeline'
+arnold_api_version: str = '1.0'
+capabilities: tuple[str, ...] = ('creative',)
 ```
 
 ## Step Surface
@@ -208,14 +204,13 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 # creative pipeline — skill reference
 
-**Runtime**: native-backed pipeline<br>
+**Driver**: compatibility mirror for the native canonical package<br>
 **Arnold API version**: `1.0`<br>
-**Run surface**: `megaplan run creative ...` or `arnold pipelines run creative ...`<br>
-**Supported modes**: form-controlled with `--form`
+**Supported modes**: `native`
 
-Fresh `creative` runs use the native runtime and persist runtime ownership in
-`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. Native
-resume cursors resume on native, and corrupt native cursors fail closed.
+This mirror delegates to
+`arnold_pipelines.megaplan.pipelines.creative`. New runtime and discovery
+surfaces should import the canonical package directly.
 
 ## Purpose
 

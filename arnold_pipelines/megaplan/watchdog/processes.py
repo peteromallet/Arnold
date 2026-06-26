@@ -61,7 +61,7 @@ def _parse_ps_time(value: str) -> float | None:
 def _categorize_cmdline(cmdline: str) -> str | None:
     lowered = cmdline.lower()
     # Split on whitespace, path separators, and dots so dotted module paths
-    # like "python -m arnold.pipelines.megaplan" are categorized correctly.
+    # like "python -m arnold_pipelines.megaplan" are categorized correctly.
     # Path segments like ".megaplan-worktrees" split into "megaplan-worktrees",
     # which does not exactly match the "megaplan" needle, avoiding false positives.
     tokens = re.split(r"[\s/.]", lowered)

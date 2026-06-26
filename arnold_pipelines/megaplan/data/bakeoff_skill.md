@@ -50,7 +50,7 @@ Symptom when this happens: bakeoff arm reports `final_state: done` but `git -C <
 ## Launching a bake-off
 
 ```bash
-PYENV_VERSION=3.11.11 python -m arnold.pipelines.megaplan bakeoff run \
+PYENV_VERSION=3.11.11 python -m arnold_pipelines.megaplan bakeoff run \
   --idea-file /tmp/<task>-idea.txt \
   --profiles all-claude deepseek-kimi-deepseek claude-kimi-deepseek-or all-deepseek-or deepseek-claude-critique \
   --robustness light \
@@ -124,9 +124,9 @@ End with a "ship this one" pick and the dimension that tipped it.
 ## Pick + merge
 
 ```bash
-PYENV_VERSION=3.11.11 python -m arnold.pipelines.megaplan bakeoff compare --exp <id>  # required before pick
-PYENV_VERSION=3.11.11 python -m arnold.pipelines.megaplan bakeoff pick --exp <id> --profile <winner> --rationale "..."
-PYENV_VERSION=3.11.11 python -m arnold.pipelines.megaplan bakeoff merge --exp <id>
+PYENV_VERSION=3.11.11 python -m arnold_pipelines.megaplan bakeoff compare --exp <id>  # required before pick
+PYENV_VERSION=3.11.11 python -m arnold_pipelines.megaplan bakeoff pick --exp <id> --profile <winner> --rationale "..."
+PYENV_VERSION=3.11.11 python -m arnold_pipelines.megaplan bakeoff merge --exp <id>
 ```
 
 Merge brings the winner's worktree changes into main as uncommitted edits — review, run pytest, then commit yourself. Don't auto-commit blindly; the merge step doesn't run tests.

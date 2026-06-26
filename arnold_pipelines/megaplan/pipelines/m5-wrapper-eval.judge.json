@@ -7,7 +7,7 @@
       "taint": []
     }
   ],
-  "implementation": "arnold.pipelines.megaplan._pipeline.eval_judge_wrapper:EvaluandClarityJudge",
+  "implementation": "arnold_pipelines.megaplan._pipeline.eval_judge_wrapper:EvaluandClarityJudge",
   "judge_version": "fd0b5569af258678bd838da90bcce5c26648d7e420c520e192a5b77568525cd1",
   "kind": "judge",
   "model_identity": "model:deterministic-demo-clarity",

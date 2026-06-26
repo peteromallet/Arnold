@@ -17,10 +17,10 @@ from typing import Iterable, Sequence
 REPO_ROOT = Path(__file__).resolve().parents[4]
 
 NEW_EVAL_MODULES: tuple[str, ...] = (
-    "arnold/pipelines/megaplan/_pipeline/eval_judge_wrapper.py",
-    "arnold/pipelines/megaplan/_pipeline/judge_manifest.py",
-    "arnold/pipelines/megaplan/_pipeline/judge_manifest_discovery.py",
-    "arnold/pipelines/megaplan/observability/evaluand.py",
+    "arnold_pipelines/megaplan/_pipeline/eval_judge_wrapper.py",
+    "arnold_pipelines/megaplan/_pipeline/judge_manifest.py",
+    "arnold_pipelines/megaplan/_pipeline/judge_manifest_discovery.py",
+    "arnold_pipelines/megaplan/observability/evaluand.py",
     "megaplan/_pipeline/eval_judge_wrapper.py",
     "megaplan/_pipeline/judge_manifest.py",
     "megaplan/_pipeline/judge_manifest_discovery.py",
@@ -28,8 +28,8 @@ NEW_EVAL_MODULES: tuple[str, ...] = (
 )
 
 SDK_STATELESS_TARGETS: tuple[str, ...] = (
-    "arnold/pipelines/megaplan/control_interface.py",
-    "arnold/pipelines/megaplan/run_outcome.py",
+    "arnold_pipelines/megaplan/control_interface.py",
+    "arnold_pipelines/megaplan/run_outcome.py",
     "megaplan/control_interface.py",
     "megaplan/run_outcome.py",
 )
@@ -51,9 +51,9 @@ OLD_PATH_ALLOWLIST: tuple[str, ...] = (
 )
 
 GUARDED_CALIBRATION_TARGETS: tuple[str, ...] = (
-    "arnold/pipelines/megaplan/auto.py",
-    "arnold/pipelines/megaplan/observability/cost.py",
-    "arnold/pipelines/megaplan/calibration/**/*.py",
+    "arnold_pipelines/megaplan/auto.py",
+    "arnold_pipelines/megaplan/observability/cost.py",
+    "arnold_pipelines/megaplan/calibration/**/*.py",
     "megaplan/auto.py",
     "megaplan/observability/cost.py",
     "megaplan/calibration/**/*.py",
@@ -308,11 +308,11 @@ def _better_function(tree: ast.AST) -> ast.FunctionDef | None:
 def check_better_join_is_pure(
     root: Path | str = REPO_ROOT,
     *,
-    rel_path: str = "arnold/pipelines/megaplan/observability/evaluand.py",
+    rel_path: str = "arnold_pipelines/megaplan/observability/evaluand.py",
 ) -> tuple[M5EvalGateFinding, ...]:
     repo_root = Path(root)
     path = repo_root / rel_path
-    if not path.exists() and rel_path == "arnold/pipelines/megaplan/observability/evaluand.py":
+    if not path.exists() and rel_path == "arnold_pipelines/megaplan/observability/evaluand.py":
         legacy_rel_path = "megaplan/observability/evaluand.py"
         legacy_path = repo_root / legacy_rel_path
         if legacy_path.exists():

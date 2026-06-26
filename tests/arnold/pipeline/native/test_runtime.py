@@ -998,7 +998,7 @@ class TestMergeStateCAS:
 
     def test_cas_merge_tracks_versions(self) -> None:
         """merge_state via CAS bumps _state_meta.versions for each key."""
-        from arnold.pipelines.megaplan._pipeline.types import (
+        from arnold_pipelines.megaplan.state_delta import (
             StateDelta,
             apply_delta,
         )
@@ -1057,7 +1057,7 @@ class TestMergeStateCAS:
 
     def test_cas_merge_accumulates_owned_keys(self) -> None:
         """merge_state via CAS adds each merged key to owned_keys."""
-        from arnold.pipelines.megaplan._pipeline.types import (
+        from arnold_pipelines.megaplan.state_delta import (
             StateDelta,
             apply_delta,
         )
@@ -1125,7 +1125,7 @@ class TestMergeStateCAS:
         ``_state_meta.versions`` — proving the conflict-detection path
         is exercised without crashing the pipeline.
         """
-        from arnold.pipelines.megaplan._pipeline.types import (
+        from arnold_pipelines.megaplan.state_delta import (
             StateDelta,
             StateDeltaConflict,
             apply_delta,
@@ -1181,7 +1181,7 @@ class TestMergeStateCAS:
 
     def test_cas_bootstrap_version_zero(self) -> None:
         """First write to a key with version=0 succeeds and sets version to 1."""
-        from arnold.pipelines.megaplan._pipeline.types import (
+        from arnold_pipelines.megaplan.state_delta import (
             StateDelta,
             apply_delta,
         )
@@ -1341,7 +1341,7 @@ class TestMergeStatePlainUpdate:
 
     def test_plain_update_versus_cas_consistency(self) -> None:
         """Same pipeline yields identical key-values with both merge modes."""
-        from arnold.pipelines.megaplan._pipeline.types import (
+        from arnold_pipelines.megaplan.state_delta import (
             StateDelta,
             apply_delta,
         )

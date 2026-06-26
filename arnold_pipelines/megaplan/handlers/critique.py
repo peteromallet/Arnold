@@ -52,7 +52,11 @@ from arnold_pipelines.megaplan._core import (
     workflow_includes_step,
 )
 
-from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
+from .plan import (
+    _build_verifiability_flags,
+    _derive_plan_test_blast_radius,
+    _merge_imported_decision_criteria,
+)
 from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
 from .tiebreaker import _build_tiebreaker_reprompt
 
@@ -700,6 +704,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 ]
                 _parts.append("Per-flag resolution claims:\n" + "\n".join(_res_lines))
             _revise_ctx = "\n\n".join(_parts)
+        _parallel_critique_reduced = False
         if len(active_checks) > 1:
             try:
                 worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks, effort=_critique_effort)
@@ -721,6 +726,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
             else:
                 agent = agent_type
+                _parallel_critique_reduced = True
         else:
             worker, agent, mode, refreshed = _pkg._run_worker(
                 "critique",
@@ -754,15 +760,18 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
 
         _file_fill_instructed = agent == "hermes"
 
-        _, _promoted = promote_scratch(
-            plan_dir,
-            _scratch_filename,
-            _CRITIQUE_SCRATCH_KNOWN_KEYS,
-            worker,
-            seed_json=_seed_json,
-            file_fill_instructed=_file_fill_instructed,
-        )
-        worker.payload = _promoted
+        if _parallel_critique_reduced:
+            _promoted = worker.payload
+        else:
+            _, _promoted = promote_scratch(
+                plan_dir,
+                _scratch_filename,
+                _CRITIQUE_SCRATCH_KNOWN_KEYS,
+                worker,
+                seed_json=_seed_json,
+                file_fill_instructed=_file_fill_instructed,
+            )
+            worker.payload = _promoted
         # ────────────────────────────────────────────────────────────
 
         try:
@@ -1112,18 +1121,16 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             prior_blast_radius = carried if isinstance(carried, dict) else None
         except Exception:
             prior_blast_radius = None
-        if prior_blast_radius is not None and revise_blast_radius is not None:
+        if revise_blast_radius is not None:
             try:
-                from arnold_pipelines.megaplan.orchestration.test_selection import (
-                    merge_blast_radius_floor,
-                )
-
-                revise_blast_radius = merge_blast_radius_floor(
-                    prior_blast_radius,
-                    revise_blast_radius,
+                revise_blast_radius = _derive_plan_test_blast_radius(
+                    plan_dir=plan_dir,
+                    state=state,
+                    payload=payload,
                 )
             except Exception:
-                revise_blast_radius = prior_blast_radius
+                if prior_blast_radius is not None:
+                    revise_blast_radius = prior_blast_radius
         elif revise_blast_radius is None:
             revise_blast_radius = prior_blast_radius
         revise_meta_fields = {
