@@ -480,10 +480,27 @@ def merge_blast_radius_floor(
         return merged
 
     def merged_strategy() -> str:
-        strategies = {floor.get("strategy"), candidate.get("strategy")}
-        if "full" in strategies:
+        floor_strategy = floor.get("strategy")
+        candidate_strategy = candidate.get("strategy")
+
+        # An explicit scoped baseline with concrete selectors and full-suite
+        # fallback should remain scoped even when the deterministic floor
+        # escalates to full (e.g. because of non-Python data). The fallback
+        # preserves the full-suite hard gate; the baseline gives finalize a
+        # trusted scoped command.
+        # Only keep the candidate's scoped baseline if it explicitly asks for
+        # the full suite as a fallback; otherwise the full floor wins.
+        if (
+            floor_strategy == "full"
+            and candidate_strategy == "scoped"
+            and selector_items(candidate)
+            and candidate.get("full_suite_fallback") is True
+        ):
+            return "scoped"
+
+        if "full" in {floor_strategy, candidate_strategy}:
             return "full"
-        if "scoped" in strategies:
+        if "scoped" in {floor_strategy, candidate_strategy}:
             return "scoped"
         return "none"
 
