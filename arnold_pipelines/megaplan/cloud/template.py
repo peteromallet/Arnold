@@ -376,10 +376,11 @@ def materialize_deploy_dir(spec: CloudSpec, dest: Path) -> None:
     _write_text(dest / "Dockerfile", render_dockerfile(spec))
     _write_text(dest / "entrypoint.sh", render_entrypoint(spec), executable=True)
     _write_text(dest / "healthserver.py", templates.joinpath("healthserver.py").read_text(encoding="utf-8"))
-    _write_text(
-        dest / "railway.toml",
-        _render_resource_template("railway.toml.tmpl", {}),
-    )
+    if spec.provider == "railway":
+        _write_text(
+            dest / "railway.toml",
+            _render_resource_template("railway.toml.tmpl", {}),
+        )
     if spec.provider == "local" and spec.local is not None:
         _write_text(dest / "docker-compose.yaml", render_docker_compose(spec))
         (dest / spec.local.workdir).mkdir(parents=True, exist_ok=True)

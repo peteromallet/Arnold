@@ -19,7 +19,7 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 VALID_MODES = ("auto", "chain", "idle")
-VALID_PROVIDERS = ("railway", "local", "ssh")
+VALID_PROVIDERS = ("local", "ssh")
 FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
 VALID_CODEX_REASONING = ("minimal", "low", "medium", "high")
@@ -93,7 +93,9 @@ class SshSpec:
     user: str | None = None
     port: int = 22
     identity_file: str | None = None
-    remote_dir: str = "/tmp/megaplan-cloud"
+    remote_dir: str = "/opt/megaplan-cloud/deploy"
+    workspace_dir: str = "/opt/megaplan-cloud/workspace"
+    cache_dir: str = "/opt/megaplan-cloud/cache"
     container: str = "megaplan-cloud-agent"
 
 
@@ -303,7 +305,7 @@ def _toolchains(raw: Any) -> list[ToolchainSpec]:
 def load_spec(path: Path) -> CloudSpec:
     raw = _load_yaml(path)
 
-    provider = _string(raw.get("provider"), "provider", default="railway")
+    provider = _string(raw.get("provider"), "provider", default="ssh")
     if provider in FUTURE_PROVIDERS:
         future = ", ".join(FUTURE_PROVIDERS)
         raise CliError(
@@ -368,11 +370,15 @@ def load_spec(path: Path) -> CloudSpec:
     )
 
     railway_raw = _mapping(raw.get("railway"), "railway")
-    railway = RailwaySpec(
-        service=_string(railway_raw.get("service"), "railway.service", default="agent"),
-        session=_string(railway_raw.get("session"), "railway.session", default="agent"),
-        project=_optional_string(railway_raw.get("project"), "railway.project"),
-        environment=_optional_string(railway_raw.get("environment"), "railway.environment"),
+    railway = (
+        RailwaySpec(
+            service=_string(railway_raw.get("service"), "railway.service", default="agent"),
+            session=_string(railway_raw.get("session"), "railway.session", default="agent"),
+            project=_optional_string(railway_raw.get("project"), "railway.project"),
+            environment=_optional_string(railway_raw.get("environment"), "railway.environment"),
+        )
+        if railway_raw
+        else None
     )
 
     local_raw = _mapping(raw.get("local"), "local")
@@ -392,8 +398,16 @@ def load_spec(path: Path) -> CloudSpec:
         port=_positive_port(ssh_raw.get("port"), "ssh.port", default=22),
         identity_file=_optional_string(ssh_raw.get("identity_file"), "ssh.identity_file"),
         remote_dir=_absolute_posix(
-            ssh_raw.get("remote_dir", "/tmp/megaplan-cloud"),
+            ssh_raw.get("remote_dir", "/opt/megaplan-cloud/deploy"),
             "ssh.remote_dir",
+        ),
+        workspace_dir=_absolute_posix(
+            ssh_raw.get("workspace_dir", "/opt/megaplan-cloud/workspace"),
+            "ssh.workspace_dir",
+        ),
+        cache_dir=_absolute_posix(
+            ssh_raw.get("cache_dir", "/opt/megaplan-cloud/cache"),
+            "ssh.cache_dir",
         ),
         container=_string(
             ssh_raw.get("container"),

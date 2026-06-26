@@ -4311,6 +4311,43 @@ def _atomic_write_text(path: Path, text: str) -> None:
     os.replace(tmp_path, path)
 
 
+def _apply_local_auto_engine_default(root: Path, plan: str) -> tuple[str | None, bool]:
+    from arnold_pipelines.megaplan.runtime.engine_isolation import (
+        default_provider_for_local_auto,
+    )
+    from arnold_pipelines.megaplan.runtime.execution_environment import (
+        resolve_execution_environment,
+    )
+
+    plan_dir = _resolve_plan_dir(plan, root)
+    if plan_dir is None:
+        return None, False
+    state_path = plan_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None, False
+    if not isinstance(state, dict):
+        return None, False
+
+    env = resolve_execution_environment(root=root, state=state)
+    proof = default_provider_for_local_auto(env)
+    if proof is None:
+        return None, False
+
+    meta = state.setdefault("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+        state["meta"] = meta
+    meta["engine_isolation_auto_default"] = {
+        "provider": proof.provider,
+        "proof": proof.to_dict(),
+    }
+    write_plan_state(plan_dir, mode="replace", state=state)
+    os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = proof.provider
+    return proof.provider, True
+
+
 def run_auto(root: Path, args: argparse.Namespace) -> int:
     """CLI entry point. Returns a POSIX exit code suitable for ``sys.exit``."""
     from arnold_pipelines.megaplan.orchestration.progress import ProgressContext
@@ -4322,33 +4359,42 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
         "phase_idle_timeout",
         DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     )
-    outcome = drive(
-        args.plan,
-        cwd=root,
-        stall_threshold=args.stall_threshold,
-        max_iterations=args.max_iterations,
-        max_review_rework_cycles=args.max_review_rework_cycles,
-        max_cost_usd=args.max_cost_usd,
-        max_context_retries=args.max_context_retries,
-        max_external_retries=getattr(
-            args,
-            "max_external_retries",
-            DEFAULT_MAX_EXTERNAL_RETRIES,
-        ),
-        max_blocked_retries=args.max_blocked_retries,
-        max_add_note_attempts=args.max_add_note_attempts,
-        escalate_after_fails=getattr(
-            args,
-            "escalate_after_fails",
-            DEFAULT_ESCALATE_AFTER_FAILS,
-        ),
-        on_escalate=args.on_escalate,
-        poll_sleep=args.poll_sleep,
-        phase_timeout=args.phase_timeout,
-        phase_idle_timeout=(None if raw_phase_idle_timeout == 0 else raw_phase_idle_timeout),
-        status_timeout=args.status_timeout,
-        progress_env=progress_env,
-    )
+    previous_provider = os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER")
+    _provider, provider_was_set = _apply_local_auto_engine_default(root, args.plan)
+    try:
+        outcome = drive(
+            args.plan,
+            cwd=root,
+            stall_threshold=args.stall_threshold,
+            max_iterations=args.max_iterations,
+            max_review_rework_cycles=args.max_review_rework_cycles,
+            max_cost_usd=args.max_cost_usd,
+            max_context_retries=args.max_context_retries,
+            max_external_retries=getattr(
+                args,
+                "max_external_retries",
+                DEFAULT_MAX_EXTERNAL_RETRIES,
+            ),
+            max_blocked_retries=args.max_blocked_retries,
+            max_add_note_attempts=args.max_add_note_attempts,
+            escalate_after_fails=getattr(
+                args,
+                "escalate_after_fails",
+                DEFAULT_ESCALATE_AFTER_FAILS,
+            ),
+            on_escalate=args.on_escalate,
+            poll_sleep=args.poll_sleep,
+            phase_timeout=args.phase_timeout,
+            phase_idle_timeout=(None if raw_phase_idle_timeout == 0 else raw_phase_idle_timeout),
+            status_timeout=args.status_timeout,
+            progress_env=progress_env,
+        )
+    finally:
+        if provider_was_set:
+            if previous_provider is None:
+                os.environ.pop("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", None)
+            else:
+                os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = previous_provider
     outcome_json = outcome.to_json()
     if args.outcome_file:
         _atomic_write_text(Path(args.outcome_file), outcome_json)
