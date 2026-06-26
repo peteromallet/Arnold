@@ -700,6 +700,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 ]
                 _parts.append("Per-flag resolution claims:\n" + "\n".join(_res_lines))
             _revise_ctx = "\n\n".join(_parts)
+        _parallel_critique_reduced = False
         if len(active_checks) > 1:
             try:
                 worker = run_parallel_critique(state, plan_dir, root=root, model=model, checks=active_checks, effort=_critique_effort)
@@ -721,6 +722,7 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
                 )
             else:
                 agent = agent_type
+                _parallel_critique_reduced = True
         else:
             worker, agent, mode, refreshed = _pkg._run_worker(
                 "critique",
@@ -754,15 +756,18 @@ def handle_critique(root: Path, args: argparse.Namespace) -> StepResponse:
 
         _file_fill_instructed = agent == "hermes"
 
-        _, _promoted = promote_scratch(
-            plan_dir,
-            _scratch_filename,
-            _CRITIQUE_SCRATCH_KNOWN_KEYS,
-            worker,
-            seed_json=_seed_json,
-            file_fill_instructed=_file_fill_instructed,
-        )
-        worker.payload = _promoted
+        if _parallel_critique_reduced:
+            _promoted = worker.payload
+        else:
+            _, _promoted = promote_scratch(
+                plan_dir,
+                _scratch_filename,
+                _CRITIQUE_SCRATCH_KNOWN_KEYS,
+                worker,
+                seed_json=_seed_json,
+                file_fill_instructed=_file_fill_instructed,
+            )
+            worker.payload = _promoted
         # ────────────────────────────────────────────────────────────
 
         try:

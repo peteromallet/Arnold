@@ -19,23 +19,22 @@ _TOOLS_PACKAGE = importlib.import_module("arnold.agent.tools")
 sys.modules["tools"] = _TOOLS_PACKAGE
 
 _MINISWEAGENT_PATH = importlib.import_module(
-    "arnold.pipelines.megaplan.agent.minisweagent_path"
+    "arnold_pipelines.megaplan.agent.minisweagent_path"
 )
 sys.modules["minisweagent_path"] = _MINISWEAGENT_PATH
 
-_LEGACY_PATH = (
+_CANONICAL_PATH = (
     Path(__file__).resolve().parents[3]
-    / "arnold"
-    / "pipelines"
+    / "arnold_pipelines"
     / "megaplan"
     / "agent"
     / "tools"
     / "terminal_tool.py"
 )
 
-_SPEC = importlib.util.spec_from_file_location(__name__, _LEGACY_PATH)
+_SPEC = importlib.util.spec_from_file_location(__name__, _CANONICAL_PATH)
 if _SPEC is None or _SPEC.loader is None:
-    raise ImportError(f"Unable to load Hermes terminal tool from {_LEGACY_PATH}")
+    raise ImportError(f"Unable to load Hermes terminal tool from {_CANONICAL_PATH}")
 
 _MODULE = importlib.util.module_from_spec(_SPEC)
 sys.modules[__name__] = _MODULE

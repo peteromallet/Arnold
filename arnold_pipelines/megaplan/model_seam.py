@@ -78,6 +78,10 @@ from arnold.pipeline.model_seam import (
 )
 
 from arnold_pipelines.megaplan.schemas import SCHEMAS
+from arnold_pipelines.megaplan.orchestration.plan_structure import (
+    PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
+    validate_plan_structure,
+)
 from arnold_pipelines.megaplan.step_contracts import CompatibilityMode  # re-export (moved from deleted _compatibility.py)
 from arnold_pipelines.megaplan.step_contracts import (
     STEP_CONTRACTS,
@@ -1020,6 +1024,17 @@ def _recovery_critique_completeness_score(item: _RecoveredPayload) -> tuple[int,
     return (completed_checks, total_findings)
 
 
+def _recovery_plan_structure_score(item: _RecoveredPayload) -> tuple[int, int, int]:
+    plan_text = item.payload.get("plan")
+    if not isinstance(plan_text, str):
+        return (0, 0, 0)
+    issues = validate_plan_structure(plan_text)
+    has_required_steps = PLAN_STRUCTURE_REQUIRED_STEP_ISSUE not in issues
+    # Prefer structurally complete plans, then plans with fewer secondary
+    # warnings, then richer plan text over terse status summaries.
+    return (1 if has_required_steps else 0, -len(issues), len(plan_text))
+
+
 def _recover_payload_with_provenance(
     step: str,
     *,
@@ -1088,7 +1103,19 @@ def _recover_payload_with_provenance(
                 )
                 validation_errors.append(error.details)
         else:
-            return _RecoveredPayload(payload=preferred_payload, provenance="output_file")
+            if (
+                step == "plan"
+                and _recovery_plan_structure_score(
+                    _RecoveredPayload(payload=preferred_payload, provenance="output_file")
+                )[0]
+                == 0
+            ):
+                candidate_payloads.insert(
+                    0,
+                    _RecoveredPayload(payload=preferred_payload, provenance="output_file"),
+                )
+            else:
+                return _RecoveredPayload(payload=preferred_payload, provenance="output_file")
     raw_candidates = _extract_recovery_json_candidates(raw)
     if file_payload is not None:
         if not any(candidate.payload is file_payload for candidate in candidate_payloads):
@@ -1126,6 +1153,8 @@ def _recover_payload_with_provenance(
         return None
     if step == "critique" and len(valid_payloads) > 1:
         return max(valid_payloads, key=_recovery_critique_completeness_score)
+    if step == "plan" and len(valid_payloads) > 1:
+        return max(valid_payloads, key=_recovery_plan_structure_score)
     return valid_payloads[0]
 
 

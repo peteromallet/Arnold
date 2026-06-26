@@ -16,7 +16,7 @@ LAUNCHERS=(
 run_regen() {
   local cmd="$1"
   # shellcheck disable=SC2086
-  eval "$cmd -m arnold.pipelines.megaplan setup --regen-composed"
+  eval "$cmd -m arnold_pipelines.megaplan setup --regen-composed"
 }
 
 rc=127

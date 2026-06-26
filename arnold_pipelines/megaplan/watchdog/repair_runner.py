@@ -30,7 +30,7 @@ class RepairRunner:
     """Run allowlisted repair commands via subprocess.
 
     Megaplan subcommands (``doctor``, ``auto``, ``resume``, ``chain``) are
-    executed as ``python -m arnold.pipelines.megaplan <subcommand> ...`` inside
+    executed as ``python -m arnold_pipelines.megaplan <subcommand> ...`` inside
     the plan's project directory. System commands (``rm``, ``kill``) are run
     directly. If the executable is missing or the command cannot be run, returns
     a ``command_unavailable`` result instead of crashing.
@@ -51,7 +51,7 @@ class RepairRunner:
     def _argv_for_command(self, command: str) -> tuple[list[str], str | None]:
         """Return (argv, cwd) for *command*.
 
-        Megaplan subcommands are rewritten to ``python -m arnold.pipelines.megaplan``,
+        Megaplan subcommands are rewritten to ``python -m arnold_pipelines.megaplan``,
         or to a ``megaplan`` executable found on the search path if one exists.
         System commands are passed through. The returned cwd is the directory in
         which the command should run, or None for the current directory.
