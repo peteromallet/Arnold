@@ -379,10 +379,12 @@ def validate_evaluator_verdict(
                 "`complexity_justification`."
             )
         if cid in {"correctness", "prerequisite_ordering"} and complexity < 4:
-            _reject(
-                f"selection {idx} ({cid}): {cid!r} must use complexity >= 4 "
-                f"(got {complexity})."
+            warnings.append(
+                f"selection {idx} ({cid}): {cid!r} complexity {complexity} "
+                "was raised to the hard floor 4."
             )
+            complexity = 4
+            sel["complexity"] = complexity
         normalized_justification = justification.strip()
 
         # ── bespoke "other" custom area ──────────────────────────────────

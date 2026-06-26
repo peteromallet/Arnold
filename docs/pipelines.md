@@ -11,7 +11,7 @@ fan-out/fan-in, loops, subpipelines, plugin discovery, and runtime services. It 
 "how do pipelines compose, run, pause, route, fan out, persist artifacts, or validate
 data?"
 
-Megaplan is a **consumer plugin** (`arnold.pipelines.megaplan`) that provides robust
+Megaplan is a **consumer plugin** (`arnold_pipelines.megaplan`) that provides robust
 planning and execution intent: prep → plan → critique → gate → revise → tiebreaker →
 finalize → execute → review → feedback. It answers "how should a robust planning
 workflow behave?" Megaplan reads like composition of Arnold primitives and owns its
@@ -89,7 +89,7 @@ The first added stage becomes `Pipeline.entry`.
 
 ## Megaplan as a consumer plugin
 
-Megaplan lives at `arnold/pipelines/megaplan/` and is discovered by the generic plugin
+Megaplan lives at `arnold_pipelines/megaplan/` and is discovered by the generic plugin
 registry like any other pipeline package. It exposes `build_pipeline()` returning a
 `Pipeline` graph that composes generic Arnold primitives (`AgentStep`, `PanelStep`,
 decision routing, subpipelines, loops) with Megaplan-owned policy:
@@ -103,10 +103,10 @@ decision routing, subpipelines, loops) with Megaplan-owned policy:
   the robustness level (`bare`, `light`, `full`, `thorough`, `extreme`).
 - **Stage implementations:** All concrete planning stages (`prep.py`, `plan.py`,
   `critique.py`, `gate.py`, `revise.py`, `tiebreaker.py`, `finalize.py`, `execute.py`,
-  `review.py`) live under `arnold/pipelines/megaplan/stages/`.
-- **Prompts:** Megaplan prompt builders live under `arnold/pipelines/megaplan/prompts/`.
+  `review.py`) live under `arnold_pipelines/megaplan/stages/`.
+- **Prompts:** Megaplan prompt builders live under `arnold_pipelines/megaplan/prompts/`.
 - **Profiles:** Megaplan model-routing defaults and stage-key validation live under
-  `arnold/pipelines/megaplan/profiles/`.
+  `arnold_pipelines/megaplan/profiles/`.
 - **State and control:** `PlanState`, robustness state machine, `ControlBinding`, and
   status/override projection live in the plugin.
 
@@ -125,7 +125,7 @@ arnold pipelines list          # shows 'megaplan' among discovered plugins
 
 The in-tree pipelines are selected by name from the registry:
 
-* `megaplan` is compiled by `arnold.pipelines.megaplan.pipeline.build_pipeline()` — the
+* `megaplan` is compiled by `arnold_pipelines.megaplan.pipeline.build_pipeline()` — the
   flagship robust planning and execution plugin.
 * `doc` lives under `arnold/pipelines/doc/` and owns its document topology and prompt
   registrations.
@@ -238,7 +238,7 @@ The CLI-visible pipeline name is the file stem with underscores rewritten to hyp
 
 The generic Arnold runtime (`arnold/pipeline`, `arnold/runtime`) must never:
 
-- Import from `arnold.pipelines.megaplan`
+- Import from `arnold_pipelines.megaplan`
 - Contain `"planning"` as a string literal
 - Hardcode Megaplan gate labels (`proceed`, `iterate`, `tiebreaker`, `escalate`) as type-level policy
 - Hardcode Megaplan phase names (`prep`, `plan`, `critique`, `gate`, `revise`, `finalize`,
@@ -253,8 +253,8 @@ The generic Arnold runtime (`arnold/pipeline`, `arnold/runtime`) must never:
 * `arnold/pipeline/builder.py` — chained-builder source with auto-link rules
 * `arnold/pipeline/executor.py` — neutral graph executor
 * `arnold/pipeline/types.py` — generic pipeline types (no planning vocabulary)
-* `arnold/pipelines/megaplan/pipeline.py` — Megaplan plugin composition
+* `arnold_pipelines/megaplan/pipeline.py` — Megaplan plugin composition
 * `arnold/pipelines/doc/` — document pipeline (no gate, no planning)
 * `arnold/pipelines/creative/` — creative pipeline (form-aware)
 * `tests/arnold/pipeline/` — generic substrate tests
-* `tests/arnold/pipelines/megaplan/` — Megaplan plugin tests
+* `tests/pipelines/megaplan/` — Megaplan plugin tests

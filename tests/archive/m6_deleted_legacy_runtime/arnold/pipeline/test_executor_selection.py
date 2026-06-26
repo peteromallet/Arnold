@@ -13,8 +13,8 @@ from arnold.pipeline.native.runtime import run_native_pipeline
 from arnold.pipeline.schema_registry import ContractSchemaRegistry
 from arnold.pipeline.step_io_contract import StepIOContractContext, StepIOOperation
 from arnold.pipeline.types import Pipeline, Stage, StepContext, StepResult
-from arnold.pipelines.megaplan.native_runner import NativeMegaplanRunner
-from arnold.pipelines.megaplan import pipeline as _megaplan_pipeline  # noqa: F401 - force real compile_pipeline binding before monkeypatch
+from arnold_pipelines.megaplan.native_runner import NativeMegaplanRunner
+from arnold_pipelines.megaplan import pipeline as _megaplan_pipeline  # noqa: F401 - force real compile_pipeline binding before monkeypatch
 from arnold.runtime.envelope import RuntimeEnvelope
 
 

@@ -1,9 +1,8 @@
-"""Additional conformance boundary gates for M4.
+"""Additional conformance boundary gates for deleted Megaplan roots.
 
 Extends the neutral-package import boundary coverage to ``arnold.conformance``
-and ``arnold.agent``.  Only imports of the new product package
-``arnold_pipelines.megaplan`` are forbidden; legacy forwards to
-``arnold.pipelines.megaplan`` are M4 parity shims outside this gate.
+and ``arnold.agent``.  Imports of the deleted legacy product package
+``arnold.pipelines.megaplan`` are forbidden outside explicit scanner targets.
 """
 
 from __future__ import annotations
@@ -12,7 +11,7 @@ import ast
 from pathlib import Path
 
 
-FORBIDDEN = ("arnold_pipelines.megaplan",)
+FORBIDDEN = ("arnold.pipelines.megaplan",)
 
 
 def _scan_forbidden(package_root: Path) -> dict[str, tuple[str, ...]]:
@@ -36,13 +35,13 @@ def _scan_forbidden(package_root: Path) -> dict[str, tuple[str, ...]]:
     return violations
 
 
-def test_conformance_package_does_not_import_new_product_package() -> None:
+def test_conformance_package_does_not_import_deleted_product_package() -> None:
     root = Path(__file__).parents[4]
     violations = _scan_forbidden(root / "arnold" / "conformance")
-    assert violations == {}, f"arnold.conformance imports new product package: {violations}"
+    assert violations == {}, f"arnold.conformance imports deleted product package: {violations}"
 
 
-def test_agent_package_does_not_import_new_product_package() -> None:
+def test_agent_package_does_not_import_deleted_product_package() -> None:
     root = Path(__file__).parents[4]
     violations = _scan_forbidden(root / "arnold" / "agent")
-    assert violations == {}, f"arnold.agent imports new product package: {violations}"
+    assert violations == {}, f"arnold.agent imports deleted product package: {violations}"

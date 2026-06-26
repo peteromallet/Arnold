@@ -360,14 +360,21 @@ class TestConformanceImportIsolation:
     def test_no_megaplan_in_sys_modules_after_import(self) -> None:
         """In-process check: ``megaplan`` absent from ``sys.modules`` after import."""
         # Force a clean state by removing megaplan if already present
-        # (it won't be, but this makes the test idempotent)
-        for name in list(sys.modules):
-            if name == "megaplan" or name.startswith("arnold_pipelines.megaplan."):
-                sys.modules.pop(name, None)
-        assert "megaplan" not in sys.modules, (
-            f"megaplan already in sys.modules before conformance import: "
-            f"{sorted(k for k in sys.modules if 'megaplan' in k)}"
-        )
+        # (it won't be, but this makes the test idempotent).  Restore the
+        # original sys.modules afterwards so downstream tests that hold
+        # references to already-loaded megaplan modules are not broken.
+        original_modules = dict(sys.modules)
+        try:
+            for name in list(sys.modules):
+                if name == "megaplan" or name.startswith("arnold_pipelines.megaplan."):
+                    sys.modules.pop(name, None)
+            assert "megaplan" not in sys.modules, (
+                f"megaplan already in sys.modules before conformance import: "
+                f"{sorted(k for k in sys.modules if 'megaplan' in k)}"
+            )
+        finally:
+            sys.modules.clear()
+            sys.modules.update(original_modules)
 
     def test_subprocess_with_megaplan_blocker_imports_conformance(self) -> None:
         """Subprocess blocks megaplan imports, then imports arnold.conformance.

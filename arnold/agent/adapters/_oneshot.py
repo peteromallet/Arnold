@@ -4,7 +4,7 @@ Both :class:`~arnold.agent.adapters.codex.CodexAdapter` and
 :class:`~arnold.agent.adapters.shannon.ShannonAdapter` need to call the real
 megaplan workers (``run_codex_step`` / ``run_shannon_step``) for a single
 stateless agent turn.  Those workers are written against a persisted
-:class:`~arnold.pipelines.megaplan.types.PlanState` plus a ``plan_dir`` and a
+:class:`~arnold_pipelines.megaplan.types.PlanState` plus a ``plan_dir`` and a
 schema ``root``.  This module synthesizes the *minimal* ephemeral versions of
 all three so a caller can run a one-shot turn given only an
 :class:`~arnold.agent.contracts.AgentRequest` — no PlanState required.
@@ -110,7 +110,7 @@ def oneshot_context(request: AgentRequest) -> Iterator[dict[str, Any]]:
     """
     # Lazy imports — keep arnold.agent import-safe (no AIAgent / megaplan tree
     # at module top level).
-    from arnold.pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
 
     work_dir = resolve_oneshot_work_dir(request)
     read_only = bool(request.read_only)

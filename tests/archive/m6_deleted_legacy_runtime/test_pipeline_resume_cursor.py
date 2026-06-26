@@ -9,9 +9,9 @@ from pathlib import Path
 
 import pytest
 
-import arnold.pipelines.megaplan.cli as megaplan_cli
-from arnold.pipelines.megaplan._core.workflow import resume_plan
-from arnold.pipelines.megaplan._pipeline.resume import (
+import arnold_pipelines.megaplan.cli as megaplan_cli
+from arnold_pipelines.megaplan._core.workflow import resume_plan
+from arnold_pipelines.megaplan._pipeline.resume import (
     COMPOSITE_SUSPENSION_CURSOR_VERSION,
     COMPOSITE_SUSPENSION_KIND,
     ResumeCursor,
@@ -23,8 +23,8 @@ from arnold.pipelines.megaplan._pipeline.resume import (
     save_composite_resume_cursor,
     with_entry,
 )
-from arnold.pipelines.megaplan.types import CliError
-from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
+from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
 
 
 def test_load_none_when_no_state_file(tmp_path: Path) -> None:
@@ -154,8 +154,8 @@ def test_resume_plan_routes_native_born_megaplan_cursor_to_canonical_native_disp
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from arnold.pipelines.megaplan._core import workflow
-    from arnold.pipelines.megaplan._pipeline import registry
+    from arnold_pipelines.megaplan._core import workflow
+    from arnold_pipelines.megaplan._pipeline import registry
 
     _stub_megaplan_resume(monkeypatch)
     plan_dir = _write_resume_plan(tmp_path, "resume-native-born", phase="plan")
@@ -192,8 +192,8 @@ def test_resume_plan_preserves_graph_born_resume_operation_fallback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from arnold.pipelines.megaplan._core import workflow
-    from arnold.pipelines.megaplan import registry
+    from arnold_pipelines.megaplan._core import workflow
+    from arnold_pipelines.megaplan import registry
 
     _stub_megaplan_resume(monkeypatch)
     plan_dir = _write_resume_plan(tmp_path, "resume-graph-born", phase="plan")
@@ -431,8 +431,8 @@ def _write_resume_plan(
 
 
 def _stub_megaplan_resume(monkeypatch: pytest.MonkeyPatch) -> None:
-    from arnold.pipelines.megaplan._core import workflow
-    from arnold.pipelines.megaplan._pipeline import registry
+    from arnold_pipelines.megaplan._core import workflow
+    from arnold_pipelines.megaplan._pipeline import registry
 
     monkeypatch.setattr(workflow, "preflight_phase", lambda **_: None)
     monkeypatch.setattr(workflow, "preflight_mutating_phase", lambda **_: None)
@@ -979,7 +979,7 @@ def test_pending_suspensions_recovered_from_json_fallback(tmp_path: Path) -> Non
 def test_extract_child_resume_target_pending_suspensions(tmp_path: Path) -> None:
     """``extract_composite_child_resume_target`` recovers a child target including
     pending suspension metadata from ``composite_resume_cursor.json`` fallback."""
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_composite_child_resume_target,
     )
 
@@ -1066,7 +1066,7 @@ def test_save_composite_json_self_consistent(tmp_path: Path) -> None:
 def test_save_composite_json_survives_state_absence(tmp_path: Path) -> None:
     """After dual-write, all extraction helpers work from ``composite_resume_cursor.json``
     alone when ``state.json`` is deleted."""
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_composite_child_resume_target,
     )
 
@@ -1132,7 +1132,7 @@ def test_save_composite_children_keys_round_trip_through_json(tmp_path: Path) ->
 def test_extract_suspended_contract_result_returns_contract(tmp_path: Path) -> None:
     from arnold.pipeline import ContractResult, ContractStatus, Suspension
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1158,7 +1158,7 @@ def test_extract_suspended_contract_result_returns_contract(tmp_path: Path) -> N
 
 
 def test_extract_suspended_contract_result_none_for_missing_key(tmp_path: Path) -> None:
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1167,7 +1167,7 @@ def test_extract_suspended_contract_result_none_for_missing_key(tmp_path: Path) 
 
 
 def test_extract_suspended_contract_result_none_for_missing_file(tmp_path: Path) -> None:
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1175,7 +1175,7 @@ def test_extract_suspended_contract_result_none_for_missing_file(tmp_path: Path)
 
 
 def test_extract_suspended_contract_result_none_for_malformed_json(tmp_path: Path) -> None:
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1186,7 +1186,7 @@ def test_extract_suspended_contract_result_none_for_malformed_json(tmp_path: Pat
 def test_extract_suspended_contract_result_none_for_completed(tmp_path: Path) -> None:
     from arnold.pipeline import ContractResult, ContractStatus
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1200,7 +1200,7 @@ def test_extract_suspended_contract_result_none_for_completed(tmp_path: Path) ->
 def test_extract_suspended_contract_result_none_for_failed(tmp_path: Path) -> None:
     from arnold.pipeline import ContractResult, ContractStatus
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1216,7 +1216,7 @@ def test_extract_suspended_contract_result_none_for_schema_version_mismatch(
 ) -> None:
     from arnold.pipeline import ContractResult, ContractStatus, Suspension
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1238,7 +1238,7 @@ def test_extract_suspended_contract_result_none_for_suspended_without_suspension
 ) -> None:
     from arnold.pipeline import ContractResult, ContractStatus
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
     )
 
@@ -1258,7 +1258,7 @@ def test_extract_suspended_contract_result_none_for_suspended_without_suspension
 def test_extract_typed_resume_metadata_phase_and_pipeline(tmp_path: Path) -> None:
     from arnold.pipeline import ContractResult, ContractStatus, Suspension
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_typed_resume_metadata,
     )
 
@@ -1290,7 +1290,7 @@ def test_extract_typed_resume_metadata_phase_and_pipeline(tmp_path: Path) -> Non
 def test_extract_typed_resume_metadata_none_when_no_suspended_contract(
     tmp_path: Path,
 ) -> None:
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_typed_resume_metadata,
     )
 
@@ -1301,7 +1301,7 @@ def test_extract_typed_resume_metadata_none_when_no_suspended_contract(
 def test_extract_typed_resume_metadata_choices_from_schema(tmp_path: Path) -> None:
     from arnold.pipeline import ContractResult, ContractStatus, Suspension
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_typed_resume_metadata,
     )
 
@@ -1338,7 +1338,7 @@ def test_extract_typed_resume_metadata_choices_from_schema(tmp_path: Path) -> No
 def test_extract_typed_resume_metadata_opaque_cursor_preserved(tmp_path: Path) -> None:
     from arnold.pipeline import ContractResult, ContractStatus, Suspension
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_typed_resume_metadata,
     )
 
@@ -1367,7 +1367,7 @@ def test_extract_typed_resume_metadata_opaque_cursor_preserved(tmp_path: Path) -
 def test_extract_typed_resume_metadata_none_cursor(tmp_path: Path) -> None:
     from arnold.pipeline import ContractResult, ContractStatus, Suspension
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_typed_resume_metadata,
     )
 
@@ -1396,7 +1396,7 @@ def test_typed_state_wins_over_conflicting_awaiting_user(tmp_path: Path) -> None
     a legacy sidecar file is also present."""
     from arnold.pipeline import ContractResult, ContractStatus, Suspension
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         check_awaiting_user,
         extract_suspended_contract_result,
         extract_typed_resume_metadata,
@@ -1449,7 +1449,7 @@ def test_malformed_typed_state_falls_back(tmp_path: Path) -> None:
     """When contract_result is present but malformed (e.g. missing required
     fields), the extraction helpers return None so callers can fall through
     to legacy sources like awaiting_user.json."""
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
         extract_typed_resume_metadata,
     )
@@ -1469,7 +1469,7 @@ def test_non_suspended_typed_state_falls_back(tmp_path: Path) -> None:
     extraction helpers return None, allowing fallback to other sources."""
     from arnold.pipeline import ContractResult, ContractStatus
 
-    from arnold.pipelines.megaplan._pipeline.resume import (
+    from arnold_pipelines.megaplan._pipeline.resume import (
         extract_suspended_contract_result,
         extract_typed_resume_metadata,
     )
@@ -1484,7 +1484,7 @@ def test_non_suspended_typed_state_falls_back(tmp_path: Path) -> None:
 
 
 def test_decode_json_cursor_preserves_opaque(tmp_path: Path) -> None:
-    from arnold.pipelines.megaplan._pipeline.resume import _decode_json_cursor
+    from arnold_pipelines.megaplan._pipeline.resume import _decode_json_cursor
 
     # JSON string
     assert _decode_json_cursor('{"key": "value"}') == {"key": "value"}
@@ -1566,11 +1566,11 @@ def test_resume_human_gate_prefers_typed_state_over_conflicting_sidecar(
         return {"success": True, "phase": resumed_pipeline.entry}
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry.get_pipeline",
+        "arnold_pipelines.megaplan._pipeline.registry.get_pipeline",
         lambda name: pipeline if name == "typed-pipeline" else None,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+        "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
         fake_run_pipeline,
     )
 
@@ -1652,19 +1652,19 @@ def test_handle_resume_legacy_sidecar_only_still_routes_human_gate(
         return {"success": True, "phase": resumed_pipeline.entry}
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        "arnold_pipelines.megaplan._core.io.find_plan_dir",
         lambda root, requested_name: plan_dir,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry.get_pipeline",
+        "arnold_pipelines.megaplan._pipeline.registry.get_pipeline",
         lambda name: pipeline if name == "legacy-pipeline" else None,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+        "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
         fake_run_pipeline,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.cli.resume_plan",
+        "arnold_pipelines.megaplan.cli.resume_plan",
         lambda *_args, **_kwargs: pytest.fail("resume_plan should not run for sidecar human-gate resumes"),
     )
 
@@ -1726,19 +1726,19 @@ def test_handle_resume_routes_typed_only_human_gate_without_sidecar(
         return {"success": True, "phase": resumed_pipeline.entry}
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        "arnold_pipelines.megaplan._core.io.find_plan_dir",
         lambda root, requested_name: plan_dir,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.registry.get_pipeline",
+        "arnold_pipelines.megaplan._pipeline.registry.get_pipeline",
         lambda name: pipeline if name == "typed-pipeline" else None,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+        "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
         fake_run_pipeline,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.cli.resume_plan",
+        "arnold_pipelines.megaplan.cli.resume_plan",
         lambda *_args, **_kwargs: pytest.fail("resume_plan should not run for typed human-gate resumes"),
     )
 
@@ -1793,15 +1793,15 @@ def test_handle_resume_routes_typed_programmatic_resume_to_resume_plan(
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        "arnold_pipelines.megaplan._core.io.find_plan_dir",
         lambda root, requested_name: plan_dir,
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.cli._resume_human_gate",
+        "arnold_pipelines.megaplan.cli._resume_human_gate",
         lambda *_args, **_kwargs: pytest.fail("_resume_human_gate should not run without typed choices or sidecar"),
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.cli.resume_plan",
+        "arnold_pipelines.megaplan.cli.resume_plan",
         lambda root, plan, store=None: captured.update(
             {"root": root, "plan": plan, "store": store}
         )
@@ -1828,11 +1828,11 @@ def test_handle_resume_opts_into_self_hosted_editable_for_engine_root(
 
     monkeypatch.delenv("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", raising=False)
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan.cli.megaplan_engine_root",
+        "arnold_pipelines.megaplan.cli.megaplan_engine_root",
         lambda: tmp_path.resolve(),
     )
     monkeypatch.setattr(
-        "arnold.pipelines.megaplan._core.io.find_plan_dir",
+        "arnold_pipelines.megaplan._core.io.find_plan_dir",
         lambda root, requested_name: plan_dir,
     )
 
@@ -1840,7 +1840,7 @@ def test_handle_resume_opts_into_self_hosted_editable_for_engine_root(
         seen_provider.append(os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER"))
         return {"success": True, "phase": "finalize"}
 
-    monkeypatch.setattr("arnold.pipelines.megaplan.cli.resume_plan", fake_resume_plan)
+    monkeypatch.setattr("arnold_pipelines.megaplan.cli.resume_plan", fake_resume_plan)
 
     result = megaplan_cli.handle_resume(
         tmp_path,

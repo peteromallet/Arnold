@@ -575,7 +575,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     # ═══ Execute family ═══════════════════════════════════════════════════
     AuthorityRoute(
         id="EXEC-01",
-        file="arnold/pipelines/megaplan/execute/batch.py",
+        file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="1650-1654",
         description="Auto-loop task selection: builds completed_task_ids from raw task.get('status') in {'done','skipped'}",
         disposition=MIGRATED,
@@ -584,7 +584,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-02",
-        file="arnold/pipelines/megaplan/execute/batch.py",
+        file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="951-957",
         description="Batch prerequisite gate: completed_ids from batch_status_overlay trusting raw {'done','skipped'}",
         disposition=MIGRATED,
@@ -593,7 +593,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-03",
-        file="arnold/pipelines/megaplan/execute/batch.py",
+        file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="1114-1118",
         description="All-tracked check for batch completion: all(t.get('status') in {'done','skipped'})",
         disposition=MIGRATED,
@@ -602,7 +602,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-04",
-        file="arnold/pipelines/megaplan/execute/batch.py",
+        file="arnold_pipelines/megaplan/execute/batch.py",
         line_range="2083",
         description="Post-batch completed_id update re-reading raw status from finalize.json",
         disposition=MIGRATED,
@@ -611,7 +611,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-05",
-        file="arnold/pipelines/megaplan/_core/io.py",
+        file="arnold_pipelines/megaplan/_core/io.py",
         line_range="58-104",
         description="compute_task_batches: accepts completed_ids as satisfied deps; wrapper must supply corroborated IDs",
         disposition=MIGRATED,
@@ -620,7 +620,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-06",
-        file="arnold/pipelines/megaplan/_core/scheduler/topo.py",
+        file="arnold_pipelines/megaplan/_core/scheduler/topo.py",
         line_range="15-62",
         description="schedule_batches: threads completed_ids through; same pure-assertion consumer as compute_task_batches",
         disposition=MIGRATED,
@@ -629,7 +629,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-07",
-        file="arnold/pipelines/megaplan/execute/_binding/reducer.py",
+        file="arnold_pipelines/megaplan/execute/_binding/reducer.py",
         line_range="132",
         description="all_tracked = all(t.get('status') in {'done','skipped'}) determines BatchOutcome.SUCCESS",
         disposition=MIGRATED,
@@ -638,7 +638,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-08",
-        file="arnold/pipelines/megaplan/execute/timeout.py",
+        file="arnold_pipelines/megaplan/execute/timeout.py",
         line_range="350",
         description="Timeout recovery completed_tasks from raw status in {'done','skipped'}",
         disposition=MIGRATED,
@@ -647,7 +647,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="EXEC-09",
-        file="arnold/pipelines/megaplan/prompts/execute.py",
+        file="arnold_pipelines/megaplan/prompts/execute.py",
         line_range="156",
         description="Prompt helper filtering done_tasks from raw task.get('status') in ('done','skipped')",
         disposition=MIGRATED,
@@ -658,7 +658,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     # ═══ Resume / redrive family ══════════════════════════════════════════
     AuthorityRoute(
         id="RESUME-01",
-        file="arnold/pipelines/megaplan/_core/workflow.py",
+        file="arnold_pipelines/megaplan/_core/workflow.py",
         line_range="508-699",
         description="resume_plan: reads resume_cursor, dispatches phase, pops cursor on success — no corroboration",
         disposition=MIGRATED,
@@ -667,7 +667,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="RESUME-02",
-        file="arnold/pipelines/megaplan/_pipeline/resume.py",
+        file="arnold_pipelines/megaplan/_pipeline/resume.py",
         line_range="133,166",
         description="Pipeline resume cursor: ResumeCursor.load() and with_entry() re-enter pipeline without corroboration",
         disposition=MIGRATED,
@@ -676,7 +676,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="RESUME-03",
-        file="arnold/pipelines/megaplan/auto.py",
+        file="arnold_pipelines/megaplan/auto.py",
         line_range="1675-1691",
         description="_active_phase_already_completed: trusts phase_produced_state without task-level corroboration",
         disposition=MIGRATED,
@@ -685,7 +685,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="RESUME-04",
-        file="arnold/pipelines/megaplan/auto.py",
+        file="arnold_pipelines/megaplan/auto.py",
         line_range="2217-2280",
         description="Auto terminal success signaling: terminal_status == 'done' gates PLAN_FINISHED, exit-code-0, shadow verdict",
         disposition=MIGRATED,
@@ -696,7 +696,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     # ═══ Chain family ═════════════════════════════════════════════════════
     AuthorityRoute(
         id="CHAIN-01",
-        file="arnold/pipelines/megaplan/chain/__init__.py",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="598-646",
         description="_latest_execution_batch_all_tasks_done: raw status=='done' check on batch artifacts + finalize.json",
         disposition=MIGRATED,
@@ -705,7 +705,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="CHAIN-02",
-        file="arnold/pipelines/megaplan/chain/__init__.py",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="887-973",
         description="_handle_outcome: advances on outcome.status in {'done','finalized'} without task-level corroboration",
         disposition=MIGRATED,
@@ -714,7 +714,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="CHAIN-03",
-        file="arnold/pipelines/megaplan/chain/__init__.py",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="666-698",
         description="_recover_blocked_execute_if_tasks_done: uses _latest_execution_batch_all_tasks_done raw status",
         disposition=MIGRATED,
@@ -723,7 +723,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="CHAIN-04",
-        file="arnold/pipelines/megaplan/chain/__init__.py",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="1125-1154",
         description="Seed plan terminal skip: compares plan state against TERMINAL_SKIP_STATES {'done','aborted','failed'}",
         disposition=MIGRATED,
@@ -732,7 +732,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="CHAIN-05",
-        file="arnold/pipelines/megaplan/chain/__init__.py",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="1167-1217",
         description="current_plan_name pointer reads used to skip or advance chain work",
         disposition=MIGRATED,
@@ -743,7 +743,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     # ═══ Supervisor family ════════════════════════════════════════════════
     AuthorityRoute(
         id="SUP-01",
-        file="arnold/pipelines/megaplan/supervisor/chain_runner.py",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="696-719",
         description="_recover_blocked_execute_if_tasks_done: duplicate of CHAIN-03 raw status check for blocked→executed",
         disposition=MIGRATED,
@@ -752,7 +752,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="SUP-02",
-        file="arnold/pipelines/megaplan/supervisor/chain_runner.py",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="453-463",
         description="_assert_dependencies_completed: gates on completed_node_ids labels only — no evidence corroboration",
         disposition=MIGRATED,
@@ -761,7 +761,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="SUP-03",
-        file="arnold/pipelines/megaplan/supervisor/chain_runner.py",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="97-385",
         description="run_chain milestone advancement loop: advances on LadderAction.ADVANCE from driver outcome",
         disposition=MIGRATED,
@@ -770,7 +770,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="SUP-04",
-        file="arnold/pipelines/megaplan/supervisor/chain_runner.py",
+        file="arnold_pipelines/megaplan/supervisor/chain_runner.py",
         line_range="150-385",
         description="Supervisor dependency gates, PR-merge advancement, and blocked-execute recovery in run_chain",
         disposition=MIGRATED,
@@ -781,7 +781,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     # ═══ Status-only / informational routes ═══════════════════════════════
     AuthorityRoute(
         id="STATUS-01",
-        file="arnold/pipelines/megaplan/cli/status_view.py",
+        file="arnold_pipelines/megaplan/cli/status_view.py",
         line_range="586",
         description="Status view filtering: displays done/skipped task counts for operator visibility",
         disposition=INFORMATIONAL,
@@ -790,7 +790,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="STATUS-02",
-        file="arnold/pipelines/megaplan/auto.py",
+        file="arnold_pipelines/megaplan/auto.py",
         line_range="1395-1455",
         description="_shadow_completion_verdict in auto drive: calls compute_verdict but only blocks in enforce mode",
         disposition=DEFERRED,
@@ -799,7 +799,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="STATUS-03",
-        file="arnold/pipelines/megaplan/chain/__init__.py",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="465-500",
         description="_shadow_milestone_completion_verdict: shadow-only; explicitly NOT enforcement",
         disposition=DEFERRED,
@@ -808,7 +808,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="STATUS-04",
-        file="arnold/pipelines/megaplan/orchestration/completion_contract.py",
+        file="arnold_pipelines/megaplan/orchestration/completion_contract.py",
         line_range="1698",
         description="compute_verdict: milestone-level completion checking from objective evidence (git, artifacts, suites)",
         disposition=DEFERRED,
@@ -817,7 +817,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="STATUS-05",
-        file="arnold/pipelines/megaplan/auto.py",
+        file="arnold_pipelines/megaplan/auto.py",
         line_range="1406-1436",
         description="Shadow verdict in auto terminal: calls compute_verdict for completion contract shadow/warn/enforce",
         disposition=DEFERRED,
@@ -826,7 +826,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     ),
     AuthorityRoute(
         id="STATUS-06",
-        file="arnold/pipelines/megaplan/chain/__init__.py",
+        file="arnold_pipelines/megaplan/chain/__init__.py",
         line_range="485-525",
         description="Shadow verdict in chain _handle_outcome flow: calls compute_verdict for milestone check",
         disposition=DEFERRED,
@@ -837,7 +837,7 @@ AUTHORITY_ROUTES: tuple[AuthorityRoute, ...] = (
     # ═══ Timeout-reporting (operator-reporting) ════════════════════════════
     AuthorityRoute(
         id="TIMEOUT-01",
-        file="arnold/pipelines/megaplan/execute/timeout.py",
+        file="arnold_pipelines/megaplan/execute/timeout.py",
         line_range="1-388",
         description="Timeout recovery summary: best-effort operator reporting; not a blocking authority gate",
         disposition=MIGRATED,

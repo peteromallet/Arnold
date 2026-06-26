@@ -7,7 +7,7 @@ description: "Planning Pipeline — Skill Reference"
 
 ## Overview
 
-The `megaplan` pipeline (packaged at `arnold/pipelines/megaplan/`) is the built-in megaplan plan-production substrate.
+The `megaplan` pipeline (packaged at `arnold_pipelines/megaplan/`) is the built-in megaplan plan-production substrate.
 Its canonical registry identity is `megaplan` with the legacy alias `planning → megaplan`.
 It orchestrates the full prepare → plan → critique/gate/revise loop →
 finalize → execute → review lifecycle.

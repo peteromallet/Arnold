@@ -42,7 +42,7 @@ description: str = (
     "chain-ready revised epic."
 )
 default_profile: str = "@epic-blitz:standard"
-supported_modes: tuple[str, ...] = ()
+supported_modes: tuple[str, ...] = ("graph",)
 recommended_profiles: tuple[str, ...] = (
     "@epic-blitz:standard",
 )

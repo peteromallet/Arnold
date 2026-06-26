@@ -34,7 +34,7 @@ def _make_state(plan_dir: Path, version: int = 1) -> dict:
                 "timestamp": "2026-01-01T00:00:00Z",
             }
         ],
-        "config": {"test_selection": "scoped"},
+        "config": {"test_selection": "scoped", "project_dir": str(plan_dir.parent)},
         "meta": {},
     }
 
@@ -185,7 +185,9 @@ def test_unresolved_surface_without_selector_falls_back_to_full(
     assert radius["uncovered_changes_justification"] == "pkg/missing.py"
 
 
-def test_non_python_change_forces_full_suite(tmp_path: Path) -> None:
+def test_non_python_change_preserves_scoped_baseline_with_full_suite_fallback(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     _write(repo, "pkg/util.py", "VALUE = 1\n")
     _write(repo, "tests/test_feature.py", "import pkg.util\n")
@@ -196,10 +198,22 @@ def test_non_python_change_forces_full_suite(tmp_path: Path) -> None:
         repo,
     )
 
-    assert radius["strategy"] == "full"
+    assert radius["strategy"] == "scoped"
     assert radius["confidence"] == "low"
+    assert radius["full_suite_fallback"] is True
     assert "force the full suite" in radius["rationale"]
     assert _selector_values(radius) == ["tests/test_feature.py"]
+
+
+def test_missing_declared_pytest_selector_forces_full_suite(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    radius = compute_default_blast_radius(["tests/test_missing.py"], repo)
+
+    assert radius["strategy"] == "full"
+    assert radius["selectors"] == []
+    assert radius["missing_test_selectors"] == ["tests/test_missing.py"]
 
 
 def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
@@ -207,6 +221,8 @@ def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
 ) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
+    _write(tmp_path, "tests/test_feature.py")
+    _write(tmp_path, "tests/test_core.py")
     state = _make_state(plan_dir)
     _write_plan_meta(
         plan_dir,
@@ -235,6 +251,59 @@ def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
         "pytest tests/test_feature.py tests/test_core.py"
     )
     assert "always_run" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_rejects_missing_path_selector(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [{"kind": "path", "value": "tests/test_missing.py"}],
+            "changed_surfaces": ["pkg/util.py"],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "Bad selector.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "unresolved"
+    assert "do not exist" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_rejects_missing_always_run_path(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(tmp_path, "tests/test_feature.py")
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [{"kind": "path", "value": "tests/test_feature.py"}],
+            "changed_surfaces": ["pkg/util.py"],
+            "always_run": ["python -m pytest tests/test_missing.py"],
+            "full_suite_fallback": True,
+            "rationale": "Bad always_run.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "unresolved"
+    assert "always_run pytest path" in result["reason"]
 
 
 def test_resolve_baseline_test_selection_missing_metadata_is_unresolved(

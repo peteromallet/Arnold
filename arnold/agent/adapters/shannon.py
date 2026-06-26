@@ -12,7 +12,7 @@ The irreducible Claude context — tmux session, workspace-trust file
 (``_ensure_workspace_trusted``), ``ANTHROPIC_API_KEY=""`` subscription path,
 ``CLAUDE_CONFIG_DIR`` isolation, readiness handshake, paste-race handling and
 output parsing — all live inside
-``arnold.pipelines.megaplan.workers.shannon.run_shannon_step`` (and the
+``arnold_pipelines.megaplan.workers.shannon.run_shannon_step`` (and the
 ``run_turn`` executor it drives).  This adapter calls ``run_shannon_step``
 exactly the way the existing ``MEGAPLAN_USE_AGENT_DISPATCHER`` closure
 (``_shannon_to_agent_result``) does, synthesizing only the minimal ephemeral
@@ -50,16 +50,16 @@ class ShannonAdapter:
     def is_available(cls) -> bool:
         """Return ``True`` iff the vendored Shannon stack is runnable.
 
-        Delegates to ``arnold.pipelines.megaplan._core.is_shannon_available``
+        Delegates to ``arnold_pipelines.megaplan._core.is_shannon_available``
         (bun + tmux + claude on PATH and the vendored fork present).
         """
-        from arnold.pipelines.megaplan._core import is_shannon_available
+        from arnold_pipelines.megaplan._core import is_shannon_available
 
         return is_shannon_available()
 
     def __call__(self, request: AgentRequest) -> AgentResult:
         # Lazy import: keep arnold.agent import-safe.
-        from arnold.pipelines.megaplan.workers.shannon import run_shannon_step
+        from arnold_pipelines.megaplan.workers.shannon import run_shannon_step
 
         with _oneshot.oneshot_context(request) as ctx:
             worker_result = run_shannon_step(

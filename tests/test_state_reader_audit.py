@@ -11,7 +11,7 @@ Enforces the three allowlists from the R1 authority flip:
   retired at M6`` annotation.
 
 Any other ``read_json(plan_dir / "state.json")``-shaped read found in the
-``arnold/pipelines/megaplan/`` tree fails the audit.
+``arnold_pipelines/megaplan/`` tree fails the audit.
 """
 
 from __future__ import annotations
@@ -28,30 +28,30 @@ MEGAPLAN_DIR = REPO_ROOT / "arnold" / "pipelines" / "megaplan"
 
 # Files (relative to repo root) where state.json reads have been classified.
 AUTHORITY_FILES = {
-    "arnold/pipelines/megaplan/control.py",
-    "arnold/pipelines/megaplan/store/plan_repository.py",
-    "arnold/pipelines/megaplan/handlers/execute.py",
-    "arnold/pipelines/megaplan/_core/state.py",
-    "arnold/pipelines/megaplan/orchestration/tiebreaker.py",
-    "arnold/pipelines/megaplan/prompts/tiebreaker_orchestrator.py",
+    "arnold_pipelines/megaplan/control.py",
+    "arnold_pipelines/megaplan/store/plan_repository.py",
+    "arnold_pipelines/megaplan/handlers/execute.py",
+    "arnold_pipelines/megaplan/_core/state.py",
+    "arnold_pipelines/megaplan/orchestration/tiebreaker.py",
+    "arnold_pipelines/megaplan/prompts/tiebreaker_orchestrator.py",
 }
 
 CACHE_TOLERANT_FILES = {
-    "arnold/pipelines/megaplan/bakeoff/metrics.py",
-    "arnold/pipelines/megaplan/receipts/report.py",
-    "arnold/pipelines/megaplan/receipts/extractors.py",
-    "arnold/pipelines/megaplan/cli/status_view.py",
-    "arnold/pipelines/megaplan/cli/__init__.py",
-    "arnold/pipelines/megaplan/cli/feedback.py",
-    "arnold/pipelines/megaplan/observability/doctor.py",
-    "arnold/pipelines/megaplan/observability/cost.py",
-    "arnold/pipelines/megaplan/observability/introspect.py",
-    "arnold/pipelines/megaplan/bakeoff/judge.py",
-    "arnold/pipelines/megaplan/store/warrant_sources.py",
+    "arnold_pipelines/megaplan/bakeoff/metrics.py",
+    "arnold_pipelines/megaplan/receipts/report.py",
+    "arnold_pipelines/megaplan/receipts/extractors.py",
+    "arnold_pipelines/megaplan/cli/status_view.py",
+    "arnold_pipelines/megaplan/cli/__init__.py",
+    "arnold_pipelines/megaplan/cli/feedback.py",
+    "arnold_pipelines/megaplan/observability/doctor.py",
+    "arnold_pipelines/megaplan/observability/cost.py",
+    "arnold_pipelines/megaplan/observability/introspect.py",
+    "arnold_pipelines/megaplan/bakeoff/judge.py",
+    "arnold_pipelines/megaplan/store/warrant_sources.py",
 }
 
 DORMANT_FILES = {
-    "arnold/pipelines/megaplan/auto.py",
+    "arnold_pipelines/megaplan/auto.py",
 }
 
 # state_store.py is the new R1 backend module — its reads are routed via
@@ -59,28 +59,28 @@ DORMANT_FILES = {
 # state.py owns the writer (atomic_write_json) and read sites outside the
 # 8-reader allowlist (snapshot/restore plumbing — they are write-side I/O).
 INFRA_ALLOWED_FILES = {
-    "arnold/pipelines/megaplan/_core/io.py",  # defines read_plan_state_cached itself
-    "arnold/pipelines/megaplan/_core/state.py",  # writer/snapshot plumbing
-    "arnold/pipelines/megaplan/_core/state_store.py",  # backend protocol
-    "arnold/pipelines/megaplan/_pipeline/executor.py",  # forensic backup path
-    "arnold/pipelines/megaplan/_pipeline/resume.py",  # resume cursor probe
-    "arnold/pipelines/megaplan/_pipeline/run_cli.py",  # CLI resume probe
-    "arnold/pipelines/megaplan/_pipeline/types.py",  # in-process phase dispatch reads live state
-    "arnold/pipelines/megaplan/stages/inprocess_step.py",  # in-process driver
-    "arnold/pipelines/megaplan/chain/__init__.py",  # chain runner state probes
-    "arnold/pipelines/megaplan/supervisor/chain_runner.py",  # supervisor chain state probes
+    "arnold_pipelines/megaplan/_core/io.py",  # defines read_plan_state_cached itself
+    "arnold_pipelines/megaplan/_core/state.py",  # writer/snapshot plumbing
+    "arnold_pipelines/megaplan/_core/state_store.py",  # backend protocol
+    "arnold_pipelines/megaplan/_pipeline/executor.py",  # forensic backup path
+    "arnold_pipelines/megaplan/_pipeline/resume.py",  # resume cursor probe
+    "arnold_pipelines/megaplan/_pipeline/run_cli.py",  # CLI resume probe
+    "arnold_pipelines/megaplan/_pipeline/types.py",  # in-process phase dispatch reads live state
+    "arnold_pipelines/megaplan/stages/inprocess_step.py",  # in-process driver
+    "arnold_pipelines/megaplan/chain/__init__.py",  # chain runner state probes
+    "arnold_pipelines/megaplan/supervisor/chain_runner.py",  # supervisor chain state probes
     # write paths / fixture/manifest references / non-reader callers
-    "arnold/pipelines/megaplan/observability/fold.py",  # WAL fold authority itself
-    "arnold/pipelines/megaplan/bakeoff/merge.py",  # rewrite helper
-    "arnold/pipelines/megaplan/orchestration/phase_result.py",  # write path
-    "arnold/pipelines/megaplan/workers/_impl.py",  # worker write path
-    "arnold/pipelines/megaplan/handlers/init.py",  # artifact manifest string
-    "arnold/pipelines/megaplan/loop/handlers.py",  # loop artifact manifest strings
-    "arnold/pipelines/megaplan/loop/engine.py",  # loop engine write path
+    "arnold_pipelines/megaplan/observability/fold.py",  # WAL fold authority itself
+    "arnold_pipelines/megaplan/bakeoff/merge.py",  # rewrite helper
+    "arnold_pipelines/megaplan/orchestration/phase_result.py",  # write path
+    "arnold_pipelines/megaplan/workers/_impl.py",  # worker write path
+    "arnold_pipelines/megaplan/handlers/init.py",  # artifact manifest string
+    "arnold_pipelines/megaplan/loop/handlers.py",  # loop artifact manifest strings
+    "arnold_pipelines/megaplan/loop/engine.py",  # loop engine write path
     # test infra (not the megaplan reader surface)
-    "arnold/pipelines/megaplan/tests/agentic/adapter.py",
-    "arnold/pipelines/megaplan/agent/tests/test_benchmark_scoring.py",
-    "arnold/pipelines/megaplan/agent/tests/test_evals/test_run_evals.py",
+    "arnold_pipelines/megaplan/tests/agentic/adapter.py",
+    "arnold_pipelines/megaplan/agent/tests/test_benchmark_scoring.py",
+    "arnold_pipelines/megaplan/agent/tests/test_evals/test_run_evals.py",
 }
 
 ALLOWED_FILES = (
@@ -128,54 +128,54 @@ RAW_AUTHORITY_GREP_PATTERNS = (
 
 
 RAW_AUTHORITY_AUDIT_FILES = {
-    "arnold/pipelines/megaplan/execute/batch.py",
-    "arnold/pipelines/megaplan/execute/_binding/reducer.py",
-    "arnold/pipelines/megaplan/execute/timeout.py",
-    "arnold/pipelines/megaplan/prompts/execute.py",
-    "arnold/pipelines/megaplan/auto.py",
-    "arnold/pipelines/megaplan/chain/__init__.py",
-    "arnold/pipelines/megaplan/orchestration/completion_contract.py",
-    "arnold/pipelines/megaplan/cli/status_view.py",
+    "arnold_pipelines/megaplan/execute/batch.py",
+    "arnold_pipelines/megaplan/execute/_binding/reducer.py",
+    "arnold_pipelines/megaplan/execute/timeout.py",
+    "arnold_pipelines/megaplan/prompts/execute.py",
+    "arnold_pipelines/megaplan/auto.py",
+    "arnold_pipelines/megaplan/chain/__init__.py",
+    "arnold_pipelines/megaplan/orchestration/completion_contract.py",
+    "arnold_pipelines/megaplan/cli/status_view.py",
 }
 
 
 # Raw-status reads that are intentionally non-authority in current production code.
 NON_AUTHORITY_RAW_STATUS_SNIPPETS = {
-    "arnold/pipelines/megaplan/execute/_binding/reducer.py": {
+    "arnold_pipelines/megaplan/execute/_binding/reducer.py": {
         'if task.get("status") == "done":',
         'if task.get("id") == task_id and task.get("status") in {"done", "skipped"}',
     },
-    "arnold/pipelines/megaplan/execute/timeout.py": {
+    "arnold_pipelines/megaplan/execute/timeout.py": {
         'if task.get("status") != "done":',
     },
 }
 
 
 INVENTORIED_RAW_AUTHORITY_SNIPPETS = {
-    "arnold/pipelines/megaplan/auto.py": {
+    "arnold_pipelines/megaplan/auto.py": {
         'if terminal_status == "done":': "RESUME-04",
         'elif terminal_status == "done":': "RESUME-04",
         "verdict = compute_verdict(": "STATUS-05",
     },
-    "arnold/pipelines/megaplan/chain/__init__.py": {
+    "arnold_pipelines/megaplan/chain/__init__.py": {
         "verdict = compute_verdict(": "STATUS-06",
         'if status in {"done", "finalized"}:': "CHAIN-02",
     },
-    "arnold/pipelines/megaplan/cli/status_view.py": {
+    "arnold_pipelines/megaplan/cli/status_view.py": {
         'tasks_done = sum(1 for t in tasks if t.get("status") == "done")': "STATUS-01",
         'if t.get("status") in {"done", "skipped"} and isinstance(t.get("id"), str)': "STATUS-01",
     },
-    "arnold/pipelines/megaplan/execute/batch.py": {
+    "arnold_pipelines/megaplan/execute/batch.py": {
         'task.get("status") in {"done", "skipped"}': "EXEC-03",
         'any_done = any(task.get("status") == "done" for task in tracked_tasks)': "EXEC-03",
     },
-    "arnold/pipelines/megaplan/orchestration/completion_contract.py": {
+    "arnold_pipelines/megaplan/orchestration/completion_contract.py": {
         "def compute_verdict(": "STATUS-04",
     },
-    "arnold/pipelines/megaplan/prompts/execute.py": {
+    "arnold_pipelines/megaplan/prompts/execute.py": {
         'done_tasks = [task for task in tasks if task.get("status") in ("done", "skipped")]': "EXEC-09",
     },
-    "arnold/pipelines/megaplan/execute/timeout.py": {
+    "arnold_pipelines/megaplan/execute/timeout.py": {
         'if t.get("status") in {"done", "skipped"}': "EXEC-08",
         'raw_terminal_tasks = [t for t in tasks if t.get("status") in {"done", "skipped"}]': "EXEC-08",
     },
@@ -214,13 +214,13 @@ def test_cache_tolerant_files_carry_annotation():
 
 def test_dormant_path_reads_carry_annotation():
     """All auto.py state.json reads must carry the dormant-path annotation."""
-    auto_path = REPO_ROOT / "arnold/pipelines/megaplan/auto.py"
+    auto_path = REPO_ROOT / "arnold_pipelines/megaplan/auto.py"
     text = auto_path.read_text(encoding="utf-8")
     expected_marker = "# dormant-path: subprocess seam, retired at M6"
     count = text.count(expected_marker)
     # 10 dormant reads per the Step 20 inventory.
     assert count >= 10, (
-        f"arnold/pipelines/megaplan/auto.py: expected ≥10 `{expected_marker}` annotations, "
+        f"arnold_pipelines/megaplan/auto.py: expected ≥10 `{expected_marker}` annotations, "
         f"found {count}."
     )
 
@@ -338,12 +338,12 @@ def test_m2_authority_readers_execute_routes_have_key_sites():
     execute_routes = [r for r in AUTHORITY_ROUTES if r.route_family == "execute"]
     execute_files = {r.file for r in execute_routes}
     required_files = {
-        "arnold/pipelines/megaplan/execute/batch.py",
-        "arnold/pipelines/megaplan/_core/io.py",
-        "arnold/pipelines/megaplan/_core/scheduler/topo.py",
-        "arnold/pipelines/megaplan/execute/_binding/reducer.py",
-        "arnold/pipelines/megaplan/execute/timeout.py",
-        "arnold/pipelines/megaplan/prompts/execute.py",
+        "arnold_pipelines/megaplan/execute/batch.py",
+        "arnold_pipelines/megaplan/_core/io.py",
+        "arnold_pipelines/megaplan/_core/scheduler/topo.py",
+        "arnold_pipelines/megaplan/execute/_binding/reducer.py",
+        "arnold_pipelines/megaplan/execute/timeout.py",
+        "arnold_pipelines/megaplan/prompts/execute.py",
     }
     missing = required_files - execute_files
     assert not missing, (
@@ -361,9 +361,9 @@ def test_m2_authority_readers_resume_routes_have_key_sites():
     resume_routes = [r for r in AUTHORITY_ROUTES if r.route_family == "resume"]
     resume_files = {r.file for r in resume_routes}
     required_files = {
-        "arnold/pipelines/megaplan/_core/workflow.py",
-        "arnold/pipelines/megaplan/_pipeline/resume.py",
-        "arnold/pipelines/megaplan/auto.py",
+        "arnold_pipelines/megaplan/_core/workflow.py",
+        "arnold_pipelines/megaplan/_pipeline/resume.py",
+        "arnold_pipelines/megaplan/auto.py",
     }
     missing = required_files - resume_files
     assert not missing, (
@@ -380,7 +380,7 @@ def test_m2_authority_readers_chain_routes_have_key_sites():
 
     chain_routes = [r for r in AUTHORITY_ROUTES if r.route_family == "chain"]
     chain_files = {r.file for r in chain_routes}
-    assert "arnold/pipelines/megaplan/chain/__init__.py" in chain_files, (
+    assert "arnold_pipelines/megaplan/chain/__init__.py" in chain_files, (
         f"Chain inventory missing chain/__init__.py. Present: {sorted(chain_files)}"
     )
 
@@ -393,7 +393,7 @@ def test_m2_authority_readers_supervisor_routes_have_key_sites():
 
     supervisor_routes = [r for r in AUTHORITY_ROUTES if r.route_family == "supervisor"]
     supervisor_files = {r.file for r in supervisor_routes}
-    assert "arnold/pipelines/megaplan/supervisor/chain_runner.py" in supervisor_files, (
+    assert "arnold_pipelines/megaplan/supervisor/chain_runner.py" in supervisor_files, (
         f"Supervisor inventory missing chain_runner.py. Present: {sorted(supervisor_files)}"
     )
 
@@ -497,7 +497,7 @@ def test_m2_completion_contract_and_shadow_routes_remain_deferred_infrastructure
 
     completion_contract_route = routes_by_id["STATUS-04"]
     assert completion_contract_route.file == (
-        "arnold/pipelines/megaplan/orchestration/completion_contract.py"
+        "arnold_pipelines/megaplan/orchestration/completion_contract.py"
     )
     assert "compute_verdict" in completion_contract_route.description
 
@@ -512,7 +512,7 @@ def test_m2_informational_status_read_remains_fail_open():
     )
 
     status_route = next(route for route in AUTHORITY_ROUTES if route.id == "STATUS-01")
-    assert status_route.file == "arnold/pipelines/megaplan/cli/status_view.py"
+    assert status_route.file == "arnold_pipelines/megaplan/cli/status_view.py"
     assert status_route.disposition == INFORMATIONAL
     assert status_route.disposition not in {MIGRATED, TESTED}
     assert "does not skip" in status_route.owner_or_reason.lower()
