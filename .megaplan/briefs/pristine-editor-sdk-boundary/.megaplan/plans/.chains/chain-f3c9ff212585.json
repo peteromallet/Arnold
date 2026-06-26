@@ -4,7 +4,7 @@
   "current_plan_name": "m3-host-family-adapter-20260626-0441",
   "last_state": "awaiting_pr_merge",
   "pr_number": 74,
-  "pr_state": "open",
+  "pr_state": "awaiting_merge",
   "completed": [
     {
       "label": "m0-extract-portable-sdk-contracts",
@@ -53,7 +53,7 @@
       "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/native-python-pipelines-completion-thread2",
-      "target_head": "5fddbda05161d9894d61102b645259f46464e2c1",
+      "target_head": "bb0ff2056e02c0ec0d2f4864fb12dde6766c1ee9",
       "target_base": "5fddbda05161d9894d61102b645259f46464e2c1",
       "target_base_ref": "main",
       "target_fallback_reason": null
