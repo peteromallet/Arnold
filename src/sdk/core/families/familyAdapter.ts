@@ -12,6 +12,59 @@
  */
 
 import type { ExecutionMaturity } from './maturity';
+import type { ExtensionDiagnostic } from '../diagnostics';
+import type { FamilyConformanceReport } from './conformance';
+
+// ---------------------------------------------------------------------------
+// Adapter input/output contracts
+// ---------------------------------------------------------------------------
+
+/**
+ * A single contribution paired with its owning extension ID.
+ *
+ * This is the canonical input unit for adapter normalization.  It is
+ * intentionally plain data — no host runtime imports.
+ */
+export interface FamilyContributionRef<TContribution = unknown> {
+  /** The original contribution value (family-specific shape). */
+  readonly contribution: TContribution;
+
+  /** The ID of the extension that declared this contribution. */
+  readonly extensionId: string;
+}
+
+/**
+ * Input to a host family adapter's normalization pass.
+ */
+export interface NormalizeFamilyInput<TContribution = unknown> {
+  /** Sorted contributions ready for projection. */
+  readonly contributions: readonly FamilyContributionRef<TContribution>[];
+}
+
+/**
+ * Result of a host family adapter's normalization pass.
+ *
+ * Adapters may optionally return diagnostics (e.g. validation warnings)
+ * alongside the projected descriptors.
+ */
+export interface FamilyNormalizeResult<TDescriptor = unknown> {
+  /** Projected, frozen descriptors. */
+  readonly descriptors: readonly TDescriptor[];
+
+  /** Optional diagnostics emitted during normalization. */
+  readonly diagnostics?: readonly ExtensionDiagnostic[];
+}
+
+/**
+ * Input to a host family adapter capability query.
+ *
+ * Kept as a plain-data contract so callers can ask an adapter what
+ * execution capabilities it provides without passing host runtime state.
+ */
+export interface FamilyCapabilityInput {
+  /** The contribution kind being queried. */
+  readonly kind: string;
+}
 
 // ---------------------------------------------------------------------------
 // Adapter manifest
@@ -60,12 +113,35 @@ export interface HostAdapterManifest {
 export interface HostFamilyAdapter<
   Kind extends string = string,
   TContribution = unknown,
+  TDescriptor = unknown,
 > {
   /** Contribution kind this adapter handles. */
   readonly kind: Kind;
 
+  /** Adapter classification: real independent adapter or delegated placeholder. */
+  readonly classification: 'real' | 'placeholder';
+
   /** Adapter manifest metadata. */
   readonly manifest: HostAdapterManifest;
+
+  /**
+   * Normalize a batch of contributions into projected descriptors.
+   *
+   * The input contributions are assumed to be sorted in canonical order
+   * (extension order → contribution.order → contribution.id).  The adapter
+   * must not mutate the input.
+   */
+  normalize(
+    input: NormalizeFamilyInput<TContribution>,
+  ): FamilyNormalizeResult<TDescriptor>;
+
+  /**
+   * Build a conformance report for this adapter's family.
+   *
+   * Real adapters usually read the canonical SDK family definition.
+   * Placeholder adapters may additionally annotate delegated gaps.
+   */
+  buildConformanceReport(): FamilyConformanceReport<Kind>;
 }
 
 // ---------------------------------------------------------------------------

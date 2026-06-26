@@ -82,6 +82,31 @@ export interface ConformanceGap {
   readonly requirementKeys?: readonly (keyof FamilyRequirementChecklist)[];
 
   /**
+   * Optional delegation owner.
+   *
+   * Required for host-aggregated delegated gaps; optional for generic
+   * base SDK gaps.
+   */
+  readonly owner?: string;
+
+  /**
+   * Optional delegation reason.
+   *
+   * Required for host-aggregated delegated gaps; optional for generic
+   * base SDK gaps.
+   */
+  readonly reason?: string;
+
+  /**
+   * Optional delegation expiration (`M4`, `M6`, an ISO-8601 date, or
+   * `permanent:<rationale>`).
+   *
+   * Required for host-aggregated delegated gaps; optional for generic
+   * base SDK gaps.
+   */
+  readonly expiration?: string;
+
+  /**
    * Optional free-form metadata for extensibility.
    *
    * Consumers (adapter registry, gap reporters, tooling) may attach

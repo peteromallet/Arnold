@@ -16,9 +16,17 @@ import type { ExecutionMaturity } from './maturity';
 import type {
   FamilyConformanceReport,
   ConformanceGap,
+  ConformanceGapCategory,
 } from './conformance';
 import { buildConformanceReport } from './conformance';
-import type { FamilyAdapterRegistry } from './familyAdapter';
+import type { FamilyAdapterRegistry, HostFamilyAdapter } from './familyAdapter';
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** A registry entry or `undefined` when not registered. */
+type HostFamilyAdapterOrNull = HostFamilyAdapter | null | undefined;
 
 // ---------------------------------------------------------------------------
 // Host-level report aggregation
@@ -72,6 +80,43 @@ export function aggregateHostConformance(
 }
 
 // ---------------------------------------------------------------------------
+// Delegated conformance gap (release-mode)
+// ---------------------------------------------------------------------------
+
+/**
+ * Release-mode delegated conformance gap.
+ *
+ * Unlike base {@link ConformanceGap} whose `owner`, `reason`, and
+ * `expiration` are optional, a `DelegatedConformanceGap` carries
+ * **required** delegation metadata:
+ * - `owner`      — Team or system responsible for the delegated family.
+ * - `reason`     — Why this family is delegated.
+ * - `expiration` — ISO-8601 date when the delegated posture must be
+ *                  resolved, or `'never'` for indefinitely deferred.
+ *
+ * This type is used by host-side conformance aggregation to enforce
+ * release-mode traceability for every delegated family gap.  Base SDK
+ * gaps (from {@link buildConformanceReport}) keep metadata optional.
+ */
+export interface DelegatedConformanceGap extends ConformanceGap {
+  readonly category: ConformanceGapCategory;
+  readonly message: string;
+  readonly owner: string;
+  readonly reason: string;
+  readonly expiration: string;
+  readonly metadata: {
+    /** The contribution kind. */
+    readonly kind: string;
+    /** Marker indicating this is a delegated kind gap. */
+    readonly delegatedKind: true;
+    /** The execution maturity that triggered this gap. */
+    readonly executionMaturity: ExecutionMaturity;
+    /** Registry status at time of aggregation. */
+    readonly registryStatus: string;
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Registry gap computation
 // ---------------------------------------------------------------------------
 
@@ -85,7 +130,7 @@ export function aggregateHostConformance(
  */
 function computeRegistryGaps(
   definition: FamilyDefinition,
-  registryEntry: HostFamilyAdapterOrNull | undefined,
+  registryEntry: HostFamilyAdapterOrNull,
 ): ConformanceGap[] {
   const gaps: ConformanceGap[] = [];
 
@@ -110,21 +155,33 @@ function computeRegistryGaps(
     });
   }
 
-  // Delegated-gap: registry has null but maturity is runtime-bridged or higher
-  if (
-    registryEntry === null &&
-    maturityExpectsAdapter
-  ) {
+  // Delegated-gap: registry has null but maturity is runtime-bridged or higher.
+  // Release-mode: must include owner, reason, and expiration.
+  if (registryEntry === null && maturityExpectsAdapter) {
+    const defRec = definition as unknown as Record<string, unknown>;
+    const owner =
+      (defRec.delegatedOwner as string | undefined) ?? 'video-editor-runtime';
+    const reason =
+      (defRec.delegatedReason as string | undefined) ??
+      `Kind "${definition.kind}" has a null (known-unavailable) adapter entry ` +
+      `but execution maturity "${definition.executionMaturity}" expects a real adapter.`;
+    const expiration =
+      (defRec.delegatedExpiration as string | undefined) ?? 'M4';
+
     gaps.push({
       category: 'host-adapter-missing',
+      owner,
+      reason,
+      expiration,
       message:
         `Kind "${definition.kind}" is registered as known-unavailable ` +
         `(null adapter) but execution maturity is ` +
         `"${definition.executionMaturity}", which requires a real adapter.`,
       metadata: {
         kind: definition.kind,
-        delegatedKind: true,
+        delegatedKind: true as const,
         executionMaturity: definition.executionMaturity,
+        registryStatus: 'null',
       },
     });
   }
@@ -143,6 +200,13 @@ function computeRegistryGaps(
  * - The gap's metadata includes `delegatedKind: true`.
  * - The adapter registry has a `null` entry for that kind (known-unavailable).
  * - The family's execution maturity is at least `runtime-bridged`.
+ * - **Release-mode enforcement**: the gap includes non-empty `owner`,
+ *   `reason`, and `expiration` strings.  These are required by
+ *   {@link DelegatedConformanceGap} for host-side aggregation.
+ *
+ * Base SDK gaps (from {@link buildConformanceReport}) with optional
+ * metadata are not validated against the owner/reason/expiration
+ * requirement — only host-aggregated delegated gaps carry these.
  *
  * @param gap      — The gap to validate.
  * @param registry — The adapter registry to cross-reference.
@@ -180,7 +244,30 @@ export function isValidDelegatedGap(
     executionMaturity !== 'absent' &&
     executionMaturity !== 'delegated';
 
-  return maturityExpectsAdapter;
+  if (!maturityExpectsAdapter) {
+    return false;
+  }
+
+  // ── Release-mode enforcement ──────────────────────────────────────────
+  // Host-aggregated delegated gaps MUST carry owner, reason, and expiration.
+  // Base SDK gaps (with optional metadata) skip this check:
+  // owner/reason/expiration are only required on host-side aggregation,
+  // not on base ConformanceGap instances from buildConformanceReport.
+  const metadata = gap.metadata;
+  if (metadata.registryStatus === 'null') {
+    // This is a host-aggregated gap — enforce release-mode metadata.
+    const owner = gap.owner;
+    const reason = gap.reason;
+    const expiration = gap.expiration;
+
+    if (!owner || owner.length === 0) return false;
+    if (!reason || reason.length === 0) return false;
+    if (!expiration || expiration.length === 0) return false;
+  }
+  // For non-host-aggregated gaps (registryStatus !== 'null'), the
+  // owner/reason/expiration fields are optional (base SDK contract).
+
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -207,12 +294,3 @@ export function identifyDelegatedFamilies(
   delegated.sort();
   return delegated;
 }
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-import type { HostFamilyAdapter } from './familyAdapter';
-
-/** A registry entry or `undefined` when not registered. */
-type HostFamilyAdapterOrNull = HostFamilyAdapter | null | undefined;

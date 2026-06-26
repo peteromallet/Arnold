@@ -8,14 +8,18 @@
  * @module families/metadataFacetAdapter
  */
 
-import type { HostFamilyAdapter, HostAdapterManifest } from '@/sdk/core/families/familyAdapter';
-import type { FamilyConformanceReport } from '@/sdk/core/families/conformance';
-import { buildConformanceReport } from '@/sdk/core/families/conformance';
-import type { ExecutionMaturity } from '@/sdk/core/families/maturity';
+import type {
+  HostFamilyAdapter,
+  HostAdapterManifest,
+  NormalizeFamilyInput,
+  FamilyNormalizeResult,
+  FamilyConformanceReport,
+  ExecutionMaturity,
+} from '@reigh/editor-sdk';
 import type { MetadataFacetContribution } from '@reigh/editor-sdk';
-import type { VideoEditorMetadataFacetDescriptor } from '../extensionSurface';
-import type { CollectedContribution } from './FamilyContributionSequence';
 import { getVideoFamilyDefinition } from '@reigh/editor-sdk';
+import type { VideoEditorMetadataFacetDescriptor } from '../extensionSurface';
+import { buildConformanceReport } from '@/sdk/core/families/conformance';
 
 // ---------------------------------------------------------------------------
 // Adapter manifest
@@ -46,9 +50,11 @@ const MANIFEST: HostAdapterManifest = Object.freeze({
  */
 export const metadataFacetAdapter: HostFamilyAdapter<
   'metadataFacet',
-  MetadataFacetContribution
+  MetadataFacetContribution,
+  VideoEditorMetadataFacetDescriptor
 > = Object.freeze({
   kind: 'metadataFacet' as const,
+  classification: 'real',
   manifest: MANIFEST,
 
   // -----------------------------------------------------------------------
@@ -63,16 +69,16 @@ export const metadataFacetAdapter: HostFamilyAdapter<
    * canonical order (extension-order → contribution.order → contribution.id).
    * The adapter does not re-sort — ordering is the caller's responsibility.
    *
-   * @param contributions — Sorted metadata facet contributions with their
-   *                        owning extension IDs.
+   * @param input — Sorted metadata facet contributions with their
+   *                owning extension IDs.
    * @returns A frozen array of normalized metadata facet descriptors.
    */
   normalize(
-    contributions: readonly CollectedContribution[],
-  ): readonly VideoEditorMetadataFacetDescriptor[] {
+    input: NormalizeFamilyInput<MetadataFacetContribution>,
+  ): FamilyNormalizeResult<VideoEditorMetadataFacetDescriptor> {
     const descriptors: VideoEditorMetadataFacetDescriptor[] = [];
 
-    for (const { contribution, extensionId } of contributions) {
+    for (const { contribution, extensionId } of input.contributions) {
       const facetContrib = contribution as unknown as MetadataFacetContribution;
 
       descriptors.push(
@@ -91,7 +97,7 @@ export const metadataFacetAdapter: HostFamilyAdapter<
       );
     }
 
-    return Object.freeze(descriptors);
+    return { descriptors: Object.freeze(descriptors) };
   },
 
   // -----------------------------------------------------------------------

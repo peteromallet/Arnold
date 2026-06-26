@@ -406,13 +406,13 @@ export function assembleExtensionRuntime(
         // metadataFacet shape so we can call normalize().
         const facetAdapter = adapter as unknown as typeof metadataFacetAdapter;
         metadataFacetDescriptors.push(
-          ...facetAdapter.normalize(metadataFacetContributions),
+          ...facetAdapter.normalize({ contributions: metadataFacetContributions }).descriptors,
         );
       }
     } else {
       // No registry — fall back to direct adapter import (backwards compat).
       metadataFacetDescriptors.push(
-        ...metadataFacetAdapter.normalize(metadataFacetContributions),
+        ...metadataFacetAdapter.normalize({ contributions: metadataFacetContributions }).descriptors,
       );
     }
   }
