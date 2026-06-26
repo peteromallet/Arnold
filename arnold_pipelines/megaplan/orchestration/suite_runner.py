@@ -15,6 +15,7 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from hashlib import sha256
@@ -212,10 +213,19 @@ def _hash_paths_from_config(config: dict[str, Any]) -> list[str] | None:
 
 def _pytest_command(command: str | None) -> str:
     if not command:
-        return "pytest --tb=no -q --no-header -rA"
-    if "pytest" not in command:
-        return command
+        return f"{shlex.quote(sys.executable)} -m pytest --tb=no -q --no-header -rA"
     parts = shlex.split(command)
+    if not parts:
+        return f"{shlex.quote(sys.executable)} -m pytest --tb=no -q --no-header -rA"
+    first = Path(parts[0]).name
+    if first == "pytest":
+        parts = [sys.executable, "-m", "pytest", *parts[1:]]
+    elif first.startswith("pytest"):
+        parts = [sys.executable, "-m", "pytest", *parts[1:]]
+    elif first in {"python", "python3"} or first.startswith("python"):
+        pass
+    elif "pytest" not in command:
+        return command
     parts = ["-rA" if p == "-rN" else p for p in parts]
     present = set(parts)
     for flag in ("--tb=no", "-q", "--no-header", "-rA"):
