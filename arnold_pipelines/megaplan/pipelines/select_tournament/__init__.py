@@ -1,11 +1,12 @@
-"""Compatibility mirror for the canonical ``select-tournament`` package."""
+"""Canonical public surface for the ``select-tournament`` pipeline package."""
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.select_tournament import (
-    DEFAULT_CANDIDATES,
-    build_pipeline,
-)
+from collections.abc import Sequence
+
+from arnold.pipeline import Pipeline
+
+from .pipeline import DEFAULT_CANDIDATES, build_pipeline as _build_pipeline
 
 
 name: str = "select-tournament"
@@ -20,6 +21,14 @@ driver: tuple[str, str] = ("native", "fanout+pairwise-reduce")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("review",)
+
+
+def build_pipeline(
+    candidates: Sequence[str] = DEFAULT_CANDIDATES,
+) -> Pipeline:
+    """Return the canonical native-projected ``select-tournament`` pipeline."""
+
+    return _build_pipeline(candidates=candidates)
 
 
 __all__ = [

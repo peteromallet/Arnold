@@ -72,6 +72,65 @@ TOKEN_USAGE_SCHEMA: dict[str, Any] = {
     ],
 }
 
+TEST_BLAST_RADIUS_SELECTOR_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "kind": {"type": "string"},
+        "value": {"type": "string"},
+        "reason": {"type": "string"},
+    },
+    "required": ["kind", "value", "reason"],
+}
+
+TEST_BLAST_RADIUS_IMPORT_GRAPH_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "degraded": {"type": "boolean"},
+        "dependent_tests": {"type": "integer"},
+        "unresolved": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["degraded", "dependent_tests", "unresolved"],
+}
+
+TEST_BLAST_RADIUS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "strategy": {"type": "string", "enum": ["none", "scoped", "full"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "selectors": {
+            "type": "array",
+            "items": deepcopy(TEST_BLAST_RADIUS_SELECTOR_SCHEMA),
+        },
+        "changed_surfaces": {"type": "array", "items": {"type": "string"}},
+        "always_run": {"type": "array", "items": {"type": "string"}},
+        "full_suite_fallback": {"type": "boolean"},
+        "rationale": {"type": "string"},
+        "import_graph": deepcopy(TEST_BLAST_RADIUS_IMPORT_GRAPH_SCHEMA),
+    },
+    "required": [
+        "strategy",
+        "confidence",
+        "selectors",
+        "changed_surfaces",
+        "always_run",
+        "full_suite_fallback",
+        "rationale",
+        "import_graph",
+    ],
+}
+
+CRITIQUE_EVALUATOR_CHECK_IDS: list[str] = [
+    "issue_hints",
+    "correctness",
+    "scope",
+    "all_locations",
+    "callers",
+    "conventions",
+    "verification",
+    "criteria_quality",
+    "prerequisite_ordering",
+]
+
 
 def _build_critique_evaluator_schema() -> dict[str, Any]:
     """Single source of truth for stored critique-evaluator artifacts.
@@ -81,12 +140,14 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
     - current catalog selections routed by `complexity`
     - current additive `"other"` custom-area selections
     """
+    check_ids = CRITIQUE_EVALUATOR_CHECK_IDS
+    selectable_check_ids = [*check_ids, "other"]
 
     legacy_selection_schema = {
         "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
-            "check_id": {"type": "string"},
+            "check_id": {"type": "string", "enum": selectable_check_ids},
             "critic_model": {"type": "string"},
             "why": {"type": "string"},
             "area": {"type": "string"},
@@ -98,7 +159,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
         "x-preserve-explicit-required": True,
         "type": "object",
         "properties": {
-            "check_id": {"type": "string"},
+            "check_id": {"type": "string", "enum": check_ids},
             "complexity": {"type": "integer"},
             "complexity_justification": {"type": "string"},
             "area": {"type": "string"},
@@ -144,7 +205,7 @@ def _build_critique_evaluator_schema() -> dict[str, Any]:
                 "items": {
                     "type": "object",
                     "properties": {
-                        "check_id": {"type": "string"},
+                        "check_id": {"type": "string", "enum": check_ids},
                         "why": {"type": "string"},
                     },
                     "required": ["check_id", "why"],
@@ -195,7 +256,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "assumptions": {"type": "array", "items": {"type": "string"}},
             "changed_surfaces": {"type": "array", "items": {"type": "string"}},
-            "test_blast_radius": {"type": "object"},
+            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_SCHEMA),
         },
         "required": ["plan", "questions", "success_criteria", "assumptions"],
     },
@@ -421,7 +482,7 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             },
             "questions": {"type": "array", "items": {"type": "string"}},
             "changed_surfaces": {"type": "array", "items": {"type": "string"}},
-            "test_blast_radius": {"type": "object"},
+            "test_blast_radius": deepcopy(TEST_BLAST_RADIUS_SCHEMA),
         },
         "required": [
             "plan",

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.live_supervisor.pipeline import (
-    _build_graph_pipeline,
+from arnold_pipelines.megaplan.pipelines.live_supervisor.pipeline import (
     _native_bundle,
     _native_program,
     build_pipeline as _build_pipeline,

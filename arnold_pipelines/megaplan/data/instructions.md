@@ -7,9 +7,9 @@
 Route every step through the Arnold CLI's Megaplan subcommands. Never call agents directly.
 Before the first CLI call, resolve a working launcher and reuse it for the whole run. Do not assume the removed `megaplan` entrypoint is on `PATH`; command presence alone is not enough. Prove the launcher works by successfully running a harmless CLI call with it first. In the instructions below, treat `<launcher>` as that verified command.
 Launcher resolution order:
-1. Try `python -m arnold.pipelines.megaplan config show`.
-2. If that fails, try `./.venv/bin/python -m arnold.pipelines.megaplan config show`.
-3. If that fails, try `uv run python -m arnold.pipelines.megaplan config show`.
+1. Try `python -m arnold_pipelines.megaplan config show`.
+2. If that fails, try `./.venv/bin/python -m arnold_pipelines.megaplan config show`.
+3. If that fails, try `uv run python -m arnold_pipelines.megaplan config show`.
 4. If those fail, stop and report that the Arnold Megaplan module launcher is unavailable.
 5. Do not use the removed `megaplan` module or console entrypoint; the repo-root `megaplan.py` file is a clean-break guard.
 ## Triage

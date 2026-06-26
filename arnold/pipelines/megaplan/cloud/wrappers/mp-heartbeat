@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-# Deprecated — use arnold-heartbeat instead.
-echo "mp-heartbeat: this wrapper is deprecated, use arnold-heartbeat instead." >&2
-exec "$(dirname "$0")/arnold-heartbeat"
