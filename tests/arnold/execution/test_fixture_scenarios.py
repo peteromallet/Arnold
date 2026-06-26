@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,8 @@ from arnold.kernel import (
 )
 from arnold.kernel.journal import read_event_journal
 from tests.arnold.execution import fixtures
+
+GOLDEN_RUNTIME_ROOT = Path("tests/fixtures/golden/workflow_manifest_runtime")
 
 
 class RecordingEffectHandler:
@@ -69,6 +72,36 @@ def _node_refs(events: list[Any]) -> set[str]:
         e.payload["node_ref"]
         for e in events
         if e.kind == "node_completed" and e.payload.get("child_key") is None
+    }
+
+
+def test_m1_added_fixture_payload_keeps_route_fields_compatible() -> None:
+    data = json.loads((GOLDEN_RUNTIME_ROOT / "human-suspension.json").read_text(encoding="utf-8"))
+
+    assert data["schema_version"] == "workflow-manifest-runtime.golden.v1"
+    assert data["coverage_origin"] == "m1-added"
+    assert "source_golden" not in data
+    assert data["routes"] == ["suspend", "operator-reentry", "resume"]
+    assert "seed" not in data["normalization"]
+
+    manifest_contract = data["manifest_contract"]
+    assert manifest_contract["id"] == "human-suspension"
+    assert manifest_contract["schema_version"] == "arnold.workflow.manifest.v1"
+
+    route_metadata = [
+        item["route_metadata"]
+        for item in manifest_contract["nodes"] + manifest_contract["edges"]
+        if "route_metadata" in item
+    ]
+    assert {metadata["behavioral_step"] for metadata in route_metadata} == set(data["routes"])
+    assert {
+        metadata["route_semantics"]
+        for metadata in route_metadata
+        if "route_semantics" in metadata
+    } >= {
+        "pauses execution for external human decision",
+        "operator payload resumes the suspended node through a stable reentry id",
+        "resume continuation after validated human payload",
     }
 
 

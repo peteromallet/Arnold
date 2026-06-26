@@ -128,6 +128,8 @@ def validate_safe_relative_subpath(value: str) -> str:
     if "\\" in value or "\x00" in value:
         raise ValueError("relative artifact path contains unsupported characters")
     path = PurePosixPath(value)
+    if str(path) != value:
+        raise ValueError("relative artifact path must use canonical POSIX spelling")
     if path.is_absolute():
         raise ValueError("relative artifact path must not be absolute")
     if any(part in {"", ".", ".."} for part in path.parts):
@@ -269,6 +271,7 @@ class FileBackedArtifactStore:
         self._quarantine_dir = self.root / ".quarantine" / "legacy"
 
     def _artifact_dir(self, artifact_id: str) -> Path:
+        validate_logical_root_id(artifact_id)
         directory = self.root / artifact_id
         directory.mkdir(parents=True, exist_ok=True)
         return directory
@@ -311,6 +314,7 @@ class FileBackedArtifactStore:
     ) -> ArtifactBinding:
         """Write a versioned artifact and return its binding."""
 
+        validate_logical_root_id(artifact_id)
         content_type = self.registry.require(content_type_id)
         artifact_dir = self._artifact_dir(artifact_id)
         self._quarantine_legacy_files(artifact_dir)
@@ -353,6 +357,7 @@ class FileBackedArtifactStore:
     ) -> ArtifactBinding | None:
         """Return the binding for the newest ``vN.<ext>`` artifact."""
 
+        validate_logical_root_id(artifact_id)
         artifact_dir = self.root / artifact_id
         if not artifact_dir.exists():
             return None
@@ -375,6 +380,7 @@ class FileBackedArtifactStore:
     def list_versions(self, artifact_id: str, extension: str) -> list[int]:
         """Return all ``vN.<ext>`` version numbers for an artifact."""
 
+        validate_logical_root_id(artifact_id)
         artifact_dir = self.root / artifact_id
         if not artifact_dir.exists():
             return []
@@ -403,6 +409,7 @@ class FileBackedArtifactStore:
     def legacy_inputs(self, artifact_id: str) -> Mapping[str, bytes]:
         """Return quarantined legacy flat artifact contents as migration input."""
 
+        validate_logical_root_id(artifact_id)
         target_dir = self._quarantine_dir / artifact_id
         if not target_dir.exists():
             return {}
