@@ -15,7 +15,7 @@ def _radius(
     changed_surfaces: list[str] | None = None,
     always_run: list[str] | None = None,
     rationale: str = "radius",
-    full_suite_fallback: bool = True,
+    full_suite_fallback: bool = False,
 ) -> dict:
     return {
         "strategy": strategy,
@@ -89,6 +89,21 @@ def test_full_floor_cannot_be_narrowed_to_scoped() -> None:
 
     assert merged is not None
     assert merged["strategy"] == "full"
+
+
+def test_explicit_full_suite_fallback_preserves_scoped_baseline_against_full_floor() -> None:
+    floor = _radius(strategy="full", selectors=[_selector("tests/test_floor.py")])
+    candidate = _radius(
+        strategy="scoped",
+        selectors=[_selector("tests/test_candidate.py")],
+        full_suite_fallback=True,
+    )
+
+    merged = merge_blast_radius_floor(floor, candidate)
+
+    assert merged is not None
+    assert merged["strategy"] == "scoped"
+    assert merged["full_suite_fallback"] is True
 
 
 def test_none_handling_returns_the_present_side() -> None:
