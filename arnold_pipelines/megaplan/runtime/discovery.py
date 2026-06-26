@@ -47,8 +47,8 @@ _OUT_OF_TREE_SUB_BUDGET_USD = 1.0
 
 # Megaplan-specific in-tree path fragments (mirrors
 # arnold_pipelines.megaplan._pipeline.discovery.trust._IN_TREE_PATH_FRAGMENTS).
-# ``arnold_pipelines`` is the new plugin root (scanned first);
-# ``megaplan/pipelines`` is the legacy root.
+# ``arnold_pipelines`` is the plugin root; ``megaplan/pipelines`` remains
+# supported for standalone development checkouts outside this package.
 _IN_TREE_PATH_FRAGMENTS: tuple[str, ...] = ("arnold_pipelines", "megaplan/pipelines")
 
 
@@ -151,11 +151,6 @@ def _package_prefix_for_module_file(module_file: Path) -> str | None:
     arnold_pipelines_fragment = "/arnold_pipelines/"
     if arnold_pipelines_fragment in normalised or normalised.endswith("/arnold_pipelines"):
         return "arnold_pipelines"
-    arnold_megaplan_fragment = "/arnold/pipelines/megaplan/pipelines/"
-    if arnold_megaplan_fragment in normalised or normalised.endswith(
-        "/arnold/pipelines/megaplan/pipelines"
-    ):
-        return "arnold_pipelines.megaplan.pipelines"
     arnold_fragment = "/arnold/pipelines/"
     if arnold_fragment in normalised or normalised.endswith("/arnold/pipelines"):
         return "arnold.pipelines"
@@ -594,44 +589,28 @@ def discover_python_pipelines() -> list[
     silently.
 
     Implementation delegates to :func:`scan_python_pipelines` for the full
-    scan, then raises an aggregate error if any **in-tree** module was
-    rejected (collect-then-raise, NOT fail-on-first).  Rejected **user**
-    modules emit a :class:`UserWarning` and do NOT raise.
+    scan.  Rejected modules (both in-tree and user) emit a :class:`UserWarning`
+    and are omitted from the returned list; this function does NOT raise.
 
     The return shape is back-compat: list of
     ``(cli_name, build_callable, metadata, source_path)`` quads.
     """
     dispositions = scan_python_pipelines()
 
-    # Collect rejected in-tree modules for aggregate error.
-    rejected_in_tree = [
-        d
-        for d in dispositions
-        if d.status == "rejected" and d.origin == "in_tree"
-    ]
-
-    # Warn (but do not raise) for rejected user modules.
+    # Warn (but do not raise) for rejected or skipped modules.
     for d in dispositions:
-        if d.status == "rejected" and d.origin == "user":
+        if d.status == "rejected":
             warnings.warn(
-                f"user pipeline {d.path!s} could not be loaded: {d.reason}",
+                f"{d.origin} pipeline {d.path!s} could not be loaded: {d.reason}",
                 UserWarning,
                 stacklevel=2,
             )
-        if d.status == "skipped" and d.origin == "user":
+        if d.status == "skipped":
             warnings.warn(
-                f"user pipeline {d.path!s} skipped: {d.reason}",
+                f"{d.origin} pipeline {d.path!s} skipped: {d.reason}",
                 UserWarning,
                 stacklevel=2,
             )
-
-    # Aggregate raise for rejected in-tree modules (after full scan).
-    if rejected_in_tree:
-        lines = [f"  {d.path}: {d.reason}" for d in rejected_in_tree]
-        raise RuntimeError(
-            "In-tree pipeline discovery failed for the following modules "
-            "(aggregate, collect-then-raise):\n" + "\n".join(lines)
-        )
 
     # Build back-compat quad list from discovered dispositions only.
     out: list[tuple[str, PipelineBuilder, dict[str, Any], Path]] = []

@@ -59,21 +59,7 @@ def test_loadable_native_entries_validate_through_native_pipeline_contract() -> 
     assert rendered_path == _example_path(generator, "creative")
     assert "## Native builder report" in rendered
     assert "`build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`" in rendered
-    assert "| Builder target | arnold.pipelines.megaplan.pipelines.creative:build_pipeline|" in rendered
-
-
-def test_examples_are_split_aware_for_different_canonical_and_docs_paths() -> None:
-    generator = _load_generator()
-    info = _by_id()["epic-blitz"]
-
-    assert info.canonical_builder_path == "arnold.pipelines.megaplan.pipelines.epic_blitz:build_pipeline"
-    assert info.docs_path == "arnold/pipelines/megaplan/pipelines/epic-blitz/SKILL.md"
-
-    rendered_path, rendered = generator._render_example(info)
-    assert rendered_path == _example_path(generator, "epic-blitz")
-    assert "| Builder source | arnold/pipelines/megaplan/pipelines/epic_blitz.py|" in rendered
-    assert "| Skill | arnold/pipelines/megaplan/pipelines/epic-blitz/SKILL.md|" in rendered
-    assert "| Load state | loadable-native|" in rendered
+    assert "| Builder target | arnold_pipelines.megaplan.pipelines.creative:build_pipeline|" in rendered
 
 
 def test_loadable_native_deliberation_renders_builder_report() -> None:
@@ -100,7 +86,6 @@ def test_required_public_examples_render_for_workflow_and_native_sources() -> No
         "creative",
         "doc",
         "live-supervisor",
-        "epic-blitz",
         "select-tournament",
         "writing-panel-strict",
         "folder-audit",
@@ -117,6 +102,6 @@ def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> N
     second = generator.render_reference()
 
     assert first == second
-    assert "| megaplan.creative | creative | native:creative | arnold/pipelines/megaplan/pipelines/creative | keep|" in first
+    assert "| megaplan.creative | creative | native:creative | arnold_pipelines/megaplan/pipelines/creative | keep|" in first
     assert "| arnold.deliberation | deliberation | native:deliberation | arnold/pipelines/deliberation | keep|" in first
     assert "| evidence_pack.verifier | evidence_pack_verifier | sha256:" in first

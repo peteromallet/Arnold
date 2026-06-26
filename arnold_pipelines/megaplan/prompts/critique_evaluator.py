@@ -337,6 +337,9 @@ def _critique_evaluator_prompt(
             "Each entry needs: `flag_id`, `lens` (one of the lens ids above),",
             "`outcome` (verified / open / accepted_tradeoff), and `rationale`",
             "(cite specific lines from the diff or plan text).",
+            "Use exactly one catalog lens id for `lens`; do not combine ids",
+            "with slashes, commas, plus signs, or prose such as",
+            "`correctness/all_locations`.",
             "",
             "Always include the `flag_verifications` field. Use an empty list",
             "`[]` when there are no flag resolutions to verify.",
@@ -445,6 +448,11 @@ def _critique_evaluator_prompt(
           custom critique area), `why` (the probe question for the critic),
           `complexity`, and `complexity_justification`. At most {MAX_OTHER_AREAS}
           `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
 
         Your output must be a JSON object with these keys:
         - `selections`: list of objects. For catalog lenses:
@@ -456,7 +464,9 @@ def _critique_evaluator_prompt(
         - `flag_verifications`: list of
           {{flag_id, lens, outcome, rationale}} objects where outcome is
           one of "verified" / "open" / "accepted_tradeoff"; use [] when the
-          Flag Resolution Verification section is absent
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
 
         Remember: prefer the smallest selected set that still covers the real
         risk.  Skipping requires a justification.  When you skip, explain *why

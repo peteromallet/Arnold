@@ -180,9 +180,9 @@ reentry point.
 
 ## 7. Reference Implementations
 
-- `arnold/pipelines/megaplan/pipeline.py` - native Megaplan planning topology.
-- `arnold/pipelines/megaplan/pipelines/epic_blitz.py` - native panels.
-- `arnold/pipelines/megaplan/pipelines/select-tournament/__init__.py` - fixed
+- `arnold_pipelines/megaplan/pipeline.py` - native Megaplan planning topology.
+- `arnold_pipelines/megaplan/pipelines/epic_blitz.py` - native panels.
+- `arnold_pipelines/megaplan/pipelines/select_tournament/__init__.py` - fixed
   native parallel branches with typed ports.
 - `docs/arnold/authoring-guide.md` and
   `docs/arnold/package-authoring-contract.md` - full contract details.

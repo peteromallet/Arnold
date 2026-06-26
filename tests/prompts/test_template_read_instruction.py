@@ -58,6 +58,7 @@ def test_critique_evaluator_prompt_pairs_template_path_with_exact_read_file_call
     tmp_path: Path,
 ) -> None:
     state = _minimal_state(tmp_path)
+    state["iteration"] = 2
     plan_dir = tmp_path / "plan"
 
     prompt = _critique_evaluator_prompt(state, plan_dir, root=tmp_path)
@@ -66,3 +67,40 @@ def test_critique_evaluator_prompt_pairs_template_path_with_exact_read_file_call
     assert f"Your output template is at: {output_path}" in prompt
     assert f"calling `read_file` with `path` exactly `{output_path}`" in prompt
     assert "If you cannot supply that exact non-empty path, do not call `read_file`." in prompt
+
+
+def test_critique_evaluator_prompt_forbids_invented_check_ids(tmp_path: Path) -> None:
+    state = _minimal_state(tmp_path)
+    plan_dir = tmp_path / "plan"
+
+    prompt = _critique_evaluator_prompt(state, plan_dir, root=tmp_path)
+
+    assert "Do not invent check IDs" in prompt
+    assert 'check_id: "other"' in prompt
+    assert "north_star_alignment" in prompt
+
+
+def test_critique_evaluator_prompt_forbids_combined_flag_verification_lenses(
+    tmp_path: Path,
+) -> None:
+    state = _minimal_state(tmp_path)
+    state["iteration"] = 2
+    plan_dir = tmp_path / "plan"
+
+    prompt = _critique_evaluator_prompt(
+        state,
+        plan_dir,
+        root=tmp_path,
+        revise_resolutions=[
+            {
+                "id": "flag-1",
+                "concern": "Concern.",
+                "evidence": "Evidence.",
+                "resolution": {"kind": "addressed", "claim": "Fixed.", "where": "T1"},
+            }
+        ],
+        plan_diff="diff --git a/file b/file\n",
+    )
+
+    assert "Use exactly one catalog lens id for `lens`" in prompt
+    assert "correctness/all_locations" in prompt

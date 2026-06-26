@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/evidence_pack
-- manifest_hash: sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2
+- manifest_hash: sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -24,7 +24,7 @@ Provenance:
 | Validation | `arnold workflow check --module arnold_pipelines.evidence_pack:build_pipeline`|
 | Contract | workflow|
 | Load state | workflow|
-| Identity | sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2|
+| Identity | sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70|
 
 ## Builder Surface
 
@@ -34,7 +34,7 @@ The following snippet is extracted verbatim from the pack's canonical builder so
 name: str = "evidence-pack"
 description: str = "Model-less verification of persisted evidence-pack JSON artifacts."
 
-driver: tuple[str, str] = ("in_process", "verify")
+driver: tuple[str, str] = ("graph", "verify")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("artifact-verification", "evidence-pack")
@@ -153,7 +153,7 @@ def build_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
 ```yaml
 edge_count: 4
 id: evidence_pack_verifier
-manifest_hash: sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2
+manifest_hash: sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70
 node_count: 5
 possible_routes:
 - condition_ref: null

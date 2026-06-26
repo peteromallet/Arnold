@@ -10,7 +10,7 @@ What it reuses (it does NOT reimplement)
 The codex CLI argv build, sandbox/workspace flags, ``_codex_child_env``,
 pre-first-byte / idle watchdogs, output parsing and ``WorkerResult``
 construction all live in
-``arnold.pipelines.megaplan.workers._impl.run_codex_step``.  This adapter
+``arnold_pipelines.megaplan.workers._impl.run_codex_step``.  This adapter
 calls that function exactly the way the existing
 ``MEGAPLAN_USE_AGENT_DISPATCHER`` closure (``_codex_to_agent_result``) does,
 synthesizing only the minimal ephemeral one-shot context (fresh non-persistent
@@ -43,7 +43,7 @@ class CodexAdapter:
 
     def __call__(self, request: AgentRequest) -> AgentResult:
         # Lazy import: keep arnold.agent import-safe.
-        from arnold.pipelines.megaplan.workers import run_codex_step
+        from arnold_pipelines.megaplan.workers import run_codex_step
 
         with _oneshot.oneshot_context(request) as ctx:
             worker_result = run_codex_step(

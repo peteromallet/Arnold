@@ -88,7 +88,7 @@ def test_evaluate_full_suite_backstop_delta_gate_matrix(
         return run_full_suite_backstop(
             tmp_path / "plan",
             tmp_path,
-            {},
+            {"test_command": "pytest tests/backstop.py"},
             baseline=baseline,
         )
 
@@ -135,7 +135,7 @@ def test_non_green_base_is_usable_in_enforce(
     result = run_full_suite_backstop(
         tmp_path / "plan",
         tmp_path,
-        {},
+        {"test_command": "pytest tests/backstop.py"},
         baseline=_baseline(
             failing=["tests/test_a.py::test_a"],
             collected=["tests/test_a.py::test_a"],
@@ -173,7 +173,7 @@ def test_uncertainty_blocks_in_enforce_and_not_shadow(
         assert evaluate_full_suite_backstop(result, "shadow")["blocks"] is False
 
 
-def test_run_full_suite_backstop_passed_copies_config_and_forces_full(
+def test_run_full_suite_backstop_passed_copies_config_and_preserves_scoped_command(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -202,8 +202,8 @@ def test_run_full_suite_backstop_passed_copies_config_and_forces_full(
     assert result["passed"] == 1
     assert result["failed"] == 0
     assert result["failing_tests"] == []
-    assert seen_config["test_selection"] == "full"
-    assert "test_command" not in seen_config
+    assert seen_config["test_selection"] == "scoped"
+    assert seen_config["test_command"] == "pytest tests/scoped.py::test_one"
     assert caller_config == {
         "test_selection": "scoped",
         "test_command": "pytest tests/scoped.py::test_one",
@@ -226,7 +226,11 @@ def test_run_full_suite_backstop_failed_returns_failing_tests(
         ),
     )
 
-    result = run_full_suite_backstop(tmp_path / "plan", tmp_path, {})
+    result = run_full_suite_backstop(
+        tmp_path / "plan",
+        tmp_path,
+        {"test_command": "pytest tests/backstop.py"},
+    )
 
     assert result["status"] == "failed"
     assert result["passed"] == 1
@@ -419,9 +423,15 @@ def test_full_suite_backstop_retry_once_still_error_blocks(
 def _write_chain_spec(tmp_path: Path) -> Path:
     idea = tmp_path / "idea.txt"
     idea.write_text("ship milestone", encoding="utf-8")
+    (tmp_path / "NORTHSTAR.md").write_text("Finish the chain.", encoding="utf-8")
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text(
-        "base_branch: main\n" "milestones:\n" "  - label: m1\n" f"    idea: {idea}\n",
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {idea}\n",
         encoding="utf-8",
     )
     return spec_path
@@ -446,6 +456,19 @@ def _write_plan_state(
     )
     (plan_dir / "finalize_output.json").write_text(
         json.dumps({"tasks": [{"id": "T1", "files_changed": ["src/app.py"]}]}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_command": None,
+                "test_selection": {
+                    "command_override": "pytest tests/backstop.py",
+                },
+                "tasks": [{"id": "T1", "files_changed": ["src/app.py"]}],
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     (plan_dir / "execution_batch_1.json").write_text(
@@ -606,6 +629,7 @@ def test_run_chain_full_suite_backstop_shadow_records_and_advances(
 def test_run_chain_full_suite_backstop_enforce_blocks_before_commit(
     tmp_path: Path,
 ) -> None:
+    _init_git_with_semantic_change(tmp_path)
     spec_path = _write_chain_spec(tmp_path)
     plan_name = "plan-m1"
     plan_dir = _write_plan_state(tmp_path, plan_name, current_state="finalized")

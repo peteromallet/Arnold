@@ -34,7 +34,7 @@ def _make_state(plan_dir: Path, version: int = 1) -> dict:
                 "timestamp": "2026-01-01T00:00:00Z",
             }
         ],
-        "config": {"test_selection": "scoped"},
+        "config": {"test_selection": "scoped", "project_dir": str(plan_dir.parent)},
         "meta": {},
     }
 
@@ -185,7 +185,9 @@ def test_unresolved_surface_without_selector_falls_back_to_full(
     assert radius["uncovered_changes_justification"] == "pkg/missing.py"
 
 
-def test_non_python_change_forces_full_suite(tmp_path: Path) -> None:
+def test_non_python_change_preserves_scoped_baseline_with_full_suite_fallback(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     _write(repo, "pkg/util.py", "VALUE = 1\n")
     _write(repo, "tests/test_feature.py", "import pkg.util\n")
@@ -196,10 +198,22 @@ def test_non_python_change_forces_full_suite(tmp_path: Path) -> None:
         repo,
     )
 
-    assert radius["strategy"] == "full"
+    assert radius["strategy"] == "scoped"
     assert radius["confidence"] == "low"
+    assert radius["full_suite_fallback"] is True
     assert "force the full suite" in radius["rationale"]
     assert _selector_values(radius) == ["tests/test_feature.py"]
+
+
+def test_missing_declared_pytest_selector_forces_full_suite(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    radius = compute_default_blast_radius(["tests/test_missing.py"], repo)
+
+    assert radius["strategy"] == "full"
+    assert radius["selectors"] == []
+    assert radius["missing_test_selectors"] == ["tests/test_missing.py"]
 
 
 def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
@@ -207,6 +221,8 @@ def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
 ) -> None:
     plan_dir = tmp_path / "plan"
     plan_dir.mkdir()
+    _write(tmp_path, "tests/test_feature.py")
+    _write(tmp_path, "tests/test_core.py")
     state = _make_state(plan_dir)
     _write_plan_meta(
         plan_dir,
@@ -237,6 +253,89 @@ def test_resolve_baseline_test_selection_folds_always_run_into_scoped_command(
     assert "always_run" in result["reason"]
 
 
+def test_resolve_baseline_test_selection_rejects_missing_path_selector(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [{"kind": "path", "value": "tests/test_missing.py"}],
+            "changed_surfaces": ["pkg/util.py"],
+            "always_run": [],
+            "full_suite_fallback": True,
+            "rationale": "Bad selector.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "unresolved"
+    assert "do not exist" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_rejects_missing_always_run_path(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write(tmp_path, "tests/test_feature.py")
+    state = _make_state(plan_dir)
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "high",
+            "selectors": [{"kind": "path", "value": "tests/test_feature.py"}],
+            "changed_surfaces": ["pkg/util.py"],
+            "always_run": ["python -m pytest tests/test_missing.py"],
+            "full_suite_fallback": True,
+            "rationale": "Bad always_run.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "unresolved"
+    assert "always_run pytest path" in result["reason"]
+
+
+def test_resolve_baseline_test_selection_missing_metadata_is_unresolved(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "unresolved"
+    assert result["command_override"] is None
+    assert "No test_blast_radius" in result["reason"]
+    assert "full suite" not in result["reason"]
+
+
+def test_resolve_baseline_test_selection_explicit_full_allows_full(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+    state["config"]["test_selection"] = "full"
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "full"
+    assert result["command_override"] is None
+    assert "explicit opt-out" in result["reason"]
+
+
 def test_resolve_baseline_test_selection_falls_back_on_non_path_selector(
     tmp_path: Path,
 ) -> None:
@@ -262,9 +361,128 @@ def test_resolve_baseline_test_selection_falls_back_on_non_path_selector(
 
     result = resolve_baseline_test_selection(plan_dir, state)
 
-    assert result["mode"] == "full"
+    assert result["mode"] == "unresolved"
     assert result["command_override"] is None
     assert "non-path selector kind(s) marker" in result["reason"]
+
+
+def test_finalize_baseline_selection_uses_task_files_when_plan_metadata_absent(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.handlers.finalize import (
+        _fallback_baseline_test_selection,
+    )
+
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    _write(repo, "pkg/util.py", "VALUE = 1\n")
+    _write(repo, "tests/test_feature.py", "import pkg.util\n")
+    state = _make_state(plan_dir)
+    resolved = resolve_baseline_test_selection(plan_dir, state)
+
+    result = _fallback_baseline_test_selection(
+        plan_dir,
+        state,
+        repo,
+        resolved,
+        planned_files=["pkg/util.py"],
+    )
+
+    assert result["mode"] == "scoped"
+    assert result["command_override"] == "pytest tests/test_feature.py"
+    assert result["fallback_source"] == "finalize_task_files_changed"
+    assert "finalize task file" in result["reason"]
+
+
+def test_finalize_baseline_selection_prefers_task_pytest_commands(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.handlers.finalize import (
+        _fallback_baseline_test_selection,
+        _planned_task_pytest_command,
+    )
+
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    state = _make_state(plan_dir)
+    payload = {
+        "tasks": [
+            {
+                "commands_run": [
+                    "python scripts/generate_legacy_megaplan_registry.py --check",
+                    (
+                        "pytest tests/arnold_pipelines/megaplan/test_legacy_surface_ratchets.py "
+                        "tests/arnold_pipelines/megaplan/test_import_boundaries.py "
+                        "tests/test_gate_grep_ratchet.py -q"
+                    ),
+                ],
+                "files_changed": [
+                    "docs/arnold/legacy-megaplan-surface-registry.json"
+                ],
+            },
+            {
+                "commands_run": [
+                    (
+                        "pytest tests/arnold/conformance/test_megaplan_coupling_gate.py "
+                        "tests/arnold/conformance/test_conformance_gates.py -q"
+                    )
+                ],
+            },
+        ]
+    }
+    command = _planned_task_pytest_command(payload)
+    resolved = resolve_baseline_test_selection(plan_dir, state)
+
+    result = _fallback_baseline_test_selection(
+        plan_dir,
+        state,
+        repo,
+        resolved,
+        planned_files=["docs/arnold/legacy-megaplan-surface-registry.json"],
+        planned_test_command=command,
+    )
+
+    assert result["mode"] == "scoped"
+    assert result["fallback_source"] == "finalize_task_commands_run"
+    assert result["command_override"] == (
+        "pytest "
+        "tests/arnold_pipelines/megaplan/test_legacy_surface_ratchets.py "
+        "tests/arnold_pipelines/megaplan/test_import_boundaries.py "
+        "tests/test_gate_grep_ratchet.py "
+        "tests/arnold/conformance/test_megaplan_coupling_gate.py "
+        "tests/arnold/conformance/test_conformance_gates.py"
+    )
+
+
+def test_finalize_baseline_selection_keeps_full_opt_out_with_task_files(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.handlers.finalize import (
+        _fallback_baseline_test_selection,
+    )
+
+    repo = tmp_path / "repo"
+    plan_dir = repo / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    state = _make_state(plan_dir)
+    state["config"]["test_selection"] = "full"
+    resolved = {
+        "mode": "full",
+        "reason": "explicit full",
+        "command_override": None,
+    }
+
+    result = _fallback_baseline_test_selection(
+        plan_dir,
+        state,
+        repo,
+        resolved,
+        planned_files=["pkg/util.py"],
+    )
+
+    assert result == resolved
 
 
 def test_graph_build_failure_keeps_name_convention_result(

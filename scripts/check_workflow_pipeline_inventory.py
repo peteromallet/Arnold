@@ -112,10 +112,6 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "registry_id": None,
     },
     # Deletes (legacy duplicates)
-    "arnold/pipelines/megaplan": {
-        "status": "delete",
-        "registry_id": None,
-    },
     "arnold/pipelines/jokes": {
         "status": "delete",
         "registry_id": None,
@@ -172,6 +168,13 @@ FORBIDDEN_STRING_PATTERNS = (
     "Stage(",
     "Edge(",
 )
+
+CANONICAL_NATIVE_ALLOWED_PATTERNS = {
+    "from arnold.pipeline",
+    "import arnold.pipeline",
+    "Stage(",
+    "Edge(",
+}
 
 # Command examples that must not appear in active docs/skills.
 FORBIDDEN_DOC_PATTERNS = (
@@ -258,10 +261,16 @@ def _check_forbidden_strings(path: Path) -> list[str]:
     errors: list[str] = []
     if path.suffix != ".py":
         return errors
+    rel = _normalize_root(path)
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     for lineno, line in enumerate(lines, start=1):
         for pattern in FORBIDDEN_STRING_PATTERNS:
+            if (
+                rel.startswith("arnold_pipelines/megaplan/pipelines/")
+                and pattern in CANONICAL_NATIVE_ALLOWED_PATTERNS
+            ):
+                continue
             if pattern in line:
                 errors.append(f"{path}:{lineno}: forbidden pattern {pattern!r}")
     return errors

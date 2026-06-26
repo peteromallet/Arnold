@@ -2,25 +2,23 @@ from __future__ import annotations
 
 import argparse
 
-from arnold.pipelines.megaplan.cli import arnold, build_parser
+from arnold_pipelines.megaplan.cli import arnold, build_parser
 
 
 EXPECTED_SURFACE = {
     "top_level": ["auto", "override", "pipelines", "run", "<module>"],
     "discovered_modules": [
         "creative",
-        "deliberation",
         "doc",
         "epic-blitz",
         "evidence-pack",
-        "folder-audit",
         "jokes",
         "live-supervisor",
         "megaplan",
         "select-tournament",
         "writing-panel-strict",
     ],
-    "pipelines_actions": ["check", "describe", "doctor", "list", "new", "run", "upgrade-cursor"],
+    "pipelines_actions": ["check", "describe", "doctor", "list", "new"],
     "module_verbs": ["run", "check", "doctor", "describe", "auto"],
     "planning_module_verbs": ["run", "check", "doctor", "describe", "auto", "override"],
     "umbrella_override_actions": [

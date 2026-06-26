@@ -1,6 +1,6 @@
 ---
 name: megaplan-prep
-description: Set up a megaplan run before invoking it — size the work, write the brief, score overall plan difficulty, and choose robustness/depth. Consult before every `python -m arnold.pipelines.megaplan init`.
+description: Set up a megaplan run before invoking it — size the work, write the brief, score overall plan difficulty, and choose robustness/depth. Consult before every `python -m arnold_pipelines.megaplan init`.
 ---
 
 # Megaplan Setup
@@ -33,7 +33,7 @@ Two decisions come before the three dials: **how many megaplans you need**, and 
 
 A megaplan should fit roughly **two weeks of human work** — the time a skilled engineer would take to plan, build, and review the same scope. Wall-clock for the harness itself is unrelated; this is about scope, not duration.
 
-If the work is bigger, **split it into an epic** — a chain of sprint-sized megaplans driven sequentially by `python -m arnold.pipelines.megaplan chain`. Each sprint in the chain gets its own brief, its own overall plan difficulty score, its own profile, and its own retrospective. See the **megaplan-epic** skill for spec format, per-milestone rubric, and end-to-end usage. Cramming a month of work into one plan means the brief drifts, the critique loses focus, and the review can't hold the whole shape in one pass.
+If the work is bigger, **split it into an epic** — a chain of sprint-sized megaplans driven sequentially by `python -m arnold_pipelines.megaplan chain`. Each sprint in the chain gets its own brief, its own overall plan difficulty score, its own profile, and its own retrospective. See the **megaplan-epic** skill for spec format, per-milestone rubric, and end-to-end usage. Cramming a month of work into one plan means the brief drifts, the critique loses focus, and the review can't hold the whole shape in one pass.
 
 Signs you should split:
 
@@ -51,7 +51,7 @@ When you split, structure the dependency graph explicitly. Each handoff is a wri
 
 **The brief must be locked in before init** — fully self-contained so the model can run end-to-end without coming back for clarification. The harness snapshots the brief at `init`; later edits to the idea-file are not re-read. If you find yourself wanting to "ask the model" what to do, write that decision down first.
 
-**Store durable briefs in `.megaplan/briefs/`.** Single-plan ideas live at `.megaplan/briefs/<slug>.md`. Epics live at `.megaplan/briefs/<epic-slug>/chain.yaml` with their milestone briefs in the same directory. `.megaplan/plans/` is generated run state; `.megaplan/briefs/` is the committed input material you hand to `python -m arnold.pipelines.megaplan init` or `python -m arnold.pipelines.megaplan chain start`. Use `python -m arnold.pipelines.megaplan brief new` or `python -m arnold.pipelines.megaplan brief epic` to create the canonical files.
+**Store durable briefs in `.megaplan/briefs/`.** Single-plan ideas live at `.megaplan/briefs/<slug>.md`. Epics live at `.megaplan/briefs/<epic-slug>/chain.yaml` with their milestone briefs in the same directory. `.megaplan/plans/` is generated run state; `.megaplan/briefs/` is the committed input material you hand to `python -m arnold_pipelines.megaplan init` or `python -m arnold_pipelines.megaplan chain start`. Use `python -m arnold_pipelines.megaplan brief new` or `python -m arnold_pipelines.megaplan brief epic` to create the canonical files.
 
 A good brief covers:
 
@@ -152,10 +152,10 @@ Default to `low`; only spend on depth when you can name the specific reason the 
 
 **If a run is struggling, escalate mid-flight rather than letting it grind.** Common signals: the plan keeps missing concerns critique surfaces; revise doesn't resolve the critique's flags; the executor produces work review can't accept; iteration cycles through the same defects without converging. Don't sit through a degenerate run — one wasted phase costs much less than restarting the sprint.
 
-- `python -m arnold.pipelines.megaplan override set-profile --profile NAME --plan ID` — swap profile mid-run. Started on `partnered-3`, hit something gnarlier, escalate to `partnered-4` or `partnered-5` for the remainder.
-- `python -m arnold.pipelines.megaplan override set-robustness --robustness LEVEL --plan ID` — same for the planning-complexity dial.
-- `python -m arnold.pipelines.megaplan override replan --plan ID` — back up to planning and redo with whatever models / robustness are now active.
-- `python -m arnold.pipelines.megaplan override add-note --plan ID --note "..."` — inject guidance into an active plan without restarting any phase. Read by every subsequent phase. The brief is snapshotted at `init`; later edits to the idea-file are NOT re-read, so this is the verb for "I missed something." **`python -m arnold.pipelines.megaplan feedback` is end-of-run rating, not in-flight guidance** — common confusion.
+- `python -m arnold_pipelines.megaplan override set-profile --profile NAME --plan ID` — swap profile mid-run. Started on `partnered-3`, hit something gnarlier, escalate to `partnered-4` or `partnered-5` for the remainder.
+- `python -m arnold_pipelines.megaplan override set-robustness --robustness LEVEL --plan ID` — same for the planning-complexity dial.
+- `python -m arnold_pipelines.megaplan override replan --plan ID` — back up to planning and redo with whatever models / robustness are now active.
+- `python -m arnold_pipelines.megaplan override add-note --plan ID --note "..."` — inject guidance into an active plan without restarting any phase. Read by every subsequent phase. The brief is snapshotted at `init`; later edits to the idea-file are NOT re-read, so this is the verb for "I missed something." **`python -m arnold_pipelines.megaplan feedback` is end-of-run rating, not in-flight guidance** — common confusion.
 
 Lean on these instead of inventing more profile names. If you find yourself thinking "I want a profile that's *like* `partnered-3` but with X" — the answer is usually `partnered-3` plus an override, unless it matches the explicit `partnered-4` or `partnered-5` rubric above.
 
@@ -181,7 +181,7 @@ Two narrower levers orthogonal to the three dials. Both off by default.
 
 "Prep just in case" doesn't earn its cost. Redundant at `thorough` and `extreme` (those already include prep); the flag's value is at `light` and `full`, where prep is normally skipped.
 
-**Steering prep with `--prep-direction`.** When prep runs (either via `--with-prep` or because robustness is `thorough`/`extreme`), you can hand it explicit guidance about *what* to explore: `python -m arnold.pipelines.megaplan init … --prep-direction "focus on the worker shutdown path; ignore CLI plumbing"`. It's shown to the prep worker as a distinct "User direction for prep" section — steering, not a replacement for the task. Use it when prep would otherwise wander (broad codebase, multiple plausible entry points) or when you want it to skip the obvious file and trace a specific call chain. You can also set or replace it after init with `python -m arnold.pipelines.megaplan prep --direction "…"` before the phase runs, and chain milestones accept `prep_direction:` per milestone. Has no effect if prep is skipped.
+**Steering prep with `--prep-direction`.** When prep runs (either via `--with-prep` or because robustness is `thorough`/`extreme`), you can hand it explicit guidance about *what* to explore: `python -m arnold_pipelines.megaplan init … --prep-direction "focus on the worker shutdown path; ignore CLI plumbing"`. It's shown to the prep worker as a distinct "User direction for prep" section — steering, not a replacement for the task. Use it when prep would otherwise wander (broad codebase, multiple plausible entry points) or when you want it to skip the obvious file and trace a specific call chain. You can also set or replace it after init with `python -m arnold_pipelines.megaplan prep --direction "…"` before the phase runs, and chain milestones accept `prep_direction:` per milestone. Has no effect if prep is skipped.
 
 ### Feedback (`--with-feedback`)
 
@@ -213,7 +213,7 @@ Write `profile/robustness/depth`, omit defaults, append modifiers. Order is fixe
 
 Modifier conventions: `@<vendor>` for vendor override, `, critic=<kind>` for critic override, `+prep` to enable prep, `+feedback` to enable feedback. Append modifiers without disturbing the spine.
 
-The shorthand is for recording (sprint notes, brief headers, commit messages), not for the CLI. The actual invocation is still `python -m arnold.pipelines.megaplan init --profile … --robustness … --depth …` — see "Running it" below.
+The shorthand is for recording (sprint notes, brief headers, commit messages), not for the CLI. The actual invocation is still `python -m arnold_pipelines.megaplan init --profile … --robustness … --depth …` — see "Running it" below.
 
 ---
 
@@ -233,14 +233,14 @@ The invocation has three layers: three flags for the dials, four modifiers for o
 - **`--critic cross`** — overrides the critique+review pair to the other premium vendor relative to `--vendor`, when supported by the selected profile.
 - **`--deepseek-provider direct`** — keeps canonical DeepSeek v4-pro slots on DeepSeek's direct API. Defaults to `direct`; Fireworks is not a supported DeepSeek route.
 - **`--with-prep`** — force the `prep` research phase into the workflow regardless of `--robustness`. Off by default; no-op at `thorough`/`extreme`. See "Optional phases" above.
-- **`--prep-direction "…"`** — steering text shown to the prep worker (when prep runs) as a "User direction for prep" section. Points prep at specific files / subsystems / questions to explore. Can also be set or replaced later with `python -m arnold.pipelines.megaplan prep --direction "…"` before the phase runs. No-op if prep is skipped. See "Optional phases" above.
+- **`--prep-direction "…"`** — steering text shown to the prep worker (when prep runs) as a "User direction for prep" section. Points prep at specific files / subsystems / questions to explore. Can also be set or replaced later with `python -m arnold_pipelines.megaplan prep --direction "…"` before the phase runs. No-op if prep is skipped. See "Optional phases" above.
 - **`--with-feedback`** — force the `feedback` phase into the workflow regardless of `--robustness`. Scaffolds `feedback.md` (a per-stage ratings template) between `review` and `done`, then completes the plan non-interactively. Off by default. See "Optional phases" above.
 
 ### The escape hatch
 
 **`--phase-model phase=spec`**, repeatable. For when `--depth` is too coarse — e.g. bump just `critique` without touching the rest. Most runs don't need it.
 
-For an in-flight plan, `python -m arnold.pipelines.megaplan override set-model --phase PHASE --model MODEL`
+For an in-flight plan, `python -m arnold_pipelines.megaplan override set-model --phase PHASE --model MODEL`
 updates that phase's persisted `phase_model` entry. If you are switching premium
 vendors, pass a full premium spec such as `--model claude:sonnet` or
 `--model codex:gpt-5.5`; passing only `--model sonnet` keeps the phase's
@@ -265,7 +265,7 @@ The model that critiques the plan also reviews the executed work — same mind p
 
 ### Worktree isolation — `--in-worktree`
 
-`python -m arnold.pipelines.megaplan init --in-worktree NAME` spins up a dedicated git worktree at `~/Documents/.megaplan-worktrees/<NAME>/` on a new branch, so each sprint lives in its own checkout. Use it for multi-PR migrations, or when concurrent work on `main` shouldn't be disturbed. Substitutes for `--project-dir`.
+`python -m arnold_pipelines.megaplan init --in-worktree NAME` spins up a dedicated git worktree at `~/Documents/.megaplan-worktrees/<NAME>/` on a new branch, so each sprint lives in its own checkout. Use it for multi-PR migrations, or when concurrent work on `main` shouldn't be disturbed. Substitutes for `--project-dir`.
 
 - **`--worktree-from GITREF`** — fork from a specific branch/tag/SHA instead of `HEAD`.
 - **`--clean-worktree`** — fork from a clean base. By default, uncommitted state in the invoking repo is replicated into the new worktree (the source repo's working tree is never touched).
@@ -277,22 +277,22 @@ Skip `--in-worktree` for small one-shot plans, bakeoff runs (orchestrator manage
 ### Worked invocations
 
 > *"Schema migration, step ordering intricate but each step mechanical."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-3`
+> `python -m arnold_pipelines.megaplan init <brief> --profile partnered-3`
 
 > *"Novel cross-cutting feature, long brief, unfamiliar codebase."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-4 --depth high`
+> `python -m arnold_pipelines.megaplan init <brief> --profile partnered-4 --depth high`
 
 > *"Novel feature against an external API we haven't used."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-3 --with-prep`
+> `python -m arnold_pipelines.megaplan init <brief> --profile partnered-3 --with-prep`
 
 > *"Migration logic against production data."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-5 --robustness thorough --depth high`
+> `python -m arnold_pipelines.megaplan init <brief> --profile partnered-5 --robustness thorough --depth high`
 
 > *"Schema everyone downstream will build on — concurrency primitive, cascading consequences."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-5 --robustness thorough --depth high`
+> `python -m arnold_pipelines.megaplan init <brief> --profile partnered-5 --robustness thorough --depth high`
 
 > *"Tier 3, brief is clear, but I want the critic specifically to deliberate more — leave the planner alone."*
-> `python -m arnold.pipelines.megaplan init <brief> --profile partnered-3 --phase-model critique=claude:medium --phase-model review=claude:medium` *(surgical: bumps just the critic+review pair — preserving the critique==review invariant — and leaves plan/revise at the profile's default. `--depth` can't express this because it's by-phase-name, not by-author-vs-critic.)*
+> `python -m arnold_pipelines.megaplan init <brief> --profile partnered-3 --phase-model critique=claude:medium --phase-model review=claude:medium` *(surgical: bumps just the critic+review pair — preserving the critique==review invariant — and leaves plan/revise at the profile's default. `--depth` can't express this because it's by-phase-name, not by-author-vs-critic.)*
 
 Three pieces of intent → three flags (`--profile`, `--robustness`, `--depth`), plus `--vendor` / `--critic` / `--with-prep` / `--with-feedback` / `--in-worktree` when you need them.
 
@@ -319,7 +319,7 @@ Default to a single profile. Only run a multi-arm bake-off when (a) the user ask
 
 This skill covers profile/robustness/depth selection *before* a run. Once a plan is in flight, switch to the **`megaplan-observe`** skill — same author, complementary focus:
 
-- **Pull-mode observation**: `python -m arnold.pipelines.megaplan introspect` / `trace` / `doctor` for on-demand inspection, blockage diagnosis, drift detection. Read it before reaching for `override` so you don't guess at an `invalid_transition`.
+- **Pull-mode observation**: `python -m arnold_pipelines.megaplan introspect` / `trace` / `doctor` for on-demand inspection, blockage diagnosis, drift detection. Read it before reaching for `override` so you don't guess at an `invalid_transition`.
 - **Push-mode observation**: `watcher.sh` (bundled in the same skill) is a bash polling loop that streams phase-transition notifications. Wire it through Claude Code's `Monitor` tool to get told when phases start/end, when cost climbs, and when the plan reaches a terminal state — no manual polling.
 
 When something looks wrong during a run (cost spiking, phase not advancing, iteration counter stuck), `megaplan-observe` is the next stop, not `--max-cost-usd`. The cost-cap and rework-cap flags exist for narrow recovery cases; they are not a default. Trust the defaults; intervene with `override` + tests if a phase fixates.

@@ -1,7 +1,7 @@
 """T13 — Post-M3b gate grep ratchet (GateRecommendation, OverrideAction, kind='gate').
 
 Code-only count of GateRecommendation, OverrideAction, and ``kind='gate'``
-references across arnold/pipelines/megaplan/_pipeline source files.  After M3b (T12), the
+references across canonical Megaplan core source files.  After M3b (T12), the
 typed GateRecommendation and OverrideAction literals are removed and all
 kind='gate' routing edges are migrated to kind='decision' — the baselines
 are pinned to zero.
@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 
 
-#: Files in arnold/pipelines/megaplan/_pipeline/ that are allowed to name GateRecommendation.
+#: Files in the canonical Megaplan core tree that are allowed to name GateRecommendation.
 #: Empty — post-M3b, zero code references expected.
 _GATEREC_FILES: tuple[str, ...] = ()
 
@@ -82,6 +82,11 @@ def _count_code_refs(filepath: str, pattern: str) -> tuple[int, int]:
     return total, total
 
 
+def _canonical_core_dir() -> Path:
+    repo_root = Path(__file__).resolve().parent.parent
+    return repo_root / "arnold_pipelines" / "megaplan" / "_core"
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # GateRecommendation ratchet
 # ═══════════════════════════════════════════════════════════════════════
@@ -112,16 +117,16 @@ def test_gaterec_ratchet_per_file_matches_baseline():
 
 
 def test_gaterec_no_refs_outside_allow_list():
-    """No file under arnold/pipelines/megaplan/_pipeline/ may contain ANY GateRecommendation
+    """No file under the canonical Megaplan core tree may contain ANY GateRecommendation
     reference in non-comment, non-docstring code.
 
-    Scans every .py file under arnold/pipelines/megaplan/_pipeline/ (recursively) and
+    Scans every .py file under arnold_pipelines/megaplan/_core (recursively) and
     asserts only the allow-listed files contain the literal string
     ``GateRecommendation`` in code (not comments or docstrings).
     Post-M3b: allow-list is empty — any code reference is a regression.
     """
     repo_root = Path(__file__).resolve().parent.parent
-    pipeline_dir = repo_root / "arnold" / "pipelines" / "megaplan" / "_pipeline"
+    pipeline_dir = _canonical_core_dir()
 
     exclude_names = {"run_cli.py"}
 
@@ -174,11 +179,11 @@ def test_overrideaction_ratchet_per_file_matches_baseline():
 
 
 def test_overrideaction_no_refs_outside_allow_list():
-    """No file under arnold/pipelines/megaplan/_pipeline/ may contain ANY OverrideAction
+    """No file under the canonical Megaplan core tree may contain ANY OverrideAction
     reference in non-comment, non-docstring code.  Post-M3b: allow-list
     is empty — any code reference is a regression."""
     repo_root = Path(__file__).resolve().parent.parent
-    pipeline_dir = repo_root / "arnold" / "pipelines" / "megaplan" / "_pipeline"
+    pipeline_dir = _canonical_core_dir()
 
     exclude_names = {"run_cli.py"}
 
@@ -235,11 +240,11 @@ def test_kind_gate_ratchet_per_file_matches_baseline():
 
 
 def test_kind_gate_no_refs_outside_allow_list():
-    """No file under arnold/pipelines/megaplan/_pipeline/ may contain ANY ``kind='gate'``
+    """No file under the canonical Megaplan core tree may contain ANY ``kind='gate'``
     routing edge in non-comment, non-docstring code.  Post-M3b: allow-list
     is empty — any ``kind='gate'`` in executable code is a regression."""
     repo_root = Path(__file__).resolve().parent.parent
-    pipeline_dir = repo_root / "arnold" / "pipelines" / "megaplan" / "_pipeline"
+    pipeline_dir = _canonical_core_dir()
 
     exclude_names = {"run_cli.py"}
 

@@ -5,7 +5,7 @@
 **Supported modes**: `native`
 
 This mirror delegates to
-`arnold.pipelines.megaplan.pipelines.creative`. New runtime and discovery
+`arnold_pipelines.megaplan.pipelines.creative`. New runtime and discovery
 surfaces should import the canonical package directly.
 
 ## Purpose

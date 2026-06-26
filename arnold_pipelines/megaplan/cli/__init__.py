@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.profiles import (
     ROBUSTNESS_LEVELS,
     effective_premium_vendor,
 )
+from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
 from arnold_pipelines.megaplan.types import (
     CliError,
     DEFAULTS,
@@ -1307,12 +1308,28 @@ def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
             actor_id=getattr(args, "actor", None)
             or os.environ.get("MEGAPLAN_ACTOR_ID"),
         )
+    previous_provider = os.environ.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER")
+    self_hosted = False
+    if not previous_provider:
+        try:
+            self_hosted = root.resolve() == megaplan_engine_root()
+        except Exception:
+            self_hosted = False
+        if self_hosted:
+            os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = "self_hosted_editable"
     try:
         return resume_plan(root, args.plan, store=store)
     finally:
-        close = getattr(store, "close", None)
-        if callable(close):
-            close()
+        try:
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
+        finally:
+            if self_hosted:
+                if previous_provider is None:
+                    os.environ.pop("MEGAPLAN_ENGINE_ISOLATION_PROVIDER", None)
+                else:
+                    os.environ["MEGAPLAN_ENGINE_ISOLATION_PROVIDER"] = previous_provider
 
 
 def _resume_human_gate(root: Path, plan_dir: Path, args: argparse.Namespace) -> dict[str, Any]:

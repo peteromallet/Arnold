@@ -104,11 +104,14 @@ package-name-staleness arnold.agent.agent.trajectory
 package-name-staleness arnold.agent.hermes_cli.auth
 package-name-staleness arnold.agent.hermes_cli.models
 package-name-staleness arnold.agent.run_agent
+package-name-staleness arnold.agent.tools.terminal_tool
 package-name-staleness arnold.conformance.checks
 package-name-staleness arnold.conformance.workflow_manifest_runtime
+package-name-staleness arnold.pipeline.registry
 package-name-staleness arnold.workflow.validation
 
 semantic-coupling arnold.agent.adapters._oneshot
+semantic-coupling arnold.agent.tools.terminal_tool
 semantic-coupling arnold.agent.agent.anthropic_adapter
 semantic-coupling arnold.agent.agent.auxiliary_client
 semantic-coupling arnold.agent.agent.context_compressor

@@ -409,7 +409,7 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, base_branch: s
     """Create or reuse the draft PR for a milestone branch."""
     if not milestone.branch:
         raise CliError("missing_branch", f"milestone {milestone.label!r} has no branch")
-    if _compat().shutil.which("gh") is None:
+    if shutil.which("gh") is None:
         writer(
             "[chain] gh executable not found; continuing with branch commits/pushes "
             f"but skipping PR creation for {milestone.branch}\n"
@@ -1263,12 +1263,22 @@ def _commit_and_push_phase(
                 f"[chain] rebase failed; aborting and falling back to force push"
                 f"{(': ' + detail) if detail else ''}\n"
             )
-            _compat()._run_command(
-                root,
+            abort = _compat().subprocess.run(
                 ["git", "rebase", "--abort"],
-                writer=writer,
-                error_code="git_push_failed",
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
             )
+            writer(f"[chain] git rebase --abort -> rc={abort.returncode}\n")
+            if abort.returncode != 0:
+                abort_detail = (abort.stderr or abort.stdout or "").strip()
+                writer(
+                    "[chain] warning: git rebase --abort failed during fallback; "
+                    "continuing to force-with-lease push"
+                    f"{(': ' + abort_detail) if abort_detail else ''}\n"
+                )
             _compat()._run_command(
                 root,
                 ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],

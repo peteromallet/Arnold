@@ -25,7 +25,7 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.resources import PipelineResourceBundle, resolve_bundle_prompt
-from arnold.pipelines.megaplan._pipeline import (
+from arnold_pipelines.megaplan.step_types import (
     Edge,
     ParallelStage,
     Pipeline,
@@ -35,8 +35,7 @@ from arnold.pipelines.megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
-from arnold.pipelines.megaplan._pipeline.prompts import PromptRegistry
+from arnold_pipelines.megaplan.runtime.bridge import run_pipeline
 
 
 # -----------------------------------------------------------------------
@@ -87,9 +86,19 @@ def test_unregistered_mode_falls_back_to_default_prompt() -> None:
 
 
 def test_missing_prompt_key_raises_loudly() -> None:
-    registry = PromptRegistry()
+    _TEST_PROMPT_BUNDLE.prompts.clear()
     with pytest.raises(KeyError):
-        registry.resolve("nonexistent")
+        resolve_bundle_prompt(
+            _TEST_PROMPT_BUNDLE,
+            "nonexistent",
+            StepContext(
+                plan_dir=Path("/tmp"),
+                state={},
+                profile=None,
+                mode="code",
+                inputs={},
+            ),
+        )
 
 
 # -----------------------------------------------------------------------
@@ -154,21 +163,25 @@ def test_critic_verdict_flags_reach_reviser_via_state_patch(tmp_path: Path) -> N
 # -----------------------------------------------------------------------
 
 def test_one_step_type_serves_all_pipelines() -> None:
-    from arnold.pipelines.megaplan._pipeline.demos.doc_critique import build_pipeline as build_doc
-    from arnold.pipelines.megaplan._pipeline.demo_judges import build_pipeline as build_judges
-    from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+    from arnold.pipeline.types import (
+        Pipeline as ArnoldPipeline,
+        Step as ArnoldStep,
+    )
+    from arnold_pipelines.megaplan.pipelines.doc.pipeline import build_pipeline as build_doc
+    from arnold_pipelines.megaplan.pipelines.jokes.pipeline import build_pipeline as build_jokes
+    from arnold_pipelines.megaplan.pipelines.select_tournament import build_pipeline as build_select_tournament
 
     doc_pipeline = build_doc()
-    judges_pipeline = build_judges()
-    planning_pipeline = compile_planning_pipeline()
+    jokes_pipeline = build_jokes()
+    select_tournament_pipeline = build_select_tournament()
 
-    for pipeline in (doc_pipeline, judges_pipeline, planning_pipeline):
-        assert isinstance(pipeline, Pipeline)
+    for pipeline in (doc_pipeline, jokes_pipeline, select_tournament_pipeline):
+        assert isinstance(pipeline, (Pipeline, ArnoldPipeline))
         for stage in pipeline.stages.values():
             # Every node either has a `.step` (Stage) or `.steps` (ParallelStage).
             assert hasattr(stage, "step") or hasattr(stage, "steps")
             if hasattr(stage, "step"):
-                assert isinstance(stage.step, Step)
+                assert isinstance(stage.step, (Step, ArnoldStep))
 
 
 # -----------------------------------------------------------------------
@@ -279,8 +292,8 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline(
     submission time in _run_parallel_stage, before pool.submit).  The error
     message must name the stage and the unsafe step.
     """
-    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
-    from arnold.pipelines.megaplan.runtime.inprocess_step import InProcessHandlerStep
+    from arnold_pipelines.megaplan.runtime.bridge import run_pipeline
+    from arnold_pipelines.megaplan.runtime.inprocess_step import InProcessHandlerStep
 
     # A handler that raises if called — proves the guard fires first.
     def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
@@ -316,18 +329,17 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline(
     with pytest.raises(ValueError, match="unsafe_handler"):
         run_pipeline(pipeline, ctx, artifact_root=tmp_path)
 
-    # Confirm the message mentions thread-safety / InProcessHandlerStep.
-    with pytest.raises(ValueError, match="thread-safe"):
+    # Confirm the message mentions the current parallel-safety guard.
+    with pytest.raises(ValueError, match="parallel-safe"):
         run_pipeline(pipeline, ctx, artifact_root=tmp_path)
 
 
-def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline_with_policy(
+def test_parallel_stage_with_inprocess_handler_step_rejected_by_bridge_executor(
     tmp_path: Path,
 ) -> None:
-    """run_pipeline_with_policy also rejects unsafe ParallelStage before any handler runs."""
-    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
-    from arnold.pipelines.megaplan._pipeline.runtime import RuntimePolicy
-    from arnold.pipelines.megaplan.runtime.inprocess_step import InProcessHandlerStep
+    """The bridge executor also rejects unsafe ParallelStage before any handler runs."""
+    from arnold_pipelines.megaplan.runtime.bridge import run_pipeline
+    from arnold_pipelines.megaplan.runtime.inprocess_step import InProcessHandlerStep
 
     def _must_not_run(_root: Path, _args: Any) -> dict[str, Any]:
         raise AssertionError("handler must not be called — guard should reject first")
@@ -351,17 +363,11 @@ def test_parallel_stage_with_inprocess_handler_step_rejected_by_run_pipeline_wit
     ctx = StepContext(
         plan_dir=tmp_path, state={}, profile=None, mode="test", inputs={},
     )
-    policy = RuntimePolicy(max_iterations=10)
-
     with pytest.raises(ValueError, match="bad_fanout"):
-        run_pipeline_with_policy(
-            pipeline, ctx, artifact_root=tmp_path, policy=policy,
-        )
+        run_pipeline(pipeline, ctx, artifact_root=tmp_path)
 
     with pytest.raises(ValueError, match="unsafe_handler"):
-        run_pipeline_with_policy(
-            pipeline, ctx, artifact_root=tmp_path, policy=policy,
-        )
+        run_pipeline(pipeline, ctx, artifact_root=tmp_path)
 
 
 def test_safe_hermetic_parallel_steps_run_concurrently_and_return_in_declaration_order(
@@ -374,7 +380,7 @@ def test_safe_hermetic_parallel_steps_run_concurrently_and_return_in_declaration
     as_completed order.
     """
     import time as _time
-    from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
+    from arnold_pipelines.megaplan.runtime.bridge import run_pipeline
 
     # Shared timeline so we can assert overlap.
     timeline: list[tuple[str, float]] = []

@@ -4,7 +4,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/epic_blitz.py
+- source_package: arnold_pipelines/megaplan/pipelines/epic_blitz.py
 - manifest_hash: native:epic-blitz
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
@@ -17,10 +17,10 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/epic_blitz.py|
-| Builder target | arnold.pipelines.megaplan.pipelines.epic_blitz:build_pipeline|
-| Builder source | arnold/pipelines/megaplan/pipelines/epic_blitz.py|
-| Skill | arnold/pipelines/megaplan/pipelines/epic-blitz/SKILL.md|
+| Package | arnold_pipelines/megaplan/pipelines/epic_blitz.py|
+| Builder target | arnold_pipelines.megaplan.pipelines.epic_blitz:build_pipeline|
+| Builder source | arnold_pipelines/megaplan/pipelines/epic_blitz.py|
+| Skill | arnold_pipelines/megaplan/pipelines/epic-blitz/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
 | Load state | loadable-native|
