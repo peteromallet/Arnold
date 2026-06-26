@@ -16,9 +16,6 @@ import {
   defineExtension,
   validateExtensionId,
   validateContributionId,
-  setEditorShellRoot,
-  getEditorShellRoot,
-  createExtensionContext,
   DIAGNOSTIC_SOURCE_EXTENSION,
   DEFAULT_DIAGNOSTIC_PER_EXTENSION_CAPACITY,
   KNOWN_CONTRIBUTION_KINDS,
@@ -29,6 +26,34 @@ import {
   PANEL_PLACEMENTS,
   ASSET_DETAIL_SECTION_PLACEMENTS,
   ALL_VALID_PLACEMENTS,
+  BUILTIN_CLIP_TYPES,
+  DETERMINISM_STATUSES,
+  FamilyAdapterRegistryImpl,
+  RENDER_BLOCKER_REASONS,
+  RENDER_ROUTES,
+  TIMELINE_DIFF_GRANULARITIES,
+  TIMELINE_DIFF_KINDS,
+  TIMELINE_PATCH_ALL_OP_FAMILIES,
+  TIMELINE_PATCH_OP_FAMILIES,
+  TIMELINE_PATCH_RESERVED_OP_FAMILIES,
+  aggregateHostConformance,
+  buildFamilyAdapterManifest,
+  createExtensionSettingsService,
+  crossReferenceManifest,
+  describeShaderMaterializerRequirementScope,
+  disposeAll,
+  findAdapter,
+  findSettingsMigrationDeclarations,
+  getConfigSignature,
+  getSettingsPrefix,
+  getStableConfigSignature,
+  identifyDelegatedFamilies,
+  isTimelineVersionConflictError,
+  isValidDelegatedGap,
+  listRegisteredKinds,
+  normalizeAdapters,
+  projectMaturityCapabilities,
+  shaderMissingMaterializerBlockerMessage,
 } from '@reigh/editor-sdk';
 import type {
   ReighExtension,
@@ -55,6 +80,49 @@ import type {
   ProposalImportStatus,
   ProposalImportDiagnostic,
   ProposalImportResult,
+  ArtifactBoundary,
+  BakeContract,
+  BuiltinClipType,
+  ConformanceGap,
+  ConformanceGapCategory,
+  ContributionRenderability,
+  CreateExtensionSettingsServiceOptions,
+  DeclarationMaturity,
+  DelegatedConformanceGap,
+  DeterminismStatus,
+  ExecutionMaturity,
+  FamilyAdapterManifest,
+  FamilyAdapterManifestEntry,
+  FamilyAdapterRegistry,
+  FamilyCapabilityInput,
+  FamilyConformanceReport,
+  FamilyContributionRef,
+  FamilyDefinition,
+  FamilyNormalizeResult,
+  FamilyRequirementChecklist,
+  HostAdapterManifest,
+  HostAdapterRegistrationDescriptor,
+  HostFamilyAdapter,
+  ManifestCrossReferenceResult,
+  NormalizeFamilyInput,
+  RenderBlocker,
+  RenderBlockerReason,
+  RenderCapability,
+  RenderCapabilityStatus,
+  RenderLocatorKind,
+  RenderMaterial,
+  RenderMaterialMediaKind,
+  RenderMaterialRef,
+  RenderRoute,
+  RenderStorageLocator,
+  SettingsMigrationConfig,
+  SettingsPersistenceError,
+  SettingsPersistenceOperation,
+  SettingsPersistenceSuccess,
+  StableTimelineAssetRegistryInput,
+  StableTimelineConfigSignatureInput,
+  TimelineConfigSignatureInput,
+  TimelineVersionConflictError,
 } from '@reigh/editor-sdk';
 
 // ---------------------------------------------------------------------------
@@ -135,16 +203,6 @@ const exampleProjectReqs: ProjectExtensionRequirements = {
   requirements: [exampleProjectReq],
 };
 
-/** Demonstrate shell root registry helpers in a noop fashion. */
-function demonstrateShellRoot(): void {
-  // Get current (null when no shell is mounted)
-  const current = getEditorShellRoot();
-  // Set to null (clear) — safe noop when already null
-  setEditorShellRoot(null);
-  // Restore whatever was there
-  setEditorShellRoot(current);
-}
-
 // ---------------------------------------------------------------------------
 // Extension definition
 // ---------------------------------------------------------------------------
@@ -189,9 +247,6 @@ export function activateCoverageExtension(
     chrome.toast('ID validation failed unexpectedly.', 'error');
   }
 
-  // ---- Shell root helpers ------------------------------------------------
-  demonstrateShellRoot();
-
   // ---- Reserved manifest fields (descriptive only, no runtime effect) -----
   // These are exercised above as type-level demonstrations.
   void exampleProcessManifest;
@@ -219,6 +274,67 @@ export function activateCoverageExtension(
   void _knownSlots;
   void _knownSlotsSet;
   void _placements;
+
+
+  // ---- M4 additional surface coverage (compile-time only) ------------------
+  const _v0 = BUILTIN_CLIP_TYPES;
+  void _v0;
+  const _v1 = DETERMINISM_STATUSES;
+  void _v1;
+  const _v2 = FamilyAdapterRegistryImpl;
+  void _v2;
+  const _v3 = RENDER_BLOCKER_REASONS;
+  void _v3;
+  const _v4 = RENDER_ROUTES;
+  void _v4;
+  const _v5 = TIMELINE_DIFF_GRANULARITIES;
+  void _v5;
+  const _v6 = TIMELINE_DIFF_KINDS;
+  void _v6;
+  const _v7 = TIMELINE_PATCH_ALL_OP_FAMILIES;
+  void _v7;
+  const _v8 = TIMELINE_PATCH_OP_FAMILIES;
+  void _v8;
+  const _v9 = TIMELINE_PATCH_RESERVED_OP_FAMILIES;
+  void _v9;
+  const _v10 = aggregateHostConformance;
+  void _v10;
+  const _v11 = buildFamilyAdapterManifest;
+  void _v11;
+  const _v12 = createExtensionSettingsService;
+  void _v12;
+  const _v13 = crossReferenceManifest;
+  void _v13;
+  const _v14 = describeShaderMaterializerRequirementScope;
+  void _v14;
+  const _v15 = disposeAll;
+  void _v15;
+  const _v16 = findAdapter;
+  void _v16;
+  const _v17 = findSettingsMigrationDeclarations;
+  void _v17;
+  const _v18 = getConfigSignature;
+  void _v18;
+  const _v19 = getSettingsPrefix;
+  void _v19;
+  const _v20 = getStableConfigSignature;
+  void _v20;
+  const _v21 = identifyDelegatedFamilies;
+  void _v21;
+  const _v22 = isTimelineVersionConflictError;
+  void _v22;
+  const _v23 = isValidDelegatedGap;
+  void _v23;
+  const _v24 = listRegisteredKinds;
+  void _v24;
+  const _v25 = normalizeAdapters;
+  void _v25;
+  const _v26 = projectMaturityCapabilities;
+  void _v26;
+  const _v27 = shaderMissingMaterializerBlockerMessage;
+  void _v27;
+  type _CoverageTypes = [ArtifactBoundary, BakeContract, BuiltinClipType, ConformanceGap, ConformanceGapCategory, ContributionRenderability, CreateExtensionSettingsServiceOptions, DeclarationMaturity, DelegatedConformanceGap, DeterminismStatus, ExecutionMaturity, FamilyAdapterManifest, FamilyAdapterManifestEntry, FamilyAdapterRegistry, FamilyCapabilityInput, FamilyConformanceReport, FamilyContributionRef, FamilyDefinition, FamilyNormalizeResult, FamilyRequirementChecklist, HostAdapterManifest, HostAdapterRegistrationDescriptor, HostFamilyAdapter, ManifestCrossReferenceResult, NormalizeFamilyInput, RenderBlocker, RenderBlockerReason, RenderCapability, RenderCapabilityStatus, RenderLocatorKind, RenderMaterial, RenderMaterialMediaKind, RenderMaterialRef, RenderRoute, RenderStorageLocator, SettingsMigrationConfig, SettingsPersistenceError, SettingsPersistenceOperation, SettingsPersistenceSuccess, StableTimelineAssetRegistryInput, StableTimelineConfigSignatureInput, TimelineConfigSignatureInput];
+  void 0 as unknown as _CoverageTypes;
 
   // ---- Proposal import lifecycle types (compile-time coverage only) --------
   type _ProposalExpiry = ProposalExpiryDetail;

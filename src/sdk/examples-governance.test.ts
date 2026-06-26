@@ -161,16 +161,30 @@ function isVideoEditorInternal(relativePath: string, specifier: string): boolean
 /** Regex matching `export (type|interface|class|function|const|let|var) Name`. */
 const SDK_EXPORT_RE = /^export\s+(?:(?:declare\s+)?(?:type|interface|class|function|const|let|var)\s+)([A-Za-z_$][\w$]*)/gm;
 
+/** Regex matching `export { A, type B } from './module'` re-exports (multiline). */
+const SDK_REEXPORT_RE = /export\s+(?:type\s+)?\{([\s\S]*?)\}(?:\s*from\s*['"][^'"]+['"])?/g;
+
 /**
  * Extract the set of named exports from src/sdk/index.ts.
- * Uses a simple regex-based approach that captures type, interface,
- * class, function, const, let, and var exports.
+ * Captures inline declarations and named re-exports (with or without `from`).
  */
 function extractSdkExports(): Set<string> {
   const content = fs.readFileSync(SDK_INDEX, 'utf8');
   const names = new Set<string>();
   for (const match of content.matchAll(SDK_EXPORT_RE)) {
     names.add(match[1]);
+  }
+  for (const match of content.matchAll(SDK_REEXPORT_RE)) {
+    const specifiers = match[1]
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const spec of specifiers) {
+      // Handle `type Name` and `Name as Alias`
+      const cleaned = spec.replace(/^type\s+/, '');
+      const aliasMatch = cleaned.match(/^([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)$/);
+      names.add(aliasMatch ? aliasMatch[2] : cleaned);
+    }
   }
   return names;
 }
@@ -184,8 +198,8 @@ function extractSdkImports(filePath: string): Set<string> {
   const content = fs.readFileSync(filePath, 'utf8');
   const names = new Set<string>();
 
-  // Match import { ... } from '@reigh/editor-sdk' (value + type imports)
-  const importBlockRe = /import\s+(?:type\s+)?\{([^}]+)\}\s+from\s+['"]@reigh\/editor-sdk['"]/g;
+  // Match import { ... } from '@reigh/editor-sdk' (value + type imports, multiline)
+  const importBlockRe = /import\s+(?:type\s+)?\{([\s\S]*?)\}\s+from\s+['"]@reigh\/editor-sdk['"]/g;
   for (const match of content.matchAll(importBlockRe)) {
     const block = match[1];
     // Split on commas, handle `as` aliases

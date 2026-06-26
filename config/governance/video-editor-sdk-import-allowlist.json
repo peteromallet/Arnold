@@ -9,69 +9,258 @@
   ],
   "allowlist": {
     "src/app/routes.tsx": [
-      "src/tools/video-editor/pages/VideoEditorPage.tsx",
-      "src/tools/video-editor/pages/ExtensionHarnessPage.tsx"
+      {
+        "target": "src/tools/video-editor/pages/VideoEditorPage.tsx",
+        "classification": "internal",
+        "owner": "app-shell",
+        "rationale": "React Router route table mounts top-level video-editor page components.",
+        "removalCondition": "Never; routes are intrinsically host-shell owned.",
+        "expiration": "permanent"
+      },
+      {
+        "target": "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+        "classification": "internal",
+        "owner": "app-shell",
+        "rationale": "React Router route table mounts top-level video-editor page components.",
+        "removalCondition": "Never; routes are intrinsically host-shell owned.",
+        "expiration": "permanent"
+      }
     ],
     "src/domains/media-lightbox/hooks/useAddToVideoEditor.ts": [
-      "src/tools/video-editor/hooks/timelineStore.ts",
-      "src/tools/video-editor/hooks/useTimelineCommands.ts",
-      "src/tools/video-editor/lib/timeline-asset-plans.ts",
-      "src/tools/video-editor/lib/video-editor-path.ts",
-      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+      {
+        "target": "src/tools/video-editor/hooks/timelineStore.ts",
+        "classification": "internal",
+        "owner": "media-lightbox",
+        "rationale": "Media lightbox pushes selected media into the video-editor timeline.",
+        "removalCondition": "Abstract behind app-level intent bus or SDK contribution.",
+        "expiration": "M5"
+      },
+      {
+        "target": "src/tools/video-editor/hooks/useTimelineCommands.ts",
+        "classification": "internal",
+        "owner": "media-lightbox",
+        "rationale": "Media lightbox pushes selected media into the video-editor timeline.",
+        "removalCondition": "Abstract behind app-level intent bus or SDK contribution.",
+        "expiration": "M5"
+      },
+      {
+        "target": "src/tools/video-editor/lib/timeline-asset-plans.ts",
+        "classification": "internal",
+        "owner": "media-lightbox",
+        "rationale": "Media lightbox pushes selected media into the video-editor timeline.",
+        "removalCondition": "Abstract behind app-level intent bus or SDK contribution.",
+        "expiration": "M5"
+      },
+      {
+        "target": "src/tools/video-editor/lib/video-editor-path.ts",
+        "classification": "internal",
+        "owner": "media-lightbox",
+        "rationale": "Media lightbox pushes selected media into the video-editor timeline.",
+        "removalCondition": "Abstract behind app-level intent bus or SDK contribution.",
+        "expiration": "M5"
+      },
+      {
+        "target": "src/tools/video-editor/settings/videoEditorDefaults.ts",
+        "classification": "internal",
+        "owner": "media-lightbox",
+        "rationale": "Media lightbox pushes selected media into the video-editor timeline.",
+        "removalCondition": "Abstract behind app-level intent bus or SDK contribution.",
+        "expiration": "M5"
+      }
     ],
     "src/features/tasks/components/TasksPane/TasksPane.tsx": [
-      "src/tools/video-editor/components/AgentChat/index.ts"
+      {
+        "target": "src/tools/video-editor/components/AgentChat/index.ts",
+        "classification": "internal",
+        "owner": "tasks-pane",
+        "rationale": "Tasks pane embeds the agent chat component owned by video-editor.",
+        "removalCondition": "Move AgentChat to shared components or expose via slot.",
+        "expiration": "M5"
+      }
     ],
     "src/app/hooks/useGlobalPaneShortcuts.ts": [
-      "src/tools/video-editor/lib/video-editor-path.ts"
+      {
+        "target": "src/tools/video-editor/lib/video-editor-path.ts",
+        "classification": "internal",
+        "owner": "app-shortcuts",
+        "rationale": "Global keyboard shortcut navigates to the video editor route.",
+        "removalCondition": "Move route path to a shared routing contract.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/components/ToolsPane/ToolsPane.tsx": [
-      "src/tools/video-editor/lib/video-editor-path.ts",
-      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+      {
+        "target": "src/tools/video-editor/lib/video-editor-path.ts",
+        "classification": "internal",
+        "owner": "shared-ui",
+        "rationale": "Shared tools pane links to and reads defaults from the video editor.",
+        "removalCondition": "Move path/defaults to a shared config module.",
+        "expiration": "M5"
+      },
+      {
+        "target": "src/tools/video-editor/settings/videoEditorDefaults.ts",
+        "classification": "internal",
+        "owner": "shared-ui",
+        "rationale": "Shared tools pane links to and reads defaults from the video editor.",
+        "removalCondition": "Move path/defaults to a shared config module.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/contexts/AgentChatContext.tsx": [
-      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+      {
+        "target": "src/tools/video-editor/settings/videoEditorDefaults.ts",
+        "classification": "internal",
+        "owner": "agent-chat",
+        "rationale": "Agent chat default settings depend on video-editor defaults.",
+        "removalCondition": "Move shared defaults to a shared config module.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/hooks/useHomeNavigation.ts": [
-      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+      {
+        "target": "src/tools/video-editor/settings/videoEditorDefaults.ts",
+        "classification": "internal",
+        "owner": "home",
+        "rationale": "Home navigation reads video-editor defaults.",
+        "removalCondition": "Move defaults to a shared config module.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/lib/tooling/homeNavigation.ts": [
-      "src/tools/video-editor/lib/video-editor-path.ts"
+      {
+        "target": "src/tools/video-editor/lib/video-editor-path.ts",
+        "classification": "internal",
+        "owner": "home",
+        "rationale": "Home navigation links to the video editor route.",
+        "removalCondition": "Move route path to a shared routing contract.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/lib/tooling/toolManifest.ts": [
-      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+      {
+        "target": "src/tools/video-editor/settings/videoEditorDefaults.ts",
+        "classification": "internal",
+        "owner": "tooling",
+        "rationale": "Tool manifest references video-editor defaults.",
+        "removalCondition": "Move defaults to a shared config module.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/state/selectionStore.ts": [
-      "src/tools/video-editor/hooks/useSelectedMediaClips.ts"
+      {
+        "target": "src/tools/video-editor/hooks/useSelectedMediaClips.ts",
+        "classification": "internal",
+        "owner": "selection-store",
+        "rationale": "Shared selection store reads video-editor selected clips.",
+        "removalCondition": "Selection store should be owned by video-editor or use an event contract.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/state/currentAttachmentSet.ts": [
-      "src/tools/video-editor/hooks/useSelectedMediaClips.ts"
+      {
+        "target": "src/tools/video-editor/hooks/useSelectedMediaClips.ts",
+        "classification": "internal",
+        "owner": "selection-store",
+        "rationale": "Shared attachment set reads video-editor selected clips.",
+        "removalCondition": "Selection store should be owned by video-editor or use an event contract.",
+        "expiration": "M5"
+      }
     ],
     "src/tooling/toolDefaultsRegistry.ts": [
-      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+      {
+        "target": "src/tools/video-editor/settings/videoEditorDefaults.ts",
+        "classification": "internal",
+        "owner": "tooling",
+        "rationale": "Tool defaults registry includes video-editor defaults.",
+        "removalCondition": "Move defaults to a shared config module.",
+        "expiration": "M5"
+      }
     ],
     "src/tools/index.ts": [
-      "src/tools/video-editor/settings/videoEditorDefaults.ts"
+      {
+        "target": "src/tools/video-editor/settings/videoEditorDefaults.ts",
+        "classification": "internal",
+        "owner": "tools-index",
+        "rationale": "Tools index re-exports video-editor defaults.",
+        "removalCondition": "Remove re-export or move defaults to shared config.",
+        "expiration": "M5"
+      }
     ],
     "src/tools/travel-between-images/hooks/video/useShotFinalVideos.ts": [
-      "src/tools/video-editor/lib/finalVideoAssets.ts"
+      {
+        "target": "src/tools/video-editor/lib/finalVideoAssets.ts",
+        "classification": "internal",
+        "owner": "travel-between-images",
+        "rationale": "Reads video-editor final video asset metadata.",
+        "removalCondition": "Move asset metadata to a shared domain module.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/components/SettingsModal/sections/ExtensionsSection.tsx": [
-      "src/tools/video-editor/runtime/extensionReferenceReport.ts"
+      {
+        "target": "src/tools/video-editor/runtime/extensionReferenceReport.ts",
+        "classification": "internal",
+        "owner": "settings-ui",
+        "rationale": "Settings extensions section displays a host-side extension reference report.",
+        "removalCondition": "Move report generation to shared or expose via a host contract.",
+        "expiration": "M5"
+      }
     ],
     "src/shared/components/SettingsModal/types.ts": [
-      "src/tools/video-editor/runtime/extensionReferenceReport.ts"
+      {
+        "target": "src/tools/video-editor/runtime/extensionReferenceReport.ts",
+        "classification": "internal",
+        "owner": "settings-ui",
+        "rationale": "Settings modal types depend on a host-side extension reference report type.",
+        "removalCondition": "Move report types to shared or expose via a host contract.",
+        "expiration": "M5"
+      }
     ],
     "supabase/functions/ai-generate-sequence/sequence-validation.ts": [
-      "src/tools/video-editor/sequences/metadata.ts",
-      "src/tools/video-editor/sequences/validation.ts"
+      {
+        "target": "src/tools/video-editor/sequences/metadata.ts",
+        "classification": "host-facing",
+        "owner": "edge-ai-sequence",
+        "rationale": "Edge function reuses video-editor sequence validation logic.",
+        "removalCondition": "Extract portable validation into a shared or SDK package.",
+        "expiration": "M5"
+      },
+      {
+        "target": "src/tools/video-editor/sequences/validation.ts",
+        "classification": "host-facing",
+        "owner": "edge-ai-sequence",
+        "rationale": "Edge function reuses video-editor sequence validation logic.",
+        "removalCondition": "Extract portable validation into a shared or SDK package.",
+        "expiration": "M5"
+      }
     ],
     "supabase/functions/complete_task/handler.ts": [
-      "src/tools/video-editor/types/index.ts"
+      {
+        "target": "src/tools/video-editor/types/index.ts",
+        "classification": "host-facing",
+        "owner": "edge-complete-task",
+        "rationale": "Edge function imports video-editor runtime types.",
+        "removalCondition": "Extract shared edge-safe types.",
+        "expiration": "M5"
+      }
     ],
     "supabase/functions/complete_task/placement.ts": [
-      "src/tools/video-editor/lib/timeline-domain.ts",
-      "src/tools/video-editor/types/index.ts"
+      {
+        "target": "src/tools/video-editor/lib/timeline-domain.ts",
+        "classification": "host-facing",
+        "owner": "edge-complete-task",
+        "rationale": "Edge function imports video-editor timeline domain logic.",
+        "removalCondition": "Extract portable placement logic to a shared package.",
+        "expiration": "M5"
+      },
+      {
+        "target": "src/tools/video-editor/types/index.ts",
+        "classification": "host-facing",
+        "owner": "edge-complete-task",
+        "rationale": "Edge function imports video-editor timeline domain logic.",
+        "removalCondition": "Extract portable placement logic to a shared package.",
+        "expiration": "M5"
+      }
     ]
   }
 }

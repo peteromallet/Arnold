@@ -2,71 +2,71 @@
  * Host-wired ExtensionContext factory.
  *
  * Creates a concrete ExtensionContext for a given extension.  This module
- * is the home for host wiring (DOM, localStorage, console, provider
- * services) that is deliberately kept OUT of `src/sdk/context.ts`, which
- * remains a host-wiring-free contract module.
+ * lives under `src/tools/video-editor/runtime/` and is the canonical home
+ * for host wiring (DOM, localStorage, console, provider services) that is
+ * deliberately kept OUT of `src/sdk/context.ts`, which remains a
+ * host-wiring-free contract module.
  *
- * Moved from inline in `src/sdk/index.ts` as part of M2b family-module
- * extraction.
+ * Moved from `src/sdk/contextFactory.ts` as part of M4 SDK boundary closure.
  *
- * @publicContract
+ * @hostContract
  */
 
-import type { DisposeHandle } from './dispose';
+import type { DisposeHandle } from '@/sdk/dispose';
 import type {
   ExtensionI18nService,
   ExtensionDiagnosticsService,
   ExtensionCommandService,
   ExtensionContext,
   CreativeContext,
-} from './context';
-import { createCreativeContext, CONTEXT_DISPOSE_SYMBOL } from './context';
-import type { CommandHandler, CommandRegistrationOptions } from './commands';
+} from '@/sdk/context';
+import { createCreativeContext, CONTEXT_DISPOSE_SYMBOL } from '@/sdk/context';
+import type { CommandHandler, CommandRegistrationOptions } from '@/sdk/commands';
 import type {
   ExtensionChromeService,
   ChromeEvent,
   ChromeEventPayload,
   ChromeProgressPayload,
-} from './chrome';
+} from '@/sdk/chrome';
 import type {
   DiagnosticSeverity,
   ExtensionDiagnostic,
-} from './diagnostics';
-import { DIAGNOSTIC_SOURCE_EXTENSION } from './diagnostics';
-import type { ReighExtension } from './lifecycle';
+} from '@/sdk/diagnostics';
+import { DIAGNOSTIC_SOURCE_EXTENSION } from '@/sdk/diagnostics';
+import type { ReighExtension } from '@/sdk/lifecycle';
 import {
   createExtensionSettingsService,
   type CreateExtensionSettingsServiceOptions,
-} from './extensionSettingsService';
+} from '@/sdk/extensionSettingsService';
 
 // M2b family module imports (type-only, compile-erased)
 import type {
   EffectComponent,
   EffectRegistrationOptions,
   EffectRegistrationService,
-} from './video/families/effects';
+} from '@/sdk/video/families/effects';
 import type {
   TransitionRenderer,
   TransitionRegistrationOptions,
   TransitionRegistrationService,
-} from './video/families/transitions';
+} from '@/sdk/video/families/transitions';
 import type {
   ClipRenderer,
   ClipInspector,
   ClipTypeRegistrationOptions,
   ClipTypeRegistrationService,
-} from './video/families/clipTypeContributions';
+} from '@/sdk/video/families/clipTypeContributions';
 import type {
   ShaderSourceDescriptor,
   ShaderRegistrationOptions,
   ShaderRegistrationService,
-} from './video/families/shaders';
+} from '@/sdk/video/families/shaders';
 import type {
   AgentToolRegistrationService,
   AgentToolHandler,
   ToolProcessResult,
-} from './video/families/agentTools';
-import type { ProcessSpawnConfig } from './video/families/processes';
+} from '@/sdk/video/families/agentTools';
+import type { ProcessSpawnConfig } from '@/sdk/video/families/processes';
 
 // ---------------------------------------------------------------------------
 // Editor shell root registry (module-level, set by host shell on mount)

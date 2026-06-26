@@ -14,7 +14,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   defineExtension,
-  createExtensionContext,
   validateExtensionId,
   validateContributionId,
   createCreativeContextStubs,
@@ -28,6 +27,7 @@ import {
   getVideoFamilyConformanceReport,
   getVideoFamilyLegacyBridgeStatus,
 } from '@/sdk/index';
+import { createExtensionContext } from '@/tools/video-editor/runtime/extensionContextFactory';
 import * as sdkStar from '@/sdk/index';
 import type {
   ReighExtension,

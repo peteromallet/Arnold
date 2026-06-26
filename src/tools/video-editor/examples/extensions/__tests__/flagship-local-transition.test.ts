@@ -12,8 +12,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   defineExtension,
-  createExtensionContext,
 } from '@/sdk/index';
+import { createExtensionContext } from '@/tools/video-editor/runtime/extensionContextFactory';
 import type {
   ReighExtension,
   ExtensionContext,

@@ -26,7 +26,6 @@ import {
   type ExtensionLifecycleHost,
 } from '@/tools/video-editor/runtime/extensionLifecycle.ts';
 import {
-  createExtensionContext,
   createCreativeContext,
   type ReighExtension,
   type CommandContribution,
@@ -36,6 +35,7 @@ import {
   createDiagnosticCollection,
   type DiagnosticCollection,
 } from '@reigh/editor-sdk';
+import { createExtensionContext } from '@/tools/video-editor/runtime/extensionContextFactory';
 import type { CreativeContext } from '@reigh/editor-sdk';
 import { useAgentChatRegistry } from '@/shared/contexts/AgentChatContext.tsx';
 import { clearTimelineClipData, setTimelineClipData } from '@/shared/state/selectionStore.ts';

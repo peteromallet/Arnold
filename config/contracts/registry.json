@@ -33,7 +33,7 @@
       "class": "runtime_contract",
       "path": "src/tools/video-editor/index.ts",
       "requiredTags": [
-        "@publicContract"
+        "@hostContract"
       ],
       "expectedExports": [
         "BUILTIN_CLIP_TYPES",
@@ -625,7 +625,6 @@
         "createCreativeContext",
         "createCreativeContextStubs",
         "createDiagnosticCollection",
-        "createExtensionContext",
         "createExtensionSettingsService",
         "createLifecycleEvent",
         "crossReferenceManifest",
@@ -637,7 +636,6 @@
         "findSettingsMigrationDeclarations",
         "getCapabilityRequirements",
         "getConfigSignature",
-        "getEditorShellRoot",
         "getManifestSettingsSchemaVersion",
         "getSettingsPrefix",
         "getStableConfigSignature",
@@ -651,7 +649,6 @@
         "normalizeAdapters",
         "projectMaturityCapabilities",
         "runSettingsMigration",
-        "setEditorShellRoot",
         "shaderMissingMaterializerBlockerMessage",
         "validateContributionId",
         "validateExtensionId",

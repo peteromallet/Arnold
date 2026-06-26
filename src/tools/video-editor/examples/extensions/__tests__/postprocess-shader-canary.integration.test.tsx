@@ -2,12 +2,12 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  createExtensionContext,
   type ExtensionDiagnostic,
   type ExtensionDiagnosticsService,
   type ReighExtension,
   type TimelineSnapshot,
 } from '@/sdk/index';
+import { createExtensionContext } from '@/tools/video-editor/runtime/extensionContextFactory';
 import {
   POSTPROCESS_SHADER_CANARY_CONTRIBUTION_ID,
   POSTPROCESS_SHADER_CANARY_DIAGNOSTIC_CONTRIBUTION_ID,

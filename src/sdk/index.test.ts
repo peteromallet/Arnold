@@ -10,12 +10,9 @@ import {
   getVideoFamilyDefinition,
   getVideoFamilyConformanceReport,
   getVideoFamilyLegacyBridgeStatus,
-  createExtensionContext,
   createCreativeContextStubs,
   ExtensionNotImplementedError,
   CREATIVE_MEMBER_MILESTONE,
-  setEditorShellRoot,
-  getEditorShellRoot,
   runSettingsMigration,
   getManifestSettingsSchemaVersion,
   findSettingsMigrationDeclarations,
@@ -27,6 +24,7 @@ import {
   RENDER_BLOCKER_REASONS,
   RENDER_ROUTES,
 } from '@/sdk/index';
+import { createExtensionContext, setEditorShellRoot, getEditorShellRoot } from '@/tools/video-editor/runtime/extensionContextFactory';
 import type {
   ReighExtension,
   ExtensionManifest,
