@@ -1,0 +1,62 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 4,
+  "current_plan_name": null,
+  "last_state": "done",
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [
+    {
+      "label": "m0-extract-portable-sdk-contracts",
+      "index": 0,
+      "status": "completed"
+    },
+    {
+      "label": "m1-family-contract-and-maturity-model",
+      "index": 1,
+      "status": "completed"
+    },
+    {
+      "label": "m2a-core-sdk-boundary-modules",
+      "index": 2,
+      "status": "completed"
+    },
+    {
+      "label": "m2b-family-modules-and-public-surface",
+      "index": 3,
+      "status": "completed"
+    }
+  ],
+  "branch_head": "10bc9e70e3852f459d108796625cbde72f0ced8c",
+  "pr_head": "10bc9e70e3852f459d108796625cbde72f0ced8c",
+  "last_pushed_commit": "10bc9e70e3852f459d108796625cbde72f0ced8c",
+  "dirty_flag": false,
+  "sync_state": "clean",
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
+      "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
+      "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
+      "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/native-python-pipelines-completion-thread2",
+      "target_head": "a152e9df33b039fa3511e3b01ef02e4278d67a14",
+      "target_base": "a152e9df33b039fa3511e3b01ef02e4278d67a14",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    }
+  }
+}
