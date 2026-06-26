@@ -33,6 +33,7 @@ import type {
 } from '@reigh/editor-sdk';
 import { buildFamilyContributionSequence } from '@/tools/video-editor/runtime/families/FamilyContributionSequence.ts';
 import { assembleExtensionRuntime } from '@/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts';
+import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from '@/tools/video-editor/runtime/families/familyAdapterRegistry.ts';
 import type { TimelineGestureOwner } from '@/tools/video-editor/lib/mobile-interaction-model';
 import type {
   PackageState,
@@ -565,21 +566,14 @@ export function normalizeExtensionRuntime(
 
   // ---- Phase 1–3: sequence contributions -----------------------------------
   const seq = buildFamilyContributionSequence(extensions);
-  const {
-    diagnostics,
-    inactiveReserved,
-    knownRenderIds,
-    settingsDefaults,
-    extensionOrder,
-    uniqueExtensions,
-    sortedBridged: sorted,
-    m6ReservedOutputFormats,
-    m6ReservedSearchProviders,
-    m12ReservedProcesses,
-  } = seq;
 
   // ---- Phase 4–5: assemble and freeze (delegated to FamilyRuntimeAssembly) --
-  return assembleExtensionRuntime(seq, packageStateEntries, DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME);
+  return assembleExtensionRuntime(
+    seq,
+    packageStateEntries,
+    DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+    VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+  );
 }
 
 /** Frozen empty runtime, preserving {@link DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME} identity. */

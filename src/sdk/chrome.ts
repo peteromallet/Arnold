@@ -8,6 +8,8 @@
 // interface contracts with no runtime dependency on any video-editor subsystem.
 //
 // Extracted from src/sdk/index.ts during M2a Step 9 (T12).
+//
+// @publicContract
 // ---------------------------------------------------------------------------
 
 import type { DiagnosticSeverity } from './diagnostics';

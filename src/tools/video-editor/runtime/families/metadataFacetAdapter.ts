@@ -34,6 +34,7 @@ const MANIFEST: HostAdapterManifest = Object.freeze({
     'Normalizes metadata facet contributions into VideoEditorMetadataFacetDescriptor ' +
     'records for the asset panel.  Owns field-path validation, value-kind ' +
     'preservation, aggregation-posture projection, and enum-value freezing.',
+  metadata: Object.freeze({ classification: 'real' }),
 });
 
 // ---------------------------------------------------------------------------

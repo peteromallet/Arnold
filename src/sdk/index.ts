@@ -42,7 +42,7 @@ export type { CapabilityVersion, CapabilitySourceRef, RouteFitMetadata, Capabili
 export { getCapabilityRequirements } from './capabilities';
 
 // settings & persistence
-export type { ExtensionSettingsService } from './settings';
+export type { ExtensionSettingsSchema, ExtensionSettingsService } from './settings';
 export { createExtensionSettingsService, getSettingsPrefix } from './extensionSettingsService';
 export type { ExtensionSettingsServiceFactoryResult, CreateExtensionSettingsServiceOptions, SettingsMigrationConfig, SettingsPersistenceError, SettingsPersistenceOperation, SettingsPersistenceSuccess } from './extensionSettingsService';
 export { runSettingsMigration, getManifestSettingsSchemaVersion, findSettingsMigrationDeclarations } from './extensionSettingsMigration';

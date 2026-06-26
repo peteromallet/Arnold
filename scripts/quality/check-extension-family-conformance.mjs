@@ -53,7 +53,7 @@
  *   `tsx` TypeScript runtime.  Reads the schema from disk directly.
  */
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -184,6 +184,24 @@ try {
 
 const { checkCrossAxisCoherence, buildConformanceReport, isFullyConformant } =
   conformance;
+
+// ---------------------------------------------------------------------------
+// Adapter registry import (optional — used for delegated-gap metadata checks)
+// ---------------------------------------------------------------------------
+
+/** @type {import('@/tools/video-editor/runtime/families/familyAdapterRegistry').FamilyAdapterRegistry | null} */
+let adapterRegistry = null;
+
+try {
+  const adapterRegistryModule = await import(
+    '@/tools/video-editor/runtime/families/familyAdapterRegistry.js'
+  );
+  adapterRegistry = adapterRegistryModule.VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY;
+} catch (err) {
+  console.warn(
+    `${LABEL} Could not import video-editor adapter registry; delegated-gap and classification checks will be skipped.`,
+  );
+}
 
 console.log(
   `${LABEL} Registry: ${registry.length} family definitions loaded.`,
@@ -527,7 +545,7 @@ if (onDiskMatrix) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. Additional cross-reference: host adapter consistency
+// 8. Host adapter consistency and file existence (Step 28)
 // ---------------------------------------------------------------------------
 
 console.log(`\n${LABEL} Checking host adapter consistency…`);
@@ -538,30 +556,205 @@ const EXECUTION_EXPECTS_ADAPTER = new Set([
   'public-supported',
 ]);
 
-for (const def of registry) {
-  if (
-    EXECUTION_EXPECTS_ADAPTER.has(def.executionMaturity) &&
-    def.hostAdapter === null
-  ) {
-    R.warn(
-      `Family '${def.kind}' has executionMaturity '${def.executionMaturity}' ` +
-        `but hostAdapter is null.`,
-    );
-  }
+/**
+ * Resolve a hostAdapter path from the registry to an absolute file path.
+ * @param {string} hostAdapter
+ * @returns {string}
+ */
+function hostAdapterPath(hostAdapter) {
+  return resolve(repoRoot, hostAdapter);
+}
 
-  if (
-    !EXECUTION_EXPECTS_ADAPTER.has(def.executionMaturity) &&
+/**
+ * Read the source of a host adapter file.
+ * @param {string} hostAdapter
+ * @returns {string}
+ */
+function readHostAdapterSource(hostAdapter) {
+  return readFileSync(hostAdapterPath(hostAdapter), 'utf8');
+}
+
+for (const def of registry) {
+  if (EXECUTION_EXPECTS_ADAPTER.has(def.executionMaturity)) {
+    if (def.hostAdapter === null) {
+      const msg =
+        `Family '${def.kind}' has executionMaturity '${def.executionMaturity}' ` +
+        `but hostAdapter is null.`;
+      if (isRelease) {
+        R.error(msg);
+      } else {
+        R.warn(msg);
+      }
+      continue;
+    }
+
+    if (!existsSync(hostAdapterPath(def.hostAdapter))) {
+      const msg =
+        `Family '${def.kind}' host adapter file does not exist: ${def.hostAdapter}`;
+      if (isRelease) {
+        R.error(msg);
+      } else {
+        R.warn(msg);
+      }
+      continue;
+    }
+
+    // runtime-bridged families must not use a placeholder adapter
+    if (def.executionMaturity === 'runtime-bridged') {
+      const source = readHostAdapterSource(def.hostAdapter);
+      const isPlaceholder =
+        source.includes("classification: 'placeholder'") ||
+        source.includes('createPlaceholderAdapter');
+      if (isPlaceholder) {
+        R.error(
+          `Family '${def.kind}' is runtime-bridged but its host adapter ` +
+            `appears to be a placeholder (${def.hostAdapter}).`,
+        );
+      }
+    }
+  } else if (
+    def.executionMaturity === 'absent' &&
     def.hostAdapter !== null
   ) {
     R.warn(
-      `Family '${def.kind}' has executionMaturity '${def.executionMaturity}' ` +
-        `but hostAdapter is non-null ('${def.hostAdapter}').`,
+      `Family '${def.kind}' has executionMaturity 'absent' but hostAdapter is non-null.`,
     );
   }
 }
 
 // ---------------------------------------------------------------------------
-// 9. Additional check: all requirement keys must be valid
+// 9. Delegated gap metadata (Step 28)
+// ---------------------------------------------------------------------------
+
+console.log(`\n${LABEL} Checking delegated gap metadata…`);
+
+if (adapterRegistry) {
+  for (const def of registry) {
+    if (def.executionMaturity !== 'delegated') continue;
+
+    const adapter = adapterRegistry.get(def.kind);
+    if (adapter === undefined) {
+      R.warn(
+        `Family '${def.kind}' is delegated but has no registered adapter in the runtime registry.`,
+      );
+      continue;
+    }
+    if (adapter === null) {
+      // Known-unavailable delegated family (e.g. agent) — nothing to report.
+      continue;
+    }
+
+    const meta = adapter.manifest?.metadata ?? {};
+    const missing = [];
+    if (!meta.owner) missing.push('owner');
+    if (!meta.reason) missing.push('reason');
+    if (!meta.expiration) missing.push('expiration');
+
+    if (missing.length > 0) {
+      R.warn(
+        `Family '${def.kind}' delegated gap is missing metadata fields: ${missing.join(', ')}.`,
+      );
+    }
+  }
+} else {
+  R.warn('Skipping delegated gap metadata checks — adapter registry unavailable.');
+}
+
+// ---------------------------------------------------------------------------
+// 10. Inline projection check (Step 29)
+// ---------------------------------------------------------------------------
+
+console.log(`\n${LABEL} Checking for inline family projection in extensionSurface.ts…`);
+
+const EXTENSION_SURFACE_PATH = resolve(
+  repoRoot,
+  'src/tools/video-editor/runtime/extensionSurface.ts',
+);
+
+if (existsSync(EXTENSION_SURFACE_PATH)) {
+  const surfaceSource = readFileSync(EXTENSION_SURFACE_PATH, 'utf8');
+  const inlineSwitch =
+    /switch\s*\(\s*(contribution|contrib)\.kind\s*\)/.test(surfaceSource);
+
+  if (inlineSwitch) {
+    R.error(
+      'extensionSurface.ts contains an inline switch on contribution.kind; ' +
+        'family projection must live in adapter/projector modules.',
+    );
+  }
+} else {
+  R.warn('extensionSurface.ts not found; cannot check for inline projection.');
+}
+
+// ---------------------------------------------------------------------------
+// 11. Projector forbidden-import check (Step 29)
+// ---------------------------------------------------------------------------
+
+console.log(`\n${LABEL} Checking projector imports…`);
+
+const PROJECTORS_DIR = resolve(
+  repoRoot,
+  'src/tools/video-editor/runtime/families/projectors',
+);
+
+/** Forbidden import paths for projector modules. Type-only imports are allowed. */
+const FORBIDDEN_PROJECTOR_IMPORTS = [
+  'src/tools/video-editor/runtime/extensionSurface',
+  'src/tools/video-editor/runtime/useTimelineState.types',
+  'src/tools/video-editor/runtime/slices/',
+  'src/tools/video-editor/runtime/store/',
+  'src/tools/video-editor/state/',
+];
+
+/**
+ * Detect whether a source line contains a value (non-type) import from one
+ * of the forbidden paths.
+ *
+ * @param {string} line
+ * @returns {string | null} the matched forbidden path, or null
+ */
+function detectForbiddenProjectorImport(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('import') && !trimmed.startsWith('export')) {
+    return null;
+  }
+  if (trimmed.startsWith('import type') || trimmed.startsWith('export type')) {
+    return null;
+  }
+  const fromMatch = trimmed.match(/from\s+['"]([^'"]+)['"]/);
+  if (!fromMatch) return null;
+  const sourcePath = fromMatch[1];
+  for (const forbidden of FORBIDDEN_PROJECTOR_IMPORTS) {
+    if (sourcePath.includes(forbidden)) return forbidden;
+  }
+  return null;
+}
+
+if (existsSync(PROJECTORS_DIR)) {
+  const projectorFiles = readdirSync(PROJECTORS_DIR).filter((name) =>
+    name.endsWith('.ts'),
+  );
+  for (const file of projectorFiles) {
+    const filePath = resolve(PROJECTORS_DIR, file);
+    const source = readFileSync(filePath, 'utf8');
+    const lines = source.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const forbidden = detectForbiddenProjectorImport(lines[i]);
+      if (forbidden) {
+        const msg =
+          `Projector ${file} line ${i + 1} imports from forbidden path ` +
+          `'${forbidden}' (value imports from extensionSurface, useTimelineState.types, ` +
+          `or broad runtime slice modules are not allowed).`;
+        R.error(msg);
+      }
+    }
+  }
+} else {
+  R.warn('Projectors directory not found; skipping forbidden-import checks.');
+}
+
+// ---------------------------------------------------------------------------
+// 12. Additional check: all requirement keys must be valid
 // ---------------------------------------------------------------------------
 
 console.log(`\n${LABEL} Checking requirement key validity…`);

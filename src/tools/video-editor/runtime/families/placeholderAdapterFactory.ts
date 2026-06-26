@@ -88,6 +88,11 @@ export function createPlaceholderAdapter<
   ) => FamilyNormalizeResult<TDescriptor>,
   options?: PlaceholderAdapterOptions,
 ): HostFamilyAdapter<Kind, TContribution, TDescriptor> {
+  const owner = options?.owner ?? 'video-editor-runtime';
+  const reason =
+    options?.reason ?? 'awaiting real adapter implementation';
+  const expiration = options?.expiration ?? 'M4';
+
   const manifest: HostAdapterManifest = Object.freeze({
     adapterId: `${kind}-placeholder`,
     kind,
@@ -96,6 +101,12 @@ export function createPlaceholderAdapter<
     description:
       options?.description ??
       `Placeholder adapter for "${kind}" — delegated projection.`,
+    metadata: Object.freeze({
+      classification: 'placeholder',
+      owner,
+      reason,
+      expiration,
+    }),
   });
 
   const adapter: HostFamilyAdapter<Kind, TContribution, TDescriptor> = {

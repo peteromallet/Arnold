@@ -21,10 +21,7 @@ import {
   getVideoFamilyDefinition,
   getVideoFamilyLegacyBridgeStatus,
 } from '@reigh/editor-sdk';
-import type {
-  FamilyAdapterRegistry,
-  HostFamilyAdapter,
-} from '@/sdk/core/families/familyAdapter';
+import type { FamilyAdapterRegistry } from '@/sdk/core/families/familyAdapter';
 
 // ---------------------------------------------------------------------------
 // Projection status
@@ -143,16 +140,14 @@ export function evaluateProjectionPolicy(
 
     // Real adapter — use its manifest maturity.
     const maturity = adapter.manifest.maturity;
+    const shouldSurface = SURFACING_MATURITIES.has(maturity);
     return Object.freeze({
       kind,
-      shouldSurface: SURFACING_MATURITIES.has(maturity),
+      shouldSurface,
       isDelegated: maturity === 'delegated',
-      legacyBridgeStatus:
-        maturity === 'runtime-bridged' ||
-        maturity === 'host-integrated' ||
-        maturity === 'public-supported'
-          ? null
-          : undefined,
+      // Adapter-owned surfacing families are treated as bridged for
+      // sequencing purposes, even when the SDK maturity is delegated.
+      legacyBridgeStatus: shouldSurface ? null : undefined,
       adapterOwned: true,
       executionMaturity: maturity,
     });

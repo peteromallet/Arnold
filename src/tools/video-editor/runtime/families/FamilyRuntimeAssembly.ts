@@ -1,42 +1,26 @@
 /**
- * Family runtime assembly — Phase 4–5 of host-owned runtime normalization.
+ * Family runtime assembly — Phase 4–5 of host-owned runtime normalization.
  *
  * This module builds a frozen, deterministic {@link ExtensionRuntime} from
  * the contribution sequence produced by {@link buildFamilyContributionSequence}.
- * It is intentionally a pure data function — it does not consult the adapter
- * registry, the projection policy, or any host runtime state.
  *
- * Real adapters (metadataFacet, and later effect, transition, shader, etc.)
- * own their normalization; this module delegates to them instead of
- * projecting contributions inline.
+ * All family projection is now owned by the registered host adapters in
+ * {@link VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY}.  This module is responsible
+ * only for dispatch, diagnostics aggregation, config assembly, package
+ * summary enrichment, and deep freezing.
  *
  * @module families/FamilyRuntimeAssembly
  */
 
+import type { ExtensionContribution } from '@reigh/editor-sdk';
 import type {
-  ContributionKind,
-  ExtensionContribution,
-  ExtensionDiagnostic,
-  ParserContribution,
-  OutputFormatContribution,
-  SearchProviderContribution,
-  MetadataFacetContribution,
-  AssetDetailSectionContribution,
-  EffectContribution,
-  TransitionContribution,
-  ShaderContribution,
-  AgentToolContribution,
-  ProcessContribution,
-  RenderDependentOutputDescriptor,
-  IntegrationCapabilities,
-  CapabilityRequirement,
-  CapabilitySourceRef,
-  ToolResultFamily,
+  HostFamilyAdapter,
+  FamilyAdapterRegistry,
+  NormalizeFamilyInput,
+  FamilyNormalizeResult,
 } from '@reigh/editor-sdk';
-import { findAdapter } from '@reigh/editor-sdk';
-import type { FamilyAdapterRegistry, HostFamilyAdapter } from '@reigh/editor-sdk';
 import type { FamilyContributionSequence } from './FamilyContributionSequence';
-import { metadataFacetAdapter } from './metadataFacetAdapter';
+import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from './familyAdapterRegistry';
 import type {
   ExtensionRuntime,
   VideoEditorExtensionRuntimeConfig,
@@ -56,20 +40,16 @@ import type {
   VideoEditorTransitionDescriptor,
   VideoEditorShaderDescriptor,
   VideoEditorAgentToolDescriptor,
-  VideoEditorRouteRequirementDescriptor,
-  VideoEditorProcessRequirementDescriptor,
-  VideoEditorPlannerBlockerDescriptor,
-  VideoEditorPlannerNextActionDescriptor,
   PackageStateInventoryEntry,
-  InactiveReservedContribution,
 } from '../extensionSurface';
+import type { VideoEditorSlotDescriptor } from './slotAdapter';
 
 // ---------------------------------------------------------------------------
 // Contribution kind labels
 // ---------------------------------------------------------------------------
 
 /** Short human-readable label for each contribution kind. */
-const CONTRIBUTION_KIND_LABEL: Partial<Record<ContributionKind, string>> = {
+const CONTRIBUTION_KIND_LABEL: Partial<Record<string, string>> = {
   slot: 'Slot',
   dialog: 'Dialog',
   panel: 'Panel',
@@ -167,26 +147,66 @@ export function computePackageContributionSummary(
 }
 
 // ---------------------------------------------------------------------------
+// Adapter dispatch configuration
+// ---------------------------------------------------------------------------
+
+type ConfigField =
+  | 'slots'
+  | 'dialogHost.dialogs'
+  | 'registry.panels'
+  | 'registry.inspectorSections'
+  | 'overlays'
+  | 'assetParsers'
+  | 'outputFormats'
+  | 'processes'
+  | 'searchProviders'
+  | 'metadataFacets'
+  | 'assetDetailSections'
+  | 'effects'
+  | 'transitions'
+  | 'shaders'
+  | 'agentTools';
+
+interface DispatchConfig {
+  readonly field: ConfigField | null;
+  readonly source: 'bridged' | 'reservedOutputFormat' | 'reservedSearchProvider' | 'reservedProcess';
+}
+
+const ADAPTER_DISPATCH: Readonly<Record<string, DispatchConfig>> = {
+  slot: { field: 'slots', source: 'bridged' },
+  dialog: { field: 'dialogHost.dialogs', source: 'bridged' },
+  panel: { field: 'registry.panels', source: 'bridged' },
+  inspectorSection: { field: 'registry.inspectorSections', source: 'bridged' },
+  timelineOverlay: { field: 'overlays', source: 'bridged' },
+  parser: { field: 'assetParsers', source: 'bridged' },
+  outputFormat: { field: 'outputFormats', source: 'reservedOutputFormat' },
+  searchProvider: { field: 'searchProviders', source: 'reservedSearchProvider' },
+  process: { field: 'processes', source: 'reservedProcess' },
+  metadataFacet: { field: 'metadataFacets', source: 'bridged' },
+  assetDetailSection: { field: 'assetDetailSections', source: 'bridged' },
+  effect: { field: 'effects', source: 'bridged' },
+  transition: { field: 'transitions', source: 'bridged' },
+  shader: { field: 'shaders', source: 'bridged' },
+  agentTool: { field: 'agentTools', source: 'bridged' },
+};
+
+// ---------------------------------------------------------------------------
 // Main assembly function
 // ---------------------------------------------------------------------------
 
 /**
- * Phase 4–5 of host-owned runtime normalization: project the sequenced
+ * Phase 4–5 of host-owned runtime normalization: project the sequenced
  * contributions into runtime descriptors, assemble the frozen
  * {@link ExtensionRuntime}, and compute package contribution summaries.
  *
- * When an `adapterRegistry` is provided, family kinds that have real
- * adapters registered are normalized through the adapter coordinator
- * instead of inline projection.  Currently only `metadataFacet` is
- * routed this way; all other families remain inline.
- *
- * @param seq - The contribution sequence from Phase 1–3.
+ * @param seq - The contribution sequence from Phase 1–3.
  * @param packageStateEntries - Optional package-state inventory entries.
  * @param defaultConfig - The default config to use when no configurable
  *   contributions exist (pass {@link DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME}
  *   to preserve identity).
  * @param adapterRegistry - Optional adapter registry for coordinator-backed
- *   family normalization.  When absent, falls back to direct adapter import.
+ *   family normalization.  When omitted, the canonical
+ *   {@link VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY} is used.
  */
 export function assembleExtensionRuntime(
   seq: FamilyContributionSequence,
@@ -201,19 +221,38 @@ export function assembleExtensionRuntime(
     settingsDefaults,
     extensionOrder,
     uniqueExtensions,
-    sortedBridged: sorted,
+    sortedBridged,
     m6ReservedOutputFormats,
     m6ReservedSearchProviders,
     m12ReservedProcesses,
   } = seq;
 
-  // ---- Phase 4: project onto VideoEditorExtensionRuntimeConfig --------------
+  const registry = adapterRegistry ?? VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY;
+
+  // ---- Phase 4: collect contributions by dispatch source --------------------
+  const byKind: Record<string, { kind: string; contributions: typeof sortedBridged }> = {};
+
+  function pushToKind(kind: string, item: (typeof sortedBridged)[number]) {
+    if (!byKind[kind]) {
+      byKind[kind] = { kind, contributions: [] };
+    }
+    byKind[kind].contributions.push(item);
+  }
+
+  for (const item of sortedBridged) {
+    pushToKind(item.contribution.kind, item);
+  }
+
+  // ---- Phase 4a: dispatch to adapters --------------------------------------
   const slots: Record<string, VideoEditorSlotRenderer> = {};
   const dialogDescriptors: VideoEditorDialogDescriptor[] = [];
   const panelDescriptors: VideoEditorPanelDescriptor[] = [];
   const inspectorSectionDescriptors: VideoEditorInspectorSectionDescriptor[] = [];
   const overlayDescriptors: VideoEditorOverlayDescriptor[] = [];
   const assetParserDescriptors: VideoEditorAssetParserDescriptor[] = [];
+  const outputFormatDescriptors: VideoEditorOutputFormatDescriptor[] = [];
+  const processDescriptors: VideoEditorProcessDescriptor[] = [];
+  const searchProviderDescriptors: VideoEditorSearchProviderDescriptor[] = [];
   const metadataFacetDescriptors: VideoEditorMetadataFacetDescriptor[] = [];
   const assetDetailSectionDescriptors: VideoEditorAssetDetailSectionDescriptor[] = [];
   const effectDescriptors: VideoEditorEffectDescriptor[] = [];
@@ -221,315 +260,96 @@ export function assembleExtensionRuntime(
   const shaderDescriptors: VideoEditorShaderDescriptor[] = [];
   const agentToolDescriptors: VideoEditorAgentToolDescriptor[] = [];
 
-  // ---- Separate metadataFacet contributions for adapter-owned normalization --
-  const metadataFacetContributions = sorted.filter(
-    (c) => c.contribution.kind === 'metadataFacet',
-  );
-  const nonMetadataFacet = sorted.filter(
-    (c) => c.contribution.kind !== 'metadataFacet',
-  );
-
-  for (const { contribution, extensionId } of nonMetadataFacet) {
-    switch (contribution.kind) {
-      case 'slot': {
-        if (contribution.slot) {
-          // Slots are rendered by the host; we register a placeholder that
-          // extension activation can replace with a real render function.
-          // For now, slots collect metadata without render functions.
-          // (Render functions are wired during activation in a later task.)
-          slots[contribution.slot] = slots[contribution.slot] ?? (null as unknown as VideoEditorSlotRenderer);
-        }
-        break;
-      }
-      case 'dialog': {
-        dialogDescriptors.push({
-          id: contribution.id as VideoEditorDialogDescriptor['id'],
-          order: contribution.order,
-          layer: contribution.layer,
-          render: null as unknown as VideoEditorSlotRenderer, // placeholder
-        });
-        break;
-      }
-      case 'panel': {
-        panelDescriptors.push({
-          id: contribution.id as VideoEditorPanelDescriptor['id'],
-          placement: 'asset-panel',
-          order: contribution.order,
-          render: null as unknown as VideoEditorSlotRenderer, // placeholder
-        });
-        break;
-      }
-      case 'inspectorSection': {
-        inspectorSectionDescriptors.push({
-          id: contribution.id as VideoEditorInspectorSectionDescriptor['id'],
-          placement: contribution.placement ?? 'after-default',
-          order: contribution.order,
-          render: null as unknown as VideoEditorSlotRenderer, // placeholder
-        });
-        break;
-      }
-      case 'timelineOverlay': {
-        overlayDescriptors.push({
-          id: contribution.id as VideoEditorOverlayDescriptor['id'],
-          order: contribution.order,
-          render: null as unknown as VideoEditorSlotRenderer, // placeholder
-        });
-        break;
-      }
-      // M6: parser — bridge parser contributions into assetParsers
-      case 'parser': {
-        const parserContrib = contribution as unknown as ParserContribution;
-        assetParserDescriptors.push({
-          id: contribution.id as string,
-          extensionId,
-          order: contribution.order,
-          label: parserContrib.label ?? contribution.id as string,
-          acceptMimeTypes: parserContrib.acceptMimeTypes,
-          acceptExtensions: parserContrib.acceptExtensions,
-          maxBytes: parserContrib.maxBytes,
-          required: parserContrib.required,
-        });
-        break;
-      }
-      // M6: assetDetailSection — bridge into assetDetailSections
-      case 'assetDetailSection': {
-        const sectionContrib = contribution as unknown as AssetDetailSectionContribution;
-        assetDetailSectionDescriptors.push({
-          id: contribution.id as string,
-          extensionId,
-          order: contribution.order,
-          title: sectionContrib.title,
-          placement: sectionContrib.placement,
-          fieldPaths: sectionContrib.fieldPaths,
-          when: sectionContrib.when,
-        });
-        break;
-      }
-      // M7: effect — bridge component-backed effects into effects
-      case 'effect': {
-        const effectContrib = contribution as unknown as EffectContribution;
-        if (effectContrib.effectId) {
-          effectDescriptors.push({
-            id: contribution.id as string,
-            extensionId,
-            order: contribution.order,
-            effectId: effectContrib.effectId,
-            label: effectContrib.label ?? effectContrib.effectId,
-            allowBrowserExport: effectContrib.allowBrowserExport ?? false,
-            allowWorkerExport: effectContrib.allowWorkerExport ?? false,
-            hasComponentMetadata: true,
-          });
-        }
-        // Effects without effectId are filtered in Phase 2; they never reach here.
-        break;
-      }
-      // M8: transition — bridge renderer-backed transitions into transitions
-      case 'transition': {
-        const transitionContrib = contribution as unknown as TransitionContribution;
-        if (transitionContrib.transitionId) {
-          transitionDescriptors.push({
-            id: contribution.id as string,
-            extensionId,
-            order: contribution.order,
-            transitionId: transitionContrib.transitionId,
-            label: transitionContrib.label ?? transitionContrib.transitionId,
-            allowBrowserExport: transitionContrib.allowBrowserExport ?? false,
-            allowWorkerExport: transitionContrib.allowWorkerExport ?? false,
-            hasRendererMetadata: true,
-          });
-        }
-        // Transitions without transitionId are filtered in Phase 2; they never reach here.
-        break;
-      }
-      // M13: shader — bridge dedicated WebGL shader contributions into shaders
-      case 'shader': {
-        const shaderContrib = contribution as unknown as ShaderContribution;
-        if (shaderContrib.shaderId) {
-          shaderDescriptors.push({
-            id: contribution.id as string,
-            extensionId,
-            order: contribution.order,
-            shaderId: shaderContrib.shaderId,
-            label: shaderContrib.label ?? shaderContrib.shaderId,
-            description: shaderContrib.description,
-            pass: shaderContrib.pass,
-            source: shaderContrib.source,
-            uniforms: shaderContrib.uniforms,
-            textures: shaderContrib.textures,
-            fallback: shaderContrib.fallback,
-            materializer: shaderContrib.materializer,
-            hasSourceMetadata: shaderContrib.source !== undefined,
-          });
-        } else {
-          diagnostics.push({
-            severity: 'error',
-            code: 'runtime/shader-missing-shader-id',
-            message:
-              `Shader contribution "${contribution.id as string}" in extension "${extensionId}" ` +
-              'has no shaderId. The shader will be inactive.',
-            extensionId,
-            contributionId: contribution.id as string,
-          });
-        }
-        break;
-      }
-      // M10: agentTool — bridge agent tool contributions into agentTools
-      case 'agentTool': {
-        const at = contribution as unknown as AgentToolContribution;
-        agentToolDescriptors.push({
-          id: contribution.id as string,
-          extensionId,
-          order: contribution.order,
-          toolId: at.toolId,
-          label: at.label,
-          description: at.description,
-          resultFamilies: (at.resultFamilies ?? []) as readonly ToolResultFamily[],
-          hasHandler: false,
-        });
-        break;
-      }
+  function getDescriptorArray(field: ConfigField): unknown[] | null {
+    switch (field) {
+      case 'dialogHost.dialogs':
+        return dialogDescriptors;
+      case 'registry.panels':
+        return panelDescriptors;
+      case 'registry.inspectorSections':
+        return inspectorSectionDescriptors;
+      case 'overlays':
+        return overlayDescriptors;
+      case 'assetParsers':
+        return assetParserDescriptors;
+      case 'outputFormats':
+        return outputFormatDescriptors;
+      case 'processes':
+        return processDescriptors;
+      case 'searchProviders':
+        return searchProviderDescriptors;
+      case 'metadataFacets':
+        return metadataFacetDescriptors;
+      case 'assetDetailSections':
+        return assetDetailSectionDescriptors;
+      case 'effects':
+        return effectDescriptors;
+      case 'transitions':
+        return transitionDescriptors;
+      case 'shaders':
+        return shaderDescriptors;
+      case 'agentTools':
+        return agentToolDescriptors;
+      case 'slots':
       default:
-        // Unknown bridged kinds are silently skipped (should not occur)
-        break;
+        return null;
     }
   }
 
-  // ---- Adapter-owned normalization: metadataFacet ----------------------------
-  // Route through the adapter coordinator when a registry is available;
-  // fall back to the direct adapter import for callers that haven't wired
-  // the registry yet (backwards compatibility).
-  if (metadataFacetContributions.length > 0) {
-    if (adapterRegistry) {
-      const adapter = findAdapter(adapterRegistry, 'metadataFacet');
-      if (adapter && adapter !== null) {
-        // The coordinator returns a generic HostFamilyAdapter; narrow to the
-        // metadataFacet shape so we can call normalize().
-        const facetAdapter = adapter as unknown as typeof metadataFacetAdapter;
-        metadataFacetDescriptors.push(
-          ...facetAdapter.normalize({ contributions: metadataFacetContributions }).descriptors,
-        );
+  function getReservedContributions(kind: string): typeof sortedBridged {
+    if (kind === 'outputFormat') return m6ReservedOutputFormats;
+    if (kind === 'searchProvider') return m6ReservedSearchProviders;
+    if (kind === 'process') return m12ReservedProcesses;
+    return [];
+  }
+
+  for (const [kind, config] of Object.entries(ADAPTER_DISPATCH)) {
+    const adapter = registry.get(kind) as HostFamilyAdapter<string, unknown, unknown> | null | undefined;
+    if (!adapter || adapter === null) {
+      // No adapter registered — skip projection.  This is only expected for
+      // families whose execution maturity is absent/delegated and that have
+      // no placeholder yet.
+      continue;
+    }
+
+    const contributions =
+      config.source === 'bridged'
+        ? byKind[kind]?.contributions ?? []
+        : getReservedContributions(kind);
+
+    if (contributions.length === 0) {
+      continue;
+    }
+
+    const input: NormalizeFamilyInput<unknown> = {
+      contributions,
+      extensionOrder,
+    };
+
+    const result: FamilyNormalizeResult<unknown> = adapter.normalize(input);
+
+    if (result.diagnostics && result.diagnostics.length > 0) {
+      diagnostics.push(...result.diagnostics);
+    }
+
+    if (config.field === null) {
+      continue;
+    }
+
+    if (config.field === 'slots') {
+      for (const descriptor of result.descriptors as VideoEditorSlotDescriptor[]) {
+        if (descriptor.slot && !slots[descriptor.slot]) {
+          slots[descriptor.slot] = descriptor.render;
+        }
       }
-    } else {
-      // No registry — fall back to direct adapter import (backwards compat).
-      metadataFacetDescriptors.push(
-        ...metadataFacetAdapter.normalize({ contributions: metadataFacetContributions }).descriptors,
-      );
+      continue;
+    }
+
+    const target = getDescriptorArray(config.field);
+    if (target) {
+      target.push(...(result.descriptors as unknown[]));
     }
   }
-
-  // ---- Phase 4b: project M6 reserved contributions --------------------------
-  // OutputFormat: surfaced with planner metadata for render-dependent formats.
-  const outputFormatDescriptors: VideoEditorOutputFormatDescriptor[] = [];
-  for (const { contribution, extensionId } of m6ReservedOutputFormats) {
-    const of = contribution as unknown as OutputFormatContribution;
-    const requiresRender = of.requiresRender ?? false;
-    const renderDescriptor = requiresRender ? of.render : undefined;
-    const routeRequirements = buildRouteRequirements(renderDescriptor);
-    const processRequirements = buildProcessRequirements(renderDescriptor);
-    const blockers = buildOutputFormatBlockers(extensionId, contribution.id as string, of, renderDescriptor);
-    const nextActions = buildOutputFormatNextActions(of, renderDescriptor, blockers);
-    const capabilities = buildOutputFormatCapabilities(extensionId, contribution.id as string, of, renderDescriptor, blockers);
-    outputFormatDescriptors.push({
-      id: contribution.id as string,
-      extensionId,
-      order: contribution.order,
-      label: of.label ?? contribution.id as string,
-      requiresRender,
-      outputExtension: of.outputExtension,
-      outputMimeType: of.outputMimeType,
-      description: of.description,
-      disabled: false,
-      disabledReason: undefined,
-      availableRoutes: Object.freeze([...(renderDescriptor?.routes ?? [])]),
-      routeRequirements,
-      processRequirements,
-      blockers,
-      nextActions,
-      capabilities,
-      sampling: of.sampling,
-      sidecars: Object.freeze([...(of.sidecars ?? [])]),
-    });
-  }
-
-  // Order output formats by extension order, then contribution order, then ID
-  outputFormatDescriptors.sort((a, b) => {
-    const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
-    const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
-    if (extOrderA !== extOrderB) return extOrderA - extOrderB;
-    const orderA = a.order ?? 0;
-    const orderB = b.order ?? 0;
-    if (orderA !== orderB) return orderA - orderB;
-    return a.id.localeCompare(b.id);
-  });
-
-  // Process: surfaced as planner-visible declarations without runtime spawn.
-  const processDescriptors: VideoEditorProcessDescriptor[] = [];
-  for (const { contribution, extensionId } of m12ReservedProcesses) {
-    const processContrib = contribution as unknown as ProcessContribution;
-    const spec = processContrib.spec;
-    const operations = Object.freeze([...(spec.operations ?? [])]);
-    const availableRoutes = Object.freeze(
-      Array.from(new Set(operations.flatMap((operation) => operation.routes ?? []))),
-    );
-    processDescriptors.push({
-      id: contribution.id as string,
-      extensionId,
-      order: contribution.order,
-      processId: spec.id,
-      label: processContrib.label ?? spec.label ?? spec.id,
-      description: spec.description,
-      spec,
-      protocol: spec.protocol,
-      operations,
-      availableRoutes,
-      capabilities: spec.capabilities,
-      requiredBy: Object.freeze([...(spec.requiredBy ?? [])]),
-      blockers: Object.freeze([]),
-      nextActions: Object.freeze([
-        {
-          kind: 'start-process',
-          label: `Start ${processContrib.label ?? spec.label ?? spec.id}`,
-          processId: spec.id,
-          message: 'Process execution is host-owned and must be activated before route planning can dispatch operations.',
-        },
-      ]),
-    });
-  }
-
-  processDescriptors.sort((a, b) => {
-    const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
-    const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
-    if (extOrderA !== extOrderB) return extOrderA - extOrderB;
-    const orderA = a.order ?? 0;
-    const orderB = b.order ?? 0;
-    if (orderA !== orderB) return orderA - orderB;
-    return a.id.localeCompare(b.id);
-  });
-
-  // SearchProvider: surfaced as declaration-only descriptors
-  const searchProviderDescriptors: VideoEditorSearchProviderDescriptor[] = [];
-  for (const { contribution, extensionId } of m6ReservedSearchProviders) {
-    const sp = contribution as unknown as SearchProviderContribution;
-    searchProviderDescriptors.push({
-      id: contribution.id as string,
-      extensionId,
-      order: contribution.order,
-      label: sp.label ?? contribution.id as string,
-      description: sp.description,
-      resultKinds: sp.resultKinds,
-    });
-  }
-
-  // Order search providers by extension order, then contribution order, then ID
-  searchProviderDescriptors.sort((a, b) => {
-    const extOrderA = extensionOrder.get(a.extensionId) ?? Number.MAX_SAFE_INTEGER;
-    const extOrderB = extensionOrder.get(b.extensionId) ?? Number.MAX_SAFE_INTEGER;
-    if (extOrderA !== extOrderB) return extOrderA - extOrderB;
-    const orderA = a.order ?? 0;
-    const orderB = b.order ?? 0;
-    if (orderA !== orderB) return orderA - orderB;
-    return a.id.localeCompare(b.id);
-  });
 
   // ---- Phase 5: assemble and freeze ----------------------------------------
   /** Whether any contributions — bridged or M6-reserved — affect the config. */
@@ -593,15 +413,13 @@ export function assembleExtensionRuntime(
   for (const pr of processDescriptors) activeContributionIds.add(pr.id);
 
   const enrichedPackageStateEntries = (packageStateEntries ?? []).map((entry) => {
-    // Try to find the matching active extension for this package
     const ext = uniqueExtensions.find(
       (e) => (e.manifest.id as string) === entry.extensionId,
     );
-    
+
     let contributionSummary: PackageContributionSummary | null = null;
-    
+
     if (ext) {
-      // Active extension: derive full summary from manifest + runtime
       const inactiveForExt = inactiveReserved.filter(
         (r) => r.extensionId === entry.extensionId,
       ).length;
@@ -611,15 +429,13 @@ export function assembleExtensionRuntime(
         inactiveForExt,
       );
     } else if (entry.manifestContributions) {
-      // Non-active package: derive from preserved manifest contributions
       contributionSummary = computePackageContributionSummary(
         entry.manifestContributions,
       );
     }
-    
-    // Keep any preexisting contributionSummary if already set by caller
+
     const summary = entry.contributionSummary ?? contributionSummary;
-    
+
     return Object.freeze({
       ...entry,
       contributionSummary: summary ? Object.freeze({ ...summary }) : null,
@@ -652,183 +468,4 @@ export function assembleExtensionRuntime(
   });
 
   return runtime;
-}
-
-// ---------------------------------------------------------------------------
-// Output-format planner helpers
-// ---------------------------------------------------------------------------
-
-function buildRouteRequirements(
-  renderDescriptor: RenderDependentOutputDescriptor | undefined,
-): readonly VideoEditorRouteRequirementDescriptor[] {
-  if (!renderDescriptor) return Object.freeze([]);
-
-  return Object.freeze([
-    Object.freeze({
-      routes: Object.freeze([...renderDescriptor.routes]),
-      requiredCapabilities: Object.freeze([...(renderDescriptor.requiredCapabilities ?? [])]),
-      processId: renderDescriptor.processId,
-      operationId: renderDescriptor.operationId,
-      determinism: renderDescriptor.determinism ?? 'unknown',
-      unavailableMessage: renderDescriptor.unavailableMessage,
-    }),
-  ]);
-}
-
-function buildProcessRequirements(
-  renderDescriptor: RenderDependentOutputDescriptor | undefined,
-): readonly VideoEditorProcessRequirementDescriptor[] {
-  if (!renderDescriptor?.processId) return Object.freeze([]);
-
-  return Object.freeze([
-    Object.freeze({
-      processId: renderDescriptor.processId,
-      operationId: renderDescriptor.operationId,
-      requiredCapabilities: Object.freeze([...(renderDescriptor.requiredCapabilities ?? [])]),
-    }),
-  ]);
-}
-
-function buildOutputFormatBlockers(
-  extensionId: string,
-  contributionId: string,
-  contribution: OutputFormatContribution,
-  renderDescriptor: RenderDependentOutputDescriptor | undefined,
-): readonly VideoEditorPlannerBlockerDescriptor[] {
-  if (!contribution.requiresRender || renderDescriptor) return Object.freeze([]);
-
-  const nextAction: VideoEditorPlannerNextActionDescriptor = Object.freeze({
-    kind: 'resolve-blocker',
-    label: 'Add render route requirements',
-    message: 'Render-dependent output formats must declare render routes before planning can execute them.',
-  });
-
-  return Object.freeze([
-    Object.freeze({
-      id: `${extensionId}.${contributionId}.missing-render-descriptor`,
-      extensionId,
-      contributionId,
-      reason: 'route-unsupported',
-      message: `Output format "${contribution.label ?? contributionId}" requires render planning but did not declare route requirements.`,
-      nextAction,
-    }),
-  ]);
-}
-
-function buildOutputFormatNextActions(
-  contribution: OutputFormatContribution,
-  renderDescriptor: RenderDependentOutputDescriptor | undefined,
-  blockers: readonly VideoEditorPlannerBlockerDescriptor[],
-): readonly VideoEditorPlannerNextActionDescriptor[] {
-  if (!contribution.requiresRender) return Object.freeze([]);
-  if (blockers[0]?.nextAction) return Object.freeze([blockers[0].nextAction]);
-
-  const actions: VideoEditorPlannerNextActionDescriptor[] = [];
-  if (renderDescriptor?.processId) {
-    actions.push(Object.freeze({
-      kind: 'start-process',
-      label: `Start process ${renderDescriptor.processId}`,
-      processId: renderDescriptor.processId,
-      operationId: renderDescriptor.operationId,
-      message: renderDescriptor.unavailableMessage,
-    }));
-  }
-
-  for (const route of renderDescriptor?.routes ?? []) {
-    actions.push(Object.freeze({
-      kind: 'select-route',
-      label: `Plan ${route}`,
-      route,
-      processId: renderDescriptor?.processId,
-      operationId: renderDescriptor?.operationId,
-      message: renderDescriptor?.unavailableMessage,
-    }));
-  }
-
-  return Object.freeze(actions);
-}
-
-function buildOutputFormatCapabilities(
-  extensionId: string,
-  contributionId: string,
-  contribution: OutputFormatContribution,
-  renderDescriptor: RenderDependentOutputDescriptor | undefined,
-  blockers: readonly VideoEditorPlannerBlockerDescriptor[],
-): IntegrationCapabilities | undefined {
-  const sourceRef: CapabilitySourceRef = Object.freeze({
-    source: 'extension',
-    extensionId,
-    contributionId,
-  });
-
-  if (!contribution.requiresRender) {
-    return Object.freeze({
-      extensionId,
-      contributionId,
-      routes: Object.freeze([]),
-      determinism: 'deterministic',
-      capabilityRequirements: Object.freeze([]),
-      sourceRefs: Object.freeze([sourceRef]),
-      fullySupported: true,
-      anyBlocked: false,
-    });
-  }
-
-  const routes = Object.freeze([...(renderDescriptor?.routes ?? [])]);
-  const determinism = renderDescriptor?.determinism ?? 'unknown';
-  const requiredCapabilities = Object.freeze([...(renderDescriptor?.requiredCapabilities ?? [])]);
-  const routeFit = renderDescriptor
-    ? undefined
-    : Object.freeze({
-        route: 'sidecar-export' as const,
-        fit: 'blocked' as const,
-        reason: 'route-unsupported' as const,
-        message: blockers[0]?.message,
-      });
-
-  const capabilityRequirements: CapabilityRequirement[] = routes.map((route) => Object.freeze({
-    id: `${extensionId}.${contributionId}.${route}`,
-    sourceRef,
-    route,
-    requiredCapabilities,
-    determinism,
-    routeFit: Object.freeze({
-      route,
-      fit: 'supported' as const,
-      message: renderDescriptor?.unavailableMessage,
-    }),
-    blocking: false,
-  }));
-
-  if (!renderDescriptor) {
-    capabilityRequirements.push(Object.freeze({
-      id: `${extensionId}.${contributionId}.missing-render-descriptor`,
-      sourceRef,
-      route: 'sidecar-export',
-      requiredCapabilities: Object.freeze([]),
-      determinism: 'unknown',
-      routeFit,
-      findings: Object.freeze(blockers.map((blocker) => Object.freeze({
-        id: blocker.id,
-        severity: 'error' as const,
-        route: blocker.route,
-        reason: blocker.reason,
-        message: blocker.message,
-        extensionId: blocker.extensionId,
-        contributionId: blocker.contributionId,
-      }))),
-      blocking: true,
-    }));
-  }
-
-  return Object.freeze({
-    extensionId,
-    contributionId,
-    routes,
-    determinism,
-    capabilityRequirements: Object.freeze(capabilityRequirements),
-    sourceRefs: Object.freeze([sourceRef]),
-    fullySupported: blockers.length === 0,
-    anyBlocked: blockers.length > 0,
-  });
 }

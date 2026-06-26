@@ -4,13 +4,13 @@ import type {
   ExtensionDiagnostic,
   EffectContribution,
   TransitionContribution,
-  ShaderContribution,
 } from '@reigh/editor-sdk';
 import type { InactiveReservedContribution } from '@/tools/video-editor/runtime/extensionSurface.ts';
 import { getContributionRuntimeStatus } from '@/tools/video-editor/runtime/families/FamilyProjectionPolicy.ts';
+import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from '@/tools/video-editor/runtime/families/familyAdapterRegistry.ts';
 
 // ---------------------------------------------------------------------------
-// Collected contribution (used during Phase 2 & Phase 3)
+// Collected contribution (used during Phase 2 & Phase 3)
 // ---------------------------------------------------------------------------
 
 /** A contribution paired with its owning extension ID during sequencing. */
@@ -81,7 +81,7 @@ function recordInactiveReservedContribution(
 // ---------------------------------------------------------------------------
 
 /**
- * Phase 1–3 of host-owned runtime normalization: validate extensions,
+ * Phase 1-3 of host-owned runtime normalization: validate extensions,
  * collect and classify contributions, and produce a deterministically
  * ordered sequence ready for descriptor projection.
  *
@@ -159,7 +159,18 @@ export function buildFamilyContributionSequence(
       }
       seenContributionIds.set(contribId, extId);
 
-      const runtimeStatus = getContributionRuntimeStatus(contrib.kind);
+      // outputFormat/searchProvider/process remain historically reserved
+      // (surfaced as descriptors but recorded as inactive reserved).
+      // All other families consult the adapter registry so delegated
+      // placeholder adapters are treated as projectable / bridged.
+      const historicallyReserved =
+        contrib.kind === 'outputFormat' ||
+        contrib.kind === 'searchProvider' ||
+        contrib.kind === 'process';
+      const runtimeStatus = getContributionRuntimeStatus(
+        contrib.kind,
+        historicallyReserved ? undefined : VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+      );
       const notYetBridged = runtimeStatus.legacyBridgeStatus;
 
       // M7: Effect contributions with component metadata (effectId) are

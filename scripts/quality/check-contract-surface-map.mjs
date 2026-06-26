@@ -32,6 +32,7 @@ const readme = readFileSync(readmePath, 'utf8');
 const errors = [];
 
 for (const [gate, surfaces] of Object.entries(mapping)) {
+  if (gate === 'description' || gate.startsWith('_')) continue;
   if (!Array.isArray(surfaces) || surfaces.length === 0) {
     errors.push(`Gate "${gate}" must map to a non-empty array`);
     continue;

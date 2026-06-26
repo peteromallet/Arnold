@@ -12,7 +12,7 @@
  */
 
 import type { ExecutionMaturity } from './maturity';
-import type { ExtensionDiagnostic } from '../diagnostics';
+import type { ExtensionDiagnostic } from '../../diagnostics';
 import type { FamilyConformanceReport } from './conformance';
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,14 @@ export interface FamilyContributionRef<TContribution = unknown> {
 export interface NormalizeFamilyInput<TContribution = unknown> {
   /** Sorted contributions ready for projection. */
   readonly contributions: readonly FamilyContributionRef<TContribution>[];
+
+  /**
+   * Optional extension order map (extensionId → insertion index).
+   *
+   * Adapters that need deterministic re-sorting can use this map.  When
+   * omitted, adapters should preserve the order of `contributions`.
+   */
+  readonly extensionOrder?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -91,6 +99,12 @@ export interface HostAdapterManifest {
 
   /** Optional human-readable description of the adapter's scope. */
   readonly description?: string;
+
+  /**
+   * Optional free-form metadata for registry consumers (e.g. delegation
+   * owner/reason/expiration, provenance, or audit tags).
+   */
+  readonly metadata?: Readonly<Record<string, unknown>>;
 }
 
 // ---------------------------------------------------------------------------

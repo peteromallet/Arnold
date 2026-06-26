@@ -20,6 +20,7 @@ import type { ReighExtension, ExtensionDiagnostic } from '@reigh/editor-sdk';
 import { assembleExtensionRuntime } from '@/tools/video-editor/runtime/families/FamilyRuntimeAssembly';
 import { buildFamilyContributionSequence } from '@/tools/video-editor/runtime/families/FamilyContributionSequence';
 import { metadataFacetAdapter } from '@/tools/video-editor/runtime/families/metadataFacetAdapter';
+import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from '@/tools/video-editor/runtime/families/familyAdapterRegistry';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -400,14 +401,17 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
 
   it('tracks reserved-vs-active families from the registry maturity helpers', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
-    expect(getVideoFamilyDefinition('parser')?.executionMaturity).toBe('runtime-bridged');
-    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
+    // SDK execution maturity is delegated for parser; runtime projection
+    // policy keeps it projectable via the placeholder adapter.
+    expect(getVideoFamilyDefinition('parser')?.executionMaturity).toBe('delegated');
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBe('M6');
     expect(getVideoFamilyDefinition('outputFormat')?.executionMaturity).toBe('delegated');
     expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
     expect(getVideoFamilyDefinition('searchProvider')?.executionMaturity).toBe('delegated');
     expect(getVideoFamilyLegacyBridgeStatus('searchProvider')).toBe('M6');
     expect(getVideoFamilyDefinition('process')?.executionMaturity).toBe('delegated');
     expect(getVideoFamilyLegacyBridgeStatus('process')).toBe('M12');
+    // Only historically reserved delegated families appear in inactiveReserved.
     expect(rt.inactiveReserved.map((item) => item.kind).sort()).toEqual([
       'outputFormat',
       'process',
@@ -2692,16 +2696,13 @@ describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs
     // --- Path A: inline (no registry) ---
     const runtimeInline = normalizeExtensionRuntime([ex]);
 
-    // --- Path B: coordinator-backed (with registry) ---
-    const registry = new FamilyAdapterRegistryImpl();
-    registry.register({ adapter: metadataFacetAdapter });
-
+    // --- Path B: coordinator-backed (with canonical registry) ---
     const seq = buildFamilyContributionSequence([ex]);
     const runtimeCoordinator = assembleExtensionRuntime(
       seq,
       undefined,
       DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
-      registry.snapshot(),
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
     );
 
     // --- Parity assertions ---
@@ -2713,12 +2714,12 @@ describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs
       runtimeInline.metadataFacets,
     );
 
-    // Effects must be identical (inline family, unchanged)
+    // Effects must be identical
     expect(runtimeCoordinator.config.effects).toEqual(
       runtimeInline.config.effects,
     );
 
-    // Transitions must be identical (inline family, unchanged)
+    // Transitions must be identical
     expect(runtimeCoordinator.config.transitions).toEqual(
       runtimeInline.config.transitions,
     );
@@ -2732,8 +2733,8 @@ describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs
     expect(Object.isFrozen(runtimeCoordinator.config)).toBe(true);
     expect(Object.isFrozen(runtimeInline.config)).toBe(true);
 
-    // Verify the coordinator path actually used the adapter
-    const found = findAdapter(registry.snapshot(), 'metadataFacet');
+    // Verify the canonical registry contains the metadataFacet adapter
+    const found = findAdapter(VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY, 'metadataFacet');
     expect(found).not.toBeNull();
     expect(found).not.toBeUndefined();
   });
@@ -2754,19 +2755,16 @@ describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs
       },
     });
 
-    // Inline path
+    // Inline path (uses canonical registry internally)
     const runtimeInline = normalizeExtensionRuntime([ex]);
 
-    // Coordinator path
-    const registry = new FamilyAdapterRegistryImpl();
-    registry.register({ adapter: metadataFacetAdapter });
-
+    // Coordinator path (explicit canonical registry)
     const seq = buildFamilyContributionSequence([ex]);
     const runtimeCoordinator = assembleExtensionRuntime(
       seq,
       undefined,
       DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
-      registry.snapshot(),
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
     );
 
     // metadataFacets match exactly
@@ -2812,7 +2810,7 @@ describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs
     expect(Object.isFrozen(runtime.config.metadataFacets[0])).toBe(true);
   });
 
-  it('non-metadataFacet families are unaffected by registry presence', () => {
+  it('non-metadataFacet families are projected through the canonical registry', () => {
     const ex = ext('com.example.effects-only', {
       manifest: {
         contributions: [
@@ -2827,22 +2825,17 @@ describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs
       },
     });
 
-    // Without registry
+    // Both paths use the canonical registry (one explicitly, one via default).
     const runtimeInline = normalizeExtensionRuntime([ex]);
-
-    // With registry (but no metadataFacet in contributions, so irrelevant)
-    const registry = new FamilyAdapterRegistryImpl();
-    registry.register({ adapter: metadataFacetAdapter });
 
     const seq = buildFamilyContributionSequence([ex]);
     const runtimeCoordinator = assembleExtensionRuntime(
       seq,
       undefined,
       DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
-      registry.snapshot(),
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
     );
 
-    // Effects must be identical — registry has no effect on inline families
     expect(runtimeCoordinator.config.effects).toEqual(
       runtimeInline.config.effects,
     );
@@ -2882,15 +2875,12 @@ describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs
       },
     });
 
-    const registry = new FamilyAdapterRegistryImpl();
-    registry.register({ adapter: metadataFacetAdapter });
-
     const seq = buildFamilyContributionSequence([ex]);
     const runtime = assembleExtensionRuntime(
       seq,
       undefined,
       DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
-      registry.snapshot(),
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
     );
 
     const facets = runtime.config.metadataFacets;

@@ -634,9 +634,9 @@ describe('ExtensionContext — type safety guard', () => {
 // M6: Contribution kind bridging — parser active, output/search typed
 // ---------------------------------------------------------------------------
 
-describe('M6: contribution kind bridging (parser M6-active, output/search typed)', () => {
-  it('parser is M6-active (contributionKindNotYetBridged returns null)', () => {
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+describe('M6: contribution kind bridging (parser M6-delegated, output/search typed)', () => {
+  it('parser is M6-delegated (contributionKindNotYetBridged returns M6)', () => {
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 
   it('outputFormat is typed but execution is reserved (returns M6)', () => {
@@ -653,8 +653,8 @@ describe('M6: contribution kind bridging (parser M6-active, output/search typed)
     const bridged = contributionKindNotYetBridged('outputFormat');
     expect(bridged).toBe('M6');
 
-    // Contrast: parser IS bridged at M6
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    // parser is delegated → M6 (runtime projection policy keeps it projectable)
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
@@ -662,8 +662,8 @@ describe('M6: contribution kind bridging (parser M6-active, output/search typed)
     // get a clear diagnostic, not silent ignorance.
     // clipType is runtime-bridged → null
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
-    // agentTool is runtime-bridged → null
-    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    // agentTool is delegated → M10
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
     // agent is delegated → returns M10
     expect(contributionKindNotYetBridged('agent')).toBe('M10');
   });
@@ -1364,8 +1364,8 @@ describe('M10: ExtensionContext.agentTools registration boundary', () => {
 // ---------------------------------------------------------------------------
 
 describe('M10: Contribution kind bridging — agentTool bridged, agent delegated', () => {
-  it('agentTool is M10-bridged (executionMaturity runtime-bridged)', () => {
-    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+  it('agentTool is M10-delegated (executionMaturity delegated)', () => {
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
   });
 
   it('agent is NOT bridged (executionMaturity delegated — no host adapter)', () => {
@@ -1378,17 +1378,21 @@ describe('M10: Contribution kind bridging — agentTool bridged, agent delegated
     expect(CONTRIBUTION_KIND_MILESTONE.agent).toBe('M10');
   });
 
-  it('all other bridged kinds remain unchanged after M10 activation', () => {
+  it('all other active kinds remain unchanged after M10 activation', () => {
+    // host-integrated / public-supported / runtime-bridged remain null
     expect(contributionKindNotYetBridged('slot')).toBeNull();
     expect(contributionKindNotYetBridged('dialog')).toBeNull();
     expect(contributionKindNotYetBridged('panel')).toBeNull();
     expect(contributionKindNotYetBridged('command')).toBeNull();
     expect(contributionKindNotYetBridged('keybinding')).toBeNull();
     expect(contributionKindNotYetBridged('contextMenuItem')).toBeNull();
-    expect(contributionKindNotYetBridged('effect')).toBeNull();
-    expect(contributionKindNotYetBridged('transition')).toBeNull();
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    expect(contributionKindNotYetBridged('automation')).toBeNull();
+    expect(contributionKindNotYetBridged('metadataFacet')).toBeNull();
+    // delegated kinds surface their owning milestone
+    expect(contributionKindNotYetBridged('effect')).toBe('M7');
+    expect(contributionKindNotYetBridged('transition')).toBe('M8');
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 });
 
@@ -2076,9 +2080,10 @@ describe('registry-derived family helpers', () => {
   it('getVideoFamilyLegacyBridgeStatus matches registry execution maturity', () => {
     // Bridged (runtime-bridged, host-integrated, public-supported)
     expect(getVideoFamilyLegacyBridgeStatus('slot')).toBeNull();
-    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
-    expect(getVideoFamilyLegacyBridgeStatus('transition')).toBeNull();
-    // Not bridged (delegated)
+    expect(getVideoFamilyLegacyBridgeStatus('command')).toBeNull();
+    // Delegated (descriptor projection is host-policy mediated)
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBe('M6');
+    expect(getVideoFamilyLegacyBridgeStatus('transition')).toBe('M8');
     expect(getVideoFamilyLegacyBridgeStatus('agent')).toBe('M10');
     expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
     expect(getVideoFamilyLegacyBridgeStatus('shader')).toBe('M13');
@@ -2099,15 +2104,17 @@ describe('registry-derived family helpers', () => {
   it('contributionKindNotYetBridged is execution-maturity-derived', () => {
     // Execution maturity determines bridging:
     // runtime-bridged → null
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
-    expect(contributionKindNotYetBridged('effect')).toBeNull();
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
     // host-integrated → null
     expect(contributionKindNotYetBridged('command')).toBeNull();
     expect(contributionKindNotYetBridged('dialog')).toBeNull();
     // public-supported → null
     expect(contributionKindNotYetBridged('slot')).toBeNull();
     // delegated → milestone string
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
+    expect(contributionKindNotYetBridged('effect')).toBe('M7');
     expect(contributionKindNotYetBridged('agent')).toBe('M10');
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
     expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
     expect(contributionKindNotYetBridged('shader')).toBe('M13');
@@ -2918,8 +2925,8 @@ describe('T6: family adapter manifest (boundary)', () => {
     expect(entry).toBeDefined();
     expect(entry!.kind).toBe('effect');
     expect(entry!.label).toBe('Effect');
-    expect(entry!.executionMaturity).toBe('runtime-bridged');
-    expect(entry!.hostAdapter).toBe('src/video-editor/adapters/effectAdapter.ts');
+    expect(entry!.executionMaturity).toBe('delegated');
+    expect(entry!.hostAdapter).toBe('src/tools/video-editor/runtime/families/effectAdapter.ts');
   });
 
   it('getEntry returns undefined for an unknown kind', () => {
@@ -2953,47 +2960,50 @@ describe('T6: family adapter manifest (boundary)', () => {
   it('manifest hostAdapter paths agree with familyDefinitions registry', () => {
     const manifest = buildFamilyAdapterManifest();
 
-    // Families with real adapter paths
+    // Families with adapter paths
     expect(manifest.getEntry('agentTool')!.hostAdapter)
-      .toBe('src/video-editor/adapters/agentToolAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/agentToolAdapter.ts');
     expect(manifest.getEntry('assetDetailSection')!.hostAdapter)
-      .toBe('src/video-editor/adapters/metadataAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/assetDetailSectionAdapter.ts');
     expect(manifest.getEntry('automation')!.hostAdapter)
-      .toBe('src/video-editor/adapters/clipTypeAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/automationAdapter.ts');
     expect(manifest.getEntry('clipType')!.hostAdapter)
-      .toBe('src/video-editor/adapters/clipTypeAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/clipTypeAdapter.ts');
     expect(manifest.getEntry('command')!.hostAdapter)
-      .toBe('src/video-editor/adapters/commandAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/commandAdapter.ts');
     expect(manifest.getEntry('contextMenuItem')!.hostAdapter)
-      .toBe('src/video-editor/adapters/commandAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/contextMenuItemAdapter.ts');
     expect(manifest.getEntry('dialog')!.hostAdapter)
-      .toBe('src/video-editor/adapters/slotAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/dialogAdapter.ts');
     expect(manifest.getEntry('effect')!.hostAdapter)
-      .toBe('src/video-editor/adapters/effectAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/effectAdapter.ts');
     expect(manifest.getEntry('inspectorSection')!.hostAdapter)
-      .toBe('src/video-editor/adapters/slotAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/inspectorSectionAdapter.ts');
     expect(manifest.getEntry('keybinding')!.hostAdapter)
-      .toBe('src/video-editor/adapters/commandAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/keybindingAdapter.ts');
     expect(manifest.getEntry('metadataFacet')!.hostAdapter)
       .toBe('src/tools/video-editor/runtime/families/metadataFacetAdapter.ts');
+    expect(manifest.getEntry('outputFormat')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/outputFormatAdapter.ts');
     expect(manifest.getEntry('panel')!.hostAdapter)
-      .toBe('src/video-editor/adapters/slotAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/panelAdapter.ts');
     expect(manifest.getEntry('parser')!.hostAdapter)
-      .toBe('src/video-editor/adapters/parserAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/parserAdapter.ts');
+    expect(manifest.getEntry('process')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/processAdapter.ts');
+    expect(manifest.getEntry('searchProvider')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/searchProviderAdapter.ts');
     expect(manifest.getEntry('shader')!.hostAdapter)
-      .toBe('src/video-editor/adapters/shaderAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/shaderAdapter.ts');
     expect(manifest.getEntry('slot')!.hostAdapter)
-      .toBe('src/video-editor/adapters/slotAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/slotAdapter.ts');
     expect(manifest.getEntry('timelineOverlay')!.hostAdapter)
-      .toBe('src/video-editor/adapters/slotAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/timelineOverlayAdapter.ts');
     expect(manifest.getEntry('transition')!.hostAdapter)
-      .toBe('src/video-editor/adapters/transitionAdapter.ts');
+      .toBe('src/tools/video-editor/runtime/families/transitionAdapter.ts');
 
     // Families with null adapter
     expect(manifest.getEntry('agent')!.hostAdapter).toBeNull();
-    expect(manifest.getEntry('outputFormat')!.hostAdapter).toBeNull();
-    expect(manifest.getEntry('process')!.hostAdapter).toBeNull();
-    expect(manifest.getEntry('searchProvider')!.hostAdapter).toBeNull();
   });
 
   // ---- maturity expectations ------------------------------------------------
@@ -3003,16 +3013,28 @@ describe('T6: family adapter manifest (boundary)', () => {
 
     // delegated / absent → no real adapter expected
     expect(manifest.getEntry('agent')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('agentTool')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('assetDetailSection')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('effect')!.expectsRealAdapter).toBe(false);
     expect(manifest.getEntry('outputFormat')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('parser')!.expectsRealAdapter).toBe(false);
     expect(manifest.getEntry('process')!.expectsRealAdapter).toBe(false);
     expect(manifest.getEntry('searchProvider')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('shader')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('transition')!.expectsRealAdapter).toBe(false);
 
     // runtime-bridged / host-integrated / public-supported → expects adapter
-    expect(manifest.getEntry('effect')!.expectsRealAdapter).toBe(true);
-    expect(manifest.getEntry('slot')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('automation')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('clipType')!.expectsRealAdapter).toBe(true);
     expect(manifest.getEntry('command')!.expectsRealAdapter).toBe(true);
-    expect(manifest.getEntry('parser')!.expectsRealAdapter).toBe(true);
-    expect(manifest.getEntry('shader')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('contextMenuItem')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('dialog')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('inspectorSection')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('keybinding')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('metadataFacet')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('panel')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('slot')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('timelineOverlay')!.expectsRealAdapter).toBe(true);
   });
 
   // ---- crossReferenceManifest -----------------------------------------------
@@ -3064,15 +3086,14 @@ describe('T6: family adapter manifest (boundary)', () => {
 
   it('crossReferenceManifest detects kinds needing adapter', () => {
     const manifest = buildFamilyAdapterManifest();
-    // Register effect as null even though it expects a real adapter
+    // Register slot as null even though it expects a real adapter
     const registry: FamilyAdapterRegistry = new Map([
-      ['effect', null],
       ['slot', null],
     ]);
     const result = crossReferenceManifest(manifest, registry);
 
-    expect(result.kindsNeedingAdapter).toContain('effect');
     expect(result.kindsNeedingAdapter).toContain('slot');
+    expect(result.kindsNeedingAdapter).not.toContain('effect');
   });
 
   it('crossReferenceManifest detects kinds in registry but not manifest', () => {

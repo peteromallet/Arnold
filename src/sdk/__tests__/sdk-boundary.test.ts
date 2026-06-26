@@ -1196,8 +1196,8 @@ describe('M6: parser/outputFormat/searchProvider type interfaces are importable 
 // ---------------------------------------------------------------------------
 
 describe('M6: contribution kind bridging for parser/output/search', () => {
-  it('parser is M6-active (contributionKindNotYetBridged returns null)', () => {
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+  it('parser is delegated to a placeholder adapter (contributionKindNotYetBridged returns M6)', () => {
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 
   it('outputFormat is typed but execution is reserved (returns M6)', () => {
@@ -1216,8 +1216,8 @@ describe('M6: contribution kind bridging for parser/output/search', () => {
     const bridged = contributionKindNotYetBridged('outputFormat');
     expect(bridged).toBe('M6');
 
-    // contrats with parser which IS bridged
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    // parser is now delegated to a placeholder adapter, so it also reports M6.
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 
   it('unsupported contribution behavior remains explicit (registry-derived)', () => {
@@ -1226,8 +1226,8 @@ describe('M6: contribution kind bridging for parser/output/search', () => {
     // M9 clipType and automation are bridged (executionMaturity runtime-bridged).
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
     expect(contributionKindNotYetBridged('automation')).toBeNull();
-    // agentTool is bridged (executionMaturity runtime-bridged).
-    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    // agentTool is delegated to a placeholder adapter (executionMaturity delegated).
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
     // agent is NOT bridged (executionMaturity delegated — no host adapter).
     expect(contributionKindNotYetBridged('agent')).toBe('M10');
   });
@@ -1579,12 +1579,12 @@ describe('M7: internal effect registration types are NOT re-exported from @reigh
 // ---------------------------------------------------------------------------
 
 describe('M7/M8: contribution kind bridging for effect and transition', () => {
-  it('effect is M7-bridged (contributionKindNotYetBridged returns null)', () => {
-    expect(contributionKindNotYetBridged('effect')).toBeNull();
+  it('effect is delegated to a placeholder adapter (contributionKindNotYetBridged returns M7)', () => {
+    expect(contributionKindNotYetBridged('effect')).toBe('M7');
   });
 
-  it('transition is M8-bridged (contributionKindNotYetBridged returns null)', () => {
-    expect(contributionKindNotYetBridged('transition')).toBeNull();
+  it('transition is delegated to a placeholder adapter (contributionKindNotYetBridged returns M8)', () => {
+    expect(contributionKindNotYetBridged('transition')).toBe('M8');
   });
 
   it('CONTRIBUTION_KIND_MILESTONE maps effect to M7 and transition to M8', () => {
@@ -1595,9 +1595,9 @@ describe('M7/M8: contribution kind bridging for effect and transition', () => {
   it('previously bridged kinds remain bridged (regression)', () => {
     expect(contributionKindNotYetBridged('slot')).toBeNull();
     expect(contributionKindNotYetBridged('command')).toBeNull();
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
-    expect(contributionKindNotYetBridged('effect')).toBeNull();
-    expect(contributionKindNotYetBridged('transition')).toBeNull();
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
+    expect(contributionKindNotYetBridged('effect')).toBe('M7');
+    expect(contributionKindNotYetBridged('transition')).toBe('M8');
   });
 });
 
@@ -3818,7 +3818,7 @@ describe('registry-derived family helpers', () => {
 
     const parserDef = getVideoFamilyDefinition('parser');
     expect(parserDef).toBeDefined();
-    expect(parserDef!.executionMaturity).toBe('runtime-bridged');
+    expect(parserDef!.executionMaturity).toBe('delegated');
     expect(parserDef!.legacyMilestone).toBe('M6');
   });
 
@@ -3837,9 +3837,13 @@ describe('registry-derived family helpers', () => {
   it('getVideoFamilyLegacyBridgeStatus matches registry execution maturity', () => {
     // Bridged
     expect(getVideoFamilyLegacyBridgeStatus('slot')).toBeNull();
-    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
-    expect(getVideoFamilyLegacyBridgeStatus('agentTool')).toBeNull();
-    // Not bridged (delegated)
+    expect(getVideoFamilyLegacyBridgeStatus('command')).toBeNull();
+    // Delegated placeholder-backed kinds still report their legacy milestone.
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBe('M6');
+    expect(getVideoFamilyLegacyBridgeStatus('agentTool')).toBe('M10');
+    expect(getVideoFamilyLegacyBridgeStatus('effect')).toBe('M7');
+    expect(getVideoFamilyLegacyBridgeStatus('transition')).toBe('M8');
+    // Not bridged (delegated / absent)
     expect(getVideoFamilyLegacyBridgeStatus('agent')).toBe('M10');
     expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
     expect(getVideoFamilyLegacyBridgeStatus('shader')).toBe('M13');
@@ -3862,20 +3866,21 @@ describe('registry-derived family helpers', () => {
 
   it('contributionKindNotYetBridged uses execution maturity from registry', () => {
     // runtime-bridged → bridged
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
-    expect(contributionKindNotYetBridged('effect')).toBeNull();
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
-    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
     // host-integrated → bridged
     expect(contributionKindNotYetBridged('command')).toBeNull();
     expect(contributionKindNotYetBridged('dialog')).toBeNull();
     // public-supported → bridged
     expect(contributionKindNotYetBridged('slot')).toBeNull();
-    // delegated → NOT bridged
+    // delegated → NOT bridged (returns legacy milestone)
     expect(contributionKindNotYetBridged('agent')).toBe('M10');
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
     expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
     expect(contributionKindNotYetBridged('shader')).toBe('M13');
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
+    expect(contributionKindNotYetBridged('effect')).toBe('M7');
+    expect(contributionKindNotYetBridged('transition')).toBe('M8');
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
   });
 });
 
@@ -4519,7 +4524,7 @@ describe('T6: family adapter manifest (sdk-boundary)', () => {
   it('getEntry resolves known families', () => {
     const manifest = buildFamilyAdapterManifest();
     expect(manifest.getEntry('slot')!.executionMaturity).toBe('public-supported');
-    expect(manifest.getEntry('effect')!.executionMaturity).toBe('runtime-bridged');
+    expect(manifest.getEntry('effect')!.executionMaturity).toBe('delegated');
     expect(manifest.getEntry('agent')!.executionMaturity).toBe('delegated');
     expect(manifest.getEntry('outputFormat')!.executionMaturity).toBe('delegated');
   });
@@ -4551,15 +4556,16 @@ describe('T6: family adapter manifest (sdk-boundary)', () => {
 
   it('crossReferenceManifest detects adapter-needing kinds', () => {
     const manifest = buildFamilyAdapterManifest();
-    // Register effect and transition as null — both need real adapters
+    // Register slot and dialog as null — both are public-supported / host-integrated
+    // and therefore expect a real adapter.
     const registry: FamilyAdapterRegistry = new Map([
-      ['effect', null],
-      ['transition', null],
+      ['slot', null],
+      ['dialog', null],
     ]);
     const result = crossReferenceManifest(manifest, registry);
 
-    expect(result.kindsNeedingAdapter).toContain('effect');
-    expect(result.kindsNeedingAdapter).toContain('transition');
+    expect(result.kindsNeedingAdapter).toContain('slot');
+    expect(result.kindsNeedingAdapter).toContain('dialog');
   });
 
   it('crossReferenceManifest reports missingFromManifest for extra registry entries', () => {

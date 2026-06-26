@@ -6,6 +6,7 @@
  * Used by check-sdk-no-barrel-imports.test.mjs.
  */
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import type { DisposeHandle } from '../dispose';
 
 export const CLEAN_FIXTURE = 'clean-direct-import';

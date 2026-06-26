@@ -36,18 +36,18 @@
       "milestone": "M10",
       "bridged": false
     },
-    "hostIntegrationNotes": "Agent contributions are proposal-backed; the host mediates tool dispatch and generation sessions. No standalone host adapter exists yet \u2014 execution is delegated through the agent-tool registration service."
+    "hostIntegrationNotes": "Agent contributions are proposal-backed; the host mediates tool dispatch and generation sessions. No standalone host adapter exists yet — execution is delegated through the agent-tool registration service."
   },
   {
     "kind": "agentTool",
     "label": "Agent Tool",
     "description": "Agent tool contributions expose host-mediated tool handlers with input schemas, proposal-backed mutations, and host-owned invocation lifecycle. Registered imperatively via ctx.agentTools.",
     "declarationMaturity": "schema-backed",
-    "executionMaturity": "runtime-bridged",
+    "executionMaturity": "delegated",
     "sdkModules": [
       "src/sdk/video/families/agentTools.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/agentToolAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/agentToolAdapter.ts",
     "requiresTrustedCode": true,
     "manifestSchemaDefinition": "AgentToolContribution",
     "coverage": {
@@ -75,18 +75,18 @@
       "milestone": "M10",
       "bridged": true
     },
-    "hostIntegrationNotes": "Agent tool contributions are host-mediated: the host owns invocation, progress, cancellation, proposal creation, and UI. Extensions register tool handlers imperatively via ctx.agentTools. Evidence: AgentToolContribution interface, AgentToolRegistrationService, and manifest schema oneOf coverage."
+    "hostIntegrationNotes": "Agent tool contributions are host-mediated: the host owns invocation, progress, cancellation, proposal creation, and UI. Extensions register tool handlers imperatively via ctx.agentTools. Execution posture is delegated to a placeholder adapter while descriptor projection remains stable. Evidence: AgentToolContribution interface, AgentToolRegistrationService, and manifest schema oneOf coverage."
   },
   {
     "kind": "assetDetailSection",
     "label": "Asset Detail Section",
     "description": "Asset detail section contributions add custom sections to the asset detail panel with placement control and title validation. Bridged at M6.",
     "declarationMaturity": "schema-backed",
-    "executionMaturity": "runtime-bridged",
+    "executionMaturity": "delegated",
     "sdkModules": [
       "src/sdk/video/families/assetDetailSections.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/metadataAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/assetDetailSectionAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "AssetDetailSectionContribution",
     "coverage": {
@@ -114,7 +114,7 @@
       "milestone": "M6",
       "bridged": true
     },
-    "hostIntegrationNotes": "Asset detail section contributions add custom sections to the asset detail panel with title and placement validation. Bridged at M6. Evidence: manifest validation enforces non-empty title and valid placement (before-default, after-default)."
+    "hostIntegrationNotes": "Asset detail section contributions add custom sections to the asset detail panel with title and placement validation. Descriptor projection is delegated to a distinct placeholder adapter separate from metadataFacet. Evidence: manifest validation enforces non-empty title and valid placement (before-default, after-default)."
   },
   {
     "kind": "automation",
@@ -126,7 +126,7 @@
       "src/sdk/video/timeline/clipTypes.ts",
       "src/sdk/video/families/automation.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/clipTypeAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/automationAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "AutomationContribution",
     "coverage": {
@@ -166,7 +166,7 @@
       "src/sdk/video/timeline/clipTypes.ts",
       "src/sdk/video/families/clipTypeContributions.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/clipTypeAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/clipTypeAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "ClipTypeContribution",
     "coverage": {
@@ -205,7 +205,7 @@
     "sdkModules": [
       "src/sdk/video/families/commands.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/commandAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "CommandContribution",
     "coverage": {
@@ -244,7 +244,7 @@
     "sdkModules": [
       "src/sdk/video/families/contextMenuItems.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/contextMenuItemAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "ContextMenuItemContribution",
     "coverage": {
@@ -283,7 +283,7 @@
     "sdkModules": [
       "src/sdk/manifest.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/dialogAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "DialogContribution",
     "coverage": {
@@ -318,11 +318,11 @@
     "label": "Effect",
     "description": "Effect contributions register trusted local render components that execute in the browser preview. Blocked from export unless allowBrowserExport or allowWorkerExport is declared. Bridged at M7.",
     "declarationMaturity": "schema-backed",
-    "executionMaturity": "runtime-bridged",
+    "executionMaturity": "delegated",
     "sdkModules": [
       "src/sdk/video/families/effects.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/effectAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/effectAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "EffectContribution",
     "coverage": {
@@ -350,7 +350,7 @@
       "milestone": "M7",
       "bridged": true
     },
-    "hostIntegrationNotes": "Effect contributions are trusted local browser-preview components. Extensions register effect components imperatively via ctx.effects. Evidence: EffectContribution interface, EffectRegistrationService, manifest schema oneOf coverage, and kind enum inclusion."
+    "hostIntegrationNotes": "Effect contributions are trusted local browser-preview components. Extensions register effect components imperatively via ctx.effects. Descriptor projection is delegated to a placeholder adapter while runtime registration remains host-mediated. Evidence: EffectContribution interface, EffectRegistrationService, manifest schema oneOf coverage, and kind enum inclusion."
   },
   {
     "kind": "inspectorSection",
@@ -361,7 +361,7 @@
     "sdkModules": [
       "src/sdk/manifest.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/inspectorSectionAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "InspectorSectionContribution",
     "coverage": {
@@ -400,7 +400,7 @@
     "sdkModules": [
       "src/sdk/video/families/keybindings.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/keybindingAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "KeybindingContribution",
     "coverage": {
@@ -440,7 +440,7 @@
       "src/sdk/video/families/metadataFacet.ts",
       "src/sdk/video/assets/metadata.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/metadataAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/metadataFacetAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "MetadataFacetContribution",
     "coverage": {
@@ -480,7 +480,7 @@
       "src/sdk/video/families/outputFormats.ts",
       "src/sdk/video/exports/outputFormats.ts"
     ],
-    "hostAdapter": null,
+    "hostAdapter": "src/tools/video-editor/runtime/families/outputFormatAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "OutputFormatContribution",
     "coverage": {
@@ -506,9 +506,9 @@
     },
     "legacyCompatibility": {
       "milestone": "M6",
-      "bridged": false
+      "bridged": true
     },
-    "hostIntegrationNotes": "Output format types are declared but runtime execution is reserved. The host provides compile-only and render-dependent output stubs."
+    "hostIntegrationNotes": "Output format types are declared but runtime execution is reserved. Descriptor projection is delegated to a placeholder adapter that surfaces compile-only and render-dependent planner stubs."
   },
   {
     "kind": "panel",
@@ -519,7 +519,7 @@
     "sdkModules": [
       "src/sdk/manifest.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/panelAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "PanelContribution",
     "coverage": {
@@ -554,12 +554,12 @@
     "label": "Parser",
     "description": "Parsers convert assets from import formats into editor-native representations. Fully bridged at M6 with host adapter, diagnostics, and lifecycle.",
     "declarationMaturity": "schema-backed",
-    "executionMaturity": "runtime-bridged",
+    "executionMaturity": "delegated",
     "sdkModules": [
       "src/sdk/video/families/parsers.ts",
       "src/sdk/video/assets/parsers.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/parserAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/parserAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "ParserContribution",
     "coverage": {
@@ -587,7 +587,7 @@
       "milestone": "M6",
       "bridged": true
     },
-    "hostIntegrationNotes": "Parser contributions are bridged through the asset ingestion pipeline. The host adapter normalizes parser descriptors, owns lifecycle, and produces diagnostics for parse failures."
+    "hostIntegrationNotes": "Parser contributions are bridged through the asset ingestion pipeline. Descriptor projection is delegated to a placeholder adapter; real ingestion lifecycle remains host-owned."
   },
   {
     "kind": "process",
@@ -598,7 +598,7 @@
     "sdkModules": [
       "src/sdk/video/families/processes.ts"
     ],
-    "hostAdapter": null,
+    "hostAdapter": "src/tools/video-editor/runtime/families/processAdapter.ts",
     "requiresTrustedCode": true,
     "manifestSchemaDefinition": "ProcessContribution",
     "coverage": {
@@ -624,9 +624,9 @@
     },
     "legacyCompatibility": {
       "milestone": "M12",
-      "bridged": false
+      "bridged": true
     },
-    "hostIntegrationNotes": "Process contributions declare trusted local process descriptors with installation posture, lifecycle, and capability requirements. Execution is reserved for M12 \u2014 processes are declarable in manifests but not yet bridged for runtime. Evidence: ProcessContribution interface, ProcessSpec, ProcessLifecycleState types; contributionKindNotYetBridged returns M12."
+    "hostIntegrationNotes": "Process contributions declare trusted local process descriptors with installation posture, lifecycle, and capability requirements. Execution is reserved for M12 — processes are declarable in manifests but not yet bridged for runtime. Evidence: ProcessContribution interface, ProcessSpec, ProcessLifecycleState types; contributionKindNotYetBridged returns M12."
   },
   {
     "kind": "searchProvider",
@@ -637,7 +637,7 @@
     "sdkModules": [
       "src/sdk/video/families/searchProviders.ts"
     ],
-    "hostAdapter": null,
+    "hostAdapter": "src/tools/video-editor/runtime/families/searchProviderAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "SearchProviderContribution",
     "coverage": {
@@ -663,7 +663,7 @@
     },
     "legacyCompatibility": {
       "milestone": "M6",
-      "bridged": false
+      "bridged": true
     },
     "hostIntegrationNotes": "Search provider contributions supply asset/material search results to the host search surface. The provider owns indexing, model choice, and refresh; the host owns query dispatch, result merge, and source labeling. Typed but execution is reserved (declarable, not yet bridged for runtime). Evidence: SearchProviderContribution interface; contributionKindNotYetBridged returns M6."
   },
@@ -672,12 +672,12 @@
     "label": "Shader",
     "description": "Shader contributions declare WebGL/WebGPU materializer contracts for custom rendering passes. Types exist; runtime execution is delegated.",
     "declarationMaturity": "schema-backed",
-    "executionMaturity": "runtime-bridged",
+    "executionMaturity": "delegated",
     "sdkModules": [
       "src/sdk/video/rendering/capabilities.ts",
       "src/sdk/video/families/shaders.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/shaderAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/shaderAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "ShaderContribution",
     "coverage": {
@@ -705,7 +705,7 @@
       "milestone": "M13",
       "bridged": true
     },
-    "hostIntegrationNotes": "Shader contributions declare WebGL materializer descriptors. The host projects shader capabilities into the render planner. Materializer requirements are validated at export time."
+    "hostIntegrationNotes": "Shader contributions declare WebGL materializer descriptors. Descriptor projection is delegated to a placeholder adapter while materializer requirements remain validated at export time."
   },
   {
     "kind": "slot",
@@ -716,7 +716,7 @@
     "sdkModules": [
       "src/sdk/manifest.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/slotAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "SlotContribution",
     "coverage": {
@@ -755,7 +755,7 @@
     "sdkModules": [
       "src/sdk/manifest.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/timelineOverlayAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "TimelineOverlayContribution",
     "coverage": {
@@ -790,11 +790,11 @@
     "label": "Transition",
     "description": "Transition contributions register trusted local renderers for cross-clip transitions. Blocked from export unless allowBrowserExport or allowWorkerExport is declared. Bridged at M8.",
     "declarationMaturity": "schema-backed",
-    "executionMaturity": "runtime-bridged",
+    "executionMaturity": "delegated",
     "sdkModules": [
       "src/sdk/video/families/transitions.ts"
     ],
-    "hostAdapter": "src/video-editor/adapters/transitionAdapter.ts",
+    "hostAdapter": "src/tools/video-editor/runtime/families/transitionAdapter.ts",
     "requiresTrustedCode": false,
     "manifestSchemaDefinition": "TransitionContribution",
     "coverage": {
@@ -822,6 +822,6 @@
       "milestone": "M8",
       "bridged": true
     },
-    "hostIntegrationNotes": "Transition contributions are trusted local browser-preview renderers for cross-clip transitions. Extensions register transition renderers imperatively via ctx.transitions. Evidence: TransitionContribution interface, TransitionRegistrationService, manifest schema oneOf coverage, and kind enum inclusion."
+    "hostIntegrationNotes": "Transition contributions are trusted local browser-preview renderers for cross-clip transitions. Extensions register transition renderers imperatively via ctx.transitions. Descriptor projection is delegated to a placeholder adapter while runtime registration remains host-mediated. Evidence: TransitionContribution interface, TransitionRegistrationService, manifest schema oneOf coverage, and kind enum inclusion."
   }
 ]
