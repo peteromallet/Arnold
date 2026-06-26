@@ -120,7 +120,7 @@ def test_scan_python_pipelines_never_raises(tmp_path: Path):
     _make_broken_pipeline(broken_dir)
 
     scan_roots = [(broken_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()  # must not raise
 
     assert isinstance(result, list)
@@ -134,7 +134,7 @@ def test_scan_python_pipelines_returns_disposition_for_every_path(tmp_path: Path
     _make_no_builder_pipeline(user_dir)
 
     scan_roots = [(user_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     assert len(result) == 3
@@ -152,7 +152,7 @@ def test_scan_python_pipelines_disposition_has_reason_for_broken(tmp_path: Path)
     _make_broken_pipeline(user_dir)
 
     scan_roots = [(user_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     rejected = [d for d in result if d.status == "rejected"]
@@ -166,7 +166,7 @@ def test_scan_python_pipelines_good_module_is_discovered(tmp_path: Path):
     _make_good_pipeline(user_dir)
 
     scan_roots = [(user_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     discovered = [d for d in result if d.status == "discovered"]
@@ -182,7 +182,7 @@ def test_scan_python_pipelines_origin_intree_vs_user(tmp_path: Path):
     _make_good_pipeline(intree_dir)
 
     scan_roots = [(intree_dir, "arnold_pipelines.megaplan.pipelines"), (user_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     assert any(d.origin == "in_tree" for d in result)
@@ -197,8 +197,8 @@ def test_discover_python_pipelines_does_not_raise_for_broken_intree(tmp_path: Pa
     intree_dir.mkdir()
     _make_broken_pipeline(intree_dir)
 
-    scan_roots = [(intree_dir, "arnold.pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    scan_roots = [(intree_dir, "arnold_pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = discover_python_pipelines()
@@ -214,8 +214,8 @@ def test_discover_python_pipelines_keeps_good_intree_with_rejected_intree(tmp_pa
     bad = intree_dir / "bad_one.py"
     bad.write_text("raise RuntimeError('bad_one')\n", encoding="utf-8")
 
-    scan_roots = [(intree_dir, "arnold.pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    scan_roots = [(intree_dir, "arnold_pipelines.megaplan.pipelines"), (tmp_path / "user", None)]
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             result = discover_python_pipelines()
@@ -229,7 +229,7 @@ def test_discover_python_pipelines_broken_user_warns_not_raises(tmp_path: Path):
     _make_broken_pipeline(user_dir)
 
     scan_roots = [(tmp_path / "intree", None), (user_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             result = discover_python_pipelines()  # must NOT raise
@@ -246,7 +246,7 @@ def test_discover_python_pipelines_good_pack_still_returned_alongside_rejected_u
     _make_broken_pipeline(user_dir)
 
     scan_roots = [(tmp_path / "intree", None), (user_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with warnings.catch_warnings(record=True):
             warnings.simplefilter("always")
             result = discover_python_pipelines()
@@ -261,7 +261,7 @@ def test_discover_python_pipelines_back_compat_return_shape(tmp_path: Path):
     _make_good_pipeline(user_dir)
 
     scan_roots = [(tmp_path / "intree", None), (user_dir, None)]
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = discover_python_pipelines()
 
     for item in result:
@@ -279,7 +279,7 @@ def test_manifest_discovery_default_ignores_m6_alias_value(tmp_path: Path, monke
 
     scan_roots = [(user_dir, None)]
     monkeypatch.setenv("MEGAPLAN_M6_MANIFEST_DISCOVERY", "0")
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         result = scan_python_pipelines()
 
     discovered = [d for d in result if d.status == "discovered"]
@@ -301,7 +301,7 @@ def test_manifest_discovery_does_not_exec_valid_module_by_default(
 
     scan_roots = [(user_dir, None)]
     monkeypatch.delenv("MEGAPLAN_M6_MANIFEST_DISCOVERY", raising=False)
-    with patch("arnold_pipelines.megaplan.runtime.discovery._SCAN_ROOTS", scan_roots):
+    with patch("arnold_pipelines.megaplan.runtime.discovery._get_scan_roots", lambda: scan_roots):
         with patch(
             "arnold_pipelines.megaplan.runtime.discovery._load_module_from_path",
             fail_load,

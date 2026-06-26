@@ -268,7 +268,7 @@ class TestDispatchResumeRouting:
 
     def _make_ctx(self, state: dict | None = None, *, artifact_root: str = "/tmp") -> object:
         """Build a minimal StepContext-like object for dispatch tests."""
-        from arnold.pipelines.megaplan._pipeline.types import StepContext
+        from arnold_pipelines.megaplan._pipeline.types import StepContext
 
         return StepContext(
             plan_dir=Path(artifact_root),
@@ -300,7 +300,7 @@ class TestDispatchResumeRouting:
         tmp_path: Path,
     ) -> None:
         """Valid native Megaplan cursors resume through pipeline.native_program."""
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         persist_native_cursor(
             tmp_path,
@@ -315,7 +315,7 @@ class TestDispatchResumeRouting:
         with patch(
             "arnold.pipeline.native.runtime.run_native_pipeline"
         ) as mock_run_native, patch(
-            "arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
+            "arnold_pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
         ) as mock_megaplan_runner:
             mock_run_native.return_value = type(
                 "FakeResult", (),
@@ -350,7 +350,7 @@ class TestDispatchResumeRouting:
         This is an explicit compatibility shim for serialized graph-era
         cursors, not a fresh-run default.
         """
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         # Write a graph-born cursor (no native key)
         persist_resume_cursor(
@@ -378,12 +378,12 @@ class TestDispatchResumeRouting:
             }
 
         with patch(
-            "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+            "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
             fake_legacy_run,
         ), patch(
             "arnold.pipeline.native.runtime.run_native_pipeline"
         ) as mock_run_native, patch(
-            "arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
+            "arnold_pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
         ) as mock_megaplan_runner:
             result = run_pipeline_dispatch(
                 pipeline=self._make_native_capable_megaplan_pipeline(),
@@ -403,7 +403,7 @@ class TestDispatchResumeRouting:
     def test_corrupt_native_cursor_fails_closed(self, tmp_path: Path) -> None:
         """When a corrupt native cursor exists, dispatch must fail closed
         and NOT fall back to the graph executor."""
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         # Write a corrupt native cursor (native is not a dict)
         payload = {
@@ -424,12 +424,12 @@ class TestDispatchResumeRouting:
 
         # Should raise NativeCursorCorruptError (fail closed)
         with patch(
-            "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+            "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
             fake_legacy_run,
         ), patch(
             "arnold.pipeline.native.runtime.run_native_pipeline"
         ) as mock_run_native, patch(
-            "arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
+            "arnold_pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
         ) as mock_megaplan_runner, pytest.raises(NativeCursorCorruptError) as exc_info:
             run_pipeline_dispatch(
                 pipeline=self._make_native_capable_megaplan_pipeline(),
@@ -443,14 +443,14 @@ class TestDispatchResumeRouting:
 
     def test_no_cursor_uses_flag_routing_native(self, tmp_path: Path) -> None:
         """When no cursor exists, the _native_execution flag controls routing."""
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         ctx = self._make_ctx(
             {"_native_execution": True}, artifact_root=str(tmp_path)
         )
 
         with patch(
-            "arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
+            "arnold_pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
         ) as mock_run:
             mock_run.return_value = type(
                 "FakeResult", (),
@@ -463,7 +463,7 @@ class TestDispatchResumeRouting:
             )()
 
             with patch(
-                "arnold.pipelines.megaplan._pipeline._bridge.run_pipeline_bridged",
+                "arnold_pipelines.megaplan._pipeline._bridge.run_pipeline_bridged",
                 return_value={"state": {}, "final_stage": "prep", "status": "completed"},
             ):
                 result = run_pipeline_dispatch(
@@ -479,7 +479,7 @@ class TestDispatchResumeRouting:
 
     def test_no_cursor_uses_flag_routing_graph(self, tmp_path: Path) -> None:
         """When no cursor exists and _native_execution is False, route to graph."""
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         ctx = self._make_ctx(
             {"_native_execution": False}, artifact_root=str(tmp_path)
@@ -499,7 +499,7 @@ class TestDispatchResumeRouting:
             }
 
         with patch(
-            "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+            "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
             fake_legacy_run,
         ):
             result = run_pipeline_dispatch(
@@ -513,8 +513,8 @@ class TestDispatchResumeRouting:
 
     def test_no_cursor_native_capable_fresh_defaults_native(self, tmp_path: Path) -> None:
         """Fresh canonical Megaplan dispatch uses pipeline.native_program."""
-        from arnold.pipelines.megaplan.pipeline import build_pipeline
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan.pipeline import build_pipeline
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         pipeline = build_pipeline()
         ctx = self._make_ctx({}, artifact_root=str(tmp_path))
@@ -522,7 +522,7 @@ class TestDispatchResumeRouting:
         with patch(
             "arnold.pipeline.native.runtime.run_native_pipeline"
         ) as mock_run_native, patch(
-            "arnold.pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
+            "arnold_pipelines.megaplan.native_runner.NativeMegaplanRunner.run_native_pipeline"
         ) as mock_megaplan_runner:
             mock_run_native.return_value = type(
                 "FakeResult",
@@ -552,7 +552,7 @@ class TestDispatchResumeRouting:
         tmp_path: Path,
     ) -> None:
         """Canonical-looking Megaplan stages are not native evidence."""
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         ctx = self._make_ctx({}, artifact_root=str(tmp_path))
         legacy_called = []
@@ -569,7 +569,7 @@ class TestDispatchResumeRouting:
             }
 
         with patch(
-            "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+            "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
             fake_legacy_run,
         ):
             run_pipeline_dispatch(
@@ -583,7 +583,7 @@ class TestDispatchResumeRouting:
 
     def test_no_cursor_explicit_graph_overrides_native_default(self, tmp_path: Path) -> None:
         """A fresh explicit graph marker keeps a converted pipeline on graph."""
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         ctx = self._make_ctx(
             {
@@ -607,7 +607,7 @@ class TestDispatchResumeRouting:
             }
 
         with patch(
-            "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+            "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
             fake_legacy_run,
         ):
             run_pipeline_dispatch(
@@ -624,7 +624,7 @@ class TestDispatchResumeRouting:
         tmp_path: Path,
     ) -> None:
         """Persisted state.json runtime markers participate in fresh routing."""
-        from arnold.pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
+        from arnold_pipelines.megaplan._pipeline._bridge import run_pipeline_dispatch
 
         (tmp_path / "state.json").write_text(
             json.dumps(
@@ -651,7 +651,7 @@ class TestDispatchResumeRouting:
             }
 
         with patch(
-            "arnold.pipelines.megaplan._pipeline.executor.run_pipeline",
+            "arnold_pipelines.megaplan._pipeline.executor.run_pipeline",
             fake_legacy_run,
         ):
             run_pipeline_dispatch(

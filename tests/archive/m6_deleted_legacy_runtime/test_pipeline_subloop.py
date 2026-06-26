@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from arnold.pipelines.megaplan._pipeline import (
+from arnold_pipelines.megaplan._pipeline import (
     Edge,
     Pipeline,
     Stage,
@@ -18,8 +18,8 @@ from arnold.pipelines.megaplan._pipeline import (
     StepResult,
     PipelineVerdict,
 )
-from arnold.pipelines.megaplan._pipeline.executor import run_pipeline
-from arnold.pipelines.megaplan._pipeline.subloop import SubloopStep
+from arnold_pipelines.megaplan._pipeline.executor import run_pipeline
+from arnold_pipelines.megaplan._pipeline.subloop import SubloopStep
 
 
 @dataclass
@@ -121,7 +121,7 @@ def test_subloop_without_child_pipeline_raises(tmp_path: Path) -> None:
 
 # ── M4: Suspended-child lift coverage ───────────────────────────────────────
 
-_EXECUTOR_PATH = "arnold.pipelines.megaplan._pipeline.executor.run_pipeline"
+_EXECUTOR_PATH = "arnold_pipelines.megaplan._pipeline.executor.run_pipeline"
 
 
 def test_non_null_suspension_scope_raises(tmp_path: Path) -> None:

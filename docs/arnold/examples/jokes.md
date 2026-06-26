@@ -4,7 +4,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/jokes
+- source_package: arnold_pipelines/megaplan/pipelines/jokes
 - manifest_hash: native:jokes
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
@@ -17,11 +17,11 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/jokes|
-| Builder target | arnold.pipelines.megaplan.pipelines.jokes:build_pipeline|
-| Steps | arnold/pipelines/megaplan/pipelines/jokes/steps.py|
-| Builder source | arnold/pipelines/megaplan/pipelines/jokes/__init__.py|
-| Skill | arnold/pipelines/megaplan/pipelines/jokes/SKILL.md|
+| Package | arnold_pipelines/megaplan/pipelines/jokes|
+| Builder target | arnold_pipelines.megaplan.pipelines.jokes:build_pipeline|
+| Steps | arnold_pipelines/megaplan/pipelines/jokes/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/jokes/__init__.py|
+| Skill | arnold_pipelines/megaplan/pipelines/jokes/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
 | Load state | loadable-native|
@@ -32,16 +32,13 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "jokes"
-description: str = (
-    "Joke pipeline: drafts a joke, tightens the beat, and emits the final artifact "
-    "through a direct native program."
-)
+name: str = 'jokes'
+description: str = 'Joke pipeline: drafts a joke, tightens the beat, and emits the final artifact through a direct native program.'
 
-driver: tuple[str, str] = ("native", "linear")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("creative", "joke")
+driver: tuple[str, str] = ('native', 'linear')
+entrypoint: str = 'build_pipeline'
+arnold_api_version: str = '1.0'
+capabilities: tuple[str, ...] = ('creative', 'joke')
 ```
 
 ## Step Surface
@@ -139,13 +136,9 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 # jokes Pipeline
 
-Purpose: provide a tiny standalone SDK pipeline that drafts, tightens, and
-emits a joke artifact without delegating to the `creative` pipeline.
-
-Runtime: `jokes` is a native-first pipeline. Fresh runs through
-`megaplan run jokes ...` or `arnold pipelines run jokes ...` execute on the
-native runtime. Native-born runs resume on native, and corrupt native cursors
-fail closed rather than silently falling back to graph.
+Purpose: provide a tiny standalone SDK pipeline that declares: "I'm a graph
+driver, I need dispatch+emit." It drafts, tightens, and emits a joke artifact
+without delegating to the `creative` pipeline.
 
 Topology:
 

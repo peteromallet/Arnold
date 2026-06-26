@@ -36,7 +36,7 @@ for launcher in "${LAUNCHERS[@]}"; do
 done
 
 if [ "$rc" = "1" ]; then
-  git add arnold/pipelines/megaplan/data/_composed/
+  git add arnold_pipelines/megaplan/data/_composed/
   echo 'megaplan: regenerated composed bundles — re-run git commit' >&2
   exit 1
 fi

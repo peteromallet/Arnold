@@ -41,6 +41,14 @@ def _existing_file(repo_root: Path, rel_path: str) -> bool:
     return candidate.is_file()
 
 
+def _existing_pytest_selector_path(repo_root: Path, rel_path: str) -> bool:
+    selector_path = rel_path.split("::", 1)[0].strip()
+    if not selector_path:
+        return False
+    candidate = repo_root / selector_path
+    return candidate.is_file() or candidate.is_dir()
+
+
 def _direct_selector_candidates(rel_path: str) -> list[str]:
     path = Path(rel_path)
     rel_dir = path.parent.as_posix()
@@ -135,6 +143,79 @@ def _always_run_path_args(value: str) -> list[str]:
     return paths
 
 
+def _sanitize_blast_radius_paths(
+    radius: dict[str, Any],
+    repo_root: Path,
+) -> dict[str, Any]:
+    """Keep only existing pytest path selectors in plan-time baseline metadata."""
+
+    sanitized = dict(radius)
+    missing: list[str] = []
+
+    selectors = radius.get("selectors")
+    if isinstance(selectors, list):
+        kept_selectors: list[dict[str, Any]] = []
+        for selector in selectors:
+            if not isinstance(selector, dict):
+                continue
+            if selector.get("kind") != "path":
+                kept_selectors.append(dict(selector))
+                continue
+            value = selector.get("value")
+            if not isinstance(value, str) or not value.strip():
+                continue
+            normalized = _normalize_relpath(value.strip())
+            if _existing_pytest_selector_path(repo_root, normalized):
+                kept = dict(selector)
+                kept["value"] = normalized
+                kept_selectors.append(kept)
+            else:
+                missing.append(normalized)
+        sanitized["selectors"] = kept_selectors
+
+    always_run = radius.get("always_run")
+    if isinstance(always_run, list):
+        kept_commands: list[str] = []
+        for command in always_run:
+            if not isinstance(command, str) or not command.strip():
+                continue
+            paths = _always_run_path_args(command)
+            missing_for_command = [
+                path
+                for path in paths
+                if not _existing_pytest_selector_path(repo_root, path)
+            ]
+            if missing_for_command:
+                missing.extend(missing_for_command)
+                continue
+            kept_commands.append(command.strip())
+        sanitized["always_run"] = kept_commands
+
+    if missing:
+        existing_missing = sanitized.get("missing_test_selectors")
+        all_missing: list[str] = []
+        seen: set[str] = set()
+        for value in [
+            *(existing_missing if isinstance(existing_missing, list) else []),
+            *missing,
+        ]:
+            if isinstance(value, str) and value not in seen:
+                seen.add(value)
+                all_missing.append(value)
+        sanitized["missing_test_selectors"] = all_missing
+        rationale = str(sanitized.get("rationale") or "").strip()
+        suffix = (
+            " Dropped nonexistent pytest path(s) from plan-time baseline metadata: "
+            + ", ".join(all_missing)
+            + "."
+        )
+        sanitized["rationale"] = (rationale + suffix).strip()
+    return sanitized
+
+
+sanitize_blast_radius_paths = _sanitize_blast_radius_paths
+
+
 def compute_default_blast_radius(
     changed_files: Iterable[str],
     repo_root: Path,
@@ -144,6 +225,12 @@ def compute_default_blast_radius(
     normalized = sorted({_normalize_relpath(path) for path in changed_files if path})
     changed_test_files = [
         rel_path for rel_path in normalized if _is_pytest_test_file(rel_path)
+    ]
+    missing_test_files = [
+        rel_path for rel_path in changed_test_files if not _existing_file(repo_root, rel_path)
+    ]
+    changed_test_files = [
+        rel_path for rel_path in changed_test_files if _existing_file(repo_root, rel_path)
     ]
     changed_python_surfaces = [
         rel_path
@@ -235,10 +322,13 @@ def compute_default_blast_radius(
             continue
         uncovered.append(rel_path)
 
-    if non_python_data:
-        strategy = "full"
-        confidence = "low"
-    elif uncovered:
+    has_scoped_selectors = bool(selectors)
+    if has_scoped_selectors:
+        strategy = "scoped"
+        confidence = "low" if missing_test_files or non_python_data or uncovered else (
+            "medium" if used_bounded_search or import_graph_degraded else "high"
+        )
+    elif missing_test_files or non_python_data or uncovered:
         strategy = "full"
         confidence = "low"
     elif not changed_test_files and not changed_python_surfaces:
@@ -254,6 +344,12 @@ def compute_default_blast_radius(
     if changed_test_files:
         rationale_parts.append(
             f"Included {len(changed_test_files)} changed pytest file(s) directly."
+        )
+    if missing_test_files:
+        rationale_parts.append(
+            "Declared pytest selector path(s) do not exist, so the default stays on the full-suite path: "
+            + ", ".join(missing_test_files)
+            + "."
         )
     if changed_python_surfaces:
         rationale_parts.append(
@@ -302,6 +398,8 @@ def compute_default_blast_radius(
     }
     if uncovered:
         result["uncovered_changes_justification"] = ", ".join(uncovered)
+    if missing_test_files:
+        result["missing_test_selectors"] = missing_test_files
     return result
 
 
@@ -738,6 +836,22 @@ def resolve_baseline_test_selection(
             "command_override": None,
         }
 
+    repo_root = Path(config.get("project_dir") or plan_dir.parent.parent.parent)
+    missing_paths = [
+        path
+        for path in path_values
+        if not _existing_pytest_selector_path(repo_root, path)
+    ]
+    if missing_paths:
+        return {
+            "mode": "unresolved",
+            "reason": (
+                "test_blast_radius scoped path selector(s) do not exist: "
+                + ", ".join(missing_paths)
+            ),
+            "command_override": None,
+        }
+
     # Deduplicate while preserving order.
     seen: set[str] = set()
     unique_paths: list[str] = []
@@ -757,6 +871,21 @@ def resolve_baseline_test_selection(
                     seen.add(path)
                     unique_paths.append(path)
                     always_run_paths.append(path)
+
+    missing_always_run_paths = [
+        path
+        for path in always_run_paths
+        if not _existing_pytest_selector_path(repo_root, path)
+    ]
+    if missing_always_run_paths:
+        return {
+            "mode": "unresolved",
+            "reason": (
+                "test_blast_radius always_run pytest path(s) do not exist: "
+                + ", ".join(missing_always_run_paths)
+            ),
+            "command_override": None,
+        }
 
     scoped_command = "pytest " + " ".join(shlex.quote(p) for p in unique_paths)
     reason = f"Scoped to {len(unique_paths)} path selector(s) from plan metadata"

@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import copy
 import fnmatch
+import json
 from pathlib import Path
 from typing import Any, Callable, Collection, Mapping
 
@@ -28,10 +29,24 @@ _DEFAULT_ARNOLD_ROOT = Path(__file__).resolve().parents[1]
 _DEFAULT_MEGAPLAN_COUPLING_ALLOWLIST = (
     Path(__file__).resolve().parent / "_megaplan_coupling_allowlist.txt"
 )
+_DEFAULT_LEGACY_REFERENCE_ALLOWLIST = (
+    Path(__file__).resolve().parent / "legacy_reference_allowlist.json"
+)
 ACTIVE_MEGAPLAN_PACKAGE_NAMES = (
     "megaplan",
     "arnold.pipelines.megaplan",
     "arnold_pipelines.megaplan",
+)
+LEGACY_REFERENCE_PATTERNS = (
+    "arnold.pipelines.megaplan",
+    "arnold/pipelines/megaplan",
+    "python -m arnold.pipelines.megaplan",
+)
+LEGACY_REFERENCE_CATEGORIES = frozenset(
+    {
+        "scanner-target",
+        "historical-non-shipped",
+    }
 )
 
 
@@ -631,6 +646,102 @@ def check_never_port_artifacts(
     )
 
 
+def check_legacy_reference_allowlist(
+    *,
+    repo_root: Path | None = None,
+    allowlist_path: Path | None = None,
+    allowlist: Collection[Mapping[str, str]] | None = None,
+) -> ConformanceCheckResult:
+    """Validate the machine-readable legacy Megaplan reference allowlist.
+
+    The JSON allowlist is the milestone authority for any permitted remaining
+    references to the deleted ``arnold.pipelines.megaplan`` root.  Entries are
+    intentionally narrow: each one names an exact repository path, one scanner
+    pattern, an allowed category, and a reason.  The check fails for malformed
+    entries, stale entries whose path no longer contains the pattern, and live
+    non-archive references missing from the allowlist.
+    """
+
+    root = repo_root or _DEFAULT_ARNOLD_ROOT.parent
+    records = (
+        list(allowlist)
+        if allowlist is not None
+        else _read_legacy_reference_allowlist(
+            allowlist_path or _DEFAULT_LEGACY_REFERENCE_ALLOWLIST
+        )
+    )
+    resolved_allowlist_path = (
+        allowlist_path or _DEFAULT_LEGACY_REFERENCE_ALLOWLIST
+    ).resolve()
+    resolved_root = root.resolve()
+    allowlist_rel = (
+        resolved_allowlist_path.relative_to(resolved_root).as_posix()
+        if resolved_allowlist_path.is_relative_to(resolved_root)
+        else None
+    )
+
+    invalid_entries: list[dict[str, Any]] = []
+    allowed: set[tuple[str, str]] = set()
+    duplicates: list[dict[str, str]] = []
+    for index, record in enumerate(records):
+        normalized, errors = _normalize_legacy_reference_entry(record)
+        if errors:
+            invalid_entries.append(
+                {"index": index, "entry": dict(record), "errors": errors}
+            )
+            continue
+        key = (normalized["path"], normalized["pattern"])
+        if key in allowed:
+            duplicates.append(
+                {"path": normalized["path"], "pattern": normalized["pattern"]}
+            )
+        allowed.add(key)
+
+    references = _scan_legacy_references(root, allowlist_rel=allowlist_rel)
+    observed = {(hit["path"], hit["pattern"]) for hit in references}
+    unallowlisted = [
+        hit for hit in references if (hit["path"], hit["pattern"]) not in allowed
+    ]
+    stale = [
+        {"path": path, "pattern": pattern}
+        for path, pattern in sorted(allowed - observed)
+    ]
+
+    details = {
+        "allowlisted_count": len(allowed),
+        "observed_count": len(observed),
+        "unallowlisted": unallowlisted,
+        "stale_allowlist": stale,
+        "invalid_entries": invalid_entries,
+        "duplicates": duplicates,
+    }
+
+    diagnostics: list[str] = []
+    if invalid_entries:
+        diagnostics.append(f"invalid legacy reference allowlist entries: {len(invalid_entries)}")
+    if duplicates:
+        diagnostics.append(f"duplicate legacy reference allowlist entries: {len(duplicates)}")
+    if stale:
+        diagnostics.append(
+            "stale legacy reference allowlist entries: "
+            + ", ".join(f"{item['path']}:{item['pattern']}" for item in stale)
+        )
+    if unallowlisted:
+        diagnostics.append(
+            "unallowlisted legacy references: "
+            + ", ".join(
+                f"{item['path']}:{item['pattern']}" for item in unallowlisted[:20]
+            )
+        )
+
+    return ConformanceCheckResult(
+        check_id="legacy-reference-allowlist",
+        passed=not diagnostics,
+        message="; ".join(diagnostics),
+        details=details,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -711,6 +822,94 @@ def _read_megaplan_coupling_allowlist(path: Path) -> set[str]:
     return allowed
 
 
+def _read_legacy_reference_allowlist(path: Path) -> list[Mapping[str, str]]:
+    if not path.exists():
+        return []
+    loaded = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(loaded, list):
+        return loaded
+    if isinstance(loaded, dict) and isinstance(loaded.get("references"), list):
+        return loaded["references"]
+    return [
+        {
+            "path": str(path),
+            "pattern": "",
+            "category": "",
+            "reason": (
+                "legacy reference allowlist JSON must be a list or an object "
+                "with a 'references' list"
+            ),
+        }
+    ]
+
+
+def _normalize_legacy_reference_entry(
+    record: Mapping[str, str],
+) -> tuple[dict[str, str], list[str]]:
+    required = ("path", "pattern", "category", "reason")
+    errors: list[str] = []
+    normalized: dict[str, str] = {}
+    for key in required:
+        value = record.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"missing or empty {key!r}")
+            normalized[key] = ""
+        else:
+            normalized[key] = value.strip()
+    extra = sorted(set(record) - set(required))
+    if extra:
+        errors.append("unexpected keys: " + ", ".join(extra))
+    if normalized.get("pattern") not in LEGACY_REFERENCE_PATTERNS:
+        errors.append(f"unsupported pattern {normalized.get('pattern')!r}")
+    if normalized.get("category") not in LEGACY_REFERENCE_CATEGORIES:
+        errors.append(f"unsupported category {normalized.get('category')!r}")
+    if Path(normalized.get("path", "")).is_absolute():
+        errors.append("path must be repository-relative")
+    return normalized, errors
+
+
+def _scan_legacy_references(
+    root: Path,
+    *,
+    allowlist_rel: str | None = None,
+) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if rel == allowlist_rel or _is_excluded_from_legacy_reference_scan(rel):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for pattern in LEGACY_REFERENCE_PATTERNS:
+            if pattern in text:
+                references.append({"path": rel, "pattern": pattern})
+    return references
+
+
+def _is_excluded_from_legacy_reference_scan(relative_path: str) -> bool:
+    parts = relative_path.split("/")
+    if (
+        parts[0] in {
+            ".git",
+            ".megaplan",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            "__pycache__",
+        }
+        or "__pycache__" in parts
+        or relative_path.startswith("tests/archive/")
+        or relative_path.startswith("docs/archive/")
+        or relative_path.startswith("docs/arnold/workflow-manifest-runtime-review/")
+    ):
+        return True
+    return False
+
+
 def _scan_generic_arnold_megaplan_imports(root: Path) -> dict[str, tuple[str, ...]]:
     coupled: dict[str, tuple[str, ...]] = {}
     for path in sorted(root.rglob("*.py")):
@@ -738,9 +937,7 @@ def _scan_generic_arnold_megaplan_imports(root: Path) -> dict[str, tuple[str, ..
 
 def _is_excluded_from_generic_arnold_scan(root: Path, path: Path) -> bool:
     relative_parts = path.relative_to(root).parts
-    if "__pycache__" in relative_parts or "tests" in relative_parts:
-        return True
-    return relative_parts[:2] == ("pipelines", "megaplan")
+    return "__pycache__" in relative_parts or "tests" in relative_parts
 
 
 def _module_name_from_path(root: Path, path: Path) -> str:
@@ -897,6 +1094,8 @@ def check_adapter_registry_round_trip(
 
 __all__ = [
     "ACTIVE_MEGAPLAN_PACKAGE_NAMES",
+    "LEGACY_REFERENCE_CATEGORIES",
+    "LEGACY_REFERENCE_PATTERNS",
     "check_adapter_protocol_conformance",
     "check_adapter_unknown_kind_fail_closed",
     "check_adapter_smoke_invocation",
@@ -906,9 +1105,9 @@ __all__ = [
     "check_contract_result_empty_schema_version_accepted",
     "check_generic_arnold_megaplan_coupling",
     "check_import_coupling",
+    "check_legacy_reference_allowlist",
     "check_never_port_artifacts",
     "check_package_name_staleness",
     "check_public_workflow_layering",
     "check_semantic_coupling",
-    "check_package_name_staleness",
 ]

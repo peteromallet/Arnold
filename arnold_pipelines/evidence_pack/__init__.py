@@ -18,9 +18,9 @@ from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 name: str = "evidence-pack"
 description: str = "Model-less verification of persisted evidence-pack JSON artifacts."
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ()
+supported_modes: tuple[str, ...] = ("graph",)
 recommended_profiles: tuple[str, ...] = ()
-driver: tuple[str, str] = ("in_process", "verify")
+driver: tuple[str, str] = ("graph", "verify")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("artifact-verification", "evidence-pack")

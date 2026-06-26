@@ -18,7 +18,7 @@ from arnold.pipeline.resume import (
     classify_resume_cursor_payload,
     persist_resume_cursor,
 )
-from arnold.pipelines.megaplan.pipeline import build_pipeline
+from arnold_pipelines.megaplan.pipeline import build_pipeline
 
 
 EXPECTED_STAGE_ORDER = (

@@ -20,14 +20,14 @@ from typing import Any
 
 import pytest
 
-import arnold.pipelines.megaplan as megaplan
+import arnold_pipelines.megaplan as megaplan
 
-from arnold.pipelines.megaplan.runtime.inprocess_step import (
+from arnold_pipelines.megaplan.runtime.inprocess_step import (
     build_inprocess_planning_steps,
     build_revise_step,
     build_review_step,
 )
-from arnold.pipelines.megaplan._pipeline.types import StepContext
+from arnold_pipelines.megaplan._pipeline.types import StepContext
 
 from tests.conftest import make_args_factory
 

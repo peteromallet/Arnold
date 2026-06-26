@@ -85,10 +85,17 @@ def _derive_plan_test_blast_radius(
     from arnold_pipelines.megaplan.orchestration.test_selection import (
         compute_default_blast_radius,
         merge_blast_radius_floor,
+        sanitize_blast_radius_paths,
     )
 
     repo_root = Path(state["config"]["project_dir"])
     changed_surfaces = payload.get("changed_surfaces")
+    if not isinstance(changed_surfaces, list):
+        model_proposed = payload.get("test_blast_radius")
+        if isinstance(model_proposed, dict):
+            proposed_changed_surfaces = model_proposed.get("changed_surfaces")
+            if isinstance(proposed_changed_surfaces, list):
+                changed_surfaces = proposed_changed_surfaces
     if not isinstance(changed_surfaces, list):
         changed_surfaces = _prep_relevant_code_surfaces(plan_dir)
     changed_surfaces = [
@@ -123,6 +130,8 @@ def _derive_plan_test_blast_radius(
     else:
         final_blast_radius = deterministic_floor
 
+    if final_blast_radius is not None:
+        final_blast_radius = sanitize_blast_radius_paths(final_blast_radius, repo_root)
     if final_blast_radius is not None and "changed_surfaces" not in final_blast_radius:
         final_blast_radius["changed_surfaces"] = list(changed_surfaces)
     return final_blast_radius

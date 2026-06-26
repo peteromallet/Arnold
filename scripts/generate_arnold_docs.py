@@ -652,7 +652,7 @@ def _render_composed_skill(name: str, description: str) -> str:
             "## Disallowed surfaces",
             "",
             "Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, "
-            "hand-built graph fallback builders, or ``arnold.pipelines.megaplan`` imports.  New "
+            "hand-built graph fallback builders, or deleted Megaplan-root imports.  New "
             "packages must be native-first: use native declarations and return an "
             "``arnold.pipeline.Pipeline`` with ``native_program`` set.",
             "",

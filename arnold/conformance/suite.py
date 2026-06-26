@@ -38,6 +38,7 @@ from arnold.conformance.checks import (
     check_contract_result_schema_version_skew,
     check_generic_arnold_megaplan_coupling,
     check_import_coupling,
+    check_legacy_reference_allowlist,
     check_never_port_artifacts,
     check_package_name_staleness,
     check_public_workflow_layering,
@@ -197,6 +198,7 @@ def run_conformance_suite(
     results.append(
         check_never_port_artifacts(allowlist=allowlist["never-port-artifacts"])
     )
+    results.append(check_legacy_reference_allowlist())
 
     return ConformanceSuiteResult(
         suite_id=suite_id,

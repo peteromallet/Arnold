@@ -45,6 +45,15 @@ MODULE_VERBS: tuple[str, ...] = ("run", "check", "doctor", "describe", "auto")
 # canonical pipeline identity routed through this surface is ``megaplan``.
 PLANNING_MODULE_VERBS: tuple[str, ...] = (*MODULE_VERBS, "override")
 
+# Subcommand surface exposed by ``arnold pipelines``.
+PIPELINES_ACTIONS: tuple[str, ...] = (
+    "check",
+    "describe",
+    "doctor",
+    "list",
+    "new",
+)
+
 
 def cli_entry() -> None:
     sys.exit(main())

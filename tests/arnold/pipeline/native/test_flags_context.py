@@ -142,26 +142,6 @@ class TestImportabilityWithoutFlag:
         # The deprecated guard no longer gates native execution.
         rnr()
 
-    def test_megaplan_native_hooks_importable_without_flag(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """SC4: arnold.pipelines.megaplan.native_hooks imports without flag."""
-        monkeypatch.delenv("ARNOLD_NATIVE_RUNTIME", raising=False)
-        from arnold.pipelines.megaplan.native_hooks import (
-            MegaplanNativeRuntimeHooks,
-            MegaplanNativeHooks,
-            UnknownOverrideError,
-        )
-        # All symbols are importable
-        assert MegaplanNativeRuntimeHooks is not None
-        assert MegaplanNativeHooks is not None
-        assert UnknownOverrideError is not None
-        # MegaplanNativeHooks is an alias for MegaplanNativeRuntimeHooks
-        assert MegaplanNativeHooks is MegaplanNativeRuntimeHooks
-        # Can instantiate without error
-        hooks = MegaplanNativeRuntimeHooks()
-        assert hooks.halt_reason is None
-
 
 # ── NativeRuntimeDisabledError shape ──────────────────────────────────
 
@@ -276,26 +256,6 @@ class TestM3HandoffBoundary:
         assert not rejected_shim.exists(), (
             f"SD3 boundary violation: rejected shim exists at {rejected_shim}"
         )
-
-    def test_megaplan_native_hooks_importable_without_flag(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """SC4: arnold.pipelines.megaplan.native_hooks imports without flag."""
-        monkeypatch.delenv("ARNOLD_NATIVE_RUNTIME", raising=False)
-        from arnold.pipelines.megaplan.native_hooks import (
-            MegaplanNativeRuntimeHooks,
-            MegaplanNativeHooks,
-            UnknownOverrideError,
-        )
-        # All symbols are importable
-        assert MegaplanNativeRuntimeHooks is not None
-        assert MegaplanNativeHooks is not None
-        assert UnknownOverrideError is not None
-        # MegaplanNativeHooks is an alias for MegaplanNativeRuntimeHooks
-        assert MegaplanNativeHooks is MegaplanNativeRuntimeHooks
-        # Can instantiate without error
-        hooks = MegaplanNativeRuntimeHooks()
-        assert hooks.halt_reason is None
 
     def test_nine_callbacks_only_on_hooks_protocol(self) -> None:
         """The NativeRuntimeHooks protocol has exactly the 9 real callbacks."""

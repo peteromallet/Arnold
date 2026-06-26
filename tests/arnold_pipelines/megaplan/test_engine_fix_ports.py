@@ -137,7 +137,7 @@ def test_authority_reader_uses_current_head_when_task_omits_head_sha(
     head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=project_dir, text=True).strip()
 
     refs = _evidence_from_task_record(
-        {"id": "T1", "files_changed": ["file.txt"]},
+        {"id": "T1", "status": "done", "files_changed": ["file.txt"]},
         project_dir / ".megaplan" / "plans" / "p" / "execution.json",
         root=project_dir,
     )

@@ -22,16 +22,16 @@ from typing import Any
 
 import pytest
 
-import arnold.pipelines.megaplan as megaplan
+import arnold_pipelines.megaplan as megaplan
 from arnold.pipelines import megaplan
-import arnold.pipelines.megaplan._core
-import arnold.pipelines.megaplan._core.io as io_module
-import arnold.pipelines.megaplan.cli as megaplan_cli
+import arnold_pipelines.megaplan._core
+import arnold_pipelines.megaplan._core.io as io_module
+import arnold_pipelines.megaplan.cli as megaplan_cli
 
-from arnold.pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
-from arnold.pipelines.megaplan._pipeline.planning import compile_planning_pipeline
-from arnold.pipelines.megaplan._pipeline.runtime import policy_from_cli_args
-from arnold.pipelines.megaplan._pipeline.types import StepContext
+from arnold_pipelines.megaplan._pipeline.executor import run_pipeline_with_policy
+from arnold_pipelines.megaplan._pipeline.planning import compile_planning_pipeline
+from arnold_pipelines.megaplan._pipeline.runtime import policy_from_cli_args
+from arnold_pipelines.megaplan._pipeline.types import StepContext
 
 
 def _mock_plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -150,7 +150,7 @@ def test_pipeline_runtime_honors_cost_cap(
     to verify the tracker correctly halts on the first stage.
     """
     from dataclasses import dataclass
-    from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepResult
+    from arnold_pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage, StepResult
 
     @dataclass
     class _Costly:

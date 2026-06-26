@@ -52,7 +52,11 @@ from arnold_pipelines.megaplan._core import (
     workflow_includes_step,
 )
 
-from .plan import _build_verifiability_flags, _merge_imported_decision_criteria
+from .plan import (
+    _build_verifiability_flags,
+    _derive_plan_test_blast_radius,
+    _merge_imported_decision_criteria,
+)
 from .shared import _agent_mode_parts, _append_to_meta, _finish_step, _raise_step_validation_error, _write_plan_version
 from .tiebreaker import _build_tiebreaker_reprompt
 
@@ -1117,18 +1121,16 @@ def handle_revise(root: Path, args: argparse.Namespace) -> StepResponse:
             prior_blast_radius = carried if isinstance(carried, dict) else None
         except Exception:
             prior_blast_radius = None
-        if prior_blast_radius is not None and revise_blast_radius is not None:
+        if revise_blast_radius is not None:
             try:
-                from arnold_pipelines.megaplan.orchestration.test_selection import (
-                    merge_blast_radius_floor,
-                )
-
-                revise_blast_radius = merge_blast_radius_floor(
-                    prior_blast_radius,
-                    revise_blast_radius,
+                revise_blast_radius = _derive_plan_test_blast_radius(
+                    plan_dir=plan_dir,
+                    state=state,
+                    payload=payload,
                 )
             except Exception:
-                revise_blast_radius = prior_blast_radius
+                if prior_blast_radius is not None:
+                    revise_blast_radius = prior_blast_radius
         elif revise_blast_radius is None:
             revise_blast_radius = prior_blast_radius
         revise_meta_fields = {

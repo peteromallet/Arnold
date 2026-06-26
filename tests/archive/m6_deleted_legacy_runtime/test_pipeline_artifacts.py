@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipelines.megaplan._pipeline.artifacts import (
+from arnold_pipelines.megaplan._pipeline.artifacts import (
     artifact_dir,
     latest_artifact_path,
     latest_version,
     next_version_path,
     versioned_artifacts,
 )
-from arnold.pipelines.megaplan._pipeline.types import StepContext
+from arnold_pipelines.megaplan._pipeline.types import StepContext
 
 
 def _ctx(tmp_path: Path) -> StepContext:
