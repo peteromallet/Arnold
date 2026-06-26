@@ -1,4 +1,4 @@
-base_branch: native-python-working-tree
+base_branch: main
 
 anchors:
   north_star: NORTHSTAR.md

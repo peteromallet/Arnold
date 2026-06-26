@@ -240,7 +240,16 @@ SCHEMAS: dict[str, dict[str, Any]] = {
     "plan.json": {
         "type": "object",
         "properties": {
-            "plan": {"type": "string"},
+            "plan": {
+                "type": "string",
+                "description": (
+                    "Complete plan markdown. Must include exactly one H1 title, "
+                    "a `## Overview` section, at least one step heading in the "
+                    "form `## Step N: ...` or `### Step N: ...` under a phase, "
+                    "and `## Execution Order` or `## Validation Order`. Do not "
+                    "return a prose numbered list without Step headings."
+                ),
+            },
             "questions": {"type": "array", "items": {"type": "string"}},
             "success_criteria": {
                 "type": "array",

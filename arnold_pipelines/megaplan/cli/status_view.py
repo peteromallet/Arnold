@@ -33,6 +33,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
     Deviation,
     read_phase_result,
 )
+from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
 from arnold_pipelines.megaplan.control_interface import read_valid_targets
 from arnold.runtime.outcome import RunOutcome
 
@@ -306,6 +307,15 @@ def _projected_target_ids(
 
 
 def _projected_valid_next(state: dict[str, Any]) -> list[str]:
+    history = state.get("history")
+    last = history[-1] if isinstance(history, list) and history else None
+    if (
+        isinstance(last, dict)
+        and last.get("result") == "error"
+        and last.get("step") in {"plan", "revise"}
+        and PLAN_STRUCTURE_REQUIRED_STEP_ISSUE in str(last.get("message") or "")
+    ):
+        return [str(last["step"])]
     use_recovery = _projected_outcome(state) in {
         RunOutcome.BLOCKED,
         RunOutcome.AWAITING_HUMAN,

@@ -16,6 +16,7 @@ from arnold.kernel.content_types import ContentTypeRegistration, ContentTypeRegi
 _VERSIONED_NAME_RE = re.compile(
     r"^v(?P<version>[1-9][0-9]*)\.(?P<ext>[A-Za-z0-9][A-Za-z0-9._-]*)$"
 )
+_LOGICAL_ROOT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 
 
 class ArtifactRootKind(StrEnum):
@@ -32,6 +33,20 @@ class ArtifactRoot:
     root_id: str
     path: str
     kind: ArtifactRootKind = ArtifactRootKind.PLAN_ARTIFACT_ROOT
+
+    def __post_init__(self) -> None:
+        validate_logical_root_id(self.root_id)
+        if not self.path:
+            raise ValueError("artifact root path must be non-empty")
+        if "\x00" in self.path:
+            raise ValueError("artifact root path must not contain NUL bytes")
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "kind": self.kind.value,
+            "path": self.path,
+            "root_id": self.root_id,
+        }
 
 
 @dataclass(frozen=True)
@@ -86,6 +101,38 @@ class ArtifactBinding:
     content_type: ContentTypeRegistration
     provenance: GeneratedArtifactProvenance
     retention_pins: tuple[RetentionPin, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_logical_root_id(self.artifact_id)
+        validate_safe_relative_subpath(self.relative_path)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _plain_value(self)
+
+
+def validate_logical_root_id(value: str) -> str:
+    """Validate a stable logical artifact root or artifact id."""
+
+    if not value:
+        raise ValueError("logical root id must be non-empty")
+    if not _LOGICAL_ROOT_ID_RE.fullmatch(value):
+        raise ValueError("logical root id contains unsupported characters")
+    return value
+
+
+def validate_safe_relative_subpath(value: str) -> str:
+    """Validate an artifact-relative POSIX path that cannot escape its root."""
+
+    if not value:
+        raise ValueError("relative artifact path must be non-empty")
+    if "\\" in value or "\x00" in value:
+        raise ValueError("relative artifact path contains unsupported characters")
+    path = PurePosixPath(value)
+    if path.is_absolute():
+        raise ValueError("relative artifact path must not be absolute")
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("relative artifact path must not contain empty, dot, or parent segments")
+    return value
 
 
 def versioned_artifact_name(stem: str, version: int, extension: str) -> str:
@@ -375,5 +422,7 @@ __all__ = [
     "ProvenanceParent",
     "latest_version",
     "next_version_path",
+    "validate_logical_root_id",
+    "validate_safe_relative_subpath",
     "versioned_artifact_name",
 ]
