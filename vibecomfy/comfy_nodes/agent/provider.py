@@ -244,6 +244,8 @@ def build_batch_messages(
     budget_remaining: int = 12,
     max_batches: int = 12,
     conversation_messages: list[dict[str, Any]] | None = None,
+    research_only: bool = False,
+    research_brief: str = "",
     research_summary: str = "",
     graph_report: str = "",
     precedent_adaptation_plan: str = "",
@@ -272,8 +274,13 @@ def build_batch_messages(
             "If its signature is not included, search "
             "`search(focus_types=[\"vibecomfy.exec\"])` first. "
         )
+    mission = (
+        "You are answering a research question for a ComfyUI canvas. Gather auditable evidence with `research(...)`, refine weak searches, answer in prose, then call `done()`. Do not edit the graph.\n"
+        if research_only
+        else "You edit a ComfyUI canvas as live Python objects.\n"
+    )
     system = (
-        "You edit a ComfyUI canvas as live Python objects.\n"
+        mission +
         "Each node is a variable; wiring uses `.OUTPUT` from other variables.\n\n"
         "Two moves:\n"
         "- Add: `x = NodeType(field=val, input=other.OUTPUT)`\n"
@@ -281,33 +288,53 @@ def build_batch_messages(
         "Privileged calls:\n"
         "- `del x`\n"
         "- `node.mode = \"bypassed\" | \"muted\" | \"enabled\"` (bypass does NOT pass input through)\n"
-        "- `search(focus_types=[\"ClassName\"])` — exact local installed-node schema lookup only; no internet/precedent search and no edit lands\n"
-        "- `research(\"query words\", sources=[\"workflows\", \"messages\", \"web\"])` — choose evidence tiers; no edit lands\n"
+        "- `search(focus_types=[\"ClassName\"])` — exact local ComfyUI schema lookup only; no internet/precedent search and no edit lands\n"
+        "- `research(\"query words\", sources=[\"workflows\", \"registry\", \"messages\", \"web\"])` — choose evidence tiers; if sources are omitted it searches internal workflows/templates only; no edit lands\n"
         "- `python()` — view current workflow Python\n"
         "- `done()` — commit landed edits\n\n"
-        "Output rule: name output slots, e.g. `up.IMAGE`, never bare `up`. "
-        "Bare ambiguous refs are rejected.\n\n"
+        "Output rule: name output slots, e.g. `up.IMAGE`, never bare `up`.\n\n"
         "Known limits:\n"
         "- `attr = None` disconnects a wire\n"
         "- No list sockets/reorder/group/cross-subgraph edits\n\n"
-        "Question mode: if Research/Graph inspection appears and the user only asked a question, answer and `done()`.\n\n"
+        "Question / explanation mode: if Research/Graph inspection appears and the user only asked a question, answer from it and `done()`.\n\n"
         "Code node rule:\n"
         "For code-node, Python, PIL, or custom image-processing requests, use exactly "
         "`vibecomfy.exec` — never `vibecomfy.code`, `ImageCode`, `PythonCode`, or a guessed class. "
         f"{code_node_instruction}"
-        "Use `io={...}`, route decoded image through `in_0`, return "
-        "`{\"image\": processed}` from `source`, and wire `out_0` downstream.\n\n"
-        "Use real graph names: Reference EXISTING nodes by EXACT names in Current scratchpad Python. "
-        "NEVER invent names/placeholders.\n\n"
-        "Search first (only when needed): existing nodes are shown above, so do NOT search for them. "
-        "Only `search(focus_types=[\"X\"])` for a NEW node TYPE you want to ADD. Then edit or `clarify(\"...\")`.\n\n"
-        "Precedent research: use `research(\"specific query\", sources=[...])` for workflow/message/web evidence; "
-        "`sources=[\"web\"]` means web-only. "
-        "Then narrow `research(...)`, run local `search(...)`, edit, or `clarify(\"...\")` if nodes are not installed.\n\n"
+        "The `io` JSON widget declares the typed contract. Use exactly one of these shapes: "
+        "`io={'inputs': [['image', 'IMAGE']], 'outputs': [['image', 'IMAGE']]}`, "
+        "`io={'inputs': {'image': 'IMAGE'}, 'outputs': {'image': 'IMAGE'}}`, or a JSON string equivalent. "
+        "Wire with physical slot names (`in_0`, `out_0`) and reference the semantic input name inside `source`. "
+        "Example: `pil = vibecomfy.exec(source='import torch; return {\"image\": image[0]}', io={'inputs': {'image': 'IMAGE'}, 'outputs': {'image': 'IMAGE'}}, in_0=decode.IMAGE)` "
+        "then `save.images = pil.out_0`.\n\n"
+        "Local schema lookup (only when needed): existing nodes are shown above, so do NOT search for them. "
+        "Only `search(focus_types=[\"X\"])` for a NEW exact node TYPE you intend to add. "
+        "`search(...)` is factual local ComfyUI schema lookup, not workflow/web research, and never justifies substituting a merely similar installed node for the user's named target.\n\n"
+        "For generic save/export/view/output requests, start from the graph's actual terminal output type. "
+        "If the graph ends in `IMAGE`, search local consumers with `search(compatible_output_type=\"IMAGE\")`; "
+        "if you need an mp4-style video sink, search both the image-to-video step and video sink, e.g. "
+        "`search(compatible_output_type=\"IMAGE\")` then `search(compatible_output_type=\"VIDEO\")`. "
+        "Do this before guessing branded output-node class names. Use exact `focus_types` only after a class name appears in those compatibility results or other evidence.\n\n"
+        "Research strategy (bounded guidance): "
+        "When a Research brief appears, use it to choose focused `research(...)` "
+        "queries and source tiers; it is search direction, not an answer. "
+        "Do not search the raw user sentence if the brief supplies better terms. "
+        "workflow context is mandatory for named external workflow/model/node-family requests. "
+        "Search for the smallest named artifact that would identify the real workflow pattern, not for guessed implementation details. "
+        "Separate the user's named target from generic constraints; do not search generic constraints by themselves. "
+        "Use separate evidence-tier calls: `sources=[\"workflows\"]` first, "
+        "then if needed `sources=[\"web\"]`, then if needed `sources=[\"registry\"]`. "
+        "First look internally for a workflow/template precedent. "
+        "Do not combine internal workflow search with web or registry in the first pass. "
+        "A web URL/title is a lead, not yet workflow context — keep searching for concrete node types/wiring. "
+        "Only after workflow/example context identifies a pack should you query registry/schema. "
+        "Do not invent likely class names. "
+        "Do not call `search(focus_types=[...])` for guessed names. "
+        "Apply the smallest workflow-pattern edit the evidence supports. "
+        "Treat community messages as weak hints; ground missing-node requirements in registry/workflow evidence.\n\n"
         "Placement: optional `near=anchor_var`; never set coordinates.\n\n"
-        "Envelope: start with one user-facing prose sentence — the visible chat reply — then exactly one ```batch fence. "
-        "Never respond with only a fenced block; the prose is not a review/status placeholder. "
-        "`clarify(\"...\")` is terminal and creates no candidate. "
+        "Envelope: start with one user-facing prose sentence, then exactly one ```batch fence. "
+        "Never respond with only a fenced block. `clarify(\"...\")` is terminal and creates no candidate. "
         "Use it only when no defensible edit is possible after graph, context, precedent research, and schema/search. "
         "Prefer one valid default over asking. No extra fenced blocks before the required ```batch fence.\n\n"
         f"Budget: {budget_remaining} turn(s) remaining out of {max_batches}.\n\n"
@@ -397,10 +424,18 @@ def build_batch_messages(
                 "\n\nNode variable index:\n"
                 f"```\n{node_variable_index}\n```"
             )
+        research_brief_block = ""
+        if research_brief:
+            research_brief_block = (
+                "\n\nResearch brief from triage (directional; not findings):\n"
+                f"{research_brief}\n"
+                "Use these directions to form focused research(...) calls. "
+                "If results are weak or generic, refine the query and try a different evidence tier."
+            )
         research_block = ""
         if research_summary:
             research_block = (
-                "\n\nResearch findings (external + local corpus):\n"
+                "\n\nResearch evidence/context (external + local corpus):\n"
                 f"{research_summary}\n{_WORKFLOW_RESEARCH_GUIDANCE}"
             )
         graph_report_block = ""
@@ -431,6 +466,7 @@ def build_batch_messages(
             f"{node_index_block}"
             f"{catalog_block}"
             f"{names_block}"
+            f"{research_brief_block}"
             f"{research_block}"
             f"{precedent_adaptation_block}"
             f"{revision_evidence_block}"
@@ -454,6 +490,14 @@ def build_batch_messages(
                 "\n\nNode variable index:\n"
                 f"```\n{node_variable_index}\n```"
             )
+        research_brief_block = ""
+        if research_brief:
+            research_brief_block = (
+                "\n\nResearch brief from triage (directional; not findings):\n"
+                f"{research_brief}\n"
+                "Use these directions to form focused research(...) calls. "
+                "If results are weak or generic, refine the query and try a different evidence tier."
+            )
         previous_message_block = ""
         if previous_model_message:
             previous_message_block = (
@@ -467,7 +511,7 @@ def build_batch_messages(
         research_block = ""
         if research_summary:
             research_block = (
-                "\n\nResearch findings (external + local corpus):\n"
+                "\n\nResearch evidence/context (external + local corpus):\n"
                 f"{research_summary}\n{_WORKFLOW_RESEARCH_GUIDANCE}"
             )
         graph_report_block = ""
@@ -494,6 +538,7 @@ def build_batch_messages(
             f"{previous_message_block}"
             f"{diff_block}"
             f"{report_block}"
+            f"{research_brief_block}"
             f"{research_block}"
             f"{precedent_adaptation_block}"
             f"{revision_evidence_block}"

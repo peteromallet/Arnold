@@ -1,0 +1,6 @@
+# owner: structural-harness-surface
+# reason: pre-existing structural harness fixture gaps in offline environment
+# audit: added during sprint-3 diagnostics verification
+
+tests/test_structural_harness_adapter.py::test_capture_hoists_structural_artifacts_to_pack_root_and_surfaces_actions
+tests/test_structural_harness_adapter.py::test_capture_structural_evidence_routes_m2_slug_and_writes_workspace_git_diff

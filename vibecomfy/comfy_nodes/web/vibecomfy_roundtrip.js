@@ -4,7 +4,16 @@ import {
   nextAgentPanelId,
   panelsCreatedCount,
   setCurrentAgentPanel,
-} from "./panel_runtime.js";
+  // ── T7: Scope snapshot / draft management ────────────────────────────
+  saveScopeDraft,
+  getScopeDraft,
+  saveScopeSnapshot,
+  forgetScopeSnapshot,
+  // ── T9: Per-scope queue guard context ────────────────────────────────
+  saveScopeQueueGuardContext,
+  getScopeQueueGuardContext,
+  forgetScopeQueueGuardContext,
+} from \"./panel_runtime.js\";
 import {
   consumeAgentPanelDirtySections,
   ensureScheduledAgentPanelDirtyFlush,
@@ -52,6 +61,7 @@ import {
 import {
   createAgentEditState,
   createAgentStateCompartments,
+  eventSessionMatchesActiveScope,
   RENDER_SECTIONS,
   normalizeDeltaOpsFromSubmit,
   normalizeObligationDirtySections,
@@ -138,6 +148,11 @@ import {
 import {
   fulfillNodePackInstallRequest,
 } from "./agent_edit_node_pack_installer.js";
+import {
+  resolveActiveCanvasScope,
+  assertPanelScopeMatchesActiveCanvas,
+  assertApplyScopeConsistency,
+} from "./active_canvas_scope_guard.js";
 
 // Re-export diagnostics functions for tests and external callers.
 export {
@@ -319,6 +334,9 @@ const PANEL_IDS = Object.freeze({
   route: "vibecomfy-agent-panel-route",
   model: "vibecomfy-agent-panel-model",
   apiKey: "vibecomfy-agent-panel-api-key",
+  researchContribution: "vibecomfy-agent-panel-research-contribution",
+  researchContributionYes: "vibecomfy-agent-panel-research-contribution-yes",
+  researchContributionNo: "vibecomfy-agent-panel-research-contribution-no",
   settingsStatus: "vibecomfy-agent-panel-settings-status",
   settingsGuidance: "vibecomfy-agent-panel-settings-guidance",
   settingsSave: "vibecomfy-agent-panel-settings-save",
@@ -378,6 +396,7 @@ const LOWERED_BADGE = "lowered";
 
 // ── localStorage helpers (safe wrappers — tolerate missing/throwing storage) ─
 const LS_ACTIVE_SESSION_KEY = "vibecomfy_active_session_id";
+const LS_RESEARCH_CONTRIBUTION_KEY = "vibecomfy_research_contribution_enabled";
 
 function resolveModuleAssetUrl(path) {
   try {
@@ -391,6 +410,41 @@ function resolveModuleAssetUrl(path) {
 }
 
 const VIBECOMFY_LOGO_URL = resolveModuleAssetUrl("./vibecomfy_agent_icon_cream.png");
+
+// ── Scoped session-storage persistence ────────────────────────────────────
+// Imported from a zero-dependency module so the helpers can be unit-tested
+// without pulling in the full ComfyUI runtime (app, api, etc.).
+import {
+  _tabNonce,
+  getScopedSessionId,
+  setScopedSessionId,
+  forgetScopedSessionId,
+  resolveScopeSessionId,
+} from "./scoped_session_storage.js";
+
+// Re-export for test consumers that import from this module.
+export {
+  _tabNonce,
+  getScopedSessionId,
+  setScopedSessionId,
+  forgetScopedSessionId,
+  resolveScopeSessionId,
+};
+
+// ── T11: Re-export active-canvas scope guards for tests ─────────────────
+export {
+  resolveActiveCanvasScope,
+  assertPanelScopeMatchesActiveCanvas,
+  assertApplyScopeConsistency,
+};
+
+function getPersistedResearchContributionEnabled() {
+  return _lsGet(LS_RESEARCH_CONTRIBUTION_KEY) === "1";
+}
+
+function setPersistedResearchContributionEnabled(value) {
+  _lsSet(LS_RESEARCH_CONTRIBUTION_KEY, value ? "1" : "0");
+}
 
 // ── Default execution mode (settings combo + localStorage fallback) ─────────
 const DEFAULT_EXECUTION_MODE_LS_KEY = "vibecomfy.defaultExecutionMode";
@@ -549,15 +603,19 @@ function normalizeExecIoValue(value) {
 }
 
 function normalizeExecIoEntries(entries) {
-  if (!Array.isArray(entries)) {
+  let rawItems = entries;
+  if (entries && typeof entries === "object" && !Array.isArray(entries)) {
+    rawItems = Object.entries(entries).map(([name, type]) => [name, type]);
+  }
+  if (!Array.isArray(rawItems)) {
     return [];
   }
-  return entries
+  return rawItems
     .map((entry) => {
-      if (Array.isArray(entry) && entry.length >= 2) {
+      if (Array.isArray(entry) && entry.length >= 1) {
         const name = String(entry[0] || "").trim();
         const type = String(entry[1] || "").trim();
-        return name && type ? [name, type] : null;
+        return name ? [name, type || "*"] : null;
       }
       if (entry && typeof entry === "object") {
         const name = String(entry.name || "").trim();
@@ -807,7 +865,7 @@ function readIntentMetadata(node, fallbackClassType = null) {
     ? properties.vibecomfy
     : null;
   const execIo = classType === "vibecomfy.exec"
-    ? normalizeExecIoValue(readExecWidgetValue(node, "io"))
+    ? normalizeExecIoObject(readExecWidgetValue(node, "io"))
     : null;
   const ioPayload = payload?.io || execIo;
   const typedInputs = normalizeIntentTypedIo(ioPayload, "inputs");
@@ -1223,6 +1281,47 @@ function ensureLiveGraphLinkStore(graph) {
   return graph.links;
 }
 
+function liveLinkStoreGet(linkStore, linkId) {
+  if (!linkStore) {
+    return null;
+  }
+  if (typeof linkStore.get === "function") {
+    return linkStore.get(linkId) || linkStore.get(Number(linkId)) || linkStore.get(String(linkId)) || null;
+  }
+  return linkStore[String(linkId)] || null;
+}
+
+function liveLinkStoreSet(linkStore, linkId, link) {
+  if (!linkStore) {
+    return;
+  }
+  if (typeof linkStore.set === "function") {
+    linkStore.set(linkId, link);
+    return;
+  }
+  linkStore[String(linkId)] = link;
+}
+
+function liveLinkStoreValues(linkStore) {
+  if (!linkStore) {
+    return [];
+  }
+  if (typeof linkStore.values === "function") {
+    return Array.from(linkStore.values()).filter(Boolean);
+  }
+  return Object.values(linkStore).filter(Boolean);
+}
+
+function liveLinkStoreKeys(linkStore) {
+  if (!linkStore) {
+    return [];
+  }
+  if (typeof linkStore.keys === "function") {
+    return Array.from(linkStore.keys()).filter((id) => id !== null && id !== undefined);
+  }
+  return Object.keys(linkStore);
+}
+
 function removeCompatibleLiveLinkFromNetwork(network, linkId) {
   if (!network) {
     return;
@@ -1318,7 +1417,7 @@ function restoreCandidateLinksOnLiveGraph(graph, candidateGraph) {
       continue;
     }
     const idKey = String(link.id);
-    const existing = linkStore[idKey];
+    const existing = liveLinkStoreGet(linkStore, link.id);
     if (
       existing
       && String(existing.origin_id) === String(sourceNode.id)
@@ -1327,28 +1426,29 @@ function restoreCandidateLinksOnLiveGraph(graph, candidateGraph) {
       && Number(existing.target_slot) === Number(link.target_slot)
     ) {
       if (typeof existing.asSerialisable !== "function") {
-        linkStore[idKey] = liveLinkRecord(existing);
+        liveLinkStoreSet(linkStore, link.id, liveLinkRecord(existing));
       }
       restoredIds.add(idKey);
       continue;
     }
-    linkStore[idKey] = liveLinkRecord({
+    liveLinkStoreSet(linkStore, link.id, liveLinkRecord({
       id: link.id,
       origin_id: sourceNode.id,
       origin_slot: Number(link.origin_slot),
       target_id: targetNode.id,
       target_slot: Number(link.target_slot),
       type: link.type ?? targetSlot.type ?? sourceSlot.type ?? null,
-    });
+    }));
     restoredIds.add(idKey);
     restored += 1;
   }
 
-  const activeIds = new Set(Object.keys(linkStore));
+  const linkValues = liveLinkStoreValues(linkStore);
+  const activeIds = new Set(liveLinkStoreKeys(linkStore).map((id) => String(id)));
   for (const node of getLiveGraphNodes(graph)) {
     if (Array.isArray(node.inputs)) {
       node.inputs.forEach((input, index) => {
-        const link = Object.values(linkStore).find(
+        const link = linkValues.find(
           (entry) => String(entry.target_id) === String(node.id) && Number(entry.target_slot) === index,
         );
         input.link = link ? link.id : null;
@@ -1356,7 +1456,7 @@ function restoreCandidateLinksOnLiveGraph(graph, candidateGraph) {
     }
     if (Array.isArray(node.outputs)) {
       node.outputs.forEach((output, index) => {
-        const links = Object.values(linkStore)
+        const links = linkValues
           .filter((entry) => String(entry.origin_id) === String(node.id) && Number(entry.origin_slot) === index)
           .map((entry) => entry.id)
           .filter((id) => activeIds.has(String(id)));
@@ -1364,7 +1464,7 @@ function restoreCandidateLinksOnLiveGraph(graph, candidateGraph) {
       });
     }
   }
-  const maxLinkId = Object.keys(linkStore)
+  const maxLinkId = liveLinkStoreKeys(linkStore)
     .map((id) => Number(id))
     .filter((id) => Number.isFinite(id))
     .reduce((max, id) => Math.max(max, id), 0);
@@ -2484,6 +2584,22 @@ async function structuralGraphHash(graph) {
   return sha256HexUtf8(canonicalJsonString(buildStructuralGraphProjection(graph)));
 }
 
+// ── T6: Scope resolver ────────────────────────────────────────────────────
+// Imported from a zero-dependency module so the fingerprint/scope logic
+// can be unit-tested without pulling in the full ComfyUI runtime.
+import {
+  computeStructuralGraphFingerprint,
+  computeScopeId,
+  captureInitialScopeId,
+} from "./scope_resolver.js";
+
+// Re-export for test consumers that import from this module.
+export {
+  computeStructuralGraphFingerprint,
+  computeScopeId,
+  captureInitialScopeId,
+};
+
 function captureLiveCanvasToken(_graphHash, structuralHash) {
   const revision = captureLiveCanvasRevision();
   if (revision != null) {
@@ -3381,6 +3497,58 @@ function createAgentPanelShell() {
   const settingsTest = button("Test Provider", () =>
     testAgentSettingsImpl(currentAgentPanel(), agentStatusDeps()));
   settingsTest.id = PANEL_IDS.settingsTest;
+  const researchContributionControl = el("div");
+  researchContributionControl.id = PANEL_IDS.researchContribution;
+  Object.assign(researchContributionControl.style, {
+    display: "grid",
+    gap: "6px",
+  });
+  const researchContributionLabel = el("div", "Contribute agent research");
+  Object.assign(researchContributionLabel.style, {
+    color: "#edf2f7",
+    fontSize: "12px",
+    lineHeight: "1.35",
+  });
+  const researchContributionToggle = el("div");
+  Object.assign(researchContributionToggle.style, {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    border: "1px solid #373c46",
+    borderRadius: "6px",
+    overflow: "hidden",
+  });
+  const researchContributionYes = button("YES", () => {
+    const panel = currentAgentPanel();
+    if (panel) {
+      return saveResearchContributionSetting(panel, true, { trigger: true });
+    }
+    return undefined;
+  });
+  researchContributionYes.id = PANEL_IDS.researchContributionYes;
+  const researchContributionNo = button("NO", () => {
+    const panel = currentAgentPanel();
+    if (panel) {
+      return saveResearchContributionSetting(panel, false, { trigger: false });
+    }
+    return undefined;
+  });
+  researchContributionNo.id = PANEL_IDS.researchContributionNo;
+  [researchContributionYes, researchContributionNo].forEach((node) => {
+    Object.assign(node.style, {
+      border: "none",
+      borderRadius: "0",
+      padding: "6px 8px",
+      fontSize: "11px",
+      fontWeight: "700",
+    });
+  });
+  researchContributionToggle.appendChild(researchContributionYes);
+  researchContributionToggle.appendChild(researchContributionNo);
+  researchContributionControl.appendChild(researchContributionLabel);
+  researchContributionControl.appendChild(researchContributionToggle);
+  researchContributionControl.yesButton = researchContributionYes;
+  researchContributionControl.noButton = researchContributionNo;
+  researchContributionControl.checked = false;
   routeSelect.onchange = () => {
     const panel = currentAgentPanel();
     if (panel) {
@@ -3427,6 +3595,7 @@ function createAgentPanelShell() {
   settingsRegion.body.appendChild(modelInput);
   settingsRegion.body.appendChild(apiKeyInput);
   settingsRegion.body.appendChild(settingsButtons);
+  settingsRegion.body.appendChild(researchContributionControl);
   settingsRegion.body.appendChild(settingsStatus);
   settingsRegion.body.appendChild(settingsGuidance);
 
@@ -3524,6 +3693,7 @@ function createAgentPanelShell() {
       route: routeSelect,
       model: modelInput,
       apiKey: apiKeyInput,
+      researchContribution: researchContributionControl,
     },
     buttons: {
       submit: submitBtn,
@@ -3565,6 +3735,8 @@ function createAgentPanelShell() {
       settingsMessage: null,
       settingsMessageKind: null,
       settingsAutosaveToken: 0,
+      researchContributionEnabled: getPersistedResearchContributionEnabled(),
+      researchContributionMessage: null,
       lastAutosavedModel: "",
       providerTestInFlight: false,
       developerExpanded: false,
@@ -3747,6 +3919,14 @@ function applyAgentPanelMount(panel, { mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, c
 }
 
 // ── Chat rehydration ──────────────────────────────────────────────────────
+// ── T8: Scope-aware rehydrate ─────────────────────────────────────────────
+// Rehydrate reads the session id through scoped session-storage (SD2) so
+// duplicate tabs fork their conversation.  The scope and request epoch are
+// captured at start; when the async fetch resolves the handler refuses to
+// commit if the visible panel has switched to a different scope in the
+// meantime (race-safe).  Backward-compatible: when no chatScopeId is set
+// (first open before scope resolver runs) the legacy localStorage scalar
+// is used as fallback.
 async function _rehydrateChat(panel) {
   if (!panel || !panel.state) {
     return;
@@ -3754,7 +3934,15 @@ async function _rehydrateChat(panel) {
   const startObligations = transition(panel, "CHAT_REHYDRATE_START");
   fulfillLifecycleTransitionObligations(panel, startObligations);
   const requestEpoch = startObligations.requestEpoch;
-  const savedId = _lsGet(LS_ACTIVE_SESSION_KEY);
+
+  // ── T8: Scope-aware session resolution ─────────────────────────────────
+  const requestScopeId = panel.state.chatScopeId || null;
+  const scopedSessionId = requestScopeId
+    ? resolveScopeSessionId(requestScopeId)
+    : null;
+  // Fall back to legacy localStorage when scope is not yet set.
+  const savedId = scopedSessionId || _lsGet(LS_ACTIVE_SESSION_KEY);
+
   if (!savedId) {
     const noSessionObligations = transition(panel, "CHAT_REHYDRATE_NO_SESSION", { requestEpoch });
     fulfillAgentPanelCommitObligations(panel, noSessionObligations, "rehydrate");
@@ -3769,9 +3957,21 @@ async function _rehydrateChat(panel) {
       throw new Error(`Server returned ${res.status}`);
     }
     const rawPayload = await res.json();
+
+    // ── T8: Scope guard — refuse to commit if the panel has switched scopes
+    // while the fetch was in flight.  Stale responses must never mutate the
+    // visible panel state of a different workflow.
+    if (requestScopeId && panel.state.chatScopeId !== requestScopeId) {
+      return;
+    }
+
     const payload = normalizeChatRehydratePayload(rawPayload);
     if (payload && payload.ok === true) {
       if (payload.exists === false) {
+        // Re-check scope guard before missing-session transition.
+        if (requestScopeId && panel.state.chatScopeId !== requestScopeId) {
+          return;
+        }
         const missingSessionObligations = transition(panel, "CHAT_REHYDRATE_MISSING_SESSION", {
           requestEpoch,
           sessionId: savedId,
@@ -3799,14 +3999,25 @@ async function _rehydrateChat(panel) {
       if (successObligations.stale) {
         return;
       }
+      // ── T8: Persist session back to scoped storage so subsequent reopens
+      // on this scope use the correct session id.
+      if (requestScopeId && typeof payload.sessionId === "string" && payload.sessionId) {
+        setScopedSessionId(requestScopeId, payload.sessionId);
+      }
       fulfillAgentPanelCommitObligations(panel, successObligations, "rehydrate");
       resetThreadRenderState(panel);
       renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD] });
-      restoreLatestCandidateFromChat(panel, payload);
+      // ── T8: Pass requestScopeId so restoreLatestCandidateFromChat can
+      // refuse cross-scope / cross-session candidate restores.
+      restoreLatestCandidateFromChat(panel, payload, requestScopeId);
     } else {
       throw new Error(payload.raw?.error || "chat endpoint returned ok: false");
     }
   } catch (_e) {
+    // ── T8: Scope guard before committing failure.
+    if (requestScopeId && panel.state.chatScopeId !== requestScopeId) {
+      return;
+    }
     const failureObligations = transition(panel, "CHAT_REHYDRATE_FAILURE", {
       requestEpoch,
       chatError: String(_e),
@@ -3819,17 +4030,45 @@ async function _rehydrateChat(panel) {
   }
 }
 
-function _persistActiveSession(sessionId) {
-  if (typeof sessionId === "string" && sessionId) {
+// ── T9: Scope-aware session persistence ──────────────────────────────────
+// Persists to both localStorage (legacy migration source) and the scoped
+// sessionStorage map so the binding survives across panel reopens within
+// the same workflow scope.
+function _persistActiveSession(sessionId, scopeId = null) {
+  if (typeof sessionId === \"string\" && sessionId) {
     _lsSet(LS_ACTIVE_SESSION_KEY, sessionId);
+  }
+  // ── T9: Also bind session → scope in sessionStorage ────────────────────
+  const resolvedScopeId = scopeId || _activeScopeId();
+  if (resolvedScopeId) {
+    if (typeof sessionId === \"string\" && sessionId) {
+      setScopedSessionId(resolvedScopeId, sessionId);
+    }
   }
 }
 
-function restoreLatestCandidateFromChat(panel, payload) {
+// ── T8: Scope-aware latest-candidate restore ──────────────────────────────
+// Accepts requestScopeId from the calling _rehydrateChat so it can refuse
+// to restore when:
+//   1. The visible panel has switched to a different scope since the fetch
+//      was initiated (cross-scope refusal).
+//   2. The candidate's session id does not match the scoped session bound
+//      to the active scope (cross-session refusal).
+// When no scope is active (requestScopeId is null) the legacy behaviour
+// is preserved.
+function restoreLatestCandidateFromChat(panel, payload, requestScopeId = null) {
   const latest = payload?.latestCandidate || null;
   if (!panel?.state || !latest || typeof latest !== "object") {
     return;
   }
+
+  // ── T8: Scope guard — refuse if the panel has switched scopes since the
+  // rehydrate fetch was initiated.  A candidate from scope A must never
+  // populate the visible panel when scope B is active.
+  if (requestScopeId && panel.state.chatScopeId !== requestScopeId) {
+    return;
+  }
+
   switch (latest.outcome?.kind || null) {
     case "candidate":
       break;
@@ -3845,6 +4084,19 @@ function restoreLatestCandidateFromChat(panel, payload) {
   if (!candidateGraph || typeof candidateGraph !== "object") {
     return;
   }
+
+  // ── T8: Cross-session refusal — when a scope is active, the candidate's
+  // session id must match the session bound to this scope.  A rehydrate
+  // response for scope A's session must never restore a candidate into
+  // scope B even if the panel hasn't switched mid-flight.
+  if (requestScopeId) {
+    const scopeSession = resolveScopeSessionId(requestScopeId);
+    const candidateSessionId = latestIdentity?.sessionId || null;
+    if (scopeSession && candidateSessionId && scopeSession !== candidateSessionId) {
+      return;
+    }
+  }
+
   const eligibility = latestApplyCandidate?.eligibility;
   const normalizedEligibility = normalizeCandidateApplyEligibility(candidateGraph, eligibility);
   const restoredActionAllowed = Boolean(
@@ -3852,6 +4104,10 @@ function restoreLatestCandidateFromChat(panel, payload) {
     && (latestApplyCandidate?.applyable === true || normalizedEligibility?.applyable === true),
   );
   const restoreObligations = transition(panel, "CHAT_REHYDRATE_RESTORE_LATEST_CANDIDATE", {
+    // ── T8: Pass scope context so the lifecycle handler can enforce
+    // cross-scope and cross-session boundary refusals.
+    requestScopeId: requestScopeId || null,
+    candidateSessionId: latestIdentity?.sessionId || null,
     sessionId: latestIdentity?.sessionId || null,
     turnId: latestIdentity?.turnId || null,
     baselineTurnId: latestIdentity?.baselineTurnId || null,
@@ -3899,8 +4155,23 @@ function restoreLatestCandidateFromChat(panel, payload) {
   });
 }
 
-function forgetActiveSession() {
+// ── T9: Return the active scope id from the current panel, if any. ────────
+function _activeScopeId() {
+  const panel = currentAgentPanel();
+  if (panel?.state && typeof panel.state.chatScopeId === \"string\" && panel.state.chatScopeId) {
+    return panel.state.chatScopeId;
+  }
+  return null;
+}
+
+// ── T9: Scope-aware session forget ───────────────────────────────────────
+// Clears both localStorage legacy key and the scoped sessionStorage binding.
+function forgetActiveSession(scopeId = null) {
   _lsRemove(LS_ACTIVE_SESSION_KEY);
+  const resolvedScopeId = scopeId || _activeScopeId();
+  if (resolvedScopeId) {
+    forgetScopedSessionId(resolvedScopeId);
+  }
 }
 
 function fulfillAgentPanelCommitObligations(panel, obligations = {}, commitKind) {
@@ -3967,6 +4238,7 @@ function openAgentPanel({ mode = AGENT_PANEL_MOUNT_MODE.LAUNCHER, container = nu
     pollerPopulateRouteSelect(panel.fields.route, null, { selectedRoute: persisted }, agentStatusDeps());
   }
   pollerRefreshAgentStatus(panel, { quiet: true }, agentStatusDeps());
+  refreshResearchContributionSetting(panel);
   ensureScheduledAgentPanelDirtyFlush(panel, "open-backstop");
   return panel;
 }
@@ -4249,6 +4521,10 @@ function outcomeRequiresClarification(outcome) {
 
 function outcomeIsNoop(outcome) {
   return Boolean(outcome && typeof outcome === "object" && outcome.kind === "noop");
+}
+
+function outcomeRequiresCustomNodes(outcome) {
+  return Boolean(outcome && typeof outcome === "object" && outcome.kind === "requires_custom_nodes");
 }
 
 function clarificationMessageFromOutcome(outcome, fallbackMessage = null) {
@@ -5434,6 +5710,20 @@ function shouldAcceptAgentTurnEvent(panel, payload) {
   }
   const currentSessionId =
     typeof panel.state.sessionId === "string" && panel.state.sessionId ? panel.state.sessionId : null;
+
+  // ── T10: Scope-aware pre-filter ───────────────────────────────────────
+  // Before any session-based filtering, verify the event belongs to the
+  // active scope.  This prevents (a) a stale event for scope B's session
+  // from mutating scope A's visible panel, and (b) a first-allocation race
+  // where an event for a foreign scope binds `panel.state.sessionId` while
+  // the panel is scope-A-active but session-null.
+  if (panel.state.chatScopeId) {
+    const scopedSession = resolveScopeSessionId(panel.state.chatScopeId);
+    if (!eventSessionMatchesActiveScope(panel.state, payloadSessionId, scopedSession)) {
+      return false;
+    }
+  }
+
   if (currentSessionId) {
     return currentSessionId === payloadSessionId;
   }
@@ -5468,8 +5758,25 @@ function handleAgentTurnEvent(event) {
   if (!payload || !shouldAcceptAgentTurnEvent(panel, payload)) {
     return;
   }
+  // ── T10: Scope-guarded first-session binding ──────────────────────────
+  // Only bind panel.state.sessionId if the event's session matches the
+  // active scope.  This closes the first-allocation race: when scope A is
+  // active and sessionId is null, a stale event for scope B's session must
+  // not bind the wrong session.  Also persist the scope→session mapping so
+  // subsequent events for this scope can use the scoped session key.
   if (!panel.state.sessionId && typeof payload.session_id === "string" && payload.session_id) {
-    panel.state.sessionId = payload.session_id;
+    if (panel.state.chatScopeId) {
+      const scopedSession = resolveScopeSessionId(panel.state.chatScopeId);
+      if (eventSessionMatchesActiveScope(panel.state, payload.session_id, scopedSession)) {
+        panel.state.sessionId = payload.session_id;
+        setScopedSessionId(panel.state.chatScopeId, payload.session_id);
+      }
+      // else: event belongs to a different scope — silently drop.
+      // shouldAcceptAgentTurnEvent already validated this, so this is
+      // defense-in-depth.
+    } else {
+      panel.state.sessionId = payload.session_id;
+    }
   }
   // Derive canonical activity state before upserting so the turn entry carries it.
   const canonicalPayload = normalizeAgentTurnPayload(payload);
@@ -5514,12 +5821,21 @@ function handleExecutorPhaseEvent(event) {
   if (!normalized) {
     return;
   }
-  if (
-    normalized.session_id
-    && panel.state?.sessionId
-    && normalized.session_id !== panel.state.sessionId
-  ) {
-    return;
+  // ── T10: Scope-aware executor phase event guard ───────────────────────
+  // Reject executor phase events whose session does not belong to the
+  // active scope.  When scope tracking is active the scoped session binding
+  // is authoritative; when inactive we fall back to the legacy in-memory
+  // sessionId comparison.
+  if (normalized.session_id) {
+    if (panel.state?.chatScopeId) {
+      const scopedSession = resolveScopeSessionId(panel.state.chatScopeId);
+      if (!eventSessionMatchesActiveScope(panel.state, normalized.session_id, scopedSession)) {
+        return;
+      }
+    } else if (panel.state?.sessionId && normalized.session_id !== panel.state.sessionId) {
+      // Legacy: no scope tracking — reject foreign sessions.
+      return;
+    }
   }
   const progress = executorPhaseToCanonicalProgress(normalized);
   if (!progress) {
@@ -5922,8 +6238,9 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
       return panel.state._previewDiff;
     }
 
+    const previewCandidateGraph = prepareCandidateGraphForPanel(candidateGraph);
     const liveNodes = getLiveGraphNodes(getLiveGraph());
-    const candidateNodes = Array.isArray(candidateGraph?.nodes) ? candidateGraph.nodes : [];
+    const candidateNodes = Array.isArray(previewCandidateGraph?.nodes) ? previewCandidateGraph.nodes : [];
 
     // ── Index by uid ──────────────────────────────────────────────────────
     // The candidate (server round-trip) stamps vibecomfy_uid on every node, but a
@@ -6196,7 +6513,7 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
       if (!raw || typeof raw !== "object") return [];
       return Array.isArray(raw) ? raw : Object.values(raw);
     })();
-    const candidateLinkEntries = Array.isArray(candidateGraph?.links) ? candidateGraph.links : [];
+    const candidateLinkEntries = Array.isArray(previewCandidateGraph?.links) ? previewCandidateGraph.links : [];
 
     const liveLinkKeys = _collectNormalizedLinkKeys(
       liveLinkEntries,
@@ -6302,6 +6619,8 @@ export function computePreviewDiff(candidateGraph, candidateReport) {
       unresolved,
       added_links,
       removed_links,
+      _candidateGraph: previewCandidateGraph,
+      _candidateGraphHash: candidateGraphHash || null,
     };
 
     // ── Cache on panel state ──────────────────────────────────────────────
@@ -8100,6 +8419,262 @@ function composerRenderDeps() {
   };
 }
 
+function renderDeveloper(panel) {
+  const body = panel?.sections?.developer;
+  if (!body) {
+    return;
+  }
+  clearNode(body);
+
+  const caps = adapterCapabilitySnapshot();
+
+  const devData = el("div");
+  Object.assign(devData.style, {
+    display: "grid",
+    gap: "4px",
+    fontSize: "10px",
+    color: "#8d93a1",
+    lineHeight: "1.4",
+  });
+
+  // ── Adapter capability state ──────────────────────────────────────────
+  const adapterSection = renderDeveloperSubsection("Adapter Capabilities");
+  const capLines = [
+    `graphApply: ${caps.graphApply.available ? "✓" : "✗"} (${caps.graphApply.detail})`,
+    `previewForeground: ${caps.previewForeground.available ? "✓" : "✗"} (${caps.previewForeground.detail})`,
+    caps.previewStrategy ? `preview strategy: ${caps.previewStrategy}${caps.previewPolling ? " (polling fallback)" : ""}` : null,
+    `queueGuard: ${caps.queueGuard.available ? "✓" : "✗"} (${caps.queueGuard.detail})`,
+    caps.queueGuard.fallbackWarning ? `queueGuard fallback: ${caps.queueGuard.fallbackWarning}` : null,
+    `supportsAll: ${caps.supportsAll ? "yes" : "no"} (frontend ${caps.frontendVersion})`,
+  ].filter(Boolean);
+  for (const line of capLines) {
+    const div = el("div", line);
+    div.style.color = line.startsWith("graphApply: ✗") || line.startsWith("previewForeground: ✗") || line.startsWith("queueGuard: ✗") ? "#ff8d8d" : "#8d93a1";
+    adapterSection.appendChild(div);
+  }
+  devData.appendChild(adapterSection);
+
+  // ── Queue guard state ─────────────────────────────────────────────────
+  const qgSection = renderDeveloperSubsection("Queue Guard State");
+  const qgState = getQueueGuardStateForPanel();
+  const runtime = getAgentPanelRuntime();
+  const qgLines = [
+    `hookInstalled: ${qgState.hookInstalled}`,
+    `hookPath: ${qgState.hookPath || "none"}`,
+    qgState.fallbackWarning ? `fallbackWarning: ${qgState.fallbackWarning}` : null,
+    qgState.activeContext ? `activeContext: turn=${qgState.activeContext.turnId || "?"} queueAllowed=${qgState.activeContext.queueAllowed}` : "activeContext: none",
+    qgState.lastBlockNotice ? `lastBlock: ${qgState.lastBlockNotice.at || "?"} — ${qgState.lastBlockNotice.message}` : "lastBlockNotice: none",
+    `blockedTurnKeys: ${runtime.queueGuardBlockedTurnKeys.size}`,
+  ].filter(Boolean);
+  for (const line of qgLines) {
+    qgSection.appendChild(el("div", line));
+  }
+  devData.appendChild(qgSection);
+
+  // ── Hashes ────────────────────────────────────────────────────────────
+  const hashSection = renderDeveloperSubsection("Hashes");
+  const hashLines = [
+    `baselineGraphHash: ${panel.state.baselineGraphHash || "none"}`,
+    panel.state.baselineGraphHashKind ? `baselineGraphHashKind: ${panel.state.baselineGraphHashKind}` : null,
+    panel.state.baselineGraphHashVersion != null ? `baselineGraphHashVersion: ${panel.state.baselineGraphHashVersion}` : null,
+    `candidateGraphHash: ${panel.state.candidateGraphHash || "none"}`,
+    `serverSubmitGraphHash: ${panel.state.serverSubmitGraphHash || "none"}`,
+    panel.state.lastSubmit?.client_graph_hash ? `lastSubmit.client_graph_hash: ${panel.state.lastSubmit.client_graph_hash}` : null,
+    panel.state.lastSubmit?.client_structural_graph_hash ? `lastSubmit.client_structural_graph_hash: ${panel.state.lastSubmit.client_structural_graph_hash}` : null,
+  ].filter(Boolean);
+  for (const line of hashLines) {
+    hashSection.appendChild(el("div", line));
+  }
+  devData.appendChild(hashSection);
+
+  // ── Raw booleans ──────────────────────────────────────────────────────
+  const boolSection = renderDeveloperSubsection("Raw Booleans");
+  const boolLines = [
+    `canvasApplyAllowed: ${panel.state.canvasApplyAllowed}`,
+    `queueAllowed: ${panel.state.queueAllowed}`,
+    `applyAllowed: ${panel.state.applyAllowed}`,
+    `applyEligibility: ${JSON.stringify(panel.state.applyEligibility)}`,
+    panel.state.applyEligibilityWarning ? `applyEligibilityWarning: ${JSON.stringify(panel.state.applyEligibilityWarning)}` : null,
+  ].filter(Boolean);
+  for (const line of boolLines) {
+    boolSection.appendChild(el("div", line));
+  }
+  devData.appendChild(boolSection);
+
+  // ── Missing-contract warning ──────────────────────────────────────────
+  if (panel.state.applyEligibilityWarning && panel.state.applyEligibilityWarning.reason === APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT) {
+    const mcSection = renderDeveloperSubsection("Missing Contract");
+    mcSection.style.color = "#ffc107";
+    mcSection.appendChild(el("div", `turn_id: ${panel.state.applyEligibilityWarning.turn_id || "?"}`));
+    mcSection.appendChild(el("div", `message: ${panel.state.applyEligibilityWarning.message}`));
+    if (panel.state.applyEligibilityWarning.candidate_graph_hash) {
+      mcSection.appendChild(el("div", `candidate_graph_hash: ${panel.state.applyEligibilityWarning.candidate_graph_hash}`));
+    }
+    devData.appendChild(mcSection);
+  }
+
+  // ── Raw JSON ──────────────────────────────────────────────────────────
+  const rawSection = renderDeveloperSubsection("Raw JSON");
+  const statusSnapshot = scrubDebugPayload(panel.state.statusSnapshot);
+  const debugPayload = scrubDebugPayload(panel.state.debugPayload);
+  if (statusSnapshot || debugPayload) {
+    if (statusSnapshot) {
+      rawSection.appendChild(createDetails("Status snapshot", statusSnapshot));
+    }
+    if (debugPayload) {
+      rawSection.appendChild(createDetails("Debug payload", debugPayload));
+    }
+    devData.appendChild(rawSection);
+  }
+
+  body.appendChild(devData);
+  if (Object.prototype.hasOwnProperty.call(body, "textContent")) {
+    const summaryText = [
+      "Adapter Capabilities",
+      ...capLines,
+      "Queue Guard State",
+      ...qgLines,
+      "Raw Booleans",
+      ...boolLines,
+    ].join("\n");
+    body.textContent = summaryText;
+    if (body.parentNode && Object.prototype.hasOwnProperty.call(body.parentNode, "textContent")) {
+      body.parentNode.textContent = summaryText;
+    }
+  }
+}
+
+function renderDeveloperDisclosure(panel) {
+  const body = panel?.sections?.developer;
+  const toggle = getPanelElementById(panel, PANEL_IDS.developerToggle);
+  const expanded = Boolean(panel?.state?.developerExpanded);
+  if (toggle) {
+    toggle.textContent = expanded ? "▾ Developer" : "▸ Developer";
+    toggle.ariaExpanded = expanded ? "true" : "false";
+    if (typeof toggle.setAttribute === "function") {
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    } else if (toggle.attributes && typeof toggle.attributes === "object") {
+      toggle.attributes["aria-expanded"] = expanded ? "true" : "false";
+    }
+  }
+  if (body) {
+    body.style.display = expanded ? "grid" : "none";
+  }
+}
+
+function renderDeveloperSubsection(title) {
+  const section = el("div");
+  Object.assign(section.style, {
+    border: "1px solid #282a32",
+    borderRadius: "4px",
+    padding: "6px",
+    background: "#0d0f14",
+  });
+  const heading = el("div", title);
+  Object.assign(heading.style, {
+    fontSize: "10px",
+    fontWeight: "700",
+    color: "#9da1ac",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    marginBottom: "4px",
+  });
+  section.appendChild(heading);
+  return section;
+}
+
+function syncResearchContributionControl(panel) {
+  const control = panel?.fields?.researchContribution;
+  if (!control) {
+    return;
+  }
+  const enabled = Boolean(panel.state.researchContributionEnabled);
+  control.checked = enabled;
+  const yesButton = control.yesButton;
+  const noButton = control.noButton;
+  function styleSegment(node, selected) {
+    if (!node) {
+      return;
+    }
+    node.setAttribute?.("aria-pressed", selected ? "true" : "false");
+    Object.assign(node.style, {
+      background: selected ? "#2f6f8f" : "#0d0e12",
+      color: selected ? "#edf2f7" : "#9da1ac",
+      cursor: "pointer",
+      opacity: "1",
+    });
+  }
+  styleSegment(yesButton, enabled);
+  styleSegment(noButton, !enabled);
+}
+
+function renderSettings(panel) {
+  const routeStatus = routeStatusState(panel);
+  const descriptor = getRouteDescriptor(panel);
+  const controlsReady =
+    Boolean(descriptor)
+    && routeStatus.kind === ROUTE_STATUS_KIND.READY;
+  const apiKeyVisible = controlsReady && Boolean(descriptor.browser_api_key_allowed);
+  panel.fields.route.disabled = !controlsReady;
+  panel.fields.model.disabled = !controlsReady;
+  syncResearchContributionControl(panel);
+  setVisible(panel.fields.apiKey, apiKeyVisible, "");
+  const storedBrowserKey = hasStoredBrowserCredential(panel, panel.fields.route.value);
+  const browserKeyLabel = normalizeRoutePreference(panel.fields.route.value) === "deepseek" ? "DeepSeek" : "OpenRouter";
+  panel.fields.apiKey.placeholder = apiKeyVisible
+    ? (storedBrowserKey ? `Saved ${browserKeyLabel} key present; paste a new key to replace` : `${browserKeyLabel} API key`)
+    : "Browser API keys are not accepted for this route";
+  if (!apiKeyVisible) {
+    clearCredentialInput(panel);
+  }
+
+  const statusNode = getPanelElementById(panel, PANEL_IDS.settingsStatus);
+  const guidanceNode = getPanelElementById(panel, PANEL_IDS.settingsGuidance);
+  if (!statusNode || !guidanceNode) {
+    return;
+  }
+  statusNode.style.color =
+    panel.state.settingsMessageKind === "success"
+      ? "#7ee787"
+      : panel.state.settingsMessageKind === "error"
+        ? "#ff8d8d"
+        : panel.state.settingsMessageKind === "pending"
+          ? "#f2cc60"
+          : "#8d93a1";
+  if (!controlsReady) {
+    if (routeStatus.kind === ROUTE_STATUS_KIND.LOADING) {
+      statusNode.textContent = panel.state.settingsMessage || "Loading route/model status…";
+      guidanceNode.textContent = "Waiting for /vibecomfy/agent/status before enabling route/model controls.";
+    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MISSING_OPTIONS) {
+      statusNode.textContent = panel.state.settingsMessage || "Status missing route options; route/model controls disabled.";
+      guidanceNode.textContent = "The backend returned status without route_options. Check /vibecomfy/agent/status and retry.";
+    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MALFORMED) {
+      statusNode.textContent = panel.state.settingsMessage || "Malformed status payload; route/model controls disabled.";
+      guidanceNode.textContent = "The backend status payload is malformed. Fix /vibecomfy/agent/status and retry.";
+    } else if (routeStatus.kind === ROUTE_STATUS_KIND.UNAVAILABLE) {
+      statusNode.textContent = panel.state.settingsMessage || "Status unavailable.";
+      guidanceNode.textContent = "Could not reach /vibecomfy/agent/status. Retry with Test Provider after restoring the backend.";
+    } else {
+      statusNode.textContent = panel.state.settingsMessage || "Route/model controls unavailable.";
+      guidanceNode.textContent = "";
+    }
+    return;
+  }
+
+  const normalizedRoute = descriptor.normalized_route || normalizeRoutePreference(panel.fields.route.value);
+  const providerAvailable = panel.state.statusSnapshot?.provider_available;
+  const availability = providerAvailable === false ? "provider unavailable" : "provider ready";
+  statusNode.textContent = panel.state.settingsMessage
+    || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
+  guidanceNode.textContent = descriptor.guidance || "";
+  if (apiKeyVisible && storedBrowserKey) {
+    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved ${browserKeyLabel} key present. Paste a new key only if you want to replace it.`;
+  }
+  if (descriptor.requested_route === "anthropic") {
+    guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
+  }
+}
+
 function syncComposerButtons(panel, {
   submitting = false,
   applying = false,
@@ -8397,6 +8972,83 @@ async function saveAgentSettings(panel, { includeCredential = false } = {}) {
   return persistAgentSettings(panel, { includeCredential }, agentStatusDeps());
 }
 
+async function refreshResearchContributionSetting(panel) {
+  if (!panel) {
+    return;
+  }
+  try {
+    const res = await fetch("/vibecomfy/agent/settings");
+    const result = await res.json();
+    if (result?.ok === false) {
+      throw new Error(result.user_facing_message || result.reason || "settings unavailable");
+    }
+    const enabled = Boolean(result?.research_contribution_enabled);
+    panel.state.researchContributionEnabled = enabled;
+    setPersistedResearchContributionEnabled(enabled);
+    syncResearchContributionControl(panel);
+    renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.SETTINGS] });
+  } catch (_e) {
+    const fallback = getPersistedResearchContributionEnabled();
+    panel.state.researchContributionEnabled = fallback;
+    syncResearchContributionControl(panel);
+  }
+}
+
+async function triggerResearchContributionWorkflow(panel) {
+  const res = await fetch("/vibecomfy/agent/research-contribution/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: "agent_panel" }),
+  });
+  const result = await res.json();
+  if (result?.ok === false) {
+    throw new Error(result.user_facing_message || result.reason || "research contribution failed");
+  }
+  if (result?.triggered === false) {
+    return "Research contribution is off.";
+  }
+  return "Research contribution started.";
+}
+
+async function saveResearchContributionSetting(panel, enabled, { trigger = false } = {}) {
+  if (!panel) {
+    return;
+  }
+  panel.state.researchContributionEnabled = Boolean(enabled);
+  panel.state.settingsMessage = enabled ? "Saving research contribution opt-in…" : "Saving research contribution opt-out…";
+  panel.state.settingsMessageKind = "pending";
+  setPersistedResearchContributionEnabled(Boolean(enabled));
+  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+  try {
+    const res = await fetch("/vibecomfy/agent/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ research_contribution_enabled: Boolean(enabled) }),
+    });
+    const result = await res.json();
+    if (result?.ok === false) {
+      throw new Error(result.user_facing_message || result.reason || "settings save failed");
+    }
+    panel.state.researchContributionEnabled = Boolean(result?.research_contribution_enabled);
+    setPersistedResearchContributionEnabled(panel.state.researchContributionEnabled);
+    let message = panel.state.researchContributionEnabled
+      ? "Research contribution is on."
+      : "Research contribution is off.";
+    if (trigger && panel.state.researchContributionEnabled) {
+      message = await triggerResearchContributionWorkflow(panel);
+    }
+    panel.state.settingsMessage = message;
+    panel.state.settingsMessageKind = "success";
+  } catch (e) {
+    panel.state.researchContributionEnabled = getPersistedResearchContributionEnabled();
+    panel.state.settingsMessage = `Research contribution save failed: ${String(e)}`;
+    panel.state.settingsMessageKind = "error";
+  } finally {
+    syncResearchContributionControl(panel);
+    renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+  }
+}
+
 async function autoSaveAgentSettings(panel, { includeCredential = false } = {}) {
   if (!panel) {
     return;
@@ -8441,6 +9093,17 @@ async function newAgentConversation(panel) {
   panel.state.previewEnabled = false;
   fulfillLifecycleTransitionObligations(panel, obligations);
   renderLifecycleTransition(panel, obligations);
+}
+
+// ── T11: Prompt draft capture helper for scope guards ───────────────────
+// Returns the current prompt text from the panel's live prompt element.
+// Used to preserve drafts before auto-switching scopes during submit.
+function _capturePromptDraft(panel) {
+  const promptEl = getPanelElementById(panel, PANEL_IDS.prompt) || panel?.fields?.prompt;
+  if (promptEl && typeof promptEl.value === "string") {
+    return promptEl.value || null;
+  }
+  return null;
 }
 
 // ── Submit helpers (extracted from submitAgentEdit; pure data transformations) ──
@@ -8492,6 +9155,24 @@ function isSubmitResponseValid(outcome, candidateGraph) {
 }
 
 export function fulfillLifecycleTransitionObligations(panel, obligations = {}) {
+  // ── T7: Save departing scope's draft prompt text BEFORE any DOM mutation ──
+  // The scope switch transition provides departingScopeId so we can snapshot
+  // the current prompt box content into the old scope's draft storage.
+  if (obligations.departingScopeId) {
+    const promptEl = getPanelElementById(panel, PANEL_IDS.prompt) || panel?.fields?.prompt;
+    const draftText = promptEl && typeof promptEl.value === \"string\" ? promptEl.value : \"\";
+    saveScopeDraft(obligations.departingScopeId, draftText || null);
+    // ── T9: Save departing scope's queue guard context ──────────────────
+    // The queue guard context lives on the runtime singleton, not on
+    // panel.state, so it is not covered by saveScopeSnapshot.  We
+    // explicitly snapshot it here so scope B's guard survives a switch
+    // to scope A and back.
+    const runtime = getAgentPanelRuntime();
+    if (runtime) {
+      saveScopeQueueGuardContext(obligations.departingScopeId, runtime.queueGuardContext);
+    }
+  }
+
   if (Array.isArray(obligations?.dirtySections) && obligations.dirtySections.length) {
     markAgentPanelDirty(panel, obligations.dirtySections);
   }
@@ -8507,10 +9188,37 @@ export function fulfillLifecycleTransitionObligations(panel, obligations = {}) {
   if (obligations.persistSession !== undefined) {
     _persistActiveSession(obligations.persistSession || null);
   }
+  // ── T7: Persist scope → session mapping ──────────────────────────────
+  if (obligations.persistScope !== undefined) {
+    if (typeof obligations.persistScope === "string" && obligations.persistScope) {
+      setScopedSessionId(obligations.persistScope, panel.state.sessionId || null);
+    } else {
+      forgetScopedSessionId(obligations.persistScope || null);
+    }
+  }
   if (obligations.forgetSession) {
     forgetActiveSession();
   }
+  // ── T7: Forget scope snapshot (new conversation, workflow closed) ─────
+  if (obligations.forgetScope) {
+    forgetScopeSnapshot(obligations.forgetScope);
+  }
   if (obligations.queueGuardClear) {
+    setQueueGuardContext(null);
+  }
+  // ── T9: Scoped queue guard clear — saves the departing scope's guard
+  // context before clearing, so scope B's guard survives new-conversation
+  // or scope switch starting from scope A.
+  if (obligations.queueGuardClearScope) {
+    const scopeId = typeof obligations.queueGuardClearScope === \"string\"
+      ? obligations.queueGuardClearScope
+      : null;
+    if (scopeId) {
+      const runtime = getAgentPanelRuntime();
+      if (runtime) {
+        saveScopeQueueGuardContext(scopeId, runtime.queueGuardContext);
+      }
+    }
     setQueueGuardContext(null);
   }
   if (obligations.setQueueGuardContext) {
@@ -8530,9 +9238,51 @@ export function fulfillLifecycleTransitionObligations(panel, obligations = {}) {
       renderLifecycleTransition,
     });
   }
+  // ── T7: Clear undo affordances on scope switch ────────────────────────
+  // The undo stack is canvas-affine (SD3).  After switching scopes, the
+  // visible panel must not show undo affordances for undo entries that
+  // belong to a different workflow's canvas.  We reset the composer button
+  // state so the undo button loses emphasis and the menu entry is hidden.
+  if (obligations.clearUndoAffordance) {
+    if (panel.buttons && panel.buttons.undo) {
+      // Reset undo button emphasis — the undo stack entries belong to
+      // a different canvas context.
+      if (typeof panel.buttons.undo.style === "object") {
+        panel.buttons.undo.style.opacity = "0.5";
+        panel.buttons.undo.style.pointerEvents = "auto";
+      }
+    }
+    // Re-sync composer buttons so apply/undo/reject affordances reflect
+    // the post-switch state (no candidate, no apply allowed).
+    syncComposerButtons(panel);
+  }
 }
 
 function renderLifecycleTransition(panel, obligations = {}) {
+  // ── T7: Restore draft prompt text for the arriving scope ──────────────
+  // The scope switch transition provides restoreScopeDraft so we can
+  // write the saved prompt text back into the DOM prompt element.
+  if (obligations.restoreScopeDraft) {
+    const draftText = getScopeDraft(obligations.restoreScopeDraft);
+    if (draftText != null) {
+      const promptEl = getPanelElementById(panel, PANEL_IDS.prompt) || panel?.fields?.prompt;
+      if (promptEl && typeof promptEl.value === \"string\") {
+        promptEl.value = draftText;
+        try {
+          if (typeof promptEl.dispatchEvent === \"function\" && typeof Event === \"function\") {
+            promptEl.dispatchEvent(new Event(\"input\", { bubbles: true }));
+          }
+        } catch (_e) { /* best-effort */ }
+      }
+    }
+    // ── T9: Restore arriving scope's queue guard context ────────────────
+    // Saved by fulfillLifecycleTransitionObligations on departure.
+    const restoredGuard = getScopeQueueGuardContext(obligations.restoreScopeDraft);
+    if (restoredGuard) {
+      setQueueGuardContext(restoredGuard);
+    }
+  }
+
   if (obligations.render) {
     renderDirtyAgentPanelSections(panel, obligations);
   }
@@ -8637,6 +9387,86 @@ async function submitAgentEdit(panel, { taskOverride } = {}) {
       fulfillLifecycleTransitionObligations(panel, obligations);
       renderLifecycleTransition(panel, obligations);
       return;
+    }
+
+    // ── T11: Active-canvas scope guard before submit ────────────────────
+    // Compare the panel's tracked chat scope against the live canvas scope.
+    // If the canvas changed (user loaded a different workflow), auto-switch
+    // the panel scope AFTER preserving the old scope's drafts.  If the
+    // mismatch is unresolvable (e.g., tab divergence), block the submit.
+    const scopeAssertion = assertPanelScopeMatchesActiveCanvas(panel, { caller: "submit" });
+    if (!scopeAssertion.ok) {
+      const currentChatScopeId = panel.state.chatScopeId;
+      const currentDraft = _capturePromptDraft(panel);
+
+      // ── Preserve old scope's drafts before any mutation ─────────────
+      if (currentChatScopeId) {
+        if (currentDraft != null) {
+          saveScopeDraft(currentChatScopeId, currentDraft);
+        }
+        // Also save a full scope snapshot so chat/turn/history survive.
+        saveScopeSnapshot(currentChatScopeId, panel);
+      }
+
+      // ── Determine if auto-switch is safe ────────────────────────────
+      const canAutoSwitch =
+        scopeAssertion.reason === "panel_has_no_scope" ||
+        scopeAssertion.reason === "graph_diverged" ||
+        scopeAssertion.reason === "canvas_is_empty";
+
+      if (canAutoSwitch) {
+        // Emit scope switch transition to update chatScopeId/chatScopeFingerprint.
+        const newCanvasScope = resolveActiveCanvasScope();
+        const scopeSwitchObligations = transition(panel, "SCOPE_SWITCH", {
+          chatScopeId: newCanvasScope?.scopeId || null,
+          chatScopeFingerprint: newCanvasScope?.fingerprint || null,
+          departingScopeId: currentChatScopeId || undefined,
+          arrivingScopeId: newCanvasScope?.scopeId || null,
+          debugPayload: {
+            reason: `submit_auto_switch:${scopeAssertion.reason}`,
+            previousScopeId: currentChatScopeId,
+            newScopeId: newCanvasScope?.scopeId || null,
+            scopeAssertion,
+          },
+        });
+        fulfillLifecycleTransitionObligations(panel, scopeSwitchObligations);
+
+        // Restore the arriving scope's prompt draft if one exists.
+        const arrivingScopeId = newCanvasScope?.scopeId;
+        if (arrivingScopeId && promptEl && typeof promptEl.value === "string") {
+          const arrivingDraft = getScopeDraft(arrivingScopeId);
+          if (arrivingDraft != null && typeof arrivingDraft === "string") {
+            promptEl.value = arrivingDraft;
+            try {
+              if (typeof promptEl.dispatchEvent === "function" && typeof Event === "function") {
+                promptEl.dispatchEvent(new Event("input", { bubbles: true }));
+              }
+            } catch (_e) { /* no-op */ }
+          }
+        }
+      } else {
+        // Unsafe mismatch (e.g., tab divergence, empty panel with scoped canvas).
+        // Block the submit with debug metadata.
+        const failure = agentPanelFailure("ScopeMismatch", "The active canvas scope does not match the panel scope. Submit is blocked.", {
+          retryable: false,
+          graph_unchanged: true,
+          next_action: "Reload the page or create a new conversation from the current canvas.",
+          scope_mismatch_reason: scopeAssertion.reason,
+          panel_scope_id: scopeAssertion.panelScopeId,
+          canvas_scope_id: scopeAssertion.canvasScopeId,
+          scope_debug: scopeAssertion.debug,
+        });
+        const obligations = transition(panel, "SUBMIT_SCOPE_MISMATCH", {
+          failure,
+          debugPayload: {
+            ...failure,
+            scopeAssertion,
+          },
+        });
+        fulfillLifecycleTransitionObligations(panel, obligations);
+        renderLifecycleTransition(panel, obligations);
+        return;
+      }
     }
 
     const explicitTask = typeof taskOverride === "string" ? taskOverride.trim() : "";
@@ -9226,6 +10056,31 @@ async function applyAgentCandidate(panel) {
     return panel.state.inFlightApply;
   }
 
+  // ── T11: Scope consistency guard before apply ────────────────────────
+  // Fails closed on any scope/session disagreement.  Unlike submit,
+  // apply NEVER auto-switches scopes — a mismatch means the candidate
+  // does not belong to the currently active workflow and must be refused.
+  const applyScopeCheck = assertApplyScopeConsistency(panel, panel.state.sessionId);
+  if (!applyScopeCheck.ok) {
+    const failure = agentPanelFailure("ScopeMismatch", `Apply blocked: ${applyScopeCheck.reason || "scope/session inconsistency"}.`, {
+      retryable: false,
+      graph_unchanged: true,
+      next_action: "Submit a new edit from the current canvas to generate a candidate for this workflow.",
+      scope_mismatch_reason: applyScopeCheck.reason,
+      scope_details: applyScopeCheck.details,
+    });
+    const obligations = transition(panel, "APPLY_SCOPE_MISMATCH", {
+      failure,
+      debugPayload: {
+        ...failure,
+        applyScopeCheck,
+      },
+    });
+    fulfillLifecycleTransitionObligations(panel, obligations);
+    renderLifecycleTransition(panel, obligations);
+    return;
+  }
+
   const applyPromise = (async () => {
     let beforeApply;
     try {
@@ -9602,6 +10457,15 @@ async function applyAgentCandidate(panel) {
       client_graph_hash: currentBeforeLoad.graphHash,
       accepted_baseline_graph_hash: accepted.baselineGraphHash || panel.state.baselineGraphHash || null,
       captured_at: new Date().toISOString(),
+      // ── T7: Stamp undo entries with scope metadata ────────────────────
+      // Each undo entry is stamped with the workflow scope it belongs to.
+      // This allows downstream tools (diagnostics, the undo menu, canvas
+      // reconciliation) to validate that undo entries are applied within
+      // the correct workflow context.  Undo history is canvas-affine (SD3);
+      // scope stamps provide traceability without coupling undo to scopes.
+      chat_scope_id: panel.state.chatScopeId || null,
+      chat_scope_fingerprint: panel.state.chatScopeFingerprint || null,
+      canvas_structural_hash: currentBeforeLoad.structuralHash || null,
     });
     panel.state.undoStack = panel.state.undoStack.slice(-16);
     markAgentPanelDirty(panel, [RENDER_SECTIONS.META]);
@@ -10756,6 +11620,66 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     }, 1000);
   }
 
+  function showResearchContributionChoice(route) {
+    box.innerHTML = "";
+    Object.assign(box.style, {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "stretch",
+      justifyContent: "center",
+      textAlign: "left",
+      gap: "12px",
+    });
+
+    const heading = el("div", "Contribute agent research?");
+    Object.assign(heading.style, {
+      fontSize: "16px",
+      fontWeight: "700",
+      color: "#edf2f7",
+    });
+    box.appendChild(heading);
+
+    const subtext = el("div", "Let your agent contribute discovered workflow research for future searches.");
+    Object.assign(subtext.style, {
+      fontSize: "12px",
+      lineHeight: "1.45",
+      color: "#9da1ac",
+    });
+    box.appendChild(subtext);
+
+    const statusLine = el("div", "");
+    Object.assign(statusLine.style, {
+      minHeight: "16px",
+      fontSize: "11px",
+      color: "#8d93a1",
+    });
+    box.appendChild(statusLine);
+
+    const buttonRow = el("div");
+    Object.assign(buttonRow.style, {
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: "8px",
+    });
+
+    async function choose(enabled) {
+      yesBtn.disabled = true;
+      noBtn.disabled = true;
+      statusLine.textContent = enabled ? "Starting research contribution…" : "Saving preference…";
+      try {
+        await saveResearchContributionSetting(panel, enabled, { trigger: enabled });
+      } finally {
+        showThankYouAndClose(route);
+      }
+    }
+
+    const yesBtn = button("Yes", () => choose(true));
+    const noBtn = button("No", () => choose(false));
+    buttonRow.appendChild(yesBtn);
+    buttonRow.appendChild(noBtn);
+    box.appendChild(buttonRow);
+  }
+
   async function onConfirm() {
     if (!confirmEnabled()) return;
     const route = selectedRoute;
@@ -10790,7 +11714,7 @@ function openChooseEngineOverlay(panel, { onResolved }) {
     }
 
     commitRoute(route);
-    showThankYouAndClose(route);
+    showResearchContributionChoice(route);
   }
 
   // Initial disabled state.

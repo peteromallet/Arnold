@@ -43,9 +43,21 @@ from __future__ import annotations
 import json
 import logging
 import os
+from pathlib import Path
 import re
 import sys
 import time
+
+
+def _bootstrap_repo_root() -> None:
+    """Make this file runnable by absolute path from a neutral cwd."""
+    repo_root = Path(__file__).resolve().parents[3]
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
+
+
+_bootstrap_repo_root()
 
 from vibecomfy.executor.profiler import profiler_log, profiler_span, short_text, utc_now_iso
 

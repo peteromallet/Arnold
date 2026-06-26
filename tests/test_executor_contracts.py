@@ -17,11 +17,16 @@ from vibecomfy.executor.contracts import (
     ClassifyDecision,
     ExecutorRequest,
     ExecutorResult,
+    GraphFacts,
     ImplementationResult,
     InspectionSummary,
     PrecedentAdaptationPlan,
+    PrecedentOption,
+    PrecedentPacket,
+    ReadinessReport,
     Report,
     ResearchResult,
+    TopologyFindings,
     WorkflowSlice,
     _ALLOWED_ROUTES,
     format_route_options_for_prompt,
@@ -1036,6 +1041,45 @@ class TestParseClassifyResponse:
         raw = '{"research": true, "implement": false, "reply": true, "effort": "low", "plan_summary": "ok"} (done)'
         d = parse_classify_response(raw)
         assert d.research is True
+
+    def test_research_direction_metadata_round_trips(self) -> None:
+        raw = json.dumps(
+            {
+                "research": True,
+                "implement": False,
+                "reply": True,
+                "effort": "medium",
+                "plan_summary": "research faster options",
+                "intent": "research",
+                "route": "research",
+                "task": "research_nodes",
+                "research_goal": "Find distilled or faster ways to run the workflow.",
+                "search_directions": [
+                    "distilled AnimateDiff or lightning motion models",
+                    "context length, sampler, steps, and frame-count speed tradeoffs",
+                ],
+                "source_preferences": ["workflows", "messages", "web"],
+                "avoid": ["raw sentence search", "stopword-only searches"],
+                "known_graph_context": "Current graph resembles an AnimateDiff workflow.",
+            }
+        )
+
+        d = parse_classify_response(raw)
+        payload = d.to_dict()
+
+        assert d.effective_route == "research"
+        assert d.research_goal == "Find distilled or faster ways to run the workflow."
+        assert d.search_directions == (
+            "distilled AnimateDiff or lightning motion models",
+            "context length, sampler, steps, and frame-count speed tradeoffs",
+        )
+        assert d.source_preferences == ("workflows", "messages", "web")
+        assert d.avoid == ("raw sentence search", "stopword-only searches")
+        assert d.known_graph_context == "Current graph resembles an AnimateDiff workflow."
+        assert payload["search_directions"] == [
+            "distilled AnimateDiff or lightning motion models",
+            "context length, sampler, steps, and frame-count speed tradeoffs",
+        ]
 
     def test_non_bool_coercion(self) -> None:
         raw = '{"research": "yes", "implement": 0, "reply": 1, "effort": "low", "plan_summary": ""}'
@@ -2267,6 +2311,7 @@ class TestCanonicalRouteVocabulary:
         options = format_route_options_for_prompt()
         for route in ("clarify", "respond", "inspect", "research", "revise", "adapt"):
             assert f'"{route}"' in options, f"route {route!r} missing from prompt"
+        assert '"requires_custom_nodes"' not in options
         assert '""' in options or "empty string" in options.lower()
 
 
@@ -2291,6 +2336,16 @@ class TestClassifierDecisionTable:
         }
         for route, marker in route_entries.items():
             assert marker in system, f"Decision-table entry for {route!r} missing from classify prompt"
+        assert 'route="requires_custom_nodes"' not in system
+
+    def test_system_prompt_routes_named_external_edit_to_adapt(self) -> None:
+        msgs = build_classify_messages("Switch to generating 16 frames with Hotshot")
+        system = msgs[0]["content"]
+
+        assert "names an external model, node family" in system
+        assert "route=\"adapt\"" in system
+        assert "Switch to generating 16 frames with Hotshot" in system
+        assert "Do not clarify just because a named external technology has variants" in system
 
     def test_decision_table_maps_research_route_to_research_true_implement_false(self) -> None:
         msgs = build_classify_messages("look up LTX audio workflows")
@@ -2644,3 +2699,455 @@ class TestReplyPromptWarningsAndEvidence:
         assert "Node4" in content
         assert "Node5" not in content
         assert "Node7" not in content
+
+
+# ── PrecedentOption contract tests (T2) ──────────────────────────────────────
+
+
+_FORBIDDEN_PUBLIC_KEYS = frozenset({
+    "winner", "best", "selected", "score", "rank", "primary",
+    "preferred", "chosen", "pick", "choice", "top", "recommended",
+})
+
+
+def _assert_no_forbidden_keys(payload: dict, label: str) -> None:
+    """Fail if any forbidden public-key name appears in the payload."""
+    found = _FORBIDDEN_PUBLIC_KEYS & set(payload)
+    assert not found, f"{label} contains forbidden keys: {sorted(found)}"
+
+
+class TestPrecedentOption:
+    """Contract tests for PrecedentOption serialization, forbidden-key
+    avoidance, and omitted empty optional fields."""
+
+    def test_defaults(self) -> None:
+        opt = PrecedentOption()
+        assert opt.source_class_type == ""
+        assert opt.source_workflow_path is None
+        assert opt.node_ids == ()
+        assert opt.node_types == ()
+        assert opt.description == ""
+        assert opt.notes == ()
+
+    def test_to_dict_defaults(self) -> None:
+        opt = PrecedentOption()
+        d = opt.to_dict()
+        assert d == {
+            "source_class_type": "",
+            "description": "",
+        }
+        # Optional fields omitted when empty/None
+        assert "source_workflow_path" not in d
+        assert "node_ids" not in d
+        assert "node_types" not in d
+        assert "notes" not in d
+        _assert_no_forbidden_keys(d, "PrecedentOption defaults")
+
+    def test_to_dict_with_all_fields(self) -> None:
+        opt = PrecedentOption(
+            source_class_type="LTXAudioLipsync",
+            source_workflow_path="custom_nodes/ltxaudio/LTX_audio.py",
+            node_ids=("10", "11", "12"),
+            node_types=("AudioLoader", "VAEDecode", "PreviewImage"),
+            description="Audio lipsync pipeline for LTX video",
+            notes=("requires custom node pack", "tested with LTX 0.9.5"),
+        )
+        d = opt.to_dict()
+        assert d["source_class_type"] == "LTXAudioLipsync"
+        assert d["source_workflow_path"] == "custom_nodes/ltxaudio/LTX_audio.py"
+        assert d["node_ids"] == ["10", "11", "12"]
+        assert d["node_types"] == ["AudioLoader", "VAEDecode", "PreviewImage"]
+        assert d["description"] == "Audio lipsync pipeline for LTX video"
+        assert d["notes"] == ["requires custom node pack", "tested with LTX 0.9.5"]
+        _assert_no_forbidden_keys(d, "PrecedentOption all fields")
+
+    def test_to_dict_omits_empty_source_workflow_path(self) -> None:
+        opt = PrecedentOption(
+            source_class_type="KSampler",
+            source_workflow_path=None,
+            description="A KSampler precedent",
+        )
+        d = opt.to_dict()
+        assert "source_workflow_path" not in d
+
+    def test_to_dict_omits_empty_node_ids(self) -> None:
+        opt = PrecedentOption(
+            source_class_type="KSampler",
+            node_ids=(),
+            description="empty node_ids",
+        )
+        d = opt.to_dict()
+        assert "node_ids" not in d
+
+    def test_to_dict_omits_empty_node_types(self) -> None:
+        opt = PrecedentOption(
+            source_class_type="KSampler",
+            node_types=(),
+            description="empty node_types",
+        )
+        d = opt.to_dict()
+        assert "node_types" not in d
+
+    def test_to_dict_omits_empty_notes(self) -> None:
+        opt = PrecedentOption(
+            source_class_type="KSampler",
+            notes=(),
+            description="empty notes",
+        )
+        d = opt.to_dict()
+        assert "notes" not in d
+
+    def test_forbidden_keys_absent(self) -> None:
+        """Every forbidden public-key name is absent from serialized output."""
+        opt = PrecedentOption(
+            source_class_type="TestNode",
+            description="A test option with description",
+            notes=("note 1", "note 2"),
+            node_ids=("1", "2"),
+        )
+        d = opt.to_dict()
+        _assert_no_forbidden_keys(d, "PrecedentOption")
+        # Also check that description/notes don't accidentally contain
+        # forbidden key names as top-level keys.
+        forbidden_in_keys = _FORBIDDEN_PUBLIC_KEYS & set(d)
+        assert not forbidden_in_keys, (
+            f"PrecedentOption serialized payload has forbidden keys: "
+            f"{sorted(forbidden_in_keys)}"
+        )
+
+    def test_node_ids_coerced_to_tuple(self) -> None:
+        opt = PrecedentOption(node_ids=["a", "b", "c"])
+        assert isinstance(opt.node_ids, tuple)
+        assert opt.node_ids == ("a", "b", "c")
+
+    def test_node_types_coerced_to_tuple(self) -> None:
+        opt = PrecedentOption(node_types=["KSampler", "VAEDecode"])
+        assert isinstance(opt.node_types, tuple)
+        assert opt.node_types == ("KSampler", "VAEDecode")
+
+    def test_notes_coerced_to_tuple(self) -> None:
+        opt = PrecedentOption(notes=["note a", "note b"])
+        assert isinstance(opt.notes, tuple)
+        assert opt.notes == ("note a", "note b")
+
+    def test_immutable(self) -> None:
+        opt = PrecedentOption(source_class_type="Test")
+        with pytest.raises(Exception):
+            opt.source_class_type = "Other"  # type: ignore[misc]
+
+
+# ── PrecedentPacket contract tests (T2) ──────────────────────────────────────
+
+
+class TestPrecedentPacket:
+    """Contract tests for PrecedentPacket serialization, forbidden-key
+    avoidance, and omitted empty optional fields."""
+
+    def test_defaults(self) -> None:
+        pkt = PrecedentPacket()
+        assert pkt.options == ()
+        assert pkt.context_note == ""
+        assert pkt.warnings == ()
+
+    def test_to_dict_defaults(self) -> None:
+        pkt = PrecedentPacket()
+        d = pkt.to_dict()
+        assert d == {"options": []}
+        assert "context_note" not in d
+        assert "warnings" not in d
+        _assert_no_forbidden_keys(d, "PrecedentPacket defaults")
+
+    def test_to_dict_with_all_fields(self) -> None:
+        opt1 = PrecedentOption(
+            source_class_type="LTXAudioLipsync",
+            node_ids=("10", "11"),
+            description="First option",
+        )
+        opt2 = PrecedentOption(
+            source_class_type="KSampler",
+            node_ids=("1",),
+            description="Second option",
+        )
+        pkt = PrecedentPacket(
+            options=(opt1, opt2),
+            context_note="Two workflows found for LTX audio adaptation",
+            warnings=(
+                {"type": "TimeoutError", "message": "hivemind timed out"},
+                {"type": "ValueError", "message": "empty search result"},
+            ),
+        )
+        d = pkt.to_dict()
+        assert len(d["options"]) == 2
+        assert d["options"][0]["source_class_type"] == "LTXAudioLipsync"
+        assert d["options"][1]["source_class_type"] == "KSampler"
+        assert d["context_note"] == "Two workflows found for LTX audio adaptation"
+        assert len(d["warnings"]) == 2
+        assert d["warnings"][0]["type"] == "TimeoutError"
+        _assert_no_forbidden_keys(d, "PrecedentPacket all fields")
+        # Each option must also have no forbidden keys.
+        for i, opt_dict in enumerate(d["options"]):
+            _assert_no_forbidden_keys(opt_dict, f"PrecedentPacket option {i}")
+
+    def test_to_dict_omits_empty_context_note(self) -> None:
+        pkt = PrecedentPacket(
+            options=(PrecedentOption(source_class_type="Test", description="desc"),),
+            context_note="",
+        )
+        d = pkt.to_dict()
+        assert "options" in d
+        assert "context_note" not in d
+
+    def test_to_dict_omits_empty_warnings(self) -> None:
+        pkt = PrecedentPacket(
+            options=(PrecedentOption(source_class_type="Test", description="desc"),),
+            warnings=(),
+        )
+        d = pkt.to_dict()
+        assert "warnings" not in d
+
+    def test_forbidden_keys_absent_in_packet_and_options(self) -> None:
+        opt = PrecedentOption(
+            source_class_type="TestNode",
+            description="Test option",
+            notes=("a note",),
+        )
+        pkt = PrecedentPacket(
+            options=(opt,),
+            context_note="test context",
+            warnings=({"level": "info", "text": "sample warning"},),
+        )
+        d = pkt.to_dict()
+        _assert_no_forbidden_keys(d, "PrecedentPacket")
+        for i, opt_dict in enumerate(d["options"]):
+            _assert_no_forbidden_keys(opt_dict, f"PrecedentPacket option[{i}]")
+
+    def test_options_coerced_to_tuple(self) -> None:
+        opt = PrecedentOption(source_class_type="Test")
+        pkt = PrecedentPacket(options=[opt])
+        assert isinstance(pkt.options, tuple)
+        assert len(pkt.options) == 1
+        assert pkt.options[0] is opt
+
+    def test_immutable(self) -> None:
+        pkt = PrecedentPacket(context_note="test")
+        with pytest.raises(Exception):
+            pkt.context_note = "modified"  # type: ignore[misc]
+
+
+# ── GraphFacts contract tests (T2) ───────────────────────────────────────────
+
+
+class TestGraphFacts:
+    """Contract tests for GraphFacts serialization, from_collectors
+    classmethod, has_blockers property, and forbidden-key absence."""
+
+    def test_defaults(self) -> None:
+        gf = GraphFacts()
+        assert gf.current_output_node_types == ()
+        assert gf.terminal_output_socket_types == ()
+        assert gf.socket_type_mismatches == ()
+        assert gf.missing_required_inputs == ()
+        assert gf.unknown_class_types == ()
+        assert gf.missing_models == ()
+        assert gf.missing_node_packs == ()
+        assert gf.readiness_blockers == ()
+        assert gf.has_dangling_inputs is False
+        assert gf.has_dangling_outputs is False
+        assert gf.no_gpu_detected is False
+        assert gf.summary == ""
+
+    def test_to_dict_defaults(self) -> None:
+        gf = GraphFacts()
+        d = gf.to_dict()
+        assert d["current_output_node_types"] == []
+        assert d["terminal_output_socket_types"] == []
+        assert d["socket_type_mismatches"] == []
+        assert d["missing_required_inputs"] == []
+        assert d["unknown_class_types"] == []
+        assert d["missing_models"] == []
+        assert d["missing_node_packs"] == []
+        assert d["readiness_blockers"] == []
+        assert d["has_dangling_inputs"] is False
+        assert d["has_dangling_outputs"] is False
+        assert d["no_gpu_detected"] is False
+        assert d["summary"] == ""
+        assert d["has_blockers"] is False
+        _assert_no_forbidden_keys(d, "GraphFacts defaults")
+
+    def test_to_dict_with_data(self) -> None:
+        gf = GraphFacts(
+            current_output_node_types=("IMAGE", "LATENT"),
+            terminal_output_socket_types=("IMAGE",),
+            socket_type_mismatches=(
+                {"node": "1", "expected": "IMAGE", "got": "LATENT"},
+            ),
+            missing_required_inputs=(
+                {"node": "2", "missing_input": "model"},
+            ),
+            unknown_class_types=("BogusNode",),
+            missing_models=("sd_xl_base_1.0.safetensors",),
+            missing_node_packs=("custom_nodes/missing_pack",),
+            readiness_blockers=("no GPU detected",),
+            has_dangling_inputs=True,
+            has_dangling_outputs=False,
+            no_gpu_detected=True,
+            summary="Graph has multiple topology and readiness issues",
+        )
+        d = gf.to_dict()
+        assert d["current_output_node_types"] == ["IMAGE", "LATENT"]
+        assert d["terminal_output_socket_types"] == ["IMAGE"]
+        assert len(d["socket_type_mismatches"]) == 1
+        assert d["socket_type_mismatches"][0]["node"] == "1"
+        assert len(d["missing_required_inputs"]) == 1
+        assert d["missing_required_inputs"][0]["missing_input"] == "model"
+        assert d["unknown_class_types"] == ["BogusNode"]
+        assert d["missing_models"] == ["sd_xl_base_1.0.safetensors"]
+        assert d["missing_node_packs"] == ["custom_nodes/missing_pack"]
+        assert d["readiness_blockers"] == ["no GPU detected"]
+        assert d["has_dangling_inputs"] is True
+        assert d["has_dangling_outputs"] is False
+        assert d["no_gpu_detected"] is True
+        assert d["summary"] == "Graph has multiple topology and readiness issues"
+        assert d["has_blockers"] is True
+        _assert_no_forbidden_keys(d, "GraphFacts with data")
+
+    def test_has_blockers_false_when_empty(self) -> None:
+        gf = GraphFacts()
+        assert gf.has_blockers is False
+
+    def test_has_blockers_true_with_socket_type_mismatches(self) -> None:
+        gf = GraphFacts(socket_type_mismatches=({"node": "1"},))
+        assert gf.has_blockers is True
+
+    def test_has_blockers_true_with_missing_required_inputs(self) -> None:
+        gf = GraphFacts(missing_required_inputs=({"node": "1", "missing": "model"},))
+        assert gf.has_blockers is True
+
+    def test_has_blockers_true_with_unknown_class_types(self) -> None:
+        gf = GraphFacts(unknown_class_types=("UnknownNode",))
+        assert gf.has_blockers is True
+
+    def test_has_blockers_true_with_missing_models(self) -> None:
+        gf = GraphFacts(missing_models=("model.safetensors",))
+        assert gf.has_blockers is True
+
+    def test_has_blockers_true_with_missing_node_packs(self) -> None:
+        gf = GraphFacts(missing_node_packs=("missing_pack",))
+        assert gf.has_blockers is True
+
+    def test_has_blockers_true_with_readiness_blockers(self) -> None:
+        gf = GraphFacts(readiness_blockers=("no GPU",))
+        assert gf.has_blockers is True
+
+    def test_has_blockers_true_with_no_gpu(self) -> None:
+        gf = GraphFacts(no_gpu_detected=True)
+        assert gf.has_blockers is True
+
+    def test_from_collectors_defaults_when_none(self) -> None:
+        """from_collectors with None args returns default-empty GraphFacts."""
+        gf = GraphFacts.from_collectors()
+        assert gf.current_output_node_types == ()
+        assert gf.socket_type_mismatches == ()
+        assert gf.missing_models == ()
+        assert gf.has_blockers is False
+
+    def test_from_collectors_with_topology_only(self) -> None:
+        topo = TopologyFindings(
+            socket_type_mismatches=(
+                {"node": "3", "expected": "MODEL", "got": "CLIP"},
+            ),
+            missing_required_inputs=(
+                {"node": "4", "missing_input": "clip"},
+            ),
+            unknown_class_types=("CustomNode",),
+        )
+        gf = GraphFacts.from_collectors(topology=topo)
+        assert len(gf.socket_type_mismatches) == 1
+        assert gf.socket_type_mismatches[0]["node"] == "3"
+        assert len(gf.missing_required_inputs) == 1
+        assert gf.unknown_class_types == ("CustomNode",)
+        assert gf.missing_models == ()
+        assert gf.missing_node_packs == ()
+        assert gf.has_blockers is True
+
+    def test_from_collectors_with_readiness_only(self) -> None:
+        readiness = ReadinessReport(
+            missing_models=("sd_xl.safetensors",),
+            missing_node_packs=("efficiency",),
+            readiness_blockers=("missing model",),
+            no_gpu_detected=True,
+        )
+        gf = GraphFacts.from_collectors(readiness=readiness)
+        assert gf.missing_models == ("sd_xl.safetensors",)
+        assert gf.missing_node_packs == ("efficiency",)
+        assert gf.readiness_blockers == ("missing model",)
+        assert gf.no_gpu_detected is True
+        assert gf.socket_type_mismatches == ()
+        assert gf.has_blockers is True
+
+    def test_from_collectors_with_both(self) -> None:
+        topo = TopologyFindings(
+            socket_type_mismatches=(),
+            missing_required_inputs=(),
+            unknown_class_types=(),
+            dangling_links=("1->3",),
+            absent_endpoint_nodes=("99",),
+        )
+        readiness = ReadinessReport(
+            missing_models=(),
+            missing_node_packs=(),
+            readiness_blockers=(),
+            no_gpu_detected=False,
+        )
+        gf = GraphFacts.from_collectors(topology=topo, readiness=readiness)
+        # Even though topology has dangling_links and absent_endpoint_nodes,
+        # GraphFacts.from_collectors() only projects the subset of fields
+        # that GraphFacts carries (socket_type_mismatches, missing_required_inputs,
+        # unknown_class_types from topology; missing_models, missing_node_packs,
+        # readiness_blockers, no_gpu_detected from readiness).
+        assert gf.socket_type_mismatches == ()
+        assert gf.missing_required_inputs == ()
+        assert gf.unknown_class_types == ()
+        assert gf.missing_models == ()
+        assert gf.has_blockers is False
+
+    def test_forbidden_keys_absent(self) -> None:
+        gf = GraphFacts(
+            socket_type_mismatches=({"node": "1", "expected": "A", "got": "B"},),
+            summary="test",
+        )
+        d = gf.to_dict()
+        _assert_no_forbidden_keys(d, "GraphFacts")
+
+    def test_tuples_coerced(self) -> None:
+        gf = GraphFacts(
+            current_output_node_types=["IMAGE"],
+            missing_models=["model.safetensors"],
+        )
+        assert isinstance(gf.current_output_node_types, tuple)
+        assert isinstance(gf.missing_models, tuple)
+
+    def test_immutable(self) -> None:
+        gf = GraphFacts(summary="test")
+        with pytest.raises(Exception):
+            gf.summary = "modified"  # type: ignore[misc]
+
+
+# ── Executor export access tests (T2) ────────────────────────────────────────
+
+
+class TestExecutorExportAccess:
+    """Verify PrecedentOption, PrecedentPacket, and GraphFacts are
+    importable from vibecomfy.executor via lazy exports."""
+
+    def test_precedent_option_importable(self) -> None:
+        from vibecomfy.executor import PrecedentOption as PO
+        assert PO is PrecedentOption
+
+    def test_precedent_packet_importable(self) -> None:
+        from vibecomfy.executor import PrecedentPacket as PP
+        assert PP is PrecedentPacket
+
+    def test_graph_facts_importable(self) -> None:
+        from vibecomfy.executor import GraphFacts as GF
+        assert GF is GraphFacts

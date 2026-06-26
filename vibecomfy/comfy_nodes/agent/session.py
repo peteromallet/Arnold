@@ -98,12 +98,116 @@ class RebaselineConflict:
     record: dict[str, Any]
 
 
+# ── Authoritative path-component normalizer ────────────────────────────────
+# Every session_id and turn_id MUST pass through this boundary before it
+# becomes a filesystem path component.  This is the single choke-point that
+# prevents path-traversal attacks (e.g. "../../etc/passwd") and prevents
+# absolute-path injection from callers that receive raw user input.
+
+_MAX_PATH_COMPONENT_LENGTH = 80
+_PATH_COMPONENT_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]")
+
+
+def _deterministic_fallback(raw: str) -> str:
+    """Return a deterministic 32-char hex string for *raw*.
+
+    Uses SHA-256 so the same rejected input always maps to the same safe
+    component.  This keeps ``_safe_session_id`` backwards-compatible: callers
+    that sanitise a malicious session id once and later look it up from
+    storage get the same normalised id.
+    """
+    return hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:32]
+
+
+def normalize_path_component(
+    value: str | None,
+    *,
+    fallback_factory: Callable[[], str] | None = None,
+) -> str:
+    """Return *value* as a single safe filesystem path component.
+
+    *   Characters outside ``[A-Za-z0-9_.-]`` are replaced with ``_``.
+    *   The result is truncated to ``_MAX_PATH_COMPONENT_LENGTH`` chars.
+    *   Empty/whitespace-only values produce the *fallback_factory* result
+        (default: ``uuid.uuid4().hex``).
+    *   Values that still contain ``..`` after normalisation are rejected
+        (a deterministic SHA-256 fallback is used so the same raw value always
+        maps to the same safe component) — no normalised component can act as
+        a parent-directory reference.
+    *   Leading ``/`` and ``\\\\`` are stripped so the component can never
+        constitute an absolute path when joined to a root.
+    """
+    if fallback_factory is None:
+        fallback_factory = lambda: uuid.uuid4().hex
+
+    if not isinstance(value, str) or not value.strip():
+        return fallback_factory()
+
+    # Strip leading slashes/backslashes first so they don't become
+    # leading underscores; then replace remaining dangerous characters.
+    safe = value.strip().lstrip("/").lstrip("\\\\")
+    safe = _PATH_COMPONENT_SAFE_RE.sub("_", safe)
+    safe = safe[:_MAX_PATH_COMPONENT_LENGTH]
+
+    if not safe or ".." in safe:
+        # Deterministic fallback: same rejected raw value → same safe id.
+        # This preserves backwards compat with _safe_session_id callers
+        # that sanitise once and look up later (e.g. read_session_chat).
+        return _deterministic_fallback(value)
+
+    return safe
+
+
+def normalize_session_id(value: str | None = None) -> str:
+    """Normalize a session id to a single safe path component.
+
+    This is the authoritative entry-point used by ``session_dir_for`` and
+    ``turn_dir_for``.  Callers that obtain raw session ids from HTTP routes
+    or executor requests can also call it directly for early validation.
+    """
+    return normalize_path_component(value)
+
+
 def session_dir_for(root: Path, session_id: str) -> Path:
-    return root / session_id
+    """Return the canonical session directory for *session_id* under *root*.
+
+    The *session_id* is normalised through ``normalize_session_id`` so the
+    result is always a single path component safely contained within *root*.
+    """
+    safe_id = normalize_session_id(session_id)
+    candidate = (root / safe_id).resolve()
+    # Containment check: the resolved path must be within *root* (or be the
+    # root itself).  This is a defence-in-depth guard in case a future
+    # normalizer regression lets a traversal component through.
+    root_resolved = root.resolve()
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        raise ValueError(
+            f"session_id {session_id!r} resolves outside session root "
+            f"{root_resolved}: {candidate}"
+        )
+    return candidate
 
 
 def turn_dir_for(root: Path, session_id: str, turn_id: str) -> Path:
-    return session_dir_for(root, session_id) / "turns" / turn_id
+    """Return the canonical turn directory for (*session_id*, *turn_id*).
+
+    Both *session_id* and *turn_id* are normalised so the result is always
+    a path safely contained within the session directory.
+    """
+    safe_session = normalize_session_id(session_id)
+    safe_turn = normalize_path_component(turn_id)
+    candidate = (root / safe_session / "turns" / safe_turn).resolve()
+    root_resolved = root.resolve()
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        raise ValueError(
+            f"turn_dir_for({session_id!r}, {turn_id!r}) resolves outside "
+            f"session root {root_resolved}: {candidate}"
+        )
+    return candidate
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -2984,6 +3088,8 @@ __all__ = [
     "allocate_turn",
     "canonical_json_bytes",
     "default_state",
+    "normalize_path_component",
+    "normalize_session_id",
     "payload_hash",
     "read_state",
     "record_idempotent_response",

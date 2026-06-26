@@ -102,8 +102,8 @@ the executor endpoint.
 
 ## Route-Intent Map Evidence
 
-The M5 agentic suite freezes a deterministic route-intent map
-(`tests/agentic_harness/scenarios/route-intent-map.yaml`) that exercises all
+The M5 structural suite freezes a deterministic route-intent map
+(`tests/structural_harness/scenarios/route-intent-map.yaml`) that exercises all
 four canonical routes through the executor.  The frozen evidence asserts:
 
 | Route | research | implement | apply_eligible | no_candidate_reason |

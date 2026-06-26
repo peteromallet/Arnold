@@ -5254,6 +5254,125 @@ test("VibeComfy settings live in a toggled popover and keep route-status guidanc
   }
 });
 
+test("VibeComfy settings toggle saves and triggers research contribution", async () => {
+  globalThis.localStorage?.removeItem("vibecomfy_agent_provider");
+  globalThis.localStorage?.removeItem("vibecomfy_research_contribution_enabled");
+  const settingsBodies = [];
+  let triggerCount = 0;
+  const routeOptions = {
+    auto: { requested_route: "auto", normalized_route: "arnold", browser_api_key_allowed: false },
+    "openai-codex": { requested_route: "openai-codex", normalized_route: "arnold", browser_api_key_allowed: false },
+  };
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/settings": async ({ options }) => {
+        if (options?.method === "POST") {
+          const body = JSON.parse(options.body);
+          settingsBodies.push(body);
+          return { status: 200, body: { ok: true, research_contribution_enabled: body.research_contribution_enabled } };
+        }
+        return { status: 200, body: { ok: true, research_contribution_enabled: false } };
+      },
+      "/vibecomfy/agent/research-contribution/run": async () => {
+        triggerCount += 1;
+        return { status: 200, body: { ok: true, triggered: true, research_contribution_enabled: true } };
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: { ok: true, provider_available: true, route: "arnold", requested_route: "auto", route_options: routeOptions },
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.requests.some((entry) => entry.url === "/vibecomfy/agent/settings"));
+
+    const settingsGear = harness.document.body.querySelectorAll((node) => node.title === "Settings")[0];
+    settingsGear.click();
+    const toggle = harness.document.getElementById("vibecomfy-agent-panel-research-contribution");
+    const yesToggle = harness.document.getElementById("vibecomfy-agent-panel-research-contribution-yes");
+    const noToggle = harness.document.getElementById("vibecomfy-agent-panel-research-contribution-no");
+    assert.equal(toggle.checked, false);
+    assert.equal(noToggle.style.background, "#2f6f8f");
+
+    await yesToggle.click();
+
+    await waitFor(() => settingsBodies.length === 1 && triggerCount === 1);
+    assert.deepEqual(settingsBodies[0], { research_contribution_enabled: true });
+    assert.equal(toggle.checked, true);
+    assert.equal(yesToggle.style.background, "#2f6f8f");
+    assert.equal(globalThis.localStorage.getItem("vibecomfy_research_contribution_enabled"), "1");
+    assert.match(harness.textDump(), /Research contribution started/);
+  } finally {
+    globalThis.localStorage?.removeItem("vibecomfy_agent_provider");
+    globalThis.localStorage?.removeItem("vibecomfy_research_contribution_enabled");
+    await harness.dispose();
+  }
+});
+
+test("VibeComfy onboarding asks for research contribution after engine selection", async () => {
+  globalThis.localStorage?.removeItem("vibecomfy_agent_provider");
+  globalThis.localStorage?.removeItem("vibecomfy_research_contribution_enabled");
+  const settingsBodies = [];
+  let triggerCount = 0;
+  const routeOptions = {
+    auto: { requested_route: "auto", normalized_route: "arnold", browser_api_key_allowed: false },
+    "openai-codex": { requested_route: "openai-codex", normalized_route: "arnold", browser_api_key_allowed: false },
+  };
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+      "/vibecomfy/agent/settings": async ({ options }) => {
+        if (options?.method === "POST") {
+          const body = JSON.parse(options.body);
+          settingsBodies.push(body);
+          return { status: 200, body: { ok: true, research_contribution_enabled: body.research_contribution_enabled } };
+        }
+        return { status: 200, body: { ok: true, research_contribution_enabled: false } };
+      },
+      "/vibecomfy/agent/research-contribution/run": async () => {
+        triggerCount += 1;
+        return { status: 200, body: { ok: true, triggered: true, research_contribution_enabled: true } };
+      },
+      "/vibecomfy/agent/status?route=auto": {
+        status: 200,
+        body: { ok: true, provider_available: false, route: "arnold", requested_route: "auto", route_options: routeOptions },
+      },
+      "/vibecomfy/agent/status?route=openai-codex": {
+        status: 200,
+        body: { ok: true, provider_available: true, route: "arnold", requested_route: "openai-codex", route_options: routeOptions },
+      },
+    },
+  });
+
+  try {
+    await harness.loadExtension();
+    await harness.setup();
+    await harness.invokeCommand("VibeComfy.AgentEdit");
+    await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-welcome-overlay"));
+
+    const codexLabel = harness.document.body.querySelectorAll((node) => node.textContent === "Codex")[0];
+    codexLabel.parentNode.click();
+    harness.getButton("Confirm Selection").click();
+    await waitFor(() => /Contribute agent research/.test(harness.textDump()));
+
+    harness.getButton("Yes").click();
+    await waitFor(() => settingsBodies.length === 1 && triggerCount === 1);
+
+    assert.deepEqual(settingsBodies[0], { research_contribution_enabled: true });
+    assert.equal(globalThis.localStorage.getItem("vibecomfy_agent_provider"), "openai-codex");
+    assert.equal(globalThis.localStorage.getItem("vibecomfy_research_contribution_enabled"), "1");
+  } finally {
+    globalThis.localStorage?.removeItem("vibecomfy_agent_provider");
+    globalThis.localStorage?.removeItem("vibecomfy_research_contribution_enabled");
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy first open auto-selects DeepSeek when a stored browser key is ready", async () => {
   const harness = await createBrowserHarness({
     responses: {

@@ -20,6 +20,7 @@ from vibecomfy.comfy_nodes.agent.edit import (
     _agent_edit_turn_event_payload,
     _batch_warning_sentence,
     _conversation_with_candidate_reference,
+    _format_available_node_names,
     _human_change_phrase,
     _humanized_edit_message,
     _landed_edit_lead,
@@ -79,6 +80,18 @@ from vibecomfy.workflow import VibeNode, VibeWorkflow, WorkflowSource
 
 
 # ── shared helpers ────────────────────────────────────────────────────────
+
+
+def test_format_available_node_names_bounds_large_catalog() -> None:
+    rows = [types.SimpleNamespace(class_type=f"Node{i:03d}") for i in range(220)]
+
+    formatted = _format_available_node_names(rows, max_names=25)
+
+    assert "Node000" in formatted
+    assert "Node024" in formatted
+    assert "Node025" not in formatted
+    assert "195 more node type names omitted" in formatted
+    assert "use search(...)" in formatted
 
 
 class _Provider:
@@ -1013,6 +1026,47 @@ def test_batch_repl_code_node_addition_preserves_unrelated_unknown_graph_blocker
     assert result["outcome"]["kind"] == "candidate"
     assert result["candidate"] is not None
     assert result["debug"]["batch_repl"]["exit_mode"] == "done"
+
+
+def test_batch_repl_code_node_addition_accepts_dict_io_format(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the prompt example allows io={'inputs': {'image': 'IMAGE'},
+    'outputs': {'image': 'IMAGE'}}; the emit/validation path must parse it."""
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    graph = _json_clone(_ui_graph())
+    source = (
+        "from PIL import ImageOps\n"
+        "processed = ImageOps.autocontrast(image)\n"
+        'return {"image": processed}'
+    )
+    batch = (
+        f"code_node = vibecomfy.exec(source={source!r}, "
+        'io={"inputs": {"image": "IMAGE"}, "outputs": {"image": "IMAGE"}}, '
+        "in_0=loadimage.image)\n"
+        "saveimage.images = code_node.out_0\n"
+        "done()"
+    )
+
+    def _client(_messages):
+        return {"message": "Inserted a PIL processing code node.", "batch": batch}
+
+    result = handle_agent_edit(
+        {
+            "graph": graph,
+            "task": "Add a code node that processes images with PIL",
+            "session_id": "batch-exec-dict-io",
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["candidate"] is not None
 
 
 def test_localized_code_node_addition_keeps_new_candidate_blockers(tmp_path: Path) -> None:
@@ -2180,12 +2234,27 @@ def test_handle_agent_edit_batch_repl_turn0_catalog_is_scoped_and_search_first(
     assert "ImageScaleBy" in names
     assert "do NOT search for them" in system
     assert "Search first" in system
-    assert 'research("query words", sources=["workflows", "messages", "web"])' in system
     assert "local installed-node schema lookup" in system
     assert "Reference EXISTING nodes by EXACT names" in system
     assert "Bare ambiguous refs are rejected." in system
-    assert 'sources=["web"]' in system
     assert "for a NEW node TYPE you want to ADD" in system
+    assert "Local schema lookup" in system
+    assert 'research("query words", sources=["workflows", "registry", "messages", "web"])' in system
+    assert "if sources are omitted it searches internal workflows/templates only" in system
+    assert "factual local ComfyUI schema lookup" in system
+    assert 'sources=["web"]' in system
+    assert "workflow context is mandatory" in system
+    assert "smallest named artifact" in system
+    assert "Use separate evidence-tier calls" in system
+    assert "First look internally for a workflow/template precedent" in system
+    assert "Do not combine internal workflow search with web or registry" in system
+    assert "URL/title is a lead, not yet workflow context" in system
+    assert "Only after workflow/example context identifies a pack" in system
+    assert 'sources=["workflows"]' in system
+    assert 'sources=["registry"]' in system
+    assert "do not search generic constraints by themselves" in system
+    assert "Do not invent likely class names" in system
+    assert "Do not call `search(focus_types=[...])` for guessed names" in system
 
 
 def test_batch_repl_search_query_output_is_in_next_turn_report() -> None:
@@ -2213,6 +2282,1475 @@ def test_batch_repl_search_query_output_is_in_next_turn_report() -> None:
     assert result.statements[0].op_kind == "query"
     assert "def ImageScaleBy" in result.statements[0].detail["query_output"]
     assert "def ImageScaleBy" in report
+
+
+def test_batch_repl_search_exact_miss_explains_local_schema_lookup() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
+    from vibecomfy.porting.edit.session import EditSession
+
+    provider = _Provider(
+        {
+            "SaveAnimatedWEBP": NodeSchema(
+                class_type="SaveAnimatedWEBP",
+                pack=None,
+                inputs={"images": InputSpec("IMAGE", required=True)},
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            )
+        }
+    )
+    session = EditSession(_ui_graph(), schema_provider=provider)
+
+    result = session.apply_batch('search(focus_types=["HotshotXL"])')
+    report = _format_batch_report(result, consecutive_errors=0, budget_remaining=1)
+
+    assert result.ok is True
+    assert result.statements[0].op_kind == "query"
+    query_output = result.statements[0].detail["query_output"]
+    assert "No node signature found for exact class type(s): 'HotshotXL'." in query_output
+    assert "not an internet or precedent search" in query_output
+    assert "registry/schema lookup for the exact class name(s): HotshotXL" in query_output
+    assert "Do not repeat local workflow search" in query_output
+    assert "expand the miss into guessed loader/sampler names" in query_output
+    assert "No available local class names contain the requested terms." in report
+
+
+def test_batch_repl_search_partial_exact_miss_reports_missing_classes() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
+    from vibecomfy.porting.edit.session import EditSession
+
+    provider = _Provider(
+        {
+            "KSamplerAdvanced": NodeSchema(
+                class_type="KSamplerAdvanced",
+                pack=None,
+                inputs={"model": InputSpec("MODEL", required=True)},
+                outputs=[OutputSpec("LATENT", "LATENT")],
+                source_provider="test",
+                confidence=1.0,
+            )
+        }
+    )
+    session = EditSession(_ui_graph(), schema_provider=provider)
+
+    result = session.apply_batch(
+        'search(focus_types=["ADE_AnimateDiffLoaderWithContext", '
+        '"ADE_AnimateDiffUniformContextOptions", "KSamplerAdvanced"])'
+    )
+    report = _format_batch_report(result, consecutive_errors=0, budget_remaining=1)
+
+    query_output = result.statements[0].detail["query_output"]
+    assert "def KSamplerAdvanced" in query_output
+    assert (
+        "No node signature found for exact class type(s): "
+        "'ADE_AnimateDiffLoaderWithContext', 'ADE_AnimateDiffUniformContextOptions'."
+    ) in query_output
+    assert "registry/schema lookup for the exact class name(s)" in query_output
+    assert "ADE_AnimateDiffLoaderWithContext" in report
+
+
+def test_batch_repl_research_query_output_is_in_next_turn_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
+    from vibecomfy.porting.edit.session import EditSession
+
+    calls: list[dict[str, object]] = []
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        calls.append({"query": query, **kwargs})
+        return ResearchResult(
+            summary="Found Hotshot XL custom-node installation and workflow precedent.",
+            sources=(
+                {
+                    "title": "ComfyUI-HotshotXL",
+                    "url": "https://example.test/hotshot",
+                    "description": "HotshotXL provides video generation custom nodes for ComfyUI.",
+                },
+            ),
+            warnings=("local corpus unavailable",),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch('research("Hotshot XL ComfyUI 16 frames")')
+    report = _format_batch_report(result, consecutive_errors=0, budget_remaining=1)
+
+    assert result.ok is True
+    assert result.statements[0].op_kind == "query"
+    assert calls[0]["query"] == "Hotshot XL ComfyUI 16 frames"
+    assert calls[0]["local_limit"] == 5
+    assert calls[0]["registry_resolver"] is None
+    assert calls[0]["hivemind_client"] is None
+    assert calls[0]["web_search_client"] is None
+    assert result.statements[0].detail["research_sources"] == ("workflows",)
+    assert result.statements[0].detail["requested_research_sources"] == ("workflows",)
+    assert "Found Hotshot XL custom-node installation" in result.statements[0].detail["query_output"]
+    assert "Workflow-first check" in result.statements[0].detail["query_output"]
+    assert "ComfyUI-HotshotXL" in report
+    assert "local corpus unavailable" in report
+
+
+def test_batch_repl_research_can_choose_web_only_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vibecomfy.porting.edit.session import EditSession
+
+    calls: list[dict[str, object]] = []
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        calls.append({"query": query, **kwargs})
+        return ResearchResult(summary="Web-only result.", sources=())
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch('research("HotshotXL ComfyUI", sources=["web"])')
+
+    assert result.ok is True
+    assert calls[0]["query"] == "HotshotXL ComfyUI"
+    assert calls[0]["local_limit"] == 0
+    assert calls[0]["hivemind_client"] is None
+    assert calls[0]["web_search_client"] is not None
+    assert result.statements[0].detail["research_sources"] == ("web",)
+
+
+def test_batch_repl_web_url_only_research_prompts_concrete_workflow_followup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.porting.edit.session import EditSession
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary="Found URL leads.",
+            sources=(
+                {
+                    "source": "web",
+                    "title": "Hotshot XL OpenArt workflow",
+                    "url": "https://openart.ai/workflows/example/hotshot-xl/abc",
+                    "description": "External search result from openart.ai",
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch('research("Hotshot XL ComfyUI workflow", sources=["web"])')
+
+    query_output = result.statements[0].detail["query_output"]
+    assert "External workflow check" in query_output
+    assert "URL/title leads, not yet a workflow pattern" in query_output
+    assert "workflow JSON, repo example, or page result" in query_output
+
+
+def test_batch_repl_web_workflow_json_prompts_exact_schema_followup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.porting.edit.session import EditSession
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary="Found GitHub workflow JSON.",
+            sources=(
+                {
+                    "source": "external_workflow",
+                    "source_type": "github_workflow_json",
+                    "title": "workflow-vid2vid-hotshotXL.json",
+                    "url": "https://github.com/example/repo/blob/main/workflow-vid2vid-hotshotXL.json",
+                    "description": "Fetched GitHub workflow JSON.",
+                    "node_types": [
+                        "ADE_AnimateDiffUniformContextOptions",
+                        "VHS_LoadImagesPath",
+                        "KSamplerAdvanced",
+                    ],
+                    "source_workflow_path": "/tmp/workflow-vid2vid-hotshotXL.json",
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch('research("Hotshot XL ComfyUI workflow", sources=["web"])')
+
+    query_output = result.statements[0].detail["query_output"]
+    assert "Concrete workflow pattern found" in query_output
+    assert "ADE_AnimateDiffUniformContextOptions" in query_output
+    assert "VHS_LoadImagesPath" in query_output
+    assert "/tmp/workflow-vid2vid-hotshotXL.json" in query_output
+    assert "query registry/schema using exact node classes" in query_output
+    assert "python() only shows the current graph" in query_output
+    assert "broad custom-node queries such as only the model name" in query_output
+
+
+def test_batch_repl_research_memory_keeps_workflow_evidence_across_turns() -> None:
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "source": 'research("Hotshot XL ComfyUI workflow", sources=["web"])',
+                        "detail": {
+                            "query": "research",
+                            "research_query": "Hotshot XL ComfyUI workflow",
+                            "requested_research_sources": ("web",),
+                            "query_output": (
+                                "Sources:\n"
+                                "- workflow.json (github_workflow_json; source_workflow_path=/tmp/hotshot.json)\n"
+                                "Concrete workflow pattern found: node types found: "
+                                "ADE_AnimateDiffUniformContextOptions, VHS_LoadImagesPath."
+                            ),
+                        },
+                    }
+                ],
+            },
+            {
+                "turn_number": 2,
+                "statements": [
+                    {
+                        "source": 'search(focus_types=["ADE_AnimateDiffUniformContextOptions"])',
+                        "detail": {
+                            "query": "search",
+                            "query_output": (
+                                "No node signature found for exact class type(s): "
+                                "'ADE_AnimateDiffUniformContextOptions'. "
+                                "registry/schema lookup for the exact class name(s): "
+                                "ADE_AnimateDiffUniformContextOptions."
+                            ),
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory = _batch_research_memory_summary(state)
+
+    assert "github_workflow_json" in memory
+    assert "ADE_AnimateDiffUniformContextOptions" in memory
+    assert "VHS_LoadImagesPath" in memory
+    assert "No node signature found" in memory
+    assert "registry/schema lookup" in memory
+
+
+# ── T16: cross-turn memory compactness, no full-packet reserialization,
+#        forbidden-key absence ──────────────────────────────────────────
+
+_FORBIDDEN_MEMORY_KEYS: frozenset[str] = frozenset({
+    "winner", "best", "selected", "score", "rank", "primary",
+    "preferred", "chosen", "pick", "choice", "top", "recommended",
+})
+
+
+def _assert_no_forbidden_keys_in_text(text: str, label: str) -> None:
+    """Fail if any forbidden public-key name appears as a label in *text*."""
+    lowered = text.lower()
+    for key in _FORBIDDEN_MEMORY_KEYS:
+        assert f" {key}:" not in lowered, f"{label}: forbidden key '{key}:' in output"
+        assert f'"{key}"' not in lowered, f'{label}: forbidden key "{key}" in output'
+
+
+def test_batch_repl_memory_packet_aware_compact_summary() -> None:
+    """Turn >0 with precedent_packet: compact one-line-per-option summary,
+    not full packet reserialization and not verbatim query_output dump."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    packet: dict[str, Any] = {
+        "context_note": "Evidence/context only — NOT a winner, recommendation, or required implementation.",
+        "options": [
+            {
+                "source_class_type": "LTXVideoToVideo",
+                "description": "LTX 0.9.5 video-to-video workflow with IPAdapter face",
+                "source_workflow_path": "/tmp/ltx_v2v.json",
+                "node_ids": ["1", "2", "3", "4", "5"],
+                "node_types": ["LTXVideoToVideo", "IPAdapterFace", "LoadImage", "SaveVideo"],
+                "notes": ["source: github_workflow_json", "Caveat: requires LTX 0.9.5+", "Uses experimental IPAdapterFace"],
+            },
+            {
+                "source_class_type": "HotshotXLPipeline",
+                "description": "Hotshot XL vid2vid pipeline with ControlNet depth",
+                "source_workflow_path": "/tmp/hotshot.json",
+                "node_ids": ["10", "11"],
+                "node_types": ["HotshotXLPipeline", "ControlNetDepth"],
+                "notes": ["source: hivemind_workflow", "Caveat: 24GB+ VRAM"],
+            },
+        ],
+        "warnings": ["Some nodes may require custom packs"],
+    }
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "source": 'research("video to video workflow", sources=["web"])',
+                        "detail": {
+                            "query": "research",
+                            "research_query": "video to video workflow",
+                            "requested_research_sources": ("web",),
+                            "precedent_packet": packet,
+                            "query_output": "FULL VERBATIM OUTPUT THAT SHOULD NOT APPEAR IN MEMORY " * 50,
+                        },
+                    }
+                ],
+            },
+            {
+                "turn_number": 2,
+                "statements": [],
+            },
+        ]
+    )
+
+    memory = _batch_research_memory_summary(state)
+
+    # ── compact packet-aware output present ────────────────────────
+    assert "LTXVideoToVideo" in memory
+    assert "HotshotXLPipeline" in memory
+    assert "github_workflow_json" in memory   # source tier extracted from notes
+    assert "hivemind_workflow" in memory     # source tier extracted from notes
+    assert "IPAdapter face" in memory         # one-line pattern summary
+    assert "ControlNet depth" in memory       # one-line pattern summary
+    assert "caveat(s)" in memory.lower()      # caveat count present
+    assert "precedent option(s)" in memory    # packet-aware header
+
+    # ── full packet NOT reserialized ───────────────────────────────
+    assert "context_note" not in memory           # packet-level field not leaked
+    assert "FULL VERBATIM" not in memory          # query_output not dumped verbatim
+    assert '"node_ids"' not in memory             # full option fields omitted
+    assert '"node_types"' not in memory
+    assert "/tmp/ltx_v2v.json" not in memory      # raw source_workflow_path not leaked
+    assert "Evidence/context only" not in memory  # context_note text not leaked
+
+
+def test_batch_repl_memory_no_full_packet_reserialization() -> None:
+    """Memory output must never contain full packet fields
+    (context_note, node_ids, node_types, raw source_workflow_path, verbatim query_output)."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    packet: dict[str, Any] = {
+        "context_note": "Should not appear in memory.",
+        "options": [
+            {
+                "source_class_type": "BigNode",
+                "description": "A long description that should be first-line truncated. "
+                + ("extra detail " * 50),
+                "source_workflow_path": "/very/long/path/to/workflow.json",
+                "node_ids": [str(i) for i in range(100)],
+                "node_types": ["TypeA", "TypeB", "TypeC"],
+                "notes": ["source: web", "note1", "note2"],
+            },
+        ],
+        "warnings": ["warning1", "warning2", "warning3"],
+    }
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "source": 'research("test", sources=["web"])',
+                        "detail": {
+                            "query": "research",
+                            "precedent_packet": packet,
+                            "query_output": "IRRELEVANT VERBATIM " * 100,
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory = _batch_research_memory_summary(state)
+
+    # ── full packet fields absent ──────────────────────────────────
+    assert "context_note" not in memory
+    assert '"node_ids"' not in memory
+    assert '"node_types"' not in memory
+    assert "/very/long/path/to/workflow.json" not in memory
+    assert "IRRELEVANT VERBATIM" not in memory
+
+    # ── compact summary present ────────────────────────────────────
+    assert "BigNode" in memory
+    assert "precedent option(s)" in memory
+    assert "caveat(s)" in memory.lower()
+
+
+def test_batch_repl_memory_forbidden_keys_absent_packet_path() -> None:
+    """No score/winner/best/selected/chosen keys leak into memory
+    via the packet-aware summary path."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    packet: dict[str, Any] = {
+        "options": [
+            {
+                "source_class_type": "CleanNode",
+                "description": "A clean node without forbidden keys.",
+                "notes": ["source: curated"],
+            },
+            {
+                "source_class_type": "AnotherNode",
+                "description": "Another clean node.",
+                "notes": ["source: hivemind"],
+            },
+        ],
+        "warnings": [],
+    }
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "source": 'research("test", sources=["curated"])',
+                        "detail": {
+                            "query": "research",
+                            "precedent_packet": packet,
+                            "query_output": "some output",
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory = _batch_research_memory_summary(state)
+    _assert_no_forbidden_keys_in_text(memory, "packet-aware memory")
+
+
+def test_batch_repl_memory_forbidden_keys_absent_legacy_path() -> None:
+    """No score/winner/best/selected/chosen keys leak into memory
+    via the legacy marker-matched query_output path."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "source": 'research("test", sources=["web"])',
+                        "detail": {
+                            "query": "research",
+                            "research_query": "test",
+                            "query_output": (
+                                "Concrete workflow pattern found: SomeNode, AnotherNode.\n"
+                                "source_workflow_path=/tmp/test.json\n"
+                                "github_workflow_json evidence collected."
+                            ),
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory = _batch_research_memory_summary(state)
+    _assert_no_forbidden_keys_in_text(memory, "legacy memory")
+
+
+def test_summarize_precedent_packet_compact_fields_only() -> None:
+    """_summarize_precedent_packet carries only source title, source tier,
+    one-line pattern summary, and caveat count — no full packet fields leak."""
+    from vibecomfy.comfy_nodes.agent.edit import _summarize_precedent_packet
+
+    packet: dict[str, Any] = {
+        "context_note": "Should not appear.",
+        "options": [
+            {
+                "source_class_type": "MyNode",
+                "description": "First line of description.\nSecond line that should NOT appear.",
+                "source_workflow_path": "/tmp/path.json",
+                "node_ids": ["1", "2", "3"],
+                "node_types": ["MyNode", "HelperNode"],
+                "notes": ["source: github", "caveat: needs GPU", "caveat: large model"],
+            },
+        ],
+        "warnings": ["global warning 1"],
+    }
+
+    result = _summarize_precedent_packet(packet, turn_number=2)
+
+    assert result is not None
+    # ── compact fields present ─────────────────────────────────────
+    assert "MyNode" in result                # source title
+    assert "github" in result                # source tier from notes
+    assert "First line of description" in result  # one-line pattern summary
+    assert "caveat(s)" in result             # caveat count
+
+    # ── full packet fields NOT leaked ──────────────────────────────
+    assert "context_note" not in result
+    assert "/tmp/path.json" not in result
+    assert '"node_ids"' not in result
+    assert '"node_types"' not in result
+    assert "HelperNode" not in result
+    assert "Second line" not in result
+    assert "global warning 1" not in result
+
+
+def test_summarize_precedent_packet_description_truncation() -> None:
+    """One-line pattern summary truncated at 120 chars with ellipsis."""
+    from vibecomfy.comfy_nodes.agent.edit import _summarize_precedent_packet
+
+    long_desc = "A" * 200
+    packet: dict[str, Any] = {
+        "options": [
+            {
+                "source_class_type": "TruncNode",
+                "description": long_desc,
+                "notes": [],
+            },
+        ],
+        "warnings": [],
+    }
+
+    result = _summarize_precedent_packet(packet, turn_number=3)
+
+    assert result is not None
+    # Truncated form present, full 200-char string absent
+    assert "A" * 117 + "..." in result
+    assert long_desc not in result
+
+
+def test_summarize_precedent_packet_forbidden_keys_in_output() -> None:
+    """_summarize_precedent_packet must never emit forbidden keys
+    (winner, best, selected, score, rank, primary, preferred, chosen,
+    pick, choice, top, recommended) in its output string."""
+    from vibecomfy.comfy_nodes.agent.edit import _summarize_precedent_packet
+
+    packet: dict[str, Any] = {
+        "options": [
+            {
+                "source_class_type": "Node1",
+                "description": "A normal description.",
+                "notes": ["source: curated", "note A"],
+            },
+            {
+                "source_class_type": "Node2",
+                "description": "Another normal description.",
+                "notes": [],
+            },
+        ],
+        "warnings": [],
+    }
+
+    result = _summarize_precedent_packet(packet, turn_number=1)
+    assert result is not None
+    _assert_no_forbidden_keys_in_text(result, "_summarize_precedent_packet")
+
+
+def test_batch_repl_memory_packet_absent_falls_back_to_marker_path() -> None:
+    """When precedent_packet is absent, the legacy marker-matched
+    query_output path is used (not the packet-aware header)."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "source": 'research("test", sources=["web"])',
+                        "detail": {
+                            "query": "research",
+                            "research_query": "test",
+                            "requested_research_sources": ("web",),
+                            "query_output": (
+                                "Concrete workflow pattern found: NodeX.\n"
+                                "github_workflow_json evidence.\n"
+                                "No node signature found for exact class type(s): 'NodeY'.\n"
+                                "registry/schema lookup completed."
+                            ),
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory = _batch_research_memory_summary(state)
+
+    # Legacy marker-matched path active
+    assert "NodeX" in memory
+    assert "NodeY" in memory
+    assert "github_workflow_json" in memory
+    assert "registry/schema lookup" in memory
+
+    # Packet-aware header absent
+    assert "precedent option(s)" not in memory
+
+
+def test_batch_repl_memory_mixed_packet_and_marker_turns() -> None:
+    """Memory handles mixed turns: some with precedent_packet,
+    some with legacy marker-matched query_output."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    packet: dict[str, Any] = {
+        "options": [
+            {
+                "source_class_type": "PacketNode",
+                "description": "From packet-aware turn.",
+                "notes": ["source: curated"],
+            },
+        ],
+        "warnings": [],
+    }
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "source": 'research("packet turn", sources=["curated"])',
+                        "detail": {
+                            "query": "research",
+                            "precedent_packet": packet,
+                            "query_output": "SHOULD NOT APPEAR",
+                        },
+                    }
+                ],
+            },
+            {
+                "turn_number": 2,
+                "statements": [
+                    {
+                        "source": 'search(focus_types=["NodeX"])',
+                        "detail": {
+                            "query": "search",
+                            "query_output": "No node signature found for exact class type(s): 'NodeX'.",
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory = _batch_research_memory_summary(state)
+
+    # Packet-aware turn
+    assert "PacketNode" in memory
+    assert "precedent option(s)" in memory
+    assert "SHOULD NOT APPEAR" not in memory
+
+    # Legacy marker-matched turn
+    assert "NodeX" in memory
+    assert "No node signature found" in memory
+
+
+def test_batch_repl_memory_max_items_limit() -> None:
+    """max_items parameter limits the number of records in the summary."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    turns = []
+    for i in range(5):
+        turns.append({
+            "turn_number": i + 1,
+            "statements": [
+                {
+                    "source": f'research("turn {i+1}", sources=["web"])',
+                    "detail": {
+                        "query": "research",
+                        "research_query": f"turn {i+1}",
+                        "query_output": (
+                            f"Concrete workflow pattern found: Node{i}.\n"
+                            "github_workflow_json."
+                        ),
+                    },
+                }
+            ],
+        })
+
+    state = SimpleNamespace(batch_turns=turns)
+
+    memory_full = _batch_research_memory_summary(state, max_items=10)
+    memory_limited = _batch_research_memory_summary(state, max_items=2)
+
+    # Full memory has all 5 turns
+    for i in range(5):
+        assert f"Node{i}" in memory_full
+
+    # Limited memory only has last 2
+    assert "Node3" in memory_limited
+    assert "Node4" in memory_limited
+    assert "Node0" not in memory_limited
+    assert "Node1" not in memory_limited
+    assert "Node2" not in memory_limited
+
+
+def test_batch_repl_memory_turn_number_in_output() -> None:
+    """Memory output includes turn numbers for traceability
+    (both packet-aware and legacy paths)."""
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _batch_research_memory_summary
+
+    # Legacy path
+    state_legacy = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 3,
+                "statements": [
+                    {
+                        "source": 'research("test", sources=["web"])',
+                        "detail": {
+                            "query": "research",
+                            "research_query": "test",
+                            "query_output": "Concrete workflow pattern found: NodeA.",
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory_legacy = _batch_research_memory_summary(state_legacy)
+    assert "turn 3" in memory_legacy
+    assert "NodeA" in memory_legacy
+
+    # Packet-aware path
+    packet: dict[str, Any] = {
+        "options": [
+            {
+                "source_class_type": "PacketNode",
+                "description": "From packet turn 5.",
+                "notes": ["source: curated"],
+            },
+        ],
+        "warnings": [],
+    }
+
+    state_packet = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 5,
+                "statements": [
+                    {
+                        "source": 'research("pkt", sources=["curated"])',
+                        "detail": {
+                            "query": "research",
+                            "precedent_packet": packet,
+                            "query_output": "VERBATIM NOT USED",
+                        },
+                    }
+                ],
+            },
+        ]
+    )
+
+    memory_packet = _batch_research_memory_summary(state_packet)
+    assert "turn 5" in memory_packet
+    assert "PacketNode" in memory_packet
+
+
+def test_missing_custom_node_clarify_requires_registry_after_schema_miss() -> None:
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _premature_missing_custom_node_clarify_feedback
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "statements": [
+                    {
+                        "detail": {
+                            "query": "research",
+                            "requested_research_sources": ("web",),
+                            "query_output": (
+                                "workflow.json (github_workflow_json)\n"
+                                "Concrete workflow pattern found: "
+                                "ADE_AnimateDiffUniformContextOptions"
+                            ),
+                        }
+                    }
+                ],
+            },
+            {
+                "turn_number": 2,
+                "statements": [
+                    {
+                        "detail": {
+                            "query": "search",
+                            "query_output": (
+                                "No node signature found for exact class type(s): "
+                                "'ADE_LoadAnimateDiffModel', "
+                                "'ADE_AnimateDiffUniformContextOptions'."
+                            ),
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+    feedback = _premature_missing_custom_node_clarify_feedback(
+        state,
+        "The required custom nodes are not installed.",
+    )
+
+    assert "Premature missing-custom-node clarification rejected" in feedback
+    assert "ADE_LoadAnimateDiffModel" in feedback
+    assert 'sources=["registry"]' in feedback
+
+    state.batch_turns.append(
+        {
+            "turn_number": 3,
+            "statements": [
+                {
+                    "detail": {
+                        "query": "research",
+                        "requested_research_sources": ("registry",),
+                        "query_output": "Found ComfyUI-AnimateDiff-Evolved.",
+                    }
+                }
+            ],
+        }
+    )
+
+    assert (
+        _premature_missing_custom_node_clarify_feedback(
+            state,
+            "The required custom nodes are not installed.",
+        )
+        == ""
+    )
+
+
+def test_workflow_schema_clarify_must_apply_provisional_nodes() -> None:
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _premature_workflow_schema_clarify_feedback
+
+    state = SimpleNamespace(
+        batch_turns=[
+            {
+                "turn_number": 1,
+                "landed_op_count": 0,
+                "statements": [
+                    {
+                        "detail": {
+                            "query": "research",
+                            "requested_research_sources": ("web",),
+                            "query_output": (
+                                "workflow vid2vid hotshotXL ipadapterplusface ipadapter.json "
+                                "(github_workflow_json)\n"
+                                "workflow_schema ADE_AnimateDiffLoaderWithContext: "
+                                "inputs=context_options, model; widgets=widget_0, widget_1; outputs=MODEL\n"
+                                "workflow_schema ADE_AnimateDiffUniformContextOptions: "
+                                "widgets=widget_0, widget_1, widget_2, widget_3, widget_4; outputs=CONTEXT_OPTIONS"
+                            ),
+                        }
+                    }
+                ],
+            },
+            {
+                "turn_number": 2,
+                "landed_op_count": 0,
+                "statements": [
+                    {
+                        "detail": {
+                            "query": "search",
+                            "query_output": (
+                                "def ADE_AnimateDiffLoaderWithContext(widget_0: STRING = ..., "
+                                "widget_1: STRING = ..., model: MODEL, "
+                                "context_options: CONTEXT_OPTIONS) -> MODEL:\n"
+                                "def ADE_AnimateDiffUniformContextOptions(widget_0: INT = ..., "
+                                "widget_1: INT = ...) -> CONTEXT_OPTIONS:"
+                            ),
+                        }
+                    }
+                ],
+            },
+        ]
+    )
+
+    feedback = _premature_workflow_schema_clarify_feedback(
+        state,
+        "The current graph lacks the required AnimateDiff nodes, so I cannot build this.",
+    )
+
+    assert "Premature clarification rejected" in feedback
+    assert "ADE_AnimateDiffLoaderWithContext" in feedback
+    assert "add the workflow-sourced provisional nodes" in feedback
+
+    state.batch_turns.append({"turn_number": 3, "landed_op_count": 1, "statements": []})
+    assert (
+        _premature_workflow_schema_clarify_feedback(
+            state,
+            "The current graph lacks the required AnimateDiff nodes.",
+        )
+        == ""
+    )
+
+
+def test_rejected_terminal_clarify_is_durable_budget_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    events: list[tuple[str, dict[str, object], str | None]] = []
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent.edit._ws_send",
+        lambda event, payload, *, client_id=None: events.append((event, payload, client_id)),
+    )
+    responses = iter(
+        [
+            {
+                "batch": 'search(focus_types=["SaveImage"])',
+                "message": "I checked the workflow-derived constructor schema.",
+            },
+            {
+                "batch": 'clarify("The current graph lacks the required node, so I cannot build this.")',
+                "message": "I cannot continue without the missing node.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Generate 8 frames with Hotshot",
+            "session_id": "rejected-terminal-clarify",
+            "max_batches": 5,
+            "max_consecutive_errors": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+        client_id="client-rejected-clarify",
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.SCHEMA_GAP.value,
+        stage="agent_batch",
+        audit_ref_expected=True,
+    )
+    issue = result["agent_failure_context"]["issues"][0]
+    assert issue["code"] == "batch_budget_exhausted"
+    assert issue["detail"]["turn_count"] == 2
+    assert issue["detail"]["budget_state"]["remaining_batches"] == 3
+    assert issue["detail"]["budget_state"]["consecutive_errors"] == 1
+    assert [payload["status"] for _, payload, _ in events] == [
+        "in_progress",
+        "budget_exhausted",
+    ]
+
+    response_path = tmp_path / "rejected-terminal-clarify" / "turns" / "0001" / "response.json"
+    assert response_path.is_file()
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    assert response["ok"] is False
+    model_response = json.loads(
+        (tmp_path / "rejected-terminal-clarify" / "turns" / "0001" / "model_response.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    rejected = model_response["turns"][1]["rejected_clarification"]
+    assert rejected["diagnostics"][0]["code"] == "premature_missing_custom_node_clarify"
+    assert "Premature clarification rejected" in rejected["report"]
+
+
+def test_rejected_terminal_clarify_after_partial_edit_fails_fast(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    responses = iter(
+        [
+            {
+                "batch": "del saveimage\nreplacement = MissingHotshotNode(images=loadimage.image)",
+                "message": "I will replace the output node.",
+            },
+            {
+                "batch": 'search(focus_types=["SaveImage"])',
+                "message": "I checked the constructor schema.",
+            },
+            {
+                "batch": 'clarify("The current graph lacks the required node, so I cannot safely build this.")',
+                "message": "I cannot continue without the missing node.",
+            },
+            {
+                "batch": "done()",
+                "message": "This response must not be requested.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Replace the output node with Hotshot",
+            "session_id": "rejected-clarify-partial-edit",
+            "max_batches": 5,
+            "max_consecutive_errors": 3,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    _assert_failure_defaults(
+        result,
+        kind=FailureKind.SCHEMA_GAP.value,
+        stage="agent_batch",
+        audit_ref_expected=True,
+    )
+    issue = result["agent_failure_context"]["issues"][0]
+    assert issue["code"] == "batch_budget_exhausted"
+    assert issue["detail"]["turn_count"] == 3
+    assert issue["detail"]["budget_state"]["remaining_batches"] == 2
+
+    turn_dir = tmp_path / "rejected-clarify-partial-edit" / "turns" / "0001"
+    assert (turn_dir / "response.json").is_file()
+    model_request = json.loads((turn_dir / "model_request.json").read_text(encoding="utf-8"))
+    model_response = json.loads((turn_dir / "model_response.json").read_text(encoding="utf-8"))
+    assert len(model_request["turns"]) == 3
+    assert len(model_response["turns"]) == 3
+    assert model_response["turns"][0]["batch_result"]["landed_op_count"] == 0
+    assert "rejected_clarification" in model_response["turns"][2]
+
+
+def test_batch_repl_research_honors_workflows_plus_web_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.porting.edit.session import EditSession
+
+    calls: list[dict[str, object]] = []
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        calls.append({"query": query, **kwargs})
+        return ResearchResult(summary="External workflow result.", sources=())
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch(
+        'research("Hotshot XL ComfyUI workflow", sources=["workflows", "web"])'
+    )
+
+    assert result.ok is True
+    assert calls[0]["query"] == "Hotshot XL ComfyUI workflow"
+    assert calls[0]["local_limit"] == 5
+    assert calls[0]["registry_resolver"] is None
+    assert calls[0]["web_search_client"] is not None
+    assert result.statements[0].detail["research_sources"] == ("workflows", "web")
+    assert "Workflow-first check" in result.statements[0].detail["query_output"]
+
+
+def test_batch_repl_research_honors_web_plus_registry_sources(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.porting.edit.session import EditSession
+
+    calls: list[dict[str, object]] = []
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        calls.append({"query": query, **kwargs})
+        return ResearchResult(summary="External workflow result.", sources=())
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch(
+        'research("Hotshot XL ComfyUI workflow nodes", sources=["web", "registry", "messages"])'
+    )
+
+    assert result.ok is True
+    assert calls[0]["local_limit"] == 0
+    assert callable(calls[0]["registry_resolver"])
+    assert calls[0]["hivemind_client"] is not None
+    assert calls[0]["web_search_client"] is not None
+    assert result.statements[0].detail["research_sources"] == ("web", "registry", "messages")
+    assert "Research-order check" not in result.statements[0].detail["query_output"]
+
+
+def test_batch_repl_research_can_choose_registry_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vibecomfy.executor.research import ResearchResult
+    from vibecomfy.porting.edit.session import EditSession
+
+    calls: list[dict[str, object]] = []
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        calls.append({"query": query, **kwargs})
+        return ResearchResult(
+            summary="Found registry candidate.",
+            sources=(
+                {
+                    "source": "comfy-registry",
+                    "class_type": "ComfyUI-AnimateDiff-Evolved",
+                    "pack": "ComfyUI-AnimateDiff-Evolved",
+                    "description": "Expected classes: ADE_AnimateDiffLoaderWithContext",
+                    "resolver_candidate": {
+                        "pack": {"slug": "ComfyUI-AnimateDiff-Evolved"},
+                        "expected_classes": ["ADE_AnimateDiffLoaderWithContext"],
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    monkeypatch.setattr(research_module, "resolve_missing_nodes", object())
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch('research("Hotshot XL ComfyUI nodes", sources=["registry"])')
+
+    assert result.ok is True
+    assert calls[0]["query"] == "Hotshot XL ComfyUI nodes"
+    assert calls[0]["local_limit"] == 0
+    assert callable(calls[0]["registry_resolver"])
+    assert calls[0]["hivemind_client"] is None
+    assert calls[0]["web_search_client"] is None
+    assert result.statements[0].detail["research_sources"] == ("registry",)
+    assert result.statements[0].detail["resolver_candidates"]
+    assert "ComfyUI-AnimateDiff-Evolved" in result.statements[0].detail["query_output"]
+    assert "Registry check" in result.statements[0].detail["query_output"]
+
+
+def test_handle_agent_edit_batch_repl_adds_workflow_json_provisional_node(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.executor.research import ResearchResult
+
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary=f"Concrete workflow evidence for {query}.",
+            sources=(
+                {
+                    "source": "external_workflow",
+                    "source_type": "github_workflow_json",
+                    "class_type": "workflow vid2vid hotshotXL ipadapterplusface ipadapter.json",
+                    "pack": "github.com",
+                    "url": "https://github.com/fictions-ai/sharing-is-caring/blob/main/workflow-vid2vid-hotshotXL-ipadapterplusface-ipadapter.json",
+                    "source_workflow_path": "/tmp/hotshot-workflow.json",
+                    "node_types": ["ADE_AnimateDiffUniformContextOptions"],
+                    "workflow_schema_classes": ["ADE_AnimateDiffUniformContextOptions"],
+                    "workflow_schema": {
+                        "ADE_AnimateDiffUniformContextOptions": {
+                            "input": {
+                                "required": {},
+                                "optional": {
+                                    "widget_0": {"type": "INT", "default": 8},
+                                    "widget_1": {"type": "INT", "default": 1},
+                                    "widget_2": {"type": "INT", "default": 3},
+                                    "widget_3": {"type": "STRING", "default": "uniform"},
+                                    "widget_4": {"type": "BOOLEAN", "default": False},
+                                },
+                            },
+                            "outputs": [{"name": "CONTEXT_OPTIONS", "type": "CONTEXT_OPTIONS"}],
+                            "object_info_widget_order": [
+                                "widget_0",
+                                "widget_1",
+                                "widget_2",
+                                "widget_3",
+                                "widget_4",
+                            ],
+                        }
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    responses = iter(
+        [
+            {
+                "batch": 'research("Hotshot XL ComfyUI workflow", sources=["web"])',
+                "message": "Found a concrete Hotshot workflow JSON.",
+            },
+            {
+                "batch": (
+                    "context = ADE_AnimateDiffUniformContextOptions("
+                    "widget_0=16, widget_1=1, widget_2=3, widget_3='uniform', widget_4=False, "
+                    "near=saveimage)\ndone()"
+                ),
+                "message": "Added the workflow-derived unresolved ADE context node.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch to generating 16 frames with Hotshot",
+            "session_id": "hotshot-workflow-json-provisional-node",
+            "max_batches": 4,
+            "max_consecutive_errors": 2,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    node = next(
+        node
+        for node in result["graph"].get("nodes", [])
+        if isinstance(node, dict) and node.get("type") == "ADE_AnimateDiffUniformContextOptions"
+    )
+    assert node["widgets_values"] == [16, 1, 3, "uniform", False]
+
+
+def test_handle_agent_edit_batch_repl_adds_registry_provisional_missing_node(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.executor.research import ResearchResult
+
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary=f"Registry evidence for {query}.",
+            sources=(
+                {
+                    "source": "comfy-registry",
+                    "class_type": "ADE_AnimateDiffLoaderWithContext",
+                    "pack": "ComfyUI-AnimateDiff-Evolved",
+                    "description": "Expected classes: ADE_AnimateDiffLoaderWithContext",
+                    "resolver_candidate": {
+                        "pack": {
+                            "slug": "ComfyUI-AnimateDiff-Evolved",
+                            "source": "comfy-registry",
+                            "url": "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved",
+                        },
+                        "expected_classes": ["ADE_AnimateDiffLoaderWithContext"],
+                        "validation_mode": "class_validatable",
+                        "provisional_schema": {
+                            "version": "1.0.0",
+                            "runnable": False,
+                            "schema": {
+                                "nodes": {
+                                    "ADE_AnimateDiffLoaderWithContext": {
+                                        "input": {"required": {}, "optional": {}},
+                                        "output": ["MODEL"],
+                                        "output_name": ["MODEL"],
+                                    }
+                                }
+                            },
+                        },
+                        "runnable": False,
+                        "stable_install_hash": "ade-registry-evidence",
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    monkeypatch.setattr(research_module, "resolve_missing_nodes", object())
+    responses = iter(
+        [
+            {
+                "batch": 'research("Hotshot XL ComfyUI nodes", sources=["registry"])',
+                "message": "Found the registry-backed Hotshot node pack.",
+            },
+            {
+                "batch": "hotshot = ADE_AnimateDiffLoaderWithContext(near=saveimage)\ndone()",
+                "message": "Added the unresolved Hotshot custom node as a candidate.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch to generating 16 frames with Hotshot",
+            "session_id": "hotshot-provisional-node",
+            "max_batches": 4,
+            "max_consecutive_errors": 2,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert any(
+        node.get("type") == "ADE_AnimateDiffLoaderWithContext"
+        for node in result["graph"].get("nodes", [])
+        if isinstance(node, dict)
+    )
+
+
+def test_revise_hydrates_existing_unknown_node_from_registry_before_readonly_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    graph = {
+        "nodes": [
+            {
+                "id": 12,
+                "type": "ADE_AnimateDiffUniformContextOptions",
+                "inputs": [],
+                "outputs": [
+                    {
+                        "name": "CONTEXT_OPTIONS",
+                        "slot_index": 0,
+                        "type": "CONTEXT_OPTIONS",
+                    }
+                ],
+                "properties": {"vibecomfy_uid": "n12"},
+                "widgets_values": [8, 1, 3, "uniform", False],
+            }
+        ],
+        "links": [],
+    }
+
+    def fake_resolve_missing_nodes(query: str, *, query_intent: str | None = None, **_kwargs: object) -> object:
+        assert query == "ADE_AnimateDiffUniformContextOptions"
+        assert query_intent == "class_name"
+        candidate = {
+            "pack": {
+                "slug": "ComfyUI-AnimateDiff-Evolved",
+                "source": "comfy-registry",
+            },
+            "expected_classes": ["ADE_AnimateDiffUniformContextOptions"],
+            "provisional_schema": {
+                "version": "1.0.0",
+                "runnable": False,
+                "schema": {
+                    "nodes": {
+                        "ADE_AnimateDiffUniformContextOptions": {
+                            "input": {
+                                "required": {},
+                                "optional": {
+                                    "widget_0": {"type": "INT", "default": 8},
+                                    "widget_1": {"type": "INT", "default": 1},
+                                    "widget_2": {"type": "INT", "default": 3},
+                                    "widget_3": {"type": "STRING", "default": "uniform"},
+                                    "widget_4": {"type": "BOOLEAN", "default": False},
+                                },
+                            },
+                            "output": ["CONTEXT_OPTIONS"],
+                            "output_name": ["CONTEXT_OPTIONS"],
+                        }
+                    }
+                },
+            },
+            "stable_install_hash": "ade-context-options-schema",
+        }
+        return types.SimpleNamespace(candidates=(candidate,))
+
+    monkeypatch.setattr(
+        "vibecomfy.registry.pack_resolver.resolve_missing_nodes",
+        fake_resolve_missing_nodes,
+    )
+
+    responses = iter(
+        [
+            {
+                "batch": "ade_animatediffuniformcontextoptions.widget_0 = 16\ndone()",
+                "message": "Changed the existing Hotshot context frame count to 16.",
+            }
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": graph,
+            "task": "can you make that actually generate 16 frames?",
+            "session_id": "revise-existing-registry-hydrated-node",
+            "route": "revise",
+            "executor_classification": {
+                "route": "revise",
+                "task": "edit_graph",
+                "implement": True,
+                "research": False,
+            },
+            "max_batches": 2,
+            "max_consecutive_errors": 1,
+        },
+        schema_provider=_Provider({}),
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] in {"candidate", "edit"}
+    node = result["graph"]["nodes"][0]
+    assert node["type"] == "ADE_AnimateDiffUniformContextOptions"
+    assert node["widgets_values"] == [16, 1, 3, "uniform", False]
+    evidence_path = tmp_path / "revise-existing-registry-hydrated-node" / "turns" / "0001" / "revision_evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))["revision_evidence"]
+    assert evidence["safe_candidate_possible"] is True
+    assert evidence["topology"]["unknown_class_types"] == []
+    assert evidence["readiness"]["missing_node_packs"] == []
+
+
+def test_batch_repl_research_output_includes_later_web_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
+    from vibecomfy.porting.edit.session import EditSession
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        local_sources = tuple(
+            {
+                "class_type": f"local/template/{index}",
+                "source": "ready_template",
+                "description": "Local template result.",
+            }
+            for index in range(7)
+        )
+        return ResearchResult(
+            summary="Found mixed local and web evidence.",
+            sources=(
+                *local_sources,
+                {
+                    "class_type": "KintCark/Hotshot-XL-Gradio-Cpu-Termux",
+                    "source": "web",
+                    "url": "https://github.com/KintCark/Hotshot-XL-Gradio-Cpu-Termux",
+                    "description": "GitHub result mentioning HotshotXL and ComfyUI.",
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_Provider({}))
+
+    result = session.apply_batch('research("ComfyUI HotshotXL")')
+    report = _format_batch_report(result, consecutive_errors=0, budget_remaining=1)
+
+    assert result.ok is True
+    assert "local/template/0" in report
+    assert "KintCark/Hotshot-XL-Gradio-Cpu-Termux" in report
 
 
 def test_batch_repl_search_exact_miss_explains_local_schema_lookup() -> None:
@@ -2461,9 +3999,7 @@ def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_c
     )
     issue = result["agent_failure_context"]["issues"][0]
     assert issue["code"] == "batch_budget_exhausted"
-    assert result["message"] == (
-        "Applied 1 edit. I ran out of turn budget before completing the remaining changes."
-    )
+    assert result["message"] == "I ran out of turn budget before completing the remaining changes."
     assert issue["detail"]["turn_count"] == 1
     assert issue["detail"]["budget_state"]["consecutive_errors"] == 1
 
@@ -2474,9 +4010,10 @@ def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_c
     assert batch_meta["budget_state"]["consecutive_errors"] == 1
     assert batch_meta["exit_mode"] == "budget"
     assert batch_meta["final_summary"] == "Stopped after 1 turn(s); 3 turn(s) remaining."
-    assert "Turn summary: 1 landed, 3 failed, 3 diagnostic(s), 3 turn(s) remaining, 1 consecutive error turn(s)." in batch_meta["feedback"]
-    assert "✓ Statement 1: set_node_field" in batch_meta["feedback"]
+    assert "Turn summary: 0 landed, 4 failed, 4 diagnostic(s), 3 turn(s) remaining, 1 consecutive error turn(s)." in batch_meta["feedback"]
+    assert "✗ Statement 1: set_node_field" in batch_meta["feedback"]
     assert "✗ Statement 2: set_node_field" in batch_meta["feedback"]
+    assert "batch_transaction_rolled_back" in batch_meta["feedback"]
     assert "cause: Statement depends on graph name 'extra' whose add-node statement did not land." in batch_meta["feedback"]
     assert "unknown_target_field: SaveImage has no editable field or input named 'not_a_field'." in batch_meta["feedback"]
     assert "unbound_graph_name: Graph name 'extra' is currently unbound because its add-node statement did not land." in batch_meta["feedback"]
@@ -2486,13 +4023,14 @@ def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_c
     )["turns"]
     turn0 = response_turns[0]["batch_result"]
     assert turn0["batch_ok"] is False
-    assert turn0["landed_op_count"] == 1
+    assert turn0["landed_op_count"] == 0
     assert turn0["statement_count"] == 4
-    assert len(turn0["diagnostics"]) == 3
+    assert len(turn0["diagnostics"]) == 4
     assert turn0["report"] == batch_meta["feedback"]
 
     statements = turn0["statements"]
-    assert [item["landed"] for item in statements] == [True, False, False, False]
+    assert [item["landed"] for item in statements] == [False, False, False, False]
+    assert statements[0]["diagnostics"][-1]["code"] == "batch_transaction_rolled_back"
     assert statements[1]["diagnostics"][0]["code"] == "unknown_target_field"
     assert statements[1]["diagnostics"][0]["teaching_hint"] == (
         "Check the available field and input names. Use describe(name) to see the node's shape."
@@ -2671,11 +4209,10 @@ def test_batch_repl_refuses_read_only_done_after_partial_failed_edit_and_allows_
     assert result["outcome"]["kind"] == "candidate"
     assert len(captured_messages) == 3
     assert "done() was NOT accepted" in captured_messages[2][1]["content"]
-    assert "A search() is read-only and does NOT repair" in captured_messages[2][1]["content"]
+    assert "A search() is read-only and does NOT fix" in captured_messages[2][1]["content"]
     assert "def LoadImage(image: CHOICE[\"example.png\"])" in captured_messages[2][1]["content"]
 
     node_types = [node["type"] for node in result["graph"]["nodes"]]
-    assert "EmptyLatentImage" not in node_types
     assert "LoadImage" in node_types
     assert "VAEEncode" in node_types
     ksampler = next(node for node in result["graph"]["nodes"] if node["type"] == "KSampler")
@@ -2786,6 +4323,226 @@ def test_handle_agent_edit_batch_repl_returns_successful_non_commit_clarificatio
     assert audit["metadata"]["batch_repl"]["turn_count"] == 1
 
 
+def test_handle_agent_edit_research_route_writes_agentic_messages_and_blocks_apply(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def _fake_batch_client(messages):
+        captured_messages.append(messages)
+        return {
+            "batch": 'research("distilled faster ComfyUI inference", sources=["workflows"])\ndone()',
+            "message": "Distilled/faster options depend on the model family and available workflow precedent.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "is there a distilled/faster way to run?",
+            "route": "research",
+            "executor_route": "research",
+            "research_brief": {
+                "research_goal": "Find distilled or faster ways to run the current ComfyUI video workflow.",
+                "search_directions": [
+                    "distilled or lightning video/motion models compatible with AnimateDiff-style workflows",
+                    "AnimateDiff speed settings such as context length, sampler, steps, and frame count",
+                ],
+                "source_preferences": ["workflows", "messages", "web"],
+                "avoid": [
+                    "generic searches for the raw sentence",
+                    "stopword-only searches such as there way run",
+                ],
+                "known_graph_context": "The attached graph uses sampler/image-generation nodes.",
+            },
+            "session_id": "research-route",
+            "max_batches": 3,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result.get("candidate") is None
+    assert result["apply_eligibility"]["applyable"] is False
+    assert result.get("graph_unchanged") is True
+    assert captured_messages
+    system_prompt = captured_messages[0][0]["content"]
+    user_prompt = captured_messages[0][1]["content"]
+    assert "research(" in system_prompt
+    assert "You are answering a research question" in system_prompt
+    assert "Do not edit the graph" in system_prompt
+    assert "When a Research brief appears" in system_prompt
+    assert "Do not search the raw user sentence" in system_prompt
+    assert "Research brief from triage" in user_prompt
+    assert "distilled or lightning video/motion models" in user_prompt
+    assert "stopword-only searches such as there way run" in user_prompt
+    assert "Research evidence/context" not in user_prompt
+
+    turn_dir = turn_dir_for(tmp_path, "research-route", result["turn_id"])
+    messages_path = turn_dir / "messages.jsonl"
+    assert messages_path.is_file()
+    records = [
+        json.loads(line)
+        for line in messages_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert records
+    assert records[0]["batch"].startswith('research("distilled faster')
+    assert (turn_dir / "model_request.json").is_file()
+    assert (turn_dir / "model_response.json").is_file()
+
+
+def test_handle_agent_edit_research_route_blocks_apply_even_if_model_emits_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def _fake_batch_client(_messages):
+        return {
+            "batch": 'saveimage.filename_prefix = "after"\ndone()',
+            "message": "I found a faster option and changed the graph.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "is there a distilled/faster way to run?",
+            "route": "research",
+            "executor_route": "research",
+            "session_id": "research-route-edit-attempt",
+            "max_batches": 2,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result.get("candidate") is None
+    assert result["apply_eligibility"]["applyable"] is False
+    assert result.get("canvas_apply_allowed") in (None, False)
+    assert result["batch_turns"][0]["landed_op_count"] == 1
+    turn_dir = turn_dir_for(tmp_path, "research-route-edit-attempt", result["turn_id"])
+    assert (turn_dir / "messages.jsonl").is_file()
+
+
+def test_handle_agent_edit_batch_repl_stops_repeated_discovery_only_turns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary="No workflow/template precedents found.",
+            sources=(),
+            warnings=("precedent research: no workflow/template precedents found",),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+
+    calls = 0
+
+    def _fake_batch_client(_messages):
+        nonlocal calls
+        calls += 1
+        return {
+            "batch": 'research("Hotshot XL ComfyUI workflow", sources=["workflows", "registry", "web"])',
+            "message": "Looking for the Hotshot XL workflow pattern.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch to generating 16 frames with Hotshot",
+            "session_id": "batch-discovery-stop",
+            "max_batches": 8,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "clarify"
+    assert result["graph_unchanged"] is True
+    assert result["debug"]["batch_repl"]["exit_mode"] == "pure_clarify"
+    assert result["debug"]["batch_repl"]["turn_count"] == 6
+    assert "could not find a workflow precedent" in result["message"].lower()
+    assert calls == 6
+    assert len(result["batch_turns"]) == 6
+    for turn in result["batch_turns"]:
+        assert turn["landed_op_count"] == 0
+        assert [statement["op_kind"] for statement in turn["statements"]] == ["query"]
+
+
+def test_handle_agent_edit_batch_repl_missing_custom_nodes_does_not_emit_noop_message(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary="Found registry-backed Hotshot custom-node evidence.",
+            sources=(
+                {
+                    "source": "comfy-registry",
+                    "class_type": "ComfyUI-AnimateDiff-Evolved",
+                    "pack": "ComfyUI-AnimateDiff-Evolved",
+                    "description": "Expected classes: ADE_AnimateDiffLoaderWithContext",
+                    "resolver_candidate": {
+                        "pack": {"slug": "ComfyUI-AnimateDiff-Evolved"},
+                        "expected_classes": ["ADE_AnimateDiffLoaderWithContext"],
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+
+    responses = iter(
+        [
+            {
+                "batch": 'research("Hotshot XL ComfyUI nodes", sources=["registry"])',
+                "message": "Looking for the Hotshot custom-node pack.",
+            },
+            {
+                "batch": 'clarify("Hotshot custom nodes are required before I can safely apply the workflow pattern.")',
+                "message": "Hotshot custom nodes are required before I can safely apply the workflow pattern.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch to generating 16 frames with Hotshot",
+            "session_id": "batch-missing-custom-nodes-message",
+            "max_batches": 4,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "requires_custom_nodes"
+    assert result["graph_unchanged"] is True
+    assert result["message"] == "Hotshot custom nodes are required before I can safely apply the workflow pattern."
+    assert result["message"] != "No graph changes were needed."
+
+
 def test_handle_agent_edit_batch_repl_treats_followup_after_clarify_as_continuation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2890,6 +4647,7 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert result["candidate"]["structural_graph_hash"] == result["candidate_structural_graph_hash"]
     assert result["candidate"]["baseline_graph_hash"] == result["baseline_graph_hash"]
     assert result["candidate"]["submit_graph_hash"] == result["submit_graph_hash"]
+
     assert (
         result["candidate"]["submit_structural_graph_hash"]
         == result["submit_structural_graph_hash"]
@@ -3002,6 +4760,53 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert events[1][1]["turn_number"] == 1
     assert events[1][1]["exit_mode"] == "done"
     assert events[1][1]["done_summary"] == result["done_summary"]
+
+
+def test_handle_agent_edit_research_route_writes_batch_artifacts_but_no_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    responses = iter(
+        [
+            {
+                "batch": 'saveimage.filename_prefix = "after"',
+                "message": "Checking whether this edit would help.",
+            },
+            {
+                "batch": "done()",
+                "message": "Research complete; no canvas change should be applied.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "research faster save-image workflow options",
+            "route": "research",
+            "executor_route": "research",
+            "session_id": "batch-research-no-candidate",
+            "max_batches": 4,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    turn_dir = tmp_path / "batch-research-no-candidate" / "turns" / "0001"
+    assert result["ok"] is True
+    assert result["apply_allowed"] is False
+    assert result["apply_eligibility"]["applyable"] is False
+    assert result["eligibility"] == result["apply_eligibility"]
+    assert result["candidate"] is None
+    assert result["graph_unchanged"] is True
+    assert result["no_candidate_reason"] == "route_not_applyable"
+    assert result["debug"]["batch_repl"]["turn_count"] == 2
+    assert (turn_dir / "messages.jsonl").is_file()
+    assert (turn_dir / "model_request.json").is_file()
+    assert (turn_dir / "model_response.json").is_file()
 
 
 def test_handle_agent_edit_batch_repl_noop_does_not_enter_review(
@@ -5629,6 +7434,61 @@ def test_agent_executor_route_sanitizes_clarify_candidate_and_apply_fields(
     assert result["outcome"]["kind"] == "clarify"
     assert result["reply"] == "Which option should I use?"
     assert result["message"] == result["reply"]
+    for forbidden in (
+        "candidate",
+        "graph",
+        "candidate_graph",
+        "candidate_graph_hash",
+        "apply_eligible",
+        "apply_eligibility",
+        "eligibility",
+        "apply_allowed",
+        "canvas_apply_allowed",
+        "queue_allowed",
+    ):
+        assert forbidden not in result
+
+
+def test_agent_executor_route_sanitizes_nonapplyable_adapt_outcome_candidate_leaks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.comfy_nodes.agent.routes import _handle_agent_executor_submit
+
+    class _RequiresCustomNodesResult:
+        def to_dict(self) -> dict[str, object]:
+            return {
+                "ok": True,
+                "route": "adapt",
+                "reply": "Hotshot custom-node evidence was not grounded.",
+                "outcome": {
+                    "kind": "requires_custom_nodes",
+                    "candidates": [
+                        {
+                            "pack": {"slug": "ComfyUI-AnimateDiff-Evolved"},
+                            "expected_classes": ["ADE_UseEvolvedSampling"],
+                        }
+                    ],
+                },
+                "candidate": {"graph": {"nodes": [{"id": 1}]}},
+                "graph": {"nodes": [{"id": 1}]},
+                "candidate_graph": {"nodes": [{"id": 1}]},
+                "candidate_graph_hash": "leaked",
+                "apply_eligible": True,
+                "apply_eligibility": {"applyable": True},
+                "eligibility": {"applyable": True},
+                "apply_allowed": True,
+                "canvas_apply_allowed": True,
+                "queue_allowed": True,
+            }
+
+    monkeypatch.setattr("vibecomfy.executor.core.run_executor", lambda *_args, **_kwargs: _RequiresCustomNodesResult())
+
+    result, status = _handle_agent_executor_submit({"query": "Switch to Hotshot", "graph": _ui_graph()})
+
+    assert status == 200
+    assert result["route"] == "adapt"
+    assert result["outcome"]["kind"] == "requires_custom_nodes"
+    assert result["outcome"]["candidates"][0]["pack"]["slug"] == "ComfyUI-AnimateDiff-Evolved"
     for forbidden in (
         "candidate",
         "graph",
@@ -8401,8 +10261,8 @@ def test_handle_agent_edit_empty_sd15_workflow_reaches_provider_with_seed_signat
     assert "def VAEDecode" in first_user_prompt
     assert "def SaveImage" in first_user_prompt
     system_prompt = captured_messages[0][0]["content"]
-    assert "visible chat reply" in system_prompt
-    assert "not a review/status placeholder" in system_prompt
+    assert "user-facing prose sentence" in system_prompt
+    assert "Never respond with only a fenced block" in system_prompt
     assert result["ok"] is True
     assert result["outcome"]["kind"] == "candidate"
     assert result["message"] == (
@@ -10576,6 +12436,220 @@ def test_build_batch_messages_direct_edit_scenario_no_precedent_leak() -> None:
     assert "Precedent adaptation plan (structured):" not in user_content
     # Research context should also be absent when empty
     assert "Research findings (external + local corpus):" not in user_content
+
+
+# ── T14: provider research tool exposure and neutral formatting tests ──────
+
+
+class TestBuildBatchMessagesResearchToolExposure:
+    """build_batch_messages research tool parameter schema, bounded guidance,
+    evidence/context labeling, and neutral formatting."""
+
+    def test_research_tool_parameter_schema_is_clear(self) -> None:
+        """System prompt includes research() with explicit parameter schema:
+        query string + sources list with allowed values."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="add upscale",
+            python_source="x = LoadImage()",
+            signature_catalog="LoadImage(image)",
+            available_node_names="LoadImage, ImageScaleBy",
+        )
+        system = messages[0]["content"]
+
+        # Parameter schema: contains research() invocation pattern in system prompt
+        rq = 'research("query words", sources='
+        rq_alt = "research(\"query words\", sources="
+        assert rq in system or rq_alt in system, (
+            "System prompt must contain research() tool signature with query + sources"
+        )
+
+        # All four allowed source tiers are in the schema example
+        assert "workflows" in system
+        assert "registry" in system
+        assert "messages" in system
+        assert "web" in system
+
+        # Sources list shows the explicit parameter
+        assert "sources=[" in system
+
+        # Default behavior described
+        assert "if sources are omitted" in system
+        assert "internal workflows/templates only" in system
+
+    def test_bounded_guidance_label_present(self) -> None:
+        """The research strategy section is labeled as bounded guidance."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="inspect",
+            python_source="x = LoadImage()",
+        )
+        system = messages[0]["content"]
+        assert "Research strategy (bounded guidance):" in system
+
+    def test_bounded_guidance_contains_evidence_tier_strategy(self) -> None:
+        """Bounded guidance describes evidence-tier call strategy."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="inspect",
+            python_source="x = LoadImage()",
+        )
+        system = messages[0]["content"]
+        # Key bounded guidance phrases
+        assert "Use separate evidence-tier calls" in system
+        assert 'sources=["workflows"]' in system
+        assert 'sources=["web"]' in system
+        assert 'sources=["registry"]' in system
+        assert "Do not combine internal workflow search with web or registry" in system
+
+    def test_research_block_uses_evidence_context_label_turn0(self) -> None:
+        """Research block on turn 0 uses 'Research evidence/context' as the section
+        label rather than 'Research findings'."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="add upscale",
+            turn_number=0,
+            python_source="x = LoadImage()",
+            research_summary="Found workflow precedent.",
+        )
+        user = messages[1]["content"]
+        assert "Research evidence/context (external + local corpus):" in user
+        # The section label must be evidence/context, not findings
+        assert "Research findings (external + local corpus):" not in user
+
+    def test_research_block_uses_evidence_context_label_later_turn(self) -> None:
+        """Research block on later turns uses 'Research evidence/context' as
+        the section label rather than 'Research findings'."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="continue",
+            turn_number=1,
+            python_source="",
+            research_summary="Followup evidence.",
+            diff="+x.seed = 42",
+            report="Applied change.",
+        )
+        user = messages[1]["content"]
+        assert "Research evidence/context (external + local corpus):" in user
+        assert "Research findings (external + local corpus):" not in user
+
+    def test_research_block_absent_when_empty(self) -> None:
+        """No research block is injected when research_summary is empty."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="edit seed",
+            python_source="x = KSampler(seed=0)",
+            research_summary="",
+        )
+        user = messages[1]["content"]
+        assert "Research evidence/context" not in user
+        assert "Research findings" not in user
+
+    def test_no_option_menu_language_in_system_prompt(self) -> None:
+        """System prompt must not contain option-menu or recommendation language."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="inspect the graph",
+            python_source="x = LoadImage()",
+            signature_catalog="LoadImage(image)",
+            available_node_names="LoadImage",
+        )
+        system = messages[0]["content"]
+        lower = system.lower()
+        forbidden = (
+            "option menu", "choose from these", "pick one of", "we recommend",
+            "our recommendation", "select the best", "best option",
+            "menu of sources", "pick a source",
+        )
+        for term in forbidden:
+            assert term not in lower, (
+                f"Forbidden option-menu term '{term}' found in system prompt"
+            )
+
+    def test_no_winner_ranking_language_in_system_prompt(self) -> None:
+        """System prompt must not contain winner/ranking language for sources."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="inspect the graph",
+            python_source="x = LoadImage()",
+        )
+        system = messages[0]["content"]
+        lower = system.lower()
+        for term in ("winner", "best source", "top source", "preferred source",
+                      "primary source", "chosen source"):
+            assert term not in lower, (
+                f"Forbidden ranking term '{term}' found in system prompt"
+            )
+
+    def test_system_prompt_frames_research_as_evidence_not_recommendation(self) -> None:
+        """The research tool description frames output as evidence/context."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        messages = build_batch_messages(
+            task="inspect",
+            python_source="x = LoadImage()",
+        )
+        system = messages[0]["content"]
+        # The research() call description should be neutral
+        assert "research(" in system
+        # Should frame as evidence-gathering, not as picking recommendations
+        lower = system.lower()
+        assert "no edit lands" in lower
+
+    def test_precedent_adaptation_block_framed_as_structured_not_recommendation(self) -> None:
+        """Precedent adaptation plan block is labeled as 'structured', not 'recommendation'."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        plan_text = "Selected slice: AudioWorkflow\nRequired new nodes: VAEDecode, SaveImage"
+        messages = build_batch_messages(
+            task="adapt audio workflow",
+            turn_number=0,
+            python_source="x = LoadAudio()",
+            signature_catalog="LoadAudio(audio)",
+            available_node_names="LoadAudio, VAEDecode, SaveImage",
+            precedent_adaptation_plan=plan_text,
+        )
+        user = messages[1]["content"]
+        assert "Precedent adaptation plan (structured):" in user
+        # Should NOT be labeled as recommendation
+        assert "recommendation" not in user.lower()
+        assert "recommended" not in user.lower()
+
+    def test_no_forbidden_keys_in_precedent_adaptation_block(self) -> None:
+        """The precedent adaptation block content must not contain forbidden keys."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        # Construct a plan text with neutral language (no forbidden keys)
+        plan_text = (
+            "all_slices:\n"
+            "- source_class_type: HotshotXLLoader\n"
+            "- source_class_type: AnimateDiffLoader\n"
+            "context_note: This material is provided as presentation context only; "
+            "it is not an authoritative directive or required implementation.\n"
+        )
+        messages = build_batch_messages(
+            task="adapt workflow",
+            python_source="x = LoadImage()",
+            precedent_adaptation_plan=plan_text,
+        )
+        user = messages[1]["content"]
+        lower = user.lower()
+        # Only check for forbidden ranking/evaluation keys (not words that may
+        # appear negated in context_note like 'winner' or 'recommendation')
+        for key in ("best", "selected", "score", "rank",
+                     "primary", "preferred", "top pick"):
+            assert key not in lower, (
+                f"Forbidden key '{key}' found in precedent adaptation block"
+            )
+
 
 # ── T16: route-specific validation/reporting tests ─────────────────────────
 

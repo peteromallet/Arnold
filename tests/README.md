@@ -15,6 +15,8 @@ are intentionally stable because tests, docs, and tools reference them directly.
 | `e2e/` | Real-browser Playwright specs and npm metadata. Local outputs are ignored. |
 | `edgecases/` | Boundary, compatibility, concurrency, and failure-mode tests. |
 | `fixtures/` | Authored JSON/session/source-code fixtures loaded by tests and tools. |
+| `structural_harness/` | Deterministic structural contract harness: adapter, runner, builders, scenarios, and briefs. |
+| `agentic_harness/` | True live-agentic harness placeholder; no fake builders or scripted scenarios. |
 | `intent/` | Intent-level edit correctness, falsification, perceptual hash, and judge-evaluation tests. |
 | `parity/` | Typed-handle parity and independent readback tests plus parity fixtures. |
 | `property/` | Property-based and fuzz-style tests. |

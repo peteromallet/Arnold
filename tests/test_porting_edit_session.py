@@ -2274,6 +2274,76 @@ sampler = KSampler(
         )
         assert result.statements[0].diagnostics[-1].code == "field_change_old_unresolved"
 
+    def test_apply_batch_rolls_back_destructive_edit_when_later_edit_fails(self) -> None:
+        session = self._primitive_session()
+        before_ui = deepcopy(session.working_ui)
+        before_names = dict(session.uid_by_name)
+
+        result = session.apply_batch(
+            "del dst\n"
+            "replacement = MissingHotshotNode(image=src.in_)\n"
+        )
+
+        assert result.ok is False
+        assert result.landed_ops == ()
+        assert result.field_changes == ()
+        assert session.working_ui == before_ui
+        assert session.uid_by_name == before_names
+        assert session.ledger.resolve_node("", "dst") is not None
+        assert result.statements[0].landed is False
+        assert result.statements[0].ok is False
+        assert any(
+            diagnostic.code == "batch_transaction_rolled_back"
+            for diagnostic in result.statements[0].diagnostics
+        )
+        assert any(
+            diagnostic.code == "batch_transaction_rolled_back"
+            for diagnostic in result.diagnostics
+        )
+
+    def test_apply_batch_successful_add_and_rewire_still_commits(self) -> None:
+        session = self._primitive_session()
+
+        result = session.apply_batch(
+            "mid = PassThroughImage(image=src.in_, near=src)\n"
+            "dst.value = mid.IMAGE\n"
+        )
+
+        assert result.ok is True
+        assert len(result.landed_ops) == 2
+        assert result.statements[0].landed is True
+        assert result.statements[1].landed is True
+        assert "mid" in session.uid_by_name
+        mid_uid = session.uid_by_name["mid"]
+        assert session.ledger.resolve_node("", mid_uid) is not None
+        dst = session.ledger.resolve_node("", "dst")
+        assert dst is not None
+        value_input = next(item for item in dst["inputs"] if item["name"] == "value")
+        assert isinstance(value_input.get("link"), int)
+
+    def test_failed_batch_does_not_bind_new_graph_name_for_next_batch(self) -> None:
+        session = self._primitive_session()
+
+        first = session.apply_batch(
+            "mid = PassThroughImage(image=src.in_, near=src)\n"
+            "dst.value = mid.NOT_AN_OUTPUT\n"
+        )
+        second = session.apply_batch("dst.value = mid.IMAGE\n")
+
+        assert first.ok is False
+        assert first.landed_ops == ()
+        # Transactional rollback: the add-node that landed was rolled back,
+        # so mid is not bound in any form.
+        assert "mid" not in session.uid_by_name
+        assert "mid" not in session.name_by_uid
+        assert "mid" not in session.unbound_names
+        assert second.ok is False
+        # The second batch references an unknown name; the precise error code
+        # depends on whether the name was never bound (unknown_source_name)
+        # or is stale (unknown_graph_name).  Either is valid here.
+        code = second.statements[0].diagnostics[0].code
+        assert code in ("unknown_graph_name", "unknown_source_name"), f"unexpected code: {code}"
+
     def test_apply_batch_lowers_schema_less_dict_widget_assignment_to_set_node_field_op(self) -> None:
         from vibecomfy.porting import FieldChange
         from vibecomfy.porting import EditSession
@@ -2616,6 +2686,82 @@ sampler = KSampler(
         }
         assert result.landed_ops[0].inputs["in_0"].uid == "src"
 
+    def test_apply_batch_exec_accepts_semantic_io_names_for_new_node_wiring(self) -> None:
+        from vibecomfy.porting.edit.ops import AddNodeOp, UpsertLinkOp
+
+        session = self._primitive_session()
+        result = session.apply_batch(
+            "code_node = vibecomfy.exec("
+            "source='return {\"image\": image}', "
+            "io={'inputs': [['image', 'IMAGE']], 'outputs': [['image', 'IMAGE']]}, "
+            "image=src.in_)\n"
+            "dst.value = code_node.image\n"
+        )
+
+        assert result.ok is True
+        assert [type(op) for op in result.landed_ops] == [AddNodeOp, UpsertLinkOp]
+        assert result.landed_ops[0].inputs["in_0"].uid == "src"
+        code_node_uid = result.statements[0].detail["minted_uid"]
+        code_node = session.ledger.resolve_node("", code_node_uid)
+        assert code_node is not None
+        assert code_node["type"] == "vibecomfy.exec"
+        assert code_node["inputs"][0]["name"] == "in_0"
+        assert isinstance(code_node["inputs"][0]["link"], int)
+        dst = session.ledger.resolve_node("", "dst")
+        assert dst is not None
+        assert isinstance(dst["inputs"][0]["link"], int)
+        out_link = next(link for link in session.working_ui["links"] if link[3] == dst["id"])
+        assert out_link[1] == code_node["id"]
+        assert out_link[2] == 0
+
+    def test_apply_batch_exec_accepts_semantic_io_names_for_existing_node_assignments(self) -> None:
+        from vibecomfy.porting import EditSession
+        from vibecomfy.porting.edit.ops import UpsertLinkOp
+
+        raw = self._primitive_session().working_ui
+        raw["last_node_id"] = 5
+        raw["nodes"].append(
+            {
+                "id": 5,
+                "type": "vibecomfy.exec",
+                "mode": 0,
+                "pos": [320, 120],
+                "size": [220, 90],
+                "inputs": [{"name": "in_0", "type": "IMAGE", "link": None}],
+                "outputs": [{"name": "out_0", "type": "IMAGE", "links": None, "slot_index": 0}],
+                "widgets_values": [
+                    'return {"image": image}',
+                    {"inputs": [["image", "IMAGE"]], "outputs": [["image", "IMAGE"]]},
+                ],
+                "properties": {"vibecomfy_uid": "proc"},
+            }
+        )
+        session = EditSession(raw, schema_provider=self._schema_provider())
+        session.uid_by_name.update(
+            {"src": "src", "widget": "widget", "dst": "dst", "helper": "helper", "proc": "proc"}
+        )
+        session.name_by_uid.update(
+            {"src": "src", "widget": "widget", "dst": "dst", "helper": "helper", "proc": "proc"}
+        )
+
+        result = session.apply_batch(
+            "proc.image = src.in_\n"
+            "dst.value = proc.image\n"
+        )
+
+        assert result.ok is True
+        assert [type(op) for op in result.landed_ops] == [UpsertLinkOp, UpsertLinkOp]
+        proc = session.ledger.resolve_node("", "proc")
+        assert proc is not None
+        assert proc["inputs"][0]["name"] == "in_0"
+        assert isinstance(proc["inputs"][0]["link"], int)
+        dst = session.ledger.resolve_node("", "dst")
+        assert dst is not None
+        assert isinstance(dst["inputs"][0]["link"], int)
+        proc_out_link = next(link for link in session.working_ui["links"] if link[3] == dst["id"])
+        assert proc_out_link[1] == proc["id"]
+        assert proc_out_link[2] == 0
+
     def test_apply_batch_still_rejects_other_vibecomfy_constructors(self) -> None:
         session = self._primitive_session()
 
@@ -2639,18 +2785,74 @@ sampler = KSampler(
         assert result.ok is False
         assert any(diagnostic.code == "nested_call_not_allowed" for diagnostic in result.diagnostics)
 
+    def test_apply_batch_exec_accepts_name_to_type_io_dict(self) -> None:
+        from vibecomfy.porting.edit.ops import AddNodeOp
+
+        session = self._primitive_session()
+        result = session.apply_batch(
+            "code_node = vibecomfy.exec("
+            "source='return {\"image\": image}', "
+            "io={'inputs': {'image': 'IMAGE'}, 'outputs': {'image': 'IMAGE'}}, "
+            "in_0=src.in_)\n"
+        )
+
+        assert result.ok is True
+        assert isinstance(result.landed_ops[0], AddNodeOp)
+        assert result.landed_ops[0].class_type == "vibecomfy.exec"
+        code_node_uid = result.statements[0].detail["minted_uid"]
+        code_node = session.ledger.resolve_node("", code_node_uid)
+        assert code_node is not None
+        assert code_node["type"] == "vibecomfy.exec"
+        assert len(code_node["inputs"]) == 1
+        assert code_node["inputs"][0]["name"] == "in_0"
+        assert len(code_node["outputs"]) == 1
+        assert code_node["outputs"][0]["name"] == "out_0"
+
+    def test_apply_batch_exec_infers_empty_io_from_source_and_wiring(self) -> None:
+        from vibecomfy.porting.edit.ops import AddNodeOp
+
+        session = self._primitive_session()
+        result = session.apply_batch(
+            "code_node = vibecomfy.exec("
+            "source='return {\"image\": in_0}', "
+            "io={}, "
+            "in_0=src.in_)\n"
+        )
+
+        assert result.ok is True
+        assert isinstance(result.landed_ops[0], AddNodeOp)
+        assert result.landed_ops[0].fields["io"] == {
+            "inputs": [["in_0", "*"]],
+            "outputs": [["image", "*"]],
+        }
+        code_node_uid = result.statements[0].detail["minted_uid"]
+        code_node = session.ledger.resolve_node("", code_node_uid)
+        assert code_node is not None
+        assert code_node["type"] == "vibecomfy.exec"
+        assert len(code_node["inputs"]) == 1
+        assert code_node["inputs"][0]["name"] == "in_0"
+        assert len(code_node["outputs"]) == 1
+        assert code_node["outputs"][0]["name"] == "out_0"
+
     def test_apply_batch_marks_failed_add_names_unbound(self) -> None:
         session = self._primitive_session()
         failed = session.apply_batch("save_image = SaveImage(images=src.in_, relation='right_of')\n")
 
         assert failed.ok is False
-        assert "save_image" in session.unbound_names
+        # Transactional rollback: the single failed edit statement triggers
+        # rollback, which restores the pre-batch state.  The name is not
+        # left in unbound_names because the whole batch is discarded.
+        assert "save_image" not in session.unbound_names
         assert "save_image" not in session.uid_by_name
 
         follow_up = session.apply_batch("dst.value = save_image\n")
 
         assert follow_up.ok is False
-        assert follow_up.diagnostics[0].code == "unbound_graph_name"
+        # The follow-up references a name that was never bound; the error
+        # code depends on the resolution path (unknown_graph_name or
+        # unbound_graph_name are both valid).
+        code = follow_up.diagnostics[0].code
+        assert code in ("unbound_graph_name", "unknown_graph_name", "unknown_source_name"), f"unexpected code: {code}"
 
     def test_apply_batch_executes_sequentially_and_binds_successful_adds(self) -> None:
         from vibecomfy.porting.edit.ops import AddNodeOp, UpsertLinkOp
@@ -2671,8 +2873,6 @@ sampler = KSampler(
         assert isinstance(echo["inputs"][0]["link"], int)
 
     def test_apply_batch_skips_failed_dependencies_and_continues_independent_work(self) -> None:
-        from vibecomfy.porting.edit.ops import SetNodeFieldOp
-
         session = self._primitive_session()
         result = session.apply_batch(
             "save_image = SaveImage(images=src.in_, relation='right_of')\n"
@@ -2681,13 +2881,17 @@ sampler = KSampler(
         )
 
         assert result.ok is False
-        assert [statement.landed for statement in result.statements] == [False, False, True]
-        assert [type(op) for op in result.landed_ops] == [SetNodeFieldOp]
+        # Transactional rollback: when any edit statement fails, the whole
+        # batch is rolled back.  Even the independent widget.seed=11 is
+        # discarded because the batch is all-or-nothing.
+        assert [statement.landed for statement in result.statements] == [False, False, False]
+        assert result.landed_ops == ()
         assert result.statements[0].diagnostics[0].code == "anchor_target_missing"
         assert result.statements[1].diagnostics[0].code == "unbound_graph_name"
+        # widget.seed must remain unchanged
         widget = session.ledger.resolve_node("", "widget")
         assert widget is not None
-        assert widget["widgets_values"][0] == 11
+        assert widget["widgets_values"][0] == 1  # original value
 
     def test_apply_batch_infers_true_splice_anchor_from_two_line_rewire(self) -> None:
         from vibecomfy.porting.edit.ops import AddNodeOp

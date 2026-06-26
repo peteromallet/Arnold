@@ -48,7 +48,7 @@ from vibecomfy.executor.profiler import (
 )
 
 # How long to wait for a single agent turn (subprocess) before giving up.
-_TURN_TIMEOUT_SECONDS = float(os.getenv("VIBECOMFY_AGENT_TURN_TIMEOUT", "1500"))
+_TURN_TIMEOUT_SECONDS = float(os.getenv("VIBECOMFY_AGENT_TURN_TIMEOUT", "180"))
 _WORKER_PATH = str(Path(__file__).with_name("worker.py"))
 LOGGER = logging.getLogger(__name__)
 

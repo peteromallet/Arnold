@@ -3930,8 +3930,8 @@ def test_build_batch_messages_turn_zero_includes_full_python_scoped_catalog_and_
     assert "ImageScaleBy(image=decode.IMAGE" in system
     assert "do NOT search for them" in system
     assert "search(" in system
-    # Size ceiling: system prompt must stay under 2600 chars
-    assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
+    # Size ceiling: prompt should stay bounded even with research/code-node guidance.
+    assert len(system) < 5000, f"system prompt is {len(system)} chars, expected <5000"
     # No execution-semantics phrasing
     assert "return only json" not in system.lower()
     assert "delta" not in system.lower()
@@ -3966,7 +3966,7 @@ def test_build_batch_messages_later_turn_includes_diff_and_report_only() -> None
     assert "delta" not in system.lower()
     assert "execute the code" not in system.lower()
     assert "run the code" not in system.lower()
-    assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
+    assert len(system) < 5000, f"system prompt is {len(system)} chars, expected <5000"
 
     # User message includes diff + report, NOT full Python
     assert "Fix the field" in user
@@ -4036,7 +4036,7 @@ def test_build_batch_messages_no_json_delta_wording() -> None:
         assert "execute the code" not in system.lower()
         assert "run the code" not in system.lower()
         # Size ceiling
-        assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
+        assert len(system) < 5000, f"system prompt is {len(system)} chars, expected <5000"
 
 
 def test_build_batch_messages_system_prompt_contains_all_three_mode_strings() -> None:
@@ -4113,7 +4113,7 @@ def test_build_batch_messages_system_prompt_no_execution_semantics() -> None:
 
 
 def test_build_batch_messages_system_prompt_size_under_ceiling() -> None:
-    """System prompt stays under 2600 chars with budget line included."""
+    """System prompt stays bounded with budget line and research/code-node guidance."""
     messages = agent_provider.build_batch_messages(
         task="test",
         python_source="x=1",
@@ -4121,7 +4121,7 @@ def test_build_batch_messages_system_prompt_size_under_ceiling() -> None:
         max_batches=5,
     )
     system = messages[0]["content"]
-    assert len(system) < 2700, f"system prompt is {len(system)} chars, expected <2700"
+    assert len(system) < 5000, f"system prompt is {len(system)} chars, expected <5000"
 
 
 def test_build_batch_messages_conversation_memory_included_on_turn_zero() -> None:
@@ -10212,8 +10212,12 @@ def test_requires_custom_nodes_contract_registries_are_complete() -> None:
     assert "requires_custom_nodes" in agent_contracts.PUBLIC_OUTCOME_KINDS
     assert "requires_custom_nodes" not in agent_contracts.TURN_OUTCOME_KINDS
     assert set(executor_contracts._ROUTE_DESCRIPTIONS) == (executor_contracts._ALLOWED_ROUTES - {""})
-    assert executor_contracts._PUBLIC_ROUTES == frozenset(executor_contracts._ROUTE_DESCRIPTIONS)
+    assert executor_contracts._PUBLIC_ROUTES == frozenset({
+        *executor_contracts._ROUTE_DESCRIPTIONS,
+        "requires_custom_nodes",
+    })
     assert "requires_custom_nodes" in executor_contracts._PUBLIC_ROUTES
+    assert "requires_custom_nodes" in executor_contracts._ALLOWED_ROUTES
 
 
 def test_requires_custom_nodes_public_outcome_serializes_resolver_payload() -> None:

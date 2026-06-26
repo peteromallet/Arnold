@@ -3,8 +3,13 @@
 
 Hivemind's generic workflow ingester accepts ComfyUI JSON. VibeComfy's
 agent-facing workflow assets are Python ready templates, so this script uses
-the Hivemind contribute edge function directly and stores the `.py`
+the Hivemind `contribute-resource` edge function directly and stores the `.py`
 representation in both searchable text and structured payload metadata.
+
+The default `contribute-resource` endpoint is anonymous and does not require a
+contributor key. To use the authenticated `contribute` endpoint instead, pass
+``--contribute-url https://<project>.supabase.co/functions/v1/contribute`` and
+set ``HIVEMIND_CONTRIBUTOR_KEY``.
 """
 
 from __future__ import annotations
@@ -22,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_CONTRIBUTE_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/functions/v1/contribute"
+DEFAULT_CONTRIBUTE_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/functions/v1/contribute-resource"
 DEFAULT_HIVEMIND_API_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/rest/v1"
 DEFAULT_HIVEMIND_ANON_KEY = "sb_publishable_O38oPBafrBoFrpi_rlWJvA_UJrulFsx"
 GRAPH_IDENTITY_VERSION = 1
@@ -117,6 +122,17 @@ def _description(row: dict[str, Any]) -> str:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _load_contributor_key() -> str | None:
+    """Load the Hivemind contributor key from env or the standard on-disk location."""
+    key = os.environ.get("HIVEMIND_CONTRIBUTOR_KEY")
+    if key:
+        return key
+    key_path = Path.home() / ".hivemind" / "key"
+    if key_path.exists():
+        return key_path.read_text(encoding="utf-8").strip()
+    return None
 
 
 def _canonical_json(value: Any) -> str:
@@ -320,20 +336,31 @@ def _apply_description(row: dict[str, Any], descriptions: dict[str, str]) -> dic
     return enriched
 
 
-def _post(envelope: dict[str, Any], *, contribute_url: str, contributor_key: str) -> dict[str, Any]:
+def _post(envelope: dict[str, Any], *, contribute_url: str, contributor_key: str | None = None) -> dict[str, Any]:
     body = json.dumps(envelope).encode("utf-8")
+    headers: dict[str, str] = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if contributor_key:
+        headers["X-Contributor-Key"] = contributor_key
     request = urllib.request.Request(
         contribute_url,
         data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "X-Contributor-Key": contributor_key,
-        },
+        headers=headers,
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read().decode("utf-8"))
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=120) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except TimeoutError as exc:
+            last_error = exc
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+            continue
+    raise last_error or TimeoutError("request timed out after retries")
 
 
 def _postgrest_get(
@@ -528,9 +555,15 @@ def main(argv: list[str] | None = None) -> int:
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
 
-    contributor_key = os.environ.get("HIVEMIND_CONTRIBUTOR_KEY")
-    if not args.dry_run and not contributor_key:
-        print("error: set HIVEMIND_CONTRIBUTOR_KEY or use --dry-run", file=sys.stderr)
+    contributor_key = _load_contributor_key()
+    uses_authenticated_endpoint = args.contribute_url.rstrip("/").endswith("/contribute")
+    if not args.dry_run and uses_authenticated_endpoint and not contributor_key:
+        print(
+            "error: The authenticated /contribute endpoint requires a contributor key. "
+            "Set HIVEMIND_CONTRIBUTOR_KEY or place the key in ~/.hivemind/key, "
+            "or use the default anonymous /contribute-resource endpoint.",
+            file=sys.stderr,
+        )
         return 1
 
     results: list[dict[str, Any]] = []
@@ -582,7 +615,7 @@ def main(argv: list[str] | None = None) -> int:
                     response = _post(
                         envelope,
                         contribute_url=args.contribute_url,
-                        contributor_key=contributor_key or "",
+                        contributor_key=contributor_key if uses_authenticated_endpoint else None,
                     )
                     result = {"template_id": template_id, "status": "uploaded", "response": response}
                 if args.verify:

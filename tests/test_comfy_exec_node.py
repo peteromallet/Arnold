@@ -34,6 +34,13 @@ def test_parse_io_accepts_dict_payload() -> None:
     assert io_spec == {"inputs": (("image", "IMAGE"),), "outputs": (("mask", "MASK"),)}
 
 
+def test_parse_io_accepts_name_to_type_dict() -> None:
+    io_spec = parse_io({"inputs": {"image": "IMAGE"}, "outputs": {"image": "IMAGE", "mask": "MASK"}})
+
+    assert io_spec["inputs"] == (("image", "IMAGE"),)
+    assert io_spec["outputs"] == (("image", "IMAGE"), ("mask", "MASK"))
+
+
 def test_validate_exec_result_requires_dict() -> None:
     with pytest.raises(ExecNodeContractError, match="must return a dict"):
         validate_exec_result("not-a-dict", parse_io({"outputs": [["image", "IMAGE"]]}))

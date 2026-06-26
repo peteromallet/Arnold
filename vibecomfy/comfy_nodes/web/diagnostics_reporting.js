@@ -8,6 +8,16 @@ import {
   selectExecutionEvents,
   selectTranscriptMessages,
 } from "./agent_edit_response_contract.js";
+//
+// T4 audit note: Diagnostics capture reads panel.state.sessionId, turnId,
+// chatSessionPath, and chatMessages directly.  These are lifecycle-store-owned
+// fields that will be scope-correct once the lifecycle store is scope-aware
+// (T5 adds chatScopeId, candidateScopeId, submittingScopeId to the store).
+// The debugSnapshotForReport() fallback already surfaces sessionId from
+// panel.state, which is the canonical scope-keyed session.  No changes needed
+// here for per-workflow scoping — diagnostics are inherently panel-scoped and
+// the lifecycle store is the single authority for scope identity.
+// Intentionally unchanged.
 
 // ── Module-level dependency injection ────────────────────────────────────────
 

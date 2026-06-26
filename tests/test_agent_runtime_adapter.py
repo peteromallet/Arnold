@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 
 import pytest
 
@@ -116,6 +118,47 @@ def test_run_worker_mirrors_openrouter_key_into_backend_env_aliases(
     assert captured_env["OPENROUTER_API_KEY"] == "sk-or-v1-test-key"
     assert captured_env["OPENAI_API_KEY"] == "sk-or-v1-test-key"
     assert captured_env["HERMES_API_KEY"] == "sk-or-v1-test-key"
+
+
+def test_worker_bootstraps_repo_root_from_neutral_cwd(tmp_path) -> None:
+    request_path = tmp_path / "request.json"
+    result_path = tmp_path / "result.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "agent_id": "__missing_test_adapter__",
+                "agent_kwargs": {
+                    "max_iterations": 1,
+                    "enabled_toolsets": [],
+                    "save_trajectories": False,
+                    "skip_context_files": True,
+                    "skip_memory": True,
+                    "quiet_mode": True,
+                },
+                "system_message": None,
+                "user_message": "hello",
+                "response_contract": "text",
+            }
+        ),
+        encoding="utf-8",
+    )
+    env = dict(os.environ)
+    env.pop("PYTHONPATH", None)
+
+    proc = subprocess.run(
+        [sys.executable, runtime._WORKER_PATH, str(request_path), str(result_path)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert proc.returncode == 0
+    assert result_path.is_file(), proc.stderr or proc.stdout
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["error_type"] == "LookupError"
+    assert "No module named 'vibecomfy'" not in (proc.stderr + proc.stdout + json.dumps(result))
 
 
 def test_run_worker_preserves_stdout_stderr_tail_on_error(

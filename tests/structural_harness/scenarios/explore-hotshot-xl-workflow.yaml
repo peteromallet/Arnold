@@ -1,0 +1,33 @@
+name: explore-hotshot-xl-workflow
+tier: 6
+description: "Executor research route: triage passes a research brief into the agent-edit research loop for Hotshot XL workflow lookup"
+mode: structural
+agents:
+  - id: builder
+    dispatcher: fake
+tags:
+  - m6
+  - research
+  - structural
+  - positive
+  - hotshot
+assessment:
+  enforced:
+    - "executor_result.json parses as valid JSON with ok=true and report.executor.plan.research=true."
+    - "implementation_payload.json contains research_brief.search_directions with Hotshot XL or SVD-XT anchors."
+    - "messages.jsonl contains a focused research call with sources=[\"workflows\"]."
+    - "executor_result.json records a non-applyable research response with graph_unchanged=true."
+    - "actions.jsonl contains at least one entry with op=executor.run and a non-empty query."
+  graded:
+    - "The frozen evidence demonstrates the research route entered the agent-edit research loop instead of deterministic executor retrieval."
+  observed:
+    - "The focused research query contains Hotshot XL/SVD-XT anchors and does not search generic words from the raw sentence."
+extras:
+  flow_kind: executor_research_scripted
+  required_frozen_evidence:
+    - evidence/executor_result.json
+    - evidence/executor_report.json
+    - evidence/implementation_result.json
+    - evidence/implementation_payload.json
+    - evidence/messages.jsonl
+    - evidence/actions.jsonl

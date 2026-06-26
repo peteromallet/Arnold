@@ -22,6 +22,12 @@ import {
   splitRehydrateProjectionInput,
 } from "./agent_edit_response_contract.js";
 
+// ── T7: Runtime snapshot helpers for scope switching ─────────────────────
+import {
+  saveScopeSnapshot,
+  restoreScopeSnapshot,
+} from "./panel_runtime.js";
+
 // ── Phase taxonomy ─────────────────────────────────────────────────────────
 export const PANEL_STATE = Object.freeze({
   IDLE: "IDLE",
@@ -91,6 +97,22 @@ export const LIFECYCLE_STATE_FIELDS = Object.freeze([
   // Session / turn identity
   "sessionId",
   "turnId",
+
+  // ── T5: Scope identity (lifecycle-store-owned) ──────────────────────────
+  // Per-workflow chat scope: the scope this panel is bound to.  Matched
+  // against event payloads and candidate metadata to prevent cross-scope
+  // data from mutating the visible panel state.
+  "chatScopeId",
+  // Structural fingerprint of the graph at scope-capture time, used to
+  // detect canvas drift without relying on backend baseline hashes.
+  "chatScopeFingerprint",
+  // The scope id of the candidate currently displayed.  Cleared on
+  // INVALIDATE_CANDIDATE, set on candidate arrival, and checked by the
+  // overlay before drawing.
+  "candidateScopeId",
+  // The scope id under which the current submit was initiated.  Set on
+  // SUBMIT_START, cleared on SUBMIT_FINALLY and NEW_CONVERSATION.
+  "submittingScopeId",
 
   // Baseline authority (mirrored from backend CAS)
   "baselineTurnId",
@@ -190,6 +212,12 @@ export function createAgentEditState() {
     // Session / turn identity
     sessionId: null,
     turnId: null,
+
+    // ── T5: Scope identity ──────────────────────────────────────────────
+    chatScopeId: null,
+    chatScopeFingerprint: null,
+    candidateScopeId: null,
+    submittingScopeId: null,
 
     // Baseline authority
     baselineTurnId: null,
@@ -329,6 +357,15 @@ export function transition(panel, event, payload = {}) {
         debugPayload: payload?.debugPayload || payload?.failure || null,
       });
 
+    case "SUBMIT_SCOPE_MISMATCH":
+      // ── T11: Scope mismatch blocks submit ──────────────────────────
+      return _handleSubmitFailure(panel, {
+        ...payload,
+        phase: PANEL_STATE.ERROR,
+        failure: payload?.failure || null,
+        debugPayload: payload?.debugPayload || payload?.failure || null,
+      });
+
     case "SUBMIT_ABORT_CONTROLLER":
       panel.state.submitAbortController = payload?.controller || null;
       return { render: false };
@@ -377,9 +414,15 @@ export function transition(panel, event, payload = {}) {
     // ── Stop / new conversation ────────────────────────────────────────
     case "STOP_ABORT":
       return _handleStopAbort(panel, payload);
-
+    // ── New conversation ────────────────────────────────────────────────
     case "NEW_CONVERSATION":
       return _handleNewConversation(panel);
+
+    // ── T5: Scope switch ─────────────────────────────────────────────────
+    // Transitions the panel to a new workflow scope.  Scope identity fields
+    // are updated; candidate is invalidated (it belongs to the old scope).
+    case "SCOPE_SWITCH":
+      return _handleScopeSwitch(panel, payload);
 
     // ── Chat rehydrate ────────────────────────────────────────────────
     case "CHAT_REHYDRATE_START":
@@ -407,6 +450,7 @@ export function transition(panel, event, payload = {}) {
     case "APPLY_MISSING_FIELDS":
     case "APPLY_SERIALIZE_ERROR":
     case "APPLY_ELIGIBILITY_BLOCKED":
+    case "APPLY_SCOPE_MISMATCH":
       return _handleApplyBlockedFailure(panel, payload);
 
     case "APPLY_IN_FLIGHT":
@@ -589,6 +633,54 @@ export function normalizeDeltaOpsFromSubmit(result) {
   return normalized.length > 0 ? normalized : null;
 }
 
+// ── T10: Scope-aware event routing guard ───────────────────────────────────
+// Pure predicate used by the websocket event handlers in vibecomfy_roundtrip.js
+// to decide whether an incoming agent-turn or executor-phase event may mutate
+// the visible singleton panel state or bind `panel.state.sessionId`.
+//
+// The caller (event handler) resolves the scoped session via
+// resolveScopeSessionId(panel.state.chatScopeId) and passes it as
+// `scopedSessionId`.  This function has zero storage or DOM dependencies
+// so it can be unit-tested in Node.js.
+//
+// Returns true when the event is safe to process, false when it must be
+// silently dropped.
+
+/**
+ * @param {object} panelState — panel.state (plain object with at minimum
+ *   chatScopeId, phase, sessionId)
+ * @param {string|null} eventSessionId — session_id carried by the event
+ * @param {string|null} scopedSessionId — resolveScopeSessionId(chatScopeId)
+ * @returns {boolean}
+ */
+export function eventSessionMatchesActiveScope(panelState, eventSessionId, scopedSessionId) {
+  const chatScopeId = panelState?.chatScopeId;
+  if (!chatScopeId) {
+    // No scope tracking — accept all events (backward compatible).
+    return true;
+  }
+  if (!eventSessionId) {
+    // An event without a session_id cannot be validated against a scope.
+    // Reject it when scope tracking is active to prevent un-scoped events
+    // from mutating the panel.
+    return false;
+  }
+  if (scopedSessionId) {
+    // A session is already bound to this scope — the event must match it.
+    return eventSessionId === scopedSessionId;
+  }
+  // No session bound to this scope yet — first allocation.
+  // Allow only if the panel is in SUBMITTING phase (actively waiting for
+  // the first turn response) OR if the panel has already bound the same
+  // session in memory (e.g., from a previous rehydrate before scope tracking
+  // was fully activated).
+  const inMemorySession = panelState?.sessionId;
+  if (inMemorySession) {
+    return eventSessionId === inMemorySession;
+  }
+  return panelState?.phase === "SUBMITTING";
+}
+
 // ── Canonical reducer projections ──────────────────────────────────────────
 
 function _strictSelectorRead(selector, source, options = {}) {
@@ -757,6 +849,8 @@ function _writeLatestCandidateTransition(panel, payload) {
   panel.state.serverSubmitGraphHash =
     candidate?.submitGraphHash
     || (typeof payload?.serverSubmitGraphHash === "string" ? payload.serverSubmitGraphHash : null);
+  // ── T5: Bind restored candidate to the current chat scope ──────────────
+  panel.state.candidateScopeId = panel.state.submittingScopeId || panel.state.chatScopeId;
   panel.state.message = payload?.message || payload?.result?.message || null;
   panel.state.failure = null;
   panel.state.clarification = payload?.clarification || null;
@@ -880,6 +974,9 @@ function _handleInvalidateCandidate(panel, payload) {
   panel.state.changeDetails = null;
   panel.state.customNodeResolution = null;
 
+  // ── T5: Clear candidate scope identity ────────────────────────────────
+  panel.state.candidateScopeId = null;
+
   // Clear V2 delta ops — mutation intent is invalidated with the candidate.
   panel.state.deltaOps = null;
 
@@ -904,7 +1001,18 @@ function _handleSubmitStart(panel, payload) {
   panel.state.lastAppliedChanges = null;
   panel.state.lastSubmitFieldChanges = null;
   panel.state.lastSubmit = payload?.lastSubmit || null;
-  panel.state.debugPayload = payload?.debugPayload || null;
+  // ── T9: Stamp scope identity into debug payload so diagnostics always
+  // trace back to the workflow that produced them.  Scope metadata is only
+  // added when a scope is active — null scope values are not stamped.
+  if (panel.state.chatScopeId) {
+    panel.state.debugPayload = payload?.debugPayload
+      ? { ...payload.debugPayload, _scopeId: panel.state.chatScopeId, _scopeFingerprint: panel.state.chatScopeFingerprint }
+      : { _scopeId: panel.state.chatScopeId, _scopeFingerprint: panel.state.chatScopeFingerprint };
+  } else {
+    panel.state.debugPayload = payload?.debugPayload || null;
+  }
+  // ── T5: Capture submitting scope for candidate cross-check ─────────────
+  panel.state.submittingScopeId = panel.state.chatScopeId;
   return _obligations({
     render: true,
     dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
@@ -1289,6 +1397,8 @@ function _handleCandidateResponse(panel, payload) {
   panel.state.serverSubmitGraphHash =
     projectedCandidate?.submitGraphHash
     || (typeof payload?.serverSubmitGraphHash === "string" ? payload.serverSubmitGraphHash : null);
+  // ── T5: Bind candidate to the submitting scope ─────────────────────────
+  panel.state.candidateScopeId = panel.state.submittingScopeId || panel.state.chatScopeId;
   panel.state.message = result.message || null;
   panel.state.failure = null;
   panel.state.clarification = payload?.clarification || null;
@@ -1338,6 +1448,10 @@ function _handleSubmitFinally(panel, payload) {
   if (payload?.clearInFlightSubmit) {
     panel.state.inFlightSubmit = null;
   }
+  // ── T5: Clear submitting scope on submit finish ────────────────────────
+  if (payload?.clearSubmittingScope !== false) {
+    panel.state.submittingScopeId = null;
+  }
   return { render: false };
 }
 
@@ -1374,10 +1488,18 @@ function _handleNewConversation(panel) {
   const nextSubmitEpoch = (Number.isFinite(panel.state.submitEpoch) ? panel.state.submitEpoch : 0) + 1;
   const nextChatRehydrateEpoch =
     (Number.isFinite(panel.state.chatRehydrateEpoch) ? panel.state.chatRehydrateEpoch : 0) + 1;
+  // ── T9: Preserve scope identity — new conversation clears chat data
+  // within the current scope but does not unbind from the workflow.
+  // Scope B's saved state (in _scopeSnapshots) is untouched.
+  const departingScopeId = panel.state.chatScopeId;
+  const departingScopeFingerprint = panel.state.chatScopeFingerprint;
   _handleInvalidateCandidate(panel, { repaint: false });
   Object.assign(panel.state, createAgentEditState(), {
     submitEpoch: nextSubmitEpoch,
     chatRehydrateEpoch: nextChatRehydrateEpoch,
+    // ── T9: Keep the panel bound to the same workflow scope ────────────
+    chatScopeId: departingScopeId,
+    chatScopeFingerprint: departingScopeFingerprint,
   });
   return _obligations({
     render: true,
@@ -1388,10 +1510,89 @@ function _handleNewConversation(panel) {
       RENDER_SECTIONS.NOTICE,
     ],
     invalidateCandidate: true,
-    queueGuardClear: true,
+    // ── T9: Clear queue guard for current scope only ────────────────────
+    queueGuardClearScope: departingScopeId || null,
     refreshQueueGuard: true,
     forgetSession: true,
     focusPrompt: true,
+    // ── T7: Clear scope snapshot when explicitly starting fresh ──────────
+    forgetScope: departingScopeId || null,
+  });
+}
+
+// ── T7: Scope switch ─────────────────────────────────────────────────────────
+// Enhanced from T5 skeleton: now saves the departing scope's full panel state
+// as a runtime snapshot, restores the arriving scope's snapshot (if one exists),
+// preserves draft text, clears stale apply/undo affordances, and explicitly
+// excludes undoStack from all snapshot operations (SD3).
+function _handleScopeSwitch(panel, payload) {
+  const oldScopeId = panel.state.chatScopeId;
+  const scopeId = typeof payload?.scopeId === "string" && payload.scopeId
+    ? payload.scopeId
+    : null;
+  const fingerprint = typeof payload?.fingerprint === "string" && payload.fingerprint
+    ? payload.fingerprint
+    : null;
+
+  // ── T7: Save departing scope state ─────────────────────────────────────
+  // Snapshot all current panel.state fields (except undoStack, DOM refs,
+  // and ephemeral render state) keyed by the OLD scope id.  This preserves
+  // chat messages, history, session identity, composer state, queue guard
+  // state, diagnostics metadata, and all lifecycle fields so the user can
+  // return to this workflow later and pick up where they left off.
+  if (oldScopeId && oldScopeId !== scopeId) {
+    saveScopeSnapshot(oldScopeId, panel);
+  }
+
+  // Invalidate the current candidate — it belongs to the old scope.
+  _handleInvalidateCandidate(panel, { repaint: false });
+
+  // Update scope identity from payload.
+  panel.state.chatScopeId = scopeId;
+  panel.state.chatScopeFingerprint = fingerprint;
+  panel.state.candidateScopeId = null;
+  panel.state.submittingScopeId = null;
+
+  // Clear submit-in-flight state — any in-flight submit belongs to the old scope.
+  panel.state.inFlightSubmit = null;
+  panel.state.submitAbortController = null;
+  panel.state.failure = null;
+  panel.state.clarification = null;
+
+  // ── T7: Restore arriving scope state (if snapshot exists) ──────────────
+  // The snapshot restoration merges all saved fields back onto panel.state
+  // while leaving undoStack untouched.  When no snapshot exists this is a
+  // true fresh-scope transition — the lifecycle fields remain at their
+  // post-switch defaults.
+  const restored = scopeId ? restoreScopeSnapshot(scopeId, panel) : false;
+
+  return _obligations({
+    render: true,
+    dirtySections: [
+      RENDER_SECTIONS.THREAD,
+      RENDER_SECTIONS.META,
+      RENDER_SECTIONS.COMPOSER,
+      RENDER_SECTIONS.NOTICE,
+    ],
+    invalidateCandidate: true,
+    // ── T7: Clear undo affordances on scope switch ─────────────────────────
+    // Undo entries belong to the workflow's canvas context (SD3).  After a
+    // scope switch the visible panel must not offer undo for a different
+    // workflow.  The undo stack itself survives on panel.state but the
+    // affordances (button emphasis, menu entries) are reset.
+    clearUndoAffordance: true,
+    queueGuardClear: true,
+    refreshQueueGuard: true,
+    persistScope: scopeId,
+    rehydrateChat: Boolean(scopeId),
+    // ── T7: Flag indicating a draft prompt exists for the arriving scope ──
+    // The obligation fulfiller reads the DOM prompt element and restores the
+    // saved draft text when present.
+    restoreScopeDraft: scopeId,
+    // Metadata for the obligation fulfiller so it can save the departing
+    // scope's draft before the DOM repaint clears the prompt box.
+    departingScopeId: oldScopeId !== scopeId ? oldScopeId : null,
+    restored,
   });
 }
 
@@ -1843,6 +2044,29 @@ function _handleChatRehydrateRestoreLatestCandidate(panel, payload) {
     || panel.state.phase === PANEL_STATE.APPLYING
   ) {
     return { render: false, skipped: true };
+  }
+
+  // ── T8: Scope boundary refusal ─────────────────────────────────────────
+  // requestScopeId is the scope captured by _rehydrateChat at fetch-initiate
+  // time.  If the visible panel has switched to a different scope while the
+  // fetch was in flight (or between rehydrate and the caller's guard), refuse
+  // to restore — a candidate from scope A must never populate scope B.
+  if (typeof payload?.requestScopeId === "string" && payload.requestScopeId) {
+    if (panel.state.chatScopeId !== payload.requestScopeId) {
+      return { render: false, skipped: true, stale: true };
+    }
+  }
+
+  // ── T8: Cross-session boundary refusal ─────────────────────────────────
+  // When the candidate's session id is explicitly known and differs from the
+  // panel's current session id (and both are set), the candidate belongs to
+  // a different workflow's session and must not be restored into this scope.
+  if (
+    typeof payload?.candidateSessionId === "string" && payload.candidateSessionId
+    && typeof panel.state.sessionId === "string" && panel.state.sessionId
+    && panel.state.sessionId !== payload.candidateSessionId
+  ) {
+    return { render: false, skipped: true, stale: true };
   }
 
   const restored = _writeLatestCandidateTransition(panel, payload);

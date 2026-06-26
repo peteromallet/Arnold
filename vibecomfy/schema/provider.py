@@ -482,6 +482,35 @@ class CompositeSchemaProvider:
                 return schema
         return None
 
+    def schemas(self) -> dict[str, NodeSchema]:
+        merged: dict[str, NodeSchema] = {}
+        for provider in reversed(self.providers):
+            schemas = schemas_for(provider)
+            if schemas is not None:
+                merged.update({str(key): value for key, value in schemas.items() if isinstance(value, NodeSchema)})
+        return merged
+
+
+class ProvisionalRegistrySchemaProvider:
+    """Evidence-backed schemas for missing custom nodes discovered by registry research.
+
+    These schemas are not runtime proof that a node is installed. They only let
+    the editor represent a missing custom node class in a candidate graph when a
+    registry/manager lookup supplied concrete evidence for that class.
+    """
+
+    def __init__(self, candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
+        self._schemas = _provisional_schemas_from_candidates(candidates)
+
+    def get(self, class_type: str) -> NodeSchema | None:
+        return self.get_schema(class_type)
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        return self._schemas.get(class_type)
+
+    def schemas(self) -> dict[str, NodeSchema]:
+        return dict(self._schemas)
+
 
 class AuthoringSchemaProvider:
     """Offline schema provider for schema-only authoring and CLI inspection.
@@ -1000,6 +1029,55 @@ def _schema_from_object_info(class_type: str, info: dict[str, Any]) -> NodeSchem
     outputs = _parse_outputs(info)
     pack = _first_string(info, "pack", "package", "category")
     return NodeSchema(class_type=class_type, pack=pack, inputs=inputs, outputs=outputs)
+
+
+def _provisional_schemas_from_candidates(
+    candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> dict[str, NodeSchema]:
+    schemas: dict[str, NodeSchema] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        pack = candidate.get("pack") if isinstance(candidate.get("pack"), dict) else {}
+        pack_name = _first_string(pack, "slug", "name", "registry_id") if isinstance(pack, dict) else None
+        schema_payload = candidate.get("provisional_schema")
+        schema_nodes: Any = None
+        if isinstance(schema_payload, dict):
+            raw_schema = schema_payload.get("schema")
+            if isinstance(raw_schema, dict):
+                schema_nodes = raw_schema.get("nodes") or raw_schema.get("object_info") or raw_schema
+        if isinstance(schema_nodes, dict):
+            for class_type, info in schema_nodes.items():
+                if not isinstance(class_type, str) or not isinstance(info, dict):
+                    continue
+                schema = _schema_from_object_info(class_type, info)
+                schemas[class_type] = NodeSchema(
+                    class_type=schema.class_type,
+                    pack=schema.pack or pack_name,
+                    inputs=schema.inputs,
+                    outputs=schema.outputs,
+                    source_provider="comfy_registry_provisional",
+                    source_package=pack_name,
+                    source_version=_first_string(schema_payload, "version") if isinstance(schema_payload, dict) else None,
+                    confidence=0.55,
+                    ignored_evidence=("not_installed", "not_runtime_validated"),
+                )
+        expected = candidate.get("expected_classes")
+        if isinstance(expected, (list, tuple)):
+            for raw_class_type in expected:
+                class_type = str(raw_class_type).strip()
+                if class_type and class_type not in schemas:
+                    schemas[class_type] = NodeSchema(
+                        class_type=class_type,
+                        pack=pack_name,
+                        inputs={},
+                        outputs=[],
+                        source_provider="comfy_registry_provisional",
+                        source_package=pack_name,
+                        confidence=0.35,
+                        ignored_evidence=("class_only", "not_installed", "not_runtime_validated"),
+                    )
+    return schemas
 
 
 def _order_object_info_inputs(inputs: dict[str, InputSpec], info: dict[str, Any]) -> dict[str, InputSpec]:

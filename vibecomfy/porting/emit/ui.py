@@ -896,16 +896,22 @@ def _exec_node_field(node: Any, key: str) -> Any:
 
 def _normalize_exec_io_entries(value: Any) -> list[tuple[str, str]]:
     entries: list[tuple[str, str]] = []
-    if not isinstance(value, list):
+    raw_items: Any
+    if isinstance(value, Mapping):
+        raw_items = [[name, socket_type] for name, socket_type in value.items()]
+    elif isinstance(value, list):
+        raw_items = value
+    else:
         return entries
-    for index, item in enumerate(value):
+    for index, item in enumerate(raw_items):
         name: Any
         socket_type: Any
         if isinstance(item, Mapping):
             name = item.get("name")
             socket_type = item.get("type")
-        elif isinstance(item, (list, tuple)) and len(item) >= 2:
-            name, socket_type = item[0], item[1]
+        elif isinstance(item, (list, tuple)) and len(item) >= 1:
+            name = item[0]
+            socket_type = item[1] if len(item) >= 2 else None
         else:
             continue
         clean_name = str(name or f"value_{index}").strip() or f"value_{index}"

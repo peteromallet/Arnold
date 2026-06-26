@@ -1,3 +1,13 @@
+// panel_scheduler.js — Render scheduling for the active agent panel.
+//
+// T4 audit note: This module uses currentAgentPanel() (a singleton accessor)
+// because SD1 mandates a single visible VibeComfy panel.  The scheduler tracks
+// dirty sections per-panel via panel.pendingDirtySections, and all render
+// flushes operate on the single active panel instance.  No per-workflow-scope
+// awareness is needed here — the lifecycle store (agent_edit_lifecycle.js)
+// owns scope identity, and render scheduling is scope-agnostic by design.
+// Intentionally unchanged for per-workflow scoping.
+
 import { RENDER_SECTIONS, normalizeObligationDirtySections } from "./agent_edit_lifecycle.js";
 import { currentAgentPanel, getAgentPanelRuntime } from "./panel_runtime.js";
 

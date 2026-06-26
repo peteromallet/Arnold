@@ -17,8 +17,9 @@ import logging
 from typing import Any
 
 from vibecomfy.porting.object_info import class_is_known
+from vibecomfy.schema.validate import socket_types_compatible
 
-from .contracts import ReadinessReport, ScopedDiff, TopologyFindings
+from .contracts import GraphFacts, ReadinessReport, ScopedDiff, TopologyFindings
 from .graph_inspection import EdgeEvidence, inspect_graph, normalise_links
 
 LOGGER = logging.getLogger(__name__)
@@ -70,6 +71,7 @@ def collect_topology_evidence(
     node_ids: set[int | str] = set()
     node_class_types: dict[int | str, str] = {}
     node_inputs: dict[int | str, list[dict]] = {}
+    node_outputs: dict[int | str, list[dict]] = {}
     for i, node in enumerate(nodes_raw):
         if not isinstance(node, dict):
             continue
@@ -80,6 +82,9 @@ def collect_topology_evidence(
         raw_inputs = node.get("inputs")
         if isinstance(raw_inputs, list):
             node_inputs[nid] = raw_inputs
+        raw_outputs = node.get("outputs")
+        if isinstance(raw_outputs, list):
+            node_outputs[nid] = raw_outputs
 
     # ── dangling / missing links ────────────────────────────────────────
     links_raw = graph.get("links")
@@ -146,6 +151,43 @@ def collect_topology_evidence(
             elif not _class_is_known(ct, schema_provider=schema_provider):
                 unknown_class_types.append(f"node_id={nid}: {ct}")
 
+    # ── socket type mismatches ─────────────────────────────────────────
+    socket_type_mismatches: list[dict[str, Any]] = []
+    if schema_available:
+        for edge in edges:
+            if edge.origin_node not in node_ids or edge.target_node not in node_ids:
+                continue
+            output_type = _ui_output_slot_type(
+                node_outputs.get(edge.origin_node, []),
+                edge.origin_slot,
+            )
+            input_name, input_type = _ui_input_slot_name_and_type(
+                node_inputs.get(edge.target_node, []),
+                edge.target_slot,
+            )
+            if output_type and input_type and not socket_types_compatible(output_type, input_type):
+                socket_type_mismatches.append(
+                    {
+                        "link_id": edge.link_id,
+                        "origin_node": edge.origin_node,
+                        "origin_class_type": node_class_types.get(edge.origin_node),
+                        "origin_slot": edge.origin_slot,
+                        "origin_type": output_type,
+                        "target_node": edge.target_node,
+                        "target_class_type": node_class_types.get(edge.target_node),
+                        "target_slot": edge.target_slot,
+                        "target_input": input_name,
+                        "target_type": input_type,
+                        "reason": (
+                            f"Link {edge.link_id} connects "
+                            f"{node_class_types.get(edge.origin_node)}[{edge.origin_slot}] "
+                            f"{output_type} to "
+                            f"{node_class_types.get(edge.target_node)}.{input_name} "
+                            f"{input_type}."
+                        ),
+                    }
+                )
+
     # ── missing required inputs (schema-backed) ─────────────────────────
     missing_required_inputs: list[dict[str, Any]] = []
     if schema_available:
@@ -192,6 +234,8 @@ def collect_topology_evidence(
         summary_parts.append(
             f"{len(absent_endpoint_nodes)} absent endpoint node(s)"
         )
+    if socket_type_mismatches:
+        summary_parts.append(f"{len(socket_type_mismatches)} socket type mismatch(es)")
     if unknown_class_types:
         summary_parts.append(
             f"{len(unknown_class_types)} unknown class type(s)"
@@ -209,6 +253,7 @@ def collect_topology_evidence(
         missing_graph=False,
         dangling_links=tuple(dangling_links),
         absent_endpoint_nodes=tuple(absent_endpoint_nodes),
+        socket_type_mismatches=tuple(socket_type_mismatches),
         unknown_class_types=tuple(unknown_class_types),
         missing_required_inputs=tuple(missing_required_inputs),
         schema_available=schema_available,
@@ -355,6 +400,39 @@ def collect_readiness_evidence(
 
 
 # ── internal helpers ─────────────────────────────────────────────────────────
+
+
+def _ui_output_slot_type(outputs: list[dict], slot_index: int) -> str | None:
+    if slot_index < 0 or slot_index >= len(outputs):
+        return None
+    slot = outputs[slot_index]
+    if not isinstance(slot, dict):
+        return None
+    value = slot.get("type")
+    return str(value).strip().upper() if value is not None and str(value).strip() else None
+
+
+def _ui_input_slot_name_and_type(inputs: list[dict], slot_index: int) -> tuple[str, str | None]:
+    fallback_name = f"slot_{slot_index}"
+    if slot_index < 0 or slot_index >= len(inputs):
+        return fallback_name, None
+    slot = inputs[slot_index]
+    if not isinstance(slot, dict):
+        return fallback_name, None
+    name = str(slot.get("name") or fallback_name)
+    value = slot.get("type")
+    slot_type = str(value).strip().upper() if value is not None and str(value).strip() else None
+    return name, slot_type
+
+
+def _has_non_repairable_topology_blockers(topology: TopologyFindings) -> bool:
+    return bool(
+        topology.missing_graph
+        or topology.dangling_links
+        or topology.absent_endpoint_nodes
+        or topology.unknown_class_types
+        or topology.missing_required_inputs
+    )
 
 
 def _class_is_known(class_type: str, *, schema_provider: Any = None) -> bool:
@@ -779,7 +857,7 @@ def compute_scoped_diff(
 
     # ── 6. Candidate eligibility blockers ───────────────────────────────
     has_topology_blockers = (
-        topology is not None and topology.has_blockers
+        topology is not None and _has_non_repairable_topology_blockers(topology)
     )
     has_readiness_blockers = (
         readiness is not None and readiness.has_blockers
@@ -1077,7 +1155,198 @@ def _link_id_sort_key(link_id: str) -> tuple[int, str]:
     return (1, link_id)
 
 
+def collect_graph_facts(
+    graph: dict[str, Any] | None,
+    *,
+    schema_available: bool = True,
+    schema_provider: Any = None,
+    ready_metadata: dict[str, Any] | None = None,
+    diagnostics: tuple[dict[str, Any], ...] = (),
+    no_gpu_detected: bool = False,
+    readiness_blockers: tuple[str, ...] = (),
+) -> GraphFacts:
+    """Collect compact GraphFacts from topology and readiness collectors.
+
+    Reuses :func:`collect_topology_evidence` and
+    :func:`collect_readiness_evidence` — does NOT invoke full
+    :class:`RevisionEvidence` collateral.  Returns a
+    :class:`GraphFacts` projection suitable for adapt-prompt context
+    without exposing revision-internal scoped diff or candidate
+    eligibility decisions.
+
+    Parameters
+    ----------
+    graph:
+        The ComfyUI ``prompt`` dict, or ``None``.
+    schema_available:
+        When ``False``, schema-dependent checks degrade gracefully.
+    ready_metadata / diagnostics / no_gpu_detected / readiness_blockers:
+        Forwarded directly to :func:`collect_readiness_evidence`.
+
+    Returns
+    -------
+    GraphFacts
+        Always returns a populated instance — never raises.
+    """
+    topology = collect_topology_evidence(
+        graph,
+        schema_available=schema_available,
+        schema_provider=schema_provider,
+    )
+    readiness = collect_readiness_evidence(
+        graph,
+        object_info_available=schema_available,
+        schema_provider=schema_provider,
+        ready_metadata=ready_metadata,
+        diagnostics=diagnostics,
+        no_gpu_detected=no_gpu_detected,
+        readiness_blockers=readiness_blockers,
+    )
+    facts = GraphFacts.from_collectors(topology=topology, readiness=readiness)
+
+    # ── enrich with output-type / dangling facts from graph structure ──
+    output_node_types: list[str] = []
+    terminal_socket_types: list[str] = []
+    has_dangling_inputs = False
+    has_dangling_outputs = False
+
+    if graph is not None and isinstance(graph, dict):
+        nodes_raw = graph.get("nodes")
+        if isinstance(nodes_raw, list):
+            # Build node id→class_type and node id→outputs maps.
+            node_class: dict[int | str, str] = {}
+            node_outputs: dict[int | str, list[dict]] = {}
+            node_ids: set[int | str] = set()
+            for i, node in enumerate(nodes_raw):
+                if not isinstance(node, dict):
+                    continue
+                nid: int | str = node.get("id", i)
+                node_ids.add(nid)
+                ct = node.get("class_type") or node.get("type") or "Unknown"
+                node_class[nid] = str(ct)
+                raw_outputs = node.get("outputs")
+                if isinstance(raw_outputs, list):
+                    node_outputs[nid] = raw_outputs
+
+            # ── determine terminal / output nodes ──
+            links_raw = graph.get("links")
+            source_node_ids: set[int | str] = set()
+            if isinstance(links_raw, list):
+                for link in links_raw:
+                    if isinstance(link, list) and len(link) >= 2:
+                        src = link[0]
+                        if src is not None:
+                            source_node_ids.add(src)
+                    elif isinstance(link, dict):
+                        src = link.get("origin_node") or link.get("source_node")
+                        if src is not None:
+                            source_node_ids.add(src)
+
+            # Terminal nodes: nodes that exist but are never a link source.
+            terminal_ids = node_ids - source_node_ids
+            for nid in terminal_ids:
+                ct = node_class.get(nid)
+                if ct and ct not in output_node_types:
+                    output_node_types.append(ct)
+                outputs = node_outputs.get(nid, [])
+                for out_slot in outputs:
+                    if isinstance(out_slot, dict):
+                        st = (out_slot.get("type") or "").strip().upper()
+                        if st and st not in terminal_socket_types:
+                            terminal_socket_types.append(st)
+
+            # ── detect dangling inputs / outputs ──
+            target_node_ids: set[int | str] = set()
+            # Also track which (node_id, slot_index) pairs are consumed.
+            consumed_output_slots: set[tuple[int | str, int]] = set()
+            if isinstance(links_raw, list):
+                for link in links_raw:
+                    if isinstance(link, list) and len(link) >= 4:
+                        src = link[0]
+                        src_slot = link[1]
+                        tgt = link[3]
+                        if tgt is not None:
+                            target_node_ids.add(tgt)
+                        if src is not None and isinstance(src_slot, int):
+                            consumed_output_slots.add((src, src_slot))
+                    elif isinstance(link, dict):
+                        tgt = link.get("target_node") or link.get("dest_node")
+                        if tgt is not None:
+                            target_node_ids.add(tgt)
+                        src = link.get("origin_node") or link.get("source_node")
+                        src_slot = link.get("origin_slot") or link.get("source_slot")
+                        if src is not None and isinstance(src_slot, int):
+                            consumed_output_slots.add((src, src_slot))
+
+            # A node with required inputs that are not linked has dangling inputs.
+            if topology.missing_required_inputs:
+                has_dangling_inputs = True
+
+            # Dangling outputs: a node has an output slot that nothing consumes.
+            for nid in source_node_ids:
+                outputs = node_outputs.get(nid, [])
+                for slot_idx, out_slot in enumerate(outputs):
+                    if not isinstance(out_slot, dict):
+                        continue
+                    if (nid, slot_idx) not in consumed_output_slots:
+                        has_dangling_outputs = True
+                        break
+                if has_dangling_outputs:
+                    break
+
+    # ── build summary ──
+    summary_parts: list[str] = []
+    if output_node_types:
+        summary_parts.append(
+            f"{len(output_node_types)} output node type(s): "
+            + ", ".join(output_node_types[:8])
+        )
+    if terminal_socket_types:
+        summary_parts.append(
+            f"{len(terminal_socket_types)} terminal socket type(s): "
+            + ", ".join(terminal_socket_types[:8])
+        )
+    if facts.has_blockers:
+        blocker_count = sum(
+            1 for _ in (
+                facts.socket_type_mismatches,
+                facts.missing_required_inputs,
+                facts.unknown_class_types,
+                facts.missing_models,
+                facts.missing_node_packs,
+                facts.readiness_blockers,
+            ) if _
+        )
+        if facts.no_gpu_detected:
+            blocker_count += 1
+        summary_parts.append(f"{blocker_count} graph-fact blocker(s) found")
+    if has_dangling_inputs:
+        summary_parts.append("dangling/missing inputs detected")
+    if has_dangling_outputs:
+        summary_parts.append("dangling/unconsumed outputs detected")
+    if not summary_parts:
+        summary_parts.append("no graph-fact issues detected")
+
+    # Return a new GraphFacts with enriched fields (the dataclass is frozen,
+    # so we construct a new instance with all fields).
+    return GraphFacts(
+        current_output_node_types=tuple(output_node_types),
+        terminal_output_socket_types=tuple(terminal_socket_types),
+        socket_type_mismatches=facts.socket_type_mismatches,
+        missing_required_inputs=facts.missing_required_inputs,
+        unknown_class_types=facts.unknown_class_types,
+        missing_models=facts.missing_models,
+        missing_node_packs=facts.missing_node_packs,
+        readiness_blockers=facts.readiness_blockers,
+        has_dangling_inputs=has_dangling_inputs,
+        has_dangling_outputs=has_dangling_outputs,
+        no_gpu_detected=facts.no_gpu_detected,
+        summary="; ".join(summary_parts),
+    )
+
+
 __all__ = [
+    "collect_graph_facts",
     "collect_readiness_evidence",
     "collect_topology_evidence",
     "compute_scoped_diff",

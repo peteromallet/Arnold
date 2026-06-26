@@ -6,6 +6,8 @@ import hashlib
 import json
 import logging
 import os
+import subprocess
+import sys
 import urllib.request
 import uuid
 from pathlib import Path
@@ -36,6 +38,8 @@ from .hivemind_feedback import submit_hivemind_feedback
 from .session import (
     accept_turn as _session_accept_turn,
     allocate_turn as _session_allocate_turn,
+    normalize_path_component,
+    normalize_session_id,
     rebaseline_session as _session_rebaseline_session,
     record_idempotent_response as _session_record_idempotent_response,
     reject_turn as _session_reject_turn,
@@ -670,6 +674,7 @@ def _sanitize_clarify_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 _NON_APPLYABLE_ROUTES = frozenset({"clarify", "respond", "inspect", "research", "requires_custom_nodes"})
+_NON_APPLYABLE_OUTCOMES = frozenset({"clarify", "noop", "requires_custom_nodes"})
 
 
 def _serialize_executor_result(result: Any) -> dict[str, Any]:
@@ -694,8 +699,11 @@ def _serialize_executor_result(result: Any) -> dict[str, Any]:
         route == "clarify"
         or (isinstance(outcome, Mapping) and outcome.get("kind") == "clarify")
     )
-    # Non-applyable routes: strip candidate/apply/eligibility fields.
-    if route in _NON_APPLYABLE_ROUTES:
+    outcome_kind = outcome.get("kind") if isinstance(outcome, Mapping) else None
+    # Non-applyable routes/outcomes: strip candidate/apply/eligibility fields.
+    # Adapt/revise executions can terminate as clarify/requires_custom_nodes
+    # even though their public route remains apply-capable.
+    if route in _NON_APPLYABLE_ROUTES or outcome_kind in _NON_APPLYABLE_OUTCOMES:
         merged = _strip_non_applyable_forbidden_fields(merged)
     # Clarify routes: apply clarify-specific formatting.
     if is_clarify:
@@ -720,8 +728,21 @@ def _handle_agent_executor_submit(
             )
         )
         return _validated_failure_response("agent_executor", failure), 400
+
+    # ── T2: Normalise session_id before it reaches ExecutorRequest ────────
+    # ExecutorRequest.from_payload() accepts a raw session_id string, but the
+    # route layer must sanitise it first so that no path-component attack can
+    # be embedded in a durable turn allocation or response-writer path downstream.
+    safe_payload = dict(payload)
+    raw_session_id = safe_payload.get("session_id")
+    if isinstance(raw_session_id, str):
+        safe_payload["session_id"] = normalize_session_id(raw_session_id)
+    elif "session_id" in safe_payload:
+        # Non-string sentinel values (null, numbers, etc.) → strip entirely.
+        del safe_payload["session_id"]
+
     try:
-        request = ExecutorRequest.from_payload(_executor_request_payload(payload))
+        request = ExecutorRequest.from_payload(_executor_request_payload(safe_payload))
     except Exception as exc:
         failure = _agent_error_response(classify_failure("agent_executor", exc))
         return _validated_failure_response("agent_executor", failure), 400
@@ -735,7 +756,7 @@ def _handle_agent_executor_submit(
     response = _maybe_write_executor_only_durable_turn(
         response=response,
         result=result,
-        payload=payload,
+        payload=safe_payload,
         request=request,
     )
     status = 200 if response.get("ok") is not False else 500
@@ -782,11 +803,13 @@ def _maybe_write_executor_only_durable_turn(
         return response
 
     session_id_raw = payload.get("session_id")
-    session_id = (
-        session_id_raw.strip()
-        if isinstance(session_id_raw, str) and session_id_raw.strip()
-        else uuid.uuid4().hex
-    )
+    # ── T2: Normalise session_id through the authoritative path-component
+    # normaliser before it feeds durable allocation, response-writer paths,
+    # or idempotency-record keys.
+    if isinstance(session_id_raw, str):
+        session_id = normalize_session_id(session_id_raw)
+    else:
+        session_id = uuid.uuid4().hex
 
     session_root = _SESSION_ROOT
     idempotency_key = payload.get("idempotency_key") if isinstance(payload.get("idempotency_key"), str) else None
@@ -1045,12 +1068,14 @@ def _handle_agent_edit_chat(
                 agent_failure_context={"explanation": "Request body must be a JSON object."},
             )
         )
-    session_id = payload.get("session_id")
+    raw_session_id = payload.get("session_id")
     max_messages = _coerce_chat_max_messages(payload.get("max_messages"))
+    # ── T2: Normalise session_id before it reaches read_session_chat.
+    session_id = normalize_session_id(raw_session_id) if isinstance(raw_session_id, str) else None
     try:
         result = read_session_chat(
             Path(session_root) if session_root is not None else _SESSION_ROOT,
-            session_id if isinstance(session_id, str) else None,
+            session_id,
             max_messages=max_messages,
         )
     except Exception as exc:
@@ -1249,11 +1274,15 @@ def _handle_agent_edit_accept(
             )
         )
     root = _session_root_path(session_root)
-    session_id = payload.get("session_id")
+    raw_session_id = payload.get("session_id")
+    # ── T2: Normalise session_id through the authoritative normaliser before
+    # it reaches durable accept_turn() or the response-writer path builder.
+    session_id = normalize_session_id(raw_session_id) if isinstance(raw_session_id, str) else ""
+    safe_turn_id = normalize_path_component(turn_id) if isinstance(turn_id, str) and turn_id.strip() else turn_id
     try:
         result = accept_turn(
             session_root=root,
-            session_id=session_id if isinstance(session_id, str) else "",
+            session_id=session_id,
             turn_id=turn_id,
             client_graph_hash=payload.get("client_graph_hash")
             if isinstance(payload.get("client_graph_hash"), str)
@@ -1262,8 +1291,8 @@ def _handle_agent_edit_accept(
             idempotency_key=payload.get("idempotency_key")
             if isinstance(payload.get("idempotency_key"), str)
             else None,
-            response_writer=_json_response_writer(root / session_id / "turns" / turn_id / "accept_response.json")
-            if isinstance(session_id, str)
+            response_writer=_json_response_writer(root / session_id / "turns" / safe_turn_id / "accept_response.json")
+            if session_id
             else None,
         )
     except Exception as exc:
@@ -1310,11 +1339,15 @@ def _handle_agent_edit_reject(
             )
         )
     root = _session_root_path(session_root)
-    session_id = payload.get("session_id")
+    raw_session_id = payload.get("session_id")
+    # ── T2: Normalise session_id through the authoritative normaliser before
+    # it reaches durable reject_turn() or the response-writer path builder.
+    session_id = normalize_session_id(raw_session_id) if isinstance(raw_session_id, str) else ""
+    safe_turn_id = normalize_path_component(turn_id) if isinstance(turn_id, str) and turn_id.strip() else turn_id
     try:
         result = reject_turn(
             session_root=root,
-            session_id=session_id if isinstance(session_id, str) else "",
+            session_id=session_id,
             turn_id=turn_id,
             client_graph_hash=payload.get("client_graph_hash")
             if isinstance(payload.get("client_graph_hash"), str)
@@ -1323,8 +1356,8 @@ def _handle_agent_edit_reject(
             idempotency_key=payload.get("idempotency_key")
             if isinstance(payload.get("idempotency_key"), str)
             else None,
-            response_writer=_json_response_writer(root / session_id / "turns" / turn_id / "reject_response.json")
-            if isinstance(session_id, str)
+            response_writer=_json_response_writer(root / session_id / "turns" / safe_turn_id / "reject_response.json")
+            if session_id
             else None,
         )
     except Exception as exc:
@@ -1361,10 +1394,13 @@ def _handle_agent_edit_rebaseline(
                 agent_failure_context={"explanation": "Request body must be a JSON object."},
             )
         )
+    raw_session_id = payload.get("session_id")
+    # ── T2: Normalise session_id before it reaches durable rebaseline_session.
+    session_id = normalize_session_id(raw_session_id) if isinstance(raw_session_id, str) else ""
     try:
         result = rebaseline_session(
             session_root=_session_root_path(session_root),
-            session_id=payload.get("session_id") if isinstance(payload.get("session_id"), str) else "",
+            session_id=session_id,
             request_payload=payload,
             idempotency_key=payload.get("idempotency_key")
             if isinstance(payload.get("idempotency_key"), str)
@@ -1393,10 +1429,8 @@ def _handle_agent_edit_audit(
                 agent_failure_context={"explanation": "Request body must be a JSON object."},
             )
         )
-    session_id = payload.get("session_id")
-    turn_id = payload.get("turn_id")
-    action = payload.get("action")
-    if not isinstance(session_id, str) or not session_id.strip():
+    raw_session_id = payload.get("session_id")
+    if not isinstance(raw_session_id, str) or not raw_session_id.strip():
         return _agent_error_response(
             failure_envelope(
                 FailureKind.MISSING_REQUIRED_FIELD,
@@ -1404,7 +1438,8 @@ def _handle_agent_edit_audit(
                 agent_failure_context={"explanation": "session_id is required."},
             )
         )
-    if not isinstance(turn_id, str) or not turn_id.strip():
+    raw_turn_id = payload.get("turn_id")
+    if not isinstance(raw_turn_id, str) or not raw_turn_id.strip():
         return _agent_error_response(
             failure_envelope(
                 FailureKind.MISSING_REQUIRED_FIELD,
@@ -1412,6 +1447,7 @@ def _handle_agent_edit_audit(
                 agent_failure_context={"explanation": "turn_id is required."},
             )
         )
+    action = payload.get("action")
     if action not in {"accept", "reject", "rebaseline"}:
         return _agent_error_response(
             failure_envelope(
@@ -1420,6 +1456,9 @@ def _handle_agent_edit_audit(
                 agent_failure_context={"explanation": "action must be one of accept, reject, or rebaseline."},
             )
         )
+    # ── T2: Normalise session_id and turn_id before path construction.
+    session_id = normalize_session_id(raw_session_id)
+    turn_id = normalize_path_component(raw_turn_id)
     audit_path = _audit_path_for_action(_session_root_path(session_root), session_id, turn_id, action)
     try:
         body = audit_path.read_bytes()
@@ -1461,6 +1500,118 @@ def _handle_agent_credentials(
         return _agent_error_response(classify_failure("ingest", exc))
 
 
+def _agent_settings_path(path: Any = None) -> Path:
+    if path is not None:
+        return Path(path)
+    configured = os.environ.get("VIBECOMFY_AGENT_SETTINGS_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".vibecomfy" / "agent_settings.json"
+
+
+def _load_agent_settings(*, settings_path: Any = None) -> dict[str, Any]:
+    path = _agent_settings_path(settings_path)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        data = {}
+    except Exception:
+        _LOGGER.exception("Failed to read VibeComfy agent settings from %s", path)
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    return {
+        "research_contribution_enabled": bool(data.get("research_contribution_enabled")),
+        "research_contribution_last_trigger": data.get("research_contribution_last_trigger"),
+    }
+
+
+def _save_agent_settings(settings: Mapping[str, Any], *, settings_path: Any = None) -> dict[str, Any]:
+    current = _load_agent_settings(settings_path=settings_path)
+    if "research_contribution_enabled" in settings:
+        current["research_contribution_enabled"] = bool(settings.get("research_contribution_enabled"))
+    if "research_contribution_last_trigger" in settings:
+        current["research_contribution_last_trigger"] = settings.get("research_contribution_last_trigger")
+    path = _agent_settings_path(settings_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(current, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return current
+
+
+def _handle_agent_settings_get(*, settings_path: Any = None) -> dict[str, Any]:
+    settings = _load_agent_settings(settings_path=settings_path)
+    return {"ok": True, **settings}
+
+
+def _handle_agent_settings_post(payload: Any, *, settings_path: Any = None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return _agent_error_response(
+            failure_envelope(
+                FailureKind.MISSING_REQUIRED_FIELD,
+                "agent_settings",
+                agent_failure_context={"explanation": "Request body must be a JSON object."},
+            )
+        )
+    settings = _save_agent_settings(payload, settings_path=settings_path)
+    return {"ok": True, **settings}
+
+
+def _run_research_contribution_pipeline(*, runner: Any = None) -> dict[str, Any]:
+    repo_root = Path(__file__).resolve().parents[3]
+    command = [
+        sys.executable,
+        str(repo_root / "scripts" / "pipeline_orchestrate.py"),
+        "--upload",
+    ]
+    popen = runner or subprocess.Popen
+    process = popen(
+        command,
+        cwd=str(repo_root),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {
+        "pid": getattr(process, "pid", None),
+        "command": command,
+        "cwd": str(repo_root),
+    }
+
+
+def _handle_research_contribution_run(
+    payload: Any = None,
+    *,
+    settings_path: Any = None,
+    runner: Any = None,
+) -> dict[str, Any]:
+    settings = _load_agent_settings(settings_path=settings_path)
+    if not settings["research_contribution_enabled"]:
+        return {
+            "ok": True,
+            "triggered": False,
+            "reason": "research_contribution_disabled",
+            **settings,
+        }
+    try:
+        started = _run_research_contribution_pipeline(runner=runner)
+    except Exception as exc:
+        _LOGGER.exception("Failed to start VibeComfy research contribution pipeline")
+        return _agent_error_response(classify_failure("agent_settings", exc))
+    trigger = {"started_at": _utc_now_iso(), **started}
+    settings = _save_agent_settings({"research_contribution_last_trigger": trigger}, settings_path=settings_path)
+    return {
+        "ok": True,
+        "triggered": True,
+        **settings,
+    }
+
+
+def _utc_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
 
 
 def _handle_vibecomfy_submit_rating(payload: Any) -> tuple[dict[str, Any], int]:
@@ -1498,7 +1649,6 @@ def register_agent_edit_routes(app) -> None:
     from pathlib import Path as _Path  # noqa: PLC0415
     from aiohttp import web as _web  # noqa: PLC0415
     from .edit import (  # noqa: PLC0415
-        _safe_session_id as _safe_session_id,
         _SESSION_ROOT as _EDIT_SESSION_ROOT,
         handle_agent_edit,
         read_session_bundle,
@@ -1507,6 +1657,7 @@ def register_agent_edit_routes(app) -> None:
     )
     from .session import (  # noqa: PLC0415
         accept_turn,
+        normalize_session_id as _safe_session_id,
         reject_turn,
         rebaseline_session,
     )
@@ -1768,7 +1919,6 @@ def register_agent_edit_routes(app) -> None:
         status = 200 if result.get("ok") is True else 400
         return _web.json_response(_to_serializable(result), status=status)
 
-
 # ── Route registration (guarded: no-op when VIBECOMFY_HEADLESS=1) ──────────
 
 if os.environ.get("VIBECOMFY_HEADLESS") != "1":
@@ -1842,6 +1992,41 @@ if os.environ.get("VIBECOMFY_HEADLESS") != "1":
                     status=400,
                 )
             result = _handle_agent_credentials(payload)
+            return _web.json_response(result, status=400 if result.get("ok") is False else 200)
+
+        @_PromptServer.instance.routes.get("/vibecomfy/agent/settings")
+        async def agent_settings_get_route(request):  # type: ignore[no-untyped-def]
+            _LOGGER.info("/vibecomfy/agent/settings GET request")
+            result = _handle_agent_settings_get()
+            return _web.json_response(result, status=400 if result.get("ok") is False else 200)
+
+        @_PromptServer.instance.routes.post("/vibecomfy/agent/settings")
+        async def agent_settings_post_route(request):  # type: ignore[no-untyped-def]
+            _LOGGER.info("/vibecomfy/agent/settings POST request")
+            try:
+                payload = await request.json()
+            except Exception as exc:
+                return _web.json_response(
+                    failure_envelope(
+                        FailureKind.MISSING_REQUIRED_FIELD,
+                        "agent_settings",
+                        agent_failure_context={
+                            "explanation": f"Request body must be valid JSON: {exc}"
+                        },
+                    ).to_dict(),
+                    status=400,
+                )
+            result = _handle_agent_settings_post(payload)
+            return _web.json_response(result, status=400 if result.get("ok") is False else 200)
+
+        @_PromptServer.instance.routes.post("/vibecomfy/agent/research-contribution/run")
+        async def agent_research_contribution_run_route(request):  # type: ignore[no-untyped-def]
+            _LOGGER.info("/vibecomfy/agent/research-contribution/run request")
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            result = _handle_research_contribution_run(payload)
             return _web.json_response(result, status=400 if result.get("ok") is False else 200)
 
         # Also register the agent edit route on the global PromptServer instance

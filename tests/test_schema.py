@@ -16,6 +16,7 @@ from vibecomfy.ingest.normalize import (
     _schema_source_provenance,
 )
 from vibecomfy.schema import (
+    CompositeSchemaProvider,
     InputSpec,
     ConversionSchemaProvider,
     LocalSchemaProvider,
@@ -42,6 +43,7 @@ from vibecomfy.schema.cache import (
     validate_object_info_cache,
     write_object_info_cache,
 )
+from vibecomfy.porting.emitter import emit_available_node_signatures
 from vibecomfy.workflow import ValidationIssue, VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -59,6 +61,89 @@ class LegacyGetSchemaProvider:
 
     def get(self, class_type: str) -> NodeSchema | None:
         return self._schemas.get(class_type)
+
+
+def test_composite_schema_provider_enumerates_wrapped_schemas() -> None:
+    class EnumerableProvider:
+        def __init__(self, rows: dict[str, NodeSchema]) -> None:
+            self._rows = rows
+
+        def get_schema(self, class_type: str) -> NodeSchema | None:
+            return self._rows.get(class_type)
+
+        def schemas(self) -> dict[str, NodeSchema]:
+            return dict(self._rows)
+
+    base = NodeSchema(
+        class_type="SaveVideo",
+        pack="core",
+        inputs={"video": InputSpec("VIDEO", required=True)},
+        outputs=[],
+    )
+    override = NodeSchema(
+        class_type="ADE_Custom",
+        pack="custom",
+        inputs={},
+        outputs=[OutputSpec("MODEL", "MODEL")],
+    )
+    provider = CompositeSchemaProvider(
+        EnumerableProvider({"ADE_Custom": override}),
+        EnumerableProvider({"SaveVideo": base}),
+    )
+
+    schemas = provider.schemas()
+
+    assert schemas["SaveVideo"] is base
+    assert schemas["ADE_Custom"] is override
+    assert provider.get_schema("SaveVideo") is base
+
+
+def test_compatibility_search_ranks_video_save_nodes_first() -> None:
+    class EnumerableProvider:
+        def __init__(self, rows: dict[str, NodeSchema]) -> None:
+            self._rows = rows
+
+        def get_schema(self, class_type: str) -> NodeSchema | None:
+            return self._rows.get(class_type)
+
+        def schemas(self) -> dict[str, NodeSchema]:
+            return dict(self._rows)
+
+    provider = EnumerableProvider(
+        {
+            "AdjustBrightness": NodeSchema(
+                class_type="AdjustBrightness",
+                pack="image",
+                inputs={"images": InputSpec("IMAGE", required=True)},
+                outputs=[OutputSpec("IMAGE", "images")],
+            ),
+            "ByteDanceImageToVideoNode": NodeSchema(
+                class_type="ByteDanceImageToVideoNode",
+                pack="api",
+                inputs={
+                    "image": InputSpec("IMAGE", required=True),
+                    "auth_token_comfy_org": InputSpec("AUTH_TOKEN_COMFY_ORG", required=True),
+                },
+                outputs=[OutputSpec("VIDEO", "VIDEO")],
+            ),
+            "CreateVideo": NodeSchema(
+                class_type="CreateVideo",
+                pack="video",
+                inputs={"images": InputSpec("IMAGE", required=True)},
+                outputs=[OutputSpec("VIDEO", "VIDEO")],
+            ),
+            "SaveAnimatedWEBP": NodeSchema(
+                class_type="SaveAnimatedWEBP",
+                pack="image",
+                inputs={"images": InputSpec("IMAGE", required=True)},
+                outputs=[],
+            ),
+        }
+    )
+
+    rows = emit_available_node_signatures(provider, compatible_output_type="IMAGE")
+
+    assert [row.class_type for row in rows[:2]] == ["CreateVideo", "SaveAnimatedWEBP"]
 
 
 def test_authoring_schema_provider_prefers_committed_object_info_when_node_index_empty(tmp_path, monkeypatch) -> None:

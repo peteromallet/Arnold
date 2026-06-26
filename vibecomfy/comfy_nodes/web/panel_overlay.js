@@ -162,6 +162,18 @@ export function installAgentPreviewOverlay(app, deps = {}) {
     if (!panel || panel.state.phase !== PANEL_STATE.AWAITING_REVIEW || !panel.state.candidateGraph) {
       return;
     }
+    // ── T4/T5: Scope check — do not draw candidate overlay if the candidate
+    // belongs to a different workflow scope than the panel is currently bound to.
+    // candidateScopeId is set by the lifecycle store on candidate arrival and
+    // cleared on INVALIDATE_CANDIDATE.  When the field is absent (pre-T5 state
+    // or legacy), the check is a no-op to preserve backward compatibility.
+    if (
+      panel.state.candidateScopeId != null
+      && panel.state.chatScopeId != null
+      && panel.state.candidateScopeId !== panel.state.chatScopeId
+    ) {
+      return;
+    }
     try {
       const diff = getOrBuildPreviewDiff();
       if (diff) {

@@ -3,6 +3,12 @@
 // Exports pure helpers that validate and normalize websocket payloads emitted by
 // the backend _agent_edit_turn_event_payload / _ws_send("vibecomfy.agent_edit.turn", ...)
 // contract.  No Node, filesystem, or test-only dependencies.
+//
+// T4 audit note: This module is purely functional — it normalizes payloads and
+// derives activity state from structured data.  It has no singleton references,
+// no panel access, no DOM dependencies, and no session/candidate assumptions.
+// All scope awareness is the caller's responsibility (the caller passes
+// session_id and scope-keyed data into these functions).  Intentionally unchanged.
 
 // ── Internal helpers ────────────────────────────────────────────────────────
 

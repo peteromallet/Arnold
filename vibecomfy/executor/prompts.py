@@ -36,6 +36,16 @@ _CLASSIFY_SYSTEM = (
     '  "reply": true/false — whether the executor should produce a user-facing reply.\n'
     '  "effort": "low" | "medium" | "high" — estimated complexity.\n'
     '  "plan_summary": string — one sentence describing the plan.\n'
+    '  "research_goal": string (optional) — for route="research" or route="adapt", '
+    "state what the next agent should investigate; do not include conclusions.\n"
+    '  "search_directions": array of strings (optional) — 2-5 concrete search '
+    "directions or query concepts the research agent should try.\n"
+    '  "source_preferences": array of strings (optional) — preferred evidence '
+    'tiers such as "workflows", "registry", "messages", or "web".\n'
+    '  "avoid": array of strings (optional) — bad searches or reasoning traps '
+    "the research agent should avoid.\n"
+    '  "known_graph_context": string (optional) — compact graph facts relevant '
+    "to the research direction; leave blank if unknown.\n"
     '  "intent": "edit" | "research" | "explain_graph" | "respond" — the primary '
     "user intent.\n"
     f"{format_route_options_for_prompt()}"
@@ -66,6 +76,17 @@ _CLASSIFY_SYSTEM = (
     "route=\"research\".\n"
     "- No no-edit research through route=\"adapt\". If there is no requested "
     "graph edit after research, use route=\"research\".\n"
+    "- For route=\"research\" and route=\"adapt\", provide directional research "
+    "metadata when useful: research_goal, search_directions, source_preferences, "
+    "avoid, known_graph_context. These fields are instructions for what to "
+    "investigate, not the answer. Do not claim that a source, node, model, or "
+    "setting is correct until the research agent has actually searched.\n"
+    "- Search directions should be specific concepts, named technologies, model "
+    "families, node packs, workflow patterns, or graph constraints. Never put "
+    "the raw user sentence or generic filler words into search_directions.\n"
+    "- Use avoid to block generic searches such as stopword-only fragments, "
+    "unsupported guessed class names, or treating weak Discord/forum snippets "
+    "as authoritative without workflow/registry evidence.\n"
     "- No implement=true for non-applyable routes: clarify, respond, inspect, "
     "and research must all set implement=false.\n"
     "- No research=true for respond, inspect, or revise.\n"
@@ -104,6 +125,11 @@ _CLASSIFY_SYSTEM = (
     "packs.\n"
     "- A graph edit that explicitly asks for precedent/template/workflow "
     "research first → route=\"adapt\".\n"
+    "- A graph edit that names an external model, node family, custom-node "
+    "ecosystem, or workflow technology that is not already obvious in the "
+    "current graph should also use route=\"adapt\" so the edit agent can "
+    "research local workflows/templates first, then external sources if "
+    "needed, before deciding whether to edit or report missing custom nodes.\n"
     "- Never set implement=true without a graph to edit (but you don't need to check — "
     "the executor handles that).\n"
     "- For any request where the edit target is unclear, multiple interpretations "
@@ -115,6 +141,11 @@ _CLASSIFY_SYSTEM = (
     "VACE identity travel, BlockSwap low-VRAM wiring, two-pass refinement, "
     "LoRA chaining, audio latent/lipsync wiring, and ControlNet/depth/pose "
     "guidance patterns.\n"
+    "- Do not clarify just because a named external technology has variants, "
+    "possible custom-node packs, or multiple integration styles. If the user "
+    "gave a concrete edit goal and a named technology, route=\"adapt\" and let "
+    "the edit agent research the unique named terms, inspect available local "
+    "workflows/templates, and make a best-effort plan.\n"
     "- Generic edits to the current graph such as changing seeds, prompts, "
     "sampler steps, model names, node positions, or direct local wiring should "
     "stay route=\"revise\" when concrete, or route=\"clarify\" when ambiguous.\n"
@@ -125,6 +156,8 @@ _CLASSIFY_SYSTEM = (
     "- \"Find a Comfy node for PIL image processing\" -> route=\"research\".\n"
     "- \"Add a PIL transform code node after decode\" -> route=\"revise\".\n"
     "- \"Research how people add PIL transform code nodes, then add one\" -> "
+    "route=\"adapt\".\n"
+    "- \"Switch to generating 16 frames with Hotshot\" with a graph attached -> "
     "route=\"adapt\".\n"
     "- \"Generate the standard SD1.5 workflow\" -> route=\"revise\".\n"
     "- \"Switch this workflow to SDXL\" -> route=\"revise\".\n"
@@ -411,11 +444,16 @@ def build_reply_messages(
     if implementation_message:
         parts.append(f"\nImplementation: {implementation_message}")
     if adaptation_plan:
+        # Emit context_note first if present (neutrality disclaimer).
+        context_note = adaptation_plan.get("context_note")
+        if isinstance(context_note, str) and context_note.strip():
+            parts.append(f"\n{context_note.strip()}")
         selected = adaptation_plan.get("selected_slice") or {}
         bindings = adaptation_plan.get("anchor_bindings") or []
         roles = ", ".join(sorted({b.get("anchor_role", "") for b in bindings if b.get("anchor_role")}))
         parts.append(
-            f"\nAdaptation plan: selected source '{selected.get('source_class_type', 'unknown')}', "
+            f"\nAdaptation plan (reference context — not a winner): "
+            f"reference slice '{selected.get('source_class_type', 'unknown')}', "
             f"bound anchor roles: {roles or 'none'}, "
             f"structural_validation={adaptation_plan.get('structural_validation', 'not_evaluated')}, "
             f"semantic_validation={adaptation_plan.get('semantic_validation', 'not_evaluated')}."
@@ -485,6 +523,10 @@ def parse_classify_response(raw: str) -> ClassifyDecision:
     route = parsed.get("route")
     task = parsed.get("task")
     research_goal = parsed.get("research_goal")
+    search_directions = parsed.get("search_directions")
+    source_preferences = parsed.get("source_preferences")
+    avoid = parsed.get("avoid")
+    known_graph_context = parsed.get("known_graph_context")
     model_families = parsed.get("model_families")
     pattern_category = parsed.get("pattern_category")
     change_goal = parsed.get("change_goal")
@@ -525,6 +567,30 @@ def parse_classify_response(raw: str) -> ClassifyDecision:
     if not isinstance(research_goal, str):
         research_goal = ""
     research_goal = research_goal.strip()
+    if not isinstance(search_directions, list):
+        search_directions = []
+    search_directions = tuple(
+        str(item).strip()
+        for item in search_directions
+        if isinstance(item, str) and item.strip()
+    )
+    if not isinstance(source_preferences, list):
+        source_preferences = []
+    source_preferences = tuple(
+        str(item).strip()
+        for item in source_preferences
+        if isinstance(item, str) and item.strip()
+    )
+    if not isinstance(avoid, list):
+        avoid = []
+    avoid = tuple(
+        str(item).strip()
+        for item in avoid
+        if isinstance(item, str) and item.strip()
+    )
+    if not isinstance(known_graph_context, str):
+        known_graph_context = ""
+    known_graph_context = known_graph_context.strip()
     if not isinstance(model_families, list):
         model_families = []
     model_families = tuple(str(f) for f in model_families if isinstance(f, str) and f.strip())
@@ -551,6 +617,10 @@ def parse_classify_response(raw: str) -> ClassifyDecision:
         route=route,
         task=task,
         research_goal=research_goal,
+        search_directions=search_directions,
+        source_preferences=source_preferences,
+        avoid=avoid,
+        known_graph_context=known_graph_context,
         model_families=model_families,
         pattern_category=pattern_category,
         change_goal=change_goal,

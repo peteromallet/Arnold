@@ -195,7 +195,34 @@ class _DescribeMixin:
         )
         if formatted:
             formatted_rows = fmt_rows(rows)
-            if formatted_rows.strip() or not focus_types:
+            if not focus_types and (compatible_input_type or compatible_output_type) and rows:
+                index = self._format_compatibility_search_index(
+                    rows,
+                    compatible_input_type=compatible_input_type,
+                    compatible_output_type=compatible_output_type,
+                )
+                formatted_rows = f"{index}\n\n{formatted_rows}" if formatted_rows.strip() else index
+            if formatted_rows.strip():
+                if focus_types:
+                    found = {row.class_type for row in rows}
+                    missing = [
+                        class_type
+                        for class_type in focus_types
+                        if isinstance(class_type, str) and class_type not in found
+                    ]
+                    if missing:
+                        formatted_rows = (
+                            formatted_rows.rstrip()
+                            + "\n\n"
+                            + self._format_empty_search_result(
+                                focus_types=missing,
+                                compatible_input_type=compatible_input_type,
+                                compatible_output_type=compatible_output_type,
+                            ).rstrip()
+                            + "\n"
+                        )
+                return formatted_rows
+            if not focus_types:
                 return formatted_rows
             return self._format_empty_search_result(
                 focus_types=focus_types,
@@ -203,6 +230,46 @@ class _DescribeMixin:
                 compatible_output_type=compatible_output_type,
             )
         return rows
+
+    def _format_compatibility_search_index(
+        self,
+        rows: list[NodeSignatureRow],
+        *,
+        compatible_input_type: str | None = None,
+        compatible_output_type: str | None = None,
+    ) -> str:
+        names = sorted(
+            {
+                row.class_type
+                for row in rows or []
+                if isinstance(getattr(row, "class_type", None), str)
+                and row.class_type
+            }
+        )
+        filter_bits: list[str] = []
+        if compatible_input_type:
+            filter_bits.append(f"outputs compatible with {compatible_input_type!r}")
+        if compatible_output_type:
+            filter_bits.append(f"inputs compatible with {compatible_output_type!r}")
+        filter_label = " and ".join(filter_bits) if filter_bits else "matching compatibility filter"
+        lines = [f"Matching local class types ({len(names)}; {filter_label}):"]
+        if not names:
+            lines.append("<none>")
+            return "\n".join(lines)
+        current = names[0]
+        for name in names[1:]:
+            candidate = f"{current}, {name}"
+            if len(candidate) > 120:
+                lines.append(current)
+                current = name
+            else:
+                current = candidate
+        lines.append(current)
+        lines.append(
+            "Choose a class from this index, then call search(focus_types=[\"ClassName\"]) "
+            "for the exact signature before constructing it."
+        )
+        return "\n".join(lines)
 
     def _format_empty_search_result(
         self,

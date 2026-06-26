@@ -17,6 +17,7 @@ from vibecomfy.executor.contracts import (
 )
 from vibecomfy.executor.core import (
     _canonical_route_for_plan,
+    _context_text_mentions_ltx_audio,
     _delegated_clarification_plan,
     _route_behavior,
 )
@@ -291,7 +292,7 @@ class TestRepresentativeRouteScenarios:
         assert decision.effective_task == "research_nodes"
         behavior = _route_behavior(decision)
         assert behavior.needs_research is True
-        assert behavior.needs_implement is False
+        assert behavior.needs_implement is True
         assert behavior.can_produce_candidate is False
 
     def test_pil_lookup_routes_to_research(self) -> None:
@@ -369,6 +370,39 @@ class TestRepresentativeRouteScenarios:
         assert behavior.needs_research is True
         assert behavior.needs_implement is True
         assert behavior.can_produce_candidate is True
+
+    def test_install_intent_route_for_edit_normalizes_to_adapt(self) -> None:
+        """Stale classifier output must not short-circuit an edit into a noop."""
+        decision = ClassifyDecision(
+            research=False,
+            implement=False,
+            intent="edit",
+            route="requires_custom_nodes",
+            task="edit_graph",
+            plan_summary="Identify missing Hotshot custom nodes.",
+        )
+
+        assert decision.effective_route == "adapt"
+        assert decision.research is True
+        assert decision.implement is True
+        behavior = _route_behavior(decision)
+        assert behavior.needs_research is True
+        assert behavior.needs_implement is True
+        assert behavior.can_produce_candidate is True
+
+    def test_install_intent_route_for_research_normalizes_to_research(self) -> None:
+        """Custom-node lookup without an edit remains a research answer."""
+        decision = ClassifyDecision(
+            research=True,
+            implement=False,
+            intent="research",
+            route="requires_custom_nodes",
+            task="research_nodes",
+        )
+
+        assert decision.effective_route == "research"
+        assert decision.research is True
+        assert decision.implement is False
 
     def test_adapt_legacy_booleans_derive_correctly(self) -> None:
         """_derive_route with research=True, implement=True returns 'adapt'."""
@@ -592,3 +626,261 @@ class TestRepresentativeRouteScenarios:
         assert _derive_task(research=True, implement=False, intent="research") == "research_nodes"
         assert _derive_task(research=False, implement=False, intent="explain_graph") == "inspect_graph"
         assert _derive_task(research=False, implement=False, intent="respond") == "respond"
+
+
+# ── LTX/audio route behavior (T5 neutralization proofs) ───────────────────────
+
+
+class TestLTXAudioRouteBehavior:
+    """Tests proving LTX/audio is either classifier-covered as research-capable
+    adapt or constrained to process-only fallback with no concrete node suggestions."""
+
+    # ── _context_text_mentions_ltx_audio detection ──────────────────────────
+
+    def test_detects_ltx_with_audio_in_recent_messages(self) -> None:
+        """LTX + 'audio' in recent_messages triggers detection."""
+        ctx = {
+            "recent_messages": [
+                {"text": "Can you add audio to my LTX video pipeline?"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    def test_detects_ltx_with_voice_in_recent_messages(self) -> None:
+        """LTX + 'voice' in recent_messages triggers detection."""
+        ctx = {
+            "recent_messages": [
+                {"text": "I need voice output from LTX"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    def test_detects_ltx_with_lipsync_in_recent_messages(self) -> None:
+        """LTX + 'lipsync' in recent_messages triggers detection."""
+        ctx = {
+            "recent_messages": [
+                {"text": "LTX lipsync for the generated video"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    def test_detects_ltx_with_lip_sync_in_recent_messages(self) -> None:
+        """LTX + 'lip sync' (two words) in recent_messages triggers detection."""
+        ctx = {
+            "recent_messages": [
+                {"text": "LTX lip sync generation"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    def test_detects_ltx_with_runexx_in_recent_messages(self) -> None:
+        """LTX + 'runexx' in recent_messages triggers detection."""
+        ctx = {
+            "recent_messages": [
+                {"text": "Using LTX with RuneXX audio"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    def test_no_detection_without_audio_terms(self) -> None:
+        """LTX alone without audio-related terms does NOT trigger."""
+        ctx = {
+            "recent_messages": [
+                {"text": "Generate video with LTX model"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is False
+
+    def test_no_detection_with_audio_without_ltx(self) -> None:
+        """Audio terms without LTX do NOT trigger."""
+        ctx = {
+            "recent_messages": [
+                {"text": "Add audio output to the video"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is False
+
+    def test_detects_from_prior_clarification_question(self) -> None:
+        """LTX+audio in prior_clarification.clarification_question triggers detection."""
+        ctx = {
+            "prior_clarification": {
+                "clarification_question": "Should I use LTX audio VAE?",
+            },
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    def test_detects_from_prior_clarification_options(self) -> None:
+        """LTX+audio in prior_clarification.clarification_options triggers detection."""
+        ctx = {
+            "prior_clarification": {
+                "clarification_options": ["Use LTXVAudioVAELoader", "Skip audio"],
+            },
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    def test_empty_context_returns_false(self) -> None:
+        """Empty session context returns False."""
+        assert _context_text_mentions_ltx_audio({}) is False
+
+    def test_context_without_relevant_keys_returns_false(self) -> None:
+        """Context with no text-bearing keys returns False."""
+        ctx = {
+            "some_other_key": {"value": "LTX audio"},
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is False
+
+    def test_case_insensitive_detection(self) -> None:
+        """Detection is case-insensitive."""
+        ctx = {
+            "recent_messages": [
+                {"text": "ltx AUDIO pipeline"},
+            ],
+        }
+        assert _context_text_mentions_ltx_audio(ctx) is True
+
+    # ── _delegated_clarification_plan: LTX/audio does NOT force adapt ──────
+
+    def test_ltx_audio_does_not_force_adapt_route(self) -> None:
+        """LTX+audio context with blocked_route='revise' must NOT force adapt.
+
+        T5 neutralized the LTX/audio→adapt route override. The delegated
+        clarification plan must respect the prior_route and NOT elevate to
+        research-backed adapt just because LTX+audio terms appear.
+        """
+        from vibecomfy.executor.contracts import ExecutorRequest
+
+        request = ExecutorRequest(query="you figure it out")
+        session_context = {
+            "prior_clarification": {"clarification_question": "Which LTX audio loader?"},
+            "blocked_route": "revise",
+            "recent_messages": [
+                {"text": "I want LTX audio output"},
+            ],
+        }
+        plan = _delegated_clarification_plan(request, session_context)
+        assert plan is not None
+        # Must NOT be adapt (no research-backed precedent lookups).
+        assert plan.effective_route == "revise"
+        assert plan.research is False
+        assert plan.implement is True
+
+    def test_ltx_audio_respects_explicit_adapt_prior_route(self) -> None:
+        """LTX+audio with blocked_route='adapt' remains adapt.
+
+        When the prior route was already adapt (classifier-set), the LTX/audio
+        context should not downgrade it — it was already research-capable.
+        """
+        from vibecomfy.executor.contracts import ExecutorRequest
+
+        request = ExecutorRequest(query="decide for me")
+        session_context = {
+            "prior_clarification": {"clarification_question": "Which LTX audio approach?"},
+            "blocked_route": "adapt",
+            "recent_messages": [
+                {"text": "LTX video with audio"},
+            ],
+        }
+        plan = _delegated_clarification_plan(request, session_context)
+        assert plan is not None
+        assert plan.effective_route == "adapt"
+        assert plan.research is True
+        assert plan.implement is True
+
+    def test_ltx_audio_with_prior_route_fallback_to_revise(self) -> None:
+        """LTX+audio with prior_route='revise' (not blocked_route) stays revise."""
+        from vibecomfy.executor.contracts import ExecutorRequest
+
+        request = ExecutorRequest(query="choose for me")
+        session_context = {
+            "prior_clarification": {"clarification_question": "LTX audio VAE?"},
+            "prior_route": "revise",
+            "recent_messages": [
+                {"text": "LTX audio lipsync"},
+            ],
+        }
+        plan = _delegated_clarification_plan(request, session_context)
+        assert plan is not None
+        assert plan.effective_route == "revise"
+        assert plan.research is False
+
+    def test_ltx_audio_no_graph_fallback_does_not_become_adapt(self) -> None:
+        """LTX+audio with no graph and fallback → inspect, never adapt."""
+        from vibecomfy.executor.contracts import ExecutorRequest
+
+        request = ExecutorRequest(query="use your judgment", graph=None)
+        session_context = {
+            "prior_clarification": {"clarification_question": "LTX audio?"},
+            "prior_route": "clarify",  # not in {revise, adapt}
+            "recent_messages": [
+                {"text": "LTX audio"},
+            ],
+        }
+        plan = _delegated_clarification_plan(request, session_context)
+        assert plan is not None
+        # Falls back to inspect when no graph and prior_route not edit-capable.
+        assert plan.effective_route in ("inspect", "revise")
+        # Must NOT become adapt.
+        assert plan.effective_route != "adapt"
+        assert plan.effective_route != "research"
+
+    def test_ltx_audio_delegated_plan_is_not_clarify_loop(self) -> None:
+        """LTX+audio delegation must never produce a clarify loop."""
+        from vibecomfy.executor.contracts import ExecutorRequest
+
+        request = ExecutorRequest(query="decide")
+        session_context = {
+            "prior_clarification": {"clarification_question": "LTX audio VAE selection?"},
+            "blocked_route": "revise",
+            "recent_messages": [
+                {"text": "LTX voice generation"},
+            ],
+        }
+        plan = _delegated_clarification_plan(request, session_context)
+        assert plan is not None
+        assert plan.effective_route != "clarify", (
+            "LTX/audio delegated clarification must not loop back to clarify"
+        )
+
+    def test_ltx_audio_delegated_plan_no_concrete_node_suggestions(self) -> None:
+        """The plan_summary for LTX+audio delegation must not suggest concrete nodes."""
+        from vibecomfy.executor.contracts import ExecutorRequest
+
+        request = ExecutorRequest(query="you figure it out")
+        session_context = {
+            "prior_clarification": {"clarification_question": "LTX audio VAE?"},
+            "blocked_route": "revise",
+            "recent_messages": [
+                {"text": "LTX audio pipeline"},
+            ],
+        }
+        plan = _delegated_clarification_plan(request, session_context)
+        assert plan is not None
+        # plan_summary must be the generic delegation message, not LTX-specific.
+        assert "conservative default" in plan.plan_summary.lower()
+        assert "LTX" not in plan.plan_summary
+        assert "audio" not in plan.plan_summary.lower()
+
+    # ── _context_text_mentions_ltx_audio: detector remains available ────────
+
+    def test_detector_function_exists_and_is_callable(self) -> None:
+        """The _context_text_mentions_ltx_audio detector is importable and callable."""
+        from vibecomfy.executor.core import _context_text_mentions_ltx_audio as detector
+        assert callable(detector)
+        # Should accept a dict without raising.
+        result = detector({"recent_messages": [{"text": "Hello"}]})
+        assert isinstance(result, bool)
+
+    def test_detector_survives_malformed_context(self) -> None:
+        """The detector does not raise on malformed/partial context dicts."""
+        # Missing 'text' key in message dict
+        assert _context_text_mentions_ltx_audio(
+            {"recent_messages": [{"role": "user"}]}
+        ) is False
+        # recent_messages not a list
+        assert _context_text_mentions_ltx_audio(
+            {"recent_messages": "not a list"}
+        ) is False
+        # prior_clarification not a dict
+        assert _context_text_mentions_ltx_audio(
+            {"prior_clarification": "not a dict"}
+        ) is False

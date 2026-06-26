@@ -128,7 +128,10 @@ _ROUTE_DESCRIPTIONS: dict[str, str] = {
     "adapt": "research precedent or workflow patterns, then edit the graph.",
 }
 
-_PUBLIC_ROUTES = frozenset(_ROUTE_DESCRIPTIONS)
+_PUBLIC_ROUTES = frozenset({
+    *_ROUTE_DESCRIPTIONS,
+    "requires_custom_nodes",
+})
 _APPLY_ELIGIBLE_ROUTES = frozenset({"revise", "adapt"})
 _EVIDENCE_KEYS = frozenset({
     "classification",
@@ -182,6 +185,24 @@ def _normalize_explicit_route(
         return ""
     if route in _ALLOWED_ROUTES:
         return route
+
+    if route == "requires_custom_nodes":
+        if implement or intent == "edit" or task in {"edit_graph", "research_precedent"}:
+            normalized = "adapt"
+        elif research or intent == "research" or task in {"find_assets", "research_nodes"}:
+            normalized = "research"
+        else:
+            normalized = "respond"
+        LOGGER.info(
+            "executor install-intent route normalized to executable route",
+            extra={
+                "requested_route": route,
+                "normalized_route": normalized,
+                "intent": intent,
+                "task": task,
+            },
+        )
+        return normalized
 
     static_aliases = {
         "inspect_only": "inspect",
@@ -289,6 +310,10 @@ class ClassifyDecision:
 
     # ── route-aware metadata (SD1) ─────────────────────────────────────
     research_goal: str = ""
+    search_directions: tuple[str, ...] = ()
+    source_preferences: tuple[str, ...] = ()
+    avoid: tuple[str, ...] = ()
+    known_graph_context: str = ""
     model_families: tuple[str, ...] = ()
     pattern_category: str = ""
     change_goal: str = ""
@@ -333,6 +358,9 @@ class ClassifyDecision:
             object.__setattr__(self, "task", "")
 
         # Freeze tuple fields.
+        object.__setattr__(self, "search_directions", tuple(self.search_directions))
+        object.__setattr__(self, "source_preferences", tuple(self.source_preferences))
+        object.__setattr__(self, "avoid", tuple(self.avoid))
         object.__setattr__(self, "model_families", tuple(self.model_families))
         object.__setattr__(self, "clarification_options", tuple(self.clarification_options))
 
@@ -380,6 +408,14 @@ class ClassifyDecision:
         # Emit metadata fields only when non-empty.
         if self.research_goal:
             result["research_goal"] = self.research_goal
+        if self.search_directions:
+            result["search_directions"] = list(self.search_directions)
+        if self.source_preferences:
+            result["source_preferences"] = list(self.source_preferences)
+        if self.avoid:
+            result["avoid"] = list(self.avoid)
+        if self.known_graph_context:
+            result["known_graph_context"] = self.known_graph_context
         if self.model_families:
             result["model_families"] = list(self.model_families)
         if self.pattern_category:
@@ -655,6 +691,11 @@ class PrecedentAdaptationPlan:
     structural_validation: str = "not_evaluated"
     semantic_validation: str = "not_evaluated"
     warnings: tuple[dict[str, Any], ...] = ()
+    # SD1 migration: all available precedent slices preserved as neutral context.
+    # The first item (selected_slice) is presentation context only — it is not
+    # a winner, recommendation, or required implementation.
+    all_slices: tuple[WorkflowSlice, ...] = ()
+    context_note: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "anchor_bindings", tuple(
@@ -682,6 +723,7 @@ class PrecedentAdaptationPlan:
             if isinstance(warning, Mapping) else warning
             for warning in self.warnings
         ))
+        object.__setattr__(self, "all_slices", tuple(self.all_slices))
         if self.structural_validation not in ("not_evaluated", "pass", "fail", "advisory"):
             object.__setattr__(self, "structural_validation", "not_evaluated")
         if self.semantic_validation not in ("not_evaluated", "pass", "fail", "advisory"):
@@ -691,6 +733,9 @@ class PrecedentAdaptationPlan:
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
+            # selected_slice is presentation context only — it is not a winner,
+            # recommendation, or required implementation.  See all_slices and
+            # context_note for the full neutral precedent context.
             "selected_slice": self.selected_slice.to_dict(),
             "anchor_bindings": _thaw_jsonish(self.anchor_bindings),
             "required_new_nodes": _thaw_jsonish(self.required_new_nodes),
@@ -703,7 +748,95 @@ class PrecedentAdaptationPlan:
             payload["warnings"] = _thaw_jsonish(self.warnings)
         if self.structural_validation == "pass" and self.candidate_graph is not None:
             payload["candidate_graph"] = self.candidate_graph
+        if self.all_slices:
+            payload["all_slices"] = [s.to_dict() for s in self.all_slices]
+        if self.context_note:
+            payload["context_note"] = self.context_note
         return payload
+
+# ── neutral precedent packet (SD1 successor) ──────────────────────────────────
+
+
+@dataclass(frozen=True)
+class PrecedentOption:
+    """Neutral representation of a single precedent workflow slice.
+
+    Describes one discovered workflow slice without asserting any ranking,
+    selection preference, or winner.  The packet consumer (not this type)
+    decides which option to act on.
+
+    All keys emitted by ``to_dict()`` are descriptive/contextual only —
+    forbidden public-key names (``winner``, ``best``, ``selected``,
+    ``score``, ``rank``, ``primary``, ``preferred``, ``chosen``, ``pick``,
+    ``choice``, ``top``, ``recommended``) are never present in the
+    serialized payload.
+    """
+
+    source_class_type: str = ""
+    source_workflow_path: str | None = None
+    node_ids: tuple[str, ...] = ()
+    node_types: tuple[str, ...] = ()
+    description: str = ""
+    notes: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "node_ids", tuple(self.node_ids))
+        object.__setattr__(self, "node_types", tuple(self.node_types))
+        object.__setattr__(self, "notes", tuple(self.notes))
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "source_class_type": self.source_class_type,
+            "description": self.description,
+        }
+        if self.source_workflow_path is not None:
+            payload["source_workflow_path"] = self.source_workflow_path
+        if self.node_ids:
+            payload["node_ids"] = list(self.node_ids)
+        if self.node_types:
+            payload["node_types"] = list(self.node_types)
+        if self.notes:
+            payload["notes"] = list(self.notes)
+        return payload
+
+
+@dataclass(frozen=True)
+class PrecedentPacket:
+    """Neutral packet of precedent options for adaptation.
+
+    Carries every discovered precedent option without selecting a winner.
+    The ``options`` tuple is intentionally unordered and carries no score
+    or ranking metadata.  This is the neutral successor to
+    ``PrecedentAdaptationPlan`` — the old plan carries a single selected
+    slice while the packet preserves every option for the downstream
+    consumer.
+
+    Forbidden public-key names are absent from serialized output (see
+    ``PrecedentOption`` for the full list).
+    """
+
+    options: tuple[PrecedentOption, ...] = ()
+    context_note: str = ""
+    warnings: tuple[dict[str, Any], ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "options", tuple(self.options))
+        object.__setattr__(self, "warnings", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in w.items()})
+            if isinstance(w, Mapping) else w
+            for w in self.warnings
+        ))
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "options": [opt.to_dict() for opt in self.options],
+        }
+        if self.context_note:
+            payload["context_note"] = self.context_note
+        if self.warnings:
+            payload["warnings"] = _thaw_jsonish(self.warnings)
+        return payload
+
 
 # ── revision evidence contracts (M3) ──────────────────────────────────────────
 
@@ -724,6 +857,7 @@ class TopologyFindings:
     missing_graph: bool = False
     dangling_links: tuple[str, ...] = ()
     absent_endpoint_nodes: tuple[str, ...] = ()
+    socket_type_mismatches: tuple[dict[str, Any], ...] = ()
     unknown_class_types: tuple[str, ...] = ()
     missing_required_inputs: tuple[dict[str, Any], ...] = ()
     schema_available: bool = True
@@ -732,6 +866,11 @@ class TopologyFindings:
     def __post_init__(self) -> None:
         object.__setattr__(self, "dangling_links", tuple(self.dangling_links))
         object.__setattr__(self, "absent_endpoint_nodes", tuple(self.absent_endpoint_nodes))
+        object.__setattr__(self, "socket_type_mismatches", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in item.items()})
+            if isinstance(item, Mapping) else item
+            for item in self.socket_type_mismatches
+        ))
         object.__setattr__(self, "unknown_class_types", tuple(self.unknown_class_types))
         object.__setattr__(self, "missing_required_inputs", tuple(
             MappingProxyType({str(k): _freeze_jsonish(v) for k, v in item.items()})
@@ -746,6 +885,7 @@ class TopologyFindings:
             self.missing_graph
             or self.dangling_links
             or self.absent_endpoint_nodes
+            or self.socket_type_mismatches
             or self.unknown_class_types
             or self.missing_required_inputs
         )
@@ -755,6 +895,7 @@ class TopologyFindings:
             "missing_graph": self.missing_graph,
             "dangling_links": list(self.dangling_links),
             "absent_endpoint_nodes": list(self.absent_endpoint_nodes),
+            "socket_type_mismatches": _thaw_jsonish(self.socket_type_mismatches),
             "unknown_class_types": list(self.unknown_class_types),
             "missing_required_inputs": _thaw_jsonish(self.missing_required_inputs),
             "schema_available": self.schema_available,
@@ -931,7 +1072,13 @@ class RevisionEvidence:
         that the LLM may attempt a scoped repair.
         """
         return (
-            not self.topology.has_blockers
+            not (
+                self.topology.missing_graph
+                or self.topology.dangling_links
+                or self.topology.absent_endpoint_nodes
+                or self.topology.unknown_class_types
+                or self.topology.missing_required_inputs
+            )
             and self.topology.schema_available is not False
             and not self.readiness.has_blockers
         )
@@ -949,6 +1096,116 @@ class RevisionEvidence:
             payload["scoped_diff"] = self.scoped_diff.to_dict()
         if self.no_candidate_reason is not None:
             payload["no_candidate_reason"] = self.no_candidate_reason
+        return payload
+
+
+# ── graph facts projection (SD2) ──────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class GraphFacts:
+    """Compact projection of graph facts from topology and readiness collectors.
+
+    Reuses existing ``TopologyFindings`` and ``ReadinessReport`` collectors
+    rather than defining an independent collection schema.  Provides a
+    flattened projection suitable for adapt-prompt construction without
+    exposing full revision-evidence internals.
+
+    All fields default to safe/empty values so facts can always be emitted.
+    """
+
+    current_output_node_types: tuple[str, ...] = ()
+    terminal_output_socket_types: tuple[str, ...] = ()
+    socket_type_mismatches: tuple[dict[str, Any], ...] = ()
+    missing_required_inputs: tuple[dict[str, Any], ...] = ()
+    unknown_class_types: tuple[str, ...] = ()
+    missing_models: tuple[str, ...] = ()
+    missing_node_packs: tuple[str, ...] = ()
+    readiness_blockers: tuple[str, ...] = ()
+    has_dangling_inputs: bool = False
+    has_dangling_outputs: bool = False
+    no_gpu_detected: bool = False
+    summary: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "current_output_node_types",
+                           tuple(self.current_output_node_types))
+        object.__setattr__(self, "terminal_output_socket_types",
+                           tuple(self.terminal_output_socket_types))
+        object.__setattr__(self, "socket_type_mismatches", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in item.items()})
+            if isinstance(item, Mapping) else item
+            for item in self.socket_type_mismatches
+        ))
+        object.__setattr__(self, "missing_required_inputs", tuple(
+            MappingProxyType({str(k): _freeze_jsonish(v) for k, v in item.items()})
+            if isinstance(item, Mapping) else item
+            for item in self.missing_required_inputs
+        ))
+        object.__setattr__(self, "unknown_class_types",
+                           tuple(self.unknown_class_types))
+        object.__setattr__(self, "missing_models",
+                           tuple(self.missing_models))
+        object.__setattr__(self, "missing_node_packs",
+                           tuple(self.missing_node_packs))
+        object.__setattr__(self, "readiness_blockers",
+                           tuple(self.readiness_blockers))
+
+    @classmethod
+    def from_collectors(
+        cls,
+        topology: TopologyFindings | None = None,
+        readiness: ReadinessReport | None = None,
+    ) -> "GraphFacts":
+        """Project GraphFacts from existing topology and readiness collectors.
+
+        Returns a compact projection that reuses collector outputs rather
+        than collecting new independent facts.  When a collector is None
+        its defaults are used.
+        """
+        if topology is None:
+            topology = TopologyFindings()
+        if readiness is None:
+            readiness = ReadinessReport()
+        return cls(
+            socket_type_mismatches=topology.socket_type_mismatches,
+            missing_required_inputs=topology.missing_required_inputs,
+            unknown_class_types=topology.unknown_class_types,
+            missing_models=readiness.missing_models,
+            missing_node_packs=readiness.missing_node_packs,
+            readiness_blockers=readiness.readiness_blockers,
+            no_gpu_detected=readiness.no_gpu_detected,
+        )
+
+    @property
+    def has_blockers(self) -> bool:
+        """True when any graph-fact problem was found."""
+        return bool(
+            self.socket_type_mismatches
+            or self.missing_required_inputs
+            or self.unknown_class_types
+            or self.missing_models
+            or self.missing_node_packs
+            or self.readiness_blockers
+            or self.no_gpu_detected
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "current_output_node_types": list(self.current_output_node_types),
+            "terminal_output_socket_types": list(self.terminal_output_socket_types),
+            "socket_type_mismatches": _thaw_jsonish(self.socket_type_mismatches),
+            "missing_required_inputs": _thaw_jsonish(self.missing_required_inputs),
+            "unknown_class_types": list(self.unknown_class_types),
+            "missing_models": list(self.missing_models),
+            "missing_node_packs": list(self.missing_node_packs),
+            "readiness_blockers": list(self.readiness_blockers),
+            "has_dangling_inputs": self.has_dangling_inputs,
+            "has_dangling_outputs": self.has_dangling_outputs,
+            "no_gpu_detected": self.no_gpu_detected,
+            "summary": self.summary,
+        }
+        payload["has_blockers"] = self.has_blockers
         return payload
 
 
@@ -972,6 +1229,9 @@ class ResearchResult:
     # ── structured precedent fields (SD2, optional) ──────────────────
     precedent_slices: tuple[WorkflowSlice, ...] = ()
     adaptation_plan: PrecedentAdaptationPlan | None = None
+    # SD1: neutral precedent packet carrying all discovered options without
+    # ranking or winner selection.
+    precedent_packet: PrecedentPacket | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "sources", tuple(self.sources))
@@ -999,6 +1259,8 @@ class ResearchResult:
             result["precedent_slices"] = [s.to_dict() for s in self.precedent_slices]
         if self.adaptation_plan is not None:
             result["adaptation_plan"] = self.adaptation_plan.to_dict()
+        if self.precedent_packet is not None:
+            result["precedent_packet"] = self.precedent_packet.to_dict()
         return result
 
 
@@ -1302,6 +1564,8 @@ _DURABLE_ENVELOPE_TOP_LEVEL_KEYS: tuple[str, ...] = (
     "candidate_structural_graph_hash",
     "outcome",
     "apply_eligibility",
+    "graph_unchanged",
+    "no_candidate_reason",
     "change_details",
     "audit_ref",
     "artifacts",
@@ -1395,9 +1659,12 @@ __all__ = [
     "ClassifyDecision",
     "ExecutorRequest",
     "ExecutorResult",
+    "GraphFacts",
     "ImplementationResult",
     "InspectionSummary",
     "PrecedentAdaptationPlan",
+    "PrecedentOption",
+    "PrecedentPacket",
     "ReadinessReport",
     "Report",
     "ResearchResult",

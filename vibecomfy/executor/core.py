@@ -108,7 +108,7 @@ _ROUTE_BEHAVIORS = MappingProxyType({
     "research": RouteBehavior(
         route="research",
         needs_research=True,
-        needs_implement=False,
+        needs_implement=True,
         plan_summary="Research workflows, nodes, or techniques, then answer without editing.",
         clears_result_graph=True,
         reply_uses_graph_inspection=False,
@@ -170,6 +170,22 @@ def _route_behavior(plan: ClassifyDecision) -> RouteBehavior:
 def _should_research(plan: ClassifyDecision) -> bool:
     """Determine if the research phase should run for *plan*."""
     return _route_behavior(plan).needs_research
+
+
+def _should_prefetch_research(plan: ClassifyDecision) -> bool:
+    """Return True for routes that should prefetch research.
+
+    Research route: runs through the agentic batch REPL, where the model can
+    call research(...) iteratively and write an auditable messages.jsonl.
+    Adapt route: prefetches scoped research from classifier fields,
+    nested under execution_protocol_notes — does NOT inject raw query
+    results into the implementation prompt.
+    Revise route: never prefetches research.
+    """
+    route = _canonical_route_for_plan(plan)
+    if route == "adapt":
+        return _route_behavior(plan).needs_research
+    return False
 
 
 def _should_implement(plan: ClassifyDecision) -> bool:
@@ -533,8 +549,14 @@ def _delegated_clarification_plan(
     ).strip()
     if prior_route not in {"revise", "adapt"}:
         prior_route = "revise" if request.graph is not None else "inspect"
-    if prior_route == "revise" and _context_text_mentions_ltx_audio(session_context):
-        prior_route = "adapt"
+    # LTX/audio route safety net: classifier-proven removal only.
+    # When the context mentions LTX + audio, do NOT force a research-backed
+    # route (adapt) — that would introduce concrete node-family suggestions
+    # through precedent lookups.  Instead, treat this as a temporary
+    # process-shape fallback: the existing prior_route (typically revise)
+    # provides process-shape editing without research-driven node suggestions.
+    # The _context_text_mentions_ltx_audio detector remains available for
+    # classifier-proven context awareness in future routing decisions.
 
     return ClassifyDecision(
         research=(prior_route == "adapt"),
@@ -679,15 +701,38 @@ def _run_classify(
 def _run_research(
     request: ExecutorRequest,
     _spec: AgentSpecShape,
+    *,
+    plan: ClassifyDecision | None = None,
 ) -> ResearchResult:
     """Run the research phase (local corpus + optional Hivemind).
 
     Research failures are non-fatal; they are captured as warnings in the
     :class:`ResearchResult` and never propagate as exceptions.
+
+    When *plan* is provided and the route is ``adapt``, the query is scoped
+    from classifier fields (research_goal, pattern_category, change_goal,
+    model_families) instead of the raw user query, keeping implementation
+    prompts free of undirected retrieval pollution.
     """
     try:
+        query = request.query
+        if plan is not None and _canonical_route_for_plan(plan) == "adapt":
+            # Build a scoped research query from classifier-derived fields
+            # so the adapt prefetch does not inject raw-query results.
+            scoped_parts: list[str] = []
+            if plan.research_goal:
+                scoped_parts.append(f"Research goal: {plan.research_goal}")
+            if plan.pattern_category:
+                scoped_parts.append(f"Pattern category: {plan.pattern_category}")
+            if plan.change_goal:
+                scoped_parts.append(f"Change goal: {plan.change_goal}")
+            if plan.model_families:
+                families = ", ".join(plan.model_families)
+                scoped_parts.append(f"Model families: {families}")
+            if scoped_parts:
+                query = "; ".join(scoped_parts)
         result = run_research_phase(
-            request.query,
+            query,
             graph=request.graph,
             hivemind_client=_default_hivemind_client,
         )
@@ -701,6 +746,7 @@ def _run_research(
                 warning_details=result.warning_details,
                 precedent_slices=result.precedent_slices,
                 adaptation_plan=result.adaptation_plan,
+                precedent_packet=result.precedent_packet,
             )
         return result
     except Exception as exc:
@@ -736,12 +782,12 @@ def _run_implement(
     Converts the result to an :class:`ImplementationResult`; failures from
     the edit engine are surfaced as :class:`_ExecutorPhaseError`.
     """
-    if request.graph is None:
+    executor_route = _canonical_route_for_plan(plan)
+    if request.graph is None and executor_route != "research":
         return ImplementationResult(
             message="No graph attached; implementation skipped.",
         )
 
-    executor_route = _canonical_route_for_plan(plan)
     classification = plan.to_dict()
     classification["route"] = executor_route
     effective_task = plan.effective_task
@@ -751,7 +797,7 @@ def _run_implement(
     payload: dict[str, Any] = {
         "task": request.query,
         "query": request.query,
-        "graph": request.graph,
+        "graph": request.graph if request.graph is not None else {"nodes": [], "links": []},
         "route": executor_route,
         "executor_route": executor_route,
         "provider_route": spec.agent,
@@ -759,17 +805,56 @@ def _run_implement(
         "executor_classification": classification,
     }
     if research_result is not None:
-        research_payload = research_result.to_dict()
-        payload["research_summary"] = research_payload.get("summary", "")
-        payload["research_sources"] = research_payload.get("sources", [])
-        payload["executor_research"] = research_payload
-        # Forward structured precedent data to the edit engine (SD2).
-        if research_result.precedent_slices:
-            payload["precedent_slices"] = [
-                s.to_dict() for s in research_result.precedent_slices
-            ]
-        if research_result.adaptation_plan is not None:
-            payload["adaptation_plan"] = research_result.adaptation_plan.to_dict()
+        if executor_route == "adapt":
+            # Adapt route: nest scoped research under execution_protocol_notes,
+            # include research_context_packet as discardable context, and do
+            # NOT inject raw research_summary/sources into the payload.
+            protocol_notes: dict[str, Any] = {}
+            # Classifier-derived scoping fields (unranked, context-only).
+            if plan.research_goal:
+                protocol_notes["research_goal"] = plan.research_goal
+            if plan.pattern_category:
+                protocol_notes["pattern_category"] = plan.pattern_category
+            if plan.change_goal:
+                protocol_notes["change_goal"] = plan.change_goal
+            if plan.model_families:
+                protocol_notes["model_families"] = list(plan.model_families)
+            # Research summary as contextual note (not directive).
+            if research_result.summary:
+                protocol_notes["research_summary"] = research_result.summary
+            if protocol_notes:
+                protocol_notes["_discardability"] = (
+                    "This research context is provided as evidence only. "
+                    "It is NOT authoritative guidance or a required implementation. "
+                    "Discard any packet that is empty, irrelevant, or contradicts "
+                    "the user's explicit request."
+                )
+                payload["execution_protocol_notes"] = protocol_notes
+            # Include precedent packet as discardable research context.
+            if research_result.precedent_packet is not None:
+                payload["research_context_packet"] = (
+                    research_result.precedent_packet.to_dict()
+                )
+        else:
+            # Non-adapt routes: forward full research payload as before.
+            research_payload = research_result.to_dict()
+            payload["research_summary"] = research_payload.get("summary", "")
+            payload["research_sources"] = research_payload.get("sources", [])
+            payload["executor_research"] = research_payload
+            # Forward structured precedent data to the edit engine (SD2).
+            # The adaptation plan is neutral context — selected_slice is
+            # presentation context only, not a winner/recommendation/required
+            # implementation.  All available slices are included in all_slices.
+            if research_result.precedent_slices:
+                payload["precedent_slices"] = [
+                    s.to_dict() for s in research_result.precedent_slices
+                ]
+            if research_result.adaptation_plan is not None:
+                payload["adaptation_plan"] = research_result.adaptation_plan.to_dict()
+    if executor_route == "research":
+        research_brief = _research_brief_from_plan(plan)
+        if research_brief:
+            payload["research_brief"] = research_brief
     if request.session_id:
         payload["session_id"] = request.session_id
 
@@ -831,11 +916,58 @@ def _run_implement(
     if isinstance(result.get("message"), str):
         message = result["message"]
 
+    if executor_route == "research" or _implementation_response_is_terminal_no_candidate(result):
+        graph_out = None
+
     return ImplementationResult(
         graph=graph_out,
         message=message,
         durable_response=result,
     )
+
+
+def _implementation_response_is_terminal_no_candidate(result: dict[str, Any]) -> bool:
+    """Return true when agent-edit succeeded by declining an applyable candidate."""
+    outcome = result.get("outcome")
+    outcome_kind = outcome.get("kind") if isinstance(outcome, dict) else None
+    if outcome_kind in {"clarify", "requires_custom_nodes"}:
+        return True
+    apply_eligible = result.get("apply_eligible")
+    if not isinstance(apply_eligible, bool):
+        eligibility = result.get("apply_eligibility")
+        if isinstance(eligibility, dict):
+            apply_eligible = bool(
+                eligibility.get("applyable")
+                if "applyable" in eligibility
+                else eligibility.get("apply_eligible")
+            )
+    return result.get("graph_unchanged") is True and apply_eligible is False
+
+
+def _research_brief_from_plan(plan: ClassifyDecision) -> dict[str, Any]:
+    """Return classifier-authored search direction for the research agent.
+
+    This is intentionally directional. It tells the batch REPL what evidence to
+    seek, but does not pre-answer the research question or bypass research(...).
+    """
+    brief: dict[str, Any] = {}
+    if plan.research_goal:
+        brief["research_goal"] = plan.research_goal
+    if plan.search_directions:
+        brief["search_directions"] = list(plan.search_directions)
+    if plan.source_preferences:
+        brief["source_preferences"] = list(plan.source_preferences)
+    if plan.avoid:
+        brief["avoid"] = list(plan.avoid)
+    if plan.known_graph_context:
+        brief["known_graph_context"] = plan.known_graph_context
+    if plan.model_families:
+        brief["model_families"] = list(plan.model_families)
+    if plan.pattern_category:
+        brief["pattern_category"] = plan.pattern_category
+    if plan.change_goal:
+        brief["change_goal"] = plan.change_goal
+    return brief
 
 
 # ── reply phase ──────────────────────────────────────────────────────────────
@@ -1206,8 +1338,8 @@ def run_executor(
                 report=report,
             )
 
-    # ── Phase 2: research (optional) ─────────────────────────────────────
-    if _should_research(plan):
+    # ── Phase 2: research (standalone replies only) ──────────────────────
+    if _should_prefetch_research(plan):
         try:
             research_spec = _resolve_spec(request.profile, "research")
         except Exception:
@@ -1239,7 +1371,7 @@ def run_executor(
                 **_spec_fields(research_spec),
             ) as span:
                 try:
-                    research_result = _run_research(request, research_spec)
+                    research_result = _run_research(request, research_spec, plan=plan)
                     span.update(
                         warning_count=len(research_result.warnings or ()),
                         summary_preview=short_text(research_result.summary),
@@ -1330,6 +1462,28 @@ def run_executor(
         ):
             effective_graph = implementation_result.graph
             result_graph = implementation_result.graph
+        elif _implementation_result_is_terminal_no_candidate(implementation_result):
+            report = Report(
+                plan=plan,
+                research=research_result,
+                implementation=implementation_result,
+            )
+            reply_text = implementation_result.message
+            profiler_log(
+                LOGGER,
+                "executor.result",
+                **request_fields,
+                has_research=research_result is not None,
+                has_implementation=True,
+                result_has_graph=False,
+                reply_preview=short_text(reply_text),
+                reason="terminal_no_candidate",
+            )
+            return ExecutorResult.success(
+                report=report,
+                graph=None,
+                reply=reply_text,
+            )
     else:
         _emit_executor_phase_event(
             request,
@@ -1412,6 +1566,13 @@ def run_executor(
         graph=result_graph,
         reply=reply_text,
     )
+
+
+def _implementation_result_is_terminal_no_candidate(result: ImplementationResult) -> bool:
+    durable = result.durable_response
+    if durable is None:
+        return False
+    return _implementation_response_is_terminal_no_candidate(dict(durable))
 
 
 __all__ = ["run_executor"]

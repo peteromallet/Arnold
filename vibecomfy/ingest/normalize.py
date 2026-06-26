@@ -431,6 +431,11 @@ def _convert_to_vibe_format_impl(
     from vibecomfy.ingest.snapshot import capture_ingest_snapshot  # local to avoid circular at module level
     workflow.metadata["_ingest_snapshot"] = capture_ingest_snapshot(api_workflow, workflow)
 
+    # ``workflow.metadata`` is ``dict[str, Any]`` and transparently accepts
+    # any extra keys.  In particular, ``summary`` (a ``WorkflowSummary`` dict)
+    # may be present when re-ingesting a corpus JSON that was enriched with
+    # LLM-generated summaries.  It is left untouched here — no validation,
+    # no stripping — so it survives round-trips through this pipeline intact.
     return workflow
 
 

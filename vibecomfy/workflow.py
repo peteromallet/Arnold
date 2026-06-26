@@ -23,6 +23,11 @@ from vibecomfy.contracts.validation import (  # noqa: E402
     comfyui_node_issue_specs,
 )
 
+# WorkflowSummary is the typed contract for LLM-generated summaries stored
+# under ``workflow.metadata['summary']``.  Re-exported so consumers can
+# import from ``vibecomfy.workflow`` without reaching into contracts.
+from vibecomfy.contracts.summary import WorkflowSummary  # noqa: E402
+
 
 @dataclass(slots=True)
 class WorkflowSource:

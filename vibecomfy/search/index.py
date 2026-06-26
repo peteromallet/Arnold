@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -57,13 +58,32 @@ def build_search_corpus(
     external_workflow_index_path: str | Path = "external_workflow_index.json",
 ) -> list[SearchEntry]:
     ensure_indexes(auto_sync=auto_sync)
+    node_index = _resolve_index_path(node_index_path)
+    workflow_index = _resolve_index_path(workflow_index_path)
+    external_workflow_index = _resolve_index_path(external_workflow_index_path)
     entries: list[SearchEntry] = []
     entries.extend(_object_info_entries(schema_provider, warnings=warnings))
-    entries.extend(_node_index_entries(Path(node_index_path)))
+    entries.extend(_node_index_entries(node_index))
     entries.extend(_custom_example_entries(custom_nodes_root))
     entries.extend(_curated_entries(Path(coverage_path)))
     entries.extend(_ready_template_entries(Path(template_index_path)))
+    entries.extend(_workflow_index_entries(workflow_index, source_label="source_workflow"))
+    entries.extend(_workflow_index_entries(external_workflow_index, source_label="external_workflow"))
     return _dedupe(entries)
+
+
+def _resolve_index_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute() or candidate.exists():
+        return candidate
+    for env_name in ("VIBECOMFY_SEARCH_INDEX_ROOT", "REPO_ROOT"):
+        raw = os.environ.get(env_name)
+        if not raw:
+            continue
+        rooted = Path(raw).expanduser() / candidate
+        if rooted.exists():
+            return rooted
+    return candidate
 
 
 def _object_info_entries(schema_provider: SchemaProvider | None, *, warnings: list[SearchWarning] | None = None) -> list[SearchEntry]:

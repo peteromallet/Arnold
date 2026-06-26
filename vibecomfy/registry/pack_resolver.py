@@ -292,7 +292,21 @@ def resolve_missing_nodes(
     for candidate in github_candidates:
         _merge_candidate(candidates, candidate)
 
-    ordered = sorted(candidates.values(), key=lambda candidate: (_candidate_rank(candidate), candidate.ref.slug.lower()))
+    raw_candidates = list(candidates.values())
+    if intent != "class_name":
+        anchored_candidates = [
+            candidate
+            for candidate in raw_candidates
+            if _candidate_matches_query_anchor(normalized_query, candidate)
+        ]
+        dropped = len(raw_candidates) - len(anchored_candidates)
+        if dropped:
+            warnings.append(
+                f"Dropped {dropped} unanchored candidate(s) that did not mention {normalized_query!r}."
+            )
+        raw_candidates = anchored_candidates
+
+    ordered = sorted(raw_candidates, key=lambda candidate: (_candidate_rank(candidate), candidate.ref.slug.lower()))
     return MissingNodeResolution(
         query=normalized_query,
         query_intent=intent,
@@ -505,13 +519,23 @@ class _ManagerEvidenceClient(_ExternalJsonCache):
             if not expected:
                 warnings.append(f"ComfyUI-Manager matched {slug} but did not provide concrete node classes.")
             ref = _pack_ref_from_manager_record(slug, record)
+            evidence_detail = {
+                "node_list_cache_hit": list_cache_hit,
+                "node_map_cache_hit": map_cache_hit,
+            }
+            title = _first_string(dict(record), "title", "name", "display_name", "displayName")
+            description = _first_string(dict(record), "description", "nickname", "files", "reference", "repository")
+            if title:
+                evidence_detail["title"] = title
+            if description:
+                evidence_detail["description"] = description
             evidence = ResolverEvidence(
                 tier="comfyui-manager",
                 source="custom-node-map" if expected else "custom-node-list",
                 endpoint=MANAGER_NODE_MAP_URL if expected else MANAGER_NODE_LIST_URL,
                 cache_hit=map_cache_hit if expected else list_cache_hit,
                 matched_classes=expected,
-                detail={"node_list_cache_hit": list_cache_hit, "node_map_cache_hit": map_cache_hit},
+                detail=evidence_detail,
             )
             candidates.append(ResolverCandidate(ref=ref, expected_classes=expected, evidence=(evidence,), warnings=tuple(warnings)))
         return candidates
@@ -844,6 +868,8 @@ def _first_mapping(record: dict[str, Any], *keys: str) -> dict[str, Any] | None:
 def _first_string(record: dict[str, Any], *keys: str) -> str | None:
     for key in keys:
         value = record.get(key)
+        if isinstance(value, (dict, list, tuple, set)):
+            continue
         if value is not None and str(value).strip():
             return str(value).strip()
     return None
@@ -882,6 +908,72 @@ def _merge_candidate(candidates: dict[str, ResolverCandidate], candidate: Resolv
         warnings=warnings,
         provisional_schema=provisional_schema,
     )
+
+
+_CAPABILITY_ANCHOR_STOPWORDS = {
+    "comfy",
+    "comfyui",
+    "custom",
+    "node",
+    "nodes",
+    "registry",
+    "workflow",
+    "workflows",
+    "video",
+    "image",
+    "xl",
+    "sd",
+    "sdxl",
+}
+
+
+def _candidate_matches_query_anchor(query: str, candidate: ResolverCandidate) -> bool:
+    anchors = _capability_anchor_terms(query)
+    if not anchors:
+        return True
+    query_key = _normalize_lookup_key(query)
+    identity_text = " ".join(
+        (
+            candidate.ref.slug,
+            candidate.ref.name or "",
+            candidate.ref.url or "",
+        )
+    )
+    identity_key = _normalize_lookup_key(identity_text)
+    if candidate.ref.source == "github" and "comfyui" in query_key and "comfy" not in identity_key:
+        return False
+    text = " ".join(
+        (
+            identity_text,
+            " ".join(candidate.expected_classes),
+            " ".join(candidate.warnings),
+            json.dumps([item.to_dict() for item in candidate.evidence], sort_keys=True, default=str),
+            json.dumps(dict(candidate.provisional_schema or {}), sort_keys=True, default=str),
+        )
+    )
+    haystack = _normalize_lookup_key(text)
+    return any(anchor in haystack for anchor in anchors)
+
+
+def _capability_anchor_terms(query: str) -> tuple[str, ...]:
+    tokens = [
+        token
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_.+-]*", query)
+        if token.casefold() not in _CAPABILITY_ANCHOR_STOPWORDS
+        and not token.isdigit()
+    ]
+    terms: list[str] = []
+    for token in tokens:
+        normalized = _normalize_lookup_key(token)
+        if len(normalized) >= 3:
+            terms.append(normalized)
+    if len(tokens) >= 2:
+        for size in (3, 2):
+            for i in range(0, max(0, len(tokens) - size + 1)):
+                joined = _normalize_lookup_key("".join(tokens[i : i + size]))
+                if len(joined) >= 3:
+                    terms.append(joined)
+    return _dedupe_strings(terms)
 
 
 def _prefer_ref(left: PackRef, right: PackRef) -> PackRef:

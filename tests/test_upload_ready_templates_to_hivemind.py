@@ -253,7 +253,7 @@ def test_main_skips_existing_resource_before_post(monkeypatch, tmp_path, capsys)
     posted: list[dict[str, Any]] = []
 
     monkeypatch.setattr(upload, "_repo_root", lambda: tmp_path)
-    monkeypatch.setenv("HIVEMIND_CONTRIBUTOR_KEY", "contributor")
+    monkeypatch.delenv("HIVEMIND_CONTRIBUTOR_KEY", raising=False)
     monkeypatch.setattr(
         upload,
         "_find_existing_resource",
@@ -317,3 +317,70 @@ def test_dry_run_preflight_reports_existing_without_upload(monkeypatch, tmp_path
     assert posted == []
     output = capsys.readouterr().out
     assert '"status": "would_skip_existing"' in output
+
+
+
+def test_main_uploads_without_contributor_key(monkeypatch, tmp_path, capsys) -> None:
+    """Anonymous default endpoint should upload without a contributor key."""
+    template_path = tmp_path / "ready_templates" / "video" / "example.py"
+    template_path.parent.mkdir(parents=True)
+    template_path.write_text("def build():\n    pass\n", encoding="utf-8")
+    index_path = tmp_path / "template_index.json"
+    index_path.write_text(
+        json.dumps({"templates": [{"id": "video/example", "path": "ready_templates/video/example.py"}]}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(upload, "_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("HIVEMIND_CONTRIBUTOR_KEY", raising=False)
+    monkeypatch.setattr(
+        upload,
+        "_find_existing_resource",
+        lambda *args, **kwargs: {"exists": False},
+    )
+
+    captured_key: Any = "unset"
+
+    def fake_post(envelope: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        nonlocal captured_key
+        captured_key = kwargs.get("contributor_key")
+        return {"id": 42, "status": "ok"}
+
+    monkeypatch.setattr(upload, "_post", fake_post)
+
+    exit_code = upload.main(["--index", str(index_path), "--coverage", "", "--sleep", "0"])
+
+    assert exit_code == 0
+    assert '"status": "uploaded"' in capsys.readouterr().out
+    assert captured_key is None
+
+
+def test_authenticated_endpoint_requires_contributor_key(monkeypatch, tmp_path, capsys) -> None:
+    """Explicit --contribute-url pointing at /contribute must have a key."""
+    template_path = tmp_path / "ready_templates" / "video" / "example.py"
+    template_path.parent.mkdir(parents=True)
+    template_path.write_text("def build():\n    pass\n", encoding="utf-8")
+    index_path = tmp_path / "template_index.json"
+    index_path.write_text(
+        json.dumps({"templates": [{"id": "video/example", "path": "ready_templates/video/example.py"}]}),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(upload, "_repo_root", lambda: tmp_path)
+    monkeypatch.delenv("HIVEMIND_CONTRIBUTOR_KEY", raising=False)
+
+    exit_code = upload.main(
+        [
+            "--index",
+            str(index_path),
+            "--coverage",
+            "",
+            "--contribute-url",
+            "https://example.supabase.co/functions/v1/contribute",
+            "--sleep",
+            "0",
+        ]
+    )
+
+    assert exit_code == 1
+    assert "contributor key" in capsys.readouterr().err.lower()

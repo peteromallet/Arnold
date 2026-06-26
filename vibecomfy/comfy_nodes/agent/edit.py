@@ -61,6 +61,8 @@ from .gates import (
 from .provider import (
     AgentTurnResult,
     BatchTurnResult,
+    MalformedModelJSON,
+    MissingRequiredField,
     _latest_clarification_context,
     build_batch_messages,
     build_delta_messages,
@@ -73,6 +75,7 @@ from .provider import (
 from .diagnostics import lower_stage_result, queue_stage_result
 from .session import (
     allocate_turn,
+    normalize_session_id,
     payload_hash,
     read_state,
     record_idempotent_response,
@@ -86,6 +89,7 @@ from vibecomfy.executor.contracts import (
     TopologyFindings,
 )
 from vibecomfy.executor.revision_evidence import (
+    collect_graph_facts,
     collect_readiness_evidence,
     collect_topology_evidence,
     compute_scoped_diff,
@@ -157,6 +161,13 @@ class AgentEditState:
     executor_research_sources: tuple[dict[str, Any], ...] = ()
     executor_precedent_slices: tuple[dict[str, Any], ...] = ()
     executor_adaptation_plan: dict[str, Any] | None = None
+    executor_research_brief: dict[str, Any] | None = None
+    # SD3: adapt-prefetch scoped research nested under execution_protocol_notes.
+    execution_protocol_notes: dict[str, Any] | None = None
+    # SD3: neutral precedent packet as discardable research context.
+    research_context_packet: dict[str, Any] | None = None
+    # SD2: compact graph facts from topology/readiness collectors for adapt context.
+    graph_facts: dict[str, Any] | None = None
     batch_turns: list[dict[str, Any]] = field(default_factory=list)
     batch_field_changes: tuple[FieldChange, ...] = ()
     batch_noop_field_changes: tuple[FieldChange, ...] = ()
@@ -169,6 +180,7 @@ class AgentEditState:
     batch_exit_mode: str = ""
     batch_done_summary: str = ""
     lint_noop_messages: tuple[str, ...] = ()
+    provisional_registry_candidate_hashes: frozenset[str] = frozenset()
     # T15: route label carried on state so response builders can apply route-aware
     # validation/reporting without changing their call signatures.
     route: str | None = None
@@ -267,10 +279,13 @@ def _inject_lowering_provenance(state: AgentEditState) -> None:
 
 
 def _safe_session_id(value: str | None = None) -> str:
-    if not value:
-        return uuid.uuid4().hex
-    safe = re.sub(r"[^A-Za-z0-9_.-]", "_", value)
-    return safe[:80] or uuid.uuid4().hex
+    """Normalize a session id to a safe path component.
+
+    Delegates to the authoritative ``normalize_session_id`` in ``.session``
+    so every call site (edit, routes, executor) shares the same containment
+    contract.
+    """
+    return normalize_session_id(value)
 
 
 def _artifact(path: Path) -> ArtifactRef:
@@ -305,6 +320,61 @@ def _total_landed_edit_count(state: AgentEditState) -> int:
         if isinstance(landed, int) and landed > 0:
             total += landed
     return total
+
+
+def _read_only_discovery_turn_count(state: AgentEditState) -> int:
+    count = 0
+    for turn in state.batch_turns:
+        statements = turn.get("statements")
+        if not isinstance(statements, list) or not statements:
+            continue
+        landed = turn.get("landed_op_count")
+        if isinstance(landed, int) and landed > 0:
+            continue
+        if all(
+            isinstance(statement, Mapping)
+            and str(statement.get("op_kind") or "") == "query"
+            for statement in statements
+        ):
+            count += 1
+    return count
+
+
+def _discovery_stop_message(state: AgentEditState) -> str:
+    return (
+        "I could not find a workflow precedent or installed/provisional node schema "
+        "specific enough to safely switch this graph to the requested workflow. "
+        "The graph is unchanged."
+    )
+
+
+def _format_research_brief_for_prompt(brief: Mapping[str, Any] | None) -> str:
+    if not isinstance(brief, Mapping) or not brief:
+        return ""
+    allowed_keys = (
+        "research_goal",
+        "search_directions",
+        "source_preferences",
+        "avoid",
+        "known_graph_context",
+        "model_families",
+        "pattern_category",
+        "change_goal",
+    )
+    compact: dict[str, Any] = {}
+    for key in allowed_keys:
+        value = brief.get(key)
+        if isinstance(value, str) and value.strip():
+            compact[key] = value.strip()
+        elif isinstance(value, (list, tuple)):
+            items = [
+                str(item).strip()
+                for item in value
+                if isinstance(item, str) and item.strip()
+            ]
+            if items:
+                compact[key] = items[:8]
+    return json.dumps(compact, indent=2, sort_keys=True) if compact else ""
 
 
 def _field_change_is_noop(
@@ -745,6 +815,10 @@ def _terminal_answer_message(state: AgentEditState) -> str | None:
 
 
 def _humanized_noop_message(state: AgentEditState) -> str:
+    revision_message = _revision_rejected_candidate_message(state)
+    if revision_message:
+        return revision_message
+
     # Prefer lint normalization messages when available (they carry
     # class/title/field/slot context and avoid raw gate text or uids).
     if state.lint_noop_messages:
@@ -775,6 +849,57 @@ def _humanized_noop_message(state: AgentEditState) -> str:
     if gate_jargon:
         return "Nothing needed changing; the workflow already matches that."
     return "No graph changes were needed."
+
+
+def _revision_rejected_candidate_message(state: AgentEditState) -> str:
+    evidence = state.revision_evidence
+    scoped = evidence.scoped_diff if evidence is not None else None
+    if evidence is None or scoped is None or evidence.candidate_eligible is True:
+        return ""
+    blockers = list(scoped.eligibility_blockers or ())
+    mismatch_reasons = [
+        str(item.get("reason") or "").strip()
+        for item in evidence.topology.socket_type_mismatches
+        if isinstance(item, Mapping) and str(item.get("reason") or "").strip()
+    ]
+    if "candidate_topology_blockers" in blockers and mismatch_reasons:
+        return ensure_sentence_message(
+            "I left the graph unchanged because the candidate did not repair existing socket type mismatches first: "
+            + "; ".join(mismatch_reasons[:3]),
+            fallback="I left the graph unchanged because the candidate would not produce a valid workflow.",
+        )
+    if blockers:
+        return ensure_sentence_message(
+            "I left the graph unchanged because the candidate was not safe to apply: "
+            + ", ".join(blockers),
+            fallback="I left the graph unchanged because the candidate was not safe to apply.",
+        )
+    return "I left the graph unchanged because the candidate was not safe to apply."
+
+
+def _revision_candidate_retry_hint(state: AgentEditState) -> str:
+    message = _revision_rejected_candidate_message(state)
+    evidence = state.revision_evidence
+    mismatch_reasons = []
+    if evidence is not None:
+        mismatch_reasons = [
+            str(item.get("reason") or "").strip()
+            for item in evidence.topology.socket_type_mismatches
+            if isinstance(item, Mapping) and str(item.get("reason") or "").strip()
+        ]
+    details = "; ".join(mismatch_reasons[:3])
+    if details:
+        return (
+            "the candidate still leaves invalid graph wiring. Repair these existing "
+            f"socket mismatches first: {details}. Then add the save/export path. "
+            "Prefer installed local nodes from search results such as CreateVideo -> SaveVideo "
+            "or SaveAnimatedWEBP when their signatures are available; use vibecomfy.exec only "
+            "for explicit code/Python requests or when no installed node path exists."
+        )
+    return (
+        (message or "the candidate was not safe to apply")
+        + " Fix the reported eligibility blockers, then call done() again."
+    )
 
 
 def _operation_detail_payload(changes: tuple[FieldChange, ...]) -> list[dict[str, Any]]:
@@ -869,6 +994,14 @@ def _synthesize_batch_repl_message(
         return ensure_sentence_message(
             "I ran out of turn budget before completing the requested changes",
             fallback=state.batch_final_summary or state.user_message,
+        )
+    if outcome.kind == "noop" and _resolver_candidates_from_batch_turns(state):
+        return ensure_sentence_message(
+            state.user_message,
+            fallback=(
+                "I found custom-node evidence, but could not apply a grounded "
+                "workflow pattern to the current graph."
+            ),
         )
     if outcome.kind == "noop":
         return _humanized_noop_message(state)
@@ -984,8 +1117,19 @@ def _format_node_variable_index(session: Any) -> str:
     return "\n".join(f"{name} = {class_type}" for name, _uid, class_type in rows)
 
 
-def _format_available_node_names(rows: Any, *, max_line_chars: int = 96) -> str:
-    """Format NodeSignatureRow-like objects as a compact deterministic name list."""
+def _format_available_node_names(
+    rows: Any,
+    *,
+    max_line_chars: int = 96,
+    max_names: int = 80,
+) -> str:
+    """Format NodeSignatureRow-like objects as a bounded deterministic name list.
+
+    Large ComfyUI installs can expose hundreds of node types. Dumping the full
+    registry into the first edit prompt makes simple turns slow and brittle, and
+    the batch REPL already has ``search(...)`` for exact schema lookup when a
+    new type is needed.
+    """
     names = sorted(
         {
             class_type
@@ -996,6 +1140,9 @@ def _format_available_node_names(rows: Any, *, max_line_chars: int = 96) -> str:
     )
     if not names:
         return ""
+    total_count = len(names)
+    if max_names > 0 and total_count > max_names:
+        names = names[:max_names]
     lines: list[str] = []
     current = names[0]
     for name in names[1:]:
@@ -1006,6 +1153,11 @@ def _format_available_node_names(rows: Any, *, max_line_chars: int = 96) -> str:
         else:
             current = candidate
     lines.append(current)
+    if total_count > len(names):
+        lines.append(
+            f"... [{total_count - len(names)} more node type names omitted; "
+            "use search(...) for exact local schema lookup before adding an omitted type]"
+        )
     return "\n".join(lines)
 
 
@@ -1016,6 +1168,239 @@ def _format_query_output(text: str, *, max_chars: int | None = 4000) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max(0, max_chars - 18)].rstrip() + "\n... [truncated]"
+
+
+def _batch_research_memory_summary(state: Any, *, max_items: int = 3) -> str:
+    """Carry compact prior research/query evidence across batch turns.
+
+    Packet-aware: when a statement detail includes ``precedent_packet``, a
+    compact summary is built from structured option fields (source title,
+    source tier, one-line pattern summary, caveat count) instead of
+    reserializing the full packet or dumping ``query_output`` verbatim.
+    Statements without a packet fall back to the marker-matched
+    ``query_output`` path for non-research turns (e.g. ``search()``).
+    """
+    records: list[str] = []
+    for turn in getattr(state, "batch_turns", ()) or ():
+        if not isinstance(turn, Mapping):
+            continue
+        statements = turn.get("statements")
+        if not isinstance(statements, list):
+            continue
+        turn_number = turn.get("turn_number")
+        for statement in statements:
+            if not isinstance(statement, Mapping):
+                continue
+            detail = statement.get("detail")
+            if not isinstance(detail, Mapping):
+                continue
+
+            # ── packet-aware compact path ────────────────────────────
+            precedent_packet = detail.get("precedent_packet")
+            if isinstance(precedent_packet, Mapping):
+                packet_record = _summarize_precedent_packet(
+                    precedent_packet, turn_number
+                )
+                if packet_record:
+                    records.append(packet_record)
+                continue
+
+            # ── legacy marker-matched query_output path ──────────────
+            query_output = str(detail.get("query_output") or "").strip()
+            if not query_output:
+                continue
+            relevant = any(
+                marker in query_output
+                for marker in (
+                    "Concrete workflow pattern found",
+                    "github_workflow_json",
+                    "source_workflow_path",
+                    "No node signature found",
+                    "registry/schema lookup",
+                    "Registry check",
+                )
+            ) or bool(detail.get("resolver_candidates"))
+            if not relevant:
+                continue
+            query = str(detail.get("research_query") or detail.get("query") or "").strip()
+            sources = detail.get("requested_research_sources") or detail.get("research_sources")
+            source_text = f" sources={tuple(sources)!r}" if isinstance(sources, (list, tuple)) else ""
+            header = f"turn {turn_number}: {query or statement.get('source') or 'query'}{source_text}"
+            records.append(f"- {header}\n{_format_query_output(query_output, max_chars=1000)}")
+    if not records:
+        return ""
+    return "\n\n".join(records[-max_items:])
+
+
+def _summarize_precedent_packet(
+    packet: Mapping[str, Any], turn_number: Any
+) -> str | None:
+    """Build a compact one-line-per-option summary from a precedent packet dict.
+
+    Carries only source title, source tier, one-line pattern summary, and
+    caveat count.  Does **not** reserialize the full packet and omits every
+    forbidden public-key name (winner, best, selected, score, rank, primary,
+    preferred, chosen, pick, choice, top, recommended).
+    """
+    options = packet.get("options")
+    if not isinstance(options, (list, tuple)) or not options:
+        return None
+
+    packet_warnings = packet.get("warnings")
+    packet_caveats = (
+        len(packet_warnings) if isinstance(packet_warnings, (list, tuple)) else 0
+    )
+
+    lines: list[str] = [
+        f"turn {turn_number}: research evidence "
+        f"({len(options)} precedent option(s)):"
+    ]
+    for opt in options:
+        if not isinstance(opt, Mapping):
+            continue
+
+        title = str(opt.get("source_class_type") or "(unknown)")
+
+        # ── one-line pattern summary ─────────────────────────────────
+        description = str(opt.get("description", "")).strip()
+        if description:
+            summary_line = description.split("\n")[0].strip()
+            if len(summary_line) > 120:
+                summary_line = summary_line[:117] + "..."
+        else:
+            summary_line = "(no description)"
+
+        # ── source tier from notes ───────────────────────────────────
+        notes = opt.get("notes")
+        tier = ""
+        option_caveats = 0
+        if isinstance(notes, (list, tuple)):
+            for note in notes:
+                if not isinstance(note, str):
+                    continue
+                if note.startswith("source: "):
+                    tier = note[len("source: "):]
+                elif note.strip():
+                    option_caveats += 1
+
+        caveats = packet_caveats + option_caveats
+        caveat_str = f" [{caveats} caveat(s)]" if caveats else ""
+        tier_str = f" tier={tier}" if tier else ""
+
+        lines.append(f"  - {title}{tier_str}: {summary_line}{caveat_str}")
+
+    return "\n".join(lines)
+
+
+def _premature_missing_custom_node_clarify_feedback(
+    state: Any,
+    clarify_message: str,
+) -> str:
+    """Reject missing-custom-node stops that skipped required registry evidence."""
+    message_text = str(clarify_message or "").casefold()
+    if not any(term in message_text for term in ("missing", "not installed", "install", "custom node")):
+        return ""
+
+    concrete_workflow_seen = False
+    last_missing_turn = -1
+    missing_classes: list[str] = []
+    registry_after_missing = False
+    for turn in getattr(state, "batch_turns", ()) or ():
+        if not isinstance(turn, Mapping):
+            continue
+        raw_turn_number = turn.get("turn_number")
+        turn_number = raw_turn_number if isinstance(raw_turn_number, int) else -1
+        statements = turn.get("statements")
+        if not isinstance(statements, list):
+            continue
+        for statement in statements:
+            if not isinstance(statement, Mapping):
+                continue
+            detail = statement.get("detail")
+            if not isinstance(detail, Mapping):
+                continue
+            query_output = str(detail.get("query_output") or "")
+            if "Concrete workflow pattern found" in query_output or "github_workflow_json" in query_output:
+                concrete_workflow_seen = True
+            if (
+                detail.get("query") == "research"
+                and "registry" in tuple(detail.get("requested_research_sources") or ())
+                and turn_number > last_missing_turn >= 0
+            ):
+                registry_after_missing = True
+            if "No node signature found for exact class type(s):" in query_output:
+                last_missing_turn = turn_number
+                registry_after_missing = False
+                for match in re.findall(r"'([^']+)'", query_output):
+                    if match and match not in missing_classes:
+                        missing_classes.append(match)
+
+    if not concrete_workflow_seen or last_missing_turn < 0 or registry_after_missing:
+        return ""
+
+    class_text = ", ".join(missing_classes[:8]) if missing_classes else "the exact missing workflow classes"
+    return (
+        "Premature missing-custom-node clarification rejected: workflow/example evidence has named "
+        f"missing exact class(es) ({class_text}), but no registry/schema research turn has verified "
+        "the owning custom-node pack after that local schema miss. Next turn must run "
+        "`research(\"<exact missing class names or concrete pack/family>\", sources=[\"registry\"])` "
+        "using the workflow-sourced class names, then either apply with grounded schemas/provisional "
+        "custom-node evidence or clarify with the registry-backed missing pack."
+    )
+
+
+def _premature_workflow_schema_clarify_feedback(
+    state: Any,
+    clarify_message: str,
+) -> str:
+    """Reject stops that ignore concrete workflow-derived constructor schemas."""
+    message_text = str(clarify_message or "").casefold()
+    if not any(term in message_text for term in ("not found", "lacks", "missing", "cannot", "without knowing")):
+        return ""
+
+    schema_classes: list[str] = []
+    last_schema_turn = -1
+    landed_after_schema = False
+    for turn in getattr(state, "batch_turns", ()) or ():
+        if not isinstance(turn, Mapping):
+            continue
+        raw_turn_number = turn.get("turn_number")
+        turn_number = raw_turn_number if isinstance(raw_turn_number, int) else -1
+        landed_count = turn.get("landed_op_count")
+        if isinstance(landed_count, int) and landed_count > 0 and turn_number > last_schema_turn >= 0:
+            landed_after_schema = True
+        statements = turn.get("statements")
+        if not isinstance(statements, list):
+            continue
+        for statement in statements:
+            if not isinstance(statement, Mapping):
+                continue
+            detail = statement.get("detail")
+            if not isinstance(detail, Mapping):
+                continue
+            query_output = str(detail.get("query_output") or "")
+            matches = [
+                *re.findall(r"workflow_schema\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", query_output),
+                *re.findall(r"def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", query_output),
+            ]
+            if not matches:
+                continue
+            last_schema_turn = max(last_schema_turn, turn_number)
+            landed_after_schema = False
+            for class_type in matches:
+                if class_type not in schema_classes:
+                    schema_classes.append(class_type)
+
+    if not schema_classes or landed_after_schema:
+        return ""
+    class_text = ", ".join(schema_classes[:8])
+    return (
+        "Premature clarification rejected: workflow-derived constructor schemas are already available "
+        f"for {class_text}. The current graph lacking those nodes is not a reason to stop; it is the "
+        "reason to add the workflow-sourced provisional nodes. Next turn must land the smallest "
+        "evidence-backed workflow-pattern edit using those constructors, or run a strictly necessary "
+        "additional schema/registry lookup for a named class that is still actually missing."
+    )
 
 
 def _format_batch_report(
@@ -1103,7 +1488,12 @@ def _format_batch_report(
         query_only_note = (
             "No edits were made this turn. Search/query output is discovery only. "
             "If it returned a usable signature or precedent, construct and wire the edit now; "
-            "do not search again unless the last query failed to identify a usable path."
+            "do not search again unless the last query failed to identify a usable path. "
+            "If a workflow-derived class has a usable signature, use that exact class as the "
+            "workflow pattern even when its name is generic; do not invent or search for a "
+            "branded variant that did not appear in the workflow evidence. "
+            "After an exact local schema miss for a workflow-sourced class, use registry/schema "
+            "lookup for that exact class instead of repeating workflow search."
         )
     lines = [summary, *statement_lines, query_only_note, *diagnostic_lines]
     return "\n".join(line for line in lines if line)
@@ -2679,13 +3069,22 @@ def _build_precedent_adaptation_prompt(
     required nodes/rewires, socket evidence, avoid patterns, and semantic
     checks from the structured adaptation plan, but never the full
     candidate_graph to avoid biasing the model toward a single solution.
+
+    All precedent material is neutral context — it is NOT a winner,
+    recommendation, or required implementation.  The adaptation agent
+    evaluates all available slices independently.
     """
     if not adaptation_plan:
         return ""
 
     parts: list[str] = []
 
-    # ── selected slice ──
+    # ── context note (neutrality disclaimer) ──
+    context_note = adaptation_plan.get("context_note")
+    if isinstance(context_note, str) and context_note.strip():
+        parts.append(f"IMPORTANT: {context_note.strip()}")
+
+    # ── selected slice (presentation context only — not a winner) ──
     selected_slice = adaptation_plan.get("selected_slice")
     if isinstance(selected_slice, dict):
         source_class = selected_slice.get("source_class_type", "")
@@ -2704,7 +3103,30 @@ def _build_precedent_adaptation_prompt(
             slice_desc += f", exit_anchor={exit_}"
         if py_path:
             slice_desc += f", path={py_path}"
-        parts.append(f"Selected slice: {slice_desc}")
+        parts.append(f"Reference slice (presentation context only — NOT a winner): {slice_desc}")
+
+    # ── all available slices (neutral summary) ──
+    all_slices = adaptation_plan.get("all_slices")
+    if isinstance(all_slices, list) and all_slices:
+        slice_summaries = []
+        for i, s in enumerate(all_slices[:12]):
+            if isinstance(s, dict):
+                ct = s.get("source_class_type") or "unnamed"
+                nids = s.get("node_ids") or []
+                n = len(nids) if isinstance(nids, (list, tuple)) else 0
+                entry_a = s.get("entry_anchor")
+                exit_a = s.get("exit_anchor")
+                desc = f"{ct} ({n} nodes"
+                if entry_a:
+                    desc += f", entry={entry_a}"
+                if exit_a:
+                    desc += f", exit={exit_a}"
+                desc += ")"
+                slice_summaries.append(desc)
+        if slice_summaries:
+            if len(all_slices) > 12:
+                slice_summaries.append(f"(+{len(all_slices) - 12} more slices)")
+            parts.append("All available precedent slices (neutral context): " + "; ".join(slice_summaries))
 
     # ── anchor bindings ──
     anchor_bindings = adaptation_plan.get("anchor_bindings")
@@ -2924,6 +3346,114 @@ def _schema_provider_available(schema_provider: Any) -> bool:
     return callable(get_schema)
 
 
+def _schema_provider_has_class(schema_provider: Any, class_type: str) -> bool:
+    get_schema = getattr(schema_provider, "get_schema", None)
+    if not callable(get_schema):
+        return False
+    try:
+        return get_schema(class_type) is not None
+    except Exception:
+        return False
+
+
+def _graph_class_types_missing_from_schema(
+    graph: Mapping[str, Any] | None,
+    schema_provider: Any,
+) -> tuple[str, ...]:
+    if not isinstance(graph, Mapping):
+        return ()
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, list):
+        return ()
+    missing: list[str] = []
+    seen: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        raw = node.get("class_type") or node.get("type")
+        class_type = str(raw or "").strip()
+        if not class_type or class_type == "Unknown" or class_type in seen:
+            continue
+        seen.add(class_type)
+        if not _schema_provider_has_class(schema_provider, class_type):
+            missing.append(class_type)
+    return tuple(missing)
+
+
+def _candidate_dict(candidate: Any) -> dict[str, Any] | None:
+    if isinstance(candidate, Mapping):
+        return dict(candidate)
+    to_dict = getattr(candidate, "to_dict", None)
+    if callable(to_dict):
+        value = to_dict()
+        if isinstance(value, Mapping):
+            return dict(value)
+    return None
+
+
+def _resolver_candidate_supports_class(
+    candidate: Mapping[str, Any],
+    class_type: str,
+) -> bool:
+    expected = candidate.get("expected_classes")
+    if isinstance(expected, (list, tuple)) and class_type in {str(item) for item in expected}:
+        return True
+    schema_payload = candidate.get("provisional_schema")
+    if isinstance(schema_payload, Mapping):
+        raw_schema = schema_payload.get("schema")
+        if isinstance(raw_schema, Mapping):
+            nodes = raw_schema.get("nodes") or raw_schema.get("object_info") or raw_schema
+            return isinstance(nodes, Mapping) and class_type in nodes
+    return False
+
+
+def _hydrate_current_graph_unknown_node_schemas(state: AgentEditState) -> tuple[dict[str, Any], ...]:
+    missing_classes = _graph_class_types_missing_from_schema(state.graph, state.schema_provider)
+    if not missing_classes:
+        return ()
+
+    try:
+        from vibecomfy.registry.pack_resolver import resolve_missing_nodes
+        from vibecomfy.schema import CompositeSchemaProvider, ProvisionalRegistrySchemaProvider
+    except Exception as exc:  # noqa: BLE001 - registry hydration is best-effort
+        LOGGER.debug("registry schema hydration unavailable: %s", exc)
+        return ()
+
+    candidates: list[dict[str, Any]] = []
+    for class_type in missing_classes:
+        try:
+            resolution = resolve_missing_nodes(class_type, query_intent="class_name")
+        except Exception as exc:  # noqa: BLE001 - keep existing blocker on lookup failure
+            LOGGER.debug("registry schema hydration failed for %s: %s", class_type, exc)
+            continue
+        for raw_candidate in getattr(resolution, "candidates", ()) or ():
+            candidate = _candidate_dict(raw_candidate)
+            if candidate is None:
+                continue
+            if not _resolver_candidate_supports_class(candidate, class_type):
+                continue
+            candidates.append(candidate)
+
+    new_candidates = [
+        candidate
+        for candidate in candidates
+        if _candidate_stable_key(candidate) not in state.provisional_registry_candidate_hashes
+    ]
+    if not new_candidates:
+        return ()
+    provisional = ProvisionalRegistrySchemaProvider(new_candidates)
+    if not provisional.schemas():
+        return ()
+    state.provisional_registry_candidate_hashes = frozenset(
+        {
+            *state.provisional_registry_candidate_hashes,
+            *(_candidate_stable_key(candidate) for candidate in new_candidates),
+        }
+    )
+    state.schema_provider = CompositeSchemaProvider(provisional, state.schema_provider)
+    return tuple(new_candidates)
+
+
 def _revision_no_candidate_reason(evidence: RevisionEvidence) -> str | None:
     if evidence.safe_candidate_possible:
         return None
@@ -3079,6 +3609,7 @@ def _localized_additive_scoped_evidence(
         missing_graph=False if empty_graph_authoring else topology.missing_graph,
         dangling_links=topology.dangling_links,
         absent_endpoint_nodes=topology.absent_endpoint_nodes,
+        socket_type_mismatches=topology.socket_type_mismatches,
         schema_available=topology.schema_available,
         summary=(
             "pre-existing empty-graph authoring baseline ignored for new workflow"
@@ -3101,6 +3632,10 @@ def _localized_additive_scoped_evidence(
         missing_graph=candidate_topology.missing_graph,
         dangling_links=candidate_topology.dangling_links,
         absent_endpoint_nodes=candidate_topology.absent_endpoint_nodes,
+        socket_type_mismatches=_subtract_existing_blockers(
+            candidate_topology.socket_type_mismatches,
+            topology.socket_type_mismatches,
+        ),
         unknown_class_types=_subtract_existing_blockers(
             candidate_topology.unknown_class_types,
             topology.unknown_class_types,
@@ -3332,6 +3867,42 @@ def _stage_revision_evidence(
     start = time.monotonic()
     canonical_route = _canonical_agent_edit_route(state.route or route)
     if canonical_route != "revise":
+        # Adapt route: collect compact GraphFacts for workflow-dependent
+        # adapt execution without invoking full RevisionEvidence collateral.
+        if canonical_route == "adapt":
+            schema_available = _schema_provider_available(state.schema_provider)
+            ready_metadata = _extract_ready_metadata(state.request_payload, state.graph)
+            readiness_diagnostics = _extract_readiness_diagnostics(state.request_payload, state.graph)
+            no_gpu_runtime_request = (
+                _runtime_execution_requested(state.task, state.request_payload)
+                and _request_no_gpu_detected(state.request_payload)
+            )
+            explicit_readiness_blockers = (
+                ("Runtime execution was requested, but no GPU is available.",)
+                if no_gpu_runtime_request
+                else ()
+            )
+            facts = collect_graph_facts(
+                state.graph,
+                schema_available=schema_available,
+                schema_provider=state.schema_provider,
+                ready_metadata=ready_metadata,
+                diagnostics=readiness_diagnostics,
+                no_gpu_detected=no_gpu_runtime_request,
+                readiness_blockers=explicit_readiness_blockers,
+            )
+            state.graph_facts = facts.to_dict()
+            return StageResult(
+                stage="revision_evidence",
+                ok=True,
+                blocking=False,
+                duration_ms=_duration_ms(start),
+                value={
+                    "mode": "graph_facts_collected",
+                    "route": canonical_route,
+                    "has_blockers": facts.has_blockers,
+                },
+            )
         return StageResult(
             stage="revision_evidence",
             ok=True,
@@ -3340,6 +3911,7 @@ def _stage_revision_evidence(
             value={"mode": "skipped", "route": canonical_route},
         )
 
+    hydrated_candidates = _hydrate_current_graph_unknown_node_schemas(state)
     schema_available = _schema_provider_available(state.schema_provider)
     topology = collect_topology_evidence(
         state.graph,
@@ -3371,11 +3943,12 @@ def _stage_revision_evidence(
         readiness=readiness,
         no_candidate_reason=None,
         candidate_eligible=False,
+    )
+    draft = dataclasses.replace(
+        draft,
         summary=(
             "Safe revise candidate can be attempted."
-            if not topology.has_blockers
-            and topology.schema_available is not False
-            and not readiness.has_blockers
+            if draft.safe_candidate_possible
             else "Safe revise candidate blocked before model repair."
         ),
     )
@@ -3398,6 +3971,7 @@ def _stage_revision_evidence(
             "mode": "collected",
             "safe_candidate_possible": state.revision_evidence.safe_candidate_possible,
             "no_candidate_reason": state.revision_evidence.no_candidate_reason,
+            "hydrated_registry_candidate_count": len(hydrated_candidates),
         },
     )
 
@@ -3586,19 +4160,6 @@ def _finalize_revision_evidence_with_candidate(
     )
 
 
-def _prefetch_research_summary(task: str) -> str:
-    try:
-        from vibecomfy.executor.research import (
-            _default_hivemind_client,
-            research as run_research_phase,
-        )
-
-        result = run_research_phase(task, hivemind_client=_default_hivemind_client)
-        return result.summary
-    except Exception as exc:
-        return f"Research lookup failed: {type(exc).__name__}: {exc}"
-
-
 def _stage_agent_batch_repl(
     state: AgentEditState,
     _context: TurnContext,
@@ -3635,17 +4196,15 @@ def _stage_agent_batch_repl(
         else None
     )
     intent = classification.get("intent") if isinstance(classification, dict) else ""
-    prefetch_research = intent == "research" or (
-        not intent and _is_research_intent(effective_task)
-    )
     # explain_graph intent now maps to the executor inspect route, which
     # never reaches the agent-edit pipeline.  Keep the text-pattern fallback
     # for revise / adapt operations where the task reads like a graph
     # explanation (provides helpful context in the batch-REPL prompt).
     prefetch_explain = not intent and _is_graph_explain_intent(effective_task)
     prefetch_research_summary = state.executor_research_summary or (
-        _prefetch_research_summary(effective_task) if prefetch_research else ""
+        _prefetch_research_summary(effective_task) if prefetch_explain else ""
     )
+    research_brief_prompt = _format_research_brief_for_prompt(state.executor_research_brief)
     if prefetch_research_summary and state.executor_research_warnings:
         warning_lines = [
             f"- {warning}" for warning in state.executor_research_warnings[:6]
@@ -3670,11 +4229,52 @@ def _stage_agent_batch_repl(
     )
     # Build compact adaptation plan prompt for adapt route.
     precedent_adaptation_prompt = ""
-    if _canonical_agent_edit_route(state.route or route) == "adapt" and state.executor_adaptation_plan:
-        precedent_adaptation_prompt = _build_precedent_adaptation_prompt(
-            state.executor_adaptation_plan,
-            state.executor_precedent_slices,
-        )
+    adapt_scoped_research_context = ""
+    canonical_route = _canonical_agent_edit_route(state.route or route)
+    research_only_route = canonical_route == "research"
+    if canonical_route == "adapt":
+        if state.executor_adaptation_plan:
+            precedent_adaptation_prompt = _build_precedent_adaptation_prompt(
+                state.executor_adaptation_plan,
+                state.executor_precedent_slices,
+            )
+        # SD3: scoped adapt prefetch from execution_protocol_notes and
+        # research_context_packet — discardable, evidence-only context.
+        if state.execution_protocol_notes or state.research_context_packet or state.graph_facts:
+            parts: list[str] = []
+            discard_note: str | None = None
+            if state.execution_protocol_notes:
+                notes = dict(state.execution_protocol_notes)
+                discard_note = notes.pop("_discardability", None)
+                notes_str = json.dumps(notes, indent=2, sort_keys=True)
+                parts.append(
+                    "## Scoped Research Context (execution_protocol_notes)\n"
+                    "This is contextual evidence, NOT authoritative guidance.\n"
+                    f"{notes_str}"
+                )
+            if state.research_context_packet:
+                packet_str = json.dumps(
+                    state.research_context_packet, indent=2, sort_keys=True
+                )
+                parts.append(
+                    "## Research Context Packet (discardable)\n"
+                    "Precedent evidence from research phase. "
+                    "Discard if empty, irrelevant, or contradictory.\n"
+                    f"{packet_str}"
+                )
+            # SD2: compact graph facts from topology/readiness collectors.
+            if state.graph_facts:
+                facts_str = json.dumps(state.graph_facts, indent=2, sort_keys=True)
+                parts.append(
+                    "## Graph Facts (workflow topology evidence)\n"
+                    "Deterministic topology/readiness evidence about the current graph. "
+                    "Use this to understand the workflow structure, terminal outputs, "
+                    "and any known blockers. NOT a revision verdict.\n"
+                    f"{facts_str}"
+                )
+            if discard_note:
+                parts.append(f"**Discardability**: {discard_note}")
+            adapt_scoped_research_context = "\n\n".join(parts)
 
     max_batches = max(1, int(state.batch_max_turns or 1))
     max_consecutive_errors = max(1, int(state.batch_max_consecutive_errors or 1))
@@ -3705,6 +4305,7 @@ def _stage_agent_batch_repl(
     total_landed = 0
     done_noop_nudges = 0
     done_error_nudges = 0
+    done_candidate_rejection_nudges = 0
     failed_edit_turns = 0
     last_failed_edit_turn = -1
     last_successful_edit_turn_after_failure = -1
@@ -3715,6 +4316,12 @@ def _stage_agent_batch_repl(
         budget_remaining = max_batches - turn_number
         include_full_render = turn_number == 0 or last_landed_count == 0
         node_variable_index = _format_node_variable_index(session)
+        research_memory = _batch_research_memory_summary(state)
+        turn_research_summary = prefetch_research_summary if turn_number == 0 else ""
+        if research_memory:
+            turn_research_summary = (
+                f"{turn_research_summary}\n\nPrior research/query memory:\n{research_memory}"
+            ).strip()
         messages = build_batch_messages(
             task=effective_task,
             turn_number=turn_number,
@@ -3730,9 +4337,15 @@ def _stage_agent_batch_repl(
             budget_remaining=budget_remaining,
             max_batches=max_batches,
             conversation_messages=conversation_messages if turn_number == 0 else None,
-            research_summary=prefetch_research_summary if turn_number == 0 else "",
+            research_only=research_only_route,
+            research_brief=research_brief_prompt if turn_number == 0 else "",
+            research_summary=turn_research_summary,
             graph_report=prefetch_graph_report if turn_number == 0 else "",
-            precedent_adaptation_plan=precedent_adaptation_prompt if turn_number == 0 else "",
+            precedent_adaptation_plan=(
+                (precedent_adaptation_prompt + "\n\n" + adapt_scoped_research_context).strip()
+                if turn_number == 0
+                else ""
+            ),
             revision_evidence_json=_revision_evidence_prompt_json(state)
             if turn_number == 0
             else "",
@@ -3760,6 +4373,41 @@ def _stage_agent_batch_repl(
                     route=route,
                     model=model,
                 )
+        except (MalformedModelJSON, MissingRequiredField) as exc:
+            feedback = (
+                f"Agent response format error: {exc} "
+                "Respond with one user-facing sentence followed by exactly one ```batch fenced block."
+            )
+            error_record = {
+                "turn_number": turn_number,
+                "task": state.task,
+                "message": "",
+                "batch": "",
+                "error": str(exc),
+                "error_type": type(exc).__name__,
+                "request_messages": messages,
+            }
+            response_log.append(
+                {
+                    "turn_number": turn_number,
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                        "retrying": consecutive_errors + 1 < max_consecutive_errors,
+                    },
+                }
+            )
+            write_json_artifact(state.model_response_path, {"turns": response_log})
+            state.messages_path.open("a", encoding="utf-8").write(
+                json.dumps(error_record, sort_keys=True) + "\n"
+            )
+            if consecutive_errors + 1 >= max_consecutive_errors:
+                raise
+            last_report = feedback
+            previous_model_message = ""
+            last_landed_count = 0
+            consecutive_errors += 1
+            continue
         except Exception as exc:
             error_record = {
                 "turn_number": turn_number,
@@ -3791,6 +4439,143 @@ def _stage_agent_batch_repl(
         clarify_split = split_terminal_clarify(turn_result.batch)
         clarify_message = clarify_split.message
         editable_batch = clarify_split.batch if clarify_message is not None else turn_result.batch
+        response_log.append(
+            {
+                "turn_number": turn_number,
+                "response": turn_result.to_dict(),
+                "status": "received",
+            }
+        )
+        write_json_artifact(state.model_response_path, {"turns": response_log})
+        if clarify_message is not None and not editable_batch.strip():
+            clarify_feedback = (
+                _premature_workflow_schema_clarify_feedback(
+                    state,
+                    clarify_message,
+                )
+                or _premature_missing_custom_node_clarify_feedback(
+                    state,
+                    clarify_message,
+                )
+            )
+            if clarify_feedback:
+                consecutive_errors += 1
+                turn_record = {
+                    "turn_number": turn_number,
+                    "batch": turn_result.batch,
+                    "message": turn_result.message,
+                    "route": turn_result.route,
+                    "model": turn_result.model,
+                    "provider_metadata": _json_safe(dict(turn_result.audit_metadata or {})),
+                    "batch_ok": False,
+                    "landed_op_count": 0,
+                    "raw_landed_op_count": 0,
+                    "statement_count": 1,
+                    "diagnostics": [
+                        {
+                            "code": "premature_missing_custom_node_clarify",
+                            "message": clarify_feedback,
+                            "severity": "error",
+                        }
+                    ],
+                    "report": clarify_feedback,
+                    "field_changes": [],
+                }
+                state.batch_turns.append(turn_record)
+                state.batch_feedback = clarify_feedback
+                state.batch_turn_count = turn_number + 1
+                state.batch_budget_state = {
+                    "max_batches": max_batches,
+                    "max_consecutive_errors": max_consecutive_errors,
+                    "remaining_batches": max_batches - state.batch_turn_count,
+                    "remaining_consecutive_errors": max(0, max_consecutive_errors - consecutive_errors),
+                    "consecutive_errors": consecutive_errors,
+                }
+                response_log[-1] = {
+                    "turn_number": turn_number,
+                    "response": turn_result.to_dict(),
+                    "rejected_clarification": turn_record,
+                }
+                write_json_artifact(state.model_response_path, {"turns": response_log})
+                state.messages_path.open("a", encoding="utf-8").write(
+                    json.dumps(
+                        {
+                            "turn_number": turn_number,
+                            "task": state.task,
+                            "message": turn_result.message,
+                            "batch": turn_result.batch,
+                            "report": clarify_feedback,
+                        },
+                        sort_keys=True,
+                    )
+                    + "\n"
+                )
+                terminal_rejected_clarify = (
+                    _batch_candidate_graph_changed(state)
+                    or (
+                        last_failed_edit_turn >= 0
+                        and last_successful_edit_turn_after_failure < last_failed_edit_turn
+                    )
+                    or consecutive_errors >= max_consecutive_errors
+                    or (turn_number + 1) >= max_batches
+                )
+                if terminal_rejected_clarify:
+                    failure_kind = _batch_budget_failure_kind(state.batch_turns)
+                    state.batch_exit_mode = _BATCH_EXIT_BUDGET
+                    state.batch_final_summary = (
+                        f"Stopped after {state.batch_turn_count} turn(s); "
+                        f"{state.batch_budget_state.get('remaining_batches', 0)} turn(s) remaining."
+                    )
+                    _emit_agent_edit_turn_event(
+                        state,
+                        _context,
+                        turn_record,
+                        client_id=client_id,
+                        status="budget_exhausted",
+                    )
+                    return StageResult(
+                        stage="agent_batch",
+                        ok=False,
+                        blocking=True,
+                        duration_ms=_duration_ms(start),
+                        artifacts=(
+                            _artifact(state.before_py_path),
+                            _artifact(state.after_py_path),
+                            _artifact(state.model_request_path),
+                            _artifact(state.model_response_path),
+                            _artifact(state.candidate_ui_path),
+                            _artifact(state.messages_path),
+                        ),
+                        issues=(
+                            {
+                                "code": "batch_budget_exhausted",
+                                "severity": "error",
+                                "failure_kind": failure_kind.value,
+                                "message": state.batch_final_summary,
+                                "detail": {
+                                    "turn_count": state.batch_turn_count,
+                                    "budget_state": dict(state.batch_budget_state),
+                                    "budget_classification": failure_kind.value,
+                                },
+                            },
+                        ),
+                        value={
+                            "failure_kind": failure_kind.value,
+                            "turn_count": state.batch_turn_count,
+                            "budget_state": dict(state.batch_budget_state),
+                            "budget_classification": failure_kind.value,
+                        },
+                    )
+                last_report = clarify_feedback
+                last_landed_count = 0
+                _emit_agent_edit_turn_event(
+                    state,
+                    _context,
+                    turn_record,
+                    client_id=client_id,
+                    status="in_progress",
+                )
+                continue
         if clarify_message is not None and not editable_batch.strip():
             state.batch_turn_count = turn_number + 1
             state.batch_exit_mode = (
@@ -3830,13 +4615,11 @@ def _stage_agent_batch_repl(
                 "field_changes": [],
             }
             state.batch_turns.append(turn_record)
-            response_log.append(
-                {
-                    "turn_number": turn_number,
-                    "response": turn_result.to_dict(),
-                    "clarification": turn_record,
-                }
-            )
+            response_log[-1] = {
+                "turn_number": turn_number,
+                "response": turn_result.to_dict(),
+                "clarification": turn_record,
+            }
             write_json_artifact(state.model_response_path, {"turns": response_log})
             state.messages_path.open("a", encoding="utf-8").write(
                 json.dumps(
@@ -3896,6 +4679,14 @@ def _stage_agent_batch_repl(
             )
 
         batch_result = session.apply_batch(editable_batch)
+        _enrich_schema_provider_from_resolver_candidates(
+            state,
+            session,
+            [
+                *_workflow_schema_candidates_from_batch_result(batch_result),
+                *_resolver_candidates_from_batch_result(batch_result),
+            ],
+        )
         next_render = session.render()
         state.python_after = next_render
         state.after_py_path.write_text(next_render, encoding="utf-8")
@@ -4061,13 +4852,11 @@ def _stage_agent_batch_repl(
             "consecutive_errors": consecutive_errors,
         }
 
-        response_log.append(
-            {
-                "turn_number": turn_number,
-                "response": turn_result.to_dict(),
-                "batch_result": turn_record,
-            }
-        )
+        response_log[-1] = {
+            "turn_number": turn_number,
+            "response": turn_result.to_dict(),
+            "batch_result": turn_record,
+        }
         write_json_artifact(state.model_response_path, {"turns": response_log})
         state.messages_path.open("a", encoding="utf-8").write(
             json.dumps(
@@ -4173,6 +4962,7 @@ def _stage_agent_batch_repl(
         if (
             done_requested
             and consecutive_errors < max_consecutive_errors
+            and not research_only_route
         ):
             if total_landed == 0 and (turn_has_errors or failed_edit_turns > 0):
                 done_noop_nudges += 1
@@ -4287,6 +5077,30 @@ def _stage_agent_batch_repl(
                 route=state.route,
                 conversation_messages=conversation_messages,
             )
+            scoped = (
+                state.revision_evidence.scoped_diff
+                if state.revision_evidence is not None
+                else None
+            )
+            retryable_revise_blockers = (
+                set(getattr(scoped, "eligibility_blockers", ()))
+                - {"target_mismatch", "target_scope_violation"}
+            )
+            if (
+                _canonical_agent_edit_route(state.route) == "revise"
+                and state.revision_evidence is not None
+                and state.revision_evidence.candidate_eligible is not True
+                and retryable_revise_blockers
+                and (turn_number + 1) < max_batches
+                and done_candidate_rejection_nudges < 2
+            ):
+                done_candidate_rejection_nudges += 1
+                last_report = (
+                    last_report
+                    + "\n\nNOTE: done() was NOT accepted — "
+                    + _revision_candidate_retry_hint(state)
+                )
+                continue
             state.artifacts = {
                 "request": str(state.request_path),
                 "original_ui": str(state.original_ui_path),
@@ -4328,6 +5142,50 @@ def _stage_agent_batch_repl(
                     "ui_fidelity_ok": True,
                     "ui_load_safe_ok": True,
                     "state_match_ok": True,
+                },
+            )
+        if (
+            total_landed == 0
+            and _read_only_discovery_turn_count(state) >= 6
+            and not _batch_candidate_graph_changed(state)
+        ):
+            state.batch_exit_mode = _BATCH_EXIT_PURE_CLARIFY
+            state.batch_final_summary = (
+                f"Stopped after {state.batch_turn_count} discovery-only batch turn(s)."
+            )
+            state.user_message = _discovery_stop_message(state)
+            state.report = {
+                "clarification_required": True,
+                "graph_unchanged": True,
+                "queue_blockers": [],
+                "discovery_stop": {
+                    "turn_count": state.batch_turn_count,
+                    "reason": "repeated_read_only_discovery",
+                },
+            }
+            _emit_agent_edit_turn_event(
+                state,
+                _context,
+                turn_record,
+                client_id=client_id,
+                status="clarify",
+            )
+            return StageResult(
+                stage="agent_batch",
+                ok=True,
+                blocking=False,
+                duration_ms=_duration_ms(start),
+                artifacts=(
+                    _artifact(state.after_py_path),
+                    _artifact(state.model_request_path),
+                    _artifact(state.model_response_path),
+                    _artifact(state.candidate_ui_path),
+                    _artifact(state.messages_path),
+                ),
+                value={
+                    "mode": "discovery_stop",
+                    "graph_unchanged": True,
+                    "turn_count": state.batch_turn_count,
                 },
             )
         _emit_agent_edit_turn_event(
@@ -5025,6 +5883,104 @@ def _sanitize_pure_clarify_response(response: dict[str, Any]) -> dict[str, Any]:
     return _strip_clarify_forbidden_response_fields(response)
 
 
+def _resolver_candidates_from_batch_turns(state: AgentEditState) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for turn in state.batch_turns:
+        if not isinstance(turn, Mapping):
+            continue
+        statements = turn.get("statements")
+        if not isinstance(statements, list):
+            continue
+        for statement in statements:
+            if not isinstance(statement, Mapping):
+                continue
+            detail = statement.get("detail")
+            if not isinstance(detail, Mapping):
+                continue
+            raw_candidates = detail.get("resolver_candidates")
+            if not isinstance(raw_candidates, list):
+                continue
+            for raw_candidate in raw_candidates:
+                if not isinstance(raw_candidate, Mapping):
+                    continue
+                candidate = dict(raw_candidate)
+                key = (
+                    str(candidate.get("stable_install_hash") or "")
+                    or json.dumps(candidate, sort_keys=True, default=str)
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(candidate)
+    return candidates
+
+
+def _resolver_candidates_from_batch_result(batch_result: Any) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for statement in getattr(batch_result, "statements", ()) or ():
+        detail = getattr(statement, "detail", None)
+        if not isinstance(detail, Mapping):
+            continue
+        raw_candidates = detail.get("resolver_candidates")
+        if not isinstance(raw_candidates, list):
+            continue
+        for raw_candidate in raw_candidates:
+            if isinstance(raw_candidate, Mapping):
+                candidates.append(dict(raw_candidate))
+    return candidates
+
+
+def _workflow_schema_candidates_from_batch_result(batch_result: Any) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for statement in getattr(batch_result, "statements", ()) or ():
+        detail = getattr(statement, "detail", None)
+        if not isinstance(detail, Mapping):
+            continue
+        raw_candidates = detail.get("workflow_schema_candidates")
+        if not isinstance(raw_candidates, list):
+            continue
+        for raw_candidate in raw_candidates:
+            if isinstance(raw_candidate, Mapping):
+                candidates.append(dict(raw_candidate))
+    return candidates
+
+
+def _candidate_stable_key(candidate: Mapping[str, Any]) -> str:
+    return (
+        str(candidate.get("stable_install_hash") or "")
+        or json.dumps(dict(candidate), sort_keys=True, default=str)
+    )
+
+
+def _enrich_schema_provider_from_resolver_candidates(
+    state: AgentEditState,
+    session: Any,
+    candidates: list[dict[str, Any]],
+) -> None:
+    new_candidates = [
+        candidate
+        for candidate in candidates
+        if _candidate_stable_key(candidate) not in state.provisional_registry_candidate_hashes
+    ]
+    if not new_candidates:
+        return
+    from vibecomfy.schema import CompositeSchemaProvider, ProvisionalRegistrySchemaProvider
+
+    provisional = ProvisionalRegistrySchemaProvider(new_candidates)
+    if not provisional.schemas():
+        return
+    state.provisional_registry_candidate_hashes = frozenset(
+        {
+            *state.provisional_registry_candidate_hashes,
+            *(_candidate_stable_key(candidate) for candidate in new_candidates),
+        }
+    )
+    enriched = CompositeSchemaProvider(provisional, session.schema_provider)
+    session.schema_provider = enriched
+    state.schema_provider = enriched
+
+
 def _legacy_failure_response(
     state: AgentEditState,
     context: TurnContext,
@@ -5126,6 +6082,8 @@ def _build_batch_repl_response(
 ) -> dict[str, Any]:
     turn_identity = TurnIdentity.from_context(context)
     stage_snapshots = _stage_snapshot_payloads(context)
+    canonical_route = _canonical_agent_edit_route(state.route)
+    route_blocks_apply = _route_blocks_apply(state.route)
     has_candidate = (
         state.batch_exit_mode in {_BATCH_EXIT_EDIT_CLARIFY, _BATCH_EXIT_DONE}
         and _batch_candidate_graph_changed(state)
@@ -5139,6 +6097,8 @@ def _build_batch_repl_response(
         )
     ):
         has_candidate = False
+    if route_blocks_apply:
+        has_candidate = False
     compatibility_fields = _build_compatibility_response_fields(state)
     response_apply_eligibility = derive_apply_eligibility(
         context,
@@ -5146,7 +6106,7 @@ def _build_batch_repl_response(
         candidate_state="candidate",
     )
     # inspect and clarify routes cannot be Apply-eligible.
-    if _route_blocks_apply(state.route):
+    if route_blocks_apply:
         response_apply_eligibility = ApplyEligibility(
             applyable=False,
             reason="no_candidate",
@@ -5168,7 +6128,16 @@ def _build_batch_repl_response(
         has_candidate=has_candidate,
         turn_identity=turn_identity,
     )
-    if state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY:
+    resolver_candidates = _resolver_candidates_from_batch_turns(state)
+    missing_custom_nodes_terminal = (
+        state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY
+        and bool(resolver_candidates)
+    )
+    if missing_custom_nodes_terminal:
+        internal_outcome = TurnOutcome.noop(reason=state.user_message or None)
+    elif route_blocks_apply and canonical_route != "clarify":
+        internal_outcome = TurnOutcome.noop(reason=state.user_message or None)
+    elif state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY:
         internal_outcome = TurnOutcome.clarify(question=state.user_message or None)
     elif state.batch_exit_mode == _BATCH_EXIT_EDIT_CLARIFY:
         question = state.user_message or None
@@ -5184,10 +6153,17 @@ def _build_batch_repl_response(
         internal_outcome = TurnOutcome.noop(
             reason=state.batch_done_summary or state.user_message or None
         )
-    public_outcome = public_outcome_from_turn_outcome(
-        internal_outcome,
-        response={"candidate": candidate_payload},
-    )
+    if missing_custom_nodes_terminal:
+        public_outcome = {
+            "kind": "requires_custom_nodes",
+            "candidates": resolver_candidates,
+            "warnings": [],
+        }
+    else:
+        public_outcome = public_outcome_from_turn_outcome(
+            internal_outcome,
+            response={"candidate": candidate_payload},
+        )
     if internal_outcome.kind == "edit":
         message = ensure_sentence_message(
             state.user_message,
@@ -5222,9 +6198,17 @@ def _build_batch_repl_response(
     response["change_details"] = change_details
     response.update(compatibility_fields)
     response.update(_session_artifact_response_fields(state))
-    if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY}:
+    if canonical_route:
+        response["route"] = canonical_route
+    if canonical_route == "research":
+        response["graph_unchanged"] = True
+        response["no_candidate_reason"] = "route_not_applyable"
+    if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY} and not missing_custom_nodes_terminal:
         response["clarification_required"] = True
         response["graph_unchanged"] = state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY
+    elif missing_custom_nodes_terminal:
+        response["graph_unchanged"] = True
+        response["no_candidate_reason"] = "route_not_applyable"
     elif state.batch_exit_mode == _BATCH_EXIT_NOOP:
         response["graph_unchanged"] = True
         if state.batch_done_summary:
@@ -5241,15 +6225,16 @@ def _build_batch_repl_response(
     change_focus = _route_change_focus_label(state.route)
     if change_focus:
         response["change_focus"] = change_focus
-    return _sanitize_pure_clarify_response(
-        build_legacy_agent_edit_v1(
-            {
-                **response,
-                "canvas_apply_allowed": context.canvas_apply_allowed if has_candidate else False,
-                "queue_allowed": context.queue_allowed if has_candidate else False,
-            }
-        )
+    built_response = build_legacy_agent_edit_v1(
+        {
+            **response,
+            "canvas_apply_allowed": context.canvas_apply_allowed if has_candidate else False,
+            "queue_allowed": context.queue_allowed if has_candidate else False,
+        }
     )
+    if missing_custom_nodes_terminal:
+        return _strip_clarify_forbidden_response_fields(built_response)
+    return _sanitize_pure_clarify_response(built_response)
 
 
 def _build_dev_success_response(
@@ -5790,6 +6775,16 @@ def handle_agent_edit(
     adaptation_plan = payload.get("adaptation_plan")
     if isinstance(adaptation_plan, dict):
         state.executor_adaptation_plan = adaptation_plan
+    research_brief = payload.get("research_brief")
+    if isinstance(research_brief, dict):
+        state.executor_research_brief = research_brief
+    # SD3: scoped adapt-prefetch fields.
+    protocol_notes = payload.get("execution_protocol_notes")
+    if isinstance(protocol_notes, dict):
+        state.execution_protocol_notes = protocol_notes
+    context_packet = payload.get("research_context_packet")
+    if isinstance(context_packet, dict):
+        state.research_context_packet = context_packet
     if isinstance(payload.get("max_batches"), int) and payload["max_batches"] > 0:
         state.batch_max_turns = int(payload["max_batches"])
     if (

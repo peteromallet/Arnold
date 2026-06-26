@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
+import re
 import time
 from typing import Any, Mapping
 
@@ -1088,6 +1089,12 @@ def _resolve_set_node_field(
     if widget_index is None and widget_stub_name == op.target.field_path:
         widget_index = _widget_index_from_input_stubs(node.get("inputs"), op.target.field_path)
         used_schema_less_widget_recovery = widget_index is not None
+    if widget_index is None and isinstance(widgets_values, list):
+        match = re.fullmatch(r"widget_(\d+)", op.target.field_path)
+        if match is not None:
+            positional_index = int(match.group(1))
+            if 0 <= positional_index < len(widgets_values):
+                widget_index = positional_index
 
     if input_name is None and widget_index is None and widget_key is None and schema_input is None:
         return None, [

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from vibecomfy.ingest.sources import sync_sources
@@ -16,7 +17,23 @@ class SearchBootstrapError(RuntimeError):
 
 
 def _missing_indexes() -> list[str]:
-    return [name for name in REQUIRED_INDEXES if not Path(name).exists()]
+    base = _index_base_dir()
+    return [name for name in REQUIRED_INDEXES if not _index_path(name, base=base).exists()]
+
+
+def _index_base_dir() -> Path:
+    for env_name in ("VIBECOMFY_SEARCH_INDEX_ROOT", "REPO_ROOT"):
+        raw = os.environ.get(env_name)
+        if raw:
+            return Path(raw).expanduser()
+    return Path.cwd()
+
+
+def _index_path(name: str, *, base: Path | None = None) -> Path:
+    path = Path(name)
+    if path.is_absolute() or path.exists():
+        return path
+    return (base or _index_base_dir()) / path
 
 
 def ensure_indexes(*, auto_sync: bool = False) -> None:

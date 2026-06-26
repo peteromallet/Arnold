@@ -11,15 +11,18 @@ with local-only results rather than blocking on network unavailability.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import logging
+import os
 import re
 from html import unescape
 from html.parser import HTMLParser
+from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 import urllib.error
 import urllib.request
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from vibecomfy.search.index import build_search_corpus
 from vibecomfy.search.scorer import search_entries, SearchResult
@@ -29,10 +32,17 @@ from vibecomfy.ingest.workflow_source import (
     load_workflow_source,
     normalize_workflow_source,
 )
+from vibecomfy.registry.pack_resolver import (
+    MissingNodeResolution,
+    PackResolverError,
+    resolve_missing_nodes,
+)
 
 from .contracts import (
     InspectionSummary,
     PrecedentAdaptationPlan,
+    PrecedentOption,
+    PrecedentPacket,
     ResearchResult,
     WorkflowSlice,
     warning_detail_from_exception,
@@ -47,6 +57,8 @@ _DEFAULT_HIVEMIND_KEY = "sb_publishable_O38oPBafrBoFrpi_rlWJvA_UJrulFsx"
 _DEFAULT_HIVEMIND_TIMEOUT = 5.0  # seconds
 _DEFAULT_WEB_SEARCH_URL = "https://duckduckgo.com/html/"
 _DEFAULT_GITHUB_SEARCH_URL = "https://api.github.com/search/repositories"
+_DEFAULT_BRAVE_SEARCH_URL = "https://search.brave.com/search"
+_DEFAULT_WEB_CACHE_ROOT = Path(os.environ.get("VIBECOMFY_WEB_SEARCH_CACHE", "~/.cache/vibecomfy/web_search")).expanduser()
 _DEFAULT_WEB_SEARCH_TIMEOUT = 5.0  # seconds
 _DEFAULT_EXTERNAL_LIMIT = 10
 WORKFLOW_RESEARCH_GUIDANCE = (
@@ -58,6 +70,7 @@ WORKFLOW_RESEARCH_GUIDANCE = (
 # A Hivemind client is any callable (query: str, timeout: float) → dict.
 HivemindClient = Callable[[str, float], dict[str, Any]]
 WebSearchClient = Callable[[str, float], dict[str, Any]]
+RegistryResolver = Callable[[str], MissingNodeResolution]
 
 _USE_DEFAULT = object()
 
@@ -119,6 +132,24 @@ _FAMILY_EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 _ANCHOR_ROLE_PRIORITY = ("lora", "model", "sampler", "latent", "conditioning", "exit")
+_REGISTRY_QUERY_STOPWORDS = {
+    "comfy",
+    "comfyui",
+    "frame",
+    "frames",
+    "generate",
+    "generating",
+    "node",
+    "nodes",
+    "pack",
+    "registry",
+    "sd",
+    "sdxl",
+    "video",
+    "workflow",
+    "workflows",
+    "xl",
+}
 
 # ── Hivemind error (non-fatal) ───────────────────────────────────────────────
 
@@ -132,7 +163,11 @@ class WebSearchError(Exception):
     """Non-fatal web-search error converted to a warning by ``research()``."""
 
 
-# ── Local corpus research (deterministic) ────────────────────────────────────
+class RegistrySearchError(Exception):
+    """Non-fatal Comfy Registry lookup error converted to a warning."""
+
+
+# ── Local corpus research ────────────────────────────────────────────────────
 
 
 def run_local_research(
@@ -199,7 +234,7 @@ def _build_summary(sources: tuple[dict[str, Any], ...]) -> str:
         names += f", and {n - 3} more"
     result_scope = (
         "research"
-        if any(str(source.get("source", "")).startswith(("hivemind", "web")) for source in sources)
+        if any(str(source.get("source", "")).startswith(("hivemind", "web", "comfy-registry", "git")) for source in sources)
         else "local"
     )
     workflow_sources = [
@@ -599,8 +634,141 @@ def _github_repository_search(query: str, timeout: float) -> list[dict[str, str]
     return results
 
 
+def _brave_search(query: str, timeout: float) -> list[dict[str, str]]:
+    """Best-effort Brave Search HTML fallback.
+
+    Brave's rendered page embeds result URLs in static HTML even when the
+    structure is not stable enough for a full SERP parser. We only use this
+    when other no-key search tiers found nothing, and keep the payload compact
+    so the agent treats it as external leads rather than authoritative schema.
+    """
+    url = f"{_DEFAULT_BRAVE_SEARCH_URL}?q={quote(query)}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "text/html",
+            "User-Agent": (
+                "Mozilla/5.0 (compatible; vibecomfy-research/1.0; "
+                "+https://github.com/peteromallet/vibecomfy)"
+            ),
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+    except TimeoutError as exc:
+        raise WebSearchError(f"brave search timed out after {timeout}s") from exc
+    except urllib.error.URLError as exc:
+        raise WebSearchError(f"brave search HTTP error: {exc}") from exc
+
+    anchors = _web_result_anchor_terms(query)
+    results: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for match in re.finditer(r"https?://[^\"<>\\\s]+", html):
+        candidate_url = unescape(match.group(0)).rstrip(".,);]")
+        parsed = urlparse(candidate_url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        if parsed.netloc.endswith("search.brave.com") or parsed.netloc.endswith("cdn.search.brave.com"):
+            continue
+        if parsed.netloc.endswith("redditstatic.com") or parsed.netloc.endswith("redd.it"):
+            continue
+        haystack = _normalize_web_result_text(candidate_url)
+        if anchors and not any(anchor in haystack for anchor in anchors):
+            continue
+        key = candidate_url.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        title = unquote(parsed.path.strip("/").split("/")[-1] or parsed.netloc).replace("-", " ").replace("_", " ")
+        results.append(
+            {
+                "title": title or parsed.netloc,
+                "url": candidate_url,
+                "snippet": f"External search result from {parsed.netloc}",
+            }
+        )
+        if len(results) >= 50:
+            break
+    results.sort(key=lambda item: (-_external_workflow_result_score(item), item["url"]))
+    return results[:_DEFAULT_EXTERNAL_LIMIT]
+
+
+def _external_workflow_result_score(item: Mapping[str, str]) -> int:
+    text = " ".join(str(item.get(key) or "") for key in ("title", "url", "snippet")).casefold()
+    score = 0
+    if "workflow" in text or "workflows" in text:
+        score += 50
+    if "github.com" in text and "/blob/" in text and any(suffix in text for suffix in (".json", ".workflow")):
+        score += 80
+    if any(domain in text for domain in ("openart.ai/workflows", "comfyworkflows.com", "runcomfy.com/comfyui-workflows")):
+        score += 40
+    if any(term in text for term in ("guide", "tutorial", "reddit.com/r/comfyui", "reddit.com/r/stablediffusion")):
+        score += 10
+    if any(term in text for term in ("huggingface.co", "hotshot.co/")):
+        score -= 10
+    return score
+
+
+def _web_result_anchor_terms(query: str) -> tuple[str, ...]:
+    web_anchor_stopwords = {
+        "comfy",
+        "comfyui",
+        "example",
+        "examples",
+        "json",
+        "node",
+        "nodes",
+        "page",
+        "repo",
+        "repository",
+        "type",
+        "types",
+        "wiring",
+        "workflow",
+        "workflows",
+        "xl",
+    }
+    terms = [
+        token.casefold().replace("-", "").replace("_", "")
+        for token in _query_tokens(query)
+        if token.casefold() not in _SEARCH_STOPWORDS
+        and token.casefold() not in web_anchor_stopwords
+        and not token.isdigit()
+    ]
+    if len(terms) >= 2:
+        terms.append("".join(terms[:2]))
+    return tuple(dict.fromkeys(term for term in terms if len(term) >= 3))
+
+
+def _normalize_web_result_text(value: str) -> str:
+    return unquote(value).casefold().replace("-", "").replace("_", "").replace(" ", "").replace("%20", "")
+
+
+def _filter_web_results_by_named_anchor(
+    query: str,
+    results: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], int]:
+    anchors = _web_result_anchor_terms(query)
+    if not anchors:
+        return results, 0
+    kept: list[dict[str, str]] = []
+    dropped = 0
+    for item in results:
+        haystack = _normalize_web_result_text(
+            " ".join(str(item.get(key) or "") for key in ("title", "url", "snippet"))
+        )
+        if any(anchor in haystack for anchor in anchors):
+            kept.append(item)
+        else:
+            dropped += 1
+    return kept, dropped
+
+
 def _default_web_search_client(query: str, timeout: float) -> dict[str, Any]:
     """Best-effort public web-search evidence using DuckDuckGo HTML + GitHub."""
+    cached = _read_web_search_cache(query)
     results: list[dict[str, str]] = []
     warnings: list[str] = []
     try:
@@ -611,9 +779,131 @@ def _default_web_search_client(query: str, timeout: float) -> dict[str, Any]:
         results.extend(_github_repository_search(query, timeout))
     except WebSearchError as exc:
         warnings.append(str(exc))
+    if not results:
+        try:
+            results.extend(_brave_search(query, timeout))
+        except WebSearchError as exc:
+            warnings.append(str(exc))
+    if results:
+        _write_web_search_cache(query, results[:_DEFAULT_EXTERNAL_LIMIT])
+        if cached:
+            seen_keys = {
+                str(item.get("url") or item.get("title") or "").casefold()
+                for item in results
+            }
+            for cached_item in cached:
+                key = str(cached_item.get("url") or cached_item.get("title") or "").casefold()
+                if key and key in seen_keys:
+                    continue
+                if key:
+                    seen_keys.add(key)
+                results.append(cached_item)
+            results.sort(key=lambda item: (-_external_workflow_result_score(item), str(item.get("url") or "")))
+    elif cached:
+        warnings.append("web search: using cached results after live search returned no results")
+        results.extend(cached)
+    if results:
+        filtered_results, dropped = _filter_web_results_by_named_anchor(query, results)
+        if dropped:
+            warnings.append(
+                f"web search: dropped {dropped} generic result(s) that did not mention the named target"
+            )
+        results = filtered_results
     if not results and warnings:
         raise WebSearchError("; ".join(warnings))
     return {"results": results[:_DEFAULT_EXTERNAL_LIMIT], "warnings": warnings}
+
+
+def _web_search_cache_path(query: str) -> Path:
+    digest = hashlib.sha256(query.strip().casefold().encode("utf-8")).hexdigest()
+    return _DEFAULT_WEB_CACHE_ROOT / f"{digest}.json"
+
+
+def _read_web_search_cache(query: str) -> list[dict[str, str]]:
+    path = _web_search_cache_path(query)
+    exact_results = _read_web_search_cache_path(path)
+    filtered_exact_results: list[dict[str, str]] = []
+    if exact_results:
+        filtered_exact_results, _dropped = _filter_web_results_by_named_anchor(query, exact_results)
+    anchors = tuple(_web_result_anchor_terms(query))
+    if not anchors:
+        return filtered_exact_results
+    try:
+        candidates = sorted(_DEFAULT_WEB_CACHE_ROOT.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    except Exception:
+        return filtered_exact_results
+    merged_results: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for result in filtered_exact_results:
+        url_key = str(result.get("url") or "").casefold()
+        title_key = str(result.get("title") or "").casefold()
+        key = url_key or title_key
+        if key:
+            seen_urls.add(key)
+        merged_results.append(result)
+    for candidate_path in candidates[:25]:
+        try:
+            payload = json.loads(candidate_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cached_query = str(payload.get("query") or "") if isinstance(payload, dict) else ""
+        cached_text = _normalize_web_result_text(cached_query)
+        results = _read_web_search_cache_path(candidate_path)
+        result_text = _normalize_web_result_text(json.dumps(results, sort_keys=True, default=str))
+        combined_text = cached_text + " " + result_text
+        if anchors and anchors[0] not in combined_text:
+            query_tokens = [
+                _normalize_web_result_text(token)
+                for token in _query_tokens(query)
+                if len(_normalize_web_result_text(token)) >= 6
+            ]
+            if not any(token in combined_text for token in query_tokens):
+                continue
+        if results:
+            filtered_results, _dropped = _filter_web_results_by_named_anchor(query, results)
+            if filtered_results:
+                for result in filtered_results:
+                    url_key = str(result.get("url") or "").casefold()
+                    title_key = str(result.get("title") or "").casefold()
+                    key = url_key or title_key
+                    if key and key in seen_urls:
+                        continue
+                    if key:
+                        seen_urls.add(key)
+                    merged_results.append(result)
+    merged_results.sort(key=lambda item: (-_external_workflow_result_score(item), str(item.get("url") or "")))
+    return merged_results[:_DEFAULT_EXTERNAL_LIMIT]
+
+
+def _read_web_search_cache_path(path: Path) -> list[dict[str, str]]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    items = payload.get("results") if isinstance(payload, dict) else None
+    if not isinstance(items, list):
+        return []
+    results: list[dict[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        url = str(item.get("url") or "").strip()
+        snippet = str(item.get("snippet") or "").strip()
+        if title or url:
+            results.append({"title": title, "url": url, "snippet": snippet})
+    return results[:_DEFAULT_EXTERNAL_LIMIT]
+
+
+def _write_web_search_cache(query: str, results: list[dict[str, str]]) -> None:
+    try:
+        _DEFAULT_WEB_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+        _web_search_cache_path(query).write_text(
+            json.dumps({"query": query, "results": results}, sort_keys=True, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        return
 
 
 def _normalize_web_source(item: dict[str, Any], *, index: int = 0) -> dict[str, Any]:
@@ -632,6 +922,227 @@ def _normalize_web_source(item: dict[str, Any], *, index: int = 0) -> dict[str, 
     }
 
 
+def _github_blob_raw_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    if parsed.netloc.casefold() != "github.com":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 5 or parts[2] != "blob":
+        return None
+    owner, repo, _, ref, *path_parts = parts
+    if not path_parts:
+        return None
+    path = "/".join(path_parts)
+    if not path.casefold().endswith((".json", ".workflow")):
+        return None
+    return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
+
+
+def _fetch_external_workflow_json_source(
+    item: dict[str, Any],
+    *,
+    index: int,
+    timeout: float,
+) -> tuple[dict[str, Any] | None, str | None]:
+    url = _first_text(item, "url", "href", "link")
+    raw_url = _github_blob_raw_url(url)
+    if raw_url is None:
+        return None, None
+    req = urllib.request.Request(
+        raw_url,
+        headers={
+            "Accept": "application/json,text/plain;q=0.9,*/*;q=0.1",
+            "User-Agent": (
+                "vibecomfy-research/1.0 "
+                "(https://github.com/peteromallet/vibecomfy)"
+            ),
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=max(1.0, min(timeout, 5.0))) as resp:
+            body = resp.read().decode("utf-8", errors="replace")
+        payload = json.loads(body)
+    except Exception as exc:  # noqa: BLE001 - enrichment is best-effort
+        return None, f"github workflow fetch failed for {url}: {type(exc).__name__}: {exc}"
+
+    summary = _summarize_workflow_json(payload)
+    if not summary["node_types"]:
+        return None, f"github workflow fetch produced no node types for {url}"
+    workflow_schema = _workflow_object_info_from_json(payload)
+
+    try:
+        _DEFAULT_WEB_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+        workflow_root = _DEFAULT_WEB_CACHE_ROOT / "workflows"
+        workflow_root.mkdir(parents=True, exist_ok=True)
+        digest = hashlib.sha256(raw_url.encode("utf-8")).hexdigest()
+        cached_path = workflow_root / f"{digest}.json"
+        cached_path.write_text(json.dumps(payload, sort_keys=True, indent=2), encoding="utf-8")
+    except Exception:
+        cached_path = None
+
+    title = _first_text(item, "title", "class_type", "name") or url
+    node_types = summary["node_types"]
+    key_values = summary["key_values"]
+    description = "Fetched GitHub workflow JSON. Node types: " + ", ".join(node_types[:16])
+    if len(node_types) > 16:
+        description += f", and {len(node_types) - 16} more"
+    if key_values:
+        description += ". Key values: " + "; ".join(key_values[:12])
+
+    return {
+        "class_type": title,
+        "score": max(1, 95 - index),
+        "reasons": ["external workflow JSON fetched from GitHub"],
+        "source": "external_workflow",
+        "source_type": "github_workflow_json",
+        "pack": _domain(url),
+        "description": description,
+        "summary": description,
+        "tasks": ["workflow", "video"],
+        "url": url,
+        "raw_url": raw_url,
+        "path": str(cached_path) if cached_path is not None else "",
+        "source_workflow_path": str(cached_path) if cached_path is not None else "",
+        "source_workflow_available": cached_path is not None,
+        "source_workflow_parseable": True,
+        "node_types": node_types,
+        "key_values": key_values,
+        "workflow_schema": workflow_schema,
+        "workflow_schema_classes": sorted(workflow_schema),
+    }, None
+
+
+def _summarize_workflow_json(payload: Any) -> dict[str, list[str]]:
+    node_types: list[str] = []
+    key_values: list[str] = []
+
+    def add_node_type(value: Any) -> None:
+        text = str(value or "").strip()
+        if text and text not in node_types:
+            node_types.append(text)
+
+    def add_key_value(label: str, value: Any) -> None:
+        if value is None or isinstance(value, (dict, list, tuple)):
+            return
+        text = str(value).strip()
+        if not text or len(text) > 80:
+            return
+        rendered = f"{label}={text}"
+        if rendered not in key_values:
+            key_values.append(rendered)
+
+    if isinstance(payload, dict):
+        nodes = payload.get("nodes")
+        if isinstance(nodes, list):
+            for node in nodes:
+                if not isinstance(node, dict):
+                    continue
+                add_node_type(node.get("type") or node.get("class_type"))
+                widgets = node.get("widgets_values")
+                if isinstance(widgets, list):
+                    for value in widgets[:6]:
+                        add_key_value(str(node.get("type") or "node"), value)
+        for node_id, node in payload.items():
+            if not isinstance(node, dict) or not str(node_id).isdigit():
+                continue
+            add_node_type(node.get("class_type") or node.get("type"))
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict):
+                for key, value in inputs.items():
+                    if key.casefold() in {"length", "frames", "frame_count", "batch_size", "fps"}:
+                        add_key_value(key, value)
+
+    return {"node_types": node_types, "key_values": key_values}
+
+
+def _workflow_object_info_from_json(payload: Any) -> dict[str, dict[str, Any]]:
+    """Derive object_info-like provisional schemas from a concrete workflow JSON.
+
+    Comfy workflow exports include enough UI socket data to preserve a missing
+    custom-node shape even when the local runtime cannot provide object_info.
+    Widget names are usually absent, so they are represented positionally as
+    widget_0, widget_1, ...; the original values are still reported separately
+    by ``_summarize_workflow_json``.
+    """
+    nodes: list[Mapping[str, Any]] = []
+    if isinstance(payload, Mapping):
+        raw_nodes = payload.get("nodes")
+        if isinstance(raw_nodes, list):
+            nodes.extend(node for node in raw_nodes if isinstance(node, Mapping))
+        else:
+            for key, node in payload.items():
+                if str(key).isdigit() and isinstance(node, Mapping):
+                    nodes.append(node)
+
+    schemas: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        class_type = str(node.get("type") or node.get("class_type") or "").strip()
+        if not class_type:
+            continue
+        existing = schemas.setdefault(
+            class_type,
+            {
+                "input": {"required": {}, "optional": {}},
+                "outputs": [],
+                "object_info_widget_order": [],
+                "category": "workflow_json_provisional",
+            },
+        )
+        required = existing["input"]["required"]
+        optional = existing["input"]["optional"]
+        raw_inputs = node.get("inputs")
+        if isinstance(raw_inputs, list):
+            for input_row in raw_inputs:
+                if not isinstance(input_row, Mapping):
+                    continue
+                name = str(input_row.get("name") or "").strip()
+                if not name:
+                    continue
+                input_type = str(input_row.get("type") or "*")
+                target_group = required if input_row.get("link") is not None else optional
+                target_group.setdefault(name, {"type": input_type})
+        raw_widgets = node.get("widgets_values")
+        if isinstance(raw_widgets, list):
+            widget_order = existing["object_info_widget_order"]
+            for index, value in enumerate(raw_widgets):
+                name = f"widget_{index}"
+                optional.setdefault(name, {"type": _workflow_widget_type(value), "default": value})
+                if name not in widget_order:
+                    widget_order.append(name)
+        raw_outputs = node.get("outputs")
+        if isinstance(raw_outputs, list):
+            outputs = existing["outputs"]
+            seen_outputs = {
+                (str(item.get("name") or ""), str(item.get("type") or ""))
+                for item in outputs
+                if isinstance(item, Mapping)
+            }
+            for output_row in raw_outputs:
+                if not isinstance(output_row, Mapping):
+                    continue
+                name = str(output_row.get("name") or "").strip()
+                output_type = str(output_row.get("type") or "*")
+                key = (name, output_type)
+                if key in seen_outputs:
+                    continue
+                seen_outputs.add(key)
+                outputs.append({"name": name or None, "type": output_type})
+    return schemas
+
+
+def _workflow_widget_type(value: Any) -> str:
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, int) and not isinstance(value, bool):
+        return "INT"
+    if isinstance(value, float):
+        return "FLOAT"
+    if isinstance(value, str):
+        return "STRING"
+    return "*"
+
+
 def _run_web_search(
     query: str,
     *,
@@ -646,11 +1157,191 @@ def _run_web_search(
     if not isinstance(source_warnings, (list, tuple)):
         source_warnings = ()
     warnings = tuple(str(w).strip() for w in source_warnings if str(w).strip())
-    return tuple(
-        _normalize_web_source(item, index=i)
-        for i, item in enumerate(items)
-        if isinstance(item, dict)
-    ), warnings
+    sources: list[dict[str, Any]] = []
+    mutable_warnings = list(warnings)
+    seen_urls: set[str] = set()
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        enriched, warning = _fetch_external_workflow_json_source(item, index=i, timeout=timeout)
+        if warning:
+            mutable_warnings.append(warning)
+        if enriched is not None:
+            sources.append(enriched)
+            seen_urls.add(str(enriched.get("url") or "").casefold())
+        normalized = _normalize_web_source(item, index=i)
+        url_key = str(normalized.get("url") or "").casefold()
+        if url_key and url_key in seen_urls:
+            continue
+        sources.append(normalized)
+    return tuple(sources), tuple(mutable_warnings)
+
+
+def _run_registry_research(
+    query: str,
+    *,
+    resolver: RegistryResolver = resolve_missing_nodes,
+) -> tuple[tuple[dict[str, Any], ...], tuple[str, ...]]:
+    """Return read-only Comfy Registry / Manager evidence for missing nodes."""
+    warnings: list[str] = []
+    sources: list[dict[str, Any]] = []
+    seen_candidate_keys: set[str] = set()
+    seen_warning_keys: set[str] = set()
+
+    for candidate_query in _registry_candidate_queries(query):
+        try:
+            result = resolver(candidate_query)
+        except PackResolverError as exc:
+            warnings.append(f"{candidate_query}: {exc}")
+            continue
+        except Exception as exc:
+            warnings.append(f"{candidate_query}: {type(exc).__name__}: {exc}")
+            continue
+
+        for warning in result.warnings:
+            key = str(warning)
+            if key not in seen_warning_keys:
+                warnings.append(key)
+                seen_warning_keys.add(key)
+
+        for candidate in result.candidates:
+            payload = candidate.to_dict()
+            pack = payload.get("pack") if isinstance(payload.get("pack"), dict) else {}
+            slug = str(pack.get("slug") or "")
+            expected_classes = tuple(str(cls) for cls in payload.get("expected_classes", ()) if cls)
+            key = f"{slug}|{'|'.join(expected_classes)}"
+            if key in seen_candidate_keys:
+                continue
+            seen_candidate_keys.add(key)
+
+            evidence = payload.get("evidence") if isinstance(payload.get("evidence"), list) else []
+            evidence_sources = [
+                str(item.get("source") or item.get("tier") or "")
+                for item in evidence
+                if isinstance(item, dict)
+            ]
+            description_bits = []
+            if expected_classes:
+                description_bits.append(
+                    "Expected classes: " + ", ".join(expected_classes[:8])
+                )
+            if evidence_sources:
+                description_bits.append(
+                    "Evidence: " + ", ".join(src for src in evidence_sources[:5] if src)
+                )
+            if candidate.warnings:
+                description_bits.append(
+                    "Warnings: " + "; ".join(str(w) for w in candidate.warnings[:3])
+                )
+
+            source_kind = str(pack.get("source") or "registry")
+            sources.append({
+                "class_type": slug or candidate_query,
+                "title": str(pack.get("name") or slug or candidate_query),
+                "score": 80 if expected_classes else 60,
+                "reasons": [f"registry:{candidate_query}"],
+                "source": "comfy-registry" if source_kind == "comfy-registry" else source_kind,
+                "pack": slug,
+                "url": pack.get("url"),
+                "description": "; ".join(bit for bit in description_bits if bit),
+                "tasks": ["custom_nodes"],
+                "path": "",
+                "template_id": "",
+                "source_workflow_path": "",
+                "source_workflow_available": False,
+                "source_workflow_parseable": False,
+                "adapt_pattern_keys": [],
+                "expected_classes": list(expected_classes),
+                "resolver_candidate": payload,
+            })
+
+    for source in sources:
+        source["score"] = max(
+            int(source.get("score") or 0),
+            _registry_source_rank(source, query),
+        )
+    ranked_sources = [
+        source for source in sources
+        if _registry_source_rank(source, query) > 0 or str(source.get("source")) != "github"
+    ]
+    ranked_sources.sort(key=lambda source: (-_registry_source_rank(source, query), str(source.get("class_type", "")).lower()))
+    return tuple(ranked_sources), tuple(warnings)
+
+
+def _registry_candidate_queries(query: str, *, max_queries: int = 6) -> list[str]:
+    normalized = " ".join(str(query or "").split())
+    if not normalized:
+        return []
+    queries = [normalized]
+    class_tokens = re.findall(r"\b[A-Za-z][A-Za-z0-9_]*\b", normalized)
+    if any(token.startswith("ADE_") for token in class_tokens):
+        queries.append("ADE_ AnimateDiff Evolved ComfyUI")
+    for token in re.findall(r"\b[A-Za-z][A-Za-z0-9_]*\b", normalized):
+        if token in queries:
+            continue
+        if "_" not in token and not any(ch.isupper() for ch in token[1:]):
+            continue
+        if token.casefold() in _SEARCH_STOPWORDS:
+            continue
+        queries.append(token)
+        if len(queries) >= max_queries:
+            break
+    return queries[:max_queries]
+
+
+def _registry_source_rank(source: Mapping[str, Any], query: str) -> int:
+    anchors = _registry_anchor_terms(query)
+    if not anchors:
+        return 1
+    rankable = {
+        "class_type": source.get("class_type"),
+        "title": source.get("title"),
+        "source": source.get("source"),
+        "pack": source.get("pack"),
+        "url": source.get("url"),
+        "description": source.get("description"),
+        "expected_classes": source.get("expected_classes"),
+        "resolver_candidate": source.get("resolver_candidate"),
+    }
+    text = json.dumps(rankable, sort_keys=True, default=str).casefold().replace("-", "").replace("_", "")
+    rank = 0
+    for anchor in anchors:
+        if anchor in text:
+            rank += 20 + len(anchor)
+    source_kind = str(source.get("source") or "")
+    if source_kind == "comfy-registry":
+        rank += 80
+    elif source_kind == "github":
+        rank -= 5
+    return rank
+
+
+def _registry_anchor_terms(query: str) -> list[str]:
+    tokens = [
+        token for token in _query_tokens(query)
+        if token.casefold() not in _SEARCH_STOPWORDS
+        and token.casefold() not in _REGISTRY_QUERY_STOPWORDS
+        and not token.isdigit()
+    ]
+    terms = [token.casefold().replace("-", "").replace("_", "") for token in tokens]
+    if any(token.startswith("ADE_") or "AnimateDiff" in token for token in tokens):
+        terms.append("animatediff")
+    if any("Evolved" in token for token in tokens):
+        terms.append("evolved")
+    if "animatediff" in terms and "evolved" in terms:
+        terms.append("animatediffevolved")
+    if len(tokens) >= 2:
+        for size in (3, 2):
+            for i in range(0, max(0, len(tokens) - size + 1)):
+                terms.append("".join(tokens[i : i + size]).casefold().replace("-", "").replace("_", ""))
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if len(term) < 3 or term in seen:
+            continue
+        deduped.append(term)
+        seen.add(term)
+    return deduped
 
 
 # ── Structured precedent helpers (SD2) ────────────────────────────────────────
@@ -1185,6 +1876,16 @@ def _build_adaptation_plan(
                 anchor_bindings=anchor_bindings,
             )
 
+    # Build a neutral context note: the material below is not a winner,
+    # recommendation, or required implementation — it is precedent context
+    # for the adaptation agent to evaluate independently.
+    context_note = (
+        "The reference slice below is presentation context only. "
+        "It is NOT a winner, recommendation, or required implementation. "
+        "All available precedent slices are provided in all_slices for "
+        "independent evaluation by the adaptation agent."
+    )
+
     return PrecedentAdaptationPlan(
         selected_slice=selected_slice,
         anchor_bindings=anchor_bindings,
@@ -1194,7 +1895,213 @@ def _build_adaptation_plan(
         candidate_graph=candidate_graph,
         structural_validation=structural_validation,
         semantic_validation="not_evaluated",
+        all_slices=slices,
+        context_note=context_note,
     )
+
+
+# ── PrecedentPacket production (SD1) ─────────────────────────────────────────
+
+# Internal / local source kinds — these come first in packet ordering.
+_LOCAL_SOURCE_KINDS: frozenset[str] = frozenset({
+    "object_info",
+    "curated",
+    "ready_template",
+    "source_workflow",
+    "custom_node_examples",
+})
+
+# Stable source-tier ordering key for external sources.
+_SOURCE_TIER_ORDER: dict[str, int] = {
+    "hivemind_workflow": 0,
+    "hivemind": 1,
+    "external_workflow": 2,
+    "comfy-registry": 3,
+    "github": 4,
+    "git": 4,
+    "web": 5,
+}
+
+
+def _build_precedent_packet(
+    slices: tuple[WorkflowSlice, ...],
+    sources: tuple[dict, ...],
+) -> PrecedentPacket | None:
+    """Build a neutral :class:`PrecedentPacket` from slices and source dicts.
+
+    Every :class:`WorkflowSlice` becomes a :class:`PrecedentOption`.  Source
+    dictionaries that did not produce a slice are also converted into
+    lightweight :class:`PrecedentOption` entries (supplemental evidence).
+
+    Options are ordered so internal / local evidence comes first, then
+    external sources, with stable source-tier / title / class-name ordering
+    within each group.  Returns ``None`` when there are no options at all
+    (absent packet is non-failure).
+    """
+    options: list[PrecedentOption] = []
+    # Track which class_types / source_workflow_paths already appear as
+    # slice-backed options so we don't duplicate them from raw sources.
+    covered_class_types: set[str] = set()
+    covered_paths: set[str] = set()
+
+    # ── Phase 1: slice-backed options ────────────────────────────────────
+    slice_source_map: dict[str, dict] = {}
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        ct = str(source.get("class_type", ""))
+        swp = source.get("source_workflow_path")
+        if ct:
+            slice_source_map[ct] = source
+        if isinstance(swp, str) and swp:
+            # Also index by source_workflow_path for fuzzy matching.
+            slice_source_map.setdefault(swp, source)
+
+    for sl in slices:
+        ct = sl.source_class_type
+        swp = sl.source_workflow_path
+        covered_class_types.add(ct)
+        if swp is not None:
+            covered_paths.add(swp)
+
+        # Find the best matching source dict for ordering metadata.
+        matched_source = (
+            slice_source_map.get(ct)
+            or (slice_source_map.get(swp) if swp else None)
+        )
+
+        description = _slice_description(sl, matched_source)
+        notes = _slice_notes(sl, matched_source)
+
+        options.append(PrecedentOption(
+            source_class_type=ct,
+            source_workflow_path=swp,
+            node_ids=sl.node_ids,
+            node_types=sl.node_types,
+            description=description,
+            notes=notes,
+        ))
+
+    # ── Phase 2: supplemental source-dict options (non-slice) ────────────
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        ct = str(source.get("class_type", ""))
+        if not ct:
+            continue
+        if ct in covered_class_types:
+            continue
+        swp = source.get("source_workflow_path")
+        if isinstance(swp, str) and swp in covered_paths:
+            continue
+        # Only include sources that have meaningful descriptive content.
+        desc = str(source.get("description", "")).strip()
+        reasons = source.get("reasons")
+        if not desc and not reasons:
+            continue
+
+        covered_class_types.add(ct)
+
+        source_kind = str(source.get("source", ""))
+        pack = source.get("pack")
+        notes: list[str] = []
+        if isinstance(reasons, (list, tuple)):
+            for r in reasons:
+                if isinstance(r, str) and r.strip():
+                    notes.append(r.strip())
+        if pack and isinstance(pack, str) and pack.strip():
+            notes.append(f"pack: {pack.strip()}")
+        if source_kind:
+            notes.append(f"source: {source_kind}")
+
+        options.append(PrecedentOption(
+            source_class_type=ct,
+            source_workflow_path=(
+                swp if isinstance(swp, str) else None
+            ),
+            description=desc,
+            notes=tuple(notes),
+        ))
+
+    if not options:
+        return None
+
+    # ── Stable ordering: local first, then by source tier / title ────────
+    def _option_sort_key(opt: PrecedentOption) -> tuple[int, int, str, str]:
+        # Determine the source kind from notes (best-effort).
+        source_kind = ""
+        for note in opt.notes:
+            if note.startswith("source: "):
+                source_kind = note[len("source: "):]
+                break
+        is_local = source_kind in _LOCAL_SOURCE_KINDS
+        # For slice-backed options without a "source:" note, try to find the
+        # source kind from the matched source dict via class_type lookup.
+        if not source_kind and opt.source_class_type in slice_source_map:
+            ms = slice_source_map.get(opt.source_class_type)
+            if isinstance(ms, dict):
+                sk = str(ms.get("source", ""))
+                is_local = sk in _LOCAL_SOURCE_KINDS
+                source_kind = sk
+
+        local_rank = 0 if is_local else 1
+        tier = _SOURCE_TIER_ORDER.get(source_kind, 99) if not is_local else 0
+        title = opt.source_class_type.casefold()
+        class_type_sort = opt.source_class_type
+        return (local_rank, tier, title, class_type_sort)
+
+    options.sort(key=_option_sort_key)
+
+    return PrecedentPacket(
+        options=tuple(options),
+        context_note=(
+            "Precedent options are provided as neutral evidence. "
+            "No ranking, winner, or recommendation is implied. "
+            "Options are ordered with internal/local evidence first, "
+            "then by stable source/title/class-name ordering."
+        ),
+    )
+
+
+def _slice_description(
+    sl: WorkflowSlice,
+    matched_source: dict | None,
+) -> str:
+    """Build a compact description for a slice-backed PrecedentOption."""
+    if matched_source and isinstance(matched_source, dict):
+        desc = str(matched_source.get("description", "")).strip()
+        if desc:
+            return desc
+    if sl.node_types:
+        return f"Workflow slice with {len(sl.node_types)} node type(s): {', '.join(sl.node_types[:5])}"
+    return f"Precedent workflow slice: {sl.source_class_type}"
+
+
+def _slice_notes(
+    sl: WorkflowSlice,
+    matched_source: dict | None,
+) -> tuple[str, ...]:
+    """Build notes for a slice-backed PrecedentOption."""
+    notes: list[str] = []
+    if matched_source and isinstance(matched_source, dict):
+        pack = matched_source.get("pack")
+        if pack and isinstance(pack, str) and pack.strip():
+            notes.append(f"pack: {pack.strip()}")
+        source_kind = str(matched_source.get("source", ""))
+        if source_kind:
+            notes.append(f"source: {source_kind}")
+        reasons = matched_source.get("reasons")
+        if isinstance(reasons, (list, tuple)):
+            for r in reasons:
+                if isinstance(r, str) and r.strip():
+                    notes.append(r.strip())
+    # Attach any slice warnings as notes.
+    for w in sl.warnings:
+        if isinstance(w, (dict, Mapping)):
+            msg = w.get("message") or w.get("code", "")
+            if msg:
+                notes.append(str(msg))
+    return tuple(notes)
 
 
 # ── Public API ───────────────────────────────────────────────────────────────
@@ -1207,6 +2114,7 @@ def research(
     graph: dict[str, Any] | None = None,
     hivemind_client: HivemindClient | None | object = _USE_DEFAULT,
     hivemind_timeout: float = _DEFAULT_HIVEMIND_TIMEOUT,
+    registry_resolver: RegistryResolver | None | object = _USE_DEFAULT,
     web_search_client: WebSearchClient | None | object = _USE_DEFAULT,
     web_search_timeout: float = _DEFAULT_WEB_SEARCH_TIMEOUT,
     local_limit: int = 10,
@@ -1236,6 +2144,10 @@ def research(
     web_search_client:
         Injectable no-key web-search client. By default, uses DuckDuckGo HTML.
         Pass ``None`` to disable this tier.
+    registry_resolver:
+        Injectable read-only custom-node resolver. By default, uses the Comfy
+        Registry / ComfyUI-Manager / GitHub evidence resolver. Pass ``None`` to
+        skip registry lookup.
     web_search_timeout:
         Timeout in seconds for the web-search fallback.
     local_limit:
@@ -1283,6 +2195,12 @@ def research(
     else:
         resolved_web_client = web_search_client  # type: ignore[assignment]
 
+    resolved_registry_resolver: RegistryResolver | None
+    if registry_resolver is _USE_DEFAULT:
+        resolved_registry_resolver = resolve_missing_nodes
+    else:
+        resolved_registry_resolver = registry_resolver  # type: ignore[assignment]
+
     if resolved_hivemind_client is not None and hivemind_timeout > 0:
         try:
             hivemind_sources = _run_hivemind_research(
@@ -1301,7 +2219,25 @@ def research(
             for hs in hivemind_sources:
                 sources.append(hs)
 
-    # ── Phase 3: no-key web research (best-effort, independent tier) ─────
+    # ── Phase 3: read-only Comfy Registry / Manager missing-node evidence ─
+    if resolved_registry_resolver is not None:
+        try:
+            registry_sources, registry_warnings = _run_registry_research(
+                query,
+                resolver=resolved_registry_resolver,
+            )
+        except RegistrySearchError as exc:
+            warnings.append(f"registry: {exc}")
+            warning_details.append(warning_detail_from_exception(exc))
+        except Exception as exc:
+            warnings.append(f"registry (unexpected): {exc}")
+            warning_details.append(warning_detail_from_exception(exc))
+        else:
+            warnings.extend(f"registry: {warning}" for warning in registry_warnings)
+            for rs in registry_sources:
+                sources.append(rs)
+
+    # ── Phase 4: no-key web research (best-effort, independent tier) ─────
     if (
         resolved_web_client is not None
         and web_search_timeout > 0
@@ -1324,7 +2260,14 @@ def research(
                 sources.append(ws)
 
     # Re-sort: local results first, then Hivemind, then web, each by score.
-    source_order = {"hivemind_workflow": 1, "hivemind": 2, "web": 3}
+    source_order = {
+        "hivemind_workflow": 1,
+        "hivemind": 2,
+        "comfy-registry": 3,
+        "github": 4,
+        "git": 4,
+        "web": 5,
+    }
     sources.sort(
         key=lambda s: (source_order.get(str(s.get("source")), 0), -s.get("score", 0))
     )
@@ -1343,6 +2286,13 @@ def research(
         inspection=None,
         slices=precedent_slices,
     )
+    # ── Build neutral precedent packet (SD1) ──────────────────────────────
+    # The packet carries every discovered option without ranking or winner
+    # selection.  An absent packet (None) is non-failure.
+    precedent_packet = _build_precedent_packet(
+        slices=precedent_slices,
+        sources=tuple(sources),
+    )
     precedent_warnings: list[str] = []
     if not precedent_slices:
         precedent_warnings.append(
@@ -1357,6 +2307,7 @@ def research(
         warning_details=tuple(warning_details),
         precedent_slices=precedent_slices,
         adaptation_plan=adaptation_plan,
+        precedent_packet=precedent_packet,
     )
 
 
@@ -1367,6 +2318,7 @@ __all__ = [
     "WebSearchError",
     "_build_adaptation_plan",
     "_build_inspection_summary",
+    "_build_precedent_packet",
     "_build_precedent_slices",
     "_default_hivemind_client",
     "_default_web_search_client",

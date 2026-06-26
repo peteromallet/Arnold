@@ -42,16 +42,25 @@ class ExecNodeContractError(RuntimeError):
 def _normalize_io_entries(io_value: Any, *, field: str) -> tuple[tuple[str, str | None], ...]:
     if io_value is None:
         return ()
-    if not isinstance(io_value, list):
-        raise ExecNodeContractError(f"`io.{field}` must be a list of [name, type] entries")
+    entries: list[Any]
+    if isinstance(io_value, dict):
+        entries = [[name, type_name] for name, type_name in io_value.items()]
+    elif isinstance(io_value, list):
+        entries = io_value
+    else:
+        raise ExecNodeContractError(f"`io.{field}` must be a dict or list of [name, type] entries")
     normalized: list[tuple[str, str | None]] = []
-    for index, entry in enumerate(io_value):
-        if not isinstance(entry, (list, tuple)) or not (1 <= len(entry) <= 2):
+    for index, entry in enumerate(entries):
+        if isinstance(entry, dict):
+            name = entry.get("name")
+            type_name = entry.get("type")
+        elif isinstance(entry, (list, tuple)) and len(entry) >= 1:
+            name = entry[0]
+            type_name = entry[1] if len(entry) >= 2 else None
+        else:
             raise ExecNodeContractError(
-                f"`io.{field}[{index}]` must be a [name, type] pair"
+                f"`io.{field}[{index}]` must be a [name, type] pair, {{name, type}} dict, or dict entry"
             )
-        name = entry[0]
-        type_name = entry[1] if len(entry) == 2 else None
         if not isinstance(name, str) or not name:
             raise ExecNodeContractError(f"`io.{field}[{index}][0]` must be a non-empty string")
         if type_name is not None and not isinstance(type_name, str):

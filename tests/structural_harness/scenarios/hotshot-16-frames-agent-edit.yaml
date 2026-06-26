@@ -1,0 +1,31 @@
+name: hotshot-16-frames-agent-edit
+tier: 6
+description: "Agent-edit finds Hotshot workflow precedent first, then uses registry evidence for missing custom nodes"
+mode: structural
+agents:
+  - id: builder
+    dispatcher: fake
+tags:
+  - m6
+  - agent-edit
+  - structural
+  - hotshot
+  - registry
+assessment:
+  enforced:
+    - "agent_edit_result.json parses as valid JSON with ok=true."
+    - "candidate.ui.json contains at least one node whose type is ADE_AnimateDiffLoaderWithContext or ADE_UseEvolvedSampling."
+    - "messages.jsonl contains a workflow research call with sources=[\"workflows\"] before any registry research call."
+    - "messages.jsonl contains a later research call with sources=[\"registry\"] before the add-node batch."
+    - "actions.jsonl contains op=agent-edit.run, op=research source=workflows, op=research source=registry, and op=add_node entries."
+  graded:
+    - "The candidate graph adapts the workflow precedent and preserves unresolved registry-backed Hotshot/AnimateDiff custom-node classes instead of replacing Hotshot with an unrelated installed node."
+  observed:
+    - "The frozen evidence mentions ComfyUI-AnimateDiff-Evolved as the candidate custom-node pack."
+extras:
+  flow_kind: direct_agent_edit_scripted
+  required_frozen_evidence:
+    - evidence/agent_edit_result.json
+    - evidence/candidate.ui.json
+    - evidence/messages.jsonl
+    - evidence/actions.jsonl

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import TYPE_CHECKING, Any, Mapping
 
 from vibecomfy.porting.edit.ops import (
@@ -65,6 +66,11 @@ def _widget_value_for_field(node: Mapping[str, Any], class_type: str, field_name
         widget_names = effective_widget_names_for_class(class_type, allow_object_info_fallback=True)
         for index, name in enumerate(widget_names):
             if name == field_name and index < len(widgets_values):
+                return widgets_values[index]
+        match = re.fullmatch(r"widget_(\d+)", field_name)
+        if match is not None:
+            index = int(match.group(1))
+            if 0 <= index < len(widgets_values):
                 return widgets_values[index]
     return _MISSING_WIDGET_VALUE
 

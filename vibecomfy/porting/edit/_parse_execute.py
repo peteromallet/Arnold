@@ -66,10 +66,50 @@ class _ParseExecuteMixin:
             graph_name_exists=self._graph_name_exists,
             estimate_add_node_width=self._estimate_add_node_width,
         )
+        snapshot = self._snapshot_mutable_state()
         statement_results, landed_ops, diagnostics = self._execute_statements(
             parsed.expanded,
             placement_facts=placement_facts,
         )
+        failed_edit = any(
+            self._is_edit_statement(statement) and not statement.ok
+            for statement in statement_results
+        )
+        if failed_edit:
+            self._restore_snapshot(snapshot)
+            rollback_diag = _diag(
+                "batch_transaction_rolled_back",
+                "A later edit statement failed, so all edits from this batch were rolled back.",
+                severity="error",
+            )
+            rolled_back: list[StatementResult] = []
+            for stmt in statement_results:
+                diagnostics_for_statement = stmt.diagnostics
+                ok = stmt.ok
+                if stmt.landed and self._is_edit_statement(stmt):
+                    diagnostics_for_statement = stmt.diagnostics + (rollback_diag,)
+                    ok = False
+                rolled_back.append(
+                    StatementResult(
+                        statement_index=stmt.statement_index,
+                        source=stmt.source,
+                        ok=ok,
+                        diagnostics=diagnostics_for_statement,
+                        landed=False,
+                        op_kind=stmt.op_kind,
+                        detail=dict(stmt.detail),
+                        touched_uids=(),
+                        dependency_cause=stmt.dependency_cause,
+                        teaching_hint=stmt.teaching_hint,
+                    )
+                )
+            return BatchResult(
+                ok=False,
+                statements=tuple(rolled_back),
+                diagnostics=diagnostics + (rollback_diag,),
+                landed_ops=(),
+                field_changes=(),
+            )
         field_changes, statement_results = self._build_field_changes(
             landed_ops,
             statement_results,
@@ -81,6 +121,31 @@ class _ParseExecuteMixin:
             landed_ops=landed_ops,
             field_changes=field_changes,
         )
+
+    def _snapshot_mutable_state(self) -> dict:
+        return {
+            "working_ui": deepcopy(self.working_ui),
+            "landed_ops": list(self.landed_ops),
+            "touched_uids": set(self.touched_uids),
+            "touched_node_ids": set(self.touched_node_ids),
+            "uid_by_name": dict(self.uid_by_name),
+            "name_by_uid": dict(self.name_by_uid),
+            "unbound_names": set(self.unbound_names),
+        }
+
+    def _restore_snapshot(self, snapshot: dict) -> None:
+        self.working_ui = snapshot["working_ui"]
+        self.ledger = EditLedger.ingest(self.working_ui)
+        self.landed_ops = snapshot["landed_ops"]
+        self.touched_uids = snapshot["touched_uids"]
+        self.touched_node_ids = snapshot["touched_node_ids"]
+        self.uid_by_name = snapshot["uid_by_name"]
+        self.name_by_uid = snapshot["name_by_uid"]
+        self.unbound_names = snapshot["unbound_names"]
+
+    @staticmethod
+    def _is_edit_statement(statement: StatementResult) -> bool:
+        return str(statement.op_kind or "") not in {"", "query", "done"}
 
     def _execute_statements(
         self,

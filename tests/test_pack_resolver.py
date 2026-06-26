@@ -735,6 +735,63 @@ def test_resolve_missing_nodes_hotshotxl_capability_returns_animatediff_classes(
     assert candidate.evidence[0].source == "custom-node-map"
     assert candidate.evidence[0].matched_classes == candidate.expected_classes
 
+def test_resolve_missing_nodes_drops_unanchored_hotshot_candidates(tmp_path: Path) -> None:
+    manager = FakeRegistryClient(
+        {
+            (
+                "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-map.json",
+                (),
+            ): {},
+            (
+                "https://raw.githubusercontent.com/ltdrdata/ComfyUI-Manager/main/custom-node-list.json",
+                (),
+            ): [],
+        }
+    )
+    github = FakeRegistryClient(
+        {
+            (
+                "https://api.github.com/search/code",
+                (("q", "Hotshot XL ComfyUI nodes ComfyUI"),),
+            ): {
+                "items": [
+                    {
+                        "name": "README.md",
+                        "path": "README.md",
+                        "repository": {
+                            "full_name": "ZZfive/ComfyChat",
+                            "html_url": "https://github.com/ZZfive/ComfyChat",
+                        },
+                    },
+                    {
+                        "name": "MotionModels_1_result_gpt.py",
+                        "path": "MotionModels_1_result_gpt.py",
+                        "repository": {
+                            "full_name": "asgaardlab/hf-question-answer",
+                            "html_url": "https://github.com/asgaardlab/hf-question-answer",
+                        },
+                    }
+                ]
+            },
+            (
+                "https://api.github.com/search/repositories",
+                (("q", "Hotshot XL ComfyUI nodes ComfyUI"),),
+            ): {"items": []},
+        }
+    )
+
+    result = resolve_missing_nodes(
+        "Hotshot XL ComfyUI nodes",
+        query_intent="capability",
+        cache_root=tmp_path,
+        manager_client=manager,
+        registry_client=FakeRegistryClient({}),
+        github_client=github,
+    )
+
+    assert result.candidates == ()
+    assert any("Dropped 2 unanchored candidate" in warning for warning in result.warnings)
+
 
 def test_resolve_missing_nodes_fetches_registry_schema_with_concrete_version(tmp_path: Path) -> None:
     registry = FakeRegistryClient(

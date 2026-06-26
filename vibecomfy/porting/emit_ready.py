@@ -1651,6 +1651,8 @@ def _declared_exec_outputs(node: Any) -> list[tuple[str, str | None]] | None:
     if not isinstance(raw_io, Mapping):
         return None
     raw_outputs = raw_io.get("outputs")
+    if isinstance(raw_outputs, Mapping):
+        raw_outputs = [[name, type_name] for name, type_name in raw_outputs.items()]
     if not isinstance(raw_outputs, list):
         return None
     outputs: list[tuple[str, str | None]] = []
