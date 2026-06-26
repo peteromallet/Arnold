@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 5,
-  "current_plan_name": "m4-runtime-helpers-governance-20260626-0915",
-  "last_state": "awaiting_pr_merge",
+  "current_milestone_index": 6,
+  "current_plan_name": null,
+  "last_state": "completed",
   "pr_number": 75,
-  "pr_state": "open",
+  "pr_state": "merged",
   "completed": [
     {
       "label": "m0-extract-portable-sdk-contracts",
@@ -30,11 +30,16 @@
       "label": "m3-host-family-adapter-registry",
       "index": 4,
       "status": "completed"
+    },
+    {
+      "label": "m4-runtime-helpers-governance-and-readiness",
+      "index": 5,
+      "status": "completed"
     }
   ],
-  "branch_head": "3b1af4267cdc75bd2279c7395f7cd7a179dc854d",
-  "pr_head": "3b1af4267cdc75bd2279c7395f7cd7a179dc854d",
-  "last_pushed_commit": "3b1af4267cdc75bd2279c7395f7cd7a179dc854d",
+  "branch_head": "7be9934289b6e1035a476cedb46b3f92d0ad8afd",
+  "pr_head": "7be9934289b6e1035a476cedb46b3f92d0ad8afd",
+  "last_pushed_commit": "7be9934289b6e1035a476cedb46b3f92d0ad8afd",
   "dirty_flag": false,
   "sync_state": "clean",
   "extra_repos": [],
@@ -58,8 +63,8 @@
       "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/arnold-cleanup-single-root",
-      "target_head": "2a9e1ce4308e8bef355c3828a73e80cfa167eca9",
-      "target_base": "2a9e1ce4308e8bef355c3828a73e80cfa167eca9",
+      "target_head": "7be9934289b6e1035a476cedb46b3f92d0ad8afd",
+      "target_base": "7be9934289b6e1035a476cedb46b3f92d0ad8afd",
       "target_base_ref": "main",
       "target_fallback_reason": null
     }
