@@ -1,0 +1,8 @@
+{
+  "publicEntrypoints": [],
+  "allowlist": {
+    "src/app/routes.tsx": [
+      "src/tools/video-editor/pages/VideoEditorPage.tsx"
+    ]
+  }
+}

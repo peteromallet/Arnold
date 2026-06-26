@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
   "current_milestone_index": 5,
-  "current_plan_name": null,
-  "last_state": "pending",
-  "pr_number": null,
-  "pr_state": null,
+  "current_plan_name": "m4-runtime-helpers-governance-20260626-0915",
+  "last_state": "awaiting_pr_merge",
+  "pr_number": 75,
+  "pr_state": "open",
   "completed": [
     {
       "label": "m0-extract-portable-sdk-contracts",
@@ -57,9 +57,9 @@
       "project_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
-      "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/native-python-pipelines-completion-thread2",
-      "target_head": "bb0ff2056e02c0ec0d2f4864fb12dde6766c1ee9",
-      "target_base": "5fddbda05161d9894d61102b645259f46464e2c1",
+      "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/arnold-cleanup-single-root",
+      "target_head": "2a9e1ce4308e8bef355c3828a73e80cfa167eca9",
+      "target_base": "2a9e1ce4308e8bef355c3828a73e80cfa167eca9",
       "target_base_ref": "main",
       "target_fallback_reason": null
     }

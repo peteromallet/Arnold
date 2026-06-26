@@ -435,7 +435,9 @@ function buildExpectedMatrix() {
   function buildRow(def) {
     const report = bcR(def);
     const fullyConformant = iFC(def);
-    const bridged = BRIDGED_EXECUTION_MATURITIES.has(def.executionMaturity);
+    const bridged =
+      BRIDGED_EXECUTION_MATURITIES.has(def.executionMaturity) ||
+      (def.executionMaturity === 'delegated' && def.hostAdapter !== null);
 
     const coverage = {};
     for (const key of Object.keys(def.requirements)) {

@@ -19,9 +19,80 @@ const tsconfigPath = path.join(repoRoot, 'tsconfig.json');
 const tscPath = path.join(repoRoot, 'node_modules', '.bin', 'tsc');
 const videoEditorDir = path.join(repoRoot, 'src', 'tools', 'video-editor') + path.sep;
 
+const isRelease = process.argv.includes('--release');
+const isAudit = process.argv.includes('--audit') || !isRelease;
+
 function fail(message) {
   console.error(`[video-editor-sdk-imports] ${message}`);
   process.exit(1);
+}
+
+function normalizeConfigPath(filePath) {
+  return filePath.split('/').join(path.sep);
+}
+
+function relativeToRepo(filePath) {
+  return path.relative(repoRoot, filePath);
+}
+
+const VALID_CLASSIFICATIONS = new Set(['author-facing', 'host-facing', 'internal']);
+const CURRENT_MILESTONE = 4;
+
+function validateAllowlistEntry(entry, importer) {
+  const errors = [];
+  if (typeof entry === 'string') {
+    errors.push(`${importer}: allowlist entry is a bare string; structured records with target/classification/owner/rationale/removalCondition/expiration are required.`);
+    return errors;
+  }
+  if (!entry || typeof entry !== 'object') {
+    errors.push(`${importer}: allowlist entry must be a structured record.`);
+    return errors;
+  }
+
+  for (const key of ['target', 'classification', 'owner', 'rationale', 'removalCondition', 'expiration']) {
+    if (typeof entry[key] !== 'string' || entry[key].length === 0) {
+      errors.push(`${importer}: missing or invalid "${key}".`);
+    }
+  }
+
+  if (typeof entry.classification === 'string' && !VALID_CLASSIFICATIONS.has(entry.classification)) {
+    errors.push(`${importer}: invalid classification "${entry.classification}".`);
+  }
+  if (entry.classification === 'author-facing') {
+    errors.push(`${importer}: author-facing deep imports are not allowed; replace with @reigh/editor-sdk or canonical SDK modules.`);
+  }
+
+  if (typeof entry.expiration === 'string' && entry.expiration !== 'permanent') {
+    const milestoneMatch = entry.expiration.match(/^M(\d+)$/);
+    if (!milestoneMatch) {
+      errors.push(`${importer}: expiration must be "permanent" or a milestone like "M4"; got "${entry.expiration}".`);
+    } else {
+      const milestone = parseInt(milestoneMatch[1], 10);
+      if (milestone < CURRENT_MILESTONE) {
+        const note = typeof entry.reapprovalNotes === 'string' && entry.reapprovalNotes.length > 0
+          ? ` (reapprovalNotes present: ${entry.reapprovalNotes})`
+          : '';
+        errors.push(`${importer}: temporary expiration "${entry.expiration}" is past the current milestone (M4). Add reapprovalNotes or remove the entry.${note}`);
+      }
+    }
+  }
+
+  if ('deadline' in entry || 'permanent' in entry) {
+    errors.push(`${importer}: old-style fields "deadline"/"permanent" are not allowed; use "expiration".`);
+  }
+
+  return errors;
+}
+
+function collectAllowlistSchemaErrors(configObj) {
+  const errors = [];
+  for (const [importer, entries] of Object.entries(configObj.allowlist ?? {})) {
+    const normImporter = normalizeConfigPath(importer);
+    for (const entry of Array.isArray(entries) ? entries : []) {
+      errors.push(...validateAllowlistEntry(entry, normImporter));
+    }
+  }
+  return errors;
 }
 
 if (!fs.existsSync(tscPath)) {
@@ -38,19 +109,31 @@ if (!fs.existsSync(tsconfigPath)) {
 
 const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
 const publicEntrypoints = new Set((config.publicEntrypoints ?? []).map(normalizeConfigPath));
-const allowlist = new Map(
-  Object.entries(config.allowlist ?? {}).map(([importer, targets]) => [
-    normalizeConfigPath(importer),
-    new Set((Array.isArray(targets) ? targets : []).map(normalizeConfigPath)),
-  ]),
-);
 
-function normalizeConfigPath(filePath) {
-  return filePath.split('/').join(path.sep);
+const schemaErrors = collectAllowlistSchemaErrors(config);
+if (schemaErrors.length > 0) {
+  const label = isRelease ? 'FAILED' : 'WARN';
+  console.error(`[video-editor-sdk-imports] ${label}: allowlist schema violations detected:`);
+  for (const err of schemaErrors) {
+    console.error(`  - ${err}`);
+  }
+  if (isRelease) {
+    process.exit(1);
+  }
 }
 
-function relativeToRepo(filePath) {
-  return path.relative(repoRoot, filePath);
+const allowlist = new Map();
+for (const [importer, entries] of Object.entries(config.allowlist ?? {})) {
+  const normImporter = normalizeConfigPath(importer);
+  const allowedTargets = new Set();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    if (typeof entry === 'string') {
+      allowedTargets.add(normalizeConfigPath(entry));
+    } else if (entry && typeof entry === 'object' && typeof entry.target === 'string') {
+      allowedTargets.add(normalizeConfigPath(entry.target));
+    }
+  }
+  allowlist.set(normImporter, allowedTargets);
 }
 
 function walk(dir, files = []) {
@@ -516,6 +599,77 @@ function runNegativeFixtures() {
 console.log(`${NEGATIVE_LABEL} Running negative fixtures…`);
 const negativeOk = runNegativeFixtures();
 if (!negativeOk) {
+  process.exit(1);
+}
+
+// ---------------------------------------------------------------------------
+// Allowlist schema negative fixtures (M4).
+// ---------------------------------------------------------------------------
+
+const ALLOWLIST_NEGATIVE_LABEL = '[allowlist-schema-negative]';
+const allowlistNegativeFixturesDir = path.join(repoRoot, 'scripts', 'quality', 'fixtures', 'sdk-allowlist-schema');
+
+function runAllowlistSchemaNegativeFixtures() {
+  if (!fs.existsSync(allowlistNegativeFixturesDir)) {
+    console.log(`${ALLOWLIST_NEGATIVE_LABEL} No fixtures directory; skipping.`);
+    return true;
+  }
+
+  const entries = fs.readdirSync(allowlistNegativeFixturesDir, { withFileTypes: true });
+  const fixtureFiles = entries
+    .filter((e) => e.isFile() && e.name.endsWith('.json'))
+    .map((e) => path.join(allowlistNegativeFixturesDir, e.name));
+
+  const expectedKinds = new Set(['old-style-string', 'missing-expiration', 'invalid-classification', 'expired-temporary']);
+  const seenKinds = new Set();
+  let allOk = true;
+
+  for (const fixturePath of fixtureFiles) {
+    const fixtureName = path.basename(fixturePath);
+    const kind = fixtureName.replace(/\.json$/, '');
+    if (!expectedKinds.has(kind)) {
+      continue;
+    }
+    seenKinds.add(kind);
+
+    let fixtureConfig;
+    try {
+      fixtureConfig = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+    } catch (err) {
+      console.error(`${ALLOWLIST_NEGATIVE_LABEL} FAILED: ${fixtureName} is not valid JSON (${err.message}).`);
+      allOk = false;
+      continue;
+    }
+
+    const errors = collectAllowlistSchemaErrors(fixtureConfig);
+    if (errors.length === 0) {
+      console.error(`${ALLOWLIST_NEGATIVE_LABEL} FAILED: ${fixtureName} was expected to trigger schema violations but passed.`);
+      allOk = false;
+      continue;
+    }
+
+    console.log(`${ALLOWLIST_NEGATIVE_LABEL} ${fixtureName} correctly flagged ${errors.length} schema violation(s):`);
+    for (const err of errors.slice(0, 5)) {
+      console.log(`  - ${err}`);
+    }
+    if (errors.length > 5) {
+      console.log(`  ... and ${errors.length - 5} more`);
+    }
+  }
+
+  for (const kind of expectedKinds) {
+    if (!seenKinds.has(kind)) {
+      console.error(`${ALLOWLIST_NEGATIVE_LABEL} FAILED: missing negative fixture for ${kind}.`);
+      allOk = false;
+    }
+  }
+
+  return allOk;
+}
+
+console.log(`${ALLOWLIST_NEGATIVE_LABEL} Running allowlist schema negative fixtures…`);
+const allowlistNegativeOk = runAllowlistSchemaNegativeFixtures();
+if (!allowlistNegativeOk) {
   process.exit(1);
 }
 

@@ -1,5 +1,7 @@
 /**
- * @publicContract
+ * @hostContract
+ * Host/video-editor public API entrypoint (not the extension SDK boundary).
+ *
  * Edge-safe core SDK entrypoint for the video editor.
  *
  * Import browser-only host helpers from `./browser.ts`.

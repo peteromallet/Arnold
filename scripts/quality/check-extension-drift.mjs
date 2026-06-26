@@ -49,6 +49,7 @@ const moduleDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(moduleDir, '..', '..');
 
 const SDK_INDEX = resolve(repoRoot, 'src/sdk/index.ts');
+const SDK_MANIFEST = resolve(repoRoot, 'src/sdk/manifest.ts');
 const SCHEMA_PATH = resolve(repoRoot, 'config/contracts/reigh-extension.schema.json');
 const DOCS_PATH = resolve(
   repoRoot,
@@ -503,11 +504,12 @@ for (const defName of schema.definitions) {
 
 console.log(`\n${LABEL} Checking slot name drift…`);
 
-// Parse SDK slot names
+// Parse SDK slot names from the canonical definition in src/sdk/manifest.ts.
 function parseSdkSlotNames() {
-  if (!existsSync(SDK_INDEX)) return [];
-  const source = readFileSync(SDK_INDEX, 'utf8');
-  const slotBlockRe = /export type VideoEditorSlotName\s*=\s*([\s\S]*?);/;
+  const sourcePath = existsSync(SDK_MANIFEST) ? SDK_MANIFEST : SDK_INDEX;
+  if (!existsSync(sourcePath)) return [];
+  const source = readFileSync(sourcePath, 'utf8');
+  const slotBlockRe = /(?:export\s+)?type VideoEditorSlotName\s*=\s*([\s\S]*?);/;
   const slotBlock = source.match(slotBlockRe);
   /** @type {string[]} */
   const names = [];

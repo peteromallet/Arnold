@@ -119,6 +119,7 @@ fs.writeFileSync(
 // ---------------------------------------------------------------------------
 
 const consumerFixturePath = path.join(consumerDir, 'smoke.ts');
+const directFixturePath = path.join(consumerDir, 'direct-modules.ts');
 
 const consumerFixture = `/**
  * External SDK consumer smoke fixture.
@@ -131,7 +132,27 @@ const keys: string[] = Object.keys(sdk);
 console.log('[sdk-consumer-runtime] exported keys:', keys.length);
 `;
 
+const directFixture = `/**
+ * External SDK direct-module smoke fixture.
+ * Pulls representative direct modules from core and video families to prove
+ * they are individually importable outside the repo.
+ */
+import { FamilyAdapterRegistryImpl } from '@reigh/editor-sdk/core/families/familyAdapter';
+import { normalizeAdapters } from '@reigh/editor-sdk/core/families/familyAdapterCoordinator';
+import { createDiagnosticCollection } from '@reigh/editor-sdk';
+import type { EffectContribution } from '@reigh/editor-sdk/video/families/effects';
+import { KNOWN_CONTRIBUTION_KINDS } from '@reigh/editor-sdk';
+
+const registry = new FamilyAdapterRegistryImpl();
+void normalizeAdapters;
+void createDiagnosticCollection;
+void KNOWN_CONTRIBUTION_KINDS;
+void ({} as EffectContribution);
+console.log('[sdk-consumer-runtime-direct] registry size:', registry.snapshot().size);
+`;
+
 fs.writeFileSync(consumerFixturePath, consumerFixture, 'utf8');
+fs.writeFileSync(directFixturePath, directFixture, 'utf8');
 
 fs.writeFileSync(
   path.join(consumerDir, 'package.json'),
@@ -161,6 +182,7 @@ fs.writeFileSync(
         baseUrl: '.',
         paths: {
           '@reigh/editor-sdk': ['../sdk-package/index.ts'],
+          '@reigh/editor-sdk/*': ['../sdk-package/*.ts'],
         },
         strict: true,
         noEmit: true,
@@ -169,7 +191,7 @@ fs.writeFileSync(
         isolatedModules: true,
         esModuleInterop: true,
       },
-      include: ['smoke.ts', '../sdk-package/**/*.ts'],
+      include: ['smoke.ts', 'direct-modules.ts', '../sdk-package/**/*.ts'],
     },
     null,
     2,
@@ -240,7 +262,7 @@ console.log(`${label} Checking import graph for host-internal resolutions…`);
 const compilerOptions = parseConsumerTsconfig();
 const graphFailures = [];
 const visited = new Set();
-const queue = [consumerFixturePath];
+const queue = [consumerFixturePath, directFixturePath];
 
 function parseConsumerTsconfig() {
   const configPath = path.join(consumerDir, 'tsconfig.json');
@@ -351,36 +373,45 @@ if (!fs.existsSync(tsxPath)) {
   fail(`tsx is unavailable: missing ${path.relative(repoRoot, tsxPath)}`);
 }
 
-let runtimeOutput = '';
-let runtimeOk = false;
-try {
-  runtimeOutput = execSync(`${tsxPath} ${consumerFixturePath}`, {
-    cwd: consumerDir,
-    encoding: 'utf8',
-    timeout: 60_000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
-  runtimeOk = true;
-} catch (err) {
-  runtimeOutput = String(err.stdout || err.stderr || err.message || '');
+function runRuntimeSmoke(fixturePath) {
+  const name = path.basename(fixturePath);
+  let runtimeOutput = '';
+  let runtimeOk = false;
+  try {
+    runtimeOutput = execSync(`${tsxPath} ${fixturePath}`, {
+      cwd: consumerDir,
+      encoding: 'utf8',
+      timeout: 60_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    runtimeOk = true;
+  } catch (err) {
+    runtimeOutput = String(err.stdout || err.stderr || err.message || '');
+  }
+
+  if (!runtimeOk) {
+    console.error(`${label} FAILED: runtime smoke "${name}" threw an error while loading the SDK package.`);
+    console.error(runtimeOutput);
+    return false;
+  }
+
+  console.log(`${label} PASSED: runtime smoke "${name}" evaluated in Node without a top-level load error.`);
+
+  const keyCountMatch = runtimeOutput.match(/exported keys:\s*(\d+)/);
+  if (keyCountMatch) {
+    console.log(`${label} Runtime reported ${keyCountMatch[1]} top-level exported bindings.`);
+  }
+
+  if (runtimeOutput.trim()) {
+    console.log(`${label} Runtime output:\n${runtimeOutput.split('\n').map((l) => `  ${l}`).join('\n')}`);
+  }
+
+  return true;
 }
 
-if (!runtimeOk) {
-  console.error(`${label} WARNING: runtime smoke threw an error while loading the SDK package.`);
-  console.error(runtimeOutput);
-  // Do not fail the validator here; the requirement is to *report* bindings that
-  // need browser globals / Vite / host internals. Surface the report and continue.
-} else {
-  console.log(`${label} PASSED: SDK package evaluates in Node without a top-level load error.`);
-}
-
-const keyCountMatch = runtimeOutput.match(/exported keys:\s*(\d+)/);
-if (keyCountMatch) {
-  console.log(`${label} Runtime reported ${keyCountMatch[1]} top-level exported bindings.`);
-}
-
-if (runtimeOutput.trim()) {
-  console.log(`${label} Runtime output:\n${runtimeOutput.split('\n').map((l) => `  ${l}`).join('\n')}`);
+if (!runRuntimeSmoke(consumerFixturePath) || !runRuntimeSmoke(directFixturePath)) {
+  cleanup();
+  process.exit(1);
 }
 
 console.log(`${label} All external-consumer checks passed.`);

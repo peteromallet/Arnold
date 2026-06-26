@@ -3,7 +3,6 @@ import { cleanup, render, screen } from '@testing-library/react';
 import type * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  createExtensionContext,
   type AgentToolInvocationRequest,
   type AgentToolRegistrationService,
   type CreativeContext,
@@ -14,6 +13,7 @@ import {
   type ReighExtension,
   type ToolGenerationSessionResult,
 } from '@/sdk/index';
+import { createExtensionContext } from '@/tools/video-editor/runtime/extensionContextFactory';
 import {
   createLiveGeneratedFrameCanaryExtension,
   type LiveGeneratedFrameCanaryController,

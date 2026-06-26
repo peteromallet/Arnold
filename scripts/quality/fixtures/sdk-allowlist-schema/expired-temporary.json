@@ -1,0 +1,15 @@
+{
+  "publicEntrypoints": [],
+  "allowlist": {
+    "src/app/routes.tsx": [
+      {
+        "target": "src/tools/video-editor/pages/VideoEditorPage.tsx",
+        "classification": "internal",
+        "owner": "app-shell",
+        "rationale": "Route table mounts video-editor pages.",
+        "removalCondition": "Never.",
+        "expiration": "M3"
+      }
+    ]
+  }
+}

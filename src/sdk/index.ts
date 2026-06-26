@@ -55,9 +55,6 @@ export { createLifecycleEvent } from './contracts';
 // context
 export { type ExtensionI18nService, type ExtensionDiagnosticsService, type CreativeContext, type ExtensionCommandService, type ExtensionContext, createCreativeContext, createCreativeContextStubs, disposeExtensionContextServices, CONTEXT_DISPOSE_SYMBOL, ExtensionNotImplementedError, CREATIVE_MEMBER_MILESTONE } from './context';
 
-// context factory
-export { setEditorShellRoot, getEditorShellRoot, createExtensionContext } from './contextFactory';
-
 // family bridge
 export { CONTRIBUTION_KIND_MILESTONE, contributionKindNotYetBridged, getVideoFamilyDefinition, getVideoFamilyConformanceReport, getVideoFamilyLegacyBridgeStatus } from './familyBridge';
 

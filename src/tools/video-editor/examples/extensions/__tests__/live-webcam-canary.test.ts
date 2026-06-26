@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  createExtensionContext,
   type CreativeContext,
   type ExtensionContext,
   type LiveSessionsService,
   type ReighExtension,
 } from '@/sdk/index';
+import { createExtensionContext } from '@/tools/video-editor/runtime/extensionContextFactory';
 import {
   createLiveWebcamCanaryExtension,
   createLiveWebcamPreviewClip,

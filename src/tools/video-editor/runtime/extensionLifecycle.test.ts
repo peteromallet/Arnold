@@ -14,10 +14,10 @@ import { defineExtension } from '@reigh/editor-sdk';
 import {
   createCreativeContext,
   createCreativeContextStubs,
-  createExtensionContext,
   ExtensionNotImplementedError,
   CREATIVE_MEMBER_MILESTONE,
 } from '@reigh/editor-sdk';
+import { createExtensionContext } from './extensionContextFactory';
 import type {
   TimelineOps,
   TimelinePatch,
