@@ -661,37 +661,7 @@
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
     },
     {
-      "path": "tests/installed_wheel/test_m6_import_failures.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
-      "path": "tests/installed_wheel/test_m6_import_failures.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
-      "path": "tests/installed_wheel/test_m7_runtime_conformance.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
-      "path": "tests/installed_wheel/test_m7_runtime_conformance.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
       "path": "tests/m8/regression/test_structural_regressions.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
-      "path": "tests/m8/test_acceptance_artifacts.py",
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
