@@ -6,9 +6,10 @@
  * no DOM, localStorage, console, React lifecycle, requestAnimationFrame,
  * or provider-service imports.
  *
- * NOTE: createExtensionContext() remains inline in `src/sdk/index.ts` as an
- * M4 exception because it is deeply coupled to host wiring (DOM manipulation,
+ * NOTE: createExtensionContext() was moved to `src/sdk/contextFactory.ts`
+ * in M2b because it is deeply coupled to host wiring (DOM manipulation,
  * localStorage, console I/O, provider services, and React lifecycle).
+ * context.ts remains host-wiring-free.
  *
  * @publicContract
  */
@@ -23,22 +24,20 @@ import type { TimelineReader } from '@/sdk/video/timeline/reader.ts';
 import type {
   AssetReadSurface,
   MaterialReadSurface,
-  ExportService,
 } from '@/sdk/video/assets/metadata.ts';
+import type { ExportService } from '@/sdk/video/exports/outputFormats.ts';
 
-// M2b family types still inline in index.ts.
+// M2b family types now extracted to dedicated family modules.
 // import type is erased at compile time — zero runtime cost, no host wiring.
-import type {
-  TimelineOps,
-  ProposalRuntime,
-  LiveSessionsService,
-  ExtensionManifest,
-  EffectRegistrationService,
-  TransitionRegistrationService,
-  ClipTypeRegistrationService,
-  ShaderRegistrationService,
-  AgentToolRegistrationService,
-} from '../index';
+import type { EffectRegistrationService } from './video/families/effects';
+import type { ClipTypeRegistrationService } from './video/families/clipTypeContributions';
+import type { ShaderRegistrationService } from './video/families/shaders';
+import type { LiveSessionsService } from './video/liveData';
+import type { ProposalRuntime } from './video/timeline/proposals';
+import type { TimelineOps } from './video/timeline/timelineOps';
+import type { TransitionRegistrationService } from './video/families/transitions';
+import type { ExtensionManifest } from './manifest';
+import type { AgentToolRegistrationService } from './video/families/agentTools';
 
 // ---------------------------------------------------------------------------
 // Context service contracts (pure interfaces)

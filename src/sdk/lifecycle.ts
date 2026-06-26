@@ -13,11 +13,9 @@ import type { ExtensionContext } from './context';
 import type { DisposeHandle } from './dispose';
 import { validateExtensionId, validateContributionId } from './ids';
 
-// ExtensionManifest is still inline in src/sdk/index.ts because it depends
-// on ~18 contribution type aliases that have not yet been extracted to
-// canonical modules (M2b).  import type is erased at compile time and
-// introduces no runtime dependency on the barrel.
-import type { ExtensionManifest } from '../index';
+// ExtensionManifest is now the canonical source in src/sdk/manifest.ts.
+// import type is erased at compile time and introduces no runtime dependency.
+import type { ExtensionManifest } from './manifest';
 
 // ---------------------------------------------------------------------------
 // Extension lifecycle

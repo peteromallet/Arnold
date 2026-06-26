@@ -14,11 +14,8 @@
 import type { DeterminismStatus } from '@/sdk/video/rendering/renderability';
 import type { ShaderMaterializerRequirementScope } from '@/sdk/video/rendering/capabilities';
 import type { TimelinePatch } from './patch';
-import type {
-  ProjectExtensionRequirement,
-  SourceMapEntry,
-  GeneratedObjectMeta,
-} from '@/sdk/index';
+import type { ProjectExtensionRequirement } from '@/sdk/projectRequirements';
+import type { SourceMapEntry, GeneratedObjectMeta } from './sourceMap';
 
 // ---------------------------------------------------------------------------
 // M12: Planner inspection contracts — effect, transition, live-binding,
