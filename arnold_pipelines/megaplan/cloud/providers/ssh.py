@@ -118,6 +118,13 @@ class SshProvider(Provider):
         env_path = f"{self._ssh.remote_dir}/.env"
         env_lines = [f"PORT={self._spec.resources.port}"]
         env_lines.extend(f"{name}={value}" for name, value in secrets.items())
+        self._remote_run(
+            "mkdir -p "
+            f"{shlex.quote(self._ssh.remote_dir)} "
+            f"{shlex.quote(self._ssh.workspace_dir)} "
+            f"{shlex.quote(f'{self._ssh.cache_dir}/pip')} "
+            f"{shlex.quote(f'{self._ssh.cache_dir}/npm')}"
+        )
         self._remote_run(f"cat > {shlex.quote(env_path)}", input="\n".join(env_lines) + "\n")
         self._remote_run(
             f"docker rm -f {shlex.quote(self._ssh.container)} >/dev/null 2>&1 || true"
@@ -130,6 +137,9 @@ class SshProvider(Provider):
                     "--restart unless-stopped",
                     f"--env-file {shlex.quote(env_path)}",
                     f"-p {self._spec.resources.port}:{self._spec.resources.port}",
+                    f"-v {shlex.quote(self._ssh.workspace_dir)}:/workspace",
+                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/pip')}:/root/.cache/pip",
+                    f"-v {shlex.quote(f'{self._ssh.cache_dir}/npm')}:/root/.npm",
                     shlex.quote(self._ssh.container),
                 ]
             )

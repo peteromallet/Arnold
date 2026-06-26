@@ -118,6 +118,25 @@ def validate_self_hosted_editable(env: ExecutionEnvironment) -> EngineIsolationP
     )
 
 
+def default_provider_for_local_auto(
+    env: ExecutionEnvironment,
+    *,
+    env_vars: dict[str, str] | None = None,
+) -> EngineIsolationProof | None:
+    """Choose the local auto-driver default only when no operator override exists."""
+
+    env_vars = env_vars or os.environ
+    if (
+        env_vars.get("MEGAPLAN_ENGINE_ISOLATION_PROVIDER")
+        or env_vars.get("MEGPLAN_ENGINE_ISOLATION_PROVIDER")
+        or env_vars.get("MEGAPLAN_TRUSTED_CONTAINER")
+        or env_vars.get("MEGPLAN_TRUSTED_CONTAINER")
+    ):
+        return None
+    proof = validate_logical_local_dev(env)
+    return proof if proof.logical_dev_accepted else None
+
+
 def _validate_by_probe(
     env: ExecutionEnvironment,
     *,
@@ -281,6 +300,7 @@ def _same_user_chmod_can_make_writable(root: Path, probe: Path) -> bool:
 __all__ = [
     "EngineIsolationProof",
     "CliError",
+    "default_provider_for_local_auto",
     "engine_write_barrier",
     "select_provider",
     "validate_local_immutable_by_probe",
