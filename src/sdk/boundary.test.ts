@@ -634,9 +634,9 @@ describe('ExtensionContext — type safety guard', () => {
 // M6: Contribution kind bridging — parser active, output/search typed
 // ---------------------------------------------------------------------------
 
-describe('M6: contribution kind bridging (parser M6-active, output/search typed)', () => {
-  it('parser is M6-active (contributionKindNotYetBridged returns null)', () => {
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+describe('M6: contribution kind bridging (parser M6-delegated, output/search typed)', () => {
+  it('parser is M6-delegated (contributionKindNotYetBridged returns M6)', () => {
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 
   it('outputFormat is typed but execution is reserved (returns M6)', () => {
@@ -653,8 +653,8 @@ describe('M6: contribution kind bridging (parser M6-active, output/search typed)
     const bridged = contributionKindNotYetBridged('outputFormat');
     expect(bridged).toBe('M6');
 
-    // Contrast: parser IS bridged at M6
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    // parser is delegated → M6 (runtime projection policy keeps it projectable)
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 
   it('unsupported contribution behavior is explicit (returns owning milestone)', () => {
@@ -662,8 +662,8 @@ describe('M6: contribution kind bridging (parser M6-active, output/search typed)
     // get a clear diagnostic, not silent ignorance.
     // clipType is runtime-bridged → null
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
-    // agentTool is runtime-bridged → null
-    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+    // agentTool is delegated → M10
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
     // agent is delegated → returns M10
     expect(contributionKindNotYetBridged('agent')).toBe('M10');
   });
@@ -1364,8 +1364,8 @@ describe('M10: ExtensionContext.agentTools registration boundary', () => {
 // ---------------------------------------------------------------------------
 
 describe('M10: Contribution kind bridging — agentTool bridged, agent delegated', () => {
-  it('agentTool is M10-bridged (executionMaturity runtime-bridged)', () => {
-    expect(contributionKindNotYetBridged('agentTool')).toBeNull();
+  it('agentTool is M10-delegated (executionMaturity delegated)', () => {
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
   });
 
   it('agent is NOT bridged (executionMaturity delegated — no host adapter)', () => {
@@ -1378,17 +1378,21 @@ describe('M10: Contribution kind bridging — agentTool bridged, agent delegated
     expect(CONTRIBUTION_KIND_MILESTONE.agent).toBe('M10');
   });
 
-  it('all other bridged kinds remain unchanged after M10 activation', () => {
+  it('all other active kinds remain unchanged after M10 activation', () => {
+    // host-integrated / public-supported / runtime-bridged remain null
     expect(contributionKindNotYetBridged('slot')).toBeNull();
     expect(contributionKindNotYetBridged('dialog')).toBeNull();
     expect(contributionKindNotYetBridged('panel')).toBeNull();
     expect(contributionKindNotYetBridged('command')).toBeNull();
     expect(contributionKindNotYetBridged('keybinding')).toBeNull();
     expect(contributionKindNotYetBridged('contextMenuItem')).toBeNull();
-    expect(contributionKindNotYetBridged('effect')).toBeNull();
-    expect(contributionKindNotYetBridged('transition')).toBeNull();
     expect(contributionKindNotYetBridged('clipType')).toBeNull();
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
+    expect(contributionKindNotYetBridged('automation')).toBeNull();
+    expect(contributionKindNotYetBridged('metadataFacet')).toBeNull();
+    // delegated kinds surface their owning milestone
+    expect(contributionKindNotYetBridged('effect')).toBe('M7');
+    expect(contributionKindNotYetBridged('transition')).toBe('M8');
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
   });
 });
 
@@ -2076,9 +2080,10 @@ describe('registry-derived family helpers', () => {
   it('getVideoFamilyLegacyBridgeStatus matches registry execution maturity', () => {
     // Bridged (runtime-bridged, host-integrated, public-supported)
     expect(getVideoFamilyLegacyBridgeStatus('slot')).toBeNull();
-    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
-    expect(getVideoFamilyLegacyBridgeStatus('transition')).toBeNull();
-    // Not bridged (delegated)
+    expect(getVideoFamilyLegacyBridgeStatus('command')).toBeNull();
+    // Delegated (descriptor projection is host-policy mediated)
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBe('M6');
+    expect(getVideoFamilyLegacyBridgeStatus('transition')).toBe('M8');
     expect(getVideoFamilyLegacyBridgeStatus('agent')).toBe('M10');
     expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
     expect(getVideoFamilyLegacyBridgeStatus('shader')).toBe('M13');
@@ -2099,17 +2104,1048 @@ describe('registry-derived family helpers', () => {
   it('contributionKindNotYetBridged is execution-maturity-derived', () => {
     // Execution maturity determines bridging:
     // runtime-bridged → null
-    expect(contributionKindNotYetBridged('parser')).toBeNull();
-    expect(contributionKindNotYetBridged('effect')).toBeNull();
+    expect(contributionKindNotYetBridged('clipType')).toBeNull();
     // host-integrated → null
     expect(contributionKindNotYetBridged('command')).toBeNull();
     expect(contributionKindNotYetBridged('dialog')).toBeNull();
     // public-supported → null
     expect(contributionKindNotYetBridged('slot')).toBeNull();
     // delegated → milestone string
+    expect(contributionKindNotYetBridged('parser')).toBe('M6');
+    expect(contributionKindNotYetBridged('effect')).toBe('M7');
     expect(contributionKindNotYetBridged('agent')).toBe('M10');
+    expect(contributionKindNotYetBridged('agentTool')).toBe('M10');
     expect(contributionKindNotYetBridged('outputFormat')).toBe('M6');
     expect(contributionKindNotYetBridged('searchProvider')).toBe('M6');
     expect(contributionKindNotYetBridged('shader')).toBe('M13');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T3: Family adapter contract types (boundary)
+// ---------------------------------------------------------------------------
+
+import {
+  FamilyAdapterRegistryImpl,
+} from '@/sdk/index';
+import type {
+  HostFamilyAdapter,
+  HostAdapterManifest,
+  HostAdapterRegistrationDescriptor,
+  FamilyAdapterRegistry,
+  FamilyDefinition,
+  FamilyConformanceReport,
+  ConformanceGap,
+  ConformanceGapCategory,
+  DeclarationMaturity,
+  ExecutionMaturity,
+  FamilyRequirementChecklist,
+  FamilyAdapterManifest,
+  FamilyAdapterManifestEntry,
+  ManifestCrossReferenceResult,
+} from '@/sdk/index';
+import {
+  buildFamilyAdapterManifest,
+  crossReferenceManifest,
+} from '@/sdk/index';
+
+describe('T3: family adapter contract types are importable', () => {
+  it('HostFamilyAdapter is constructable with minimal fields', () => {
+    const adapter: HostFamilyAdapter<'effect', unknown> = {
+      kind: 'effect',
+      manifest: {
+        adapterId: 'effect-default',
+        kind: 'effect',
+        version: '1.0.0',
+        maturity: 'runtime-bridged',
+      },
+    };
+    expect(adapter.kind).toBe('effect');
+    expect(adapter.manifest.adapterId).toBe('effect-default');
+    expect(adapter.manifest.maturity).toBe('runtime-bridged');
+  });
+
+  it('HostAdapterManifest supports optional description', () => {
+    const manifest: HostAdapterManifest = {
+      adapterId: 'test-adapter',
+      kind: 'parser',
+      version: '0.1.0',
+      maturity: 'host-integrated',
+      description: 'Test adapter for boundary verification',
+    };
+    expect(manifest.description).toBe('Test adapter for boundary verification');
+  });
+
+  it('HostAdapterRegistrationDescriptor supports null adapter and overrideMaturity', () => {
+    const descriptor: HostAdapterRegistrationDescriptor = {
+      adapter: null,
+      overrideMaturity: 'delegated',
+      metadata: { reason: 'not-yet-implemented' },
+    };
+    expect(descriptor.adapter).toBeNull();
+    expect(descriptor.overrideMaturity).toBe('delegated');
+    expect(descriptor.metadata).toEqual({ reason: 'not-yet-implemented' });
+  });
+
+  it('FamilyAdapterRegistry is a ReadonlyMap of kind → adapter', () => {
+    const adapter: HostFamilyAdapter = {
+      kind: 'slot',
+      manifest: {
+        adapterId: 'slot-default',
+        kind: 'slot',
+        version: '1.0.0',
+        maturity: 'public-supported',
+      },
+    };
+    const registry: FamilyAdapterRegistry = new Map([
+      ['slot', adapter],
+      ['shader', null],
+    ]);
+    expect(registry.get('slot')).toBe(adapter);
+    expect(registry.get('shader')).toBeNull();
+    expect(registry.get('nonexistent')).toBeUndefined();
+  });
+
+  it('FamilyConformanceReport has optional metadata on gaps', () => {
+    const report = getVideoFamilyConformanceReport('shader');
+    expect(report).toBeDefined();
+    // Every gap in the report must accept an optional metadata field
+    for (const gap of report!.gaps) {
+      // Type-level proof: metadata is optional (can be undefined)
+      const meta: Record<string, unknown> | undefined = gap.metadata;
+      expect(gap).toHaveProperty('category');
+      expect(gap).toHaveProperty('message');
+    }
+  });
+
+  it('ConformanceGap supports metadata assignment', () => {
+    const gap: ConformanceGap = {
+      category: 'host-adapter-missing',
+      message: 'No host adapter registered',
+      metadata: { adapterPath: null, checkedAt: Date.now() },
+    };
+    expect(gap.metadata).toBeDefined();
+    expect(gap.metadata!.adapterPath).toBeNull();
+    expect(typeof gap.metadata!.checkedAt).toBe('number');
+  });
+
+  it('FamilyDefinition and FamilyRequirementChecklist are importable', () => {
+    const checklist: FamilyRequirementChecklist = {
+      manifestSchema: true,
+      normalizedDescriptor: false,
+      registrationApi: undefined,
+      lifecycleCleanup: true,
+      diagnostics: false,
+      hostCapabilityProjection: undefined,
+      uiIntegration: true,
+      persistencePosture: undefined,
+      examples: false,
+      tests: undefined,
+    };
+    const def: FamilyDefinition = {
+      kind: 'test-kind',
+      declarationMaturity: 'typed',
+      executionMaturity: 'delegated',
+      hostIntegrationNotes: 'Test-only definition',
+      requiresTrustedCode: false,
+      manifestSchemaDefinition: 'testKindSchema',
+      sdkModules: ['test/module'],
+      hostAdapter: null,
+      requirements: checklist,
+      legacyMilestone: 'M99',
+    };
+    expect(def.kind).toBe('test-kind');
+    expect(def.executionMaturity).toBe('delegated');
+    expect(def.requirements.manifestSchema).toBe(true);
+    expect(def.requirements.registrationApi).toBeUndefined();
+  });
+
+  it('DeclarationMaturity and ExecutionMaturity sealed unions are importable', () => {
+    const decl: DeclarationMaturity = 'schema-backed';
+    const exec: ExecutionMaturity = 'host-integrated';
+    expect(decl).toBe('schema-backed');
+    expect(exec).toBe('host-integrated');
+  });
+
+  it('ConformanceGapCategory sealed union covers all 5 categories', () => {
+    const categories: ConformanceGapCategory[] = [
+      'unmet-requirement',
+      'coherence-violation',
+      'schema-coverage-missing',
+      'host-adapter-missing',
+      'unassessed-requirement',
+    ];
+    expect(categories).toHaveLength(5);
+    for (const cat of categories) {
+      const gap: ConformanceGap = { category: cat, message: `Test: ${cat}` };
+      expect(gap.category).toBe(cat);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T4: Passive adapter registry (boundary)
+// ---------------------------------------------------------------------------
+
+describe('T4: passive adapter registry (boundary)', () => {
+  // ---- construction -------------------------------------------------------
+
+  it('constructs empty with size 0', () => {
+    const reg = new FamilyAdapterRegistryImpl();
+    expect(reg.size).toBe(0);
+    expect(reg.kinds()).toEqual([]);
+  });
+
+  it('constructs with initial entries', () => {
+    const fake: HostFamilyAdapter = {
+      kind: 'slot',
+      manifest: {
+        adapterId: 'slot-fake',
+        kind: 'slot',
+        version: '1.0.0',
+        maturity: 'public-supported',
+      },
+    };
+    const reg = new FamilyAdapterRegistryImpl([['slot', fake]]);
+    expect(reg.size).toBe(1);
+    expect(reg.kinds()).toEqual(['slot']);
+  });
+
+  // ---- get ----------------------------------------------------------------
+
+  it('get returns the adapter for a registered kind', () => {
+    const fake: HostFamilyAdapter = {
+      kind: 'effect',
+      manifest: {
+        adapterId: 'effect-fake',
+        kind: 'effect',
+        version: '1.0.0',
+        maturity: 'runtime-bridged',
+      },
+    };
+    const reg = new FamilyAdapterRegistryImpl([['effect', fake]]);
+    expect(reg.get('effect')).toBe(fake);
+  });
+
+  it('get returns null for a known-unavailable kind', () => {
+    const reg = new FamilyAdapterRegistryImpl([['shader', null]]);
+    expect(reg.get('shader')).toBeNull();
+  });
+
+  it('get returns undefined for an unregistered kind', () => {
+    const reg = new FamilyAdapterRegistryImpl();
+    expect(reg.get('nonexistent')).toBeUndefined();
+  });
+
+  // ---- require ------------------------------------------------------------
+
+  it('require returns the adapter for a registered kind', () => {
+    const fake: HostFamilyAdapter = {
+      kind: 'command',
+      manifest: {
+        adapterId: 'cmd-fake',
+        kind: 'command',
+        version: '1.0.0',
+        maturity: 'host-integrated',
+      },
+    };
+    const reg = new FamilyAdapterRegistryImpl([['command', fake]]);
+    expect(reg.require('command')).toBe(fake);
+  });
+
+  it('require returns null for a known-unavailable kind', () => {
+    const reg = new FamilyAdapterRegistryImpl([['parser', null]]);
+    expect(reg.require('parser')).toBeNull();
+  });
+
+  it('require throws for an unregistered kind', () => {
+    const reg = new FamilyAdapterRegistryImpl();
+    expect(() => reg.require('missing-kind')).toThrow(
+      /kind "missing-kind" is not registered/,
+    );
+  });
+
+  // ---- kinds --------------------------------------------------------------
+
+  it('kinds returns sorted alphabetical list', () => {
+    const fake: HostFamilyAdapter = {
+      kind: 'zebra',
+      manifest: {
+        adapterId: 'z',
+        kind: 'zebra',
+        version: '1.0.0',
+        maturity: 'absent',
+      },
+    };
+    const reg = new FamilyAdapterRegistryImpl([
+      ['alpha', fake],
+      ['zebra', null],
+      ['beta', fake],
+    ]);
+    expect(reg.kinds()).toEqual(['alpha', 'beta', 'zebra']);
+  });
+
+  // ---- register (real adapter) --------------------------------------------
+
+  it('register adds a real adapter', () => {
+    const reg = new FamilyAdapterRegistryImpl();
+    const fake: HostFamilyAdapter = {
+      kind: 'transition',
+      manifest: {
+        adapterId: 'trans-fake',
+        kind: 'transition',
+        version: '1.0.0',
+        maturity: 'runtime-bridged',
+      },
+    };
+    reg.register({ adapter: fake });
+    expect(reg.size).toBe(1);
+    expect(reg.get('transition')).toBe(fake);
+  });
+
+  it('register with overrideMaturity stores adapted manifest', () => {
+    const reg = new FamilyAdapterRegistryImpl();
+    const fake: HostFamilyAdapter = {
+      kind: 'metadataFacet',
+      manifest: {
+        adapterId: 'md-fake',
+        kind: 'metadataFacet',
+        version: '1.0.0',
+        maturity: 'runtime-bridged',
+      },
+    };
+    reg.register({ adapter: fake, overrideMaturity: 'delegated' });
+    const stored = reg.get('metadataFacet');
+    expect(stored).not.toBeNull();
+    expect(stored!.manifest.maturity).toBe('delegated');
+    // Original adapter is NOT mutated
+    expect(fake.manifest.maturity).toBe('runtime-bridged');
+  });
+
+  // ---- register (null adapter) --------------------------------------------
+
+  it('register with null adapter marks kind as known-unavailable', () => {
+    const reg = new FamilyAdapterRegistryImpl();
+    reg.register({
+      adapter: null,
+      metadata: { kind: 'outputFormat' },
+    });
+    expect(reg.size).toBe(1);
+    expect(reg.get('outputFormat')).toBeNull();
+    expect(reg.kinds()).toEqual(['outputFormat']);
+  });
+
+  // ---- snapshot -----------------------------------------------------------
+
+  it('snapshot returns a ReadonlyMap matching current state', () => {
+    const fake: HostFamilyAdapter = {
+      kind: 'slot',
+      manifest: {
+        adapterId: 'slot-snap',
+        kind: 'slot',
+        version: '1.0.0',
+        maturity: 'host-integrated',
+      },
+    };
+    const reg = new FamilyAdapterRegistryImpl([
+      ['slot', fake],
+      ['shader', null],
+    ]);
+    const snap: FamilyAdapterRegistry = reg.snapshot();
+    expect(snap.size).toBe(2);
+    expect(snap.get('slot')).toBe(fake);
+    expect(snap.get('shader')).toBeNull();
+    expect(snap.get('missing')).toBeUndefined();
+  });
+
+  it('snapshot is independent of later mutations', () => {
+    const fake: HostFamilyAdapter = {
+      kind: 'panel',
+      manifest: {
+        adapterId: 'panel-fake',
+        kind: 'panel',
+        version: '1.0.0',
+        maturity: 'host-integrated',
+      },
+    };
+    const reg = new FamilyAdapterRegistryImpl([['panel', fake]]);
+    const snap = reg.snapshot();
+    reg.register({ adapter: null, metadata: { kind: 'dialog' } });
+    // Snapshot still has only the original entry
+    expect(snap.size).toBe(1);
+    expect(snap.get('dialog')).toBeUndefined();
+  });
+
+  // ---- passive property ---------------------------------------------------
+
+  it('registry has no host runtime imports or side effects', () => {
+    // The registry is purely a data holder — constructing, registering,
+    // and querying must not throw unexpectedly.
+    const reg = new FamilyAdapterRegistryImpl();
+    expect(() => {
+      reg.register({
+        adapter: {
+          kind: 'test',
+          manifest: {
+            adapterId: 't',
+            kind: 'test',
+            version: '0.0.0',
+            maturity: 'absent',
+          },
+        },
+      });
+      reg.get('test');
+      reg.require('test');
+      reg.kinds();
+      reg.snapshot();
+    }).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T5: Adapter coordinator & conformance aggregation (boundary)
+// ---------------------------------------------------------------------------
+
+import {
+  normalizeAdapters,
+  disposeAll,
+  projectMaturityCapabilities,
+  findAdapter,
+  listRegisteredKinds,
+  aggregateHostConformance,
+  isValidDelegatedGap,
+  identifyDelegatedFamilies,
+} from '@/sdk/index';
+
+// ---- T5 shared helpers ---------------------------------------------------
+
+function fakeAdapter(kind: string, maturity: ExecutionMaturity = 'runtime-bridged'): HostFamilyAdapter {
+  return {
+    kind,
+    manifest: {
+      adapterId: `${kind}-fake`,
+      kind,
+      version: '1.0.0',
+      maturity,
+    },
+  };
+}
+
+function fakeDefinition(
+  kind: string,
+  executionMaturity: ExecutionMaturity,
+  opts?: { hostAdapter?: string | null; manifestSchema?: boolean },
+): FamilyDefinition {
+  return {
+    kind,
+    declarationMaturity: 'schema-backed',
+    executionMaturity,
+    requiresTrustedCode: false,
+    manifestSchemaDefinition: `${kind}Schema`,
+    sdkModules: [`video/families/${kind}`],
+    hostAdapter: opts?.hostAdapter ?? null,
+    requirements: {
+      manifestSchema: opts?.manifestSchema ?? true,
+      normalizedDescriptor: true,
+      registrationApi: true,
+      lifecycleCleanup: undefined,
+      diagnostics: undefined,
+      hostCapabilityProjection: undefined,
+      uiIntegration: undefined,
+      persistencePosture: undefined,
+      examples: undefined,
+      tests: undefined,
+    },
+  };
+}
+
+describe('T5: adapter coordinator (boundary)', () => {
+
+  // ---- normalizeAdapters --------------------------------------------------
+
+  it('normalizeAdapters deduplicates by kind (last wins)', () => {
+    const a1 = fakeAdapter('effect', 'runtime-bridged');
+    const a2 = fakeAdapter('effect', 'host-integrated');
+    const a3 = fakeAdapter('transition', 'runtime-bridged');
+
+    const normalized = normalizeAdapters([a1, a2, a3]);
+    expect(normalized.size).toBe(2);
+    expect(normalized.get('effect')!.manifest.maturity).toBe('host-integrated');
+    expect(normalized.get('transition')).toBe(a3);
+  });
+
+  it('normalizeAdapters returns empty map for empty input', () => {
+    const normalized = normalizeAdapters([]);
+    expect(normalized.size).toBe(0);
+  });
+
+  it('normalizeAdapters preserves insertion order', () => {
+    const adapters = [
+      fakeAdapter('zebra'),
+      fakeAdapter('alpha'),
+      fakeAdapter('beta'),
+    ];
+    const normalized = normalizeAdapters(adapters);
+    const keys = [...normalized.keys()];
+    expect(keys).toEqual(['zebra', 'alpha', 'beta']);
+  });
+
+  // ---- disposeAll ----------------------------------------------------------
+
+  it('disposeAll calls disposer for every adapter in order', () => {
+    const disposed: string[] = [];
+    const adapters = [
+      fakeAdapter('effect'),
+      fakeAdapter('transition'),
+      fakeAdapter('shader'),
+    ];
+
+    disposeAll(adapters, (a) => {
+      disposed.push(a.kind);
+    });
+
+    expect(disposed).toEqual(['effect', 'transition', 'shader']);
+  });
+
+  it('disposeAll skips null entries silently', () => {
+    const disposed: string[] = [];
+    const adapters: HostFamilyAdapter[] = [
+      fakeAdapter('effect'),
+      // Simulate null at runtime (though the type says no nulls)
+    ];
+
+    disposeAll(adapters, (a) => {
+      disposed.push(a.kind);
+    });
+
+    expect(disposed).toEqual(['effect']);
+  });
+
+  it('disposeAll does not throw on empty array', () => {
+    expect(() => disposeAll([], () => {})).not.toThrow();
+  });
+
+  // ---- projectMaturityCapabilities ----------------------------------------
+
+  it('projectMaturityCapabilities maps real adapters to their manifest maturity', () => {
+    const registry: FamilyAdapterRegistry = new Map([
+      ['slot', fakeAdapter('slot', 'public-supported')],
+      ['effect', fakeAdapter('effect', 'runtime-bridged')],
+    ]);
+
+    const projection = projectMaturityCapabilities(registry);
+    expect(projection.get('slot')).toBe('public-supported');
+    expect(projection.get('effect')).toBe('runtime-bridged');
+  });
+
+  it('projectMaturityCapabilities maps null entries to delegated', () => {
+    const registry: FamilyAdapterRegistry = new Map([
+      ['shader', null],
+      ['agent', null],
+    ]);
+
+    const projection = projectMaturityCapabilities(registry);
+    expect(projection.get('shader')).toBe('delegated');
+    expect(projection.get('agent')).toBe('delegated');
+  });
+
+  it('projectMaturityCapabilities returns read-only typed map', () => {
+    const registry: FamilyAdapterRegistry = new Map([
+      ['slot', fakeAdapter('slot')],
+    ]);
+
+    const projection = projectMaturityCapabilities(registry);
+    // ReadonlyMap is a type-level contract — the returned map is typed
+    // as read-only. Verify the projection data is correct.
+    expect(projection.get('slot')).toBe('runtime-bridged');
+    expect(projection.has('nonexistent')).toBe(false);
+  });
+
+  it('projectMaturityCapabilities excludes unregistered kinds', () => {
+    const registry: FamilyAdapterRegistry = new Map();
+    const projection = projectMaturityCapabilities(registry);
+    expect(projection.has('nonexistent')).toBe(false);
+  });
+
+  // ---- findAdapter ---------------------------------------------------------
+
+  it('findAdapter returns adapter for registered kind', () => {
+    const adapter = fakeAdapter('panel', 'host-integrated');
+    const registry: FamilyAdapterRegistry = new Map([['panel', adapter]]);
+    expect(findAdapter(registry, 'panel')).toBe(adapter);
+  });
+
+  it('findAdapter returns null for known-unavailable kind', () => {
+    const registry: FamilyAdapterRegistry = new Map([['shader', null]]);
+    expect(findAdapter(registry, 'shader')).toBeNull();
+  });
+
+  it('findAdapter returns undefined for unregistered kind', () => {
+    const registry: FamilyAdapterRegistry = new Map();
+    expect(findAdapter(registry, 'nonexistent')).toBeUndefined();
+  });
+
+  // ---- listRegisteredKinds -------------------------------------------------
+
+  it('listRegisteredKinds returns sorted alphabetical list', () => {
+    const registry: FamilyAdapterRegistry = new Map([
+      ['zebra', fakeAdapter('zebra')],
+      ['alpha', null],
+      ['beta', fakeAdapter('beta')],
+    ]);
+    expect(listRegisteredKinds(registry)).toEqual(['alpha', 'beta', 'zebra']);
+  });
+
+  it('listRegisteredKinds returns empty array for empty registry', () => {
+    const registry: FamilyAdapterRegistry = new Map();
+    expect(listRegisteredKinds(registry)).toEqual([]);
+  });
+});
+
+describe('T5: conformance aggregation (boundary)', () => {
+  // ---- aggregateHostConformance -------------------------------------------
+
+  it('aggregateHostConformance builds reports for all definitions', () => {
+    const defs = [
+      fakeDefinition('slot', 'public-supported'),
+      fakeDefinition('effect', 'runtime-bridged'),
+    ];
+    const registry: FamilyAdapterRegistry = new Map([
+      ['slot', fakeAdapter('slot', 'public-supported')],
+      ['effect', fakeAdapter('effect', 'runtime-bridged')],
+    ]);
+
+    const reports = aggregateHostConformance(defs, registry);
+    expect(reports).toHaveLength(2);
+    expect(reports[0].kind).toBe('slot');
+    expect(reports[1].kind).toBe('effect');
+  });
+
+  it('aggregateHostConformance adds host-adapter-missing gap when registry lacks adapter', () => {
+    const defs = [fakeDefinition('shader', 'runtime-bridged')];
+    const registry: FamilyAdapterRegistry = new Map(); // no shader entry
+
+    const reports = aggregateHostConformance(defs, registry);
+    expect(reports).toHaveLength(1);
+
+    const hostMissingGaps = reports[0].gaps.filter(
+      (g) => g.category === 'host-adapter-missing' &&
+             g.metadata?.registryStatus === 'unregistered',
+    );
+    expect(hostMissingGaps.length).toBeGreaterThan(0);
+  });
+
+  it('aggregateHostConformance adds host-adapter-missing gap for null registry entry', () => {
+    const defs = [fakeDefinition('shader', 'runtime-bridged')];
+    const registry: FamilyAdapterRegistry = new Map([['shader', null]]);
+
+    const reports = aggregateHostConformance(defs, registry);
+    expect(reports).toHaveLength(1);
+
+    const nullGaps = reports[0].gaps.filter(
+      (g) => g.category === 'host-adapter-missing' &&
+             g.metadata?.registryStatus === 'null',
+    );
+    expect(nullGaps.length).toBeGreaterThan(0);
+  });
+
+  it('aggregateHostConformance does not add host-adapter-missing for absent execution maturity', () => {
+    const defs = [fakeDefinition('unknown', 'absent')];
+    const registry: FamilyAdapterRegistry = new Map();
+
+    const reports = aggregateHostConformance(defs, registry);
+    expect(reports).toHaveLength(1);
+
+    const hostMissingGaps = reports[0].gaps.filter(
+      (g) => g.category === 'host-adapter-missing',
+    );
+    expect(hostMissingGaps).toHaveLength(0);
+  });
+
+  it('aggregateHostConformance does not add host-adapter-missing for delegated execution maturity', () => {
+    const defs = [fakeDefinition('agent', 'delegated')];
+    const registry: FamilyAdapterRegistry = new Map();
+
+    const reports = aggregateHostConformance(defs, registry);
+    expect(reports).toHaveLength(1);
+
+    const hostMissingGaps = reports[0].gaps.filter(
+      (g) => g.category === 'host-adapter-missing',
+    );
+    expect(hostMissingGaps).toHaveLength(0);
+  });
+
+  it('aggregateHostConformance preserves base report gaps', () => {
+    const defs = [fakeDefinition('effect', 'runtime-bridged', { manifestSchema: false })];
+    const registry: FamilyAdapterRegistry = new Map([
+      ['effect', fakeAdapter('effect', 'runtime-bridged')],
+    ]);
+
+    const reports = aggregateHostConformance(defs, registry);
+    // Should still have schema-coverage-missing from the base report
+    const schemaGaps = reports[0].gaps.filter(
+      (g) => g.category === 'schema-coverage-missing',
+    );
+    expect(schemaGaps.length).toBeGreaterThan(0);
+  });
+
+  // ---- isValidDelegatedGap -------------------------------------------------
+
+  it('isValidDelegatedGap returns true for legitimate delegated gap', () => {
+    const registry: FamilyAdapterRegistry = new Map([['shader', null]]);
+    const gap: ConformanceGap = {
+      category: 'host-adapter-missing',
+      message: 'Delegated gap for shader',
+      metadata: {
+        kind: 'shader',
+        delegatedKind: true,
+        executionMaturity: 'runtime-bridged',
+      },
+    };
+
+    expect(isValidDelegatedGap(gap, registry)).toBe(true);
+  });
+
+  it('isValidDelegatedGap returns false when gap lacks delegatedKind metadata', () => {
+    const registry: FamilyAdapterRegistry = new Map([['shader', null]]);
+    const gap: ConformanceGap = {
+      category: 'host-adapter-missing',
+      message: 'Not a delegated gap',
+      metadata: {
+        kind: 'shader',
+        executionMaturity: 'runtime-bridged',
+      },
+    };
+
+    expect(isValidDelegatedGap(gap, registry)).toBe(false);
+  });
+
+  it('isValidDelegatedGap returns false when registry has real adapter', () => {
+    const registry: FamilyAdapterRegistry = new Map([
+      ['effect', fakeAdapter('effect', 'runtime-bridged')],
+    ]);
+    const gap: ConformanceGap = {
+      category: 'host-adapter-missing',
+      message: 'Delegated gap for effect',
+      metadata: {
+        kind: 'effect',
+        delegatedKind: true,
+        executionMaturity: 'runtime-bridged',
+      },
+    };
+
+    expect(isValidDelegatedGap(gap, registry)).toBe(false);
+  });
+
+  it('isValidDelegatedGap returns false when maturity is absent', () => {
+    const registry: FamilyAdapterRegistry = new Map([['shader', null]]);
+    const gap: ConformanceGap = {
+      category: 'host-adapter-missing',
+      message: 'Delegated with absent maturity',
+      metadata: {
+        kind: 'shader',
+        delegatedKind: true,
+        executionMaturity: 'absent',
+      },
+    };
+
+    expect(isValidDelegatedGap(gap, registry)).toBe(false);
+  });
+
+  it('isValidDelegatedGap returns false when kind is missing from gap metadata', () => {
+    const registry: FamilyAdapterRegistry = new Map([['shader', null]]);
+    const gap: ConformanceGap = {
+      category: 'host-adapter-missing',
+      message: 'Missing kind',
+      metadata: {
+        delegatedKind: true,
+        executionMaturity: 'runtime-bridged',
+      },
+    };
+
+    expect(isValidDelegatedGap(gap, registry)).toBe(false);
+  });
+
+  // ---- identifyDelegatedFamilies -------------------------------------------
+
+  it('identifyDelegatedFamilies returns sorted null-adapter kinds', () => {
+    const registry: FamilyAdapterRegistry = new Map([
+      ['shader', null],
+      ['slot', fakeAdapter('slot', 'public-supported')],
+      ['agent', null],
+      ['effect', fakeAdapter('effect', 'runtime-bridged')],
+    ]);
+
+    const delegated = identifyDelegatedFamilies(registry);
+    expect(delegated).toEqual(['agent', 'shader']);
+  });
+
+  it('identifyDelegatedFamilies returns empty array when no null entries', () => {
+    const registry: FamilyAdapterRegistry = new Map([
+      ['slot', fakeAdapter('slot', 'public-supported')],
+    ]);
+
+    expect(identifyDelegatedFamilies(registry)).toEqual([]);
+  });
+
+  it('identifyDelegatedFamilies returns empty array for empty registry', () => {
+    const registry: FamilyAdapterRegistry = new Map();
+    expect(identifyDelegatedFamilies(registry)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T6: Family adapter manifest — cross-reference checklist (boundary)
+// ---------------------------------------------------------------------------
+
+describe('T6: family adapter manifest (boundary)', () => {
+  // ---- manifest construction ------------------------------------------------
+
+  it('buildFamilyAdapterManifest returns a manifest with entries', () => {
+    const manifest = buildFamilyAdapterManifest();
+    expect(manifest).toBeDefined();
+    expect(manifest.size).toBeGreaterThan(0);
+    expect(manifest.entries.length).toBe(manifest.size);
+  });
+
+  it('manifest entries are sorted by kind ascending', () => {
+    const manifest = buildFamilyAdapterManifest();
+    const kinds = manifest.entries.map((e) => e.kind);
+    expect(kinds).toEqual([...kinds].sort());
+  });
+
+  it('manifest.kinds matches entry kinds in order', () => {
+    const manifest = buildFamilyAdapterManifest();
+    expect(manifest.kinds).toEqual(manifest.entries.map((e) => e.kind));
+  });
+
+  it('getEntry returns the correct entry for a known kind', () => {
+    const manifest = buildFamilyAdapterManifest();
+    const entry = manifest.getEntry('effect');
+    expect(entry).toBeDefined();
+    expect(entry!.kind).toBe('effect');
+    expect(entry!.label).toBe('Effect');
+    expect(entry!.executionMaturity).toBe('delegated');
+    expect(entry!.hostAdapter).toBe('src/tools/video-editor/runtime/families/effectAdapter.ts');
+  });
+
+  it('getEntry returns undefined for an unknown kind', () => {
+    const manifest = buildFamilyAdapterManifest();
+    expect(manifest.getEntry('nonexistent')).toBeUndefined();
+  });
+
+  // ---- manifest covers every VIDEO_FAMILY_REGISTRY kind --------------------
+
+  it('manifest contains every family kind from the known contribution kinds', () => {
+    const manifest = buildFamilyAdapterManifest();
+    // All 21 kinds from VIDEO_CONTRIBUTION_KINDS must be present
+    const knownKinds = [
+      'agent', 'agentTool', 'assetDetailSection', 'automation',
+      'clipType', 'command', 'contextMenuItem', 'dialog',
+      'effect', 'inspectorSection', 'keybinding', 'metadataFacet',
+      'outputFormat', 'panel', 'parser', 'process',
+      'searchProvider', 'shader', 'slot', 'timelineOverlay',
+      'transition',
+    ];
+
+    for (const kind of knownKinds) {
+      const entry = manifest.getEntry(kind);
+      expect(entry).toBeDefined();
+      expect(entry!.kind).toBe(kind);
+    }
+  });
+
+  // ---- hostAdapter paths ---------------------------------------------------
+
+  it('manifest hostAdapter paths agree with familyDefinitions registry', () => {
+    const manifest = buildFamilyAdapterManifest();
+
+    // Families with adapter paths
+    expect(manifest.getEntry('agentTool')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/agentToolAdapter.ts');
+    expect(manifest.getEntry('assetDetailSection')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/assetDetailSectionAdapter.ts');
+    expect(manifest.getEntry('automation')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/automationAdapter.ts');
+    expect(manifest.getEntry('clipType')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/clipTypeAdapter.ts');
+    expect(manifest.getEntry('command')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/commandAdapter.ts');
+    expect(manifest.getEntry('contextMenuItem')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/contextMenuItemAdapter.ts');
+    expect(manifest.getEntry('dialog')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/dialogAdapter.ts');
+    expect(manifest.getEntry('effect')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/effectAdapter.ts');
+    expect(manifest.getEntry('inspectorSection')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/inspectorSectionAdapter.ts');
+    expect(manifest.getEntry('keybinding')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/keybindingAdapter.ts');
+    expect(manifest.getEntry('metadataFacet')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/metadataFacetAdapter.ts');
+    expect(manifest.getEntry('outputFormat')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/outputFormatAdapter.ts');
+    expect(manifest.getEntry('panel')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/panelAdapter.ts');
+    expect(manifest.getEntry('parser')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/parserAdapter.ts');
+    expect(manifest.getEntry('process')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/processAdapter.ts');
+    expect(manifest.getEntry('searchProvider')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/searchProviderAdapter.ts');
+    expect(manifest.getEntry('shader')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/shaderAdapter.ts');
+    expect(manifest.getEntry('slot')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/slotAdapter.ts');
+    expect(manifest.getEntry('timelineOverlay')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/timelineOverlayAdapter.ts');
+    expect(manifest.getEntry('transition')!.hostAdapter)
+      .toBe('src/tools/video-editor/runtime/families/transitionAdapter.ts');
+
+    // Families with null adapter
+    expect(manifest.getEntry('agent')!.hostAdapter).toBeNull();
+  });
+
+  // ---- maturity expectations ------------------------------------------------
+
+  it('manifest expectsRealAdapter matches execution maturity', () => {
+    const manifest = buildFamilyAdapterManifest();
+
+    // delegated / absent → no real adapter expected
+    expect(manifest.getEntry('agent')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('agentTool')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('assetDetailSection')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('effect')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('outputFormat')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('parser')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('process')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('searchProvider')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('shader')!.expectsRealAdapter).toBe(false);
+    expect(manifest.getEntry('transition')!.expectsRealAdapter).toBe(false);
+
+    // runtime-bridged / host-integrated / public-supported → expects adapter
+    expect(manifest.getEntry('automation')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('clipType')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('command')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('contextMenuItem')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('dialog')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('inspectorSection')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('keybinding')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('metadataFacet')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('panel')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('slot')!.expectsRealAdapter).toBe(true);
+    expect(manifest.getEntry('timelineOverlay')!.expectsRealAdapter).toBe(true);
+  });
+
+  // ---- crossReferenceManifest -----------------------------------------------
+
+  it('crossReferenceManifest detects full alignment with complete registry', () => {
+    const manifest = buildFamilyAdapterManifest();
+
+    // Build a registry with an adapter for every kind that expects one
+    const fakeAdapter = (kind: string): HostFamilyAdapter => ({
+      kind,
+      manifest: {
+        adapterId: `${kind}-default`,
+        kind,
+        version: '1.0.0',
+        maturity: 'runtime-bridged',
+      },
+    });
+
+    const entries: Array<[string, HostFamilyAdapter | null]> = [];
+    for (const entry of manifest.entries) {
+      if (entry.expectsRealAdapter) {
+        entries.push([entry.kind, fakeAdapter(entry.kind)]);
+      } else {
+        entries.push([entry.kind, null]);
+      }
+    }
+
+    const registry: FamilyAdapterRegistry = new Map(entries);
+    const result = crossReferenceManifest(manifest, registry);
+
+    expect(result.missingFromRegistry).toEqual([]);
+    expect(result.missingFromManifest).toEqual([]);
+    expect(result.kindsNeedingAdapter).toEqual([]);
+    expect(result.contributionKindsNotInManifest).toEqual([]);
+    expect(result.manifestKindsNotInContributionKinds).toEqual([]);
+    expect(result.isFullyAligned).toBe(true);
+  });
+
+  it('crossReferenceManifest detects kinds missing from registry', () => {
+    const manifest = buildFamilyAdapterManifest();
+    // Empty registry — all kinds missing
+    const registry: FamilyAdapterRegistry = new Map();
+    const result = crossReferenceManifest(manifest, registry);
+
+    expect(result.missingFromRegistry.length).toBeGreaterThan(0);
+    expect(result.missingFromRegistry).toContain('effect');
+    expect(result.isFullyAligned).toBe(false);
+  });
+
+  it('crossReferenceManifest detects kinds needing adapter', () => {
+    const manifest = buildFamilyAdapterManifest();
+    // Register slot as null even though it expects a real adapter
+    const registry: FamilyAdapterRegistry = new Map([
+      ['slot', null],
+    ]);
+    const result = crossReferenceManifest(manifest, registry);
+
+    expect(result.kindsNeedingAdapter).toContain('slot');
+    expect(result.kindsNeedingAdapter).not.toContain('effect');
+  });
+
+  it('crossReferenceManifest detects kinds in registry but not manifest', () => {
+    const manifest = buildFamilyAdapterManifest();
+    const registry: FamilyAdapterRegistry = new Map([
+      ['bogusKind', null],
+    ]);
+    const result = crossReferenceManifest(manifest, registry);
+
+    expect(result.missingFromManifest).toContain('bogusKind');
+  });
+
+  it('crossReferenceManifest aligns contribution kinds with manifest', () => {
+    const manifest = buildFamilyAdapterManifest();
+    const registry: FamilyAdapterRegistry = new Map();
+
+    const result = crossReferenceManifest(manifest, registry);
+
+    // The manifest should cover all VIDEO_CONTRIBUTION_KINDS
+    expect(result.contributionKindsNotInManifest).toEqual([]);
+
+    // And should not have kinds outside VIDEO_CONTRIBUTION_KINDS
+    expect(result.manifestKindsNotInContributionKinds).toEqual([]);
+  });
+
+  // ---- manifest entry shape -------------------------------------------------
+
+  it('every manifest entry has required fields', () => {
+    const manifest = buildFamilyAdapterManifest();
+    for (const entry of manifest.entries) {
+      expect(typeof entry.kind).toBe('string');
+      expect(entry.kind.length).toBeGreaterThan(0);
+      expect(typeof entry.label).toBe('string');
+      expect(entry.label.length).toBeGreaterThan(0);
+      expect(entry.declarationMaturity).toBeDefined();
+      expect(entry.executionMaturity).toBeDefined();
+      // hostAdapter can be a string or null
+      expect(
+        entry.hostAdapter === null || typeof entry.hostAdapter === 'string',
+      ).toBe(true);
+      expect(typeof entry.expectsRealAdapter).toBe('boolean');
+      expect(typeof entry.isFullyConformant).toBe('boolean');
+      expect(entry.requirements).toBeDefined();
+      expect(Array.isArray(entry.gaps)).toBe(true);
+      expect(typeof entry.legacyMilestone).toBe('string');
+      expect(Array.isArray(entry.sdkModules)).toBe(true);
+      expect(typeof entry.manifestSchemaDefinition).toBe('string');
+    }
+  });
+
+  it('manifest size equals VIDEO_FAMILY_REGISTRY length (21 families)', () => {
+    const manifest = buildFamilyAdapterManifest();
+    expect(manifest.size).toBe(21);
   });
 });

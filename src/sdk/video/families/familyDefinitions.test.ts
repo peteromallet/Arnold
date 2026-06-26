@@ -98,21 +98,22 @@ describe('representative entries', () => {
     expect(cmd!.hostAdapter).not.toBeNull();
   });
 
-  it('contains parser (M6)', () => {
+  it('contains parser (M6) — schema-backed, delegated', () => {
     const parser = getVideoFamily('parser');
     expect(parser).toBeDefined();
     expect(parser!.kind).toBe('parser');
-    expect(parser!.executionMaturity).toBe('runtime-bridged');
+    expect(parser!.executionMaturity).toBe('delegated');
     expect(parser!.declarationMaturity).toBe('schema-backed');
+    expect(parser!.hostAdapter).not.toBeNull();
     expect(parser!.requirements.manifestSchema).toBe(true);
   });
 
-  it('contains outputFormat (M6)', () => {
+  it('contains outputFormat (M6) — typed, delegated', () => {
     const fmt = getVideoFamily('outputFormat');
     expect(fmt).toBeDefined();
     expect(fmt!.kind).toBe('outputFormat');
-    // Reserved for execution
     expect(fmt!.executionMaturity).toBe('delegated');
+    expect(fmt!.hostAdapter).not.toBeNull();
   });
 
   it('contains clipType (M9)', () => {
@@ -122,12 +123,12 @@ describe('representative entries', () => {
     expect(ct!.executionMaturity).toBe('runtime-bridged');
   });
 
-  it('contains shader (M13) — schema-backed, runtime-bridged', () => {
+  it('contains shader (M13) — schema-backed, delegated', () => {
     const shader = getVideoFamily('shader');
     expect(shader).toBeDefined();
     expect(shader!.kind).toBe('shader');
     expect(shader!.declarationMaturity).toBe('schema-backed');
-    expect(shader!.executionMaturity).toBe('runtime-bridged');
+    expect(shader!.executionMaturity).toBe('delegated');
     expect(shader!.hostAdapter).not.toBeNull();
   });
 
@@ -148,22 +149,24 @@ describe('representative entries', () => {
     expect(slot!.hostAdapter).not.toBeNull();
   });
 
-  it('contains agentTool (M10) — schema-backed, runtime-bridged', () => {
+  it('contains agentTool (M10) — schema-backed, delegated', () => {
     const at = getVideoFamily('agentTool');
     expect(at).toBeDefined();
     expect(at!.kind).toBe('agentTool');
     expect(at!.declarationMaturity).toBe('schema-backed');
-    expect(at!.executionMaturity).toBe('runtime-bridged');
+    expect(at!.executionMaturity).toBe('delegated');
+    expect(at!.hostAdapter).not.toBeNull();
     expect(at!.requiresTrustedCode).toBe(true);
     expect(at!.legacyMilestone).toBe('M10');
   });
 
-  it('contains assetDetailSection (M6) — schema-backed, runtime-bridged', () => {
+  it('contains assetDetailSection (M6) — schema-backed, delegated', () => {
     const ads = getVideoFamily('assetDetailSection');
     expect(ads).toBeDefined();
     expect(ads!.kind).toBe('assetDetailSection');
     expect(ads!.declarationMaturity).toBe('schema-backed');
-    expect(ads!.executionMaturity).toBe('runtime-bridged');
+    expect(ads!.executionMaturity).toBe('delegated');
+    expect(ads!.hostAdapter).not.toBeNull();
     expect(ads!.legacyMilestone).toBe('M6');
     expect(ads!.requirements.manifestSchema).toBe(true);
   });
@@ -177,12 +180,13 @@ describe('representative entries', () => {
     expect(auto!.legacyMilestone).toBe('M9');
   });
 
-  it('contains effect (M7) — schema-backed, runtime-bridged', () => {
+  it('contains effect (M7) — schema-backed, delegated', () => {
     const eff = getVideoFamily('effect');
     expect(eff).toBeDefined();
     expect(eff!.kind).toBe('effect');
     expect(eff!.declarationMaturity).toBe('schema-backed');
-    expect(eff!.executionMaturity).toBe('runtime-bridged');
+    expect(eff!.executionMaturity).toBe('delegated');
+    expect(eff!.hostAdapter).not.toBeNull();
     expect(eff!.legacyMilestone).toBe('M7');
     expect(eff!.requirements.registrationApi).toBe(true);
   });
@@ -204,7 +208,7 @@ describe('representative entries', () => {
     expect(proc!.declarationMaturity).toBe('typed');
     expect(proc!.executionMaturity).toBe('delegated');
     expect(proc!.legacyMilestone).toBe('M12');
-    expect(proc!.hostAdapter).toBeNull();
+    expect(proc!.hostAdapter).not.toBeNull();
   });
 
   it('contains searchProvider (M6) — typed, delegated', () => {
@@ -214,15 +218,16 @@ describe('representative entries', () => {
     expect(sp!.declarationMaturity).toBe('typed');
     expect(sp!.executionMaturity).toBe('delegated');
     expect(sp!.legacyMilestone).toBe('M6');
-    expect(sp!.hostAdapter).toBeNull();
+    expect(sp!.hostAdapter).not.toBeNull();
   });
 
-  it('contains transition (M8) — schema-backed, runtime-bridged', () => {
+  it('contains transition (M8) — schema-backed, delegated', () => {
     const tr = getVideoFamily('transition');
     expect(tr).toBeDefined();
     expect(tr!.kind).toBe('transition');
     expect(tr!.declarationMaturity).toBe('schema-backed');
-    expect(tr!.executionMaturity).toBe('runtime-bridged');
+    expect(tr!.executionMaturity).toBe('delegated');
+    expect(tr!.hostAdapter).not.toBeNull();
     expect(tr!.legacyMilestone).toBe('M8');
     expect(tr!.requirements.registrationApi).toBe(true);
   });

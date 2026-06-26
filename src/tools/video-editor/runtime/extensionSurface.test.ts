@@ -13,8 +13,14 @@ import {
   defineExtension,
   getVideoFamilyDefinition,
   getVideoFamilyLegacyBridgeStatus,
+  FamilyAdapterRegistryImpl,
+  findAdapter,
 } from '@reigh/editor-sdk';
 import type { ReighExtension, ExtensionDiagnostic } from '@reigh/editor-sdk';
+import { assembleExtensionRuntime } from '@/tools/video-editor/runtime/families/FamilyRuntimeAssembly';
+import { buildFamilyContributionSequence } from '@/tools/video-editor/runtime/families/FamilyContributionSequence';
+import { metadataFacetAdapter } from '@/tools/video-editor/runtime/families/metadataFacetAdapter';
+import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from '@/tools/video-editor/runtime/families/familyAdapterRegistry';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -395,14 +401,17 @@ describe('normalizeExtensionRuntime — inactive reserved contributions', () => 
 
   it('tracks reserved-vs-active families from the registry maturity helpers', () => {
     const rt = normalizeExtensionRuntime([withReserved]);
-    expect(getVideoFamilyDefinition('parser')?.executionMaturity).toBe('runtime-bridged');
-    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBeNull();
+    // SDK execution maturity is delegated for parser; runtime projection
+    // policy keeps it projectable via the placeholder adapter.
+    expect(getVideoFamilyDefinition('parser')?.executionMaturity).toBe('delegated');
+    expect(getVideoFamilyLegacyBridgeStatus('parser')).toBe('M6');
     expect(getVideoFamilyDefinition('outputFormat')?.executionMaturity).toBe('delegated');
     expect(getVideoFamilyLegacyBridgeStatus('outputFormat')).toBe('M6');
     expect(getVideoFamilyDefinition('searchProvider')?.executionMaturity).toBe('delegated');
     expect(getVideoFamilyLegacyBridgeStatus('searchProvider')).toBe('M6');
     expect(getVideoFamilyDefinition('process')?.executionMaturity).toBe('delegated');
     expect(getVideoFamilyLegacyBridgeStatus('process')).toBe('M12');
+    // Only historically reserved delegated families appear in inactiveReserved.
     expect(rt.inactiveReserved.map((item) => item.kind).sort()).toEqual([
       'outputFormat',
       'process',
@@ -2032,5 +2041,859 @@ describe('normalizeExtensionRuntime — package contribution summaries', () => {
     expect(disabledSummary!.declared).toBe(1);
     expect(disabledSummary!.active).toBe(-1); // no active descriptor
     expect(disabledSummary!.kinds).toEqual(['Panel']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Characterization: Effect with missing component metadata
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — effect missing component metadata', () => {
+  const ex = ext('com.example.effect-no-meta', {
+    manifest: {
+      contributions: [
+        // effect without effectId — missing component metadata
+        { id: 'orphan-effect' as any, kind: 'effect', label: 'Orphan' },
+      ],
+    },
+  });
+
+  it('emits a warning diagnostic for effect without effectId', () => {
+    const rt = normalizeExtensionRuntime([ex]);
+    const warnings = diagsOf(rt, 'runtime/effect-missing-component-metadata');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].severity).toBe('warning');
+    expect(warnings[0].extensionId).toBe('com.example.effect-no-meta');
+    expect(warnings[0].contributionId).toBe('orphan-effect');
+  });
+
+  it('places effect without effectId into inactiveReserved, not config.effects', () => {
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.effects).toHaveLength(0);
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'effect');
+    expect(reserved).toHaveLength(1);
+    expect(reserved[0].contributionId).toBe('orphan-effect');
+    expect(reserved[0].extensionId).toBe('com.example.effect-no-meta');
+  });
+
+  it('collects known render IDs from inactive effects', () => {
+    const ex2 = ext('com.example.effect-render', {
+      manifest: {
+        contributions: [
+          { id: 'orphan-render' as any, kind: 'effect', label: 'Orphan', render: 'render/orphan' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex2]);
+    expect(rt.knownRenderIds.has('render/orphan')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Characterization: Transition with missing renderer metadata
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — transition missing renderer metadata', () => {
+  const ex = ext('com.example.transition-no-meta', {
+    manifest: {
+      contributions: [
+        // transition without transitionId — missing renderer metadata
+        { id: 'orphan-transition' as any, kind: 'transition', label: 'Orphan' },
+      ],
+    },
+  });
+
+  it('emits a warning diagnostic for transition without transitionId', () => {
+    const rt = normalizeExtensionRuntime([ex]);
+    const warnings = diagsOf(rt, 'runtime/transition-missing-renderer-metadata');
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].severity).toBe('warning');
+    expect(warnings[0].extensionId).toBe('com.example.transition-no-meta');
+    expect(warnings[0].contributionId).toBe('orphan-transition');
+  });
+
+  it('places transition without transitionId into inactiveReserved, not config.transitions', () => {
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.transitions).toHaveLength(0);
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'transition');
+    expect(reserved).toHaveLength(1);
+    expect(reserved[0].contributionId).toBe('orphan-transition');
+  });
+
+  it('collects known render IDs from inactive transitions', () => {
+    const ex2 = ext('com.example.transition-render', {
+      manifest: {
+        contributions: [
+          { id: 'orphan-render' as any, kind: 'transition', label: 'Orphan', render: 'render/transition-orphan' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex2]);
+    expect(rt.knownRenderIds.has('render/transition-orphan')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Characterization: Shader missing shaderId (asymmetric vs effect/transition)
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — shader missing shaderId (asymmetric routing)', () => {
+  it('emits an error diagnostic for shader without shaderId (projected, not Phase-2 filtered)', () => {
+    const ex = ext('com.example.shader-no-id', {
+      manifest: {
+        contributions: [
+          { id: 'orphan-shader' as any, kind: 'shader', label: 'Orphan Shader' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    // Unlike effect/transition which are filtered in Phase 2,
+    // shader contributions reach Phase 4 projection and emit diagnostics there.
+    const errors = diagsOf(rt, 'runtime/shader-missing-shader-id');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe('error');
+    expect(errors[0].extensionId).toBe('com.example.shader-no-id');
+    expect(errors[0].contributionId).toBe('orphan-shader');
+  });
+
+  it('does NOT place shader without shaderId into config.shaders', () => {
+    const ex = ext('com.example.shader-no-id', {
+      manifest: {
+        contributions: [
+          { id: 'orphan-shader' as any, kind: 'shader', label: 'Orphan Shader' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.shaders).toHaveLength(0);
+  });
+
+  it('does NOT place shader without shaderId into inactiveReserved (Phase-2 pass-through, Phase-4 diagnostic)', () => {
+    const ex = ext('com.example.shader-no-id', {
+      manifest: {
+        contributions: [
+          { id: 'orphan-shader' as any, kind: 'shader', label: 'Orphan Shader' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    // Shader without shaderId is NOT filtered in Phase 2;
+    // it passes through to Phase 4 where it hits the default case.
+    // It does NOT end up in inactiveReserved (unlike effect/transition).
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'shader');
+    expect(reserved).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Characterization: Runtime/config aliasing for effects, transitions, agentTools
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — runtime/config aliasing', () => {
+  it('aliases rt.effects to rt.config.effects', () => {
+    const ex = ext('com.example.effects-alias', {
+      manifest: {
+        contributions: [
+          { id: 'glow' as any, kind: 'effect', effectId: 'glow', label: 'Glow' },
+          { id: 'blur' as any, kind: 'effect', effectId: 'blur', label: 'Blur' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.effects).toBe(rt.config.effects);
+    expect(rt.effects).toHaveLength(2);
+    expect(rt.config.effects).toHaveLength(2);
+  });
+
+  it('aliases rt.transitions to rt.config.transitions', () => {
+    const ex = ext('com.example.transitions-alias', {
+      manifest: {
+        contributions: [
+          { id: 'dissolve' as any, kind: 'transition', transitionId: 'dissolve', label: 'Dissolve' },
+          { id: 'wipe' as any, kind: 'transition', transitionId: 'wipe', label: 'Wipe' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.transitions).toBe(rt.config.transitions);
+    expect(rt.transitions).toHaveLength(2);
+    expect(rt.config.transitions).toHaveLength(2);
+  });
+
+  it('aliases rt.agentTools to rt.config.agentTools', () => {
+    const ex = ext('com.example.agents-alias', {
+      manifest: {
+        contributions: [
+          { id: 'search-tool' as any, kind: 'agentTool', toolId: 'search', label: 'Search' },
+          { id: 'scrape-tool' as any, kind: 'agentTool', toolId: 'scrape', label: 'Scrape' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.agentTools).toBe(rt.config.agentTools);
+    expect(rt.agentTools).toHaveLength(2);
+    expect(rt.config.agentTools).toHaveLength(2);
+  });
+
+  it('aliases rt.shaders to rt.config.shaders', () => {
+    const ex = ext('com.example.shaders-alias', {
+      manifest: {
+        contributions: [
+          { id: 'grade' as any, kind: 'shader', shaderId: 'shader.grade', label: 'Grade', pass: 'postprocess' as const },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.shaders).toBe(rt.config.shaders);
+    expect(rt.shaders).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Characterization: Cross-kind duplicate contribution IDs
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — cross-kind duplicate contribution IDs', () => {
+  it('rejects duplicate contribution ID even when the kind differs (first owner wins)', () => {
+    const extA = ext('com.example.slot-owner', {
+      manifest: {
+        contributions: [
+          { id: 'shared-cross-kind' as any, kind: 'slot', slot: 'toolbar' },
+        ],
+      },
+    });
+    const extB = ext('com.example.effect-claimant', {
+      manifest: {
+        contributions: [
+          { id: 'shared-cross-kind' as any, kind: 'effect', effectId: 'glow', label: 'Glow' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([extA, extB]);
+
+    // First owner (slot) wins
+    expect(rt.config.slots).toHaveProperty('toolbar');
+    // Second claimant (effect) is skipped
+    expect(rt.config.effects).toHaveLength(0);
+
+    // Diagnostic emitted for the second occurrence
+    const dups = diagsOf(rt, 'runtime/duplicate-contribution');
+    expect(dups).toHaveLength(1);
+    expect(dups[0].contributionId).toBe('shared-cross-kind');
+    expect(dups[0].extensionId).toBe('com.example.effect-claimant');
+    expect(dups[0].severity).toBe('error');
+  });
+
+  it('rejects duplicate contribution ID across bridged and reserved kinds', () => {
+    const extA = ext('com.example.bridged-owner', {
+      manifest: {
+        contributions: [
+          { id: 'shared-reserved-id' as any, kind: 'parser', label: 'Parser' },
+        ],
+      },
+    });
+    const extB = ext('com.example.reserved-claimant', {
+      manifest: {
+        contributions: [
+          { id: 'shared-reserved-id' as any, kind: 'outputFormat', label: 'Output', requiresRender: false, outputExtension: 'json' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([extA, extB]);
+
+    // extA parser wins
+    expect(rt.config.assetParsers).toHaveLength(1);
+    expect(rt.config.assetParsers[0].id).toBe('shared-reserved-id');
+    // extB outputFormat is skipped
+    expect(rt.config.outputFormats).toHaveLength(0);
+
+    const dups = diagsOf(rt, 'runtime/duplicate-contribution');
+    expect(dups).toHaveLength(1);
+    expect(dups[0].contributionId).toBe('shared-reserved-id');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Characterization: Effect/transition/shader asymmetry summary
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — effect/transition/shader asymmetry', () => {
+  it('effect: valid (has effectId) → projected into config.effects, not in inactiveReserved', () => {
+    const ex = ext('com.example.eff-valid', {
+      manifest: {
+        contributions: [
+          { id: 'glow' as any, kind: 'effect', effectId: 'glow' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.effects).toHaveLength(1);
+    expect(rt.config.effects[0].id).toBe('glow');
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'effect');
+    expect(reserved).toHaveLength(0);
+  });
+
+  it('effect: invalid (no effectId) → warning diagnostic, inactiveReserved, not in config.effects', () => {
+    const ex = ext('com.example.eff-invalid', {
+      manifest: {
+        contributions: [
+          { id: 'bad-effect' as any, kind: 'effect' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.effects).toHaveLength(0);
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'effect');
+    expect(reserved).toHaveLength(1);
+    expect(diagsOf(rt, 'runtime/effect-missing-component-metadata')).toHaveLength(1);
+  });
+
+  it('transition: valid (has transitionId) → projected into config.transitions, not in inactiveReserved', () => {
+    const ex = ext('com.example.tr-valid', {
+      manifest: {
+        contributions: [
+          { id: 'dissolve' as any, kind: 'transition', transitionId: 'dissolve' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.transitions).toHaveLength(1);
+    expect(rt.config.transitions[0].id).toBe('dissolve');
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'transition');
+    expect(reserved).toHaveLength(0);
+  });
+
+  it('transition: invalid (no transitionId) → warning diagnostic, inactiveReserved, not in config.transitions', () => {
+    const ex = ext('com.example.tr-invalid', {
+      manifest: {
+        contributions: [
+          { id: 'bad-transition' as any, kind: 'transition' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.transitions).toHaveLength(0);
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'transition');
+    expect(reserved).toHaveLength(1);
+    expect(diagsOf(rt, 'runtime/transition-missing-renderer-metadata')).toHaveLength(1);
+  });
+
+  it('shader: valid (has shaderId) → projected into config.shaders, not in inactiveReserved', () => {
+    const ex = ext('com.example.sh-valid', {
+      manifest: {
+        contributions: [
+          { id: 'grade' as any, kind: 'shader', shaderId: 'shader.grade', pass: 'postprocess' as const },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.shaders).toHaveLength(1);
+    expect(rt.config.shaders[0].id).toBe('grade');
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'shader');
+    expect(reserved).toHaveLength(0);
+  });
+
+  it('shader: invalid (no shaderId) → error diagnostic (not warning), NOT in inactiveReserved, NOT in config.shaders', () => {
+    const ex = ext('com.example.sh-invalid', {
+      manifest: {
+        contributions: [
+          { id: 'bad-shader' as any, kind: 'shader' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+    expect(rt.config.shaders).toHaveLength(0);
+    // Shader with no shaderId is NOT in inactiveReserved (Phase-2 passthrough)
+    const reserved = rt.inactiveReserved.filter((r) => r.kind === 'shader');
+    expect(reserved).toHaveLength(0);
+    // It emits an error diagnostic during Phase 4 projection
+    const errors = diagsOf(rt, 'runtime/shader-missing-shader-id');
+    expect(errors).toHaveLength(1);
+    expect(errors[0].severity).toBe('error');
+  });
+
+  it('shader asymmetry: shader lacks Phase-2 filtering unlike effect/transition', () => {
+    // effect without effectId  → inactiveReserved + warning (Phase 2)
+    // transition without transitionId → inactiveReserved + warning (Phase 2)
+    // shader without shaderId → no inactiveReserved, error diagnostic in Phase 4, NOT projected
+    const ex = ext('com.example.all-asym', {
+      manifest: {
+        contributions: [
+          { id: 'bad-eff' as any, kind: 'effect' },
+          { id: 'bad-tr' as any, kind: 'transition' },
+          { id: 'bad-sh' as any, kind: 'shader' },
+        ],
+      },
+    });
+    const rt = normalizeExtensionRuntime([ex]);
+
+    // effect and transition go to inactiveReserved
+    const reservedKinds = rt.inactiveReserved.map((r) => r.kind).sort();
+    expect(reservedKinds).toEqual(['effect', 'transition']);
+
+    // shader does NOT go to inactiveReserved
+    const shaderReserved = rt.inactiveReserved.filter((r) => r.kind === 'shader');
+    expect(shaderReserved).toHaveLength(0);
+
+    // All three emit diagnostics of different kinds
+    expect(diagsOf(rt, 'runtime/effect-missing-component-metadata')).toHaveLength(1);
+    expect(diagsOf(rt, 'runtime/transition-missing-renderer-metadata')).toHaveLength(1);
+    expect(diagsOf(rt, 'runtime/shader-missing-shader-id')).toHaveLength(1);
+
+    // None are projected into config
+    expect(rt.config.effects).toHaveLength(0);
+    expect(rt.config.transitions).toHaveLength(0);
+    expect(rt.config.shaders).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Characterization: Mixed all-families comprehensive test
+// ---------------------------------------------------------------------------
+
+describe('normalizeExtensionRuntime — mixed all-families', () => {
+  it('correctly separates and projects all contribution kinds from a single extension', () => {
+    const allFamilies = ext('com.example.all-families', {
+      manifest: {
+        contributions: [
+          // Bridged slot-like
+          { id: 'all-slot' as any, kind: 'slot', slot: 'toolbar', order: 1 },
+          { id: 'all-dialog' as any, kind: 'dialog', order: 5 },
+          { id: 'all-panel' as any, kind: 'panel', order: 10 },
+          { id: 'all-inspector' as any, kind: 'inspectorSection', placement: 'before-default' as const, order: 3 },
+          { id: 'all-overlay' as any, kind: 'timelineOverlay', order: 7 },
+          // Bridged M6 runtime-bridged
+          { id: 'all-parser' as any, kind: 'parser', label: 'All Parser', order: 0 },
+          { id: 'all-metadataFacet' as any, kind: 'metadataFacet', fieldPath: 'test.field', displayName: 'Test Field', valueKind: 'string' as const, order: 0 },
+          { id: 'all-assetDetailSection' as any, kind: 'assetDetailSection', title: 'All Detail', placement: 'after-default' as const, order: 0 },
+          // Bridged M7/M8/M13 runtime-bridged with metadata
+          { id: 'all-effect' as any, kind: 'effect', effectId: 'all.glow', order: 2 },
+          { id: 'all-transition' as any, kind: 'transition', transitionId: 'all.dissolve', order: 2 },
+          { id: 'all-shader' as any, kind: 'shader', shaderId: 'shader.all', pass: 'postprocess' as const, order: 2 },
+          // Bridged M10 runtime-bridged
+          { id: 'all-agentTool' as any, kind: 'agentTool', toolId: 'all.tool', label: 'All Tool', order: 2 },
+          // Reserved delegated
+          { id: 'all-outputFormat' as any, kind: 'outputFormat', label: 'All Output', requiresRender: false, outputExtension: 'json', order: 100 },
+          { id: 'all-searchProvider' as any, kind: 'searchProvider', label: 'All Search', order: 100 },
+          { id: 'all-process' as any, kind: 'process', spec: { id: 'all-process-spec', label: 'All Process', spawn: { command: 'all-proc' }, protocol: 'stdio-jsonrpc' }, order: 100 },
+        ],
+      },
+    });
+
+    const rt = normalizeExtensionRuntime([allFamilies]);
+
+    // Slot-like bridged
+    expect(rt.config.slots).toHaveProperty('toolbar');
+    expect(rt.config.dialogHost.dialogs).toHaveLength(1);
+    expect(rt.config.dialogHost.dialogs[0].id).toBe('all-dialog');
+    expect(rt.config.registry.panels).toHaveLength(1);
+    expect(rt.config.registry.panels[0].id).toBe('all-panel');
+    expect(rt.config.registry.inspectorSections).toHaveLength(1);
+    expect(rt.config.registry.inspectorSections[0].id).toBe('all-inspector');
+    expect(rt.config.overlays).toHaveLength(1);
+    expect(rt.config.overlays[0].id).toBe('all-overlay');
+
+    // M6 bridged
+    expect(rt.config.assetParsers).toHaveLength(1);
+    expect(rt.config.assetParsers[0].id).toBe('all-parser');
+    expect(rt.config.metadataFacets).toHaveLength(1);
+    expect(rt.config.metadataFacets[0].id).toBe('all-metadataFacet');
+    expect(rt.config.assetDetailSections).toHaveLength(1);
+    expect(rt.config.assetDetailSections[0].id).toBe('all-assetDetailSection');
+
+    // M7/M8/M13 bridged with metadata
+    expect(rt.config.effects).toHaveLength(1);
+    expect(rt.config.effects[0].id).toBe('all-effect');
+    expect(rt.config.transitions).toHaveLength(1);
+    expect(rt.config.transitions[0].id).toBe('all-transition');
+    expect(rt.config.shaders).toHaveLength(1);
+    expect(rt.config.shaders[0].id).toBe('all-shader');
+
+    // M10 bridged
+    expect(rt.config.agentTools).toHaveLength(1);
+    expect(rt.config.agentTools[0].id).toBe('all-agentTool');
+
+    // Reserved delegated (surfaced as descriptors)
+    expect(rt.config.outputFormats).toHaveLength(1);
+    expect(rt.config.outputFormats[0].id).toBe('all-outputFormat');
+    expect(rt.config.searchProviders).toHaveLength(1);
+    expect(rt.config.searchProviders[0].id).toBe('all-searchProvider');
+    expect(rt.config.processes).toHaveLength(1);
+    expect(rt.config.processes[0].id).toBe('all-process');
+
+    // Inactive reserved = outputFormat + searchProvider + process (3 delegated)
+    const reservedKinds = rt.inactiveReserved.map((r) => r.kind).sort();
+    expect(reservedKinds).toEqual(['outputFormat', 'process', 'searchProvider']);
+
+    // Config is not DEFAULT
+    expect(rt.config).not.toBe(DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME);
+
+    // All frozen
+    expect(Object.isFrozen(rt)).toBe(true);
+    expect(Object.isFrozen(rt.config)).toBe(true);
+  });
+
+  it('correctly projects all families from multiple extensions with interleaved ordering', () => {
+    const extA = ext('com.example.a', {
+      manifest: {
+        contributions: [
+          { id: 'a-dialog' as any, kind: 'dialog', order: 100 },
+          { id: 'a-effect' as any, kind: 'effect', effectId: 'a.glow', order: 50 },
+          { id: 'a-output' as any, kind: 'outputFormat', label: 'A Output', requiresRender: false, outputExtension: 'a', order: 0 },
+        ],
+      },
+    });
+    const extB = ext('com.example.b', {
+      manifest: {
+        contributions: [
+          { id: 'b-dialog' as any, kind: 'dialog', order: 0 },
+          { id: 'b-shader' as any, kind: 'shader', shaderId: 'shader.b', pass: 'clip' as const, order: 0 },
+          { id: 'b-search' as any, kind: 'searchProvider', label: 'B Search', order: 0 },
+        ],
+      },
+    });
+
+    const rt = normalizeExtensionRuntime([extA, extB]);
+
+    // Extension-order: extA first, then extB
+    // Dialog ordering: a-dialog (extA, order=100) < b-dialog (extB, order=0) ??? NO
+    // Extension order is primary: extA then extB
+    const dialogIds = rt.config.dialogHost.dialogs.map((d) => d.id);
+    expect(dialogIds).toEqual(['a-dialog', 'b-dialog']);
+
+    // Effect from extA
+    expect(rt.config.effects).toHaveLength(1);
+    expect(rt.config.effects[0].id).toBe('a-effect');
+
+    // Shader from extB
+    expect(rt.config.shaders).toHaveLength(1);
+    expect(rt.config.shaders[0].id).toBe('b-shader');
+
+    // Output format from extA, search provider from extB
+    const outputIds = rt.config.outputFormats.map((f) => f.id);
+    expect(outputIds).toEqual(['a-output']);
+    const searchIds = rt.config.searchProviders.map((s) => s.id);
+    expect(searchIds).toEqual(['b-search']);
+
+    // Inactive reserved: outputFormat (extA) + searchProvider (extB)
+    const reservedKinds = rt.inactiveReserved.map((r) => r.kind).sort();
+    expect(reservedKinds).toEqual(['outputFormat', 'searchProvider']);
+  });
+
+  it('preserves frozen output for mixed all-families runtime', () => {
+    const ex = ext('com.example.frozen-all', {
+      manifest: {
+        contributions: [
+          { id: 'frz-slot' as any, kind: 'slot', slot: 'header' },
+          { id: 'frz-effect' as any, kind: 'effect', effectId: 'frz.glow' },
+          { id: 'frz-shader' as any, kind: 'shader', shaderId: 'shader.frz', pass: 'postprocess' as const },
+          { id: 'frz-output' as any, kind: 'outputFormat', label: 'FRZ', requiresRender: false, outputExtension: 'json' },
+        ],
+      },
+    });
+
+    const rt = normalizeExtensionRuntime([ex]);
+
+    // Top-level runtime frozen
+    expect(Object.isFrozen(rt)).toBe(true);
+    // All nested frozen
+    expect(Object.isFrozen(rt.extensions)).toBe(true);
+    expect(Object.isFrozen(rt.diagnostics)).toBe(true);
+    expect(Object.isFrozen(rt.inactiveReserved)).toBe(true);
+    expect(Object.isFrozen(rt.config)).toBe(true);
+    expect(Object.isFrozen(rt.config.slots)).toBe(true);
+    expect(Object.isFrozen(rt.config.effects)).toBe(true);
+    expect(Object.isFrozen(rt.config.shaders)).toBe(true);
+    expect(Object.isFrozen(rt.config.outputFormats)).toBe(true);
+
+    // Mutation on any nested array throws
+    expect(() => { (rt.config.effects as any[]).push({}); }).toThrow();
+    expect(() => { (rt.config.shaders as any[]).push({}); }).toThrow();
+    expect(() => { (rt.config.outputFormats as any[]).push({}); }).toThrow();
+  });
+
+  it('produces deterministic ordering across all families with mixed order values', () => {
+    const ex = ext('com.example.deterministic-all', {
+      manifest: {
+        contributions: [
+          { id: 'z-dialog' as any, kind: 'dialog', order: 0 },
+          { id: 'a-dialog' as any, kind: 'dialog', order: 0 },
+          { id: 'm-dialog' as any, kind: 'dialog', order: 5 },
+          { id: 'early-dialog' as any, kind: 'dialog', order: -10 },
+        ],
+      },
+    });
+
+    const rt = normalizeExtensionRuntime([ex]);
+    const ids = rt.config.dialogHost.dialogs.map((d) => d.id);
+
+    // order=-10: early-dialog
+    // order=0: a-dialog < z-dialog (alphabetical)
+    // order=5: m-dialog
+    expect(ids).toEqual(['early-dialog', 'a-dialog', 'z-dialog', 'm-dialog']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T11: Mixed contribution parity — coordinator vs inline path
+// ---------------------------------------------------------------------------
+
+describe('assembleExtensionRuntime — mixed contribution parity (coordinator vs inline)', () => {
+  /**
+   * Prove that routing metadataFacet through the adapter coordinator
+   * (via findAdapter) produces identical output to the direct inline
+   * path for mixed contribution sets that include metadataFacet + other
+   * families.
+   *
+   * The implementation path changed in T11 (metadataFacet now goes
+   * through findAdapter when a registry is present), but the output
+   * must be byte-for-byte identical for all family kinds.
+   */
+
+  it('produces identical output with and without the adapter registry for mixed metadataFacet + effect + transition contributions', () => {
+    const ex = ext('com.example.mixed', {
+      manifest: {
+        contributions: [
+          // metadataFacet contributions
+          {
+            id: 'gps-facet' as any,
+            kind: 'metadataFacet',
+            fieldPath: 'gps.latitude',
+            displayName: 'GPS Latitude',
+            valueKind: 'number' as const,
+            order: 0,
+          },
+          {
+            id: 'rights-facet' as any,
+            kind: 'metadataFacet',
+            fieldPath: 'consent.rightsNote',
+            displayName: 'Rights',
+            valueKind: 'enum' as const,
+            aggregationPosture: 'exact' as const,
+            enumValues: ['CC BY 4.0', 'All Rights Reserved'],
+            order: 1,
+          },
+          // effect contribution (inline family)
+          {
+            id: 'glow-effect' as any,
+            kind: 'effect',
+            effectId: 'glow',
+            label: 'Glow',
+            order: 2,
+          },
+          // transition contribution (inline family)
+          {
+            id: 'dissolve' as any,
+            kind: 'transition',
+            transitionId: 'dissolve',
+            label: 'Dissolve',
+            order: 3,
+          },
+        ],
+      },
+    });
+
+    // --- Path A: inline (no registry) ---
+    const runtimeInline = normalizeExtensionRuntime([ex]);
+
+    // --- Path B: coordinator-backed (with canonical registry) ---
+    const seq = buildFamilyContributionSequence([ex]);
+    const runtimeCoordinator = assembleExtensionRuntime(
+      seq,
+      undefined,
+      DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+    );
+
+    // --- Parity assertions ---
+    // metadataFacets must be identical
+    expect(runtimeCoordinator.config.metadataFacets).toEqual(
+      runtimeInline.config.metadataFacets,
+    );
+    expect(runtimeCoordinator.metadataFacets).toEqual(
+      runtimeInline.metadataFacets,
+    );
+
+    // Effects must be identical
+    expect(runtimeCoordinator.config.effects).toEqual(
+      runtimeInline.config.effects,
+    );
+
+    // Transitions must be identical
+    expect(runtimeCoordinator.config.transitions).toEqual(
+      runtimeInline.config.transitions,
+    );
+
+    // Diagnostics must be identical
+    expect(runtimeCoordinator.diagnostics).toEqual(
+      runtimeInline.diagnostics,
+    );
+
+    // Config identity: both should be frozen
+    expect(Object.isFrozen(runtimeCoordinator.config)).toBe(true);
+    expect(Object.isFrozen(runtimeInline.config)).toBe(true);
+
+    // Verify the canonical registry contains the metadataFacet adapter
+    const found = findAdapter(VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY, 'metadataFacet');
+    expect(found).not.toBeNull();
+    expect(found).not.toBeUndefined();
+  });
+
+  it('produces identical output with and without registry for metadataFacet-only contributions', () => {
+    const ex = ext('com.example.facets-only', {
+      manifest: {
+        contributions: [
+          {
+            id: 'temp-facet' as any,
+            kind: 'metadataFacet',
+            fieldPath: 'temperature',
+            displayName: 'Temperature',
+            valueKind: 'number' as const,
+            order: 0,
+          },
+        ],
+      },
+    });
+
+    // Inline path (uses canonical registry internally)
+    const runtimeInline = normalizeExtensionRuntime([ex]);
+
+    // Coordinator path (explicit canonical registry)
+    const seq = buildFamilyContributionSequence([ex]);
+    const runtimeCoordinator = assembleExtensionRuntime(
+      seq,
+      undefined,
+      DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+    );
+
+    // metadataFacets match exactly
+    expect(runtimeCoordinator.config.metadataFacets).toEqual(
+      runtimeInline.config.metadataFacets,
+    );
+    expect(runtimeCoordinator.config.metadataFacets).toHaveLength(1);
+    expect(runtimeCoordinator.config.metadataFacets[0].id).toBe('temp-facet');
+    expect(runtimeCoordinator.config.metadataFacets[0].fieldPath).toBe('temperature');
+
+    // Both frozen
+    expect(Object.isFrozen(runtimeCoordinator.config.metadataFacets[0])).toBe(true);
+    expect(Object.isFrozen(runtimeInline.config.metadataFacets[0])).toBe(true);
+  });
+
+  it('falls back to inline normalization when no registry is provided', () => {
+    const ex = ext('com.example.no-registry', {
+      manifest: {
+        contributions: [
+          {
+            id: 'my-facet' as any,
+            kind: 'metadataFacet',
+            fieldPath: 'notes',
+            displayName: 'Notes',
+            valueKind: 'string' as const,
+          },
+        ],
+      },
+    });
+
+    // No registry — uses the fallback (direct adapter import)
+    const seq = buildFamilyContributionSequence([ex]);
+    const runtime = assembleExtensionRuntime(
+      seq,
+      undefined,
+      DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+      // no adapterRegistry argument
+    );
+
+    expect(runtime.config.metadataFacets).toHaveLength(1);
+    expect(runtime.config.metadataFacets[0].id).toBe('my-facet');
+    expect(runtime.config.metadataFacets[0].valueKind).toBe('string');
+    expect(Object.isFrozen(runtime.config.metadataFacets[0])).toBe(true);
+  });
+
+  it('non-metadataFacet families are projected through the canonical registry', () => {
+    const ex = ext('com.example.effects-only', {
+      manifest: {
+        contributions: [
+          {
+            id: 'blur-effect' as any,
+            kind: 'effect',
+            effectId: 'blur',
+            label: 'Blur',
+            order: 0,
+          },
+        ],
+      },
+    });
+
+    // Both paths use the canonical registry (one explicitly, one via default).
+    const runtimeInline = normalizeExtensionRuntime([ex]);
+
+    const seq = buildFamilyContributionSequence([ex]);
+    const runtimeCoordinator = assembleExtensionRuntime(
+      seq,
+      undefined,
+      DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+    );
+
+    expect(runtimeCoordinator.config.effects).toEqual(
+      runtimeInline.config.effects,
+    );
+    expect(runtimeCoordinator.config.effects).toHaveLength(1);
+    expect(runtimeCoordinator.config.effects[0].effectId).toBe('blur');
+  });
+
+  it('descriptor ordering and freezing are preserved in coordinator path', () => {
+    const ex = ext('com.example.ordered-facets', {
+      manifest: {
+        contributions: [
+          {
+            id: 'c-facet' as any,
+            kind: 'metadataFacet',
+            fieldPath: 'c',
+            displayName: 'C',
+            valueKind: 'string' as const,
+            order: 30,
+          },
+          {
+            id: 'a-facet' as any,
+            kind: 'metadataFacet',
+            fieldPath: 'a',
+            displayName: 'A',
+            valueKind: 'string' as const,
+            order: 10,
+          },
+          {
+            id: 'b-facet' as any,
+            kind: 'metadataFacet',
+            fieldPath: 'b',
+            displayName: 'B',
+            valueKind: 'string' as const,
+            order: 20,
+          },
+        ],
+      },
+    });
+
+    const seq = buildFamilyContributionSequence([ex]);
+    const runtime = assembleExtensionRuntime(
+      seq,
+      undefined,
+      DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME,
+      VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY,
+    );
+
+    const facets = runtime.config.metadataFacets;
+    expect(facets).toHaveLength(3);
+    // Sorted by order: 10 (a), 20 (b), 30 (c)
+    expect(facets.map((f) => f.id)).toEqual(['a-facet', 'b-facet', 'c-facet']);
+
+    // Each descriptor is individually frozen
+    for (const facet of facets) {
+      expect(Object.isFrozen(facet)).toBe(true);
+    }
+
+    // The array is frozen
+    expect(Object.isFrozen(facets)).toBe(true);
   });
 });

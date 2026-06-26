@@ -241,22 +241,22 @@ describe('collectExtensionDeclaredIds', () => {
     expect(result.effectIds.size).toBe(0);
   });
 
-  it('skips bridged effect-kind contributions (M7 bridged)', () => {
+  it('collects effect-kind declared IDs now that effect is delegated to a placeholder adapter', () => {
     const contributions: ExtensionContribution[] = [
       { id: 'contrib.1' as any, kind: 'effect', effectId: 'my-custom-effect' },
     ];
     const result = collectExtensionDeclaredIds(contributions);
-    // Effect is M7-bridged, so it is NOT collected as inactive
-    expect(result.effectIds.has('my-custom-effect')).toBe(false);
+    // Effect executionMaturity is now 'delegated', so declared IDs are collected as inactive.
+    expect(result.effectIds.has('my-custom-effect')).toBe(true);
   });
 
-  it('skips bridged transition-kind contributions (M8 bridged)', () => {
+  it('collects transition-kind declared IDs now that transition is delegated to a placeholder adapter', () => {
     const contributions: ExtensionContribution[] = [
       { id: 'contrib.2' as any, kind: 'transition', transitionId: 'my-custom-transition' },
     ];
     const result = collectExtensionDeclaredIds(contributions);
-    // Transition is M8-bridged, so it is NOT collected as inactive
-    expect(result.transitionIds.has('my-custom-transition')).toBe(false);
+    // Transition executionMaturity is now 'delegated', so declared IDs are collected as inactive.
+    expect(result.transitionIds.has('my-custom-transition')).toBe(true);
   });
 
   it('preserves the clipType declared-ID bypass even though clipType is runtime-bridged', () => {

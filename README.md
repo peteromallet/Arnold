@@ -58,14 +58,16 @@ Run these in CI and before merging facade/contract changes:
 - `npm run test:contracts`
 - `npm run test:arch`
 - `npm run quality:check`
+- `npm run quality:extension-family-conformance`
 
 ### Gate-to-Surface Map
 
 | Gate | Required Surface Coverage | Expected Assertion |
 |---|---|---|
-| `npm run test:contracts` | `src/tools/video-editor/index.ts`, `src/tools/video-editor/browser.ts`, `src/tools/video-editor/browser-provider.ts`, `src/tools/video-editor/testing.ts`, `src/shared/components/ui/button.tsx`, `src/shared/components/ui/contracts/button.tsx`, `src/shared/components/ui/contracts/cn.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/domains/generation/types/index.ts` | Public contract API shape and behavior stays stable |
-| `npm run test:arch` | `scripts/quality/check-video-editor-sdk-imports.mjs`, `config/governance/video-editor-sdk-import-allowlist.json`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/integrations/supabase/client.ts`, contract shim policy docs/scripts | Contract and shim usage rules are enforced |
-| `npm run quality:check` | `src/tools/video-editor/index.ts`, `src/tools/video-editor/browser.ts`, `src/tools/video-editor/browser-provider.ts`, `src/tools/video-editor/testing.ts`, `scripts/quality/check-video-editor-sdk-imports.mjs`, `config/governance/video-editor-sdk-import-allowlist.json`, `scripts/quality/check-sdk-public-exports.mjs`, `config/governance/sdk-public-export-allowlist.json`, `src/integrations/supabase/client.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/shared/components/ui/contracts/*` | Integrated lint/typecheck/governance checks pass for touched contract surfaces |
+| `npm run test:contracts` | `src/sdk/index.ts`, `src/tools/video-editor/index.ts`, `src/tools/video-editor/browser.ts`, `src/tools/video-editor/testing.ts`, `src/shared/components/ui/contracts/cn.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/domains/generation/types/index.ts` | Public contract API shape and behavior stays stable |
+| `npm run test:arch` | `scripts/quality/check-video-editor-sdk-imports.mjs`, `scripts/quality/check-sdk-no-barrel-imports.mjs`, `config/governance/video-editor-sdk-import-allowlist.json`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/integrations/supabase/client.ts`, `docs/governance/contracts/compatibility-shims.md` | Contract and shim usage rules are enforced |
+| `npm run quality:check` | `src/sdk/index.ts`, `src/tools/video-editor/index.ts`, `src/tools/video-editor/browser.ts`, `src/tools/video-editor/testing.ts`, `scripts/quality/check-video-editor-sdk-imports.mjs`, `scripts/quality/check-sdk-public-exports.mjs`, `scripts/quality/check-sdk-no-barrel-imports.mjs`, `config/governance/video-editor-sdk-import-allowlist.json`, `config/governance/sdk-public-export-allowlist.json`, `src/integrations/supabase/client.ts`, `src/shared/lib/errorHandling/runtimeError.ts`, `src/shared/components/ui/contracts/cn.ts` | Integrated lint/typecheck/governance checks pass for touched contract surfaces |
+| `npm run quality:extension-family-conformance` | `src/sdk/video/families/familyDefinitions.ts`, `src/sdk/video/families/familyDefinitions.test.ts`, `src/sdk/video/families/conformanceGate.test.ts`, `src/sdk/core/families/maturity.ts`, `src/sdk/core/families/conformance.ts` | Family registry/schema/conformance contract stays aligned |
 
 ## Code Health
 

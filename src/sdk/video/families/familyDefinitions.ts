@@ -79,19 +79,20 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
   {
     kind: 'agentTool',
     declarationMaturity: 'schema-backed',
-    executionMaturity: 'runtime-bridged',
+    executionMaturity: 'delegated',
     hostIntegrationNotes:
       'Agent tool contributions are host-mediated: the host owns invocation, ' +
       'progress, cancellation, proposal creation, and UI. Extensions register ' +
-      'tool handlers imperatively via ctx.agentTools. Evidence: ' +
-      'AgentToolContribution interface, AgentToolRegistrationService, and ' +
-      'manifest schema oneOf coverage.',
+      'tool handlers imperatively via ctx.agentTools. Execution posture is ' +
+      'delegated to a placeholder adapter while descriptor projection remains ' +
+      'stable. Evidence: AgentToolContribution interface, ' +
+      'AgentToolRegistrationService, and manifest schema oneOf coverage.',
     requiresTrustedCode: true,
     manifestSchemaDefinition: 'AgentToolContribution',
     sdkModules: [
       'src/sdk/video/families/agentTools.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/agentToolAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/agentToolAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -116,18 +117,19 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
   {
     kind: 'assetDetailSection',
     declarationMaturity: 'schema-backed',
-    executionMaturity: 'runtime-bridged',
+    executionMaturity: 'delegated',
     hostIntegrationNotes:
       'Asset detail section contributions add custom sections to the asset ' +
-      'detail panel with title and placement validation. Bridged at M6. ' +
-      'Evidence: manifest validation enforces non-empty title and valid ' +
-      'placement (before-default, after-default).',
+      'detail panel with title and placement validation. Descriptor projection ' +
+      'is delegated to a distinct placeholder adapter separate from ' +
+      'metadataFacet. Evidence: manifest validation enforces non-empty title ' +
+      'and valid placement (before-default, after-default).',
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'AssetDetailSectionContribution',
     sdkModules: [
       'src/sdk/video/families/assetDetailSections.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/metadataAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/assetDetailSectionAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -166,7 +168,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
       'src/sdk/video/timeline/clipTypes.ts',
       'src/sdk/video/families/automation.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/clipTypeAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/automationAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -202,7 +204,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
       'src/sdk/video/timeline/clipTypes.ts',
       'src/sdk/video/families/clipTypeContributions.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/clipTypeAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/clipTypeAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -236,7 +238,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/video/families/commands.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/commandAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/commandAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -272,7 +274,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/video/families/contextMenuItems.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/commandAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/contextMenuItemAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -306,7 +308,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/manifest.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/dialogAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -330,18 +332,20 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
   {
     kind: 'effect',
     declarationMaturity: 'schema-backed',
-    executionMaturity: 'runtime-bridged',
+    executionMaturity: 'delegated',
     hostIntegrationNotes:
       'Effect contributions are trusted local browser-preview components. ' +
       'Extensions register effect components imperatively via ctx.effects. ' +
-      'Evidence: EffectContribution interface, EffectRegistrationService, ' +
-      'manifest schema oneOf coverage, and kind enum inclusion.',
+      'Descriptor projection is delegated to a placeholder adapter while ' +
+      'runtime registration remains host-mediated. Evidence: ' +
+      'EffectContribution interface, EffectRegistrationService, manifest ' +
+      'schema oneOf coverage, and kind enum inclusion.',
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'EffectContribution',
     sdkModules: [
       'src/sdk/video/families/effects.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/effectAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/effectAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -376,7 +380,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/manifest.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/inspectorSectionAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -411,7 +415,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/video/families/keybindings.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/commandAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/keybindingAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -447,7 +451,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
       'src/sdk/video/families/metadataFacet.ts',
       'src/sdk/video/assets/metadata.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/metadataAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/metadataFacetAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -475,14 +479,15 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     executionMaturity: 'delegated',
     hostIntegrationNotes:
       'Output format types are declared but runtime execution is reserved. ' +
-      'The host provides compile-only and render-dependent output stubs.',
+      'Descriptor projection is delegated to a placeholder adapter that ' +
+      'surfaces compile-only and render-dependent planner stubs.',
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'OutputFormatContribution',
     sdkModules: [
       'src/sdk/video/families/outputFormats.ts',
       'src/sdk/video/exports/outputFormats.ts',
     ],
-    hostAdapter: null,
+    hostAdapter: 'src/tools/video-editor/runtime/families/outputFormatAdapter.ts',
     requirements: {
       manifestSchema: false,
       normalizedDescriptor: false,
@@ -516,7 +521,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/manifest.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/panelAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -540,18 +545,18 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
   {
     kind: 'parser',
     declarationMaturity: 'schema-backed',
-    executionMaturity: 'runtime-bridged',
+    executionMaturity: 'delegated',
     hostIntegrationNotes:
       'Parser contributions are bridged through the asset ingestion pipeline. ' +
-      'The host adapter normalizes parser descriptors, owns lifecycle, and ' +
-      'produces diagnostics for parse failures.',
+      'Descriptor projection is delegated to a placeholder adapter; real ' +
+      'ingestion lifecycle remains host-owned.',
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'ParserContribution',
     sdkModules: [
       'src/sdk/video/families/parsers.ts',
       'src/sdk/video/assets/parsers.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/parserAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/parserAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -588,7 +593,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/video/families/processes.ts',
     ],
-    hostAdapter: null,
+    hostAdapter: 'src/tools/video-editor/runtime/families/processAdapter.ts',
     requirements: {
       manifestSchema: false,
       normalizedDescriptor: false,
@@ -626,7 +631,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/video/families/searchProviders.ts',
     ],
-    hostAdapter: null,
+    hostAdapter: 'src/tools/video-editor/runtime/families/searchProviderAdapter.ts',
     requirements: {
       manifestSchema: false,
       normalizedDescriptor: false,
@@ -651,18 +656,18 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
   {
     kind: 'shader',
     declarationMaturity: 'schema-backed',
-    executionMaturity: 'runtime-bridged',
+    executionMaturity: 'delegated',
     hostIntegrationNotes:
       'Shader contributions declare WebGL materializer descriptors. ' +
-      'The host projects shader capabilities into the render planner. ' +
-      'Materializer requirements are validated at export time.',
+      'Descriptor projection is delegated to a placeholder adapter while ' +
+      'materializer requirements remain validated at export time.',
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'ShaderContribution',
     sdkModules: [
       'src/sdk/video/rendering/capabilities.ts',
       'src/sdk/video/families/shaders.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/shaderAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/shaderAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -695,7 +700,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/manifest.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/slotAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -730,7 +735,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/manifest.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/timelineOverlayAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
@@ -754,19 +759,20 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
   {
     kind: 'transition',
     declarationMaturity: 'schema-backed',
-    executionMaturity: 'runtime-bridged',
+    executionMaturity: 'delegated',
     hostIntegrationNotes:
       'Transition contributions are trusted local browser-preview renderers ' +
       'for cross-clip transitions. Extensions register transition renderers ' +
-      'imperatively via ctx.transitions. Evidence: TransitionContribution ' +
-      'interface, TransitionRegistrationService, manifest schema oneOf coverage, ' +
-      'and kind enum inclusion.',
+      'imperatively via ctx.transitions. Descriptor projection is delegated ' +
+      'to a placeholder adapter while runtime registration remains host-mediated. ' +
+      'Evidence: TransitionContribution interface, TransitionRegistrationService, ' +
+      'manifest schema oneOf coverage, and kind enum inclusion.',
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'TransitionContribution',
     sdkModules: [
       'src/sdk/video/families/transitions.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/transitionAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/transitionAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,

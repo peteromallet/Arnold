@@ -371,7 +371,7 @@ export function validateManifest(
   if (manifest.contributions && manifest.contributions.length > 0) {
     const seen = new Set<string>();
     for (const contribution of manifest.contributions) {
-      const cId = (contribution as any).id as string;
+      const cId = (contribution as unknown as Record<string, unknown>).id as string;
       const cErrors = validateContributionId(cId);
       for (const msg of cErrors) {
         pushErr('manifest/invalid-contribution-id', `Contribution "${cId}": ${msg}`, cId);
@@ -382,7 +382,7 @@ export function validateManifest(
       seen.add(cId);
 
       // ---- Contribution kind validation ----
-      const cKind = (contribution as any).kind as string | undefined;
+      const cKind = (contribution as unknown as Record<string, unknown>).kind as string | undefined;
       if (!cKind || typeof cKind !== 'string') {
         pushErr('manifest/missing-contribution-kind', `Contribution "${cId}" is missing a kind`, cId);
         continue; // cannot validate kind-specific rules without a kind
@@ -400,7 +400,7 @@ export function validateManifest(
 
       // Slot: must not specify placement
       if (cKind === 'slot') {
-        const cPlacement = (contribution as any).placement;
+        const cPlacement = (contribution as unknown as Record<string, unknown>).placement;
         if (cPlacement !== undefined && cPlacement !== null) {
           pushErr(
             'manifest/slot-no-placement',
@@ -409,8 +409,8 @@ export function validateManifest(
           );
         }
         // Validate slot name if present
-        const cSlot = (contribution as any).slot;
-        if (cSlot !== undefined && cSlot !== null && !KNOWN_SLOT_NAMES_SET.has(cSlot)) {
+        const cSlot = (contribution as unknown as Record<string, unknown>).slot;
+        if (typeof cSlot === 'string' && !KNOWN_SLOT_NAMES_SET.has(cSlot)) {
           pushErr(
             'manifest/unknown-slot-name',
             `Slot contribution "${cId}" has unknown slot name "${cSlot}"; must be one of: ${KNOWN_SLOT_NAMES.join(', ')}`,
@@ -421,7 +421,7 @@ export function validateManifest(
 
       // Panel: placement must be 'asset-panel' when specified
       if (cKind === 'panel') {
-        const cPlacement = (contribution as any).placement as string | undefined;
+        const cPlacement = (contribution as unknown as Record<string, unknown>).placement as string | undefined;
         if (cPlacement !== undefined && cPlacement !== null) {
           if (!PANEL_PLACEMENTS.includes(cPlacement)) {
             pushErr(
@@ -435,7 +435,7 @@ export function validateManifest(
 
       // InspectorSection: validate placement when present; host applies defaults
       if (cKind === 'inspectorSection') {
-        const cPlacement = (contribution as any).placement as string | undefined;
+        const cPlacement = (contribution as unknown as Record<string, unknown>).placement as string | undefined;
         if (cPlacement !== undefined && cPlacement !== null) {
           if (!INSPECTOR_SECTION_PLACEMENTS.includes(cPlacement)) {
             pushErr(
@@ -516,7 +516,7 @@ export function validateManifest(
   // Settings schema validation
   // -----------------------------------------------------------------------
   if (manifest.settingsSchema) {
-    const version = (manifest.settingsSchema as any).version;
+    const version = (manifest.settingsSchema as unknown as Record<string, unknown>).version;
     if (typeof version !== 'number' || !Number.isInteger(version) || version < 0) {
       pushErr(
         'manifest/invalid-settings-schema-version',
@@ -608,7 +608,7 @@ export function validateManifest(
 
     // Integrity is expected to be validated externally (on InstalledExtensionMetadata),
     // but if integrity is passed as a top-level field on manifest we validate the shape.
-    const integrity = (manifest as any).integrity as IntegrityHash | undefined;
+    const integrity = (manifest as unknown as Record<string, unknown>).integrity as IntegrityHash | undefined;
     if (integrity) {
       if (!integrity.algorithm || integrity.algorithm !== 'sha256') {
         pushErr(
@@ -677,10 +677,6 @@ export function validateInstalledPackage(
 
   const pushErr = (code: string, message: string): void => {
     errors.push({ severity: 'error', code, message, extensionId: extId });
-  };
-
-  const pushWarn = (code: string, message: string): void => {
-    warnings.push({ severity: 'warning', code, message, extensionId: extId });
   };
 
   // Structural checks

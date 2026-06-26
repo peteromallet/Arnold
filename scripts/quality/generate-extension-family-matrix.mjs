@@ -54,9 +54,13 @@ const { buildConformanceReport, isFullyConformant } = conformanceModule;
 // ---------------------------------------------------------------------------
 
 /**
- * Determine whether a family is bridged (i.e. has real host runtime).
- * Bridged means execution maturity is runtime-bridged, host-integrated,
- * or public-supported AND not delegated.
+ * Determine whether a family is bridged (i.e. has host runtime support).
+ *
+ * Families with execution maturity `runtime-bridged`, `host-integrated`,
+ * or `public-supported` are bridged.  Families with execution maturity
+ * `delegated` are also considered bridged for runtime-support drift checks
+ * when they have a host placeholder adapter (descriptor projection is
+ * stable), but they remain `delegated` in the SDK conformance view.
  */
 const BRIDGED_EXECUTION_MATURITIES = new Set([
   'runtime-bridged',
@@ -72,7 +76,9 @@ const BRIDGED_EXECUTION_MATURITIES = new Set([
 function buildRow(def) {
   const report = buildConformanceReport(def);
   const fullyConformant = isFullyConformant(def);
-  const bridged = BRIDGED_EXECUTION_MATURITIES.has(def.executionMaturity);
+  const bridged =
+    BRIDGED_EXECUTION_MATURITIES.has(def.executionMaturity) ||
+    (def.executionMaturity === 'delegated' && def.hostAdapter !== null);
 
   // Build coverage flags — normalize undefined to null for clean JSON.
   const coverage = {};

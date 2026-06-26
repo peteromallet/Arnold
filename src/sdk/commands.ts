@@ -8,6 +8,8 @@
 // dependency on any video-editor subsystem.
 //
 // Extracted from src/sdk/index.ts during M2a Step 9 (T11).
+//
+// @publicContract
 // ---------------------------------------------------------------------------
 
 /**
