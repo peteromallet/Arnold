@@ -80,6 +80,16 @@ export interface ConformanceGap {
 
   /** The requirement keys involved, if applicable. */
   readonly requirementKeys?: readonly (keyof FamilyRequirementChecklist)[];
+
+  /**
+   * Optional free-form metadata for extensibility.
+   *
+   * Consumers (adapter registry, gap reporters, tooling) may attach
+   * structured metadata here (e.g. adapter provenance, maturity
+   * projection details, schema references) without adding new fields
+   * to the core ConformanceGap interface.
+   */
+  readonly metadata?: Record<string, unknown>;
 }
 
 /**

@@ -65,6 +65,30 @@ export { CONTRIBUTION_KIND_MILESTONE, contributionKindNotYetBridged, getVideoFam
 export type { ProjectExtensionRequirement, ProjectExtensionRequirements } from './projectRequirements';
 
 // ===========================================================================
+// Families — Core contracts (maturity, conformance, adapter)
+// ===========================================================================
+
+// maturity model
+export type { DeclarationMaturity, ExecutionMaturity, FamilyDefinition, FamilyRequirementChecklist } from './core/families/maturity';
+
+// conformance reporting
+export type { FamilyConformanceReport, ConformanceGap, ConformanceGapCategory } from './core/families/conformance';
+
+// host adapter contracts
+export type { HostFamilyAdapter, HostAdapterManifest, HostAdapterRegistrationDescriptor, FamilyAdapterRegistry } from './core/families/familyAdapter';
+export { FamilyAdapterRegistryImpl } from './core/families/familyAdapter';
+
+// adapter coordinator (bulk normalization, disposal, capability projection)
+export { normalizeAdapters, disposeAll, projectMaturityCapabilities, findAdapter, listRegisteredKinds } from './core/families/familyAdapterCoordinator';
+
+// conformance aggregation (host-side aggregation, delegated-gap validation)
+export { aggregateHostConformance, isValidDelegatedGap, identifyDelegatedFamilies } from './core/families/familyConformanceAggregation';
+
+// adapter manifest (cross-reference checklist)
+export type { FamilyAdapterManifest, FamilyAdapterManifestEntry, ManifestCrossReferenceResult } from './core/families/familyAdapterManifest';
+export { buildFamilyAdapterManifest, crossReferenceManifest } from './core/families/familyAdapterManifest';
+
+// ===========================================================================
 // Video: Families (contribution contracts)
 // ===========================================================================
 

@@ -447,7 +447,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
       'src/sdk/video/families/metadataFacet.ts',
       'src/sdk/video/assets/metadata.ts',
     ],
-    hostAdapter: 'src/video-editor/adapters/metadataAdapter.ts',
+    hostAdapter: 'src/tools/video-editor/runtime/families/metadataFacetAdapter.ts',
     requirements: {
       manifestSchema: true,
       normalizedDescriptor: true,
