@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 4,
-  "current_plan_name": "m3-host-family-adapter-20260626-0441",
-  "last_state": "awaiting_pr_merge",
-  "pr_number": 74,
-  "pr_state": "awaiting_merge",
+  "current_milestone_index": 5,
+  "current_plan_name": null,
+  "last_state": "pending",
+  "pr_number": null,
+  "pr_state": null,
   "completed": [
     {
       "label": "m0-extract-portable-sdk-contracts",
@@ -25,11 +25,16 @@
       "label": "m2b-family-modules-and-public-surface",
       "index": 3,
       "status": "completed"
+    },
+    {
+      "label": "m3-host-family-adapter-registry",
+      "index": 4,
+      "status": "completed"
     }
   ],
-  "branch_head": "c573e3d129e6752ce4cc67edaec3035ccaf99cf3",
-  "pr_head": "c573e3d129e6752ce4cc67edaec3035ccaf99cf3",
-  "last_pushed_commit": "c573e3d129e6752ce4cc67edaec3035ccaf99cf3",
+  "branch_head": "3b1af4267cdc75bd2279c7395f7cd7a179dc854d",
+  "pr_head": "3b1af4267cdc75bd2279c7395f7cd7a179dc854d",
+  "last_pushed_commit": "3b1af4267cdc75bd2279c7395f7cd7a179dc854d",
   "dirty_flag": false,
   "sync_state": "clean",
   "extra_repos": [],
