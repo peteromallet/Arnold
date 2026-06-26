@@ -1,10 +1,10 @@
 {
   "schema_version": 0,
   "current_milestone_index": 4,
-  "current_plan_name": null,
-  "last_state": "done",
-  "pr_number": null,
-  "pr_state": null,
+  "current_plan_name": "m3-host-family-adapter-20260626-0441",
+  "last_state": "awaiting_pr_merge",
+  "pr_number": 74,
+  "pr_state": "open",
   "completed": [
     {
       "label": "m0-extract-portable-sdk-contracts",
@@ -27,9 +27,9 @@
       "status": "completed"
     }
   ],
-  "branch_head": "10bc9e70e3852f459d108796625cbde72f0ced8c",
-  "pr_head": "10bc9e70e3852f459d108796625cbde72f0ced8c",
-  "last_pushed_commit": "10bc9e70e3852f459d108796625cbde72f0ced8c",
+  "branch_head": "a4033610f91c96848eb38946d37e70691c340fe4",
+  "pr_head": "a4033610f91c96848eb38946d37e70691c340fe4",
+  "last_pushed_commit": "a4033610f91c96848eb38946d37e70691c340fe4",
   "dirty_flag": false,
   "sync_state": "clean",
   "extra_repos": [],
@@ -53,8 +53,8 @@
       "target_root": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "work_dir": "/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run",
       "engine_root": "/Users/peteromalley/Documents/.megaplan-worktrees/native-python-pipelines-completion-thread2",
-      "target_head": "a152e9df33b039fa3511e3b01ef02e4278d67a14",
-      "target_base": "a152e9df33b039fa3511e3b01ef02e4278d67a14",
+      "target_head": "5fddbda05161d9894d61102b645259f46464e2c1",
+      "target_base": "5fddbda05161d9894d61102b645259f46464e2c1",
       "target_base_ref": "main",
       "target_fallback_reason": null
     }
