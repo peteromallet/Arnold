@@ -13,7 +13,7 @@
  * @publicContract
  */
 
-import type { TimelineSnapshot } from '@/sdk/video/timeline/reader';
+import type { TimelineSnapshot } from '../timeline/reader';
 import type { DisposeHandle } from '../../dispose';
 import type { ParserDiagnostic } from '../assets/parsers';
 import type { AssetMetadata } from '../assets/metadata';

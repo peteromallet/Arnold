@@ -30,5 +30,12 @@
     "src/integrations/supabase/client.ts",
     "src/shared/lib/errorHandling/runtimeError.ts",
     "src/shared/components/ui/contracts/cn.ts"
+  ],
+  "quality:extension-family-conformance": [
+    "src/sdk/video/families/familyDefinitions.ts",
+    "src/sdk/video/families/familyDefinitions.test.ts",
+    "src/sdk/video/families/conformanceGate.test.ts",
+    "src/sdk/core/families/maturity.ts",
+    "src/sdk/core/families/conformance.ts"
   ]
 }

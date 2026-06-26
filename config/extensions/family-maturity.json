@@ -6,7 +6,7 @@
     "declarationMaturity": "typed",
     "executionMaturity": "delegated",
     "sdkModules": [
-      "src/sdk/video/agent/"
+      "src/sdk/video/agent/index.ts"
     ],
     "hostAdapter": null,
     "requiresTrustedCode": true,
@@ -478,8 +478,7 @@
     "executionMaturity": "delegated",
     "sdkModules": [
       "src/sdk/video/families/outputFormats.ts",
-      "src/sdk/video/exports/outputFormats.ts",
-      "src/sdk/index.ts"
+      "src/sdk/video/exports/outputFormats.ts"
     ],
     "hostAdapter": null,
     "requiresTrustedCode": false,

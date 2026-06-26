@@ -53,7 +53,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: true,
     manifestSchemaDefinition: 'AgentContribution',
     sdkModules: [
-      'src/sdk/video/agent/',
+      'src/sdk/video/agent/index.ts',
     ],
     hostAdapter: null,
     requirements: {
@@ -481,7 +481,6 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     sdkModules: [
       'src/sdk/video/families/outputFormats.ts',
       'src/sdk/video/exports/outputFormats.ts',
-      'src/sdk/index.ts',
     ],
     hostAdapter: null,
     requirements: {
