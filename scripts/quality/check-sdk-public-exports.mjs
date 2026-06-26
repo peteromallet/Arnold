@@ -580,13 +580,44 @@ if (unlistedInlineDeclarations.length > 0) {
 }
 
 if (obsoleteInlineEntries.length > 0) {
-  console.warn(
-    `${LABEL} NOTE: ${obsoleteInlineEntries.length} inline declaration entry/entries ` +
-      `reference symbols no longer present:`,
+  const header =
+    mode === 'release'
+      ? 'RELEASE FAILURE:'
+      : 'NOTE:';
+  console.error(
+    `${LABEL} ${header} ${obsoleteInlineEntries.length} obsolete inline declaration ` +
+      `entry/entries reference symbols no longer present:`,
   );
   for (const e of obsoleteInlineEntries) {
-    console.warn(`${LABEL}   - ${e}`);
+    console.error(`${LABEL}   - ${e}`);
   }
+  if (mode === 'release') {
+    console.error(
+      `${LABEL} Remove these entries from the 'inlineDeclarations' array in ` +
+        `${path.relative(REPO_ROOT, ALLOWLIST_PATH)}.`,
+    );
+    process.exit(1);
+  }
+}
+
+// ---- No-inline barrel gate (release mode) ----
+if (mode === 'release' && inlineDeclarations_all.length > 0) {
+  console.error(
+    `${LABEL} RELEASE FAILURE: ${inlineDeclarations_all.length} inline ` +
+      `declaration(s) found in the public barrel.`,
+  );
+  console.error(
+    `${LABEL} src/sdk/index.ts must be a pure re-export barrel with no ` +
+      `inline exported interfaces, types, functions, classes, enums, or consts.`,
+  );
+  for (const d of inlineDeclarations_all) {
+    console.error(`${LABEL}   - ${d.name} (${d.declarationKind})`);
+  }
+  console.error(
+    `${LABEL} Move each declaration to a canonical module under src/sdk/ ` +
+      `and re-export it from the barrel.`,
+  );
+  process.exit(1);
 }
 
 // ---- Exit decision ----

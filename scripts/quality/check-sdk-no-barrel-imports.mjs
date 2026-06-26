@@ -51,13 +51,23 @@ if (args.has('--release')) {
   mode = 'audit';
 }
 
+// --sdk-dir override (for testing with fixture directories)
+let sdkDirOverride = null;
+for (const arg of process.argv.slice(2)) {
+  if (arg.startsWith('--sdk-dir=')) {
+    sdkDirOverride = arg.slice('--sdk-dir='.length);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const LABEL = '[sdk-no-barrel-imports]';
 const REPO_ROOT = process.cwd();
-const SDK_DIR = path.join(REPO_ROOT, 'src', 'sdk');
+const SDK_DIR = sdkDirOverride
+  ? path.resolve(REPO_ROOT, sdkDirOverride)
+  : path.join(REPO_ROOT, 'src', 'sdk');
 const SDK_BARREL = path.join(SDK_DIR, 'index.ts');
 const TSCONFIG_PATH = path.join(REPO_ROOT, 'tsconfig.json');
 
@@ -77,20 +87,9 @@ const TSCONFIG_PATH = path.join(REPO_ROOT, 'tsconfig.json');
 
 /** @type {BarrelImportException[]} */
 const BARREL_IMPORT_EXCEPTIONS = [
-  {
-    importer: 'src/sdk/video/timeline/reader.ts',
-    specifier: '@/sdk/index',
-    names: [
-      'ProjectExtensionRequirement',
-      'SourceMapEntry',
-      'GeneratedObjectMeta',
-    ],
-    justification:
-      'M2b family inline declarations (project extension requirements / ' +
-      'source-map / generated-object contracts).  These types are still inline ' +
-      'in src/sdk/index.ts pending M2b extraction to a canonical module.',
-    expires: 'M2b',
-  },
+  // M2b complete: all previously-excepted barrel imports have been resolved
+  // by extracting types to canonical modules (projectRequirements.ts,
+  // timeline/sourceMap.ts, video/liveData.ts).  No exceptions remain.
 ];
 
 // Build a lookup: Map<importer, Set<specifier>>
@@ -275,6 +274,62 @@ function isSdkBarrel(resolvedPath) {
 }
 
 // ---------------------------------------------------------------------------
+// Raw specifier barrel detection (defense-in-depth)
+//
+// In addition to TypeScript module resolution, we also perform a simple
+// path-based check for relative specifiers that would resolve to the barrel.
+// This catches edge cases where the TypeScript resolver might mis-resolve
+// or where a raw `./index` or `../index` is present but the TS resolution
+// layer is bypassed for any reason.
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether a raw relative specifier resolves to the SDK barrel via
+ * simple path arithmetic (without TypeScript).
+ *
+ * Tries common TypeScript extension candidates:
+ *   - raw path as-is
+ *   - path + .ts
+ *   - path + .tsx
+ *   - path/index.ts
+ *   - path/index.tsx
+ *
+ * @param {string} importer - Absolute path of the importing file
+ * @param {string} specifier - The raw import specifier (e.g. './index', '../index')
+ * @returns {boolean} True if the specifier resolves to the SDK barrel
+ */
+function rawSpecifierResolvesToBarrel(importer, specifier) {
+  // Only relative specifiers can accidentally hit the barrel
+  if (!specifier.startsWith('./') && !specifier.startsWith('../')) {
+    return false;
+  }
+
+  const importerDir = path.dirname(importer);
+  const base = path.resolve(importerDir, specifier);
+
+  const candidates = [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    path.join(base, 'index.ts'),
+    path.join(base, 'index.tsx'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+      if (isSdkBarrel(candidate)) {
+        return true;
+      }
+      // If we found a real file that is NOT the barrel, stop looking.
+      // The TypeScript resolver will handle that path normally.
+      return false;
+    }
+  }
+
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -322,7 +377,10 @@ for (const filePath of sourceFiles) {
 
     const resolved = path.resolve(resolvedModule.resolvedFileName);
 
-    if (isSdkBarrel(resolved)) {
+    const tsResolvedToBarrel = isSdkBarrel(resolved);
+    const rawResolvedToBarrel = rawSpecifierResolvesToBarrel(filePath, record.specifier);
+
+    if (tsResolvedToBarrel || rawResolvedToBarrel) {
       // Check exception list: skip if this importer+specifier is allowed
       const resolvedImporter = path.resolve(filePath);
       const allowedSpecs = exceptionMap.get(resolvedImporter);
@@ -335,7 +393,7 @@ for (const filePath of sourceFiles) {
         specifier: record.specifier,
         kind: record.kind,
         line: record.line,
-        resolved: path.relative(REPO_ROOT, resolved),
+        resolved: path.relative(REPO_ROOT, resolved || path.resolve(path.dirname(filePath), record.specifier)),
       });
     }
   }

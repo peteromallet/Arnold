@@ -1,5 +1,7 @@
 {
+  "description": "M2b governance surface map: tracks which gates and contracts cover the SDK public surface, video-editor SDK import boundary, and SDK-internal barrel-import discipline. Updated after M2b family-module extraction — all public exports now live in canonical modules re-exported by the barrel.",
   "test:contracts": [
+    "src/sdk/index.ts",
     "src/tools/video-editor/index.ts",
     "src/tools/video-editor/browser.ts",
     "src/tools/video-editor/testing.ts",
@@ -9,21 +11,24 @@
   ],
   "test:arch": [
     "scripts/quality/check-video-editor-sdk-imports.mjs",
+    "scripts/quality/check-sdk-no-barrel-imports.mjs",
     "config/governance/video-editor-sdk-import-allowlist.json",
     "src/shared/lib/errorHandling/runtimeError.ts",
     "src/integrations/supabase/client.ts",
     "docs/governance/contracts/compatibility-shims.md"
   ],
   "quality:check": [
+    "src/sdk/index.ts",
     "src/tools/video-editor/index.ts",
     "src/tools/video-editor/browser.ts",
     "src/tools/video-editor/testing.ts",
     "scripts/quality/check-video-editor-sdk-imports.mjs",
+    "scripts/quality/check-sdk-public-exports.mjs",
+    "scripts/quality/check-sdk-no-barrel-imports.mjs",
     "config/governance/video-editor-sdk-import-allowlist.json",
+    "config/governance/sdk-public-export-allowlist.json",
     "src/integrations/supabase/client.ts",
     "src/shared/lib/errorHandling/runtimeError.ts",
-    "src/shared/components/ui/contracts/cn.ts",
-    "scripts/quality/check-sdk-public-exports.mjs",
-    "config/governance/sdk-public-export-allowlist.json"
+    "src/shared/components/ui/contracts/cn.ts"
   ]
 }

@@ -9,11 +9,9 @@
  * This module contains only data-only types and read-only surfaces; no
  * registry, provider, resolver, or DOM behaviour lives here.
  *
- * Governance note: ProcessSpawnConfig (M12 process family) and
- * GenerationSessionLiveDelivery (M11 live-sessions) are still hosted in
- * src/sdk/index.ts pending their own family extractions. This module imports
- * them via type-only barrel references; those will be re-wired to canonical
- * modules once the process and live-session families are extracted.
+ * Governance note: ProcessSpawnConfig is imported from the sibling process
+ * family module (./processes).  GenerationSessionLiveDelivery is imported
+ * from the canonical live-data module (../liveData).  No barrel imports.
  *
  * @publicContract
  */
@@ -25,8 +23,8 @@ import type { TimelineSnapshot } from '../timeline/reader';
 import type { TimelinePatch } from '../timeline/patch';
 // Cross-family type-only imports:
 import type { ProcessSpawnConfig } from './processes';
-// GenerationSessionLiveDelivery still hosted in src/sdk/index.ts pending M11 live-session extraction:
-import type { GenerationSessionLiveDelivery } from '../../index';
+// Live-data type (canonical module under src/sdk/video/liveData.ts):
+import type { GenerationSessionLiveDelivery } from '../liveData';
 
 // ---------------------------------------------------------------------------
 // M10: Agent tool contribution (manifest)

@@ -37,6 +37,8 @@ import {
   // manifest / validation
   KNOWN_CONTRIBUTION_KINDS_SET,
   ALL_VALID_PLACEMENTS,
+  validateManifest,
+  validateInstalledPackage,
   // settings
   createExtensionSettingsService,
 } from '@/sdk/index';
@@ -61,6 +63,9 @@ import type {
   ExtensionContribution,
   ManifestValidationMode,
   ManifestValidationResult,
+  ExtensionManifest,
+  ExtensionPermissionDeclaration,
+  InstalledExtensionPackage,
   // packaging
   DependencyPosture,
   ExtensionDependency,
@@ -69,6 +74,9 @@ import type {
   MigrationHookKind,
   MigrationDeclaration,
   InstalledExtensionMetadata,
+  // project requirements
+  ProjectExtensionRequirement,
+  ProjectExtensionRequirements,
   // settings
   ExtensionSettingsSchema,
   ExtensionSettingsService,
@@ -176,6 +184,24 @@ import type {
   BindingResolutionStatus,
   LiveBinding,
   LiveSessionsService,
+  // M3 TimelineOps
+  TimelineOps,
+  // M3 timeline proposal contracts
+  ProposalState,
+  ProposalExpiryDetail,
+  // M3 timeline source-map contracts
+  SourceMapRuntime,
+  SourceMapEntry,
+  GeneratedObjectMeta,
+  TimelineProposal,
+  ProposalListener,
+  ProposalRuntime,
+  ProposalPanelState,
+  ProposalPanelAction,
+  ProposalEnvelope,
+  ProposalImportStatus,
+  ProposalImportDiagnostic,
+  ProposalImportResult,
 } from '@/sdk/index';
 
 // ===========================================================================
@@ -212,6 +238,11 @@ import {
   ALL_VALID_PLACEMENTS as ALL_VALID_PLACEMENTS_Direct,
   type ManifestValidationMode as ManifValMode_Direct,
   type ManifestValidationResult as ManifValResult_Direct,
+  type ExtensionManifest as ExtensionManifest_Direct,
+  type ExtensionPermissionDeclaration as ExtensionPermissionDeclaration_Direct,
+  type InstalledExtensionPackage as InstalledExtensionPackage_Direct,
+  validateManifest as validateManifest_Direct,
+  validateInstalledPackage as validateInstalledPackage_Direct,
 } from '../manifest';
 
 import type {
@@ -223,6 +254,11 @@ import type {
   MigrationDeclaration as MigDecl_Direct,
   InstalledExtensionMetadata as InstExtMeta_Direct,
 } from '../packaging';
+
+import type {
+  ProjectExtensionRequirement as ProjExtReq_Direct,
+  ProjectExtensionRequirements as ProjExtReqs_Direct,
+} from '../projectRequirements';
 
 import type {
   ExtensionSettingsSchema as ExtSetSchema_Direct,
@@ -376,6 +412,31 @@ import type { CommandContribution as CommandContribution_Direct } from '../video
 import type { KeybindingContribution as KeybindingContribution_Direct } from '../video/families/keybindings';
 import type { ContextMenuItemContribution as ContextMenuItemContribution_Direct } from '../video/families/contextMenuItems';
 
+// M3 timeline proposal contracts (not a contribution family)
+import type {
+  ProposalState as ProposalState_Direct,
+  ProposalExpiryDetail as ProposalExpiryDetail_Direct,
+  TimelineProposal as TimelineProposal_Direct,
+  ProposalListener as ProposalListener_Direct,
+  ProposalRuntime as ProposalRuntime_Direct,
+  ProposalPanelState as ProposalPanelState_Direct,
+  ProposalPanelAction as ProposalPanelAction_Direct,
+  ProposalEnvelope as ProposalEnvelope_Direct,
+  ProposalImportStatus as ProposalImportStatus_Direct,
+  ProposalImportDiagnostic as ProposalImportDiagnostic_Direct,
+  ProposalImportResult as ProposalImportResult_Direct,
+} from '../video/timeline/proposals';
+
+// M3 timeline source-map contracts (not a contribution family)
+import type {
+  SourceMapRuntime as SourceMapRuntime_Direct,
+  SourceMapEntry as SourceMapEntry_Direct,
+  GeneratedObjectMeta as GeneratedObjectMeta_Direct,
+} from '../video/timeline/sourceMap';
+
+// M3 TimelineOps (not a contribution family)
+import type { TimelineOps as TimelineOps_Direct } from '../video/timeline/timelineOps';
+
 // M11 live data infrastructure (not a contribution family)
 import type {
   LiveSourceKind as LiveSourceKind_Direct,
@@ -498,6 +559,143 @@ describe('M2a barrel-import smoke — manifest / validation', () => {
     expect(KNOWN_CONTRIB_KINDS_SET_Direct).toBe(KNOWN_CONTRIBUTION_KINDS_SET);
     expect(ALL_VALID_PLACEMENTS_Direct).toBe(ALL_VALID_PLACEMENTS);
   });
+
+  // ── M2b direct import coverage: manifest/package contracts ──────────────
+
+  it('ExtensionManifest is importable from the barrel', () => {
+    const manifest: ExtensionManifest = {
+      id: 'com.example' as ExtensionId,
+      version: '1.0.0',
+      label: 'Test Extension',
+    };
+    expect(manifest.id).toBe('com.example');
+    expect(manifest.label).toBe('Test Extension');
+  });
+
+  it('ExtensionManifest is importable from canonical direct path', () => {
+    const manifest: ExtensionManifest_Direct = {
+      id: 'com.example.direct' as ExtensionId,
+      version: '2.0.0',
+      label: 'Direct Test',
+    };
+    expect(manifest.id).toBe('com.example.direct');
+    expect(manifest.label).toBe('Direct Test');
+  });
+
+  it('ExtensionPermissionDeclaration is importable from the barrel', () => {
+    const perm: ExtensionPermissionDeclaration = {
+      reason: 'Needs network access for API calls',
+      posture: { network: true },
+    };
+    expect(perm.reason).toBe('Needs network access for API calls');
+    expect(perm.posture?.network).toBe(true);
+  });
+
+  it('ExtensionPermissionDeclaration is importable from canonical direct path', () => {
+    const perm: ExtensionPermissionDeclaration_Direct = {
+      reason: 'Direct import test',
+    };
+    expect(perm.reason).toBe('Direct import test');
+  });
+
+  it('InstalledExtensionPackage is importable from the barrel', () => {
+    const pkg: InstalledExtensionPackage = {
+      metadata: {
+        extensionId: 'com.example' as ExtensionId,
+        version: '1.0.0',
+        integrity: { algorithm: 'sha256', value: 'abc123' },
+        enabled: true,
+      },
+      manifest: {
+        id: 'com.example' as ExtensionId,
+        version: '1.0.0',
+        label: 'Test',
+      },
+      bundleContent: 'export function activate() {}',
+    };
+    expect(pkg.metadata.extensionId).toBe('com.example');
+    expect(pkg.bundleContent).toBe('export function activate() {}');
+  });
+
+  it('InstalledExtensionPackage is importable from canonical direct path', () => {
+    const pkg: InstalledExtensionPackage_Direct = {
+      metadata: {
+        extensionId: 'com.example.direct' as ExtensionId,
+        version: '2.0.0',
+        integrity: { algorithm: 'sha256', value: 'def456' },
+        enabled: true,
+      },
+      manifest: {
+        id: 'com.example.direct' as ExtensionId,
+        version: '2.0.0',
+        label: 'Direct Pkg Test',
+      },
+      bundleContent: '',
+    };
+    expect(pkg.manifest.label).toBe('Direct Pkg Test');
+  });
+
+  it('validateManifest is callable from the barrel and returns a result', () => {
+    const result = validateManifest({
+      id: 'com.test' as ExtensionId,
+      version: '1.0.0',
+      label: 'Test',
+    }, 'dev');
+    expect(result).toBeDefined();
+    expect(typeof result.valid).toBe('boolean');
+    expect(Array.isArray(result.errors)).toBe(true);
+    expect(Array.isArray(result.warnings)).toBe(true);
+  });
+
+  it('validateManifest is callable from canonical direct path', () => {
+    const result = validateManifest_Direct({
+      id: 'com.test.direct' as ExtensionId,
+      version: '1.0.0',
+      label: 'Direct Test',
+    }, 'dev');
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('validateInstalledPackage is callable from the barrel', () => {
+    const result = validateInstalledPackage({
+      metadata: {
+        extensionId: 'com.test' as ExtensionId,
+        version: '1.0.0',
+        integrity: { algorithm: 'sha256', value: 'abc123' },
+        enabled: true,
+      },
+      manifest: {
+        id: 'com.test' as ExtensionId,
+        version: '1.0.0',
+        label: 'Test',
+      },
+      bundleContent: 'export function activate() {}',
+    });
+    expect(result).toBeDefined();
+    expect(typeof result.valid).toBe('boolean');
+  });
+
+  it('validateInstalledPackage is callable from canonical direct path', () => {
+    const result = validateInstalledPackage_Direct({
+      metadata: {
+        extensionId: 'com.test.direct' as ExtensionId,
+        version: '1.0.0',
+        integrity: { algorithm: 'sha256', value: 'abc123' },
+        enabled: true,
+      },
+      manifest: {
+        id: 'com.test.direct' as ExtensionId,
+        version: '1.0.0',
+        label: 'Direct Test',
+        publisher: 'Test Publisher',
+        license: 'MIT',
+      },
+      bundleContent: 'export function activate() {}',
+    });
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
 });
 
 // ── packaging ──────────────────────────────────────────────────────────────
@@ -522,6 +720,55 @@ describe('M2a barrel-import smoke — packaging', () => {
     };
     expect(meta.extensionId).toBe('com.example');
     expect(meta.integrity.algorithm).toBe('sha256');
+  });
+});
+
+// ── project requirements ───────────────────────────────────────────────────
+
+describe('M2a barrel-import smoke — project requirements', () => {
+  it('ProjectExtensionRequirement is importable from the barrel', () => {
+    const req: ProjectExtensionRequirement = {
+      extensionId: 'com.example.dep',
+      versionRange: '>=1.0.0',
+      posture: 'required',
+    };
+    expect(req.extensionId).toBe('com.example.dep');
+    expect(req.posture).toBe('required');
+  });
+
+  it('ProjectExtensionRequirements is importable from the barrel', () => {
+    const reqs: ProjectExtensionRequirements = {
+      requirements: [{ extensionId: 'com.example.dep' }],
+    };
+    expect(reqs.requirements).toHaveLength(1);
+    expect(reqs.requirements[0].extensionId).toBe('com.example.dep');
+  });
+
+  // ── direct import coverage ──────────────────────────────────────────────
+
+  it('ProjectExtensionRequirement is importable from canonical direct path', () => {
+    const req: ProjExtReq_Direct = {
+      extensionId: 'com.example.direct',
+      versionRange: '>=2.0.0',
+      referencedContributionIds: ['contrib-1'],
+      integrity: 'sha256-abc',
+      posture: 'optional',
+    };
+    expect(req.extensionId).toBe('com.example.direct');
+    expect(req.referencedContributionIds).toContain('contrib-1');
+    expect(req.integrity).toBe('sha256-abc');
+    expect(req.posture).toBe('optional');
+  });
+
+  it('ProjectExtensionRequirements is importable from canonical direct path', () => {
+    const reqs: ProjExtReqs_Direct = {
+      requirements: [
+        { extensionId: 'com.a.direct' },
+        { extensionId: 'com.b.direct', posture: 'required' },
+      ],
+    };
+    expect(reqs.requirements).toHaveLength(2);
+    expect(reqs.requirements[1].posture).toBe('required');
   });
 });
 
@@ -2126,6 +2373,390 @@ describe('M2b barrel-import smoke — live data infrastructure', () => {
       getDiagnostics(_sourceId) { return []; },
     };
     expect(typeof svc.subscribeSamples).toBe('function');
+  });
+});
+
+// ── M3 timeline proposal contracts ──────────────────────────────────────────
+
+describe('M2b barrel-import smoke — proposals', () => {
+  it('ProposalState is importable from the public barrel', () => {
+    const state: ProposalState = 'pending';
+    expect(state).toBe('pending');
+    const expired: ProposalState = 'expired';
+    expect(expired).toBe('expired');
+  });
+
+  it('ProposalExpiryDetail is importable from the public barrel', () => {
+    const detail: ProposalExpiryDetail = {
+      reason: 'base-version-mismatch',
+      baseVersion: 5,
+      currentVersion: 7,
+      createdAt: 1000,
+      expiredAt: 2000,
+    };
+    expect(detail.reason).toBe('base-version-mismatch');
+    expect(detail.baseVersion).toBe(5);
+  });
+
+  it('TimelineProposal is importable from the public barrel', () => {
+    const proposal: TimelineProposal = {
+      id: 'prop-1',
+      source: 'test.extension',
+      rationale: 'test rationale',
+      state: 'pending',
+      patch: { ops: [] },
+      baseVersion: 1,
+      previewable: true,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    expect(proposal.id).toBe('prop-1');
+    expect(proposal.state).toBe('pending');
+    expect(proposal.patch.ops).toEqual([]);
+  });
+
+  it('ProposalListener is importable from the public barrel', () => {
+    const listener: ProposalListener = (_proposal) => {};
+    expect(typeof listener).toBe('function');
+  });
+
+  it('ProposalRuntime is importable from the public barrel', () => {
+    const runtime: ProposalRuntime = {
+      subscribe(_listener) { return { dispose() {} }; },
+      create(_input) {
+        return {
+          id: 'p1', source: 'test', state: 'pending',
+          patch: { ops: [] }, baseVersion: 1, previewable: true,
+          createdAt: 0, updatedAt: 0,
+        };
+      },
+      preview(_proposalId) { return { diff: { entries: [] } }; },
+      accept(_proposalId) { return { entries: [] }; },
+      reject(_proposalId, _reason) {},
+      get(_proposalId) { return undefined; },
+      list(_state) { return []; },
+      currentVersion: 1,
+      expireStale(_maxAgeMs) { return []; },
+    };
+    expect(typeof runtime.subscribe).toBe('function');
+    expect(runtime.currentVersion).toBe(1);
+  });
+
+  it('ProposalPanelState is importable from the public barrel', () => {
+    const state: ProposalPanelState = {
+      proposals: [],
+      selectedProposalId: null,
+      visible: false,
+    };
+    expect(state.proposals).toEqual([]);
+    expect(state.selectedProposalId).toBeNull();
+  });
+
+  it('ProposalPanelAction is importable from the public barrel', () => {
+    const select: ProposalPanelAction = { type: 'select', proposalId: 'p1' };
+    expect(select.type).toBe('select');
+    const toggle: ProposalPanelAction = { type: 'toggleVisibility' };
+    expect(toggle.type).toBe('toggleVisibility');
+  });
+
+  it('ProposalEnvelope is importable from the public barrel', () => {
+    const envelope: ProposalEnvelope = {
+      proposals: [],
+      baseVersion: 1,
+      summary: 'test',
+      mutationApplied: false,
+    };
+    expect(envelope.baseVersion).toBe(1);
+    expect(envelope.mutationApplied).toBe(false);
+  });
+
+  it('ProposalImportStatus is importable from the public barrel', () => {
+    const status: ProposalImportStatus = 'imported';
+    expect(status).toBe('imported');
+  });
+
+  it('ProposalImportDiagnostic is importable from the public barrel', () => {
+    const diag: ProposalImportDiagnostic = {
+      severity: 'error',
+      code: 'proposal-import/missing-id',
+      message: 'Missing proposal ID',
+    };
+    expect(diag.severity).toBe('error');
+    expect(diag.code).toBe('proposal-import/missing-id');
+  });
+
+  it('ProposalImportResult is importable from the public barrel', () => {
+    const result: ProposalImportResult = {
+      imported: 3,
+      skipped: 1,
+      rejected: 0,
+      statuses: [{ proposalId: 'p1', status: 'imported' }],
+      diagnostics: [],
+    };
+    expect(result.imported).toBe(3);
+    expect(result.statuses).toHaveLength(1);
+  });
+
+  // ── direct import coverage ──────────────────────────────────────────────
+
+  it('ProposalState is importable from canonical direct path', () => {
+    const state: ProposalState_Direct = 'accepted';
+    expect(state).toBe('accepted');
+  });
+
+  it('ProposalExpiryDetail is importable from canonical direct path', () => {
+    const detail: ProposalExpiryDetail_Direct = {
+      reason: 'ttl-elapsed',
+      baseVersion: 1,
+      currentVersion: 2,
+      createdAt: 100,
+      expiredAt: 200,
+      ttlMs: 5000,
+    };
+    expect(detail.reason).toBe('ttl-elapsed');
+    expect(detail.ttlMs).toBe(5000);
+  });
+
+  it('TimelineProposal is importable from canonical direct path', () => {
+    const proposal: TimelineProposal_Direct = {
+      id: 'direct-prop',
+      source: 'direct.ext',
+      state: 'rejected',
+      patch: { ops: [] },
+      baseVersion: 0,
+      previewable: false,
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    expect(proposal.id).toBe('direct-prop');
+    expect(proposal.state).toBe('rejected');
+  });
+
+  it('ProposalListener is importable from canonical direct path', () => {
+    const listener: ProposalListener_Direct = () => {};
+    expect(typeof listener).toBe('function');
+  });
+
+  it('ProposalRuntime is importable from canonical direct path', () => {
+    const runtime: ProposalRuntime_Direct = {
+      subscribe(_listener) { return { dispose() {} }; },
+      create(_input) {
+        return { id: '', source: '', state: 'pending', patch: { ops: [] }, baseVersion: 0, previewable: false, createdAt: 0, updatedAt: 0 };
+      },
+      preview(_proposalId) { return { diff: { entries: [] } }; },
+      accept(_proposalId) { return { entries: [] }; },
+      reject(_proposalId, _reason) {},
+      get(_proposalId) { return undefined; },
+      list(_state) { return []; },
+      currentVersion: 0,
+      expireStale(_maxAgeMs) { return []; },
+    };
+    expect(typeof runtime.create).toBe('function');
+  });
+
+  it('ProposalPanelState is importable from canonical direct path', () => {
+    const state: ProposalPanelState_Direct = {
+      proposals: [],
+      selectedProposalId: 'p1',
+      visible: true,
+    };
+    expect(state.selectedProposalId).toBe('p1');
+  });
+
+  it('ProposalPanelAction is importable from canonical direct path', () => {
+    const reject: ProposalPanelAction_Direct = { type: 'reject', proposalId: 'p1', reason: 'stale' };
+    expect(reject.type).toBe('reject');
+    expect(reject.reason).toBe('stale');
+  });
+
+  it('ProposalEnvelope is importable from canonical direct path', () => {
+    const envelope: ProposalEnvelope_Direct = {
+      proposals: [],
+      baseVersion: 5,
+      mutationApplied: true,
+    };
+    expect(envelope.baseVersion).toBe(5);
+  });
+
+  it('ProposalImportStatus is importable from canonical direct path', () => {
+    const status: ProposalImportStatus_Direct = 'skipped';
+    expect(status).toBe('skipped');
+  });
+
+  it('ProposalImportDiagnostic is importable from canonical direct path', () => {
+    const diag: ProposalImportDiagnostic_Direct = {
+      severity: 'warning',
+      code: 'test',
+      message: 'test',
+      proposalIndex: 0,
+    };
+    expect(diag.proposalIndex).toBe(0);
+  });
+
+  it('ProposalImportResult is importable from canonical direct path', () => {
+    const result: ProposalImportResult_Direct = {
+      imported: 0,
+      skipped: 0,
+      rejected: 1,
+      statuses: [],
+      diagnostics: [],
+    };
+    expect(result.rejected).toBe(1);
+  });
+});
+
+// ── M3 TimelineOps ──────────────────────────────────────────────────────────
+
+describe('M2b barrel-import smoke — TimelineOps', () => {
+  it('TimelineOps is importable from the public barrel', () => {
+    const ops: TimelineOps = {
+      validate(_patch) {
+        return { valid: true, diagnostics: [] };
+      },
+      preview(_patch) {
+        return { fullyPreviewable: true, diff: { version: 0, entries: [], affectedObjectIds: [] }, diagnostics: [] };
+      },
+      apply(_patch) {
+        return { version: 0, entries: [], affectedObjectIds: [] };
+      },
+      checkpoint(_label) { return 'ckpt-1'; },
+      rollback(_checkpointId) { return null; },
+      setAllTracksMuted(_muted) {
+        return { version: 0, entries: [], affectedObjectIds: [] };
+      },
+    };
+    expect(typeof ops.validate).toBe('function');
+    expect(typeof ops.setAllTracksMuted).toBe('function');
+  });
+
+  // ── direct import coverage ──────────────────────────────────────────────
+
+  it('TimelineOps is importable from canonical direct path', () => {
+    const ops: TimelineOps_Direct = {
+      validate(_patch) {
+        return { valid: true, diagnostics: [] };
+      },
+      preview(_patch) {
+        return { fullyPreviewable: true, diff: { version: 0, entries: [], affectedObjectIds: [] }, diagnostics: [] };
+      },
+      apply(_patch) {
+        return { version: 0, entries: [], affectedObjectIds: [] };
+      },
+      checkpoint(_label) { return 'ckpt-1'; },
+      rollback(_checkpointId) { return null; },
+      setAllTracksMuted(_muted) {
+        return { version: 0, entries: [], affectedObjectIds: [] };
+      },
+    };
+    expect(typeof ops.validate).toBe('function');
+    expect(typeof ops.apply).toBe('function');
+  });
+});
+
+// ── M3 timeline source-map contracts ────────────────────────────────────────
+
+describe('M2b barrel-import smoke — source maps', () => {
+  it('SourceMapRuntime is importable from the public barrel', () => {
+    const runtime: SourceMapRuntime = {
+      create(_ext, _target, _gran, _uri, _sl, _sc, _el, _ec, _meta) {
+        return {
+          id: 'sme-1', source: _ext, targetId: _target,
+          targetGranularity: _gran, sourceUri: _uri,
+          sourceStartLine: _sl, sourceStartColumn: _sc,
+          sourceEndLine: _el, sourceEndColumn: _ec,
+          stale: false,
+        };
+      },
+      get(_ext, _id) { return undefined; },
+      getForTarget(_ext, _target) { return []; },
+      getForSource(_ext, _uri) { return []; },
+      markStale(_ext, _uri) { return []; },
+      markStaleForTarget(_ext, _target) { return []; },
+      delete(_ext, _id) { return false; },
+      list(_ext) { return []; },
+    };
+    expect(typeof runtime.create).toBe('function');
+    expect(typeof runtime.get).toBe('function');
+  });
+
+  it('SourceMapEntry is importable from the public barrel', () => {
+    const entry: SourceMapEntry = {
+      id: 'sme-1',
+      source: 'com.test.ext',
+      targetId: 'clip-1',
+      targetGranularity: 'clip',
+      sourceUri: 'file:///src/main.ts',
+      sourceStartLine: 10,
+      sourceStartColumn: 0,
+      sourceEndLine: 15,
+      sourceEndColumn: 20,
+      stale: false,
+    };
+    expect(entry.id).toBe('sme-1');
+    expect(entry.targetGranularity).toBe('clip');
+    expect(entry.stale).toBe(false);
+  });
+
+  it('GeneratedObjectMeta is importable from the public barrel', () => {
+    const meta: GeneratedObjectMeta = {
+      extensionId: 'com.test.ext',
+      contributionId: 'gen-1',
+      provenance: { hash: 'abc123' },
+      generatedAt: 1700000000000,
+      sourceMapEntryId: 'sme-1',
+    };
+    expect(meta.extensionId).toBe('com.test.ext');
+    expect(meta.sourceMapEntryId).toBe('sme-1');
+  });
+
+  // ── direct import coverage ──────────────────────────────────────────────
+
+  it('SourceMapRuntime is importable from canonical direct path', () => {
+    const runtime: SourceMapRuntime_Direct = {
+      create(_ext, _target, _gran, _uri, _sl, _sc, _el, _ec, _meta) {
+        return {
+          id: 'direct-sme', source: _ext, targetId: _target,
+          targetGranularity: _gran, sourceUri: _uri,
+          sourceStartLine: _sl, sourceStartColumn: _sc,
+          sourceEndLine: _el, sourceEndColumn: _ec,
+          stale: false,
+        };
+      },
+      get(_ext, _id) { return undefined; },
+      getForTarget(_ext, _target) { return []; },
+      getForSource(_ext, _uri) { return []; },
+      markStale(_ext, _uri) { return []; },
+      markStaleForTarget(_ext, _target) { return []; },
+      delete(_ext, _id) { return false; },
+      list(_ext) { return []; },
+    };
+    expect(typeof runtime.markStale).toBe('function');
+  });
+
+  it('SourceMapEntry is importable from canonical direct path', () => {
+    const entry: SourceMapEntry_Direct = {
+      id: 'direct-entry',
+      source: 'direct.ext',
+      targetId: 'track-1',
+      targetGranularity: 'track',
+      sourceUri: 'file:///src/gen.ts',
+      sourceStartLine: 0,
+      sourceStartColumn: 0,
+      sourceEndLine: 10,
+      sourceEndColumn: 5,
+      stale: false,
+    };
+    expect(entry.targetGranularity).toBe('track');
+    expect(entry.source).toBe('direct.ext');
+  });
+
+  it('GeneratedObjectMeta is importable from canonical direct path', () => {
+    const meta: GeneratedObjectMeta_Direct = {
+      extensionId: 'direct.ext',
+      generatedAt: 0,
+    };
+    expect(meta.extensionId).toBe('direct.ext');
+    expect(meta.generatedAt).toBe(0);
   });
 });
 
