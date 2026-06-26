@@ -1119,9 +1119,30 @@ class GreenSuiteProvider:
     def _suite_config_and_timeout(
         ctx: CompletionContext,
     ) -> tuple[dict[str, Any], int]:
-        config: dict[str, Any] = (
+        raw_config = (
             ctx.state.get("config", {}) if isinstance(ctx.state, dict) else {}
         )
+        config: dict[str, Any] = dict(raw_config) if isinstance(raw_config, dict) else {}
+        config["plan_dir"] = str(ctx.plan_dir)
+        if not config.get("test_command"):
+            finalize = _read_json(ctx.plan_dir / "finalize.json")
+            baseline_command = (
+                finalize.get("baseline_test_command")
+                if isinstance(finalize, dict)
+                else None
+            )
+            test_selection = (
+                finalize.get("test_selection") if isinstance(finalize, dict) else None
+            )
+            selected_command = (
+                test_selection.get("command_override")
+                if isinstance(test_selection, dict)
+                else None
+            )
+            for candidate in (baseline_command, selected_command):
+                if isinstance(candidate, str) and candidate.strip():
+                    config["test_command"] = candidate.strip()
+                    break
         timeout: int = config.get("test_baseline_timeout", 900)
         if not isinstance(timeout, (int, float)) or timeout <= 0:
             timeout = 900
