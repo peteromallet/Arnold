@@ -103,7 +103,11 @@ def prepare_resume(
         return ResumeOutcome(
             ok=False,
             replay_resolution=resolution.resolution,
-            quarantine_reason=resolution.resolution.reason,
+            quarantine_reason=(
+                resolution.quarantine.reason
+                if resolution.quarantine is not None
+                else resolution.resolution.reason
+            ),
         )
 
     resolved_cursor = resolution.cursor
@@ -161,6 +165,21 @@ def prepare_resume(
                 ok=False,
                 replay_resolution=record_validation,
                 quarantine_reason=record_validation.reason,
+            )
+
+        expected_reentry_id = suspension_record.route.reentry_id.value
+        if (
+            resolved_cursor.reentry_id is not None
+            and resolved_cursor.reentry_id != expected_reentry_id
+        ):
+            reentry_validation = ReplayResolution(
+                decision=ReplayDecision.QUARANTINE,
+                reason="cursor reentry_id does not match suspension route reentry_id",
+            )
+            return ResumeOutcome(
+                ok=False,
+                replay_resolution=reentry_validation,
+                quarantine_reason=reentry_validation.reason,
             )
 
         payload_validation = validate_resume_payload(

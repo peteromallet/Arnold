@@ -11,6 +11,8 @@ from arnold.kernel.artifacts import (
     ProvenanceParent,
     latest_version,
     next_version_path,
+    validate_logical_root_id,
+    validate_safe_relative_subpath,
     versioned_artifact_name,
 )
 from arnold.kernel.capabilities import CapabilityCheck, CapabilityId, DispatchKey
@@ -56,6 +58,7 @@ from arnold.kernel.governor import (
     settlement_payload,
 )
 from arnold.kernel.ids import ReentryId, RunId, derive_idempotency_key, derive_pipeline_identity
+from arnold.kernel.ids import JudgeManifestCrossReference, JudgeManifestRelationship
 from arnold.kernel.journal import (
     EventJournal,
     JournalPosition,
@@ -120,6 +123,8 @@ __all__ = [
     "GovernorState",
     "JournalPosition",
     "JournalQuarantineRecord",
+    "JudgeManifestCrossReference",
+    "JudgeManifestRelationship",
     "LegacyAliasRecord",
     "ManifestReference",
     "MissingIdempotencyPolicyError",
@@ -160,6 +165,8 @@ __all__ = [
     "resolve_cursor",
     "schema_hash",
     "settlement_payload",
+    "validate_logical_root_id",
+    "validate_safe_relative_subpath",
     "validate_artifact_content_hashes",
     "validate_event_sequence_against_cursor",
     "validate_replay_cursor",

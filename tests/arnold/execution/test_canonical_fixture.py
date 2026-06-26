@@ -8,6 +8,7 @@ plus execution policies.  Tests fake-run it through ``arnold.execution.run`` wit
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,13 @@ from arnold.manifest import NodeRef, manifest_coordinate
 from tests.arnold.execution.canonical_manifest import HASH_A, canonical_execution_manifest
 
 FIXTURE_PATH = Path(__file__).parent.parent.parent / "fixtures" / "workflow" / "canonical_megaplan_shapes.yaml"
+GOLDEN_RUNTIME_PATH = (
+    Path(__file__).parent.parent.parent
+    / "fixtures"
+    / "golden"
+    / "workflow_manifest_runtime"
+    / "fresh-planning.json"
+)
 
 
 class _AllowingCapabilityHandler:
@@ -167,6 +175,34 @@ def test_compiles_and_matches_fixture_shapes() -> None:
         expected = _shape_nodes(shape)
         missing = expected - manifest_node_ids
         assert not missing, f"shape {shape_name!r} missing nodes: {missing}"
+
+
+def test_manifest_runtime_payload_preserves_legacy_route_fields() -> None:
+    data = json.loads(GOLDEN_RUNTIME_PATH.read_text(encoding="utf-8"))
+
+    assert data["schema_version"] == "workflow-manifest-runtime.golden.v1"
+    assert data["source_golden"] == "tests/fixtures/golden/pipeline_fresh_run.json"
+    assert data["routes"] == [
+        "prep",
+        "plan",
+        "critique",
+        "gate",
+        "revise",
+        "finalize",
+        "execute",
+        "review",
+    ]
+    assert "seed" not in data["normalization"]
+
+    manifest_contract = data["manifest_contract"]
+    assert manifest_contract["schema_version"] == "arnold.workflow.manifest.v1"
+    assert manifest_contract["id"] == data["case"]
+    route_steps = {
+        metadata["behavioral_step"]
+        for item in manifest_contract["nodes"] + manifest_contract["edges"]
+        if (metadata := item.get("route_metadata", {})).get("behavioral_step")
+    }
+    assert set(data["routes"]) <= route_steps
 
 
 def test_happy_path_runs_to_completion(tmp_path: Path, fake_backend_factory) -> None:

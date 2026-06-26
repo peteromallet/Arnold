@@ -1,8 +1,175 @@
 {
   "case": "tiebreaker",
+  "coverage_origin": "m1-added",
+  "manifest_contract": {
+    "edges": [
+      {
+        "condition_ref": "tiebreaker:branch-a",
+        "id": "tiebreaker-branch-a-tiebreaker-tiebreaker",
+        "label": "tiebreaker",
+        "route_metadata": {
+          "behavioral_step": "branch-a",
+          "decision_input": "candidate-a",
+          "route_semantics": "candidate branch participates in explicit tie resolution"
+        },
+        "source": "tiebreaker-branch-a",
+        "target": "tiebreaker-tiebreaker"
+      },
+      {
+        "condition_ref": "tiebreaker:branch-b",
+        "id": "tiebreaker-branch-b-tiebreaker-tiebreaker",
+        "label": "tiebreaker",
+        "route_metadata": {
+          "behavioral_step": "branch-b",
+          "decision_input": "candidate-b",
+          "route_semantics": "candidate branch participates in explicit tie resolution"
+        },
+        "source": "tiebreaker-branch-b",
+        "target": "tiebreaker-tiebreaker"
+      },
+      {
+        "condition_ref": "tiebreaker:resolved",
+        "id": "tiebreaker-tiebreaker-tiebreaker-selected",
+        "label": "selected",
+        "route_metadata": {
+          "behavioral_step": "tiebreaker",
+          "route_semantics": "single deterministic winner is selected after ambiguous branch scores"
+        },
+        "source": "tiebreaker-tiebreaker",
+        "target": "tiebreaker-selected"
+      }
+    ],
+    "id": "tiebreaker",
+    "nodes": [
+      {
+        "id": "tiebreaker-branch-a",
+        "kind": "branch",
+        "route_metadata": {
+          "behavioral_step": "branch-a",
+          "decision_input": "candidate-a"
+        }
+      },
+      {
+        "id": "tiebreaker-branch-b",
+        "kind": "branch",
+        "route_metadata": {
+          "behavioral_step": "branch-b",
+          "decision_input": "candidate-b"
+        }
+      },
+      {
+        "id": "tiebreaker-selected",
+        "kind": "agent",
+        "route_metadata": {
+          "behavioral_step": "selected",
+          "route_semantics": "continuation receives only the selected branch"
+        }
+      },
+      {
+        "id": "tiebreaker-tiebreaker",
+        "kind": "branch",
+        "policy": {
+          "tiebreaker": {
+            "requires_explicit_winner": true,
+            "source_routes": [
+              "branch-a",
+              "branch-b"
+            ]
+          }
+        },
+        "route_metadata": {
+          "behavioral_step": "tiebreaker",
+          "route_semantics": "resolve equal-ranked branch recommendations without implicit ordering"
+        }
+      }
+    ],
+    "version": "manifest-contract.v1",
+    "schema_version": "arnold.workflow.manifest.v1",
+    "capabilities": [
+      {
+        "capability_id": "agent:judge",
+        "route": "default",
+        "required": true
+      },
+      {
+        "capability_id": "reducer:tournament",
+        "route": "default",
+        "required": true
+      },
+      {
+        "capability_id": "artifact:write",
+        "route": "default",
+        "required": true
+      }
+    ],
+    "policy": {
+      "fanout": {
+        "mode": "static",
+        "width": 2,
+        "reducer_ref": "reducer:tournament"
+      },
+      "retry": {
+        "max_attempts": 1,
+        "backoff": "none"
+      },
+      "budget": {
+        "max_attempts": 3,
+        "max_seconds": 14400
+      },
+      "idempotency": {
+        "key_template": "tiebreaker:{run_id}",
+        "required": true
+      },
+      "suspension_routes": [
+        {
+          "route_id": "tiebreaker-route-1",
+          "capability_id": "agent:judge",
+          "reentry_id": "tiebreaker:round-1",
+          "payload_schema_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+          "resume_schema_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+        },
+        {
+          "route_id": "tiebreaker-route-2",
+          "capability_id": "reducer:tournament",
+          "reentry_id": "tiebreaker:winner",
+          "payload_schema_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+          "resume_schema_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        }
+      ],
+      "control_transitions": [
+        {
+          "transition_id": "tiebreaker-resolve-tie",
+          "transition_type": "override",
+          "trigger_ref": "tiebreaker:tie",
+          "target_ref": "tiebreaker-winner",
+          "policy_ref": "policy:tiebreaker:resolve",
+          "payload_schema_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+          "idempotency": {
+            "key_template": "tiebreaker-resolve-tie:{run_id}",
+            "required": true
+          }
+        }
+      ],
+      "topology_overlays": [
+        {
+          "overlay_id": "tiebreaker-round-overlay",
+          "overlay_type": "explicit-tiebreaker-round",
+          "source_ref": "tiebreaker-judge",
+          "target_refs": [
+            "tiebreaker-round-1"
+          ],
+          "condition_ref": "tiebreaker:tie",
+          "payload_schema_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+        }
+      ]
+    },
+    "reentry_ids": [
+      "tiebreaker:round-1",
+      "tiebreaker:winner"
+    ]
+  },
   "normalization": {
     "ordering": "stable-id",
-    "seed": null,
     "volatile_fields": [
       "absolute_path",
       "duration_ms",
@@ -18,6 +185,5 @@
     "branch-b",
     "tiebreaker"
   ],
-  "schema_version": "workflow-manifest-runtime.golden.v1",
-  "source_golden": "mainline-route-inventory"
+  "schema_version": "workflow-manifest-runtime.golden.v1"
 }

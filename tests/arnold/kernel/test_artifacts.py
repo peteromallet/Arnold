@@ -8,6 +8,7 @@ from arnold.kernel import (
     ArtifactRootKind,
     ContentTypeRegistration,
     ContentTypeRegistry,
+    FileBackedArtifactStore,
     GeneratedArtifactProvenance,
     ProvenanceParent,
     RetentionPin,
@@ -15,6 +16,7 @@ from arnold.kernel import (
     latest_version,
     next_version_path,
     schema_hash,
+    validate_safe_relative_subpath,
     versioned_artifact_name,
 )
 
@@ -105,6 +107,36 @@ def test_artifact_binding_carries_logical_root_and_provenance() -> None:
     assert binding.relative_path == "v1.md"
     assert binding.retention_pins[0].policy == RetentionPolicy.AUDIT
     assert provenance.provenance_hash.startswith("sha256:")
+    assert binding.root.to_dict() == {
+        "kind": "repo_artifact_root",
+        "path": ".megaplan/reports",
+        "root_id": "repo-megaplan",
+    }
+    assert binding.to_dict()["root"] == binding.root.to_dict()
+
+
+def test_artifact_root_serializes_repo_and_plan_roots_deterministically() -> None:
+    repo_root = ArtifactRoot(
+        "repo-root",
+        ".arnold/artifacts",
+        kind=ArtifactRootKind.REPO_ARTIFACT_ROOT,
+    )
+    plan_root = ArtifactRoot(
+        "plan-root",
+        "runs/run-1/artifacts",
+        kind=ArtifactRootKind.PLAN_ARTIFACT_ROOT,
+    )
+
+    assert repo_root.to_dict() == {
+        "kind": "repo_artifact_root",
+        "path": ".arnold/artifacts",
+        "root_id": "repo-root",
+    }
+    assert plan_root.to_dict() == {
+        "kind": "plan_artifact_root",
+        "path": "runs/run-1/artifacts",
+        "root_id": "plan-root",
+    }
 
 
 def test_provenance_parent_artifact_id_participates_in_hash() -> None:
@@ -128,3 +160,58 @@ def test_provenance_parent_artifact_id_participates_in_hash() -> None:
     )
 
     assert base.provenance_hash != changed_parent.provenance_hash
+
+
+def test_artifact_root_rejects_invalid_logical_ids_and_paths() -> None:
+    with pytest.raises(ValueError, match="logical root id"):
+        ArtifactRoot("bad root", ".megaplan/reports")
+
+    with pytest.raises(ValueError, match="relative artifact path"):
+        validate_safe_relative_subpath("../escape.md")
+
+    with pytest.raises(ValueError, match="relative artifact path"):
+        validate_safe_relative_subpath("/absolute.md")
+
+    with pytest.raises(ValueError, match="relative artifact path"):
+        validate_safe_relative_subpath("")
+
+    with pytest.raises(ValueError, match="relative artifact path"):
+        validate_safe_relative_subpath("reports/./v1.md")
+
+    with pytest.raises(ValueError, match="relative artifact path"):
+        validate_safe_relative_subpath("reports//v1.md")
+
+    with pytest.raises(ValueError, match="relative artifact path"):
+        validate_safe_relative_subpath("reports\\v1.md")
+
+    with pytest.raises(ValueError, match="relative artifact path"):
+        validate_safe_relative_subpath("reports/\x00/v1.md")
+
+    assert validate_safe_relative_subpath("reports/v1.md") == "reports/v1.md"
+
+
+def test_file_backed_store_rejects_unsafe_artifact_ids(tmp_path) -> None:
+    registry = ContentTypeRegistry()
+    registry.register(
+        ContentTypeRegistration(
+            type_id="markdown.report",
+            schema_version="v1",
+            schema_hash="sha256:" + "2" * 64,
+        )
+    )
+    store = FileBackedArtifactStore(tmp_path, registry)
+    provenance = GeneratedArtifactProvenance(
+        generator_module="arnold.docs.generator",
+        generator_source_hash="sha256:" + "3" * 64,
+        manifest_contract_version="arnold.workflow.manifest.v1",
+        generated_at="2026-06-22T00:00:00Z",
+    )
+
+    with pytest.raises(ValueError, match="logical root id"):
+        store.write_artifact(
+            "../escape",
+            b"hello",
+            "markdown.report",
+            provenance,
+            "md",
+        )

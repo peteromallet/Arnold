@@ -134,10 +134,10 @@ manifests become the runtime identity contract.
 | Current primitive | Disposition | Identity anchor after M1 |
 | --- | --- | --- |
 | Package discovery manifest fields in `arnold/pipeline/discovery/manifest.py` | Retained as package metadata, not runtime workflow manifests. | Regenerated or validated from package metadata; runtime joins use `WorkflowManifest.id + manifest_hash`. |
-| `JudgePieceManifest`, `JudgeManifestPort`, `compute_piece_version()`, `compute_judge_version()` | Retained as sidecar judge artifacts. | Judge sidecars keep `piece_version`, `judge_version`, and `rubric_hash`; workflow manifests cross-reference them by `manifest_hash` plus sidecar versions. |
-| `TrustGrade.AUTO_EXEC` / `auto-executable` | Re-chartered as a trust classification input. | Anchored to `manifest_hash` for workflow runs; package discovery may still use path-derived package identity until migration. |
-| `TrustGrade.QUARANTINED` / `quarantined` | Re-chartered as replay/suspension quarantine vocabulary. | Anchored to the mismatched original/observed `manifest_hash` pair, with operator-visible rationale. |
-| `TrustGrade.BLESSED` / `blessed` | Re-chartered as an explicit promotion classification. | Anchored to `manifest_hash` plus the package/judge sidecar versions that justified promotion. |
+| `JudgePieceManifest`, `JudgeManifestPort`, `compute_piece_version()`, `compute_judge_version()` | Retained as sidecar judge artifacts. | Judge sidecars keep `piece_version`, `judge_version`, and `rubric_hash`; workflow manifests cross-reference them with `arnold.kernel.ids.JudgeManifestCrossReference` carrying `manifest_hash`, `piece_version`, `judge_version`, `rubric_hash`, and relationship enum. |
+| `TrustGrade.AUTO_EXEC` / `auto-executable` | Re-chartered as a trust classification input. | Anchored to the workflow `manifest_hash`; any judge-derived auto-exec decision must name the supporting `JudgeManifestCrossReference` rather than relying on path-derived package identity. |
+| `TrustGrade.QUARANTINED` / `quarantined` | Re-chartered as replay/suspension quarantine vocabulary. | Anchored to the mismatched original/observed workflow `manifest_hash` pair, with operator-visible rationale; judge-side quarantine evidence is linked through `JudgeManifestCrossReference` when a judge sidecar participated. |
+| `TrustGrade.BLESSED` / `blessed` | Re-chartered as an explicit promotion classification. | Anchored to the promoted workflow `manifest_hash` plus the exact `JudgeManifestCrossReference` or package promotion record that justified promotion. |
 | `schema_registry.py` logical types and schema histories | Re-chartered. | Kernel content types carry `type_id`, `schema_version`, `schema_hash`, retention policy, and provenance parent links. |
 | `derive_tenant_id()` | Re-chartered. | Runtime identities derive from human alias plus `manifest_hash`; tenant derivation remains package-discovery evidence until a later identity migration. |
 | `PipelineIdRegistry` and source-controlled pipeline IDs | Re-chartered. | `Pipeline.id` remains the stable human alias; `manifest_hash` is the runtime discriminator. `Pipeline.version` is authoring metadata unless explicitly promoted by a future amendment. |
@@ -145,7 +145,9 @@ manifests become the runtime identity contract.
 Judge manifests survive as independent sidecars in M1 rather than being
 absorbed into `WorkflowManifest`. The sidecar boundary is intentional: a judge
 piece can have its own piece/rubric/model lineage, while the workflow manifest
-owns run topology and runtime replay coordinates.
+owns run topology and runtime replay coordinates. The durable join between
+those identities is `arnold.kernel.ids.JudgeManifestCrossReference`, not an
+implicit trust row or path-derived package relationship.
 
 ## Golden Guardrails
 
