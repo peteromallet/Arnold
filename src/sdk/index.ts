@@ -94,6 +94,76 @@ import type {
 } from './capabilities';
 import { getCapabilityRequirements } from './capabilities';
 
+// M2b family module imports (used in ExtensionManifest union and re-exported)
+import type { MetadataFacetContribution } from './video/families/metadataFacet';
+import type { AssetDetailSectionContribution } from './video/families/assetDetailSections';
+import type {
+  OutputFormatContribution,
+  CompileOnlyOutputFormatContribution,
+  RenderDependentOutputFormatContribution,
+  RenderDependentOutputDescriptor,
+} from './video/families/outputFormats';
+import type {
+  EffectContribution,
+  EffectComponent,
+  EffectParameterDefinition,
+  EffectParameterSchema,
+  EffectRegistrationOptions,
+  EffectRegistrationService,
+} from './video/families/effects';
+import type {
+  TransitionContribution,
+  TransitionRenderer,
+  TransitionParameterDefinition,
+  TransitionParameterSchema,
+  TransitionRegistrationOptions,
+  TransitionRegistrationService,
+} from './video/families/transitions';
+import type {
+  ClipTypeContribution,
+  ClipRenderer,
+  ClipInspector,
+  ClipParameterDefinition,
+  ClipParameterSchema,
+  ClipTypeRegistrationOptions,
+  ClipTypeRegistrationService,
+} from './video/families/clipTypeContributions';
+import type {
+  ShaderPassKind,
+  ShaderColorSpace,
+  ShaderFallbackBehavior,
+  ShaderTextureSourceKind,
+  ShaderTextureFilter,
+  ShaderTextureWrap,
+  ShaderInlineSource,
+  ShaderModuleSource,
+  ShaderSourceDescriptor,
+  ShaderPassDescriptor,
+  ShaderUniformType,
+  ShaderUniformEnumOption,
+  ShaderTextureRef,
+  ShaderUniformDefaultValue,
+  ShaderUniformDefinition,
+  ShaderUniformSchema,
+  ShaderTextureDefinition,
+  ShaderTextureSchema,
+  ShaderMaterializerDescriptor,
+  ShaderContribution,
+  ShaderRegistrationOptions,
+  ShaderRegistrationService,
+} from './video/families/shaders';
+import type {
+  AgentToolContribution,
+  AgentToolRegistrationService,
+  AgentToolHandler,
+} from './video/families/agentTools';
+import type { ProcessContribution, ProcessManifestEntry, ProcessSpawnConfig } from './video/families/processes';
+import type { SearchProviderContribution } from './video/families/searchProviders';
+import type { ParserContribution } from './video/families/parsers';
+import type { CommandContribution } from './video/families/commands';
+import type { KeybindingContribution } from './video/families/keybindings';
+import type { ContextMenuItemContribution } from './video/families/contextMenuItems';
+
 // Re-export publicly
 export {
   type ExtensionId,
@@ -377,1869 +447,241 @@ export { getCapabilityRequirements } from './capabilities';
 // M6: Metadata facet / asset detail section contributions
 // ---------------------------------------------------------------------------
 
-/**
- * M6: A metadata facet contribution declared in an extension manifest.
- *
- * Metadata facets tell the host how to surface a metadata field
- * as a searchable/filterable facet in the asset panel.
- */
-export interface MetadataFacetContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'metadataFacet';
-  /**
-   * Dot-separated path to the metadata field.
-   * E.g. 'gps.latitude', 'integrity.algorithm', 'extensions.myExt.tags'.
-   */
-  fieldPath: string;
-  /** Human-readable display name for the facet. */
-  displayName: string;
-  /** The value kind — determines rendering and filtering strategy. */
-  valueKind: MetadataFacetValueKind;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-  /**
-   * Aggregation posture hint for the host.
-   * - `exact` — values should be surfaced individually
-   * - `range` — numeric values can be bucketed
-   * - `presence` — only show whether the field exists
-   */
-  aggregationPosture?: 'exact' | 'range' | 'presence';
-  /**
-   * Allowed values when `valueKind` is 'enum'.
-   * The host uses this for dropdown/checkbox filter UI.
-   */
-  enumValues?: readonly string[];
-}
-
-/**
- * M6: An asset detail section contribution declared in an extension manifest.
- *
- * Asset detail sections are named slots within the asset detail panel.
- * The host owns section placement, empty/error states, search result badges,
- * and provenance-chain rendering.  Extensions provide section descriptors
- * to declare what metadata they surface.
- */
-export interface AssetDetailSectionContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'assetDetailSection';
-  /** Human-readable section title. */
-  title: string;
-  /**
-   * Placement within the asset detail panel.
-   * - `before-default` — before host-owned metadata sections
-   * - `after-default` — after host-owned metadata sections
-   */
-  placement: 'before-default' | 'after-default';
-  /**
-   * The metadata field paths this section reads.
-   * The host uses these to determine section visibility and data binding.
-   */
-  fieldPaths?: readonly string[];
-  /** Lower values sort first within their placement group. Default 0. */
-  order?: number;
-  /**
-   * Optional visibility predicate (evaluated by host).
-   * E.g. 'asset.metadata.integrity != null'.
-   */
-  when?: string;
-}
+// Re-exported from their video family modules
+export type { MetadataFacetContribution } from './video/families/metadataFacet';
+export type { AssetDetailSectionContribution } from './video/families/assetDetailSections';
 
 // ---------------------------------------------------------------------------
 // M4: Command / keybinding / context-menu contributions
 // ---------------------------------------------------------------------------
 
-/** A command contribution in an extension manifest. */
-export interface CommandContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'command';
-  /** The command identifier (e.g. 'myExtension.doSomething'). */
-  command: string;
-  /** Human-readable label for the command palette. */
-  label: string;
-  /** Category for palette grouping. */
-  category?: string;
-  /** Optional visibility predicate (evaluated by host). */
-  when?: string;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-}
+// CommandContribution is now defined in src/sdk/video/families/commands.ts
+// and re-exported below. (M2b extraction)
+export type { CommandContribution } from './video/families/commands';
 
-/** A keybinding contribution that binds a keyboard shortcut to a command. */
-export interface KeybindingContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'keybinding';
-  /** The command identifier this keybinding triggers. */
-  command: string;
-  /**
-   * Platform-aware key notation (e.g. 'CtrlOrCmd+K', 'Alt+Shift+R').
-   * Modifier keys: CtrlOrCmd, Ctrl, Cmd, Alt, Shift.
-   * Key names are case-insensitive and normalized at registration time.
-   */
-  key: string;
-  /** Optional visibility predicate (evaluated by host). */
-  when?: string;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-}
+// KeybindingContribution is now defined in src/sdk/video/families/keybindings.ts
+// and re-exported below. (M2b extraction)
+export type { KeybindingContribution } from './video/families/keybindings';
 
-/** A context-menu item contribution for clip/track/timeline-area surfaces. */
-export interface ContextMenuItemContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'contextMenuItem';
-  /** The command identifier this menu item invokes. */
-  command: string;
-  /** Override label for the menu item (falls back to command contribution label). */
-  label?: string;
-  /** The target context(s) where this item appears. */
-  target: TargetContext;
-  /** Optional visibility predicate (evaluated by host). */
-  when?: string;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-  /** Optional icon name for the menu item. */
-  icon?: string;
-}
+// ContextMenuItemContribution is now defined in src/sdk/video/families/contextMenuItems.ts
+// and re-exported below. (M2b extraction)
+export type { ContextMenuItemContribution } from './video/families/contextMenuItems';
 
-// ---------------------------------------------------------------------------
-// M6: Parser / output format / search provider contributions
-// ---------------------------------------------------------------------------
+// ParserContribution is now defined in src/sdk/video/families/parsers.ts
+// and re-exported below. (M2b extraction)
 
-/**
- * M6: A parser contribution declared in an extension manifest.
- *
- * Parsers enrich asset metadata during ingestion.  The contribution declares
- * accepted MIME types, file extensions, max size, and whether the parser is
- * required (blocking) or optional.
- *
- * Actual parser behaviour is registered imperatively during activate() via
- * the host's parser registry (ctx.creative.assets if active, or a
- * dedicated parser registration surface).
- */
-export interface ParserContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'parser';
-  /** Human-readable label for diagnostics / UI. */
-  label: string;
-  /**
-   * Accepted MIME types.  At least one of `acceptMimeTypes` or
-   * `acceptExtensions` must be non-empty.
-   */
-  acceptMimeTypes?: readonly string[];
-  /**
-   * Accepted file extensions (without leading dot).  E.g. `['jpg','jpeg']`.
-   */
-  acceptExtensions?: readonly string[];
-  /**
-   * Maximum file size in bytes this parser will accept.
-   * Files exceeding this size produce a diagnostic and are not passed
-   * to the parser handler.
-   */
-  maxBytes?: number;
-  /**
-   * When true, parser failure blocks asset ingestion with a clear
-   * diagnostic.  When false (default), the failure is diagnostic-only
-   * and the asset is still ingested with whatever metadata was already
-   * available.
-   */
-  required?: boolean;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-}
+// OutputFormatContribution, CompileOnlyOutputFormatContribution,
+// RenderDependentOutputFormatContribution, and RenderDependentOutputDescriptor
+// are now defined in src/sdk/video/families/outputFormats.ts and re-exported below.
+// (M2b extraction)
+export type {
+  OutputFormatContribution,
+  CompileOnlyOutputFormatContribution,
+  RenderDependentOutputFormatContribution,
+  RenderDependentOutputDescriptor,
+} from './video/families/outputFormats';
 
-/**
- * M6: An output format contribution declared in an extension manifest.
- *
- * Output formats produce an artifact from timeline and asset data.
- * Compile-only formats (requiresRender: false) do not invoke the render
- * pipeline; they read timeline/asset data and produce a deterministic
- * artifact (e.g. metadata JSON).
- *
- * Render-dependent formats (requiresRender: true) are declaration-only
- * in M6 and appear disabled in the export UI with a diagnostic explaining
- * that execution is unavailable until render planning activates the route.
- */
-export interface OutputFormatContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'outputFormat';
-  /** Human-readable label for the export UI. */
-  label: string;
-  /**
-   * When false, this is a compile-only format that does not invoke the
-   * render pipeline.  When true, the format requires render planning and
-   * is surfaced as disabled/reserved in M6.
-   */
-  requiresRender: boolean;
-  /** File extension for the output artifact (e.g. 'json', 'xml'). */
-  outputExtension: string;
-  /** MIME type for the output artifact (e.g. 'application/json'). */
-  outputMimeType?: string;
-  /** Optional human-readable description shown in the export UI. */
-  description?: string;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-  /**
-   * Render-dependent output route requirements.
-   * Required when `requiresRender` is true; ignored for compile-only outputs.
-   */
-  render?: RenderDependentOutputDescriptor;
-  /** Optional declarative sampling defaults for export configuration. */
-  sampling?: SamplingConfig;
-  /** Sidecar kinds this output may emit. */
-  sidecars?: readonly RenderArtifactSidecarDescriptor[];
-}
+// SearchProviderContribution is now defined in
+// src/sdk/video/families/searchProviders.ts and re-exported below.
+// (M2b extraction)
+export type { SearchProviderContribution } from './video/families/searchProviders';
 
-/** M12: Compile-only output formats never enter render planning. */
-export interface CompileOnlyOutputFormatContribution extends OutputFormatContribution {
-  requiresRender: false;
-  render?: never;
-}
-
-/** M12: Render-dependent output formats require planner-owned route execution. */
-export interface RenderDependentOutputFormatContribution extends OutputFormatContribution {
-  requiresRender: true;
-  render: RenderDependentOutputDescriptor;
-}
-
-/** M12: Route/process requirements for a render-dependent output format. */
-export interface RenderDependentOutputDescriptor {
-  /** Routes this output can accept after planning. */
-  readonly routes: readonly RenderRoute[];
-  /** Capabilities required before the output can execute. */
-  readonly requiredCapabilities?: readonly string[];
-  /** Optional local process needed to produce this output. */
-  readonly processId?: string;
-  /** Optional process operation needed to produce this output. */
-  readonly operationId?: string;
-  /** Determinism posture claimed by this output route. */
-  readonly determinism?: DeterminismStatus;
-  /** Human-readable planner hint shown when the route is unavailable. */
-  readonly unavailableMessage?: string;
-}
-
-/**
- * M6: A search provider contribution declared in an extension manifest.
- *
- * Search providers supply asset/material search results to the host search
- * surface.  The provider owns indexing, model choice, and refresh; the host
- * owns query dispatch, result merge, and source labeling.
- *
- * Search providers are bounded to host query/result integration — no local
- * model loading, inference, vector database, or ranking ownership is added
- * in M6.
- */
-export interface SearchProviderContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'searchProvider';
-  /** Human-readable label shown in the search surface. */
-  label: string;
-  /**
-   * Optional description of the search provider capabilities
-   * (e.g. 'semantic search over image embeddings').
-   */
-  description?: string;
-  /**
-   * Kinds of results this provider can surface.
-   * Defaults to ['asset'] when omitted.
-   */
-  resultKinds?: readonly ('asset' | 'material')[];
-  /** Lower values sort first. Default 0. */
-  order?: number;
-}
+// ParserContribution is now defined in src/sdk/video/families/parsers.ts
+// and re-exported below. (M2b extraction)
+export type { ParserContribution } from './video/families/parsers';
 
 // ---------------------------------------------------------------------------
 // M7: Trusted component effect contributions
 // ---------------------------------------------------------------------------
 
-/**
- * M7: An effect contribution declared in an extension manifest.
- *
- * Trusted component effects render in the browser preview and are blocked
- * from browser-export and worker-export unless the contribution declares
- * stronger capability.
- */
-export interface EffectContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'effect';
-  /** The effect identifier used in registerComponent calls. */
-  effectId: string;
-  /** Human-readable label for diagnostics / UI. */
-  label?: string;
-  /**
-   * When true, allows the effect to be executed during browser export.
-   * Default: false (preview-only).
-   */
-  allowBrowserExport?: boolean;
-  /**
-   * When true, allows the effect to be executed in a worker context.
-   * Default: false (preview-only).
-   */
-  allowWorkerExport?: boolean;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-}
+// EffectContribution, EffectComponent, EffectParameterDefinition,
+// EffectParameterSchema, EffectRegistrationOptions, and EffectRegistrationService
+// are now defined in src/sdk/video/families/effects.ts and re-exported below.
+// (M2b extraction)
+export type {
+  EffectContribution,
+  EffectComponent,
+  EffectParameterDefinition,
+  EffectParameterSchema,
+  EffectRegistrationOptions,
+  EffectRegistrationService,
+} from './video/families/effects';
 
 // ---------------------------------------------------------------------------
 // M8: Trusted component transition contributions
 // ---------------------------------------------------------------------------
 
-/**
- * M8: A transition contribution declared in an extension manifest.
- *
- * Trusted component transitions render in the browser preview and are blocked
- * from browser-export and worker-export unless the contribution declares
- * stronger capability.
- */
-export interface TransitionContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'transition';
-  /** The transition identifier used in registerRenderer calls. */
-  transitionId: string;
-  /** Human-readable label for diagnostics / UI. */
-  label?: string;
-  /**
-   * When true, allows the transition to be executed during browser export.
-   * Default: false (preview-only).
-   */
-  allowBrowserExport?: boolean;
-  /**
-   * When true, allows the transition to be executed in a worker context.
-   * Default: false (preview-only).
-   */
-  allowWorkerExport?: boolean;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-}
+// TransitionContribution, TransitionRenderer, TransitionParameterDefinition,
+// TransitionParameterSchema, TransitionRegistrationOptions, and TransitionRegistrationService
+// are now defined in src/sdk/video/families/transitions.ts and re-exported below.
+// (M2b extraction)
+export type {
+  TransitionContribution,
+  TransitionRenderer,
+  TransitionParameterDefinition,
+  TransitionParameterSchema,
+  TransitionRegistrationOptions,
+  TransitionRegistrationService,
+} from './video/families/transitions';
 
 // ---------------------------------------------------------------------------
 // M9: Clip type contributions — renderers, inspectors, keyframes, automation
 // ---------------------------------------------------------------------------
 
-/**
- * M9: A clip-type contribution declared in an extension manifest.
- *
- * Contributed clip types are trusted local browser-preview components
- * analogous to M7 effects and M8 transitions. Worker execution of
- * contributed clip code stays out of scope for M9.
- */
-export interface ClipTypeContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'clipType';
-  /** The clip-type identifier used in registerClipType calls. */
-  clipTypeId: string;
-  /** Human-readable label for diagnostics / UI. */
-  label?: string;
-  /**
-   * When true, allows the clip type to be executed during browser export.
-   * Default: false (preview-only).
-   */
-  allowBrowserExport?: boolean;
-  /**
-   * When true, allows the clip type to be executed in a worker context.
-   * Default: false (preview-only).
-   */
-  allowWorkerExport?: boolean;
-  /** Lower values sort first. Default 0. */
-  order?: number;
-}
-
-/**
- * M9: A trusted local component registered by an extension as a clip renderer.
- *
- * Clip renderers execute in the browser preview and receive host-interpolated
- * params through ClipRendererProps.
- */
-export type ClipRenderer = Record<string, unknown> | ((...args: unknown[]) => unknown);
-
-/**
- * M9: A trusted local component registered by an extension as a clip inspector.
- *
- * Clip inspectors render in the inspector panel when a clip of the
- * owning type is selected.
- */
-export type ClipInspector = Record<string, unknown> | ((...args: unknown[]) => unknown);
-
-/**
- * M9: A parameter definition for clip-type parameter schemas.
- *
- * Mirrors the effect/transition parameter definition shape so extensions
- * can declare parameter contracts at registration time.
- */
-export interface ClipParameterDefinition {
-  /** Unique parameter name (used as the key in params). */
-  name: string;
-  /** Human-readable label for UI controls. */
-  label: string;
-  /** Description shown in tooltips / inspector. */
-  description: string;
-  /** Parameter type determining the control and coercion rules. */
-  type: 'number' | 'select' | 'boolean' | 'color' | 'audio-binding';
-  /** Default value when no override is provided. */
-  default?: number | string | boolean | Record<string, unknown>;
-  /** Minimum value (number type only). */
-  min?: number;
-  /** Maximum value (number type only). */
-  max?: number;
-  /** Step increment (number type only). */
-  step?: number;
-  /** Options for select-type parameters. */
-  options?: readonly { label: string; value: string }[];
-}
-
-/** M9: Ordered array of clip parameter definitions. */
-export type ClipParameterSchema = readonly ClipParameterDefinition[];
-
-/** M9: Options for imperative clip-type registration via ctx.clipTypes.registerClipType(). */
-export interface ClipTypeRegistrationOptions {
-  /** Override label for picker / UI. */
-  label?: string;
-  /**
-   * Parameter schema for this clip type.
-   * Validated at registration time.
-   */
-  parameterSchema?: ClipParameterSchema;
-}
-
-/**
- * M9: Clip-type registration service available as `ctx.clipTypes` during activate().
- */
-export interface ClipTypeRegistrationService {
-  /**
-   * Register a trusted local renderer and optional inspector for a clip type.
-   *
-   * The `clipTypeId` must match the `clipTypeId` field of a `ClipTypeContribution`
-   * declared by this extension in its manifest.
-   *
-   * Returns a DisposeHandle that unregisters the clip type when dispose() is
-   * called (safe to call multiple times; idempotent).
-   */
-  registerClipType(
-    clipTypeId: string,
-    renderer: ClipRenderer,
-    inspector?: ClipInspector,
-    options?: ClipTypeRegistrationOptions,
-  ): DisposeHandle;
-}
+// ClipTypeContribution, ClipRenderer, ClipInspector, ClipParameterDefinition,
+// ClipParameterSchema, ClipTypeRegistrationOptions, and ClipTypeRegistrationService
+// are now defined in src/sdk/video/families/clipTypeContributions.ts and re-exported below.
+// (M2b extraction)
+export type {
+  ClipTypeContribution,
+  ClipRenderer,
+  ClipInspector,
+  ClipParameterDefinition,
+  ClipParameterSchema,
+  ClipTypeRegistrationOptions,
+  ClipTypeRegistrationService,
+} from './video/families/clipTypeContributions';
 
 // ---------------------------------------------------------------------------
 // M13: Shader/WebGL contributions
 // ---------------------------------------------------------------------------
 
-/** M13: Shader pass scopes supported by the V1 WebGL bridge. */
-export type ShaderPassKind = 'clip' | 'overlay' | 'postprocess';
+// ShaderPassKind, ShaderColorSpace, ShaderFallbackBehavior,
+// ShaderTextureSourceKind, ShaderTextureFilter, ShaderTextureWrap,
+// ShaderInlineSource, ShaderModuleSource, ShaderSourceDescriptor,
+// ShaderPassDescriptor, ShaderUniformType, ShaderUniformEnumOption,
+// ShaderTextureRef, ShaderUniformDefaultValue, ShaderUniformDefinition,
+// ShaderUniformSchema, ShaderTextureDefinition, ShaderTextureSchema,
+// ShaderMaterializerDescriptor, ShaderContribution,
+// ShaderRegistrationOptions, and ShaderRegistrationService
+// are now defined in src/sdk/video/families/shaders.ts and re-exported below.
+// (M2b extraction)
+export type {
+  ShaderPassKind,
+  ShaderColorSpace,
+  ShaderFallbackBehavior,
+  ShaderTextureSourceKind,
+  ShaderTextureFilter,
+  ShaderTextureWrap,
+  ShaderInlineSource,
+  ShaderModuleSource,
+  ShaderSourceDescriptor,
+  ShaderPassDescriptor,
+  ShaderUniformType,
+  ShaderUniformEnumOption,
+  ShaderTextureRef,
+  ShaderUniformDefaultValue,
+  ShaderUniformDefinition,
+  ShaderUniformSchema,
+  ShaderTextureDefinition,
+  ShaderTextureSchema,
+  ShaderMaterializerDescriptor,
+  ShaderContribution,
+  ShaderRegistrationOptions,
+  ShaderRegistrationService,
+} from './video/families/shaders';
 
-/** M13: Color-space posture declared by a shader pass or texture input. */
-export type ShaderColorSpace = 'srgb' | 'linear';
+// KeyframeInterpolation, Keyframe, InterpolatedParam,
+// AutomationClipTarget, and AutomationClipParams are now defined in
+// src/sdk/video/families/automation.ts and re-exported below.
+// (M2b extraction)
+export type {
+  KeyframeInterpolation,
+  Keyframe,
+  InterpolatedParam,
+  AutomationClipTarget,
+  AutomationClipParams,
+} from './video/families/automation';
 
-/** M13: Host-owned fallback posture when a shader cannot compile or preview. */
-export type ShaderFallbackBehavior = 'bypass' | 'transparent' | 'solid-black';
+// AgentToolContribution, AgentToolInputSchema, AgentToolInputProperty,
+// ToolResultFamily, ToolResult, ToolMutationProposalResult,
+// ToolGenerationSessionResult, ToolMaterialArtifactResult,
+// ToolEnrichmentSearchResult, ToolExportResult, ToolProcessResult,
+// ToolUISummaryResult, ToolSourceRef, ToolArtifactRef,
+// ToolSearchResultMatch, ToolResultDiagnostic,
+// AgentToolInvocationRequest, AgentToolRequestContext,
+// AgentToolExportContext, GenerationSession,
+// AgentToolRegistrationService, and AgentToolHandler
+// are now defined in src/sdk/video/families/agentTools.ts and re-exported below.
+// (M2b extraction)
 
-/** M13: Texture source categories supported by the V1 shader bridge. */
-export type ShaderTextureSourceKind =
-  | 'clip-frame'
-  | 'static-image-asset'
-  | 'live-generated-frame';
-
-/** M13: Texture sampling filter used by the WebGL preview bridge. */
-export type ShaderTextureFilter = 'nearest' | 'linear';
-
-/** M13: Texture coordinate wrapping policy used by the WebGL preview bridge. */
-export type ShaderTextureWrap = 'clamp-to-edge' | 'repeat' | 'mirrored-repeat';
-
-/**
- * M13: Shader source supplied inline by the manifest or during registration.
- *
- * Fragment source is required for inline programs. Vertex source is optional
- * because the host can provide the default fullscreen-triangle vertex shader.
- */
-export interface ShaderInlineSource {
-  readonly kind: 'inline';
-  readonly fragment: string;
-  readonly vertex?: string;
-}
-
-/** M13: Shader source resolved by the extension runtime from a module export. */
-export interface ShaderModuleSource {
-  readonly kind: 'module';
-  readonly specifier: string;
-  readonly exportName?: string;
-}
-
-/** M13: Public shader source descriptor. */
-export type ShaderSourceDescriptor = ShaderInlineSource | ShaderModuleSource;
-
-/**
- * M13: Shader pass descriptor.
- *
- * V1 supports a single shader per clip scope and one active postprocess shader.
- * Ordered stacks, multipass FBO chains, feedback buffers, and shader transitions
- * remain outside this SDK contract.
- */
-export interface ShaderPassDescriptor {
-  readonly kind: ShaderPassKind;
-  /** Uniform name of the host-provided input texture for this pass, if any. */
-  readonly inputTextureUniform?: string;
-  /** Expected color space for input and output conversion. */
-  readonly colorSpace?: ShaderColorSpace;
-  /** Whether the output alpha is preserved or treated as opaque by the host. */
-  readonly alpha?: 'preserve' | 'opaque';
-}
-
-/** M13: Supported shader uniform control/value kinds for V1. */
-export type ShaderUniformType =
-  | 'float'
-  | 'int'
-  | 'bool'
-  | 'vec2'
-  | 'vec3'
-  | 'vec4'
-  | 'color'
-  | 'enum'
-  | 'textureRef'
-  | 'frame'
-  | 'time';
-
-/** M13: Enum option for shader uniform controls. */
-export interface ShaderUniformEnumOption {
-  readonly label: string;
-  readonly value: string;
-}
-
-/** M13: Texture reference value used by textureRef uniforms. */
-export interface ShaderTextureRef {
-  readonly kind: ShaderTextureSourceKind;
-  /** Asset key, live source ID, generated frame ID, or host-defined frame ref. */
-  readonly ref?: string;
-}
-
-/** M13: Default values accepted by shader uniform definitions. */
-export type ShaderUniformDefaultValue =
-  | number
-  | boolean
-  | string
-  | readonly number[]
-  | ShaderTextureRef;
-
-/** M13: A host-rendered shader uniform definition. */
-export interface ShaderUniformDefinition {
-  readonly name: string;
-  readonly label: string;
-  readonly description?: string;
-  readonly type: ShaderUniformType;
-  readonly default?: ShaderUniformDefaultValue;
-  readonly min?: number;
-  readonly max?: number;
-  readonly step?: number;
-  readonly options?: readonly ShaderUniformEnumOption[];
-}
-
-/** M13: Ordered shader uniform schema. */
-export type ShaderUniformSchema = readonly ShaderUniformDefinition[];
-
-/** M13: A host-provided texture input binding for a shader. */
-export interface ShaderTextureDefinition {
-  readonly name: string;
-  readonly label?: string;
-  readonly description?: string;
-  /** The sampler uniform that receives this texture. Defaults to `name`. */
-  readonly uniform?: string;
-  readonly sourceKind: ShaderTextureSourceKind;
-  readonly required?: boolean;
-  readonly colorSpace?: ShaderColorSpace;
-  readonly filter?: ShaderTextureFilter;
-  readonly wrap?: ShaderTextureWrap;
-}
-
-/** M13: Ordered shader texture binding schema. */
-export type ShaderTextureSchema = readonly ShaderTextureDefinition[];
-
-/**
- * M13: Optional materializer metadata.
- *
- * This descriptor advertises where a later planner may look for a route that
- * produces RenderMaterial. It does not make browser preview exportable.
- */
-export interface ShaderMaterializerDescriptor {
-  readonly routes?: readonly RenderRoute[];
-  readonly requiredCapabilities?: readonly string[];
-  readonly processId?: string;
-  readonly operationId?: string;
-  readonly unavailableMessage?: string;
-}
-
-/** M13: A shader/WebGL contribution declared in an extension manifest. */
-export interface ShaderContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'shader';
-  /** Identifier used in ctx.shaders.registerShader(). */
-  shaderId: string;
-  /** Human-readable label for picker, inspector, and diagnostics. */
-  label: string;
-  readonly description?: string;
-  /** Pass scope; use a descriptor when color/alpha/input details matter. */
-  pass: ShaderPassKind | ShaderPassDescriptor;
-  readonly source?: ShaderSourceDescriptor;
-  readonly uniforms?: ShaderUniformSchema;
-  readonly textures?: ShaderTextureSchema;
-  readonly fallback?: ShaderFallbackBehavior;
-  readonly materializer?: ShaderMaterializerDescriptor;
-  /** Lower values sort first. Default 0. */
-  readonly order?: number;
-  /** Optional visibility predicate (evaluated by host). */
-  readonly when?: string;
-}
-
-/** M13: Options for imperative shader registration via ctx.shaders.registerShader(). */
-export interface ShaderRegistrationOptions {
-  readonly label?: string;
-  readonly pass?: ShaderPassKind | ShaderPassDescriptor;
-  readonly uniforms?: ShaderUniformSchema;
-  readonly textures?: ShaderTextureSchema;
-  readonly fallback?: ShaderFallbackBehavior;
-  readonly materializer?: ShaderMaterializerDescriptor;
-}
-
-/**
- * M13: Shader registration service available as `ctx.shaders` during activate().
- *
- * Shaders are registered through a dedicated WebGL bridge surface, not through
- * `ctx.effects.registerComponent()`. The `shaderId` must match a
- * {@link ShaderContribution} in the extension manifest.
- */
-export interface ShaderRegistrationService {
-  registerShader(
-    shaderId: string,
-    source: ShaderSourceDescriptor,
-    options?: ShaderRegistrationOptions,
-  ): DisposeHandle;
-}
+export type {
+  AgentToolContribution,
+  AgentToolInputSchema,
+  AgentToolInputProperty,
+  ToolResultFamily,
+  ToolResult,
+  ToolMutationProposalResult,
+  ToolGenerationSessionResult,
+  ToolMaterialArtifactResult,
+  ToolEnrichmentSearchResult,
+  ToolExportResult,
+  ToolProcessResult,
+  ToolUISummaryResult,
+  ToolSourceRef,
+  ToolArtifactRef,
+  ToolSearchResultMatch,
+  ToolResultDiagnostic,
+  AgentToolInvocationRequest,
+  AgentToolRequestContext,
+  AgentToolExportContext,
+  GenerationSession,
+  AgentToolRegistrationService,
+  AgentToolHandler,
+} from './video/families/agentTools';
 
 // ---------------------------------------------------------------------------
-// M9: Keyframe contracts
+// Process family contracts extracted to src/sdk/video/families/processes.ts
+// (M2b extraction)
 // ---------------------------------------------------------------------------
+export type {
+  ProcessSpawnConfig,
+  ProcessManifestEntry,
+  ProcessEnvFieldSpec,
+  ProcessOperationSpec,
+  ProcessSpec,
+  ProcessContribution,
+  ProcessLifecycleState,
+  ProcessStatusBase,
+  ProcessStatus,
+} from './video/families/processes';
 
-/**
- * M9: Interpolation mode for keyframe curves.
- *
- * - `linear` — lerp between adjacent keyframe values.
- * - `hold` — step function; value holds until the next keyframe.
- */
-export type KeyframeInterpolation = 'linear' | 'hold';
-
-/**
- * M9: A single keyframe stored as JSON-serializable timeline data on a clip.
- *
- * Keyframes are host-owned timeline data validated against the owning
- * parameter schema, with interpolation performed by the host before
- * passing computed params to renderers.
- */
-export interface Keyframe {
-  /** Time in seconds. */
-  time: number;
-  /** JSON-serializable value (number | string | boolean). */
-  value: number | string | boolean;
-  /** Interpolation mode from this keyframe to the next. */
-  interpolation: KeyframeInterpolation;
-}
-
-/**
- * M9: Interpolated parameter value at a specific time.
- *
- * Produced by the host keyframe interpolator and passed to clip renderers
- * so extension code never needs to implement timeline interpolation.
- */
-export interface InterpolatedParam {
-  /** The parameter name. */
-  name: string;
-  /** The interpolated value at the requested time. */
-  value: number | string | boolean;
-}
-
+// M11: Live Data Bridge — re-exported from the live data infrastructure module
 // ---------------------------------------------------------------------------
-// M9: Automation clip contracts
-// ---------------------------------------------------------------------------
-
-/**
- * M9: Target descriptor for an automation clip.
- *
- * Automation clips are host-owned timeline clips (clipType: 'automation')
- * that reference target parameters by contribution ID and parameter path.
- */
-export interface AutomationClipTarget {
-  /** The contribution ID that owns the target parameter. */
-  contributionId: string;
-  /** Dot-separated path to the target parameter within the contribution. */
-  parameterPath: string;
-}
-
-/**
- * M9: Params stored on an automation clip.
- *
- * Automation clips apply baked keyframe curves to override target
- * extension parameter values during preview and export.
- */
-export interface AutomationClipParams {
-  /** The target parameter this automation clip controls. */
-  target: AutomationClipTarget;
-  /** Ordered keyframes defining the automation curve. */
-  keyframes: readonly Keyframe[];
-  /** Whether this automation clip is active. */
-  enabled: boolean;
-}
-
-// ---------------------------------------------------------------------------
-// M10: Agent tool contributions — host-mediated, proposal-backed
-// ---------------------------------------------------------------------------
-
-/**
- * M10: An agent tool contribution declared in an extension manifest.
- *
- * Agent tools are host-mediated: the host owns invocation, progress,
- * cancellation, proposal creation, and UI. Extensions contribute tool
- * metadata, input schemas, and a handler that returns {@link ToolResult}
- * records. All mutations are proposal-backed through host-owned
- * {@link ProposalRuntime}.
- */
-export interface AgentToolContribution {
-  /** Unique within the extension. */
-  id: ContributionId;
-  kind: 'agentTool';
-  /** The tool identifier used in ctx.agentTools registration calls. */
-  toolId: string;
-  /** Human-readable label for discovery / UI. */
-  label: string;
-  /** Human-readable description shown in tooltips / panel. */
-  description?: string;
-  /**
-   * Input schema defining the shape of the tool's invocation payload.
-   * Uses a StandardSchema-compatible subset validated at registration time.
-   */
-  inputSchema?: AgentToolInputSchema;
-  /**
-   * Result families this tool can produce.
-   * When empty, all families are accepted (validated at runtime).
-   */
-  resultFamilies?: readonly ToolResultFamily[];
-  /** Lower values sort first. Default 0. */
-  order?: number;
-  /** Optional visibility predicate (evaluated by host). */
-  when?: string;
-}
-
-/**
- * Supported StandardSchema subset for agent tool input schemas.
- *
- * The host uses SchemaForm to render these schemas. Only a minimal
- * StandardSchema subset is supported in M10:
- * - type: 'object' with properties
- * - property types: string, number, boolean, enum (string[])
- * - nested objects (one level)
- * - required fields
- * - title, description annotations
- */
-export interface AgentToolInputSchema {
-  type: 'object';
-  properties?: Record<string, AgentToolInputProperty>;
-  required?: readonly string[];
-  title?: string;
-  description?: string;
-}
-
-/** A single property in an agent tool input schema. */
-export interface AgentToolInputProperty {
-  type: 'string' | 'number' | 'boolean' | 'object';
-  title?: string;
-  description?: string;
-  default?: string | number | boolean;
-  enum?: readonly string[];
-  /** Nested properties (only when type === 'object'). */
-  properties?: Record<string, AgentToolInputProperty>;
-  /** Nested required fields (only when type === 'object'). */
-  required?: readonly string[];
-}
-
-/**
- * Stable result families for agent tool outputs.
- *
- * New result shapes must fit an existing family or justify a new family
- * in SDK review. Reject one-off feature-specific result objects with
- * diagnostics.
- */
-export type ToolResultFamily =
-  | 'mutation/proposal'
-  | 'generation/session'
-  | 'material/artifact'
-  | 'enrichment/search'
-  | 'export'
-  | 'process'
-  | 'ui/summary';
-
-/**
- * M10: Grouped ToolResult union.
- *
- * Every result carries a `family` discriminator and a `family`-specific
- * payload. Results that don't fit a known family are rejected with
- * diagnostics before proposals or UI updates are created.
- */
-export type ToolResult =
-  | ToolMutationProposalResult
-  | ToolGenerationSessionResult
-  | ToolMaterialArtifactResult
-  | ToolEnrichmentSearchResult
-  | ToolExportResult
-  | ToolProcessResult
-  | ToolUISummaryResult;
-
-/** Timeline-mutation proposal result. */
-export interface ToolMutationProposalResult {
-  family: 'mutation/proposal';
-  /** Rationale / explanation for the proposed change. */
-  rationale?: string;
-  /** The patch(es) to propose via ProposalRuntime. */
-  patches: readonly TimelinePatch[];
-  /** Affected object IDs for UI context (clip IDs, track IDs, etc.). */
-  affectedObjectIds?: readonly string[];
-  /** Source-to-output reference map for traceability. */
-  sourceRefs?: readonly ToolSourceRef[];
-  /** Structured diagnostics produced during tool execution. */
-  diagnostics?: readonly ToolResultDiagnostic[];
-}
-
-/** Generation/session result for long-running generation tools. */
-export interface ToolGenerationSessionResult {
-  family: 'generation/session';
-  /** Session handle for progress tracking and cancellation. */
-  session: GenerationSession;
-  /** Optional live sample delivery activation metadata. */
-  liveDelivery?: GenerationSessionLiveDelivery;
-  /** Rationale / explanation for the generation. */
-  rationale?: string;
-  /** Structured diagnostics produced during tool execution. */
-  diagnostics?: readonly ToolResultDiagnostic[];
-}
-
-/** Material/artifact result referencing baked or placeholder asset refs. */
-export interface ToolMaterialArtifactResult {
-  family: 'material/artifact';
-  /** Material or artifact references produced by the tool. */
-  refs: readonly ToolArtifactRef[];
-  /** Rationale / explanation for the generated artifacts. */
-  rationale?: string;
-  /** Structured diagnostics produced during tool execution. */
-  diagnostics?: readonly ToolResultDiagnostic[];
-}
-
-/** Enrichment / search result for asset metadata suggestions. */
-export interface ToolEnrichmentSearchResult {
-  family: 'enrichment/search';
-  /** Enrichment suggestions keyed by asset/material key. */
-  suggestions?: Record<string, Record<string, unknown>>;
-  /** Search result matches, when applicable. */
-  matches?: readonly ToolSearchResultMatch[];
-  /** Rationale / explanation for the enrichment. */
-  rationale?: string;
-  /** Structured diagnostics produced during tool execution. */
-  diagnostics?: readonly ToolResultDiagnostic[];
-}
-
-/** Export result (planner-compatible findings). */
-export interface ToolExportResult {
-  family: 'export';
-  /** Planner-compatible findings (CapabilityFinding shape). */
-  findings?: readonly Record<string, unknown>[];
-  /** Export-scoped diagnostics. */
-  diagnostics?: readonly ToolResultDiagnostic[];
-  /** Rationale / explanation for the findings. */
-  rationale?: string;
-}
-
-/** Process invocation result (pre-M12 placeholder). */
-export interface ToolProcessResult {
-  family: 'process';
-  /** Structured pending diagnostic (always present before M12). */
-  diagnostics: readonly ToolResultDiagnostic[];
-}
-
-/** UI-only summary result (e.g. copilot explanation, analysis). */
-export interface ToolUISummaryResult {
-  family: 'ui/summary';
-  /** Human-readable summary text. */
-  summary: string;
-  /** Structured detail for UI rendering. */
-  detail?: Record<string, unknown>;
-  /** Structured diagnostics produced during tool execution. */
-  diagnostics?: readonly ToolResultDiagnostic[];
-}
-
-/** A source-to-output reference for traceability. */
-export interface ToolSourceRef {
-  /** Source identifier (clip ID, asset key, track ID, etc.). */
-  sourceId: string;
-  /** Output identifier produced from the source. */
-  outputId: string;
-  /** Human-readable description of the transformation. */
-  description?: string;
-}
-
-/** An artifact reference produced by a tool. */
-export interface ToolArtifactRef {
-  /** Artifact identifier (asset key, material key, etc.). */
-  ref: string;
-  /** Kind of artifact (asset, material, placeholder). */
-  kind: 'asset' | 'material' | 'placeholder';
-  /** Human-readable label for UI. */
-  label?: string;
-  /** Opaque metadata (e.g. bake parameters, resolution, format). */
-  meta?: Record<string, unknown>;
-}
-
-/** A search result match from an enrichment tool. */
-export interface ToolSearchResultMatch {
-  /** Asset or material key. */
-  key: string;
-  /** Relevance score (0-1). */
-  score: number;
-  /** Human-readable label. */
-  label?: string;
-}
-
-/** Structured diagnostic produced during tool execution. */
-export interface ToolResultDiagnostic {
-  severity: DiagnosticSeverity;
-  /** Stable diagnostic code, e.g. 'agent-tool/unsupported-schema'. */
-  code: `agent-tool/${string}`;
-  message: string;
-  /** Structured detail for debugging. */
-  detail?: Record<string, unknown>;
-}
-
-// ---------------------------------------------------------------------------
-// M10: AgentToolInvocationRequest
-// ---------------------------------------------------------------------------
-
-/**
- * Request to invoke an agent tool.
- *
- * Carries the tool ID, extension context, creative context slices,
- * and any tool-specific input. Edge and worker adapters receive only
- * explicit serializable slices — never raw provider internals.
- */
-export interface AgentToolInvocationRequest {
-  /** The tool identifier being invoked. */
-  toolId: string;
-  /** The extension ID that registered the tool. */
-  extensionId: string;
-  /** The contribution ID of the agent tool in the manifest. */
-  contributionId: string;
-  /** Tool-specific input matching the declared input schema. */
-  input?: Record<string, unknown>;
-  /**
-   * Explicit creative context slices for tool execution.
-   * Only serializable projections are included — never raw provider internals.
-   */
-  context?: AgentToolRequestContext;
-}
-
-/** Explicit creative context slices passed to a tool invocation. */
-export interface AgentToolRequestContext {
-  /** Read-only timeline snapshot at invocation time. */
-  timeline?: TimelineSnapshot;
-  /** Asset keys and metadata relevant to the request. */
-  assets?: readonly { key: string; metadata?: Record<string, unknown> }[];
-  /** Material keys and metadata relevant to the request. */
-  materials?: readonly { key: string; metadata?: Record<string, unknown> }[];
-  /** Export context (selected format, blockers, etc.). */
-  export?: AgentToolExportContext;
-  /** Opaque request metadata. */
-  meta?: Record<string, unknown>;
-}
-
-/** Export context passed to export-adjacent tools. */
-export interface AgentToolExportContext {
-  /** Selected output format ID. */
-  outputFormatId?: string;
-  /** Known render blockers at invocation time. */
-  blockers?: readonly Record<string, unknown>[];
-  /** Contribution IDs available for export. */
-  contributionIds?: readonly string[];
-}
-
-// ---------------------------------------------------------------------------
-// M10: GenerationSession (long-running generation)
-// ---------------------------------------------------------------------------
-
-/**
- * Session handle for long-running generation tools.
- *
- * Provides progress reporting, cancellation, and a preview-only
- * sample channel placeholder. Live media buffers and bake internals
- * are deferred to M11/M12.
- */
-export interface GenerationSession {
-  /** Unique session identifier. */
-  readonly id: string;
-  /** Current progress (0-100). */
-  readonly progress: number;
-  /** Human-readable progress label. */
-  readonly progressLabel?: string;
-  /** Whether the session has been cancelled. */
-  readonly cancelled: boolean;
-  /** Whether the session is complete. */
-  readonly done: boolean;
-  /** Structured diagnostics produced during generation. */
-  readonly diagnostics: readonly ToolResultDiagnostic[];
-  /** Optional live delivery metadata used by the host to activate sample delivery. */
-  readonly liveDelivery?: GenerationSessionLiveDelivery;
-  /** Deterministic final refs produced by the session, when known. */
-  readonly finalRefs?: readonly string[];
-  /** Deterministic baked refs produced by the session, when known. */
-  readonly bakedRefs?: readonly string[];
-
-  /**
-   * Subscribe to progress updates.
-   * Returns a DisposeHandle for unsubscription.
-   */
-  onProgress(listener: (progress: number, label?: string) => void): DisposeHandle;
-
-  /**
-   * Cancel the generation session.
-   * Idempotent — safe to call multiple times.
-   */
-  cancel(): void;
-
-  /**
-   * Get the typed sample channel descriptor for this session.
-   *
-   * Returns a LiveChannelDescriptor — a branded string that is
-   * backward-compatible with M10 code that treated the return
-   * value as a plain string. The channel carries live media
-   * frames when the session is active.
-   */
-  getSampleChannel(): LiveChannelDescriptor;
-
-  /**
-   * Subscribe to live samples delivered on this session's channel.
-   * The listener receives every sample pushed to the channel.
-   * Returns a DisposeHandle for unsubscription.
-   */
-  onSample(listener: (sample: LiveSample) => void): DisposeHandle;
-
-  /**
-   * Get the current steering lineage for this session.
-   * Returns undefined if no steering decision has been applied yet.
-   */
-  getSteeringLineage(): SteeringLineage | undefined;
-
-  /**
-   * Mark the session as complete with final result data.
-   * Safe to call once; subsequent calls are ignored.
-   */
-  complete(result?: Record<string, unknown>): void;
-}
-
-// ---------------------------------------------------------------------------
-// M10: AgentToolRegistrationService
-// ---------------------------------------------------------------------------
-
-/**
- * Agent tool registration service available as `ctx.agentTools` during activate().
- *
- * Extensions register agent tool handlers imperatively. The host owns
- * invocation, progress, cancellation, proposal creation, and UI.
- */
-export interface AgentToolRegistrationService {
-  /**
-   * Register an agent tool handler.
-   *
-   * The `toolId` must match the `toolId` field of an `AgentToolContribution`
-   * declared by this extension in its manifest.
-   *
-   * The handler receives an {@link AgentToolInvocationRequest} and returns
-   * a {@link ToolResult} (or Promise thereof).
-   *
-   * Returns a DisposeHandle that unregisters the handler when dispose() is
-   * called (safe to call multiple times; idempotent).
-   */
-  registerTool(
-    toolId: string,
-    handler: AgentToolHandler,
-  ): DisposeHandle;
-
-  /**
-   * Invoke a process-backed tool (pre-M12 placeholder).
-   *
-   * Always returns a `ToolProcessResult` with a structured pending
-   * diagnostic indicating process execution is not available until M12.
-   */
-  invokeProcess(
-    toolId: string,
-    config: ProcessSpawnConfig,
-  ): Promise<ToolProcessResult>;
-}
-
-/**
- * Agent tool handler function registered by an extension.
- *
- * Receives an invocation request with explicit context slices and
- * returns a ToolResult. May be synchronous or async. Thrown errors
- * are caught by the runtime and published as diagnostics.
- */
-export type AgentToolHandler = (
-  request: AgentToolInvocationRequest,
-) => ToolResult | Promise<ToolResult>;
-
-// ---------------------------------------------------------------------------
-
-export interface ProcessSpawnConfig {
-  command: string;
-  args?: readonly string[];
-  env?: Record<string, string>;
-  cwd?: string;
-}
-
-export type ProcessManifestEntry = ProcessSpec;
-
-/** M12: Declarative environment field for trusted local process configuration. */
-export interface ProcessEnvFieldSpec {
-  readonly key: string;
-  readonly label?: string;
-  readonly description?: string;
-  readonly required?: boolean;
-  readonly secret?: boolean;
-  readonly defaultValue?: string;
-  readonly platformDefaults?: Partial<Record<'darwin' | 'linux' | 'win32', string>>;
-}
-
-/** M12: Operation a trusted local process exposes to tools, render routes, or export formats. */
-export interface ProcessOperationSpec {
-  readonly id: string;
-  readonly label: string;
-  readonly description?: string;
-  readonly inputSchema?: AgentToolInputSchema;
-  readonly outputKinds?: readonly ('artifact' | 'material' | 'sidecar' | 'diagnostic' | 'planner-result' | 'tool-result')[];
-  readonly requiredCapabilities?: readonly string[];
-  readonly routes?: readonly RenderRoute[];
-  readonly determinism?: DeterminismStatus;
-}
-
-/** M12: Declarative trusted-local process specification. */
-export interface ProcessSpec {
-  id: string;
-  label: string;
-  description?: string;
-  spawn: ProcessSpawnConfig;
-  protocol: 'stdio-jsonrpc';
-  healthCheck?: string;
-  shutdown?: string;
-  restartPolicy?: 'never' | 'always' | 'on-failure';
-  version?: CapabilityVersion;
-  env?: readonly ProcessEnvFieldSpec[];
-  operations?: readonly ProcessOperationSpec[];
-  capabilities?: IntegrationCapabilities;
-  requiredBy?: readonly CapabilitySourceRef[];
-}
-
-/** M12: Process contribution declared in an extension manifest. */
-export interface ProcessContribution {
-  readonly id: ContributionId;
-  readonly kind: 'process';
-  readonly label?: string;
-  readonly order?: number;
-  readonly spec: ProcessSpec;
-}
-
-export type ProcessLifecycleState =
-  | 'not-installed'
-  | 'stopped'
-  | 'starting'
-  | 'ready'
-  | 'busy'
-  | 'degraded'
-  | 'failed'
-  | 'stopping';
-
-export interface ProcessStatusBase {
-  readonly processId: string;
-  readonly state: ProcessLifecycleState;
-  readonly label?: string;
-  readonly message?: string;
-  readonly updatedAt?: string;
-  readonly blockingOperations?: readonly string[];
-  readonly diagnostics?: readonly ExtensionDiagnostic[];
-}
-
-export type ProcessStatus =
-  | (ProcessStatusBase & { readonly state: 'not-installed'; readonly installHint?: string })
-  | (ProcessStatusBase & { readonly state: 'stopped' })
-  | (ProcessStatusBase & { readonly state: 'starting'; readonly startedAt?: string })
-  | (ProcessStatusBase & { readonly state: 'ready'; readonly pid?: number; readonly version?: CapabilityVersion })
-  | (ProcessStatusBase & { readonly state: 'busy'; readonly operationId?: string; readonly progress?: ProcessProgressEvent })
-  | (ProcessStatusBase & { readonly state: 'degraded'; readonly healthCheck?: string })
-  | (ProcessStatusBase & { readonly state: 'failed'; readonly errorCode?: string; readonly recoverable?: boolean })
-  | (ProcessStatusBase & { readonly state: 'stopping'; readonly reason?: string });
-
-// M11: Live Data Bridge — source, channel, sample, bake, permission,
-// recording, learn, steering, and binding-resolution contracts
-// ---------------------------------------------------------------------------
-
-/**
- * Kind of a live data source.
- *
- * - `webcam` — browser camera (getUserMedia)
- * - `microphone` — browser microphone (getUserMedia)
- * - `midi` — Web MIDI API device
- * - `serial` — Web Serial API port
- * - `bluetooth` — Web Bluetooth API device
- * - `generated` — procedurally generated frames/data (generative AI, procedural, etc.)
- * - `screen-capture` — getDisplayMedia / screen sharing
- * - `audio-device` — non-microphone audio output capture
- * - `osc` — OSC (Open Sound Control) over UDP/WebSocket
- * - `custom` — extension-defined custom source
- */
-export type LiveSourceKind =
-  | 'webcam'
-  | 'microphone'
-  | 'midi'
-  | 'serial'
-  | 'bluetooth'
-  | 'generated'
-  | 'screen-capture'
-  | 'audio-device'
-  | 'osc'
-  | 'custom';
-
-/**
- * Lifecycle status of a live data source.
- *
- *   inactive   → source registered, not yet active
- *   activating → permission requested, stream opening
- *   active     → source is streaming live data
- *   error      → source encountered a blocking error
- *   disposed   → source explicitly disposed by provider
- *   orphaned   → source's owning extension was unmounted/disposed
- */
-export type LiveSourceStatus =
-  | 'inactive'
-  | 'activating'
-  | 'active'
-  | 'error'
-  | 'disposed'
-  | 'orphaned';
-
-/**
- * A diagnostic produced by a live source or live data operation.
- */
-export interface LiveSourceDiagnostic {
-  severity: DiagnosticSeverity;
-  /** Stable diagnostic code (e.g. 'live/permission-denied'). */
-  code: string;
-  message: string;
-  sourceId?: string;
-  channelId?: LiveChannelDescriptor;
-  detail?: Record<string, unknown>;
-}
-
-/**
- * A provider-scoped live data source.
- *
- * Live sources are ephemeral runtime objects scoped to a single
- * provider mount. They are never persisted in timeline config/history.
- * Only live binding metadata is persisted on timeline objects.
- */
-export interface LiveSource {
-  /** Unique source identifier (provider-scoped). */
-  readonly id: string;
-  /** The kind of data this source produces. */
-  readonly kind: LiveSourceKind;
-  /** Current lifecycle status. */
-  readonly status: LiveSourceStatus;
-  /** Human-readable label. */
-  readonly label?: string;
-  /** Current active diagnostics. */
-  readonly diagnostics: readonly LiveSourceDiagnostic[];
-  /** Opaque source metadata. */
-  readonly metadata?: Record<string, unknown>;
-  /** Permission state for this source. */
-  readonly permission?: LiveSourcePermission;
-  /** Recording state, if recording is active. */
-  readonly recording?: LiveRecordingState;
-  /** Learn-mode state, if learn is active. */
-  readonly learnMode?: LiveLearnMode;
-}
-
-// --- Live channel descriptors ---
-
-/**
- * Kind of data carried by a live channel.
- */
-export type LiveChannelKind =
-  | 'video'
-  | 'audio'
-  | 'midi'
-  | 'osc'
-  | 'data'
-  | 'control';
-
-/**
- * A typed channel descriptor that is string-compatible.
- *
- * LiveChannelDescriptor is a branded string — it can be used anywhere a
- * string is expected (e.g. as a map key, in string concatenation, etc.)
- * but carries a distinct type so the compiler can distinguish channel
- * identifiers from arbitrary strings.
- *
- * This preserves backward compatibility with M10 code that treated
- * getSampleChannel() as returning a plain string.
- */
-export type LiveChannelDescriptor = string & { readonly __brand: 'LiveChannelDescriptor' };
-
-/**
- * Rich metadata for a live channel.
- *
- * Obtainable via LiveSessionsService.getChannelMetadata().
- */
-export interface LiveChannelMetadata {
-  /** The channel descriptor (string-compatible identifier). */
-  readonly channelId: LiveChannelDescriptor;
-  /** The kind of data carried by this channel. */
-  readonly kind: LiveChannelKind;
-  /** The source this channel is attached to. */
-  readonly sourceId: string;
-  /** Human-readable label. */
-  readonly label?: string;
-  /** Opaque channel metadata. */
-  readonly metadata?: Record<string, unknown>;
-}
-
-// --- Live samples ---
-
-/**
- * Format of a live sample frame's data payload.
- */
-export type LiveSampleFormat = 'raw' | 'encoded' | 'json' | 'binary';
-
-/**
- * A single frame/tick of live data.
- *
- * Carries timestamped data in one of several formats. The host
- * must read samples synchronously in render paths.
- */
-export interface LiveSampleFrame {
-  /** Monotonic timestamp (milliseconds since source start). */
-  readonly timestamp: number;
-  /** The sample data payload. */
-  readonly data: ArrayBuffer | Uint8Array | Record<string, unknown>;
-  /** Format of the data payload. */
-  readonly format: LiveSampleFormat;
-  /** Opaque frame metadata. */
-  readonly metadata?: Record<string, unknown>;
-}
-
-/**
- * A delivered live sample on a channel.
- */
-export interface LiveSample {
-  /** The channel this sample arrived on. */
-  readonly channelId: LiveChannelDescriptor;
-  /** The sample frame data. */
-  readonly frame: LiveSampleFrame;
-  /** Monotonically increasing sequence number for this channel. */
-  readonly sequenceNumber: number;
-}
-
-// --- Live permissions ---
-
-/**
- * Permission state for a live source.
- *
- *   prompt      — browser permission prompt not yet shown/answered
- *   granted     — permission granted, stream can open
- *   denied      — permission denied by user or system
- *   unavailable — API not available in this browser/environment
- */
-export type LivePermissionState = 'prompt' | 'granted' | 'denied' | 'unavailable';
-
-/**
- * Permission metadata for a live source.
- */
-export interface LiveSourcePermission {
-  /** Current permission state. */
-  readonly state: LivePermissionState;
-  /** Human-readable reason the permission is requested. */
-  readonly reason?: string;
-  /** User-facing device label. */
-  readonly deviceLabel?: string;
-  /** ISO 8601 timestamp when permission was requested. */
-  readonly requestedAt?: string;
-}
-
-// --- Live recording ---
-
-/**
- * Recording mode for a live source.
- *
- *   stream  — continuous recording into ring buffer
- *   take    — discrete take-based recording
- *   loop    — looping buffer (overwrites oldest data)
- *   trigger — triggered capture on external signal
- */
-export type LiveRecordingMode = 'stream' | 'take' | 'loop' | 'trigger';
-
-/**
- * Recording state for a live source.
- */
-export interface LiveRecordingState {
-  /** Whether recording is currently active. */
-  readonly active: boolean;
-  /** The recording mode in use. */
-  readonly mode: LiveRecordingMode;
-  /** ISO 8601 timestamp when recording started. */
-  readonly startedAt?: string;
-  /** Recording duration in milliseconds. */
-  readonly duration?: number;
-  /** Current take index (for 'take' mode). */
-  readonly takeIndex?: number;
-}
-
-// --- Live learn mode ---
-
-/**
- * Learn-mode state for a live source.
- *
- *   idle        — not currently learning
- *   mapping     — mapping physical controls to parameters
- *   calibrating — calibrating device range/response
- *   tracking    — actively tracking a learn target
- */
-export type LiveLearnMode = 'idle' | 'mapping' | 'calibrating' | 'tracking';
-
-// --- Live bake ---
-
-/**
- * Kind of target that a live bake can produce.
- *
- *   asset           — asset registry entry (video/image/audio bytes)
- *   keyframe        — deterministic keyframe(s) on a clip parameter
- *   automation      — automation clip with baked curves
- *   clip            — standard timeline clip referencing baked asset
- *   sidecar         — metadata sidecar file (JSON, CSV, etc.)
- *   render-material — RenderMaterialRef in the deterministic material vocabulary
- */
-export type LiveBakeTargetKind =
-  | 'asset'
-  | 'keyframe'
-  | 'automation'
-  | 'clip'
-  | 'sidecar'
-  | 'render-material';
-
-/**
- * A single bake target descriptor.
- *
- * Specifies what kind of deterministic artifact a live sample stream
- * should be baked into and which reference to populate.
- */
-export interface LiveBakeTarget {
-  /** The kind of bake target. */
-  readonly kind: LiveBakeTargetKind;
-  /** Target reference (asset key, clip ID, param name, etc.). */
-  readonly ref: string;
-  /** Bake parameters (quantization, downsampling, format, etc.). */
-  readonly params?: Record<string, unknown>;
-}
-
-/**
- * A partial bake selection — which source(s) and channel(s) to bake,
- * over what time/sample range, into which targets.
- */
-export interface LiveBakeSelection {
-  /** The source to bake from. */
-  readonly sourceId: string;
-  /** Specific channels to bake (all channels if omitted). */
-  readonly channelIds?: readonly LiveChannelDescriptor[];
-  /** Time range to bake (entire buffer if omitted). */
-  readonly timeRange?: readonly [startMs: number, endMs: number];
-  /** Frame range to bake (entire buffer if omitted). */
-  readonly frameRange?: readonly [startFrame: number, endFrame: number];
-  /** Sample index range to bake (entire buffer if omitted). */
-  readonly sampleRange?: readonly [startIndex: number, endIndex: number];
-  /** Discrete take ID to bake (all takes if omitted). */
-  readonly takeId?: string;
-  /** Targets to bake into. */
-  readonly targets: readonly LiveBakeTarget[];
-}
-
-/**
- * Result of a live bake operation.
- */
-export interface LiveBakeResult {
-  /** The source that was baked. */
-  readonly sourceId: string;
-  /** Results for each bake target. */
-  readonly targets: readonly {
-    /** The bake target that was processed. */
-    readonly target: LiveBakeTarget;
-    /** The deterministic output reference (asset key, clip ID, etc.). */
-    readonly outputRef: string;
-    /** Diagnostics produced during this target's bake. */
-    readonly diagnostics?: readonly LiveSourceDiagnostic[];
-  }[];
-  /** Overall bake diagnostics. */
-  readonly diagnostics: readonly LiveSourceDiagnostic[];
-  /** Whether all targets baked successfully. */
-  readonly success: boolean;
-}
-
-// --- Steering ---
-
-/**
- * The kind of steering decision applied to a GenerationSession.
- *
- *   supersede — replace the current generation with new output
- *   fork      — create a parallel generation branch
- *   reject    — discard the generation and clean up
- */
-export type SteeringDecisionKind = 'supersede' | 'fork' | 'reject';
-
-/**
- * Whether a parameter can be changed on a live generation without starting a
- * separate branch.
- *
- *   hot     — compatible with in-place supersede when prior samples are replaced
- *   non-hot — requires a fork or explicit rejection
- */
-export type SteeringParameterHotness = 'hot' | 'non-hot';
-
-/**
- * Explicit policy for samples produced before a steering change.
- *
- * No GenerationSession live delivery may silently keep prior samples after a
- * steering change; the resolver must choose one of these policies.
- */
-export type SteeringPriorSamplePolicy = 'replace' | 'fork' | 'retain' | 'discard';
-
-/**
- * Structured provenance for a steered generation.
- */
-export interface SteeringProvenance {
-  /** Prompt text or prompt reference used by the producer. */
-  readonly prompt: string;
-  /** Model identifier used by the producer. */
-  readonly model: string;
-  /** Seed used by the producer. */
-  readonly seed: string | number;
-  /** Producer extension identifier, when available. */
-  readonly producerExtensionId?: string;
-  /** Additional opaque provenance tags. */
-  readonly tags?: readonly string[];
-}
-
-/**
- * A requested steering parameter change.
- */
-export interface SteeringParameterChange {
-  /** Stable parameter path, for example `params.prompt` or `params.seed`. */
-  readonly path: string;
-  /** Value before steering, if known. */
-  readonly previousValue?: unknown;
-  /** Proposed value after steering. */
-  readonly nextValue: unknown;
-  /** Hotness classification for this parameter change. */
-  readonly hotness?: SteeringParameterHotness;
-}
-
-/**
- * Lineage metadata for a steered generation.
- *
- * Carries enough provenance to trace the full steering chain:
- * generation index, steer hash, parent refs, producer version,
- * and optional provenance tags.
- */
-export interface SteeringLineage {
-  /** Monotonically increasing generation index. */
-  readonly generationIndex: number;
-  /** Hash of the steering decision that produced this generation. */
-  readonly steerHash: string;
-  /** Parent generation session IDs. */
-  readonly parentRefs: readonly string[];
-  /** Version of the producer extension at steering time. */
-  readonly producerVersion: string;
-  /** Structured prompt/model/seed provenance for this steering decision. */
-  readonly provenance: SteeringProvenance;
-  /** Opaque provenance tags. */
-  readonly provenanceTags?: readonly string[];
-}
-
-/**
- * A steering decision applied to a GenerationSession.
- *
- * The steering resolver (Step 14) must always return an explicit
- * supersede, fork, or reject decision. GenerationSession live sample
- * delivery must not activate without complete steering lineage.
- */
-export interface SteeringDecision {
-  /** The kind of steering decision. */
-  readonly kind: SteeringDecisionKind;
-  /** The generation session this decision applies to. */
-  readonly sessionId: string;
-  /** Complete steering lineage. */
-  readonly lineage: SteeringLineage;
-  /** Human-readable reason for the decision. */
-  readonly reason?: string;
-  /** Replacement channel for supersede decisions. */
-  readonly replacementChannelId?: LiveChannelDescriptor;
-}
-
-/**
- * Explicit live sample delivery metadata for a GenerationSession.
- *
- * Supplying this object asks the host to bridge preview samples from the
- * GenerationSession into provider-scoped live ring buffers. Activation is
- * gated by the Step 14 steering resolver: `steeringDecision` must be a complete
- * supersede or fork decision with lineage.
- */
-export interface GenerationSessionLiveDelivery {
-  /** Origin of this live session, e.g. an agent tool or SDK session helper. */
-  readonly origin: string;
-  /** Explicit steering decision from the live steering resolver. */
-  readonly steeringDecision: SteeringDecision;
-  /** Optional source ID; defaults to a host-generated generation-session source. */
-  readonly sourceId?: string;
-  /** Optional source label. */
-  readonly sourceLabel?: string;
-  /** Channel kind to open for delivered samples. */
-  readonly channelKind?: LiveChannelKind;
-  /** Channels already known to be active for this session. */
-  readonly activeChannels?: readonly LiveChannelDescriptor[];
-  /** Deterministic final output refs, when known before completion. */
-  readonly finalRefs?: readonly string[];
-  /** Deterministic baked output refs, when known before completion. */
-  readonly bakedRefs?: readonly string[];
-  /** Opaque activation metadata. */
-  readonly metadata?: Record<string, unknown>;
-}
-
-// --- Binding resolution ---
-
-/**
- * Resolution status of a live binding.
- *
- *   resolved   — source is active and binding is fully resolved
- *   unresolved — binding exists but source is not yet active
- *   orphaned   — binding's owning extension was disposed
- *   disposed   — binding's source was explicitly disposed
- *   missing    — binding references a source that was never registered
- */
-export type BindingResolutionStatus =
-  | 'resolved'
-  | 'unresolved'
-  | 'orphaned'
-  | 'disposed'
-  | 'missing';
-
-/**
- * A persisted live binding on a timeline object (clip or effect).
- *
- * Live binding metadata is the only live state that persists in
- * timeline config. It survives provider unmount/disposal. Unresolved
- * metadata (including orphaned and disposed sources) blocks export
- * until explicit bake or remove.
- */
-export interface LiveBinding {
-  /** Unique binding identifier. */
-  readonly bindingId: string;
-  /** The source this binding references. */
-  readonly sourceId: string;
-  /** Channel descriptor, if a specific channel is bound. */
-  readonly channelId?: LiveChannelDescriptor;
-  /** Clip ID this binding is attached to, if any. */
-  readonly targetClipId?: string;
-  /** Effect ID this binding is attached to, if any. */
-  readonly targetEffectId?: string;
-  /** Parameter name on the target, if binding to a specific param. */
-  readonly targetParamName?: string;
-  /** Current resolution status. */
-  readonly status: BindingResolutionStatus;
-  /** Diagnostic explaining unresolved status, if any. */
-  readonly diagnostic?: LiveSourceDiagnostic;
-}
-
-/**
- * The resolved state of a live binding.
- *
- * Produced by the binding resolver when a consumer requests
- * resolution of a specific binding.
- */
-export interface LiveBindingResolution {
-  /** The binding that was resolved. */
-  readonly bindingId: string;
-  /** Current resolution status. */
-  readonly status: BindingResolutionStatus;
-  /** The resolved live source, if found and active. */
-  readonly source?: LiveSource;
-  /** The resolved channel metadata, if available. */
-  readonly channel?: LiveChannelMetadata;
-  /** Diagnostic explaining why resolution failed, if applicable. */
-  readonly diagnostic?: LiveSourceDiagnostic;
-}
-
-/**
- * Aggregate metadata about all live bindings in the current session.
- *
- * The pure binding scanner is the source of truth for unresolved
- * live references. It produces this aggregate to power export guard
- * and UI diagnostics.
- */
-export interface LiveBindingMetadata {
-  /** All live bindings currently persisted on timeline objects. */
-  readonly bindings: readonly LiveBinding[];
-  /** Count of unresolved bindings. */
-  readonly unresolvedCount: number;
-  /** Count of orphaned bindings (extension disposed). */
-  readonly orphanedCount: number;
-  /** Count of disposed bindings (source explicitly disposed). */
-  readonly disposedCount: number;
-}
-
-// --- Live sessions service ---
-
-/**
- * Live sessions service available as `ctx.creative.sessions` during activate().
- *
- * Provides provider-scoped live source lifecycle management, channel
- * operations, sample delivery, bake, binding resolution, and steering.
- *
- * All live data is ephemeral runtime state scoped to the current
- * provider mount. Only live binding metadata persists in timeline config.
- */
-export interface LiveSessionsService {
-  // ── Source lifecycle ──────────────────────────────────────────────
-
-  /**
-   * Register a new live source.
-   * Returns a DisposeHandle that disposes the source when called.
-   */
-  registerSource(source: Omit<LiveSource, 'status' | 'diagnostics'>): DisposeHandle;
-
-  /**
-   * Get a registered live source by ID.
-   * Returns undefined if the source is not found.
-   */
-  getSource(sourceId: string): LiveSource | undefined;
-
-  /**
-   * List all registered live sources.
-   */
-  listSources(): readonly LiveSource[];
-
-  // ── Channel operations ────────────────────────────────────────────
-
-  /**
-   * Open a typed channel on a source.
-   * Returns a LiveChannelDescriptor that is string-compatible.
-   */
-  openChannel(
-    sourceId: string,
-    kind: LiveChannelKind,
-    metadata?: Record<string, unknown>,
-  ): LiveChannelDescriptor;
-
-  /**
-   * Close a live channel.
-   * Idempotent — safe to call on already-closed channels.
-   */
-  closeChannel(channelId: LiveChannelDescriptor): void;
-
-  /**
-   * Get rich metadata for a channel.
-   * Returns undefined if the channel is not found.
-   */
-  getChannelMetadata(channelId: LiveChannelDescriptor): LiveChannelMetadata | undefined;
-
-  // ── Sample delivery ───────────────────────────────────────────────
-
-  /**
-   * Push a sample frame into a channel's ring buffer.
-   * Samples are read synchronously by render paths.
-   */
-  pushSample(channelId: LiveChannelDescriptor, frame: LiveSampleFrame): void;
-
-  /**
-   * Subscribe to samples on a channel.
-   * The listener receives every sample pushed to the channel.
-   * Returns a DisposeHandle for unsubscription.
-   */
-  subscribeSamples(
-    channelId: LiveChannelDescriptor,
-    listener: (sample: LiveSample) => void,
-  ): DisposeHandle;
-
-  // ── Bake ──────────────────────────────────────────────────────────
-
-  /**
-   * Bake live samples into deterministic timeline artifacts.
-   *
-   * Bake converts live data into asset registry entries, keyframes,
-   * automation clips, standard clips, metadata sidecars, or RenderMaterial
-   * refs. Failed bakes leave live sources unchanged.
-   *
-   * This is one of the two bridges from live runtime to deterministic
-   * timeline state (the other being removeLiveBindings).
-   */
-  bake(selection: LiveBakeSelection): LiveBakeResult;
-
-  /**
-   * Remove live bindings for a source.
-   *
-   * After removal, the source's bindings are cleared from timeline
-   * metadata, unblocking export. This is the second bridge from live
-   * runtime to deterministic timeline state (alongside bake).
-   */
-  removeLiveBindings(sourceId: string): void;
-
-  // ── Binding resolution ────────────────────────────────────────────
-
-  /**
-   * Resolve a single live binding to its current status and source.
-   */
-  resolveBinding(bindingId: string): LiveBindingResolution;
-
-  /**
-   * Get aggregate live binding metadata.
-   * The pure binding scanner produces this aggregate, which is the
-   * source of truth for unresolved live references.
-   */
-  getBindingMetadata(): LiveBindingMetadata;
-
-  // ── Steering ──────────────────────────────────────────────────────
-
-  /**
-   * Apply a steering decision to a GenerationSession.
-   *
-   * The steering resolver must always return an explicit supersede,
-   * fork, or reject. GenerationSession live sample delivery must not
-   * activate without complete steering lineage.
-   */
-  applySteeringDecision(decision: SteeringDecision): void;
-
-  // ── Diagnostics ───────────────────────────────────────────────────
-
-  /**
-   * Get diagnostics for all sources or a specific source.
-   */
-  getDiagnostics(sourceId?: string): readonly LiveSourceDiagnostic[];
-}
+export type {
+  LiveSourceKind,
+  LiveSourceStatus,
+  LiveSourceDiagnostic,
+  LiveSource,
+  LiveChannelKind,
+  LiveChannelDescriptor,
+  LiveChannelMetadata,
+  LiveSampleFormat,
+  LiveSampleFrame,
+  LiveSample,
+  LivePermissionState,
+  LiveSourcePermission,
+  LiveRecordingMode,
+  LiveRecordingState,
+  LiveLearnMode,
+  LiveBakeTargetKind,
+  LiveBakeTarget,
+  LiveBakeSelection,
+  LiveBakeResult,
+  SteeringDecisionKind,
+  SteeringParameterHotness,
+  SteeringPriorSamplePolicy,
+  SteeringProvenance,
+  SteeringParameterChange,
+  SteeringLineage,
+  SteeringDecision,
+  GenerationSessionLiveDelivery,
+  BindingResolutionStatus,
+  LiveBinding,
+  LiveBindingResolution,
+  LiveBindingMetadata,
+  LiveSessionsService,
+} from './video/liveData';
 
 // ---------------------------------------------------------------------------
 // Permission metadata (descriptive until sandboxing exists)
@@ -2749,10 +1191,11 @@ export function validateInstalledPackage(
 // ---------------------------------------------------------------------------
 // Extension manifest
 // ---------------------------------------------------------------------------
-// NOTE: ExtensionManifest remains inline here (not yet in manifest.ts) because
-// its contributions union references types (CommandContribution, etc.) that are
-// still defined inline in this file. Once those types are extracted to canonical
-// modules, ExtensionManifest can move to manifest.ts with direct imports.
+// NOTE: ExtensionManifest remains inline here (not yet in manifest.ts).
+// CommandContribution, KeybindingContribution, and ContextMenuItemContribution
+// were extracted to canonical family modules in M2b (T16). ExtensionManifest
+// can move to manifest.ts with direct imports once all remaining inline
+// contribution types are extracted.
 
 export interface ExtensionManifest {
   id: ExtensionId;
@@ -2862,173 +1305,13 @@ export {
   CREATIVE_MEMBER_MILESTONE,
 } from './context';
 
-// ---------------------------------------------------------------------------
-// M7: Effect registration service
-// ---------------------------------------------------------------------------
-
-/**
- * A trusted local component registered by an extension as an effect.
- *
- * Component effects execute in the browser preview and are blocked from
- * export contexts unless the owning contribution declares stronger capability.
- */
-export type EffectComponent = Record<string, unknown> | ((...args: unknown[]) => unknown);
-
-/**
- * A parameter definition for effect parameter schemas.
- *
- * This lightweight SDK type mirrors the video-editor internal ParameterDefinition
- * shape so extensions can declare parameter contracts at registration time.
- * The video-editor runtime validates these at registration time and coerces
- * parameter values at render time.
- */
-export interface EffectParameterDefinition {
-  /** Unique parameter name (used as the key in params). */
-  name: string;
-  /** Human-readable label for UI controls. */
-  label: string;
-  /** Description shown in tooltips / inspector. */
-  description: string;
-  /** Parameter type determining the control and coercion rules. */
-  type: 'number' | 'select' | 'boolean' | 'color' | 'audio-binding';
-  /** Default value when no override is provided. */
-  default?: number | string | boolean | Record<string, unknown>;
-  /** Minimum value (number type only). */
-  min?: number;
-  /** Maximum value (number type only). */
-  max?: number;
-  /** Step increment (number type only). */
-  step?: number;
-  /** Options for select-type parameters. */
-  options?: readonly { label: string; value: string }[];
-}
-
-/** Ordered array of parameter definitions. */
-export type EffectParameterSchema = readonly EffectParameterDefinition[];
-
-/** Options for imperative effect registration via ctx.effects.registerComponent(). */
-export interface EffectRegistrationOptions {
-  /** Override label for the effect picker / UI. */
-  label?: string;
-  /**
-   * Parameter schema for this effect.
-   *
-   * When provided, the schema is validated at registration time. An invalid
-   * schema produces `status: 'error'` on the registry record with diagnostics
-   * but does not prevent the component from rendering (render-time parameter
-   * coercion continues to work for already-applied legacy data).
-   */
-  parameterSchema?: EffectParameterSchema;
-}
-
-/**
- * Effect registration service available as `ctx.effects` during activate().
- *
- * Trusted component effects must have a matching {@link EffectContribution}
- * in the extension manifest.  Components are registered imperatively via
- * `registerComponent()` and the returned DisposeHandle unregisters them on
- * dispose.
- */
-export interface EffectRegistrationService {
-  /**
-   * Register a trusted local component as an effect.
-   *
-   * The `effectId` must match the `effectId` field of an `EffectContribution`
-   * declared by this extension in its manifest.
-   *
-   * Returns a DisposeHandle that unregisters the component when dispose() is
-   * called (safe to call multiple times; idempotent).
-   */
-  registerComponent(
-    effectId: string,
-    component: EffectComponent,
-    options?: EffectRegistrationOptions,
-  ): DisposeHandle;
-}
-
-// ---------------------------------------------------------------------------
-// M8: Transition registration service
-// ---------------------------------------------------------------------------
-
-/**
- * A trusted local renderer registered by an extension as a transition.
- *
- * Transition renderers execute in the browser preview and are blocked from
- * export contexts unless the owning contribution declares stronger capability.
- */
-export type TransitionRenderer = Record<string, unknown> | ((...args: unknown[]) => unknown);
-
-/**
- * A parameter definition for transition parameter schemas.
- *
- * This lightweight SDK type mirrors the video-editor internal ParameterDefinition
- * shape so extensions can declare parameter contracts at registration time.
- * The video-editor runtime validates these at registration time and coerces
- * parameter values at render time.
- */
-export interface TransitionParameterDefinition {
-  /** Unique parameter name (used as the key in params). */
-  name: string;
-  /** Human-readable label for UI controls. */
-  label: string;
-  /** Description shown in tooltips / inspector. */
-  description: string;
-  /** Parameter type determining the control and coercion rules. */
-  type: 'number' | 'select' | 'boolean' | 'color' | 'audio-binding';
-  /** Default value when no override is provided. */
-  default?: number | string | boolean | Record<string, unknown>;
-  /** Minimum value (number type only). */
-  min?: number;
-  /** Maximum value (number type only). */
-  max?: number;
-  /** Step increment (number type only). */
-  step?: number;
-  /** Options for select-type parameters. */
-  options?: readonly { label: string; value: string }[];
-}
-
-/** Ordered array of transition parameter definitions. */
-export type TransitionParameterSchema = readonly TransitionParameterDefinition[];
-
-/** Options for imperative transition registration via ctx.transitions.registerRenderer(). */
-export interface TransitionRegistrationOptions {
-  /** Override label for the transition picker / UI. */
-  label?: string;
-  /**
-   * Parameter schema for this transition.
-   *
-   * When provided, the schema is validated at registration time. An invalid
-   * schema produces `status: 'error'` on the registry record with diagnostics
-   * but does not prevent the renderer from rendering (render-time parameter
-   * coercion continues to work for already-applied legacy data).
-   */
-  parameterSchema?: TransitionParameterSchema;
-}
-
-/**
- * Transition registration service available as `ctx.transitions` during activate().
- *
- * Trusted component transitions must have a matching {@link TransitionContribution}
- * in the extension manifest.  Renderers are registered imperatively via
- * `registerRenderer()` and the returned DisposeHandle unregisters them on
- * dispose.
- */
-export interface TransitionRegistrationService {
-  /**
-   * Register a trusted local renderer as a transition.
-   *
-   * The `transitionId` must match the `transitionId` field of a `TransitionContribution`
-   * declared by this extension in its manifest.
-   *
-   * Returns a DisposeHandle that unregisters the renderer when dispose() is
-   * called (safe to call multiple times; idempotent).
-   */
-  registerRenderer(
-    transitionId: string,
-    renderer: TransitionRenderer,
-    options?: TransitionRegistrationOptions,
-  ): DisposeHandle;
-}
+// EffectComponent, EffectParameterDefinition, EffectParameterSchema,
+// EffectRegistrationOptions, and EffectRegistrationService are now defined in
+// src/sdk/video/families/effects.ts and re-exported above. (M2b extraction)
+//
+// TransitionRenderer, TransitionParameterDefinition, TransitionParameterSchema,
+// TransitionRegistrationOptions, and TransitionRegistrationService are now defined in
+// src/sdk/video/families/transitions.ts and re-exported above. (M2b extraction)
 
 // ---------------------------------------------------------------------------
 // Editor shell root registry (module-level, set by host shell on mount)
@@ -3536,10 +1819,10 @@ import type {
 } from '@/sdk/video/timeline/patch.ts';
 import type {
   AssetReadSurface,
-  ExportService,
   MaterialReadSurface,
   MetadataFacetValueKind,
 } from '@/sdk/video/assets/metadata.ts';
+import type { ExportService } from '@/sdk/video/exports/outputFormats.ts';
 
 // ---------------------------------------------------------------------------
 // M3: TimelineOps — atomic mutation interface
@@ -4008,19 +2291,31 @@ export type {
   MetadataFacetValueKind,
   MetadataFacetDescriptor,
   AssetDetailSectionDescriptor,
+  AssetReadSurface,
+  MaterialReadSurface,
+} from '@/sdk/video/assets/metadata';
+
+// Re-export parser runtime contracts from their dedicated module
+export type {
   ParserInput,
   ParserResult,
   ParserDiagnostic,
   ParserHandler,
-  CompileOnlyOutputResult,
-  OutputFormatHandler,
-  OutputFormatContext,
+} from '@/sdk/video/assets/parsers';
+
+// Re-export search runtime contracts from their dedicated module
+export type {
   SearchMatch,
   SearchProviderResult,
   SearchProviderHandler,
   SearchProviderContext,
-  AssetReadSurface,
-  MaterialReadSurface,
+} from '@/sdk/video/assets/search';
+
+// Re-export output-format runtime contracts from their dedicated module
+export type {
+  CompileOnlyOutputResult,
+  OutputFormatHandler,
+  OutputFormatContext,
   ExportService,
   OutputFormatRegistrationOptions,
-} from '@/sdk/video/assets/metadata';
+} from '@/sdk/video/exports/outputFormats';

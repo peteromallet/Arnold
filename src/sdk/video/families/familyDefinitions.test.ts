@@ -29,8 +29,8 @@ import {
 } from '@/sdk/core/families/conformance';
 
 import type { FamilyDefinition } from '@/sdk/core/families/maturity';
-import type { VideoContributionKind } from '@/sdk/video/families/kinds';
-import { VIDEO_CONTRIBUTION_KINDS } from '@/sdk/video/families/kinds';
+import type { VideoContributionKind } from '@/sdk/video/families/contributionKinds';
+import { VIDEO_CONTRIBUTION_KINDS } from '@/sdk/video/families/contributionKinds';
 
 // ---------------------------------------------------------------------------
 // Registry shape and type-checking

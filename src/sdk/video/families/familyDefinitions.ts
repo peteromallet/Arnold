@@ -25,7 +25,7 @@ import {
   buildLegacyMilestoneMap,
 } from '@/sdk/core/families/conformance';
 
-import type { VideoContributionKind } from '@/sdk/video/families/kinds';
+import type { VideoContributionKind } from '@/sdk/video/families/contributionKinds';
 
 // ---------------------------------------------------------------------------
 // Registry
@@ -89,7 +89,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: true,
     manifestSchemaDefinition: 'AgentToolContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/agentTools.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/agentToolAdapter.ts',
     requirements: {
@@ -125,7 +125,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'AssetDetailSectionContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/assetDetailSections.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/metadataAdapter.ts',
     requirements: {
@@ -164,7 +164,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     manifestSchemaDefinition: 'AutomationContribution',
     sdkModules: [
       'src/sdk/video/timeline/clipTypes.ts',
-      'src/sdk/index.ts',
+      'src/sdk/video/families/automation.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/clipTypeAdapter.ts',
     requirements: {
@@ -200,6 +200,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     manifestSchemaDefinition: 'ClipTypeContribution',
     sdkModules: [
       'src/sdk/video/timeline/clipTypes.ts',
+      'src/sdk/video/families/clipTypeContributions.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/clipTypeAdapter.ts',
     requirements: {
@@ -233,7 +234,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'CommandContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/commands.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/commandAdapter.ts',
     requirements: {
@@ -269,7 +270,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'ContextMenuItemContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/contextMenuItems.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/commandAdapter.ts',
     requirements: {
@@ -303,7 +304,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'DialogContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/manifest.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
     requirements: {
@@ -338,7 +339,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'EffectContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/effects.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/effectAdapter.ts',
     requirements: {
@@ -373,7 +374,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'InspectorSectionContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/manifest.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
     requirements: {
@@ -408,7 +409,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'KeybindingContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/keybindings.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/commandAdapter.ts',
     requirements: {
@@ -443,7 +444,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'MetadataFacetContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/metadataFacet.ts',
       'src/sdk/video/assets/metadata.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/metadataAdapter.ts',
@@ -478,6 +479,8 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'OutputFormatContribution',
     sdkModules: [
+      'src/sdk/video/families/outputFormats.ts',
+      'src/sdk/video/exports/outputFormats.ts',
       'src/sdk/index.ts',
     ],
     hostAdapter: null,
@@ -512,7 +515,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'PanelContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/manifest.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
     requirements: {
@@ -546,7 +549,8 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'ParserContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/parsers.ts',
+      'src/sdk/video/assets/parsers.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/parserAdapter.ts',
     requirements: {
@@ -583,7 +587,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: true,
     manifestSchemaDefinition: 'ProcessContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/processes.ts',
     ],
     hostAdapter: null,
     requirements: {
@@ -621,7 +625,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'SearchProviderContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/searchProviders.ts',
     ],
     hostAdapter: null,
     requirements: {
@@ -657,7 +661,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     manifestSchemaDefinition: 'ShaderContribution',
     sdkModules: [
       'src/sdk/video/rendering/capabilities.ts',
-      'src/sdk/index.ts',
+      'src/sdk/video/families/shaders.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/shaderAdapter.ts',
     requirements: {
@@ -690,7 +694,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'SlotContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/manifest.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
     requirements: {
@@ -725,7 +729,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'TimelineOverlayContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/manifest.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/slotAdapter.ts',
     requirements: {
@@ -761,7 +765,7 @@ export const VIDEO_FAMILY_REGISTRY: readonly FamilyDefinition<VideoContributionK
     requiresTrustedCode: false,
     manifestSchemaDefinition: 'TransitionContribution',
     sdkModules: [
-      'src/sdk/index.ts',
+      'src/sdk/video/families/transitions.ts',
     ],
     hostAdapter: 'src/video-editor/adapters/transitionAdapter.ts',
     requirements: {

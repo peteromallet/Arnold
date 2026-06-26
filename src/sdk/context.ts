@@ -23,22 +23,22 @@ import type { TimelineReader } from '@/sdk/video/timeline/reader.ts';
 import type {
   AssetReadSurface,
   MaterialReadSurface,
-  ExportService,
 } from '@/sdk/video/assets/metadata.ts';
+import type { ExportService } from '@/sdk/video/exports/outputFormats.ts';
 
-// M2b family types still inline in index.ts.
+// M2b family types now extracted to dedicated family modules.
 // import type is erased at compile time — zero runtime cost, no host wiring.
+import type { EffectRegistrationService } from './video/families/effects';
+import type { ClipTypeRegistrationService } from './video/families/clipTypeContributions';
+import type { ShaderRegistrationService } from './video/families/shaders';
+import type { LiveSessionsService } from './video/liveData';
 import type {
   TimelineOps,
   ProposalRuntime,
-  LiveSessionsService,
   ExtensionManifest,
-  EffectRegistrationService,
   TransitionRegistrationService,
-  ClipTypeRegistrationService,
-  ShaderRegistrationService,
-  AgentToolRegistrationService,
 } from '../index';
+import type { AgentToolRegistrationService } from './video/families/agentTools';
 
 // ---------------------------------------------------------------------------
 // Context service contracts (pure interfaces)

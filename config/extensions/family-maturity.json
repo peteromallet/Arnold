@@ -36,7 +36,7 @@
       "milestone": "M10",
       "bridged": false
     },
-    "hostIntegrationNotes": "Agent contributions are proposal-backed; the host mediates tool dispatch and generation sessions. No standalone host adapter exists yet — execution is delegated through the agent-tool registration service."
+    "hostIntegrationNotes": "Agent contributions are proposal-backed; the host mediates tool dispatch and generation sessions. No standalone host adapter exists yet \u2014 execution is delegated through the agent-tool registration service."
   },
   {
     "kind": "agentTool",
@@ -45,7 +45,7 @@
     "declarationMaturity": "schema-backed",
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/agentTools.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/agentToolAdapter.ts",
     "requiresTrustedCode": true,
@@ -84,7 +84,7 @@
     "declarationMaturity": "schema-backed",
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/assetDetailSections.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/metadataAdapter.ts",
     "requiresTrustedCode": false,
@@ -124,7 +124,7 @@
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
       "src/sdk/video/timeline/clipTypes.ts",
-      "src/sdk/index.ts"
+      "src/sdk/video/families/automation.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/clipTypeAdapter.ts",
     "requiresTrustedCode": false,
@@ -163,7 +163,8 @@
     "declarationMaturity": "schema-backed",
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
-      "src/sdk/video/timeline/clipTypes.ts"
+      "src/sdk/video/timeline/clipTypes.ts",
+      "src/sdk/video/families/clipTypeContributions.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/clipTypeAdapter.ts",
     "requiresTrustedCode": false,
@@ -202,7 +203,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "host-integrated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/commands.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
     "requiresTrustedCode": false,
@@ -241,7 +242,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "host-integrated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/contextMenuItems.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
     "requiresTrustedCode": false,
@@ -280,7 +281,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "host-integrated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/manifest.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
     "requiresTrustedCode": false,
@@ -319,7 +320,7 @@
     "declarationMaturity": "schema-backed",
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/effects.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/effectAdapter.ts",
     "requiresTrustedCode": false,
@@ -358,7 +359,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "host-integrated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/manifest.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
     "requiresTrustedCode": false,
@@ -397,7 +398,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "host-integrated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/keybindings.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/commandAdapter.ts",
     "requiresTrustedCode": false,
@@ -436,7 +437,7 @@
     "declarationMaturity": "schema-backed",
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
-      "src/sdk/index.ts",
+      "src/sdk/video/families/metadataFacet.ts",
       "src/sdk/video/assets/metadata.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/metadataAdapter.ts",
@@ -476,6 +477,8 @@
     "declarationMaturity": "typed",
     "executionMaturity": "delegated",
     "sdkModules": [
+      "src/sdk/video/families/outputFormats.ts",
+      "src/sdk/video/exports/outputFormats.ts",
       "src/sdk/index.ts"
     ],
     "hostAdapter": null,
@@ -515,7 +518,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "host-integrated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/manifest.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
     "requiresTrustedCode": false,
@@ -554,7 +557,8 @@
     "declarationMaturity": "schema-backed",
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/parsers.ts",
+      "src/sdk/video/assets/parsers.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/parserAdapter.ts",
     "requiresTrustedCode": false,
@@ -593,7 +597,7 @@
     "declarationMaturity": "typed",
     "executionMaturity": "delegated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/processes.ts"
     ],
     "hostAdapter": null,
     "requiresTrustedCode": true,
@@ -623,7 +627,7 @@
       "milestone": "M12",
       "bridged": false
     },
-    "hostIntegrationNotes": "Process contributions declare trusted local process descriptors with installation posture, lifecycle, and capability requirements. Execution is reserved for M12 — processes are declarable in manifests but not yet bridged for runtime. Evidence: ProcessContribution interface, ProcessSpec, ProcessLifecycleState types; contributionKindNotYetBridged returns M12."
+    "hostIntegrationNotes": "Process contributions declare trusted local process descriptors with installation posture, lifecycle, and capability requirements. Execution is reserved for M12 \u2014 processes are declarable in manifests but not yet bridged for runtime. Evidence: ProcessContribution interface, ProcessSpec, ProcessLifecycleState types; contributionKindNotYetBridged returns M12."
   },
   {
     "kind": "searchProvider",
@@ -632,7 +636,7 @@
     "declarationMaturity": "typed",
     "executionMaturity": "delegated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/searchProviders.ts"
     ],
     "hostAdapter": null,
     "requiresTrustedCode": false,
@@ -672,7 +676,7 @@
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
       "src/sdk/video/rendering/capabilities.ts",
-      "src/sdk/index.ts"
+      "src/sdk/video/families/shaders.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/shaderAdapter.ts",
     "requiresTrustedCode": false,
@@ -711,7 +715,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "public-supported",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/manifest.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
     "requiresTrustedCode": false,
@@ -750,7 +754,7 @@
     "declarationMaturity": "documented",
     "executionMaturity": "host-integrated",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/manifest.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/slotAdapter.ts",
     "requiresTrustedCode": false,
@@ -789,7 +793,7 @@
     "declarationMaturity": "schema-backed",
     "executionMaturity": "runtime-bridged",
     "sdkModules": [
-      "src/sdk/index.ts"
+      "src/sdk/video/families/transitions.ts"
     ],
     "hostAdapter": "src/video-editor/adapters/transitionAdapter.ts",
     "requiresTrustedCode": false,

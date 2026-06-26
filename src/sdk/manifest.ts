@@ -13,11 +13,11 @@
  */
 
 import type { ExtensionId, ContributionId } from './ids';
-import type { VideoContributionKind } from '@/sdk/video/families/kinds';
+import type { VideoContributionKind } from '@/sdk/video/families/contributionKinds';
 import {
   VIDEO_CONTRIBUTION_KINDS,
   VIDEO_CONTRIBUTION_KINDS_SET,
-} from '@/sdk/video/families/kinds';
+} from '@/sdk/video/families/contributionKinds';
 import type { ExtensionDiagnostic } from './diagnostics';
 
 // ---------------------------------------------------------------------------
@@ -27,7 +27,7 @@ import type { ExtensionDiagnostic } from './diagnostics';
 /**
  * Known contribution kinds. Reserved/inactive kinds are validated but not bridged.
  *
- * Alias of {@link VideoContributionKind} from `src/sdk/video/families/kinds.ts`,
+ * Alias of {@link VideoContributionKind} from `src/sdk/video/families/contributionKinds.ts`,
  * which is the single source of truth for the kind union.
  */
 export type ContributionKind = VideoContributionKind;
@@ -98,7 +98,7 @@ export interface ExtensionContribution {
  * TypeScript type system alone.
  *
  * Re-export of {@link VIDEO_CONTRIBUTION_KINDS} from
- * `src/sdk/video/families/kinds.ts`.
+ * `src/sdk/video/families/contributionKinds.ts`.
  */
 export const KNOWN_CONTRIBUTION_KINDS: readonly ContributionKind[] = VIDEO_CONTRIBUTION_KINDS;
 
