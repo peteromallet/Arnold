@@ -1,7 +1,7 @@
 base_branch: main
 
 anchors:
-  north_star: NORTHSTAR.md
+  north_star: .megaplan/briefs/workflow-manifest-runtime/NORTHSTAR.md
 
 milestones:
   - label: m1-baseline-manifest-contract
