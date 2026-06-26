@@ -39,6 +39,7 @@ LARGE_REVIEW_DIFF_MAX_BYTES = 120 * 1024
 LARGE_REVIEW_DIFF_MAX_FILES = 40
 COMPACT_REVIEW_PLAN_MAX_CHARS = 20_000
 COMPACT_REVIEW_CONTEXT_MAX_CHARS = 60_000
+REVIEW_EVIDENCE_PROMPT_MAX_CHARS = 100_000
 
 
 def _with_anchor_block(prompt: str, state: PlanState, plan_dir: Path, *, audience: str) -> str:
@@ -101,18 +102,23 @@ def _review_evidence_block(plan_dir: Path) -> str:
             "Fresh review-time evidence (`review_evidence.json`): degraded. "
             f"{degraded_reason} Treat stale execution-time artifacts as advisory and inspect the repository directly."
         )
+    evidence_text = json_dump(review_evidence).strip()
+    # Review evidence can enumerate thousands of changed files; keep the prompt
+    # inside model input budgets by truncating the embedded dump. The reviewer
+    # still has the full file on disk and is instructed to use repo tools.
+    evidence_text = _truncate_prompt_block(evidence_text, limit=REVIEW_EVIDENCE_PROMPT_MAX_CHARS)
     if degraded_reason:
         return textwrap.dedent(
             f"""
             Fresh review-time evidence (`review_evidence.json`): degraded.
             {degraded_reason}
-            {json_dump(review_evidence).strip()}
+            {evidence_text}
             """
         ).strip()
     return textwrap.dedent(
         f"""
         Fresh review-time evidence (`review_evidence.json`):
-        {json_dump(review_evidence).strip()}
+        {evidence_text}
         """
     ).strip()
 
