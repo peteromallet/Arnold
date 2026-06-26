@@ -316,23 +316,33 @@ def _audit_capture_payload(
     payload: Mapping[str, Any],
     contract: ContractResult,
 ) -> None:
+    step = _optional_str(
+        invocation.metadata.get("compatibility_validation_step")
+        or invocation.metadata.get("validation_step")
+    )
     schema = invocation.metadata.get("capture_schema") or invocation.metadata.get("output_schema")
     if not isinstance(schema, Mapping):
         schema = invocation.metadata.get("schema")
     if not isinstance(schema, Mapping):
         schema = _capture_schema_for_invocation(invocation)
+    normalized_payload: Mapping[str, Any] = payload
     if isinstance(schema, Mapping):
-        payload = _normalize_native_capture_payload(invocation, dict(payload))
-        result = validate_payload_against_schema(payload, schema)
+        normalized_payload = _normalize_native_capture_payload(invocation, dict(payload))
+        result = validate_payload_against_schema(normalized_payload, schema)
     else:
         result = validate_contract_result(contract, _capture_outcome_schema())
-    if result.ok:
-        return
-    details = "; ".join(
-        f"{diagnostic.code} at {diagnostic.payload_pointer or '/'}: {diagnostic.message}"
-        for diagnostic in result.diagnostics
-    )
-    raise ModelStructuralAuditError(details)
+    if not result.ok:
+        details = "; ".join(
+            f"{diagnostic.code} at {diagnostic.payload_pointer or '/'}: {diagnostic.message}"
+            for diagnostic in result.diagnostics
+        )
+        raise ModelStructuralAuditError(details)
+    if step == "plan":
+        plan_text = normalized_payload.get("plan")
+        if isinstance(plan_text, str):
+            issues = validate_plan_structure(plan_text)
+            if PLAN_STRUCTURE_REQUIRED_STEP_ISSUE in issues:
+                raise ModelStructuralAuditError(PLAN_STRUCTURE_REQUIRED_STEP_ISSUE)
 
 
 def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, Any] | None:

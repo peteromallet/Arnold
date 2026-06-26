@@ -633,10 +633,11 @@ def _validate_generated_plan_or_raise(
 ) -> list[str]:
     structure_warnings = validate_plan_structure(plan_text)
     if PLAN_STRUCTURE_REQUIRED_STEP_ISSUE in structure_warnings:
+        retry_next = [step] if step in {"plan", "revise"} else infer_next_steps(state)
         error = CliError(
             "structure_error",
             f"{step.title()} output failed structural validation: {PLAN_STRUCTURE_REQUIRED_STEP_ISSUE}",
-            valid_next=infer_next_steps(state),
+            valid_next=retry_next,
             extra={"raw_output": worker.raw_output},
         )
         record_step_failure(

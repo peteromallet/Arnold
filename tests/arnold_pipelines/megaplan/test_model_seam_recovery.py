@@ -2,8 +2,16 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from arnold.pipeline import StepInvocation
-from arnold_pipelines.megaplan.model_seam import capture_step_output
+from arnold_pipelines.megaplan.model_seam import (
+    ModelStructuralAuditError,
+    audit_step_payload,
+    capture_step_output,
+)
+from arnold_pipelines.megaplan.orchestration.plan_structure import PLAN_STRUCTURE_REQUIRED_STEP_ISSUE
+from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.workers import WorkerResult
 
 
 def test_plan_recovery_prefers_later_structured_plan_over_summary_payload(
@@ -72,3 +80,59 @@ def test_plan_recovery_prefers_later_structured_plan_over_summary_payload(
         "model_step_output",
         "codex_recovery:raw_output",
     )
+
+
+def test_plan_audit_rejects_numbered_list_without_step_headings() -> None:
+    payload = {
+        "plan": (
+            "Implement in seven scoped slices.\n\n"
+            "1. Add `vibecomfy/agent/server.py`.\n"
+            "2. Add a Python-callable dispatcher."
+        ),
+        "questions": [],
+        "success_criteria": [
+            {
+                "criterion": "The endpoint is implemented",
+                "priority": "must",
+                "requires": ["read_files"],
+            }
+        ],
+        "assumptions": [],
+    }
+
+    with pytest.raises(ModelStructuralAuditError) as exc:
+        audit_step_payload("plan", payload)
+
+    assert PLAN_STRUCTURE_REQUIRED_STEP_ISSUE in str(exc.value)
+
+
+def test_plan_structure_error_valid_next_retries_plan(monkeypatch, tmp_path) -> None:
+    from arnold_pipelines.megaplan.handlers import shared
+
+    monkeypatch.setattr(shared, "record_step_failure", lambda *args, **kwargs: None)
+    state = {
+        "current_state": "planned",
+        "iteration": 1,
+        "plan_versions": [{"version": 1, "file": "plan_v1.md", "hash": "old"}],
+        "history": [],
+        "meta": {},
+        "config": {},
+    }
+    worker = WorkerResult(
+        payload={},
+        raw_output='{"plan": "1. Do the thing"}',
+        duration_ms=5,
+        cost_usd=0.0,
+    )
+
+    with pytest.raises(CliError) as exc:
+        shared._validate_generated_plan_or_raise(
+            plan_dir=tmp_path,
+            state=state,
+            step="plan",
+            iteration=1,
+            worker=worker,
+            plan_text="1. Do the thing\n2. Run tests\n",
+        )
+
+    assert exc.value.valid_next == ["plan"]
