@@ -81,121 +81,6 @@
       "items": {
         "type": "string"
       }
-    },
-    "changed_surfaces": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "test_blast_radius": {
-      "type": "object",
-      "properties": {
-        "strategy": {
-          "type": "string",
-          "enum": [
-            "scoped",
-            "full",
-            "none"
-          ]
-        },
-        "confidence": {
-          "type": "string",
-          "enum": [
-            "high",
-            "medium",
-            "low"
-          ]
-        },
-        "selectors": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "kind": {
-                "type": "string"
-              },
-              "value": {
-                "type": "string"
-              },
-              "reason": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "kind",
-              "value",
-              "reason"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "changed_surfaces": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "always_run": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "full_suite_fallback": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "rationale": {
-          "type": "string"
-        },
-        "import_graph": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "reason": {
-              "type": "string"
-            },
-            "files_considered": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "tests_added": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          },
-          "required": [
-            "enabled",
-            "reason",
-            "files_considered",
-            "tests_added"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "strategy",
-        "confidence",
-        "selectors",
-        "changed_surfaces",
-        "always_run",
-        "full_suite_fallback",
-        "rationale",
-        "import_graph"
-      ],
-      "additionalProperties": false
     }
   },
   "required": [
@@ -204,9 +89,7 @@
     "flags_addressed",
     "assumptions",
     "success_criteria",
-    "questions",
-    "changed_surfaces",
-    "test_blast_radius"
+    "questions"
   ],
   "additionalProperties": false
 }
