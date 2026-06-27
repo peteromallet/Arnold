@@ -30,6 +30,11 @@ def _clean_env(monkeypatch):
         "OPENROUTER_API_KEY", "OPENAI_BASE_URL", "OPENAI_API_KEY",
         "OPENAI_MODEL", "LLM_MODEL", "NOUS_INFERENCE_BASE_URL",
         "ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+        "KIMI_API_KEY", "DEEPSEEK_API_KEY", "MINIMAX_API_KEY",
+        "MINIMAX_CN_API_KEY", "GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY",
+        "MIMO_API_KEY", "FIREWORKS_API_KEY", "FIREWORKS_AI_API_KEY",
+        "AI_GATEWAY_API_KEY", "DASHSCOPE_API_KEY",
+        "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN",
         # Per-task provider/model/direct-endpoint overrides
         "AUXILIARY_VISION_PROVIDER", "AUXILIARY_VISION_MODEL",
         "AUXILIARY_VISION_BASE_URL", "AUXILIARY_VISION_API_KEY",
@@ -513,6 +518,36 @@ class TestExplicitProviderRouting:
             mock_openai.return_value = MagicMock()
             client, model = resolve_provider_client("deepseek")
             assert client is not None
+
+    def test_explicit_deepseek_falls_back_to_kimi_when_deepseek_key_missing(self, monkeypatch):
+        monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+
+        with patch("agent.auxiliary_client.OpenAI") as mock_openai:
+            mock_openai.return_value = MagicMock()
+            client, model = resolve_provider_client("deepseek", model="deepseek-v4-pro")
+
+        assert client is not None
+        assert model == "kimi-k2-turbo-preview"
+        assert getattr(client, "_resolved_provider", None) == "kimi-coding"
+        assert mock_openai.call_args.kwargs["api_key"] == "kimi-test-key"
+
+    def test_explicit_codex_falls_back_to_kimi_when_oauth_unavailable(self, monkeypatch):
+        monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
+
+        with (
+            patch(
+                "hermes_cli.auth.resolve_codex_runtime_credentials",
+                side_effect=RuntimeError("refresh failed"),
+            ),
+            patch("agent.auxiliary_client.OpenAI") as mock_openai,
+        ):
+            mock_openai.return_value = MagicMock()
+            client, model = resolve_provider_client("openai-codex", raw_codex=True)
+
+        assert client is not None
+        assert model == "kimi-k2-turbo-preview"
+        assert getattr(client, "_resolved_provider", None) == "kimi-coding"
+        assert mock_openai.call_args.kwargs["api_key"] == "kimi-test-key"
 
     def test_explicit_zai(self, monkeypatch):
         """provider='zai' should use GLM_API_KEY."""

@@ -111,7 +111,7 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"' in text
     assert 'PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"' in text
     assert 'MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"' in text
-    assert 'CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-1800}"' in text
+    assert 'CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-7200}"' in text
     assert '--max_turns="$MAX_TURNS"' in text
     assert 'CODEX_PROMPT="$RUN_DIR/codex-repair-prompt.md"' in text
     assert 'CODEX_LOG="$RUN_DIR/codex-repair.log"' in text
