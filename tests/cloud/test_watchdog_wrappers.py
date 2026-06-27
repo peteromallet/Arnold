@@ -154,6 +154,19 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert text.index("launching Codex repair subagent") < text.index("launching Kimi goal operator")
 
 
+def test_kimi_goal_operator_reaps_run_agent_child_on_exit() -> None:
+    text = _wrapper("arnold-kimi-goal-operator")
+
+    assert "set -m" in text
+    assert "CHILD_PIDS=()" in text
+    assert "cleanup_children()" in text
+    assert "trap cleanup_children EXIT INT TERM HUP" in text
+    assert 'kill -- -"$pgid"' in text
+    assert 'kill -9 "$pid"' in text
+    assert ') >> "$LOG" 2>&1 &' in text
+    assert 'wait "$AGENT_PID"' in text
+
+
 def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() -> None:
     wrapper = _wrapper("arnold-kimi-goal-operator")
     principles = _wrapper("principles.md")
