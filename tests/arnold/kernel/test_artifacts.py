@@ -13,6 +13,7 @@ from arnold.kernel import (
     ProvenanceParent,
     RetentionPin,
     RetentionPolicy,
+    derive_pipeline_identity,
     latest_version,
     next_version_path,
     schema_hash,
@@ -160,6 +161,71 @@ def test_provenance_parent_artifact_id_participates_in_hash() -> None:
     )
 
     assert base.provenance_hash != changed_parent.provenance_hash
+
+
+def test_generated_artifact_provenance_requires_complete_workflow_identity() -> None:
+    manifest_hash = "sha256:" + "a" * 64
+    pipeline_identity = derive_pipeline_identity("planning", manifest_hash)
+
+    provenance = GeneratedArtifactProvenance(
+        generator_module="arnold.docs.generator",
+        generator_source_hash="sha256:" + "3" * 64,
+        manifest_contract_version="arnold.workflow.manifest.v1",
+        generated_at="2026-06-22T00:00:00Z",
+        workflow_alias="planning",
+        manifest_hash=manifest_hash,
+        pipeline_identity=pipeline_identity,
+    )
+
+    assert provenance.workflow_alias == "planning"
+    assert provenance.manifest_hash == manifest_hash
+    assert provenance.pipeline_identity == pipeline_identity
+    with pytest.raises(ValueError, match="all present or all absent"):
+        GeneratedArtifactProvenance(
+            generator_module="arnold.docs.generator",
+            generator_source_hash="sha256:" + "3" * 64,
+            manifest_contract_version="arnold.workflow.manifest.v1",
+            generated_at="2026-06-22T00:00:00Z",
+            workflow_alias="planning",
+        )
+    with pytest.raises(ValueError, match="pipeline_identity"):
+        GeneratedArtifactProvenance(
+            generator_module="arnold.docs.generator",
+            generator_source_hash="sha256:" + "3" * 64,
+            manifest_contract_version="arnold.workflow.manifest.v1",
+            generated_at="2026-06-22T00:00:00Z",
+            workflow_alias="planning",
+            manifest_hash=manifest_hash,
+            pipeline_identity=derive_pipeline_identity("other", manifest_hash),
+        )
+
+
+def test_workflow_identity_participates_in_generated_artifact_hash_only_when_present() -> None:
+    manifest_hash = "sha256:" + "a" * 64
+    package_only = GeneratedArtifactProvenance(
+        generator_module="arnold.docs.generator",
+        generator_source_hash="sha256:" + "3" * 64,
+        manifest_contract_version="arnold.workflow.manifest.v1",
+        generated_at="2026-06-22T00:00:00Z",
+    )
+    package_only_again = GeneratedArtifactProvenance(
+        generator_module="arnold.docs.generator",
+        generator_source_hash="sha256:" + "3" * 64,
+        manifest_contract_version="arnold.workflow.manifest.v1",
+        generated_at="2026-06-22T00:00:00Z",
+    )
+    workflow_bound = GeneratedArtifactProvenance(
+        generator_module=package_only.generator_module,
+        generator_source_hash=package_only.generator_source_hash,
+        manifest_contract_version=package_only.manifest_contract_version,
+        generated_at=package_only.generated_at,
+        workflow_alias="planning",
+        manifest_hash=manifest_hash,
+        pipeline_identity=derive_pipeline_identity("planning", manifest_hash),
+    )
+
+    assert package_only.provenance_hash == package_only_again.provenance_hash
+    assert workflow_bound.provenance_hash != package_only.provenance_hash
 
 
 def test_artifact_root_rejects_invalid_logical_ids_and_paths() -> None:

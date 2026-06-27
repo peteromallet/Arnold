@@ -6,10 +6,15 @@ non-executing path enumeration).  The core primitives are:
 * :class:`Manifest` — static metadata extracted from a pipeline module
   without importing.
 * :class:`ManifestError` — loud rejection when manifest reading fails.
+* :func:`derive_runtime_pipeline_id` — derive runtime discovery identity only
+  from workflow alias plus compiled manifest hash.
 * :func:`read_manifest` — parse a pipeline module's source to extract
   metadata constants.
 * :class:`TrustGrade` — path-derived trust classification.
 * :func:`classify` — derive trust tier from a module file path.
+* :class:`WorkflowTrustDecision` — manifest-backed workflow trust decision.
+* :func:`classify_workflow_trust` — derive runtime trust from alias plus
+  manifest hash.
 
 Every Megaplan opinion (scan roots, known capabilities, blessed
 allowlist defaults, budget authority) is injected by the consumer
@@ -21,12 +26,17 @@ from arnold.pipeline.discovery.manifest import (
     REQUIRED_FIELDS,
     Manifest,
     ManifestError,
+    derive_runtime_pipeline_id,
     read_manifest,
 )
 from arnold.pipeline.discovery.trust import (
     TrustGrade,
+    WorkflowTrustDecision,
+    WorkflowTrustEvidenceKind,
     classify,
+    classify_workflow_trust,
     derive_tenant_id,
+    derive_workflow_tenant_id,
 )
 
 __all__ = [
@@ -34,8 +44,13 @@ __all__ = [
     "REQUIRED_FIELDS",
     "Manifest",
     "ManifestError",
+    "derive_runtime_pipeline_id",
     "read_manifest",
     "TrustGrade",
+    "WorkflowTrustDecision",
+    "WorkflowTrustEvidenceKind",
     "classify",
+    "classify_workflow_trust",
     "derive_tenant_id",
+    "derive_workflow_tenant_id",
 ]

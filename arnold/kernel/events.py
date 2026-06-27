@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from enum import StrEnum
 from typing import Any, Mapping, TypeVar, get_args, get_origin, get_type_hints
 
+from arnold.kernel.ids import derive_pipeline_identity
+
 
 class EventFamily(StrEnum):
     """Neutral event families emitted by later execution."""
@@ -25,6 +27,12 @@ class ManifestReference:
     alias: str
     manifest_hash: str
     uri: str | None = None
+
+    @property
+    def pipeline_identity(self) -> str:
+        """Canonical runtime identity derived from alias and manifest hash."""
+
+        return derive_pipeline_identity(self.alias, self.manifest_hash)
 
 
 @dataclass(frozen=True)
