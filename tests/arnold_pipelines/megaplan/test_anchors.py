@@ -361,6 +361,29 @@ def test_parser_exposes_north_star_and_anchor_show() -> None:
     assert no_anchor_args.missing_anchor_ack == "Mechanical chain"
 
 
+def test_chain_status_enforces_anchor_requirement_like_start(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from arnold_pipelines.megaplan.chain import run_chain_cli
+
+    idea = tmp_path / "m1.md"
+    idea.write_text("# M1\n", encoding="utf-8")
+    chain_path = tmp_path / "chain.yaml"
+    chain_path.write_text(
+        "base_branch: main\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: m1.md\n",
+        encoding="utf-8",
+    )
+    args = build_parser().parse_args(["chain", "status", "--spec", str(chain_path)])
+
+    rc = run_chain_cli(tmp_path, args)
+
+    captured = capsys.readouterr()
+    assert rc != 0
+    assert '"error": "invalid_spec"' in captured.out
+    assert "requires a North Star" in captured.out
+
+
 def test_anchor_docs_and_templates_stay_discoverable() -> None:
     root = Path(__file__).resolve().parents[3]
     paths = [

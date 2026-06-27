@@ -430,11 +430,6 @@ session_health_status() {
     return 0
   fi
 
-  if ps -eo args | grep -E "[p]ython[0-9.]* -m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
-    echo "alive"
-    return 0
-  fi
-
   local pane log_path
   pane="$(tmux capture-pane -pt "$session" -S -120 2>/dev/null || true)"
   if printf '%s\n' "$pane" | grep -Eq 'cmd exited rc=[1-9]|error retry [0-9]+/[0-9]+'; then
@@ -447,8 +442,13 @@ session_health_status() {
   else
     log_path="$workspace/.megaplan/cloud-chain-${session}.log"
   fi
-  if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
+  if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "invalid_spec"|invalid_spec|"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
     echo "chain_log_failure"
+    return 0
+  fi
+
+  if ps -eo args | grep -E "[p]ython[0-9.]* -m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+    echo "alive"
     return 0
   fi
 
