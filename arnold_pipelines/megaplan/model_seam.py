@@ -373,6 +373,8 @@ def _normalize_native_capture_payload(
         invocation.metadata.get("compatibility_validation_step")
         or invocation.metadata.get("validation_step")
     )
+    if step == "plan":
+        return _normalize_plan_capture_payload(payload)
     if step == "review":
         return _normalize_review_capture_payload(payload)
     if step == "execute":
