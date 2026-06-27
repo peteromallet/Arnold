@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from arnold_pipelines.megaplan.auto import DriverOutcome
-from arnold_pipelines.megaplan.chain import _drive_plan
+from arnold_pipelines.megaplan.chain import _drive_plan, _init_plan, _plan_state
 from arnold_pipelines.megaplan.chain.git_ops import (
     _clean_worktree_for_chain,
     _commit_and_push_phase,
@@ -222,6 +223,46 @@ def test_checkout_existing_milestone_reconciles_with_refreshed_base(
     local_branch = _git(runner, "rev-parse", "HEAD").stdout.strip()
     assert remote_branch == local_branch
     assert any("git rebase origin/native-python-working-tree -> rc=0" in m for m in messages)
+
+
+def test_chain_child_python_commands_use_safe_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    idea = root / "idea.md"
+    idea.write_text("do the thing\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        if "init" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"plan": "plan-x"}\n', "")
+        if "status" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"state": "planned"}\n', "")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.subprocess.run",
+        fake_run,
+    )
+
+    assert (
+        _init_plan(
+            root,
+            str(idea),
+            robustness="thorough",
+            auto_approve=True,
+            phase_model=["prep=hermes:kimi:kimi-k2.7-code"],
+            writer=lambda _message: None,
+        )
+        == "plan-x"
+    )
+    assert _plan_state(root, "plan-x", timeout=30) == "planned"
+
+    for cmd in calls:
+        assert cmd[:3] == [sys.executable, "-P", "-m"]
 
 
 def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
