@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
@@ -88,6 +89,14 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help=(
             "Pass --no-git-refresh to the remote `python -m arnold_pipelines.megaplan chain start`, "
             "skipping the automatic base-branch refresh."
+        ),
+    )
+    chain_parser.add_argument(
+        "--no-editable-install-sync",
+        action="store_true",
+        help=(
+            "Skip the pre-launch push that merges the current local HEAD into "
+            "the cloud editable install branch."
         ),
     )
     _add_repo_override_args(chain_parser)
@@ -538,6 +547,161 @@ def _remote_repo_head(provider, workspace: str) -> dict[str, str | None]:
     }
 
 
+def _git_run(
+    root: Path,
+    args: list[str],
+    *,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    if check and proc.returncode != 0:
+        raise CliError(
+            "editable_install_sync_failed",
+            f"git {' '.join(args)} failed: {(proc.stderr or proc.stdout or '').strip()}",
+            extra={
+                "command": ["git", *args],
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+        )
+    return proc
+
+
+def _sync_launch_head_to_editable_install_branch(
+    root: Path,
+    *,
+    branch: str = "editible-install",
+    remote: str = "origin",
+) -> dict[str, Any]:
+    """Merge the local launch HEAD into the cloud editable-install branch.
+
+    The cloud worker refreshes `/workspace/arnold` from `editible-install`.
+    Before launching any new cloud chain, publish the code currently being used
+    to launch the run into that branch as well.  Use a temporary worktree so the
+    caller's active branch and working tree are not disturbed.
+    """
+    root = root.expanduser().resolve()
+    inside = _git_run(root, ["rev-parse", "--is-inside-work-tree"])
+    if inside.stdout.strip() != "true":
+        raise CliError(
+            "editable_install_sync_failed",
+            f"cloud chain must be launched from a git worktree to sync {branch}",
+        )
+    dirty = _git_run(root, ["status", "--porcelain"]).stdout.strip()
+    if dirty:
+        raise CliError(
+            "editable_install_sync_dirty",
+            (
+                f"Cannot sync cloud editable install branch {branch!r}: "
+                "the launch checkout has uncommitted changes. Commit or stash them, "
+                "or pass --no-editable-install-sync."
+            ),
+            extra={"dirty": dirty.splitlines()},
+        )
+
+    launch_head = _git_run(root, ["rev-parse", "HEAD"]).stdout.strip()
+    launch_branch = _git_run(root, ["branch", "--show-current"], check=False).stdout.strip() or None
+    _git_run(root, ["fetch", remote, branch], check=False)
+    remote_ref = f"{remote}/{branch}"
+    remote_exists = _git_run(root, ["rev-parse", "--verify", remote_ref], check=False).returncode == 0
+    if remote_exists:
+        remote_head = _git_run(root, ["rev-parse", remote_ref]).stdout.strip()
+        contains_launch = _git_run(
+            root,
+            ["merge-base", "--is-ancestor", launch_head, remote_ref],
+            check=False,
+        ).returncode == 0
+        if contains_launch:
+            return {
+                "status": "already_contains",
+                "branch": branch,
+                "remote": remote,
+                "launch_head": launch_head,
+                "launch_branch": launch_branch,
+                "editable_head": remote_head,
+            }
+    else:
+        remote_head = None
+
+    with TemporaryDirectory(prefix="editable-install-sync-") as tmp:
+        worktree = Path(tmp) / "worktree"
+        if remote_exists:
+            _git_run(root, ["worktree", "add", "--detach", str(worktree), remote_ref])
+            _git_run(worktree, ["checkout", "-B", branch])
+            before = remote_head
+            merge = _git_run(
+                worktree,
+                [
+                    "merge",
+                    "--no-ff",
+                    "--no-edit",
+                    launch_head,
+                    "-m",
+                    f"Sync {launch_branch or launch_head[:12]} into cloud editable install",
+                ],
+                check=False,
+            )
+            if merge.returncode != 0:
+                raise CliError(
+                    "editable_install_sync_conflict",
+                    (
+                        f"Could not merge launch HEAD {launch_head[:12]} into {branch}. "
+                        "Resolve the editable-install branch manually or pass "
+                        "--no-editable-install-sync."
+                    ),
+                    extra={
+                        "branch": branch,
+                        "launch_head": launch_head,
+                        "stdout": merge.stdout,
+                        "stderr": merge.stderr,
+                    },
+                )
+            merged = merge.returncode == 0 and "Already up to date" not in (merge.stdout + merge.stderr)
+        else:
+            _git_run(root, ["worktree", "add", "--detach", str(worktree), launch_head])
+            _git_run(worktree, ["checkout", "-B", branch])
+            before = None
+            merged = False
+
+        after = _git_run(worktree, ["rev-parse", "HEAD"]).stdout.strip()
+        push = _git_run(
+            worktree,
+            ["push", "--no-verify", remote, f"HEAD:{branch}"],
+            check=False,
+        )
+        if push.returncode != 0:
+            raise CliError(
+                "editable_install_sync_failed",
+                f"Could not push {branch}: {(push.stderr or push.stdout or '').strip()}",
+                extra={
+                    "branch": branch,
+                    "launch_head": launch_head,
+                    "stdout": push.stdout,
+                    "stderr": push.stderr,
+                },
+            )
+
+    _git_run(root, ["worktree", "prune"], check=False)
+    return {
+        "status": "pushed",
+        "branch": branch,
+        "remote": remote,
+        "launch_head": launch_head,
+        "launch_branch": launch_branch,
+        "editable_head_before": before,
+        "editable_head": after,
+        "merge_commit_created": merged,
+    }
+
+
 def _tmux_launch_status(result, *, session_name: str = "megaplan-chain") -> str:
     output = f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}"
     if "already running" in output:
@@ -576,6 +740,7 @@ def _cloud_chain_launch_provenance(
     uploaded_idea_count: int,
     repo_head: dict[str, str | None],
     tmux_result,
+    editable_install_sync: dict[str, Any] | None = None,
     verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current_milestone = chain_spec.milestones[0].label if chain_spec.milestones else None
@@ -604,6 +769,7 @@ def _cloud_chain_launch_provenance(
         "megaplan": {
             "ref": spec.megaplan.ref,
             "install_source": "cloud_image_runtime",
+            "editable_install_sync": editable_install_sync or {"status": "skipped"},
         },
         "uploaded_idea_count": uploaded_idea_count,
         "tmux": {
@@ -630,6 +796,7 @@ _CHAIN_LOG_RELATIVE = ".megaplan/cloud-chain.log"
 _CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
 _CHAIN_VERIFY_ATTEMPTS = 6
 _CHAIN_VERIFY_SLEEP_SECONDS = 5
+_EDITABLE_INSTALL_BRANCH = "editible-install"
 
 
 @dataclass(frozen=True)
@@ -952,7 +1119,7 @@ def _chain_start_command(
 def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
-    ref = spec.megaplan.ref if spec is not None else "main"
+    ref = _EDITABLE_INSTALL_BRANCH
     lines = [
         "set +e",
         "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
@@ -970,7 +1137,10 @@ def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
         '  git clone --branch "$REF" "$CLONE_URL" "$SRC"',
         "fi",
         'if [ -d "$SRC/.git" ]; then',
-        '  git -C "$SRC" pull --ff-only',
+        '  git -C "$SRC" fetch origin "$REF"',
+        '  BRANCH="$(git -C "$SRC" branch --show-current)"',
+        '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
+        '  git -C "$SRC" pull --ff-only origin "$REF"',
         '  pip install -e "$SRC"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
@@ -1272,6 +1442,20 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch
+    editable_install_sync: dict[str, Any] | None
+    if bool(getattr(args, "no_editable_install_sync", False)):
+        editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
+    else:
+        editable_install_sync = _sync_launch_head_to_editable_install_branch(
+            root,
+            branch=_EDITABLE_INSTALL_BRANCH,
+        )
+        sys.stderr.write(
+            "cloud chain editable-install sync: "
+            f"status={editable_install_sync.get('status')} "
+            f"branch={editable_install_sync.get('branch')} "
+            f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
+        )
     driver_overrides: dict[str, Any] = {}
     if spec.driver is not None and spec.driver.max_stall_iterations is not None:
         chain_spec.stall_threshold = spec.driver.max_stall_iterations
@@ -1392,6 +1576,12 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         "remote_spec": launch_ctx.remote_spec_path,
         "identity_digest": launch_ctx.digest,
         "chain_slug": launch_ctx.slug,
+        "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
+        "editable_source_head": (
+            editable_install_sync.get("editable_head")
+            or editable_install_sync.get("launch_head")
+        ),
+        "editable_install_sync": editable_install_sync,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
     result = provider.ssh_exec(
@@ -1422,6 +1612,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         uploaded_idea_count=len(uploads),
         repo_head=repo_head,
         tmux_result=result,
+        editable_install_sync=editable_install_sync,
         verification=verification,
     )
     sys.stderr.write(
@@ -1443,6 +1634,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "base_branch": chain_spec.base_branch,
                 "provenance": provenance,
+                "editable_install_sync": editable_install_sync,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_session,
                 "chain_log": launch_ctx.log_path,
