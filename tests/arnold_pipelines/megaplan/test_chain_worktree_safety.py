@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan.chain.git_ops import (
     _clean_worktree_for_chain,
     _commit_and_push_phase,
     _commit_phase,
+    _checkout_milestone_branch,
     _ensure_milestone_pr,
     _require_git_worktree_root,
 )
@@ -154,6 +155,73 @@ def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
         is None
     )
     assert any("gh executable not found" in message for message in messages)
+
+
+def test_checkout_existing_milestone_reconciles_with_refreshed_base(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+    messages: list[str] = []
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "chain.yaml").write_text("profile: partnered-5\n", encoding="utf-8")
+    _git(source, "add", "chain.yaml")
+    _git(source, "commit", "-m", "base")
+    _git(source, "branch", "-M", "native-python-working-tree")
+    _git(source, "push", "-u", "origin", "native-python-working-tree")
+
+    _git(source, "checkout", "-b", "epic-m1")
+    (source / "milestone.txt").write_text("m1\n", encoding="utf-8")
+    _git(source, "add", "milestone.txt")
+    _git(source, "commit", "-m", "milestone")
+    _git(source, "push", "-u", "origin", "epic-m1")
+
+    _git(source, "checkout", "native-python-working-tree")
+    (source / "chain.yaml").write_text(
+        "profile: hermes:kimi:kimi-k2.7-code\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", "chain.yaml")
+    _git(source, "commit", "-m", "route through kimi")
+    _git(source, "push", "origin", "native-python-working-tree")
+
+    _git(
+        tmp_path,
+        "clone",
+        "--branch",
+        "native-python-working-tree",
+        str(origin),
+        str(runner),
+    )
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+
+    _checkout_milestone_branch(
+        runner,
+        "epic-m1",
+        base_branch="native-python-working-tree",
+        writer=messages.append,
+        from_origin=True,
+    )
+
+    assert _git(runner, "branch", "--show-current").stdout.strip() == "epic-m1"
+    assert "hermes:kimi:kimi-k2.7-code" in (runner / "chain.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert (runner / "milestone.txt").read_text(encoding="utf-8") == "m1\n"
+    remote_branch = _git(
+        runner,
+        "rev-parse",
+        "origin/epic-m1",
+    ).stdout.strip()
+    local_branch = _git(runner, "rev-parse", "HEAD").stdout.strip()
+    assert remote_branch == local_branch
+    assert any("git rebase origin/native-python-working-tree -> rc=0" in m for m in messages)
 
 
 def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(

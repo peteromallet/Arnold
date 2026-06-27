@@ -347,12 +347,94 @@ def _checkout_milestone_branch(
     if _compat()._remote_branch_exists(root, branch, writer=writer):
         _clean_worktree_for_chain(root, writer)
         _compat()._run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
+        if from_origin:
+            _compat()._run_command(
+                root,
+                ["git", "fetch", "origin", base_branch],
+                writer=writer,
+                error_code="git_branch_failed",
+            )
         _compat()._run_command(
             root,
             ["git", "checkout", "-B", branch, f"origin/{branch}"],
             writer=writer,
             error_code="git_branch_failed",
         )
+        if from_origin:
+            fork_point = f"origin/{base_branch}"
+            ancestor = _compat().subprocess.run(
+                ["git", "merge-base", "--is-ancestor", fork_point, "HEAD"],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            writer(
+                f"[chain] git merge-base --is-ancestor {fork_point} HEAD -> "
+                f"rc={ancestor.returncode}\n"
+            )
+            if ancestor.returncode == 0:
+                writer(f"[chain] {branch} already contains {fork_point}\n")
+            elif ancestor.returncode == 1:
+                rebase = _compat().subprocess.run(
+                    ["git", "rebase", fork_point],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                writer(f"[chain] git rebase {fork_point} -> rc={rebase.returncode}\n")
+                if rebase.returncode != 0:
+                    detail = (rebase.stderr or rebase.stdout or "").strip()
+                    if detail:
+                        writer(f"[chain] git rebase {fork_point} output:\n{detail}\n")
+                    abort = _compat().subprocess.run(
+                        ["git", "rebase", "--abort"],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    writer(f"[chain] git rebase --abort -> rc={abort.returncode}\n")
+                    raise CliError(
+                        "git_branch_reconcile_failed",
+                        (
+                            f"Could not rebase existing milestone branch {branch} "
+                            f"onto {fork_point}. Resolve the branch conflict before "
+                            "relaunching the chain."
+                        ),
+                        extra={
+                            "branch": branch,
+                            "fork_point": fork_point,
+                            "stdout": rebase.stdout,
+                            "stderr": rebase.stderr,
+                        },
+                    )
+                _compat()._run_command(
+                    root,
+                    ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
+                    writer=writer,
+                    error_code="git_push_failed",
+                )
+            else:
+                detail = (ancestor.stderr or ancestor.stdout or "").strip()
+                raise CliError(
+                    "git_branch_reconcile_failed",
+                    (
+                        f"Could not compare existing milestone branch {branch} "
+                        f"with {fork_point}: {detail}"
+                    ),
+                    extra={
+                        "branch": branch,
+                        "fork_point": fork_point,
+                        "returncode": ancestor.returncode,
+                        "stdout": ancestor.stdout,
+                        "stderr": ancestor.stderr,
+                    },
+                )
         return
     _clean_worktree_for_chain(root, writer)
     fork_point = base_branch
