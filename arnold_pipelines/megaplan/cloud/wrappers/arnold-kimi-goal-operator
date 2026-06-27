@@ -13,6 +13,7 @@ REMOTE_SPEC="$3"
 ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"
+PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
 MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 TIMEOUT="${KIMI_GOAL_TIMEOUT_SECS:-3600}"
@@ -83,6 +84,12 @@ capture "watchdog log" bash -lc "tail -160 /workspace/watchdog.log 2>/dev/null |
 capture "arnold source git" bash -lc "cd '$ARNOLD_SRC' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
 capture "workspace git" bash -lc "cd '$WORKSPACE' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
 
+if [[ -f "$PRINCIPLES_PATH" ]]; then
+  PRINCIPLES_TEXT="$(cat "$PRINCIPLES_PATH")"
+else
+  PRINCIPLES_TEXT="No external principles file found at $PRINCIPLES_PATH."
+fi
+
 cat > "$PROMPT" <<EOF
 # Goal
 
@@ -97,24 +104,18 @@ The user's invariant is: workflows on this Hetzner worker should never pause une
 - Arnold editable install source: $ARNOLD_SRC
 - Arnold editable install branch: $SYNC_BRANCH
 - Facts file: $FACTS
+- Principles file: $PRINCIPLES_PATH
 
-# Routing Invariant
+# Repair Principles
 
-The cloud workflow should use its chain/profile routing. For current high-tier
-cloud epics this usually means profile partnered-5 with the premium vendor set
-to codex, plus any explicit non-premium phase routes in the chain spec.
-Do not "repair" a Claude/Shannon dependency error by installing Shannon, Bun, or
-Claude dependencies unless the chain spec explicitly selects Claude. If a
-Codex-backed run falls through to Claude/Shannon, classify that as the root-cause
-routing bug and fix the profile/vendor/phase_model handling at the editable
-install root.
+$PRINCIPLES_TEXT
 
 # Required Behavior
 
 1. Read the facts file and inspect the machine/repo as needed.
 2. Determine why this run stopped or became unhealthy. Do not assume a restart is enough.
 3. Before modifying Arnold source, confirm $ARNOLD_SRC is on $SYNC_BRANCH. Do not let MEGAPLAN_REF or the active workflow workspace branch choose the editable-install branch.
-4. If there is an Arnold/cloud/watchdog/root-cause bug, use Codex from the terminal to implement a focused fix in $ARNOLD_SRC. The fix belongs in the editable install source, not only in the run workspace.
+4. If there is an Arnold/cloud/watchdog/root-cause bug that needs source changes, brief Codex from the terminal with the core issue, evidence, constraints, and plausible hypotheses. Do not prescribe the implementation; let Codex determine and apply the solution in $ARNOLD_SRC. The fix belongs in the editable install source, not only in the run workspace.
 5. Validate the fix with the smallest relevant checks. At minimum, confirm:
    - python3 -c "import arnold_pipelines.megaplan.cloud.cli"
    - python3 -c "import arnold_pipelines.megaplan.chain"
