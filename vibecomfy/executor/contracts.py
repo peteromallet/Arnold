@@ -934,11 +934,19 @@ class ReadinessReport:
 
     @property
     def has_blockers(self) -> bool:
-        """True when any readiness/runtime problem was found."""
+        """True when any readiness/runtime problem was found.
+
+        ``missing_models`` and ``missing_node_packs`` are still recorded and
+        reported (advisory) but are deliberately NOT blockers. A graph is edited
+        as a spec, and the assets it references are very often not installed on
+        the editing machine (a downloaded workflow, or a user asking the agent to
+        swap in a different model/custom node). Asset availability is a runtime
+        concern, not an edit-correctness concern, so it must not prevent
+        producing or applying an edit candidate. ``validation_errors``,
+        ``no_gpu_detected`` and explicit ``readiness_blockers`` remain blockers.
+        """
         return bool(
-            self.missing_models
-            or self.missing_node_packs
-            or self.validation_errors
+            self.validation_errors
             or self.no_gpu_detected
             or self.readiness_blockers
         )

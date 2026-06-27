@@ -791,7 +791,7 @@ class _ResolveMixin:
                     hivemind_timeout=3.0,
                     web_search_timeout=3.0,
                     registry_resolver=registry_resolver,
-                    hivemind_client=None if "messages" not in source_set else research_module._default_hivemind_client,
+                    hivemind_client=None if not source_set.intersection({"messages", "workflows"}) else research_module._default_hivemind_client,
                     web_search_client=None if "web" not in source_set else research_module._default_web_search_client,
                 )
             except Exception as exc:  # noqa: BLE001 - report query failures in-band

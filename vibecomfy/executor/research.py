@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 import logging
 import os
 import re
+import zipfile
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -52,7 +54,7 @@ LOGGER = logging.getLogger(__name__)
 
 # ── Conservative external-search defaults ────────────────────────────────────
 
-_DEFAULT_HIVEMIND_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/rest/v1/unified_feed"
+_DEFAULT_HIVEMIND_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/rest/v1/external_resources"
 _DEFAULT_HIVEMIND_KEY = "sb_publishable_O38oPBafrBoFrpi_rlWJvA_UJrulFsx"
 _DEFAULT_HIVEMIND_TIMEOUT = 5.0  # seconds
 _DEFAULT_WEB_SEARCH_URL = "https://duckduckgo.com/html/"
@@ -61,6 +63,18 @@ _DEFAULT_BRAVE_SEARCH_URL = "https://search.brave.com/search"
 _DEFAULT_WEB_CACHE_ROOT = Path(os.environ.get("VIBECOMFY_WEB_SEARCH_CACHE", "~/.cache/vibecomfy/web_search")).expanduser()
 _DEFAULT_WEB_SEARCH_TIMEOUT = 5.0  # seconds
 _DEFAULT_EXTERNAL_LIMIT = 10
+
+# ── Domain-specific external-workflow extraction limits ──────────────────────
+
+_MAX_EXTERNAL_JSON_BYTES = 5 * 1024 * 1024  # 5 MB
+_MAX_EXTERNAL_ZIP_BYTES = 20 * 1024 * 1024  # 20 MB
+_ALLOWED_EXTERNAL_WORKFLOW_HOSTS = frozenset({
+    "civitai.com",
+    "openart.ai",
+    "runcomfy.com",
+    "www.runcomfy.com",
+})
+
 WORKFLOW_RESEARCH_GUIDANCE = (
     "Workflow/template exploration: use `vibecomfy workflows list --ready` to see ready templates; "
     "explore or copy ready template `.py` representations with "
@@ -104,6 +118,76 @@ _SEARCH_STOPWORDS = {
     "what",
     "whats",
     "with",
+}
+
+# Extra words to drop when degrading a Hivemind query after a statement-timeout.
+# These are generic classifier/task words that widen the ILIKE search without
+# improving recall and can push the Supabase/PostgREST query over the statement
+# timeout (HTTP 500 with Postgres SQLSTATE 57014).
+_HIVEMIND_FALLBACK_STOPWORDS = {
+    "research",
+    "goal",
+    "find",
+    "finding",
+    "working",
+    "work",
+    "include",
+    "including",
+    "required",
+    "requires",
+    "custom",
+    "nodes",
+    "node",
+    "checkpoint",
+    "checkpoints",
+    "model",
+    "models",
+    "loader",
+    "loaders",
+    "latent",
+    "sampling",
+    "setup",
+    "setups",
+    "frame",
+    "frames",
+    "generate",
+    "generating",
+    "generation",
+    "needed",
+    "using",
+    "use",
+    "used",
+    # Action verbs that describe the edit intent but carry no workflow identity.
+    "switch",
+    "switching",
+    "switches",
+    "change",
+    "changing",
+    "convert",
+    "converting",
+    "make",
+    "making",
+    "apply",
+    "applying",
+    "set",
+    "setting",
+    "add",
+    "adding",
+    "remove",
+    "removing",
+    "replace",
+    "replacing",
+    # Generic domain words that are cheap for local search but expensive/noisy
+    # for a degraded Hivemind keyword query.
+    "workflow",
+    "workflows",
+    "comfy",
+    "comfyui",
+    "video",
+    "videos",
+    "image",
+    "images",
+    "audio",
 }
 
 _PATTERN_NODE_TERMS: dict[str, tuple[str, ...]] = {
@@ -237,25 +321,36 @@ def _build_summary(sources: tuple[dict[str, Any], ...]) -> str:
         if any(str(source.get("source", "")).startswith(("hivemind", "web", "comfy-registry", "git")) for source in sources)
         else "local"
     )
-    workflow_sources = [
-        source
-        for source in sources
-        if source.get("source") in {
-            "ready_template",
-            "source_workflow",
-            "external_workflow",
-            "curated",
-            "custom_node_examples",
-            "hivemind_workflow",
-        }
-        and source.get("path")
-        and str(source.get("path")).endswith(".py")
-    ]
+    workflow_sources = sorted(
+        (
+            source
+            for source in sources
+            if source.get("source") in {
+                "ready_template",
+                "source_workflow",
+                "external_workflow",
+                "curated",
+                "custom_node_examples",
+                "hivemind_workflow",
+            }
+            and (
+                (source.get("path") and str(source.get("path")).endswith(".py"))
+                or (source.get("source") == "hivemind_workflow" and source.get("url"))
+            )
+        ),
+        key=lambda s: -int(s.get("score") or 0),
+    )
     if workflow_sources:
-        workflow_refs = ", ".join(
-            f"{source.get('class_type')} ({source.get('path')})"
-            for source in workflow_sources[:3]
-        )
+        def _workflow_ref(source: dict[str, Any]) -> str:
+            path = source.get("path")
+            url = source.get("url")
+            if path and str(path).endswith(".py"):
+                return f"{source.get('class_type')} ({path})"
+            if url:
+                return f"{source.get('class_type')} ({url})"
+            return str(source.get("class_type") or "workflow")
+
+        workflow_refs = ", ".join(_workflow_ref(source) for source in workflow_sources[:3])
         return (
             f"Found {n} {result_scope} result(s): {names}. "
             f"Relevant workflow/template paths: {workflow_refs}. "
@@ -270,46 +365,51 @@ def _build_summary(sources: tuple[dict[str, Any], ...]) -> str:
 def _default_hivemind_client(query: str, timeout: float) -> dict[str, Any]:
     """Default direct-HTTP Hivemind client backed by Supabase/PostgREST.
 
-    Searches the public ``unified_feed`` table's ``title`` and ``body`` columns
-    with PostgREST ``ilike`` filters.
+    Searches the public ``external_resources`` table's ``title`` and ``body``
+    columns using case-insensitive pattern matches (``ilike``), restricted to
+    workflow resources.  ``external_resources`` is where the anonymous
+    ``contribute-resource`` edge function writes VibeComfy external workflows;
+    the old ``unified_feed`` table only indexes Discord chat messages, so
+    workflow searches against it never returned results.
 
-    Query handling intentionally favors recall: it builds an ``OR`` query from
-    important tokens plus adjacent token phrases, then ranks rows locally by
-    phrase/token matches.  This avoids the previous all-words-as-one-phrase
-    failure where ``"Hotshot XL SDXL video"`` missed rows that mention
-    ``"Hotshot XL"`` without every query word.
+    The ``title`` and ``body`` columns in ``external_resources`` are plain text,
+    not ``tsvector``, so Postgres full-text search (``fts``) matches nothing
+    there.  We instead OR ``*term*`` ilike patterns across both columns.  With
+    the small external-resources table and a tight ``limit`` this stays fast;
+    it also avoids the leading-wildcard ``ilike`` statement timeouts that hit
+    the much larger ``unified_feed`` table.
+
+    Query handling still favors recall: it ORs the most specific query tokens
+    together, then ranks rows locally by phrase/token matches so that rows
+    matching more specific terms surface first.
 
     Raises :class:`HivemindError` on any HTTP-level or timeout failure so the
     caller can convert it to a warning.
     """
-    terms = _search_terms(query)
+    terms = _hivemind_search_terms(query)
     if not terms:
         return {"results": []}
 
-    filters: list[str] = []
-    for term in terms:
-        pattern = f"*{_postgrest_literal(term)}*"
-        filters.append(f"title.ilike.{pattern}")
-        filters.append(f"body.ilike.{pattern}")
+    def _search(search_terms: list[str]) -> dict[str, Any]:
+        ilike_query = _hivemind_ilike_query(search_terms)
+        if not ilike_query:
+            return {"results": []}
 
-    params = {
-        "select": "*",
-        "or": f"({','.join(filters)})",
-        "limit": str(_DEFAULT_EXTERNAL_LIMIT * 3),
-    }
-    try:
+        params = {
+            "select": "*",
+            "or": ilike_query,
+            "kind": "eq.workflow",
+            "limit": str(_DEFAULT_EXTERNAL_LIMIT * 3),
+        }
         parsed = _hivemind_get(params, timeout=timeout)
         if isinstance(parsed, dict):
             return parsed
         rows = parsed if isinstance(parsed, list) else []
 
-        workflow_params = dict(params)
-        workflow_params["kind"] = "eq.workflow"
-        workflow_rows = _hivemind_get(workflow_params, timeout=timeout)
-        if isinstance(workflow_rows, list):
-            rows = [*workflow_rows, *rows]
-
         return {"results": _rank_hivemind_rows(rows, query)[:_DEFAULT_EXTERNAL_LIMIT]}
+
+    try:
+        return _search(terms)
     except TimeoutError as exc:
         raise HivemindError(f"Hivemind request timed out after {timeout}s") from exc
     except urllib.error.URLError as exc:
@@ -329,9 +429,15 @@ def _hivemind_get(params: dict[str, str], *, timeout: float) -> Any:
         },
         method="GET",
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode("utf-8")
-        return _parse_json_response(body)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            return _parse_json_response(body)
+    except urllib.error.HTTPError as exc:
+        body = exc.read(800).decode("utf-8", errors="replace")
+        raise HivemindError(
+            f"Hivemind HTTP error {exc.code}: {exc.reason} ({body})"
+        ) from exc
 
 
 def _parse_json_response(body: str) -> Any:
@@ -372,41 +478,176 @@ def _search_terms(query: str, *, max_terms: int = 8) -> list[str]:
     return deduped
 
 
+def _hivemind_search_terms(query: str, *, max_terms: int = 8) -> list[str]:
+    """Return Hivemind-oriented search terms for *query*.
+
+    Drops generic domain words (``video``, ``generation``, ``workflow``,
+    ``comfyui``) in addition to common stopwords so the ``ilike`` query focuses
+    on distinctive tokens such as ``Hotshot``, ``Wan``, ``LTX`` or ``VACE``.
+    If nothing specific remains, fall back to the raw tokens so the query still
+    returns results for very generic questions.
+    """
+    raw_tokens = _query_tokens(query)
+    if not raw_tokens:
+        return []
+    stop = _SEARCH_STOPWORDS | _HIVEMIND_FALLBACK_STOPWORDS
+    tokens = [t for t in raw_tokens if t.casefold() not in stop]
+    # Pure numbers like ``16`` are almost never distinctive enough to narrow
+    # Hivemind results; they tend to match many frame-count widgets and drown
+    # out the real named target (e.g. ``Hotshot``).
+    tokens = [t for t in tokens if not t.isdigit()]
+    if not tokens:
+        tokens = [t for t in raw_tokens if not t.isdigit()]
+    if not tokens:
+        tokens = raw_tokens
+
+    terms: list[str] = []
+    for size in (3, 2):
+        for i in range(0, max(0, len(tokens) - size + 1)):
+            terms.append(" ".join(tokens[i : i + size]))
+    terms.extend(tokens)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        key = term.casefold()
+        if key not in seen:
+            deduped.append(term)
+            seen.add(key)
+        if len(deduped) >= max_terms:
+            break
+    return deduped
+
+
+def _hivemind_fts_query(search_terms: list[str]) -> str | None:
+    """Build a PostgREST ``fts`` query string from a list of search terms.
+
+    Each term is split into alphanumeric tokens; common stopwords are dropped,
+    duplicates are removed, and the remaining tokens are ORed with ``|``.  This
+    produces a cheap, indexed full-text query that scales with token count
+    instead of exploding with leading-wildcard ``ilike`` filters.
+    """
+    stop = _SEARCH_STOPWORDS | _HIVEMIND_FALLBACK_STOPWORDS
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for term in search_terms:
+        for raw in term.split():
+            token = re.sub(r"[^A-Za-z0-9]", "", raw)
+            if not token:
+                continue
+            key = token.casefold()
+            if key in stop or key in seen:
+                continue
+            if len(key) == 1 and not key.isdigit():
+                # Drop isolated single letters; keep short numbers like "16".
+                continue
+            seen.add(key)
+            tokens.append(token)
+    if not tokens:
+        return None
+    return "|".join(tokens[:8])
+
+
+def _hivemind_ilike_query(search_terms: list[str]) -> str | None:
+    """Build a PostgREST ``ilike`` OR query string for title/body search.
+
+    Each term becomes ``title.ilike.*<term>*`` and ``body.ilike.*<term>*``;
+    all patterns are ORed together.  Terms are sanitized to alphanumerics plus
+    a few safe punctuation characters to avoid breaking the PostgREST syntax.
+    """
+    patterns: list[str] = []
+    seen: set[str] = set()
+    for term in search_terms:
+        for raw in term.split():
+            token = re.sub(r"[^A-Za-z0-9_-]", "", raw)
+            if not token:
+                continue
+            key = token.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            patterns.append(f"title.ilike.*{token}*")
+            patterns.append(f"body.ilike.*{token}*")
+    if not patterns:
+        return None
+    return "(" + ",".join(patterns[:16]) + ")"
+
+
 def _query_tokens(query: str) -> list[str]:
     return [m.group(0) for m in _QUERY_TOKEN_RE.finditer(query)]
 
 
-def _postgrest_literal(value: str) -> str:
-    """Sanitize a value embedded in PostgREST's filter grammar."""
-    return re.sub(r"[^A-Za-z0-9_.+ -]", " ", value).strip()
-
-
 def _rank_hivemind_rows(rows: list[Any], query: str) -> list[dict[str, Any]]:
-    query_terms = _search_terms(query, max_terms=12)
-    scored: list[tuple[int, int, dict[str, Any]]] = []
+    # Score both multi-word phrases and individual tokens so that rows returned
+    # by an OR-style full-text query still get credit for partial matches.
+    # Use the same domain-stopword filtering as the Hivemind query builder so
+    # intent words like ``switch`` do not outrank the actual named target.
+    phrase_terms = _hivemind_search_terms(query, max_terms=12)
+    token_terms = [
+        t for t in _query_tokens(query)
+        if t.casefold() not in _SEARCH_STOPWORDS | _HIVEMIND_FALLBACK_STOPWORDS
+        and len(t) > 1
+    ]
+    query_terms = list(dict.fromkeys(phrase_terms + token_terms))
+
+    # Pre-compute how many rows each term matches so rare, specific terms
+    # (e.g. ``hotshot``) outweigh common domain words (``video``,
+    # ``generation``).
+    term_doc_counts: dict[str, int] = {}
+    row_haystacks: list[tuple[int, str, str, dict[str, Any]]] = []
     for index, row in enumerate(rows):
         if not isinstance(row, dict):
             continue
         title = _first_text(row, "title", "name", "class_type")
         body = _first_text(row, "body", "description", "content", "text")
         haystack = f"{title}\n{body}".casefold()
+        row_haystacks.append((index, title, haystack, row))
+        for term in query_terms:
+            needle = term.casefold()
+            if needle and needle in haystack:
+                term_doc_counts[needle] = term_doc_counts.get(needle, 0) + 1
+
+    scored: list[tuple[int, int, dict[str, Any]]] = []
+    for index, title, haystack, row in row_haystacks:
         score = 0
         reasons: list[str] = []
         if row.get("kind") == "workflow":
             score += 25
             reasons.append("hivemind:workflow resource")
+        seen_reasons: set[str] = set()
+        url = str(row.get("url") or row.get("source_url") or "").casefold()
+        filename = url.rsplit("/", 1)[-1] if "/" in url else url
         for term in query_terms:
             needle = term.casefold()
             if not needle or needle not in haystack:
                 continue
             is_phrase = " " in term
             in_title = needle in title.casefold()
-            score += 50 if is_phrase else 20
+            in_url = needle in url
+            in_filename = needle in filename
+            doc_count = term_doc_counts.get(needle, 1)
+            # Rare terms score far more than common domain words.
+            base_score = 300 if is_phrase else 200
+            term_score = max(60, base_score // doc_count)
             if in_title:
-                score += 20
-            reasons.append(
-                f"hivemind:{'title' if in_title else 'body'} matched {term!r}"
-            )
+                term_score += 100
+            if in_url:
+                term_score += 150
+            if in_filename:
+                term_score += 100
+            score += term_score
+            if in_title:
+                location = "title"
+            elif in_filename:
+                location = "filename"
+            elif in_url:
+                location = "url"
+            else:
+                location = "body"
+            reason = f"hivemind:{location} matched {term!r}"
+            if reason not in seen_reasons:
+                seen_reasons.add(reason)
+                reasons.append(reason)
         if score <= 0:
             continue
         ranked = dict(row)
@@ -452,6 +693,66 @@ def _domain(url: str) -> str | None:
 # ── Hivemind result normalization ────────────────────────────────────────────
 
 
+def _load_corpus_workflow_schema(corpus_path: str) -> tuple[list[str], dict[str, Any]] | None:
+    """Load node-type and socket schema from a local VibeComfy workflow JSON.
+
+    The corpus stores workflows in the compiled VibeComfy format where node
+    input/output metadata lives under ``metadata._ui``.  Returns a list of
+    node class types and a ``workflow_schema`` mapping suitable for the batch
+    REPL's research output formatter.
+    """
+    from vibecomfy.utils import find_repo_root
+
+    path = find_repo_root() / corpus_path
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    nodes = data.get("nodes")
+    if not isinstance(nodes, dict):
+        return None
+
+    node_types: list[str] = []
+    workflow_schema: dict[str, Any] = {}
+    for node in nodes.values():
+        if not isinstance(node, dict):
+            continue
+        class_type = node.get("class_type")
+        if not isinstance(class_type, str) or not class_type:
+            continue
+        node_types.append(class_type)
+        if class_type in workflow_schema:
+            continue
+        ui = (node.get("metadata") or {}).get("_ui") or {}
+        inputs: list[dict[str, Any]] = ui.get("inputs") or []
+        outputs: list[dict[str, Any]] = ui.get("outputs") or []
+        input_schema: dict[str, Any] = {"required": {}, "optional": {}}
+        for inp in inputs:
+            if not isinstance(inp, dict):
+                continue
+            name = inp.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            # Treat inputs with an active link as required; widget/value inputs
+            # as optional schema hints.
+            target = "required" if inp.get("link") is not None else "optional"
+            input_schema[target][name] = {"type": inp.get("type") or "*"}
+        output_schema = [
+            {"name": out.get("name") or out.get("type") or f"out_{i}", "type": out.get("type") or "*"}
+            for i, out in enumerate(outputs)
+            if isinstance(out, dict)
+        ]
+        workflow_schema[class_type] = {
+            "input": input_schema,
+            "outputs": output_schema,
+        }
+    return node_types, workflow_schema
+
+
 def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
     """Normalize a single Hivemind result dict to the canonical source shape."""
     title = _first_text(item, "class_type", "name", "title")
@@ -473,6 +774,18 @@ def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
         or _first_text(payload, "python_path")
     )
     source = "hivemind_workflow" if item.get("kind") == "workflow" else "hivemind"
+
+    # Enrich workflow results with concrete node-type/schema evidence from the
+    # local corpus so the agent can see the actual nodes/wiring instead of just
+    # a title/description.
+    node_types: list[str] | None = None
+    workflow_schema: dict[str, Any] | None = None
+    corpus_path = _first_text(metadata, "corpus_path")
+    if source == "hivemind_workflow" and corpus_path:
+        schema_pair = _load_corpus_workflow_schema(corpus_path)
+        if schema_pair is not None:
+            node_types, workflow_schema = schema_pair
+
     return {
         "class_type": ready_id or title,
         "score": item.get("score", 0),
@@ -484,6 +797,8 @@ def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
         "path": path or None,
         "hivemind_id": item.get("item_id", item.get("id")),
         "url": url,
+        "node_types": node_types,
+        "workflow_schema": workflow_schema,
     }
 
 
@@ -922,6 +1237,152 @@ def _normalize_web_source(item: dict[str, Any], *, index: int = 0) -> dict[str, 
     }
 
 
+# ── Domain-specific external-workflow extraction ─────────────────────────────
+
+
+def _civitai_model_id_from_url(url: str) -> int | None:
+    """Return the Civitai model id from a ``/models/<id>/...`` URL."""
+    parsed = urlparse(url)
+    if parsed.netloc.casefold() not in {"civitai.com", "www.civitai.com"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2 or parts[0].casefold() != "models":
+        return None
+    try:
+        return int(parts[1])
+    except ValueError:
+        return None
+
+
+def _extract_civitai_workflow_jsons(
+    model_id: int,
+    *,
+    timeout: float,
+) -> list[tuple[str, dict[str, Any]]]:
+    """Fetch a Civitai model page's workflow ZIPs and extract JSON payloads.
+
+    Uses the public ``/api/v1/models/<id>`` and
+    ``/api/download/models/<version_id>`` endpoints.  The ZIP archives for
+    workflow models contain the ComfyUI workflow JSON.  Returns a list of
+    ``(filename, payload)`` tuples for every JSON file found in every version
+    archive.  Failures are swallowed and returned as an empty list so the
+    caller can fall back to the plain web result.
+    """
+    api_url = f"https://civitai.com/api/v1/models/{model_id}"
+    req = urllib.request.Request(
+        api_url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": (
+                "vibecomfy-research/1.0 "
+                "(https://github.com/peteromallet/vibecomfy)"
+            ),
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=max(1.0, min(timeout, 10.0))) as resp:
+            body = resp.read(_MAX_EXTERNAL_JSON_BYTES + 1)
+            if len(body) > _MAX_EXTERNAL_JSON_BYTES:
+                return []
+            model = json.loads(body.decode("utf-8", errors="replace"))
+    except Exception:
+        return []
+
+    if not isinstance(model, dict):
+        return []
+
+    # Only workflow models are expected to ship ComfyUI JSON inside ZIPs.
+    if str(model.get("type", "")).casefold() != "workflows":
+        return []
+
+    version_ids: list[int] = []
+    for version in model.get("modelVersions", []) or []:
+        if not isinstance(version, dict):
+            continue
+        vid = version.get("id")
+        if isinstance(vid, int):
+            version_ids.append(vid)
+
+    payloads: list[tuple[str, dict[str, Any]]] = []
+    # Limit versions to keep extraction bounded and respectful.
+    for version_id in version_ids[:3]:
+        dl_url = f"https://civitai.com/api/download/models/{version_id}"
+        dl_req = urllib.request.Request(
+            dl_url,
+            headers={
+                "User-Agent": (
+                    "vibecomfy-research/1.0 "
+                    "(https://github.com/peteromallet/vibecomfy)"
+                ),
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(dl_req, timeout=max(1.0, min(timeout, 30.0))) as resp:
+                zbytes = resp.read(_MAX_EXTERNAL_ZIP_BYTES + 1)
+            if len(zbytes) > _MAX_EXTERNAL_ZIP_BYTES:
+                continue
+        except Exception:
+            continue
+
+        try:
+            zf = zipfile.ZipFile(io.BytesIO(zbytes))
+        except zipfile.BadZipFile:
+            continue
+
+        for name in zf.namelist():
+            if not name.lower().endswith(".json"):
+                continue
+            try:
+                content = zf.read(name)
+            except Exception:
+                continue
+            try:
+                payload = json.loads(content.decode("utf-8", errors="replace"))
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                payloads.append((name, payload))
+
+    return payloads
+
+
+def _extract_domain_workflow_jsons(
+    url: str,
+    *,
+    timeout: float,
+) -> list[tuple[str, str | None, dict[str, Any]]]:
+    """Best-effort extraction of embedded workflow JSON from known platforms.
+
+    Returns a list of ``(filename, raw_url, payload)`` tuples.  ``raw_url`` is
+    the canonical fetch URL (or ``None`` when the payload was assembled from
+    multiple fetches, e.g. a Civitai ZIP).  Unsupported domains or extraction
+    failures return an empty list; the caller should fall back to treating the
+    search result as plain web evidence.
+    """
+    parsed = urlparse(url)
+    host = parsed.netloc.casefold()
+    if host not in _ALLOWED_EXTERNAL_WORKFLOW_HOSTS:
+        return []
+
+    if host in {"civitai.com", "www.civitai.com"}:
+        model_id = _civitai_model_id_from_url(url)
+        if model_id is None:
+            return []
+        return [
+            (name, None, payload)
+            for name, payload in _extract_civitai_workflow_jsons(
+                model_id, timeout=timeout
+            )
+        ]
+
+    # OpenArt and RunComfy do not expose a stable, unauthenticated workflow
+    # JSON endpoint in their SSR HTML.  Extractors for those platforms can be
+    # added here once a reliable public API or embedded payload is identified.
+    return []
+
+
 def _github_blob_raw_url(url: str) -> str | None:
     parsed = urlparse(url)
     if parsed.netloc.casefold() != "github.com":
@@ -945,6 +1406,27 @@ def _fetch_external_workflow_json_source(
     timeout: float,
 ) -> tuple[dict[str, Any] | None, str | None]:
     url = _first_text(item, "url", "href", "link")
+    if not url:
+        return None, None
+
+    # Try domain-specific extractors (Civitai ZIP, etc.) first.
+    extracted = _extract_domain_workflow_jsons(url, timeout=timeout)
+    if extracted:
+        for filename, raw_url, payload in extracted:
+            source, warning = _normalize_fetched_workflow(
+                item=item,
+                url=url,
+                raw_url=raw_url or url,
+                payload=payload,
+                index=index,
+                source_type=f"domain_workflow_json:{_domain(url) or 'unknown'}",
+                filename=filename,
+            )
+            if source is not None:
+                return source, warning
+        return None, f"domain extraction for {url} produced no usable workflow JSON"
+
+    # Fall back to raw GitHub blob URLs.
     raw_url = _github_blob_raw_url(url)
     if raw_url is None:
         return None, None
@@ -966,9 +1448,37 @@ def _fetch_external_workflow_json_source(
     except Exception as exc:  # noqa: BLE001 - enrichment is best-effort
         return None, f"github workflow fetch failed for {url}: {type(exc).__name__}: {exc}"
 
+    source, warning = _normalize_fetched_workflow(
+        item=item,
+        url=url,
+        raw_url=raw_url,
+        payload=payload,
+        index=index,
+        source_type="github_workflow_json",
+    )
+    return source, warning
+
+
+def _normalize_fetched_workflow(
+    item: dict[str, Any],
+    *,
+    url: str,
+    raw_url: str,
+    payload: Any,
+    index: int,
+    source_type: str,
+    filename: str | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Normalize a fetched workflow payload into a canonical external source.
+
+    Validates the payload, writes it to the web-search workflow cache, and
+    returns a source dict matching the shape produced by
+    ``_fetch_external_workflow_json_source``.  Returns ``(None, warning)`` when
+    the payload cannot be normalized.
+    """
     summary = _summarize_workflow_json(payload)
     if not summary["node_types"]:
-        return None, f"github workflow fetch produced no node types for {url}"
+        return None, f"workflow fetch produced no node types for {url}"
     workflow_schema = _workflow_object_info_from_json(payload)
 
     try:
@@ -981,10 +1491,11 @@ def _fetch_external_workflow_json_source(
     except Exception:
         cached_path = None
 
-    title = _first_text(item, "title", "class_type", "name") or url
+    title = _first_text(item, "title", "class_type", "name") or filename or url
     node_types = summary["node_types"]
     key_values = summary["key_values"]
-    description = "Fetched GitHub workflow JSON. Node types: " + ", ".join(node_types[:16])
+    platform = _domain(url) or "external"
+    description = f"Fetched {platform} workflow JSON. Node types: " + ", ".join(node_types[:16])
     if len(node_types) > 16:
         description += f", and {len(node_types) - 16} more"
     if key_values:
@@ -993,9 +1504,9 @@ def _fetch_external_workflow_json_source(
     return {
         "class_type": title,
         "score": max(1, 95 - index),
-        "reasons": ["external workflow JSON fetched from GitHub"],
+        "reasons": [f"external workflow JSON fetched from {platform}"],
         "source": "external_workflow",
-        "source_type": "github_workflow_json",
+        "source_type": source_type,
         "pack": _domain(url),
         "description": description,
         "summary": description,
@@ -1451,8 +1962,9 @@ def _build_precedent_slices(
 
         is_workflow = source_kind in workflow_source_kinds
         has_py_path = isinstance(path, str) and path.endswith(".py")
-        has_source_workflow = isinstance(source_workflow_path, str) and source_workflow_path.endswith(".json")
-        if not is_workflow and not has_py_path and not has_source_workflow:
+        has_json_path = isinstance(path, str) and path.endswith(".json")
+        has_source_workflow = isinstance(source_workflow_path, str)
+        if not is_workflow and not has_py_path and not has_json_path and not has_source_workflow:
             continue
         if not class_type or class_type in seen:
             continue
@@ -1460,18 +1972,12 @@ def _build_precedent_slices(
         load_result: WorkflowLoadResult | None = None
         if has_source_workflow:
             load_result = load_workflow_source(source_workflow_path)
-        elif isinstance(path, str) and path.endswith(".json"):
+        elif has_json_path:
             load_result = load_workflow_source(path)
 
-        source_warnings: list[dict[str, Any]] = []
         if load_result is not None and load_result.ok:
-            pattern_key = _source_pattern_key(source)
-            extracted_nodes, source_warnings = _extract_pattern_nodes(
-                load_result=load_result,
-                pattern_key=pattern_key,
-            )
-            node_ids = tuple(record.node_id for record in extracted_nodes)
-            node_types = tuple(record.class_type for record in extracted_nodes)
+            node_ids = tuple(record.node_id for record in load_result.nodes)
+            node_types = tuple(record.class_type for record in load_result.nodes)
             entry_anchor = node_ids[0] if node_ids else None
             exit_anchor = node_ids[-1] if node_ids else None
         else:
@@ -1494,7 +2000,7 @@ def _build_precedent_slices(
                 exit_anchor=exit_anchor,
                 source_workflow_path=load_result.source_path if load_result is not None else None,
                 python_path=path if isinstance(path, str) else None,
-                warnings=tuple(source_warnings),
+                warnings=(),
             )
         )
 
@@ -1836,45 +2342,38 @@ def _build_adaptation_plan(
     if not slices:
         return None
 
-    selected_slice = slices[0]
     target_load = _normalize_target_graph(graph)
+    selected_slice = slices[0]
     anchor_bindings: tuple[dict[str, str], ...] = ()
     structural_validation = "not_evaluated"
-    source_records: tuple[WorkflowNodeRecord, ...] = ()
-    family_check_passed = False
+    candidate_graph: dict[str, Any] | None = None
 
     if target_load is not None:
         structural_validation = "fail"
-        source_records = _selected_source_records(selected_slice)
-        source_families = _detect_record_families(
-            source_records,
-            selected_slice.source_class_type,
-            selected_slice.source_workflow_path,
-            selected_slice.python_path,
-        )
-        target_families = (
-            _detect_record_families(target_load.nodes, str(target_load.raw or ""))
-            if target_load.ok else set()
-        )
-        family_check_passed = (
-            bool(source_families)
-            and bool(target_families)
-            and bool(source_families & target_families)
-        )
-    candidate_graph: dict[str, Any] | None = None
-    if target_load is not None and target_load.ok and source_records and family_check_passed:
-        anchor_bindings = _build_anchor_bindings(
-            selected_slice=selected_slice,
-            source_records=source_records,
-            target_records=target_load.nodes,
-        )
-        if anchor_bindings:
-            structural_validation = "pass"
-            candidate_graph = _build_candidate_graph(
-                target_graph=graph,
-                source_records=source_records,
-                anchor_bindings=anchor_bindings,
-            )
+        if target_load.ok:
+            for candidate_slice in slices:
+                source_records = _selected_source_records(candidate_slice)
+                if not source_records:
+                    continue
+                candidate_anchor_bindings = _build_anchor_bindings(
+                    selected_slice=candidate_slice,
+                    source_records=source_records,
+                    target_records=target_load.nodes,
+                )
+                if not candidate_anchor_bindings:
+                    continue
+                built_candidate_graph = _build_candidate_graph(
+                    target_graph=graph,
+                    source_records=source_records,
+                    anchor_bindings=candidate_anchor_bindings,
+                )
+                if built_candidate_graph is None:
+                    continue
+                selected_slice = candidate_slice
+                anchor_bindings = candidate_anchor_bindings
+                candidate_graph = built_candidate_graph
+                structural_validation = "pass"
+                break
 
     # Build a neutral context note: the material below is not a winner,
     # recommendation, or required implementation — it is precedent context

@@ -717,20 +717,26 @@ def _run_research(
     try:
         query = request.query
         if plan is not None and _canonical_route_for_plan(plan) == "adapt":
-            # Build a scoped research query from classifier-derived fields
-            # so the adapt prefetch does not inject raw-query results.
-            scoped_parts: list[str] = []
-            if plan.research_goal:
-                scoped_parts.append(f"Research goal: {plan.research_goal}")
-            if plan.pattern_category:
-                scoped_parts.append(f"Pattern category: {plan.pattern_category}")
-            if plan.change_goal:
-                scoped_parts.append(f"Change goal: {plan.change_goal}")
-            if plan.model_families:
-                families = ", ".join(plan.model_families)
-                scoped_parts.append(f"Model families: {families}")
-            if scoped_parts:
-                query = "; ".join(scoped_parts)
+            # Prefer focused classifier search_directions; they contain the named
+            # targets (e.g. ``Hotshot``) without the verbose explanatory glue
+            # that drowns out rare terms in Hivemind keyword search.
+            if plan.search_directions:
+                query = "; ".join(str(d) for d in plan.search_directions)
+            else:
+                # Build a scoped research query from classifier-derived fields
+                # so the adapt prefetch does not inject raw-query results.
+                scoped_parts: list[str] = []
+                if plan.research_goal:
+                    scoped_parts.append(f"Research goal: {plan.research_goal}")
+                if plan.pattern_category:
+                    scoped_parts.append(f"Pattern category: {plan.pattern_category}")
+                if plan.change_goal:
+                    scoped_parts.append(f"Change goal: {plan.change_goal}")
+                if plan.model_families:
+                    families = ", ".join(plan.model_families)
+                    scoped_parts.append(f"Model families: {families}")
+                if scoped_parts:
+                    query = "; ".join(scoped_parts)
         result = run_research_phase(
             query,
             graph=request.graph,
@@ -851,10 +857,9 @@ def _run_implement(
                 ]
             if research_result.adaptation_plan is not None:
                 payload["adaptation_plan"] = research_result.adaptation_plan.to_dict()
-    if executor_route == "research":
-        research_brief = _research_brief_from_plan(plan)
-        if research_brief:
-            payload["research_brief"] = research_brief
+    research_brief = _research_brief_from_plan(plan)
+    if research_brief:
+        payload["research_brief"] = research_brief
     if request.session_id:
         payload["session_id"] = request.session_id
 

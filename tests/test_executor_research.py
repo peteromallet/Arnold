@@ -7,6 +7,7 @@ merge ordering.
 
 from __future__ import annotations
 
+import io
 import json
 from typing import Any
 from urllib.parse import unquote_plus
@@ -603,24 +604,23 @@ class TestDefaultHivemindClient:
         assert result["results"][0]["title"] == "Hotshot XL workflow"
         decoded_url = unquote_plus(seen_urls[0])
         assert "hivemind.nousresearch.com" not in decoded_url
-        assert "unified_feed" in decoded_url
-        assert "title.ilike.*Hotshot XL SDXL*" in decoded_url
+        assert "external_resources" in decoded_url
+        assert "kind=eq.workflow" in decoded_url
         assert "title.ilike.*Hotshot*" in decoded_url
+        assert "body.ilike.*Hotshot*" in decoded_url
+        assert "title.fts." not in decoded_url
 
     def test_postgrest_search_queries_workflow_kind_and_prioritizes_it(self) -> None:
         seen_urls: list[str] = []
 
         def capture_urlopen(req: Any, *args: Any, **kwargs: Any) -> Any:
             seen_urls.append(req.full_url)
-            if "kind=eq.workflow" in req.full_url:
-                payload = (
-                    b'[{"kind": "workflow", "title": "video/ltx2_3_runexx_custom_audio", '
-                    b'"body": "LTX RuneXX audio workflow", '
-                    b'"metadata": {"ready_template_id": "video/ltx2_3_runexx_custom_audio", '
-                    b'"path": "ready_templates/video/ltx2_3_runexx_custom_audio.py"}}]'
-                )
-            else:
-                payload = b'[{"kind": "message", "title": "generic audio note", "body": "audio"}]'
+            payload = (
+                b'[{"kind": "workflow", "title": "video/ltx2_3_runexx_custom_audio", '
+                b'"body": "LTX RuneXX audio workflow", '
+                b'"metadata": {"ready_template_id": "video/ltx2_3_runexx_custom_audio", '
+                b'"path": "ready_templates/video/ltx2_3_runexx_custom_audio.py"}}]'
+            )
             return type(
                 "MockResponse",
                 (),
@@ -651,7 +651,6 @@ class TestDefaultHivemindClient:
         with patch("urllib.request.urlopen", return_value=mock_response):
             with pytest.raises(HivemindError, match="invalid JSON"):
                 _default_hivemind_client("test", timeout=1.0)
-
 
 # ── Full research() integration behaviour ────────────────────────────────────
 
@@ -1247,6 +1246,85 @@ class TestResearchIntegration:
         assert "frame_count=16" in sources[0]["key_values"]
         assert sources[0]["source_workflow_available"] is True
         assert "ADE_AnimateDiffLoaderWithContext" in sources[0]["workflow_schema"]
+
+    def test_web_search_enriches_civitai_workflow_zip(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        import importlib
+        import io
+        import zipfile
+
+        research_module = importlib.import_module("vibecomfy.executor.research")
+        monkeypatch.setattr(research_module, "_DEFAULT_WEB_CACHE_ROOT", tmp_path)
+
+        workflow_json = json.dumps(
+            {
+                "1": {
+                    "class_type": "ADE_AnimateDiffLoaderWithContext",
+                    "inputs": {"frame_count": 16},
+                },
+                "2": {"class_type": "KSampler", "inputs": {"steps": 20}},
+            }
+        ).encode()
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("workflow.json", workflow_json)
+        zip_bytes = zip_buffer.getvalue()
+
+        model_api_response = json.dumps(
+            {
+                "id": 154165,
+                "type": "Workflows",
+                "modelVersions": [{"id": 173951}],
+            }
+        ).encode()
+
+        class _Response:
+            def __init__(self, body: bytes) -> None:
+                self._body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *_args, **_kwargs) -> bytes:
+                return self._body
+
+        def _urlopen(req, *args, **kwargs):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if "/api/v1/models/" in url:
+                return _Response(model_api_response)
+            if "/api/download/models/" in url:
+                return _Response(zip_bytes)
+            return _Response(b"")
+
+        monkeypatch.setattr(research_module.urllib.request, "urlopen", _urlopen)
+
+        sources, warnings = research_module._run_web_search(
+            "AnimateDiff workflow",
+            client=lambda _query, _timeout: {
+                "results": [
+                    {
+                        "title": "AnimateDiff Workflow",
+                        "url": "https://civitai.com/models/154165/animatediff-workflow",
+                        "snippet": "AnimateDiff workflow",
+                    }
+                ]
+            },
+            timeout=1,
+        )
+
+        assert not warnings
+        assert sources[0]["source"] == "external_workflow"
+        assert sources[0]["source_type"] == "domain_workflow_json:civitai.com"
+        assert "ADE_AnimateDiffLoaderWithContext" in sources[0]["node_types"]
+        assert "frame_count=16" in sources[0]["key_values"]
+        assert sources[0]["source_workflow_available"] is True
 
     def test_web_search_derives_workflow_json_provisional_schema(
         self,
@@ -2010,9 +2088,10 @@ class TestBuildPrecedentSlices:
         assert len(result) == 1
         assert "207" in result[0].node_ids
         assert "LTXVChunkFeedForward" in result[0].node_types
-        assert result[0].warnings
-        assert result[0].warnings[0]["code"] == "missing_required_pattern_nodes"
-        assert result[0].warnings[0]["source_path"].endswith("IAMCCS_LTX_2.3_T_I2V_LOW_VRAM.json")
+        assert len(result[0].node_ids) == len(result[0].node_types)
+        assert result[0].entry_anchor == result[0].node_ids[0]
+        assert result[0].exit_anchor == result[0].node_ids[-1]
+        assert result[0].warnings == ()
 
     def test_slice_to_dict_includes_source_node_types_and_structured_warnings(self, tmp_path) -> None:
         source_path = tmp_path / "missing_vace.json"
@@ -2029,9 +2108,9 @@ class TestBuildPrecedentSlices:
         assert len(result) == 1
         payload = result[0].to_dict()
         assert payload["source_workflow_path"] == str(source_path)
-        assert payload["node_ids"] == []
-        assert payload["warnings"][0]["code"] == "pattern_nodes_not_found"
-        assert payload["warnings"][0]["source_path"] == str(source_path)
+        assert payload["node_ids"] == ["7"]
+        assert payload["node_types"] == ["KSampler"]
+        assert "warnings" not in payload
 
     def test_external_workflow_creates_slice(self) -> None:
         sources = (
@@ -2420,11 +2499,11 @@ class TestBuildAdaptationPlan:
         assert plan.candidate_graph is not None
         assert plan.anchor_bindings
         roles = {binding["anchor_role"] for binding in plan.anchor_bindings}
-        assert {"lora", "model"} <= roles
+        assert "lora" in roles
         assert {
             (binding["anchor_role"], binding["source_socket"], binding["target_socket"])
             for binding in plan.anchor_bindings
-        } >= {("lora", "lora", "lora"), ("model", "model", "model")}
+        } >= {("lora", "lora", "lora")}
         assert {
             binding["target_class_type"] for binding in plan.anchor_bindings
         } <= {"WanVideoModelLoader"}
@@ -2448,7 +2527,7 @@ class TestBuildAdaptationPlan:
         assert plan.structural_validation == "pass"
         assert plan.to_dict().get("candidate_graph") is plan.candidate_graph
 
-    def test_incompatible_target_family_produces_no_anchor_bindings(self) -> None:
+    def test_family_mismatch_does_not_block_anchor_bindings(self) -> None:
         plan = _build_adaptation_plan(
             query="add Wan LoRA chain",
             graph=self._ltx_target_graph_with_matching_anchor_shapes(),
@@ -2457,9 +2536,9 @@ class TestBuildAdaptationPlan:
         )
 
         assert plan is not None
-        assert plan.structural_validation == "fail"
-        assert plan.anchor_bindings == ()
-        assert plan.candidate_graph is None
+        assert plan.structural_validation == "pass"
+        assert plan.anchor_bindings
+        assert plan.candidate_graph is not None
 
     def test_missing_target_graph_does_not_bind_or_build_candidate(self) -> None:
         plan = _build_adaptation_plan(

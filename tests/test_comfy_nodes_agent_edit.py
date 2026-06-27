@@ -3815,7 +3815,9 @@ def test_batch_repl_research_query_output_is_in_next_turn_report(monkeypatch: py
     assert calls[0]["query"] == "Hotshot XL ComfyUI 16 frames"
     assert calls[0]["local_limit"] == 5
     assert calls[0]["hivemind_client"] is not None
-    assert calls[0]["web_search_client"] is not None
+    # Default ``workflows`` source now maps to local templates + Hivemind external
+    # workflows; web search is only enabled when ``sources=["web"]`` is requested.
+    assert calls[0]["web_search_client"] is None
     assert "Found Hotshot XL custom-node installation" in result.statements[0].detail["query_output"]
     assert "ComfyUI-HotshotXL" in report
     assert "local corpus unavailable" in report

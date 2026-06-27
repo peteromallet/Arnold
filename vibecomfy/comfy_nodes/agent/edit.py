@@ -2751,6 +2751,24 @@ def _stage_ingest_v2(state: AgentEditState, context: TurnContext) -> StageResult
 
     start = time.monotonic()
     request_ref = write_json_artifact(state.request_path, state.request_payload)
+    # The EditLedger walks a UI ``nodes`` array. An API-format (compiled_api)
+    # source has no ``nodes`` key, so every edit op would die on ``stale_graph_name``
+    # ("uid no longer present"). When the source is not already UI format,
+    # re-serialize the canonical VibeWorkflow (which ingests both formats) to a UI
+    # envelope so the ledger sees the nodes. UI-format inputs already have ``nodes``
+    # and are left untouched — re-serializing them is lossy and breaks the path that
+    # already works. ``state.graph`` is hashed/echoed/audited, so all downstream
+    # consumers share this one canonical view.
+    from vibecomfy.ingest.normalize import convert_to_vibe_format, detect_workflow_shape
+    from vibecomfy.porting.emit.ui import emit_ui_json
+
+    if detect_workflow_shape(state.graph) != "ui":
+        state.workflow = convert_to_vibe_format(state.graph, schema_provider=state.schema_provider)
+        state.graph = emit_ui_json(
+            state.workflow,
+            schema_provider=state.schema_provider,
+            guard_original_ui=state.graph,
+        )
     ledger = EditLedger.ingest(state.graph)
     state.guard_original_ui = ledger.stamped_copy()
     original_ui_ref = write_json_artifact(state.original_ui_path, state.guard_original_ui)
@@ -3548,6 +3566,41 @@ def _seed_focus_types_for_authoring(state: AgentEditState) -> set[str]:
     return set()
 
 
+def _focus_types_from_research_brief(brief: Mapping[str, Any] | None) -> set[str]:
+    """Pull likely node/class names out of the executor research brief.
+
+    The classifier often emits search directions like
+    ``"Hotshot ComfyUI custom nodes"``.  Surfacing those capitalized tokens in
+    the turn-0 signature catalog lets the agent discover a local schema hit
+    (e.g. the ``Hotshot`` stub) before falling back to noisy web/registry
+    research.
+    """
+    if not brief:
+        return set()
+    candidates: set[str] = set()
+    for key in ("search_directions", "model_families"):
+        values = brief.get(key)
+        if not isinstance(values, (list, tuple)):
+            continue
+        for value in values:
+            if not isinstance(value, str):
+                continue
+            for token in value.split():
+                token = token.strip(".,;:\"'")
+                if (
+                    token
+                    and token[0].isupper()
+                    and len(token) >= 2
+                    and token.isascii()
+                ):
+                    candidates.add(token)
+            # Also keep the leading phrase word as a likely brand/class name.
+            parts = value.split()
+            if parts and parts[0] and parts[0][0].isupper():
+                candidates.add(parts[0].strip(".,;:\"'"))
+    return candidates
+
+
 def _can_attempt_local_additive_revise(state: AgentEditState) -> bool:
     evidence = state.revision_evidence
     if evidence is None:
@@ -4181,6 +4234,7 @@ def _stage_agent_batch_repl(
     focus_types = set(present_types)
     effective_task = _effective_implementation_task(state)
     focus_types.update(_seed_focus_types_for_authoring(state))
+    focus_types.update(_focus_types_from_research_brief(state.executor_research_brief))
     if _is_code_node_intent(effective_task):
         focus_types.add("vibecomfy.exec")
     signature_catalog = session.search(focus_types=sorted(focus_types), formatted=True)
@@ -5620,10 +5674,69 @@ def _stage_summarize(state: AgentEditState, context: TurnContext) -> StageResult
     )
 
 
+def _recovery_report_from_ui_payload(
+    ui_payload: Mapping[str, Any] | None,
+    schema_provider: Any,
+) -> list[dict[str, Any]]:
+    """Build a queue-diagnostics recovery report by re-resolving each UI node.
+
+    The batch-REPL product path does not run ``emit_ui_json``, so it has no
+    emit-time recovery report.  This fallback lets the final summarize stage
+    still detect schema-less or low-confidence nodes before declaring the
+    candidate queue-safe.
+    """
+    recovery: list[dict[str, Any]] = []
+    if ui_payload is None or schema_provider is None:
+        return recovery
+    nodes = ui_payload.get("nodes")
+    if not isinstance(nodes, list):
+        return recovery
+    get_schema = getattr(schema_provider, "get_schema", None)
+    if not callable(get_schema):
+        return recovery
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        node_id = str(node.get("id", ""))
+        class_type = str(node.get("type", ""))
+        if not class_type:
+            continue
+        schema = get_schema(class_type)
+        if schema is None:
+            recovery.append(
+                {
+                    "node_id": node_id,
+                    "class_type": class_type,
+                    "provider": None,
+                    "confidence": None,
+                    "schema_less": True,
+                    "widget_shape_verdict": "not_applicable",
+                    "diagnostic": "schema-less: no schema provider evidence for node",
+                }
+            )
+        else:
+            recovery.append(
+                {
+                    "node_id": node_id,
+                    "class_type": class_type,
+                    "provider": getattr(schema, "source_provider", None),
+                    "confidence": getattr(schema, "confidence", None),
+                    "schema_less": False,
+                    "widget_shape_verdict": "not_applicable",
+                }
+            )
+    return recovery
+
+
 def _stage_summarize_v2(state: AgentEditState, context: TurnContext) -> StageResult:
     start = time.monotonic()
+    recovery_report = (state.report or {}).get("recovery")
+    if not recovery_report and state.ui_payload is not None:
+        recovery_report = _recovery_report_from_ui_payload(
+            state.ui_payload, state.schema_provider
+        )
     queue_result = queue_stage_result(
-        recovery_report=(state.report or {}).get("recovery"),
+        recovery_report=recovery_report,
         change_report=(state.report or {}).get("change"),
     )
     _record(context, queue_result)
@@ -6468,6 +6581,7 @@ def _run_batch_repl_product_path(
         client_id=client_id,
         conversation_messages=conversation_messages,
     )
+    _run_stage("summarize", state, context, _stage_summarize_v2)
     return state
 
 

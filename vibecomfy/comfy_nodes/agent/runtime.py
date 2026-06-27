@@ -262,7 +262,37 @@ def _strip_provider_prefix(model: str, provider: str) -> str:
     return model.split(":", 1)[1] if model.lower().startswith(prefix) else model
 
 
+def _normalize_native_deepseek_model(model: str) -> str:
+    """Strip provider prefixes DeepSeek's native API rejects.
+
+    Native ``api.deepseek.com`` only accepts bare model names
+    (``deepseek-v4-pro`` / ``deepseek-v4-flash``).  OpenRouter-style slugs like
+    ``openrouter:deepseek/deepseek-v4-flash`` or ``deepseek/deepseek-v4-flash``
+    (which the executor profile ships) are rejected with HTTP 400
+    "The supported API model names are deepseek-v4-pro or deepseek-v4-flash, but
+    you passed deepseek/deepseek-v4-flash."  Strip both the ``openrouter:``
+    route prefix and any ``deepseek/`` provider segment when pointed at the
+    native endpoint.
+    """
+    stripped = _strip_provider_prefix(model, "openrouter")
+    # Drop a leading "deepseek/" provider segment (OpenRouter-format slug).
+    if "/" in stripped:
+        provider_seg, _, model_seg = stripped.partition("/")
+        if provider_seg.lower() == "deepseek" and model_seg:
+            stripped = model_seg
+    return stripped
+
+
+def _is_native_deepseek_endpoint() -> bool:
+    return "deepseek.com" in (_OPENROUTER_BASE_URL or "").lower()
+
+
 def _hermes_credential_for(route: str | None, model: str | None) -> str | None:
+    # When pointed at DeepSeek's native API, prefer DEEPSEEK_API_KEY directly so a
+    # stale OpenRouter ``sk-or-*`` pool key in ~/.hermes/.env can't win —
+    # _resolve_openrouter_key() force-prefers any sk-or-* entry it finds there.
+    if _is_native_deepseek_endpoint() and os.getenv("DEEPSEEK_API_KEY"):
+        return os.getenv("DEEPSEEK_API_KEY")
     return _resolve_openrouter_key()
 
 
@@ -312,10 +342,15 @@ def _build_agent_kwargs(agent_id: str, route: str | None = None, model: str | No
     )
     if agent_id == "hermes":
         resolved_model = _runtime_model_for_route(route, model) or _OPENROUTER_MODEL
-        resolved_model = _strip_provider_prefix(resolved_model, "openrouter")
+        if _is_native_deepseek_endpoint():
+            # Native api.deepseek.com rejects OpenRouter-style ``deepseek/`` slugs
+            # with HTTP 400; normalize to the bare model name it accepts.
+            resolved_model = _normalize_native_deepseek_model(resolved_model)
+        else:
+            resolved_model = _strip_provider_prefix(resolved_model, "openrouter")
         return dict(
             model=resolved_model,
-            api_key=_resolve_openrouter_key(),
+            api_key=_hermes_credential_for(route, model),
             base_url=_OPENROUTER_BASE_URL,
             provider="openrouter",
             max_tokens=_OPENROUTER_MAX_TOKENS,
