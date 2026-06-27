@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pytest
-
 from arnold.execution import ExecutionRegistries, ExecutionState
 from arnold.execution.backend import ArtifactSpec, NodeOutcome, NodeState
-from arnold.kernel import GeneratedArtifactProvenance, read_event_journal
+from arnold.kernel import (
+    GeneratedArtifactProvenance,
+    derive_pipeline_identity,
+    read_event_journal,
+)
 from arnold.kernel.journal import NDJsonEventJournal
 from tests.arnold.execution.fixtures import linear_manifest
 
@@ -130,3 +133,73 @@ def test_separate_runs_have_independent_journals(
     journal_b = NDJsonEventJournal(root_b)
     assert len(journal_a.read()) == len(journal_b.read())
     assert journal_a.journal_uri != journal_b.journal_uri
+
+
+def test_backend_populates_artifact_provenance_from_executing_manifest(
+    tmp_path: Path,
+) -> None:
+    run_id = "run:artifact-identity-test"
+    now = datetime(2026, 6, 22, 0, 0, 0, tzinfo=timezone.utc)
+    result = _run_deterministic(tmp_path, run_id, now)
+    manifest = linear_manifest()
+    meta_payload = json.loads(
+        (tmp_path / "a.out" / "v1.txt.meta.json").read_text(encoding="utf-8")
+    )
+
+    assert result.state is ExecutionState.COMPLETED
+    assert meta_payload["provenance"]["workflow_alias"] == manifest.id
+    assert meta_payload["provenance"]["manifest_hash"] == manifest.manifest_hash
+    assert meta_payload["provenance"]["pipeline_identity"] == derive_pipeline_identity(
+        manifest.id, manifest.manifest_hash
+    )
+
+
+def test_backend_rejects_artifact_provenance_for_different_workflow(
+    tmp_path: Path,
+) -> None:
+    from tests.arnold.execution.conftest import FakeBackend
+
+    now = datetime(2026, 6, 22, 0, 0, 0, tzinfo=timezone.utc)
+    manifest = linear_manifest()
+    other_hash = "sha256:" + "b" * 64
+    backend = FakeBackend(
+        run_id="run:artifact-identity-mismatch-test",
+        now=now,
+        init_ts=now,
+        node_behaviors={
+            "a": NodeOutcome(
+                artifacts=(
+                    ArtifactSpec(
+                        artifact_id="a.out",
+                        content=b"artifact-a",
+                        content_type_id="text/plain",
+                        extension="txt",
+                        provenance=GeneratedArtifactProvenance(
+                            generator_module="tests.arnold.execution.test_determinism",
+                            generator_source_hash="sha256:" + "0" * 64,
+                            manifest_contract_version=manifest.SCHEMA_VERSION,
+                            generated_at=now.isoformat(),
+                            workflow_alias=manifest.id,
+                            manifest_hash=other_hash,
+                            pipeline_identity=derive_pipeline_identity(
+                                manifest.id, other_hash
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        },
+    )
+
+    result = backend.run_manifest(
+        manifest,
+        artifact_root=tmp_path,
+        registries=ExecutionRegistries(),
+    )
+
+    assert result.state is ExecutionState.FAILED
+    assert any(
+        diagnostic.code == "execution_error"
+        and "executing manifest" in diagnostic.message
+        for diagnostic in result.diagnostics
+    )

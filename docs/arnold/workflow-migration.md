@@ -58,7 +58,7 @@ M1 treats current mainline behavior as evidence. The files below are inventoried
 | `arnold/pipeline/discovery/trust.py` `TrustGrade.BLESSED` and `BLESSED_ALLOWLIST` | Explicit allowlist promotion that can auto-execute from either origin. | Re-chartered | Quarry evidence for future capability/trust policy inputs. M1 contracts should carry the identity anchor and state label without implementing a policy engine. |
 | `arnold/pipeline/discovery/trust.py` `derive_tenant_id()` | Stable SDK-derived tenant id from CLI name plus resolved module path. | Re-chartered | Quarry evidence for kernel identity derivation. New kernel IDs should be explicit structured values; the old helper remains available for discovery callers. |
 | `arnold/pipeline/schema_registry.py` `ContractSchemaRegistry`, `schema_version_for()`, and accepted-version ranges | File-backed, content-addressed registry for payload schemas and logical-type histories. | Re-chartered | Quarry evidence for `arnold.kernel.content_types` and event payload schema hashes. Retain existing registry behavior while new contracts define neutral content type and schema hash carriers. |
-| `arnold/pipeline/pipeline_id_registry.py` `PipelineIdRegistry` and loaders | Source-controlled pipeline identity validation for names, stable IDs, seam IDs, and previous stable IDs. | Re-chartered | Quarry evidence for canonical pipeline/workflow identity derivation. Future runtime coordinates derive from human alias plus `manifest_hash`; the existing registry remains package identity evidence. |
+| `arnold/pipeline/pipeline_id_registry.py` `PipelineIdRegistry` and loaders | Source-controlled pipeline identity validation for names, stable IDs, seam IDs, and previous stable IDs. | Re-chartered | Quarry evidence for canonical pipeline/workflow identity derivation. M1 runtime coordinates are derived from human alias plus `manifest_hash`; the existing registry remains package identity evidence. |
 | `arnold/pipelines/megaplan/_pipeline/pipeline_ids.json` and `arnold/pipelines/evidence_pack/pipeline_ids.json` | Product/package registry data consumed by the identity registry validator. | Retained | Keep as source-controlled package registry inputs. Do not move or delete during M1. |
 | `arnold/runtime/envelope.py` `RunEnvelope` | Runtime-owned cross-cutting carrier with taint, cost, lineage, deadline, cancellation, retry budget, lease/fencing, capacity grants, and semilattice join behavior. | Re-chartered | Quarry evidence for `arnold.kernel.governor`, control projections, and runtime overlay fields. Existing runtime envelope behavior remains unchanged. |
 | `arnold/runtime/envelope.py` `RuntimeEnvelope` | Run-level carrier for plugin identity, manifest hash, schema versions, run id, artifact root, resume cursor, trust/quarantine state, and composed `RunEnvelope`. | Re-chartered | Quarry evidence for kernel run lineage and manifest references. New contracts should expose structured lineage fields rather than importing this runtime module. |
@@ -128,19 +128,56 @@ The decision packet described a broader migration, but M1 only freezes the basel
 
 ## Discovery, Trust, And Identity Map
 
-The old discovery surfaces remain current-main behavior while workflow
-manifests become the runtime identity contract.
+The old discovery surfaces remain current-main package metadata while workflow
+manifests own the runtime identity contract. M1 locks the runtime anchor as the
+stable workflow alias plus `WorkflowManifest.manifest_hash`; every runtime ID
+below is a deterministic function of only those two values.
 
-| Current primitive | Disposition | Identity anchor after M1 |
+| Runtime surface | Locked M1 derivation | Metadata that must not override it |
 | --- | --- | --- |
-| Package discovery manifest fields in `arnold/pipeline/discovery/manifest.py` | Retained as package metadata, not runtime workflow manifests. | Regenerated or validated from package metadata; runtime joins use `WorkflowManifest.id + manifest_hash`. |
-| `JudgePieceManifest`, `JudgeManifestPort`, `compute_piece_version()`, `compute_judge_version()` | Retained as sidecar judge artifacts. | Judge sidecars keep `piece_version`, `judge_version`, and `rubric_hash`; workflow manifests cross-reference them with `arnold.kernel.ids.JudgeManifestCrossReference` carrying `manifest_hash`, `piece_version`, `judge_version`, `rubric_hash`, and relationship enum. |
-| `TrustGrade.AUTO_EXEC` / `auto-executable` | Re-chartered as a trust classification input. | Anchored to the workflow `manifest_hash`; any judge-derived auto-exec decision must name the supporting `JudgeManifestCrossReference` rather than relying on path-derived package identity. |
-| `TrustGrade.QUARANTINED` / `quarantined` | Re-chartered as replay/suspension quarantine vocabulary. | Anchored to the mismatched original/observed workflow `manifest_hash` pair, with operator-visible rationale; judge-side quarantine evidence is linked through `JudgeManifestCrossReference` when a judge sidecar participated. |
-| `TrustGrade.BLESSED` / `blessed` | Re-chartered as an explicit promotion classification. | Anchored to the promoted workflow `manifest_hash` plus the exact `JudgeManifestCrossReference` or package promotion record that justified promotion. |
-| `schema_registry.py` logical types and schema histories | Re-chartered. | Kernel content types carry `type_id`, `schema_version`, `schema_hash`, retention policy, and provenance parent links. |
-| `derive_tenant_id()` | Re-chartered. | Runtime identities derive from human alias plus `manifest_hash`; tenant derivation remains package-discovery evidence until a later identity migration. |
-| `PipelineIdRegistry` and source-controlled pipeline IDs | Re-chartered. | `Pipeline.id` remains the stable human alias; `manifest_hash` is the runtime discriminator. `Pipeline.version` is authoring metadata unless explicitly promoted by a future amendment. |
+| Canonical workflow identity | `arnold.kernel.ids.WorkflowIdentity(alias=WorkflowManifest.id, manifest_hash=WorkflowManifest.manifest_hash)`; `pipeline_identity = sha256_text(f"workflow:{alias}@{manifest_hash}")`. | `Pipeline.version`, registry stable IDs, package paths, discovery `_manifest_hash()`, `piece_version`, `judge_version`, and `rubric_hash`. |
+| Registry runtime ID | `derive_registry_runtime_id(alias, manifest_hash) = sha256_text(f"workflow-registry:{alias}@{manifest_hash}")`. `PipelineIdRegistry` may validate that `alias` is declared and any registry `manifest_hash` is fresh. | Registry `stable_id`, `previous_stable_ids`, `seam_ids`, and package registry file location. |
+| Discovery runtime `pipeline_id` | `derive_discovery_pipeline_id(alias, manifest_hash) = sha256_text(f"workflow-discovery:{alias}@{manifest_hash}")`. Discovery code may expose this only when it already has the workflow alias and compiled manifest hash. | Package discovery `Manifest.manifest_hash`, module source hash, `SKILL.md` hash, and `ARNOLD_IDENTITY_SCHEMA`. |
+| Workflow tenant ID | `derive_workflow_tenant_id(alias, manifest_hash) = "workflow_" + sha256(f"workflow-tenant:{alias}@{manifest_hash}")[:24]`. | Legacy `derive_tenant_id(cli_name, module_path)` values, CLI names, and resolved module paths. |
+| Generated artifact provenance fields | `generated_artifact_identity_header_fields(alias, manifest_hash)` returns `workflow_alias`, `manifest_hash`, and `pipeline_identity`; `GeneratedArtifactProvenance` accepts the triple only all-present or all-absent. | Generator module, generator source hash, package-only provenance, artifact parent links, and write path. |
+| Event `ManifestReference.pipeline_identity` | Computed property equal to `derive_pipeline_identity(alias, manifest_hash)`. Event serialization stays limited to `alias`, `manifest_hash`, and optional `uri`. | Event `run_id`, payload schema hash, replay refs, and serialized wire fields outside the manifest reference. |
+| Judge sidecar cross-reference identity | `derive_judge_sidecar_cross_reference_identity(alias, manifest_hash) = sha256_text(f"workflow-judge-sidecar:{alias}@{manifest_hash}")`; judge evidence also carries `JudgeManifestCrossReference` with sidecar lineage fields. | `piece_version`, `judge_version`, `rubric_hash`, model identity, rubric contents, and sidecar file path. |
+
+| Trust class | Runtime identity anchor after M1 | Evidence rule |
+| --- | --- | --- |
+| `TrustGrade.AUTO_EXEC` / `auto-executable` | Exactly one runtime anchor: the `WorkflowTrustDecision` identity triple `alias`, `manifest_hash`, and `pipeline_identity = derive_pipeline_identity(alias, manifest_hash)`. | Path-derived `classify()` can describe package discovery metadata only during migration. A runtime auto-exec decision must use `classify_workflow_trust(..., alias=..., manifest_hash=...)`; judge-backed sidecar evidence must include a `JudgeManifestCrossReference` whose `manifest_hash` matches the workflow identity. |
+| `TrustGrade.QUARANTINED` / `quarantined` | Exactly one runtime anchor: the observed `WorkflowTrustDecision` identity triple `alias`, `manifest_hash`, and `pipeline_identity = derive_pipeline_identity(alias, manifest_hash)`. Replay mismatch records may additionally store original and observed manifest hashes as quarantine evidence, not as a second trust anchor. | Missing or malformed `manifest_hash` evidence fails closed. Path-derived quarantine labels are package-discovery metadata only and cannot satisfy replay, deletion, or runtime trust gates. |
+| `TrustGrade.BLESSED` / `blessed` | Exactly one runtime anchor: the promoted `WorkflowTrustDecision` identity triple `alias`, `manifest_hash`, and `pipeline_identity = derive_pipeline_identity(alias, manifest_hash)`. | Package-promotion records and judge sidecars may justify the label, but neither replaces the manifest-hash-backed anchor. Judge-backed blessed evidence must name a `JudgeManifestCrossReference` whose `manifest_hash` matches the workflow identity. |
+
+False-pass prevention rule: deletion, replay, and runtime trust gates must reject
+evidence that lacks a manifest-hash-backed identity triple. Package paths,
+legacy tenant IDs, registry stable IDs, discovery hashes, package-promotion
+records, and judge sidecar lineage can support auditability, but they cannot
+stand in for `alias`, `manifest_hash`, and the derived `pipeline_identity`.
+
+Package discovery manifest fields in `arnold/pipeline/discovery/manifest.py`
+remain package metadata, not runtime workflow manifests. `JudgePieceManifest`,
+`JudgeManifestPort`, `compute_piece_version()`, and `compute_judge_version()`
+remain independent sidecar lineage. `schema_registry.py` logical types and
+schema histories remain content-type metadata. None of those metadata surfaces
+becomes a runtime identity input unless a future manifest amendment explicitly
+promotes it.
+
+## Deferred Hardening And Quarry Notes
+
+The following notes are handoffs for later milestones. They are not M1 blockers
+and they are not claims that the named branch diffs were inspected from this
+checkout.
+
+| Topic | M1 status | Later handling |
+| --- | --- | --- |
+| `FileBackedArtifactStore` root-kind selection | Deferred hardening | Replace any hardcoded `PLAN_ARTIFACT_ROOT` assumption with an explicit root-kind selector before artifact storage becomes a shared execution substrate. The target contract should choose plan, run, evidence, or product-owned roots by structured kind rather than path convention. |
+| `ReplayCursor.artifact_root` | Deferred hardening | Normalize cursor artifact roots as paths at the replay boundary so resume/replay comparisons do not depend on caller spelling, relative path shape, symlinks, or platform separators. |
+| Native salvage patterns | Quarry | Treat native branch tests and route/resume examples as quarry for explicit manifest lowering, source-span diagnostics, reentry naming, and parity fixtures. Salvage the patterns only after reframing them around `WorkflowManifest.manifest_hash`, kernel events, and generated artifact provenance. |
+| Loose-work fixes | Quarry | Keep branch/worktree cleanup, salvage, and interrupted-run repair techniques as operational quarry. They should land as focused fixes, not as implicit evidence that native or bridge runtime identity is authoritative. |
+| `native-python-pipelines` | Deferred inspection | Useful for native authoring lessons, resume/cursor edge cases, graph stability tests, and diagnostics. M1 does not depend on its public native runtime spine and does not claim this checkout inspected its current diff. |
+| `vibecomfy-codex-contract-fix` | Deferred inspection | Potential quarry for contract drift fixes and test tightening. Any imported lesson must be revalidated against the M1 identity map rather than accepted as a parallel contract. |
+| `arnold-pipeline-friction-codex` | Deferred inspection | Potential quarry for developer-experience fixes and loose-work handling. Any imported patch must remain additive to the manifest/kernel contract and must not reintroduce legacy path-derived authority. |
 
 Judge manifests survive as independent sidecars in M1 rather than being
 absorbed into `WorkflowManifest`. The sidecar boundary is intentional: a judge

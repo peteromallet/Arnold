@@ -5,8 +5,15 @@ import pytest
 from arnold.kernel import (
     JudgeManifestCrossReference,
     JudgeManifestRelationship,
+    WorkflowIdentity,
+    derive_discovery_pipeline_id,
+    derive_generated_artifact_identity_header_fields,
     derive_idempotency_key,
+    derive_judge_sidecar_cross_reference_identity,
     derive_pipeline_identity,
+    derive_registry_runtime_id,
+    derive_workflow_tenant_id,
+    workflow_identity_from_manifest,
 )
 
 
@@ -18,6 +25,111 @@ def test_pipeline_identity_derives_from_alias_and_manifest_hash() -> None:
     )
     assert derive_pipeline_identity("planning", manifest_hash) != derive_pipeline_identity(
         "other", manifest_hash
+    )
+
+
+def test_workflow_identity_derived_surfaces_share_only_alias_and_manifest_hash() -> None:
+    alias = "planning"
+    manifest_hash = "sha256:" + "a" * 64
+    identity = WorkflowIdentity(alias=alias, manifest_hash=manifest_hash)
+
+    assert identity.pipeline_identity == derive_pipeline_identity(alias, manifest_hash)
+    assert identity.registry_runtime_id == derive_registry_runtime_id(alias, manifest_hash)
+    assert identity.discovery_pipeline_id == derive_discovery_pipeline_id(alias, manifest_hash)
+    assert identity.tenant_id == derive_workflow_tenant_id(alias, manifest_hash)
+    assert identity.generated_artifact_identity_header_fields == {
+        "workflow_alias": alias,
+        "manifest_hash": manifest_hash,
+        "pipeline_identity": identity.pipeline_identity,
+    }
+    assert identity.generated_artifact_identity_header_fields == (
+        derive_generated_artifact_identity_header_fields(alias, manifest_hash)
+    )
+    assert identity.judge_sidecar_cross_reference_identity == (
+        derive_judge_sidecar_cross_reference_identity(alias, manifest_hash)
+    )
+
+
+def test_runtime_identity_surfaces_change_only_when_alias_or_manifest_hash_changes() -> None:
+    alias = "planning"
+    manifest_hash = "sha256:" + "a" * 64
+    other_hash = "sha256:" + "b" * 64
+    surfaces = (
+        derive_pipeline_identity,
+        derive_registry_runtime_id,
+        derive_discovery_pipeline_id,
+        derive_workflow_tenant_id,
+        derive_judge_sidecar_cross_reference_identity,
+    )
+
+    for derive in surfaces:
+        assert derive(alias, manifest_hash) == derive(alias, manifest_hash)
+        assert derive(alias, manifest_hash) != derive("other", manifest_hash)
+        assert derive(alias, manifest_hash) != derive(alias, other_hash)
+
+    assert derive_generated_artifact_identity_header_fields(alias, manifest_hash) == {
+        "workflow_alias": alias,
+        "manifest_hash": manifest_hash,
+        "pipeline_identity": derive_pipeline_identity(alias, manifest_hash),
+    }
+    assert derive_generated_artifact_identity_header_fields(alias, manifest_hash) != (
+        derive_generated_artifact_identity_header_fields(alias, other_hash)
+    )
+
+
+def test_workflow_identity_adapter_ignores_version_path_and_discovery_metadata() -> None:
+    manifest_hash = "sha256:" + "a" * 64
+
+    class ManifestLike:
+        id = "planning"
+        manifest_hash = manifest_hash
+        version = "v1"
+        module_path = "/packages/one/pipeline.py"
+        discovery_manifest_hash = "sha256:" + "b" * 64
+        piece_version = "piece:one"
+        judge_version = "judge:one"
+
+    class SameRuntimeIdentityWithDifferentMetadata:
+        id = "planning"
+        manifest_hash = manifest_hash
+        version = "v999"
+        module_path = "/packages/two/pipeline.py"
+        discovery_manifest_hash = "sha256:" + "c" * 64
+        piece_version = "piece:two"
+        judge_version = "judge:two"
+
+    assert workflow_identity_from_manifest(ManifestLike) == workflow_identity_from_manifest(
+        SameRuntimeIdentityWithDifferentMetadata
+    )
+    assert workflow_identity_from_manifest(ManifestLike).pipeline_identity == (
+        derive_pipeline_identity("planning", manifest_hash)
+    )
+
+
+def test_judge_sidecar_lineage_fields_do_not_change_runtime_identity() -> None:
+    alias = "planning"
+    manifest_hash = "sha256:" + "a" * 64
+    first_reference = JudgeManifestCrossReference(
+        relationship=JudgeManifestRelationship.JUDGES_WORKFLOW,
+        manifest_hash=manifest_hash,
+        piece_version="piece:workflow.plan@sha256:111",
+        judge_version="judge:review@sha256:222",
+        rubric_hash="sha256:" + "b" * 64,
+    )
+    second_reference = JudgeManifestCrossReference(
+        relationship=JudgeManifestRelationship.JUDGES_WORKFLOW,
+        manifest_hash=manifest_hash,
+        piece_version="piece:workflow.plan@sha256:333",
+        judge_version="judge:review@sha256:444",
+        rubric_hash="sha256:" + "c" * 64,
+    )
+
+    assert first_reference != second_reference
+    assert derive_judge_sidecar_cross_reference_identity(alias, manifest_hash) == (
+        derive_judge_sidecar_cross_reference_identity(alias, manifest_hash)
+    )
+    assert derive_pipeline_identity(alias, first_reference.manifest_hash) == (
+        derive_pipeline_identity(alias, second_reference.manifest_hash)
     )
 
 

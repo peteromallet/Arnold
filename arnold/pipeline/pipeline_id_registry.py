@@ -7,18 +7,75 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from arnold.kernel.ids import (
+    WorkflowIdentity,
+    derive_registry_runtime_id,
+    workflow_identity,
+)
+
 
 @dataclass(frozen=True)
 class PipelineIdRegistry:
+    """Source-controlled package metadata for human pipeline aliases.
+
+    The registry validates authored aliases and stable metadata.  It is not a
+    runtime identity authority: runtime identity is always derived from the
+    human alias plus the manifest hash supplied by the executing workflow.
+    """
+
     pipelines: tuple[dict[str, Any], ...]
 
     @property
     def by_name(self) -> dict[str, dict[str, Any]]:
         return {str(item["name"]): dict(item) for item in self.pipelines}
 
+    def resolve_runtime_identity(
+        self,
+        alias: str,
+        manifest_hash: str,
+    ) -> "RegistryRuntimeIdentity":
+        """Validate *alias* against registry metadata and derive runtime identity.
+
+        Registry ``stable_id`` and ``previous_stable_ids`` fields remain package
+        metadata.  They never replace the canonical runtime formula, which is
+        derived from ``alias`` plus ``manifest_hash`` through
+        :class:`arnold.kernel.ids.WorkflowIdentity`.
+        """
+
+        return resolve_registry_runtime_identity(self, alias, manifest_hash)
+
 
 class PipelineIdRegistryError(ValueError):
     """Raised when the pipeline ID registry violates the M1 metadata contract."""
+
+
+@dataclass(frozen=True)
+class RegistryRuntimeIdentity:
+    """Registry-validated view of canonical runtime identity.
+
+    ``registry_entry`` is retained as validation/provenance metadata only.  The
+    runtime fields come from ``workflow_identity`` and therefore from the
+    human alias plus manifest hash, not from registry stable IDs.
+    """
+
+    workflow_identity: WorkflowIdentity
+    registry_entry: Mapping[str, Any]
+
+    @property
+    def alias(self) -> str:
+        return self.workflow_identity.alias
+
+    @property
+    def manifest_hash(self) -> str:
+        return self.workflow_identity.manifest_hash
+
+    @property
+    def pipeline_identity(self) -> str:
+        return self.workflow_identity.pipeline_identity
+
+    @property
+    def registry_runtime_id(self) -> str:
+        return derive_registry_runtime_id(self.alias, self.manifest_hash)
 
 
 def load_pipeline_id_registry(path: str | Path) -> PipelineIdRegistry:
@@ -31,6 +88,43 @@ def load_pipeline_id_registries(paths: Iterable[str | Path]) -> PipelineIdRegist
     """Load and validate multiple registry files as one aggregate set."""
 
     return _load_pipeline_id_registry_set(paths)
+
+
+def resolve_registry_runtime_identity(
+    registry: PipelineIdRegistry,
+    alias: str,
+    manifest_hash: str,
+) -> RegistryRuntimeIdentity:
+    """Validate registry metadata, then derive identity from alias plus hash.
+
+    If a registry row declares ``manifest_hash``, the caller-supplied
+    ``manifest_hash`` must match it.  Matching is a freshness check on package
+    metadata only; the registry row does not provide or override runtime
+    ``pipeline_identity``.
+    """
+
+    identity = workflow_identity(alias, manifest_hash)
+    entry = registry.by_name.get(identity.alias)
+    if entry is None:
+        raise PipelineIdRegistryError(
+            f"pipeline alias {identity.alias!r} is not declared in registry metadata"
+        )
+
+    registry_manifest_hash = entry.get("manifest_hash")
+    if (
+        registry_manifest_hash is not None
+        and registry_manifest_hash != identity.manifest_hash
+    ):
+        raise PipelineIdRegistryError(
+            f"pipeline alias {identity.alias!r} registry manifest_hash "
+            f"{registry_manifest_hash!r} does not match runtime manifest_hash "
+            f"{identity.manifest_hash!r}"
+        )
+
+    return RegistryRuntimeIdentity(
+        workflow_identity=identity,
+        registry_entry=dict(entry),
+    )
 
 
 def _load_pipeline_id_registry_set(paths: Iterable[str | Path]) -> PipelineIdRegistry:

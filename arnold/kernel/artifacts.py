@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, TypeVar, get_args, get_origin, get_type_hints
 
 from arnold.kernel.content_types import ContentTypeRegistration, ContentTypeRegistry, RetentionPin
+from arnold.kernel.ids import workflow_identity
 
 _VERSIONED_NAME_RE = re.compile(
     r"^v(?P<version>[1-9][0-9]*)\.(?P<ext>[A-Za-z0-9][A-Za-z0-9._-]*)$"
@@ -67,24 +68,57 @@ class GeneratedArtifactProvenance:
     generated_at: str
     input_hashes: tuple[str, ...] = ()
     parents: tuple[ProvenanceParent, ...] = ()
+    workflow_alias: str | None = None
+    manifest_hash: str | None = None
+    pipeline_identity: str | None = None
+
+    def __post_init__(self) -> None:
+        identity_values = (
+            self.workflow_alias,
+            self.manifest_hash,
+            self.pipeline_identity,
+        )
+        present = tuple(value is not None for value in identity_values)
+        if any(present) and not all(present):
+            raise ValueError(
+                "workflow_alias, manifest_hash, and pipeline_identity must be "
+                "all present or all absent"
+            )
+        if not all(present):
+            return
+
+        identity = workflow_identity(self.workflow_alias or "", self.manifest_hash or "")
+        if self.pipeline_identity != identity.pipeline_identity:
+            raise ValueError("pipeline_identity does not match workflow_alias and manifest_hash")
+        object.__setattr__(self, "workflow_alias", identity.alias)
+        object.__setattr__(self, "manifest_hash", identity.manifest_hash)
 
     @property
     def provenance_hash(self) -> str:
+        payload_data = {
+            "generated_at": self.generated_at,
+            "generator_module": self.generator_module,
+            "generator_source_hash": self.generator_source_hash,
+            "input_hashes": list(self.input_hashes),
+            "manifest_contract_version": self.manifest_contract_version,
+            "parents": [
+                {
+                    "artifact_id": parent.artifact_id,
+                    "content_hash": parent.content_hash,
+                }
+                for parent in self.parents
+            ],
+        }
+        if self.workflow_alias is not None:
+            payload_data.update(
+                {
+                    "manifest_hash": self.manifest_hash,
+                    "pipeline_identity": self.pipeline_identity,
+                    "workflow_alias": self.workflow_alias,
+                }
+            )
         payload = json.dumps(
-            {
-                "generated_at": self.generated_at,
-                "generator_module": self.generator_module,
-                "generator_source_hash": self.generator_source_hash,
-                "input_hashes": list(self.input_hashes),
-                "manifest_contract_version": self.manifest_contract_version,
-                "parents": [
-                    {
-                        "artifact_id": parent.artifact_id,
-                        "content_hash": parent.content_hash,
-                    }
-                    for parent in self.parents
-                ],
-            },
+            payload_data,
             sort_keys=True,
             separators=(",", ":"),
         )
