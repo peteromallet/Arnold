@@ -1,0 +1,63 @@
+[chain] milestone m1-baseline-manifest-contract starting
+[chain] git fetch origin native-python-working-tree -> rc=128
+[chain] git fetch origin native-python-working-tree output:
+fatal: couldn't find remote ref native-python-working-tree
+{
+  "success": false,
+  "error": "git_refresh_failed",
+  "message": "Chain git refresh failed before milestone initialization: git fetch origin native-python-working-tree exited 128. Resolve the fetch failure or rerun with --no-git-refresh."
+}
+[chain] milestone m1-baseline-manifest-contract starting
+[chain] git fetch origin native-python-working-tree -> rc=128
+[chain] git fetch origin native-python-working-tree output:
+fatal: couldn't find remote ref native-python-working-tree
+{
+  "success": false,
+  "error": "git_refresh_failed",
+  "message": "Chain git refresh failed before milestone initialization: git fetch origin native-python-working-tree exited 128. Resolve the fetch failure or rerun with --no-git-refresh."
+}
+[chain] milestone m1-baseline-manifest-contract starting
+[chain] git fetch origin native-python-working-tree -> rc=128
+[chain] git fetch origin native-python-working-tree output:
+fatal: couldn't find remote ref native-python-working-tree
+{
+  "success": false,
+  "error": "git_refresh_failed",
+  "message": "Chain git refresh failed before milestone initialization: git fetch origin native-python-working-tree exited 128. Resolve the fetch failure or rerun with --no-git-refresh."
+}
+[chain] milestone m1-baseline-manifest-contract starting
+[chain] git fetch origin native-python-working-tree -> rc=128
+[chain] git fetch origin native-python-working-tree output:
+fatal: couldn't find remote ref native-python-working-tree
+{
+  "success": false,
+  "error": "git_refresh_failed",
+  "message": "Chain git refresh failed before milestone initialization: git fetch origin native-python-working-tree exited 128. Resolve the fetch failure or rerun with --no-git-refresh."
+}
+[chain] milestone m1-baseline-manifest-contract starting
+[chain] git fetch origin native-python-working-tree -> rc=128
+[chain] git fetch origin native-python-working-tree output:
+fatal: couldn't find remote ref native-python-working-tree
+{
+  "success": false,
+  "error": "git_refresh_failed",
+  "message": "Chain git refresh failed before milestone initialization: git fetch origin native-python-working-tree exited 128. Resolve the fetch failure or rerun with --no-git-refresh."
+}
+[chain] milestone m1-baseline-manifest-contract starting
+[chain] git fetch origin native-python-working-tree -> rc=128
+[chain] git fetch origin native-python-working-tree output:
+fatal: couldn't find remote ref native-python-working-tree
+{
+  "success": false,
+  "error": "git_refresh_failed",
+  "message": "Chain git refresh failed before milestone initialization: git fetch origin native-python-working-tree exited 128. Resolve the fetch failure or rerun with --no-git-refresh."
+}
+[chain] milestone m1-baseline-manifest-contract starting
+[chain] git fetch origin native-python-working-tree -> rc=128
+[chain] git fetch origin native-python-working-tree output:
+fatal: couldn't find remote ref native-python-working-tree
+{
+  "success": false,
+  "error": "git_refresh_failed",
+  "message": "Chain git refresh failed before milestone initialization: git fetch origin native-python-working-tree exited 128. Resolve the fetch failure or rerun with --no-git-refresh."
+}
