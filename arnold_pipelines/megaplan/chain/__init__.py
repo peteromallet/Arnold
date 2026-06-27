@@ -290,6 +290,7 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
         proc = subprocess.run(
             [
                 sys.executable,
+                "-P",
                 "-m",
                 "arnold_pipelines.megaplan",
                 "status",
@@ -380,6 +381,7 @@ def _init_plan(
     )
     args = [
         sys.executable,
+        "-P",
         "-m",
         "arnold_pipelines.megaplan",
         "init",
