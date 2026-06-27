@@ -73,6 +73,9 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert "--project-dir %q >> %q 2>&1" in text
     assert "--project-dir %q --one" not in text
     assert 'tmux kill-session -t "$session"' in text
+    assert 'sleep 0.2' in text
+    assert "relaunch raced with existing tmux session" in text
+    assert "session exists after relaunch race" in text
 
 
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:
