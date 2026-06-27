@@ -5,8 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from arnold.cli import workflow as workflow_cli
 
 DEMO_TARGET = "tests.fixtures.workflow.demo_pipeline:build_pipeline"
@@ -81,6 +79,22 @@ def test_workflow_module_invocation(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["state"] == "completed"
     assert payload["manifest_id"] == "demo"
+
+
+def test_workflow_resume_fake_backend_completes(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "resume"
+    rc = workflow_cli.main(
+        [
+            "resume",
+            "--module",
+            DEMO_TARGET,
+            "--backend",
+            "fake",
+            "--artifact-root",
+            str(artifact_root),
+        ]
+    )
+    assert rc == 0
 
 
 def test_workflow_run_local_backend_writes_journal(tmp_path: Path) -> None:

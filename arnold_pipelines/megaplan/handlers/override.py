@@ -931,10 +931,11 @@ def _override_force_proceed(
         if not (
             _last_gate_is_agent_availability_preflight_block(state)
             or _last_gate_is_operational_unverifiable_block(state)
+            or getattr(args, "user_approved", False)
         ):
             raise CliError(
                 "invalid_transition",
-                "force-proceed from blocked is only supported for recoverable gate blocks",
+                "force-proceed from blocked is only supported for recoverable gate blocks (pass --user-approved to override)",
                 valid_next=infer_next_steps(state),
             )
     elif state["current_state"] != STATE_CRITIQUED:

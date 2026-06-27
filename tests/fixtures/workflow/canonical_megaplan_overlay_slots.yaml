@@ -1,0 +1,7 @@
+overlay_slots:
+- dynamic_events:
+  - event: on_branch
+    slot: branch
+  - event: on_suspend
+    slot: suspension
+  node_id: overlay

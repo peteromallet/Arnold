@@ -4,7 +4,7 @@ Working directory: `/Users/peteromalley/Documents/megaplan`
 Requested editable branch: `working-branch`  
 Primary source files:
 - `briefs/native-python-pipelines-completion/chain.yaml`
-- `docs/arnold/pipelines/migration-completion-plan-v4.md`
+- `docs/archive/m5/pipeline-plans/migration-completion-plan-v4.md`
 
 ## Verdict
 
@@ -12,7 +12,7 @@ Primary source files:
 
 Blocking facts:
 
-1. `python-shaped-workflow-authoring-cleanup` does **not** contain `briefs/native-python-pipelines-completion/chain.yaml`, the milestone briefs, or `docs/arnold/pipelines/migration-completion-plan-v4.md`.
+1. `python-shaped-workflow-authoring-cleanup` does **not** contain `briefs/native-python-pipelines-completion/chain.yaml`, the milestone briefs, or `docs/archive/m5/pipeline-plans/migration-completion-plan-v4.md`.
 2. The local `chain.yaml` exists only as an ignored working-tree file (`.gitignore:38: chain.yaml`). It is not committed on `python-shaped-workflow-authoring-cleanup` or `native-python-pipelines`.
 3. The committed source plan and milestone briefs live on `native-python-pipelines`, not on `python-shaped-workflow-authoring-cleanup`.
 4. The chain spec currently says `base_branch: main`, `merge_policy: auto`, `driver.auto_approve: true`, and `driver.require_clean_base: true`. If launched as-is, it targets `main`, not the cleanup branch.
@@ -40,7 +40,7 @@ The editable install branch is `python-shaped-workflow-authoring-cleanup`. Do no
 
 Goal: finish the Arnold native Python pipeline migration so packages build native declarations, return projected `Pipeline` compatibility shells with `Pipeline.native_program`, run through native runtime/resume semantics, use native traces as test truth, and finally remove or explicitly shim graph-era surfaces only after import inventory proves it is safe.
 
-Source plan: `docs/arnold/pipelines/migration-completion-plan-v4.md` on `native-python-pipelines`.
+Source plan: `docs/archive/m5/pipeline-plans/migration-completion-plan-v4.md` on `native-python-pipelines`.
 
 ## North Star for this epic
 

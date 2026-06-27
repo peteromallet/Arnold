@@ -176,7 +176,21 @@ def test_arnold_pipeline_wins_over_megaplan_duplicate(
 ) -> None:
     """When both arnold_pipelines/megaplan/ and megaplan/pipelines/planning/
     expose build_pipeline, the arnold plugin wins discovery because
-    arnold_pipelines is scanned first."""
+    arnold_pipelines is scanned first.
+
+    This test targets the legacy (flag-OFF) discovery path; planted temp
+    modules do not carry a valid manifest, so manifest-first discovery is
+    disabled for the test.
+    """
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.runtime.discovery._manifest_discovery_enabled",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.registry._manifest_discovery_enabled",
+        lambda: False,
+    )
+
     arnold_pp = tmp_path / "arnold_pipelines"
     megaplan_pp = tmp_path / "megaplan" / "pipelines"
 
@@ -257,7 +271,21 @@ def test_skill_md_read_from_arnold_plugin_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When an arnold-planted pipeline has a co-located SKILL.md,
-    read_skill_md returns its contents."""
+    read_skill_md returns its contents.
+
+    This test targets the legacy (flag-OFF) discovery path; planted temp
+    modules do not carry a valid manifest, so manifest-first discovery is
+    disabled for the test.
+    """
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.runtime.discovery._manifest_discovery_enabled",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.registry._manifest_discovery_enabled",
+        lambda: False,
+    )
+
     arnold_pp = tmp_path / "arnold_pipelines"
 
     _plant_arnold_megaplan(tmp_path)

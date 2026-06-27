@@ -1,113 +1,62 @@
 # Creating a New Arnold Pipeline
 
-This is the M7 copy-paste guide for adding a new Arnold pipeline. New converted
-pipelines should be native-authored first, then projected to a validation graph.
+This is the workflow-first copy-paste guide for adding a new Arnold pipeline.
+New pipelines are authored as explicit-node `arnold.workflow.Pipeline` data and
+validated through the `arnold workflow` CLI.
 
-## 1. Scaffold the Module
+## 1. Scaffold the Package
 
-From the repo root:
+Copy the workflow-first template and rename it:
 
 ```bash
-arnold pipelines new my-planning-pipeline
+cp -r arnold_pipelines/_template arnold_pipelines/my_pipeline
 ```
 
-This creates a native-first module and a sibling `SKILL.md` stub. The
-CLI-visible name is the hyphenated form: `my-planning-pipeline`.
+Inside `arnold_pipelines/my_pipeline/` you will find:
+
+- `__init__.py` — package metadata and the canonical `build_pipeline()` entrypoint.
+- `SKILL.md` — agent-facing instructions for the pipeline.
+- `skills/` — optional skill bundles for Codex/Claude/Cursor.
+
+Replace every `my-pipeline` placeholder with the real pipeline id.
 
 ## 2. Replace the Skeleton
 
-Open the generated module and keep the native declaration shape. A minimal
-planning-style pipeline looks like this:
+Open `__init__.py` and keep the explicit-node workflow shape. A minimal
+pipeline looks like this:
 
 ```python
 from __future__ import annotations
 
-from typing import Any
-
-from arnold.pipeline.native import (
-    compile_pipeline,
-    decision,
-    native_panel,
-    parallel,
-    phase,
-    pipeline,
-    project_graph,
-)
-from arnold.pipeline.subpipeline import run_subpipeline
-from arnold.pipeline.types import Pipeline
+from arnold.workflow import Pipeline, Route, Step
 
 
-name: str = "my-planning-pipeline"
-description: str = "A minimal native planning pipeline."
+name: str = "my-pipeline"
+description: str = "A minimal explicit-node workflow pipeline."
 default_profile: str | None = None
-supported_modes: tuple[str, ...] = ("code",)
-driver: tuple[str, str] = ("native", "project+validate")
+supported_modes: tuple[str, ...] = ("graph",)
+recommended_profiles: tuple[str, ...] = ()
+driver: tuple[str, str] = ("graph", "linear")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("planning",)
-
-
-@phase(name="prep")
-def prep(ctx: Any) -> dict[str, Any]:
-    return {"prepped": True}
-
-
-@phase(name="plan")
-def plan(ctx: Any) -> dict[str, Any]:
-    return {"planned": True}
-
-
-@phase(name="review_fast")
-def review_fast(ctx: Any) -> dict[str, Any]:
-    return {"fast_review": "TODO"}
-
-
-@phase(name="review_deep")
-def review_deep(ctx: Any) -> dict[str, Any]:
-    return {"deep_review": "TODO"}
-
-
-@decision(name="gate", vocabulary=frozenset({"proceed", "revise"}))
-def gate(ctx: Any) -> str:
-    state = getattr(ctx, "state", {}) if not isinstance(ctx, dict) else ctx.get("state", {})
-    return "revise" if isinstance(state, dict) and state.get("needs_revision") else "proceed"
-
-
-@phase(name="revise")
-def revise(ctx: Any) -> dict[str, Any]:
-    return {"revised": True}
-
-
-@phase(name="execute")
-def execute(ctx: Any) -> dict[str, Any]:
-    return {"executed": True}
-
-
-@phase(name="review")
-def review(ctx: Any) -> dict[str, Any]:
-    return {"reviewed": True}
-
-
-@pipeline("my-planning-pipeline", description=description)
-def my_planning_pipeline(ctx: Any) -> Any:
-    yield prep(ctx)
-    yield plan(ctx)
-    for branch in parallel([review_fast, review_deep], name="planning_panel"):
-        yield branch(ctx)
-    for branch in native_panel(
-        "editorial_panel",
-        (("fast", review_fast), ("deep", review_deep)),
-    ):
-        yield branch(ctx)
-    if gate(ctx) == "revise":
-        yield revise(ctx)
-    yield execute(ctx)
-    yield review(ctx)
+capabilities: tuple[str, ...] = ("skeleton",)
 
 
 def build_pipeline() -> Pipeline:
-    program = compile_pipeline(my_planning_pipeline)
-    return project_graph(program, key_mode="phase")
+    """Build the workflow graph."""
+    return Pipeline(
+        id="my-pipeline",
+        version="1.0",
+        steps=(
+            Step(id="plan", kind="agent"),
+            Step(id="execute", kind="agent"),
+            Step(id="review", kind="agent"),
+        ),
+        routes=(
+            Route(id="plan-execute", source="plan", target="execute"),
+            Route(id="execute-review", source="execute", target="review"),
+        ),
+    )
 
 
 __all__ = [
@@ -116,6 +65,7 @@ __all__ = [
     "description",
     "default_profile",
     "supported_modes",
+    "recommended_profiles",
     "driver",
     "entrypoint",
     "arnold_api_version",
@@ -123,66 +73,58 @@ __all__ = [
 ]
 ```
 
-Use `run_subpipeline(...)` inside a `@phase` when the work should delegate to a
-child pipeline with an explicit parent/child resume boundary. Keep that call in
-one phase rather than hiding child workflow state in a graph edge.
+`build_pipeline()` must be callable with no arguments and must return an
+`arnold.workflow.Pipeline`. The compiler lowers that object to a
+`WorkflowManifest` with deterministic hashes; do not hand-author the manifest.
 
 ## 3. Validate and Run
 
 ```bash
-arnold pipelines check my-planning-pipeline
-arnold pipelines list
-arnold pipelines run my-planning-pipeline "Implement a dark mode toggle"
+arnold workflow check --module arnold_pipelines.my_pipeline:build_pipeline
+arnold workflow dry-run --module arnold_pipelines.my_pipeline:build_pipeline
+arnold workflow run --module arnold_pipelines.my_pipeline:build_pipeline --backend fake
 ```
 
-Fresh runs execute on the native runtime.
+For a local (non-fake) backend run, omit `--backend fake`.
 
 ## 4. Profiles and Prompts
 
-Profiles are still keyed by public stage name:
+Profiles are still keyed by step id:
 
 ```toml
 [profiles.default]
-prep = "hermes:deepseek:deepseek-v4-pro"
 plan = "claude"
 execute = "hermes:deepseek:deepseek-v4-pro"
 review = "claude"
 ```
 
-Static prompt files, callable prompt builders, and model-backed steps can still
-live behind the phase implementation. The native declaration owns topology;
-the phase body owns how work is performed.
+Static prompt files, callable prompt builders, and model-backed steps can live
+behind component imports. The workflow declaration owns topology; the step
+implementation owns how work is performed.
 
-## 5. Resume and Old Graph Plans
+## 5. Resume
 
-Native runs write native-owned `resume_cursor.json` files. Graph-born in-flight
-plans keep resuming on graph unless you explicitly upgrade the cursor:
+Workflow runs write event journals. Resume from a cursor with:
 
 ```bash
-arnold pipelines upgrade-cursor <plan-dir>
-arnold pipelines upgrade-cursor <plan-dir> --write
+arnold workflow resume --module arnold_pipelines.my_pipeline:build_pipeline \
+                       --artifact-root ./runs/my-pipeline
 ```
-
-The first command is a dry run. The write command keeps a graph cursor backup
-and fails without mutation if the graph stage cannot map to exactly one native
-reentry point.
 
 ## 6. Common Gotchas
 
 - `build_pipeline()` must be callable with no arguments.
 - Keep module metadata as simple literals so no-import discovery can parse it.
-- Use `@decision` vocabularies that match the labels your workflow branches on.
-- Use `parallel(...)` and `native_panel(...)` only for fixed branch sets.
-- Keep runtime-sized fanout or profile-sized panels inside a delegating phase
-  until the native compiler/runtime explicitly supports that shape.
-- Graph scaffolds are not available for new packages; new work must use the
-  native-first scaffold.
+- Use only `arnold.workflow` explicit-node data (`Pipeline`, `Step`, `Route`,
+  `Input`, `Output`, `Capability`) for topology.
+- Do not import `arnold.pipeline`, `arnold.pipeline.native`, `Stage`, `Edge`,
+  `PipelineBuilder`, or other graph/native surfaces into the canonical builder.
+- Do not add `_legacy.py`, native fallback builders, or compatibility wrappers
+  for new work.
 
 ## 7. Reference Implementations
 
-- `arnold_pipelines/megaplan/pipeline.py` - native Megaplan planning topology.
-- `arnold_pipelines/megaplan/pipelines/epic_blitz.py` - native panels.
-- `arnold_pipelines/megaplan/pipelines/select_tournament/__init__.py` - fixed
-  native parallel branches with typed ports.
-- `docs/arnold/authoring-guide.md` and
-  `docs/arnold/package-authoring-contract.md` - full contract details.
+- `arnold_pipelines/_template/__init__.py` — canonical workflow scaffold.
+- `arnold_pipelines/evidence_pack/__init__.py` — migrated workflow pipeline.
+- `docs/arnold/workflow-authoring.md` and
+  `docs/arnold/package-authoring-contract.md` — full contract details.

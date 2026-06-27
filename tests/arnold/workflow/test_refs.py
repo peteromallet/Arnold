@@ -12,6 +12,9 @@ from arnold.workflow import (
     SourceRef,
     SourceSpan,
     ValueRef,
+    as_hook_ref,
+    as_import_ref,
+    as_optional_hook_ref,
     expression_ref,
     manifest_coordinate,
 )
@@ -166,6 +169,55 @@ def test_expression_refs_are_inert_and_dependency_only() -> None:
         bool(ref)
     with pytest.raises(TypeError, match="inert reference"):
         bool(hook)
+
+
+def test_as_hook_ref_accepts_strings_import_refs_and_callables() -> None:
+    string_ref = as_hook_ref(
+        f"{__name__}:module_level_hook",
+        node_id="plan",
+        field="prompt_ref",
+    )
+    import_ref = as_import_ref(module_level_hook)
+    callable_ref = as_hook_ref(module_level_hook, node_id="plan", field="prompt_ref")
+
+    assert string_ref.spec == f"{__name__}:module_level_hook"
+    assert callable_ref.spec == string_ref.spec
+    assert HookRef(import_ref).spec == string_ref.spec
+
+
+def test_as_hook_ref_rejects_unstable_callables_with_node_field_context() -> None:
+    captured = "state"
+
+    def closure() -> str:
+        return captured
+
+    cases = [
+        (lambda: "lambda", "lambdas"),
+        (closure, "closures"),
+        (HookFixtures().method_hook, "bound methods"),
+        (CallableHook(), "callable instances"),
+        (object(), "live objects"),
+        ("not_a_module:func", "invalid hook ref"),
+    ]
+
+    for target, reason in cases:
+        with pytest.raises(RefDiagnosticError) as exc_info:
+            as_hook_ref(target, node_id="review", field="condition_ref")
+
+        message = str(exc_info.value)
+        assert "node 'review' field 'condition_ref'" in message
+        assert reason in message
+        assert "module-level function or class/static function" in message
+
+
+def test_as_optional_hook_ref_preserves_none_and_valid_refs() -> None:
+    assert as_optional_hook_ref(None, node_id="plan", field="reducer_ref") is None
+    ref = as_optional_hook_ref(
+        f"{__name__}:module_level_hook",
+        node_id="plan",
+        field="reducer_ref",
+    )
+    assert isinstance(ref, HookRef)
 
 
 @pytest.mark.parametrize(

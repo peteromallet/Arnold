@@ -14,7 +14,6 @@ from __future__ import annotations
 from typing import Any
 
 from arnold.workflow.compiler import compile_pipeline
-from arnold.workflow.dsl import Pipeline
 
 from arnold_pipelines.megaplan.workflows.planning import build_pipeline
 

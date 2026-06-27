@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from arnold.execution import ExecutionRegistries, ExecutionState
+from arnold.execution import ExecutionRegistries, ExecutionState, run
 from arnold.execution.backend import NodeOutcome, NodeState
 from arnold.execution.state import RouteCoordinate
 from arnold.kernel import (
@@ -19,6 +19,7 @@ from arnold.kernel import (
     EventFamily,
 )
 from arnold.kernel.journal import read_event_journal
+from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
 from tests.arnold.execution import fixtures
 
 GOLDEN_RUNTIME_ROOT = Path("tests/fixtures/golden/workflow_manifest_runtime")
@@ -393,3 +394,89 @@ def test_escalation_fixture_routes_after_retry_exhaustion(
     events = read_event_journal(tmp_path)
     assert any(e.kind == "escalation_routed" for e in events)
     assert "escalation_target" in _node_refs(events)
+
+
+
+
+@pytest.mark.parametrize(
+    "selections,expected_nodes,terminal",
+    [
+        (
+            {"gate": "gate:finalize"},
+            {"prep", "plan", "critique", "gate", "finalize", "execute", "review", "halt"},
+            ExecutionState.COMPLETED,
+        ),
+        (
+            {"gate": "gate:tiebreaker", "tiebreaker_decide": "tiebreaker_decide:finalize"},
+            {"prep", "plan", "critique", "gate", "tiebreaker_run", "tiebreaker_decide", "finalize", "execute", "review", "halt"},
+            ExecutionState.COMPLETED,
+        ),
+        (
+            {"gate": "gate:override", "override": "override:finalize"},
+            {"prep", "plan", "critique", "gate", "override", "finalize", "execute", "review", "halt"},
+            ExecutionState.COMPLETED,
+        ),
+        (
+            {"gate": "gate:blocked", "override": "override:halt"},
+            {"prep", "plan", "critique", "gate", "override", "halt"},
+            ExecutionState.COMPLETED,
+        ),
+        (
+            {"gate": "gate:force_proceed"},
+            {"prep", "plan", "critique", "gate", "finalize", "execute", "review", "halt"},
+            ExecutionState.COMPLETED,
+        ),
+        (
+            {"gate": "gate:halt"},
+            {"prep", "plan", "critique", "gate", "halt"},
+            ExecutionState.COMPLETED,
+        ),
+    ],
+)
+def test_megaplan_gate_routing_family(
+    tmp_path: Path,
+    fake_backend_factory,
+    selections: dict[str, str],
+    expected_nodes: set[str],
+    terminal: ExecutionState,
+) -> None:
+    manifest = build_and_compile_pipeline()
+    backend = fake_backend_factory(branch_selections=selections)
+
+    result = run(
+        manifest,
+        artifact_root=tmp_path,
+        registries=ExecutionRegistries(),
+        backend=backend,
+    )
+
+    assert result.state is terminal
+    events = read_event_journal(tmp_path)
+    completed = {
+        e.payload["node_ref"]
+        for e in events
+        if e.kind == "node_completed" and e.payload.get("child_key") is None
+    }
+    assert expected_nodes <= completed
+
+
+def test_megaplan_human_gate_suspends(tmp_path: Path, fake_backend_factory) -> None:
+    manifest = build_and_compile_pipeline()
+    backend = fake_backend_factory(
+        node_behaviors={
+            "gate": NodeOutcome(state=NodeState.SUSPENDED, suspension_route_id="gate:human")
+        }
+    )
+
+    result = run(
+        manifest,
+        artifact_root=tmp_path,
+        registries=ExecutionRegistries(),
+        backend=backend,
+    )
+
+    assert result.state is ExecutionState.SUSPENDED
+    assert result.resume_cursor is not None
+    assert result.resume_cursor.node.id == "gate"
+    events = read_event_journal(tmp_path)
+    assert any(e.kind == "node_suspended" for e in events)

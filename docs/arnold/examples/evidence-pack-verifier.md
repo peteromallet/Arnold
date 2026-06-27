@@ -173,6 +173,13 @@ possible_routes:
   source: reduce
   target: human_review
 suspension_point_count: 1
+topology_summary:
+  edge_count: 4
+  entry_nodes:
+  - ingest
+  exit_nodes:
+  - emit_attestation
+  node_count: 5
 unresolved_inputs:
   ingest:
   - evidence_pack

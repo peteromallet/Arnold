@@ -17,7 +17,6 @@ from arnold_pipelines.megaplan.content_types import (
     REVIEW_OUTPUT_CONTENT_TYPE,
     STATE_ARTIFACT_CONTENT_TYPE,
     ArtifactAdapterContext,
-    MEGAPLAN_CONTENT_TYPES,
     build_megaplan_content_type_registry,
     write_gate_signal_artifact,
     write_plan_artifact,

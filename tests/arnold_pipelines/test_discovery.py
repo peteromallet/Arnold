@@ -106,8 +106,8 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
         assert info.load_state == "workflow"
         assert info.canonical_builder_path is not None
 
-    assert by_id["my-pipeline"].builder_contract == "native"
-    assert by_id["my-pipeline"].load_state == "loadable-native"
+    assert by_id["my-pipeline"].builder_contract == "workflow"
+    assert by_id["my-pipeline"].load_state == "workflow"
     assert by_id["my-pipeline"].canonical_builder_path is not None
 
     assert by_id["creative"].builder_contract == "native"
@@ -138,13 +138,26 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         "select-tournament": "arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline",
         "folder-audit": "arnold.pipelines.folder_audit:build_pipeline",
         "deliberation": "arnold.pipelines.deliberation:build_pipeline",
-        "my-pipeline": "arnold_pipelines._template:build_pipeline",
     }
 
     assert set(native_or_deferred) == set(expected)
     for pipeline_id, target in expected.items():
         info = native_or_deferred[pipeline_id]
         assert info.canonical_builder_path == target
+
+
+def test_workflow_template_is_discovered_separately_from_native() -> None:
+    """The workflow-first template is discovered as a workflow builder."""
+
+    results = discover_shipped_pipelines()
+    by_id = {info.id: info for info in results}
+    template = by_id["my-pipeline"]
+    assert template.builder_contract == "workflow"
+    assert template.load_state == "workflow"
+    assert template.canonical_builder_path == "arnold_pipelines._template:build_pipeline"
+    assert template.builder is not None
+    pipeline = template.builder()
+    assert isinstance(pipeline, Pipeline)
 
 
 def test_load_builder_works_with_module_target() -> None:

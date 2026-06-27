@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 REQUIRED_CASES = (
     "fresh-planning.json",
     "gate-iteration.json",
@@ -377,3 +379,53 @@ def test_workflow_manifest_runtime_fixture_cases_are_present_and_normalized() ->
         assert "seed" not in data["normalization"], name
         _assert_source_or_coverage_origin(root, name, data)
         _assert_manifest_contract_substance(name, data)
+
+
+REQUIRED_CANONICAL_SHAPE_FILES = (
+    "canonical_megaplan_nodes.yaml",
+    "canonical_megaplan_refs.yaml",
+    "canonical_megaplan_capabilities.yaml",
+    "canonical_megaplan_suspension_points.yaml",
+    "canonical_megaplan_control_routes.yaml",
+    "canonical_megaplan_overlay_slots.yaml",
+    "canonical_megaplan_hashes.yaml",
+)
+
+
+def test_canonical_megaplan_shape_files_exist_and_parse() -> None:
+    root = Path("tests/fixtures/workflow")
+    for name in REQUIRED_CANONICAL_SHAPE_FILES:
+        path = root / name
+        assert path.exists(), name
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(data, dict), name
+
+
+def test_canonical_megaplan_shape_matrix_covers_named_shapes() -> None:
+    from tests.arnold.workflow.test_canonical_megaplan_conformance import (
+        _load_fixture_matrix,
+    )
+
+    matrix = _load_fixture_matrix()
+    expected_shape_names = set(matrix["shapes"].keys())
+    required_canonical_shapes = {
+        "branch",
+        "loop_revise",
+        "fanout_panel",
+        "retry",
+        "subpipeline",
+        "suspension_capability",
+        "override_fallback",
+        "escalation",
+        "compensation",
+        "supervisor_promotion",
+        "feedback",
+        "robustness_budget",
+        "dynamic_topology_overlay",
+        "tournament",
+    }
+
+    assert required_canonical_shapes <= expected_shape_names
+    assert matrix["shapes"]["dynamic_topology_overlay"]["metadata"]["overlay"][
+        "dynamic_events"
+    ]

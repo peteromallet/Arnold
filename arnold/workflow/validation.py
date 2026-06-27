@@ -49,6 +49,102 @@ _RESERVED_METADATA_KEYS = frozenset(
 )
 
 
+def _require_ref_segment(name: str, value: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+    if not _REF_RE.fullmatch(value):
+        raise ValueError(f"{name} has invalid ref format: {value!r}")
+    return value
+
+
+def _freeze_mapping(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    return MappingProxyType({str(key): _freeze_value(subvalue) for key, subvalue in value.items()})
+
+
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return _freeze_mapping(value)
+    if isinstance(value, list):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, tuple):
+        return tuple(_freeze_value(item) for item in value)
+    return value
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRef:
+    """Inert runtime reference to a workflow value.
+
+    A runtime ref exposes only stable node/output identity, declared dependency
+    metadata, fallback-route metadata, and primitive serializable metadata.  It
+    deliberately rejects Python truthiness, iteration, arithmetic, mutation,
+    attribute probing, and branching because those operations can only represent
+    live Python control flow, not manifest-routable topology.
+    """
+
+    node_id: str
+    output: str
+    dependencies: tuple[str, ...] = ()
+    fallback_route: str | None = None
+    metadata: Mapping[str, Any] = dataclass_field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "node_id", _require_ref_segment("node_id", self.node_id)
+        )
+        object.__setattr__(
+            self, "output", _require_ref_segment("output", self.output)
+        )
+        object.__setattr__(
+            self, "dependencies", tuple(_require_ref_segment("dependency", dep) for dep in self.dependencies)
+        )
+        object.__setattr__(
+            self, "fallback_route", None if self.fallback_route is None else _require_ref_segment("fallback_route", self.fallback_route)
+        )
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+
+    @property
+    def identity(self) -> str:
+        """Stable node/output identity for this runtime ref."""
+
+        return f"{self.node_id}.{self.output}"
+
+    def __bool__(self) -> bool:
+        raise TypeError("RuntimeRef is an inert reference and has no runtime truthiness")
+
+    def __iter__(self) -> Any:
+        raise TypeError("RuntimeRef is not iterable")
+
+    def __len__(self) -> int:
+        raise TypeError("RuntimeRef has no length")
+
+    def __int__(self) -> int:
+        raise TypeError("RuntimeRef cannot be coerced to a number")
+
+    def __float__(self) -> float:
+        raise TypeError("RuntimeRef cannot be coerced to a number")
+
+    def __add__(self, other: object) -> Any:
+        raise TypeError("RuntimeRef does not support arithmetic")
+
+    __sub__ = __mul__ = __truediv__ = __floordiv__ = __mod__ = __add__
+
+    def __radd__(self, other: object) -> Any:
+        raise TypeError("RuntimeRef does not support arithmetic")
+
+    def __getitem__(self, key: object) -> Any:
+        raise TypeError("RuntimeRef does not support indexing")
+
+    def __contains__(self, key: object) -> bool:
+        raise TypeError("RuntimeRef does not support membership tests")
+
+    def __getattr__(self, name: str) -> Any:
+        raise AttributeError(
+            f"RuntimeRef has no attribute {name!r}; "
+            "use the declared identity, dependencies, fallback_route, and metadata fields only"
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ManifestValidationIssue:
     """Structured validation issue for neutral workflow manifests."""

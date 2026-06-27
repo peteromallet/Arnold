@@ -1,25 +1,25 @@
 ---
 name: new-arnold-pipeline-template
-description: Scaffold a new Arnold pipeline package from the _template skeleton.
+description: Scaffold a new Arnold workflow pipeline package from the _template skeleton.
 ---
 
 # New Arnold Pipeline Template
 
 Copy `arnold_pipelines/_template/` to a new package under `arnold_pipelines/`,
-rename it (remove the leading underscore), and replace the skeleton native
-declaration body with your workflow entrypoint.
+rename it (remove the leading underscore), and replace the skeleton explicit-node
+workflow with your pipeline logic.
 
 ## Contract
 
-- `build_pipeline(...) -> arnold.pipeline.Pipeline` with `native_program` set.
+- `build_pipeline(...) -> arnold.workflow.Pipeline` returning explicit-node data.
 - Module-level metadata: `name`, `description`, `driver`, `entrypoint`,
   `arnold_api_version`, `capabilities`
 - Optional: `default_profile`, `supported_modes`, `recommended_profiles`
 
-New packages must be native-first. Use `@phase` and `@pipeline` declarations
-from `arnold.pipeline.native`, compile them with `compile_pipeline`, and return
-the result of `project_graph(...)`. Do not add `_legacy.py`, graph fallback
-builders, compatibility namespaces, or temporary wrapper modules for new work.
+New packages must be workflow-first. Use `arnold.workflow.Pipeline`, `Step`,
+`Route`, `Input`, `Output`, and `Capability` to declare the graph. Do not add
+`_legacy.py`, native fallback builders, compatibility namespaces, or temporary
+wrapper modules for new work.
 
 `build_pipeline()` remains the current package entrypoint used by discovery and
 `arnold workflow check`.
@@ -27,38 +27,30 @@ builders, compatibility namespaces, or temporary wrapper modules for new work.
 ## Example
 
 ```python
-from arnold import pipeline
+from arnold.workflow import Pipeline, Route, Step
 
 
-@pipeline.native.phase(name="start")
-def start(ctx):
-    return {"intermediate": "TODO"}
-
-
-@pipeline.native.phase(name="finish")
-def finish(ctx):
-    return {"result": "TODO"}
-
-
-@pipeline.native.pipeline("my-pipeline")
-def my_pipeline(ctx):
-    yield start(ctx)
-    yield finish(ctx)
-
-
-def build_pipeline() -> pipeline.Pipeline:
-    return pipeline.native.project_graph(
-        pipeline.native.compile_pipeline(my_pipeline), key_mode="phase"
+def build_pipeline() -> Pipeline:
+    return Pipeline(
+        id="my-pipeline",
+        version="1.0",
+        steps=(
+            Step(id="start", kind="agent"),
+            Step(id="finish", kind="agent"),
+        ),
+        routes=(
+            Route(id="start-finish", source="start", target="finish"),
+        ),
     )
 ```
 
 ## Validation
 
 - Validate import: `arnold_pipelines.my_pipeline:build_pipeline`
-- Contract: `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram` set.
+- Contract: `build_pipeline()` returns `arnold.workflow.Pipeline`.
 
 Run through the Arnold workflow checker:
 
 ```bash
-arnold workflow check my-pipeline
+arnold workflow check --module arnold_pipelines.my_pipeline:build_pipeline
 ```

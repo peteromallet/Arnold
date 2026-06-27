@@ -132,13 +132,18 @@ def tournament(
     *,
     winner_ref: str | object,
     tie_ref: str | object,
+    max_tiebreaker_rounds: int = 2,
+    reentry_id: str | None = None,
     source_span: SourceSpan | None = None,
     metadata: Mapping[str, Any] | None = None,
 ) -> PatternBlock:
-    """Return an explicit tournament with two full tiebreaker rounds.
+    """Return an explicit tournament with bounded tiebreaker loop-back.
 
-    Provisional: the exact judge/tiebreaker node count is stable and
-    inspectable, but the condition labels may be refined by later milestones.
+    The tournament lowers to a judge node, two full tiebreaker rounds, and a
+    merge node.  If the second tiebreaker still yields a tie, a bounded back-edge
+    routes to the judge for another round.  The loop is bounded by
+    ``max_tiebreaker_rounds`` and matched by a suspension route so the cycle is
+    explicit in the manifest rather than flattened into a one-shot DAG.
     """
 
     winner_hook = _as_hook_ref(winner_ref, node_id=step_id, field="winner_ref")
@@ -146,6 +151,7 @@ def tournament(
     judge_id = f"{step_id}-judge"
     tiebreak1_id = f"{step_id}-tiebreak-1"
     tiebreak2_id = f"{step_id}-tiebreak-2"
+    reentry_id = reentry_id or f"{step_id}:tiebreak"
     merge_step = Step(
         id=merge_id,
         kind="merge",
@@ -154,17 +160,26 @@ def tournament(
         metadata={**(metadata or {}), "winner_ref": winner_hook.spec, "tie_ref": tie_hook.spec},
     )
 
-    def make_branch(branch_id: str) -> Step:
+    def make_branch(branch_id: str, *, policy: WorkflowPolicy | None = None) -> Step:
         return Step(
             id=branch_id,
             kind="branch",
+            policy=policy,
             metadata={
                 "winner_ref": winner_hook.spec,
                 "tie_ref": tie_hook.spec,
             },
         )
 
-    judge = make_branch(judge_id)
+    judge = make_branch(
+        judge_id,
+        policy=WorkflowPolicy(
+            loop=LoopPolicy(max_iterations=max_tiebreaker_rounds),
+            suspension_routes=(
+                SuspensionRoute(route_id=f"{step_id}-reentry", reentry_id=reentry_id),
+            ),
+        ),
+    )
     tiebreak1 = make_branch(tiebreak1_id)
     tiebreak2 = make_branch(tiebreak2_id)
 
@@ -216,6 +231,13 @@ def tournament(
             target=merge_id,
             label="winner",
             condition_ref=winner_hook.spec,
+        ),
+        Route(
+            id=f"{tiebreak2_id}-{judge_id}",
+            source=tiebreak2_id,
+            target=judge_id,
+            label="retry",
+            condition_ref=reentry_id,
         ),
     )
     return PatternBlock(

@@ -1,191 +1,123 @@
 """Golden characterization for the canonical Megaplan pipeline surface.
 
-The legacy golden used deleted ``arnold_pipelines.megaplan._pipeline`` modules.
-This characterization is intentionally pinned to the native-backed public
-``build_pipeline()`` surface while keeping graph compatibility visible.
+The public ``build_pipeline()`` surface now returns a workflow-first
+``arnold.workflow.dsl.Pipeline`` graph. This characterization pins the
+deterministic graph shape exposed by the canonical megaplan pipeline.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from arnold.pipeline.native.ir import NativeProgram
-from arnold.pipeline.native.routing import (
-    has_native_dispatch_capability,
-    select_runtime_for_dispatch,
-)
-from arnold.pipeline.resume import (
-    classify_resume_cursor_payload,
-    persist_resume_cursor,
-)
+from arnold.workflow.compiler import compile_pipeline
+from arnold.workflow.dsl import Pipeline
 from arnold_pipelines.megaplan.pipeline import build_pipeline
 
 
-EXPECTED_STAGE_ORDER = (
+EXPECTED_STEP_ORDER = (
     "prep",
     "plan",
     "critique",
     "gate",
     "revise",
-    "tiebreaker",
+    "tiebreaker_run",
+    "tiebreaker_decide",
     "finalize",
     "execute",
     "review",
+    "halt",
+    "override",
 )
 
-EXPECTED_NATIVE_PHASE_TRACE = (
-    "prep",
-    "plan",
-    "critique",
-    "gate",
-    "revise",
-    "critique",
-    "gate",
-    "tiebreaker",
-    "critique",
-    "gate",
-    "revise",
-    "critique",
-    "gate",
-    "tiebreaker",
-    "finalize",
-    "execute",
-    "review",
+EXPECTED_STEP_KINDS = (
+    ("prep", "megaplan:prep"),
+    ("plan", "megaplan:plan"),
+    ("critique", "megaplan:critique"),
+    ("gate", "megaplan:gate"),
+    ("revise", "megaplan:revise"),
+    ("tiebreaker_run", "megaplan:tiebreaker_run"),
+    ("tiebreaker_decide", "megaplan:tiebreaker_decide"),
+    ("finalize", "megaplan:finalize"),
+    ("execute", "megaplan:execute"),
+    ("review", "megaplan:review"),
+    ("halt", "megaplan:halt"),
+    ("override", "megaplan:override"),
 )
 
-EXPECTED_NATIVE_INSTRUCTIONS = (
-    ("phase", "prep", 1),
-    ("phase", "plan", 2),
-    ("phase", "critique", 3),
-    ("phase", "gate", 4),
-    ("decision", "gate_guard", None),
-    ("phase", "revise", 6),
-    ("phase", "critique", 7),
-    ("phase", "gate", 8),
-    ("jump", "gate_loop_back", 4),
-    ("decision", "gate", None),
-    ("halt", "", None),
-    ("decision", "gate", None),
-    ("phase", "tiebreaker", 13),
-    ("decision", "tiebreaker", None),
-    ("phase", "critique", 15),
-    ("phase", "gate", 16),
-    ("decision", "gate_guard", None),
-    ("phase", "revise", 18),
-    ("phase", "critique", 19),
-    ("phase", "gate", 20),
-    ("jump", "gate_loop_back", 16),
-    ("decision", "gate", None),
-    ("halt", "", None),
-    ("decision", "gate", None),
-    ("phase", "tiebreaker", 25),
-    ("jump", "if_then_exit", 26),
-    ("jump", "if_then_exit", 27),
-    ("jump", "if_then_exit", 28),
-    ("phase", "finalize", 29),
-    ("phase", "execute", 30),
-    ("phase", "review", 31),
-    ("halt", "", None),
+EXPECTED_ROUTES = (
+    ("prep:plan", "prep", "plan", "default"),
+    ("plan:critique", "plan", "critique", "default"),
+    ("critique:gate", "critique", "gate", "default"),
+    ("gate:finalize", "gate", "finalize", "proceed"),
+    ("gate:revise", "gate", "revise", "iterate"),
+    ("gate:tiebreaker", "gate", "tiebreaker_run", "tiebreaker"),
+    ("gate:override", "gate", "override", "escalate"),
+    ("gate:halt", "gate", "halt", "abort"),
+    ("gate:suspend", "gate", "halt", "suspend"),
+    ("gate:blocked", "gate", "override", "blocked_preflight"),
+    ("gate:force_proceed", "gate", "finalize", "force_proceed"),
+    ("revise:critique", "revise", "critique", "default"),
+    ("tiebreaker_run:decide", "tiebreaker_run", "tiebreaker_decide", "default"),
+    ("tiebreaker_decide:critique", "tiebreaker_decide", "critique", "iterate"),
+    ("tiebreaker_decide:finalize", "tiebreaker_decide", "finalize", "proceed"),
+    ("tiebreaker_decide:override", "tiebreaker_decide", "override", "escalate"),
+    ("finalize:execute", "finalize", "execute", "default"),
+    ("execute:review", "execute", "review", "default"),
+    ("review:halt", "review", "halt", "default"),
+    ("review:revise", "review", "revise", "rework"),
+    ("override:halt", "override", "halt", "abort"),
+    ("override:finalize", "override", "finalize", "force_proceed"),
+    ("override:revise", "override", "revise", "replan"),
+)
+
+EXPECTED_CAPABILITIES = (
+    ("megaplan:planning", "default", True),
+    ("human:gate", "default", False),
+    ("human:review", "default", False),
 )
 
 
-def _instruction_golden(program: NativeProgram) -> tuple[tuple[str, str, int | None], ...]:
-    return tuple((inst.op, inst.name, inst.next_pc) for inst in program.instructions)
-
-
-def _phase_port_golden(program: NativeProgram) -> dict[str, dict[str, tuple[str, ...]]]:
-    return {
-        phase.name: {
-            "produces": tuple(port.name for port in phase.produces),
-            "consumes": tuple(port.port_name for port in phase.consumes),
-        }
-        for phase in program.phases
-    }
-
-
-def test_build_pipeline_golden_shape_is_native_backed_compatibility_shell() -> None:
+def test_build_pipeline_returns_workflow_first_pipeline() -> None:
     pipeline = build_pipeline()
 
+    assert isinstance(pipeline, Pipeline)
+    assert pipeline.id == "megaplan"
+    assert pipeline.version == "m4-phase3"
     assert pipeline.entry == "prep"
-    assert tuple(pipeline.stages) == EXPECTED_STAGE_ORDER
-    assert pipeline.resource_bundles == ()
-    assert isinstance(pipeline.native_program, NativeProgram)
-    assert pipeline.native_program.name == "megaplan"
-    assert has_native_dispatch_capability(pipeline) is True
+    assert tuple(s.id for s in pipeline.steps) == EXPECTED_STEP_ORDER
+    assert tuple((s.id, s.kind) for s in pipeline.steps) == EXPECTED_STEP_KINDS
 
 
-def test_native_program_golden_preserves_trace_and_port_shape() -> None:
-    pipeline = build_pipeline()
-    assert isinstance(pipeline.native_program, NativeProgram)
-
-    program = pipeline.native_program
-    assert tuple(phase.name for phase in program.phases) == EXPECTED_NATIVE_PHASE_TRACE
-    assert tuple(decision.name for decision in program.decisions) == (
-        "gate",
-        "gate",
-        "tiebreaker",
-        "gate",
-        "gate",
-    )
-    assert _instruction_golden(program) == EXPECTED_NATIVE_INSTRUCTIONS
-    assert _phase_port_golden(program) == {
-        "prep": {"produces": ("prep_payload",), "consumes": ()},
-        "plan": {"produces": ("plan_payload",), "consumes": ("prep_payload",)},
-        "critique": {
-            "produces": ("critique_payload",),
-            "consumes": ("plan_payload", "revise_payload", "tiebreaker_payload"),
-        },
-        "gate": {"produces": ("gate_payload",), "consumes": ("critique_payload",)},
-        "revise": {"produces": ("revise_payload",), "consumes": ("gate_payload",)},
-        "tiebreaker": {
-            "produces": ("tiebreaker_payload",),
-            "consumes": ("gate_payload",),
-        },
-        "finalize": {"produces": ("finalize_payload",), "consumes": ("gate_payload",)},
-        "execute": {"produces": ("execute_payload",), "consumes": ("finalize_payload",)},
-        "review": {"produces": ("review_payload",), "consumes": ("execute_payload",)},
-    }
-
-
-def test_serialized_runtime_ownership_golden_preserves_state_continuity(
-    tmp_path: Path,
-) -> None:
+def test_build_pipeline_route_shape_matches_graph_contract() -> None:
     pipeline = build_pipeline()
 
-    fresh = select_runtime_for_dispatch(
-        pipeline,
-        state={},
-        artifact_root=tmp_path,
-    )
-    assert (fresh.runtime, fresh.resume, fresh.reason) == (
-        "native",
-        False,
-        "native_fresh",
-    )
+    assert tuple(
+        (r.id, r.source, r.target, r.label) for r in pipeline.routes
+    ) == EXPECTED_ROUTES
 
-    persist_resume_cursor(
-        tmp_path,
-        stage="execute",
-        resume_cursor="graph-era-cursor",
-    )
 
-    graph_resume = select_runtime_for_dispatch(
-        pipeline,
-        state={},
-        artifact_root=tmp_path,
-    )
-    assert (graph_resume.runtime, graph_resume.resume, graph_resume.reason) == (
-        "graph",
-        True,
-        "graph_cursor",
-    )
-    assert classify_resume_cursor_payload(
-        {"stage": "execute", "resume_cursor": "graph-era-cursor"}
-    ) == "graph"
+def test_build_pipeline_capabilities_match_workflow_manifest() -> None:
+    pipeline = build_pipeline()
 
-    native_born_payload = {
-        "stage": "execute",
-        "resume_cursor": "native-cursor",
-        "native": {"pc": 17, "version": 1},
-    }
-    assert classify_resume_cursor_payload(native_born_payload) == "native"
+    assert tuple(
+        (c.id, c.route, c.required) for c in pipeline.capabilities
+    ) == EXPECTED_CAPABILITIES
+
+
+def test_compiled_manifest_preserves_workflow_graph_shape() -> None:
+    pipeline = build_pipeline()
+    manifest = compile_pipeline(pipeline)
+
+    assert manifest.id == "megaplan"
+    assert manifest.version == "m4-phase3"
+    assert manifest.schema_version == "arnold.workflow.manifest.v1"
+    assert manifest.metadata == {"product": "megaplan", "max_critique_iterations": 4}
+
+    assert tuple((n.id, n.kind) for n in sorted(manifest.nodes, key=lambda n: n.id)) == tuple(
+        sorted(EXPECTED_STEP_KINDS)
+    )
+    assert tuple(
+        (e.id, e.source, e.target, e.label)
+        for e in sorted(manifest.edges, key=lambda e: e.id)
+    ) == tuple(sorted(EXPECTED_ROUTES))
+    assert tuple(
+        (c.capability_id, c.route, c.required) for c in manifest.capabilities
+    ) == EXPECTED_CAPABILITIES
