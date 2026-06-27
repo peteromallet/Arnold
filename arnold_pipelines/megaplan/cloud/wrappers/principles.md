@@ -10,6 +10,7 @@ These principles are mandatory for watchdog-triggered repair agents.
 6. Provider dependency errors are usually routing/config bugs. Do not install unrelated provider tooling to paper over a phase being sent to the wrong backend.
 7. Repair agents are supervisors, not replacement profiles. Do not pin every workflow phase to the repair model unless the chain explicitly requests that model for those phases.
 8. Stale runtime pins that shadow the intended profile should be cleared or replaced through the supported profile/vendor/phase-model path.
-9. When source changes are needed, brief Codex with the core issue, evidence, constraints, and plausible hypotheses. Point Codex in the right direction without prescribing the implementation; let Codex determine the solution.
-10. Validate narrowly, then persist. Run focused checks for the changed layer, commit and push source changes to `editible-install`, refresh the editable install, and then relaunch.
-11. Finish with evidence: root cause, fix, validation commands, pushed commit if any, relaunch result, current health, and remaining blockers.
+9. Deep investigations and source repairs must use the `$subagent-launcher` skill. The supervisor should collect evidence, then dispatch the proper implementer/reviewer through that skill instead of doing all repair work in its own context.
+10. When source changes are needed, brief Codex through `$subagent-launcher` with the core issue, evidence, constraints, and plausible hypotheses. Point Codex in the right direction without prescribing the implementation; let Codex determine the solution.
+11. Validate narrowly, then persist. Run focused checks for the changed layer, commit and push source changes to `editible-install`, refresh the editable install, and then relaunch.
+12. Finish with evidence: root cause, fix, validation commands, pushed commit if any, relaunch result, current health, and remaining blockers.
