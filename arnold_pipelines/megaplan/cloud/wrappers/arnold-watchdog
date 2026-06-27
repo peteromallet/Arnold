@@ -455,6 +455,73 @@ session_health_status() {
   echo "stopped"
 }
 
+kimi_operator_running() {
+  local session="$1"
+  ps -eww -o args= | grep -F "[a]rnold-kimi-goal-operator $session " >/dev/null 2>&1
+}
+
+plan_phase_health_status() {
+  local workspace="$1"
+  python3 - "$workspace" <<'PY'
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plans_dir = workspace / ".megaplan" / "plans"
+state_files = sorted(
+    plans_dir.glob("*/state.json"),
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+if not state_files:
+    print("ok")
+    raise SystemExit(0)
+
+state_path = state_files[0]
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"state_unreadable:{state_path.parent.name}:{exc}")
+    raise SystemExit(0)
+
+latest_failure = state.get("latest_failure") or {}
+if latest_failure.get("kind") != "phase_failed":
+    print("ok")
+    raise SystemExit(0)
+
+phase = latest_failure.get("phase") or "unknown"
+history = state.get("history") or []
+consecutive = 0
+for item in reversed(history):
+    if item.get("step") == phase and item.get("result") == "error":
+        consecutive += 1
+        continue
+    if item.get("step") == phase and item.get("result") == "success":
+        break
+    if consecutive:
+        break
+
+active = state.get("active_step") or {}
+active_phase = active.get("phase") or ""
+active_pid = active.get("worker_pid") or ""
+message = latest_failure.get("message") or ""
+
+if consecutive >= 2:
+    print(
+        "phase_failure:"
+        f"{state_path.parent.name}:"
+        f"{phase}:"
+        f"{consecutive}:"
+        f"active={active_phase or 'none'}:"
+        f"pid={active_pid or 'none'}:"
+        f"{message[:160]}"
+    )
+else:
+    print("ok")
+PY
+}
+
 repair_unhealthy_session() {
   local session="$1"
   local workspace="$2"
@@ -491,6 +558,23 @@ launch_chain_tick() {
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec")"
   if [[ "$health" == "alive" ]]; then
+    local phase_health
+    phase_health="$(plan_phase_health_status "$workspace")"
+    if [[ "$phase_health" != "ok" ]]; then
+      if kimi_operator_running "$session"; then
+        log "session alive but plan unhealthy; Kimi repair already running session=$session reason=$phase_health"
+        report_item "$report_items" "$session" "repair" "repair_running" "$phase_health" "$workspace" "$remote_spec"
+      elif [[ -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
+        log "session alive but plan unhealthy: invoking Kimi goal operator session=$session reason=$phase_health"
+        /usr/local/bin/arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec" >> "$LOG" 2>&1 \
+          && report_item "$report_items" "$session" "repair" "repair_completed" "$phase_health" "$workspace" "$remote_spec" \
+          || report_item "$report_items" "$session" "repair" "repair_failed" "$phase_health" "$workspace" "$remote_spec"
+      else
+        log "session alive but plan unhealthy; Kimi goal operator missing session=$session reason=$phase_health"
+        report_item "$report_items" "$session" "repair" "repair_unavailable" "$phase_health" "$workspace" "$remote_spec"
+      fi
+      return 0
+    fi
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
     return 0
