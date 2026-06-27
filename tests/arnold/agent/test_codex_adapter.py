@@ -181,3 +181,63 @@ def test_run_codex_step_free_text_omits_output_schema(
     assert "--output-schema" not in captured["command"]
     assert result.payload == {}
     assert result.raw_output == "batch([done()])"
+
+
+def test_run_codex_step_read_only_trusted_container_bypasses_inner_sandbox(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
+
+    root = tmp_path / "root"
+    root.mkdir()
+    ensure_runtime_layout(root)
+    plan_dir = root / ".megaplan" / "plans" / "oneshot"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    output_path = plan_dir / "out.json"
+    state = {
+        "name": "trusted-read-only",
+        "idea": "x",
+        "current_state": "critiqued",
+        "iteration": 0,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {},
+    }
+    captured: dict = {}
+
+    def fake_run_command(command, **kwargs):
+        captured["command"] = list(command)
+        output_path.write_text('{"checks":[],"flags":[]}', encoding="utf-8")
+        return _impl.CommandResult(
+            command=list(command),
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=5,
+        )
+
+    monkeypatch.setenv("MEGAPLAN_TRUSTED_CONTAINER", "1")
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        _impl, "_codex_step_cost", lambda *args, **kwargs: (0.0, 0, 0, "gpt-5.5", None)
+    )
+
+    _impl.run_codex_step(
+        "critique",
+        state,
+        plan_dir,
+        root=root,
+        persistent=False,
+        fresh=True,
+        read_only=True,
+        output_path=output_path,
+        prompt_override="Return an empty critique payload.",
+    )
+
+    assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
+    assert "sandbox_mode='read-only'" not in captured["command"]

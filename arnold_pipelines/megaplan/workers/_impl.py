@@ -2911,11 +2911,19 @@ def _run_codex_step_uncapped(
             "exec",
             "--skip-git-repo-check",
             "--ephemeral",
-            "-c",
-            "sandbox_mode='read-only'",
             "-o",
             str(output_path),
         ]
+        if _trusted_container():
+            # Trusted containers are the outer sandbox. On hosts without
+            # unprivileged user namespaces, Codex's read-only bubblewrap
+            # sandbox fails before the worker can inspect local files.
+            command.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            command.extend([
+                "-c",
+                "sandbox_mode='read-only'",
+            ])
         command.extend(_codex_model_flag(model))
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
@@ -3560,11 +3568,16 @@ def run_codex_prep_step(
         "exec",
         "--skip-git-repo-check",
         "--ephemeral",
-        "-c",
-        "sandbox_mode='read-only'",
         "-o",
         str(output_path),
     ]
+    if _trusted_container():
+        command.append("--dangerously-bypass-approvals-and-sandbox")
+    else:
+        command.extend([
+            "-c",
+            "sandbox_mode='read-only'",
+        ])
     command.extend(_codex_model_flag(model))
     if effort is not None:
         command.extend(["-c", f"model_reasoning_effort={effort}"])
