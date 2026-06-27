@@ -63,6 +63,16 @@ def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy()
     assert '"error": "invalid_spec"' in text
 
 
+def test_watchdog_skips_relaunch_while_review_pr_is_still_open() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert "chain_wait_status()" in text
+    assert 'wait_status="$(chain_wait_status "$workspace")"' in text
+    assert 'if [[ "$health" == "awaiting_pr_merge" ]]; then' in text
+    assert 'report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge"' in text
+    assert '["gh", "pr", "view", str(int(pr_number)), "--json", "state"]' in text
+
+
 def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace() -> None:
     text = _wrapper("arnold-watchdog")
 
