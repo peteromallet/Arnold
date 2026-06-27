@@ -5,7 +5,7 @@
   "expected_diagnostics": [
     {
       "code": "AWF002_UNSUPPORTED_SYNTAX",
-      "message": "async workflow functions are outside the M2 authoring grammar",
+      "message": "async workflow functions are outside the V1 authoring grammar",
       "source_span": {
         "start_line": 7,
         "start_column": 1,

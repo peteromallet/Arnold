@@ -58,8 +58,23 @@ workflow(
 )
 ```
 
+The equivalent decorator form is also valid V1 syntax when the decorated
+function body is a linear sequence of step calls:
+
+```python
+from arnold.workflow.authoring import workflow
+from .steps import plan, execute, review
+
+@workflow(id="example", version="1.0")
+def example():
+    plan(id="plan")
+    execute(id="execute")
+    review(id="review")
+```
+
 The compiler lowers the ordered `steps` list to deterministic explicit-node DSL
-data:
+data. The decorator form lowers identically after extracting the linear function
+body into the same ordered step sequence:
 
 - Each step call becomes an `arnold.workflow.dsl.Step`.
 - Adjacent steps in the list become deterministic default `Route` values.
@@ -88,6 +103,11 @@ Component modules may be organized by kind, such as `steps.py`, `prompts.py`,
 The contract is the typed module-level export, not the filename. Package docs
 may recommend kind-based files for readability, but validation must inspect the
 exported component metadata.
+
+A package may also use a local `components.py` module that re-exports typed
+component descriptors for import ergonomics. This is a non-normative layout
+convenience; it does not define a canonical directory structure or replace the
+typed module-level export contract.
 
 Component exports must provide enough information for static validation to know
 their kind without executing workflow source. Later code may encode that with
@@ -127,9 +147,9 @@ reserved compiler intrinsics is invalid.
 ## Intrinsics And Shadowing
 
 `arnold.workflow.authoring` owns the reserved compiler intrinsics. V1 reserves
-`workflow` and leaves room for future intrinsic names for bounded control
-forms. Source code must not assign to, redefine, import over, or alias a
-reserved intrinsic.
+`workflow`; it also reserves `loop`, `halt`, `suspend`, and `transition` for
+future grammar versions. Source code must not assign to, redefine, import over,
+or alias a reserved intrinsic.
 
 Examples of invalid shadowing:
 
@@ -150,7 +170,8 @@ Python:
 - Product-specific `_pipeline` modules and compatibility bridges.
 - `stages` modules that expose old native stage shapes.
 - Builder/fluent graph construction APIs.
-- Generator, decorator, coroutine, callback, or live callable workflow bodies.
+- Generator, coroutine, callback, or live callable workflow bodies.
+- Decorator workflow bodies that are not a linear sequence of step calls.
 - Hand-authored `WorkflowManifest` JSON or Python objects.
 - Generated component catalogs edited as source.
 
@@ -201,6 +222,11 @@ The diagnostic code table defined by later implementation must cover at least:
 - Alias or provenance loss.
 - Missing or malformed component export metadata.
 
+Diagnostic codes for future bounded control forms and `loop`, `halt`,
+`suspend`, or `transition` intrinsic semantics are reserved for M3 and later.
+V1 implementations must not use those codes to imply that the current grammar
+accepts the corresponding source forms.
+
 Diagnostics must be emitted from static parsing and resolver checks. They must
 not require importing or executing workflow source.
 
@@ -209,6 +235,11 @@ not require importing or executing workflow source.
 The first compiler slice accepts a linear workflow with valid component imports
 and deterministic adjacent routes. It rejects unsupported imports, intrinsic
 shadowing, missing workflow declarations, generated-catalog source, and legacy
-or native authoring sources. Later milestones may add bounded control forms, but
-they must keep this grammar versioned boundary intact or introduce a new
-grammar version.
+or native authoring sources.
+
+M3 bounded control forms, policy references, subflows, and the future
+`loop`, `halt`, `suspend`, and `transition` intrinsic semantics must use a new
+grammar version, such as `arnold.workflow.authoring.v2`, rather than expanding
+`arnold.workflow.authoring.v1` in place. Any current ungated parser acceptance
+for those constructs is implementation debt for M3 and is not part of this V1
+contract.
