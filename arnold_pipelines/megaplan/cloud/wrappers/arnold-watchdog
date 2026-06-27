@@ -614,6 +614,10 @@ launch_chain_tick() {
   if tmux has-session -t "$session" 2>/dev/null; then
     log "killing stale tmux session before relaunch: $session"
     tmux kill-session -t "$session" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      tmux has-session -t "$session" 2>/dev/null || break
+      sleep 0.2
+    done
   fi
 
   local safe log_relative launch_script quoted_command
@@ -638,6 +642,12 @@ EOF
 
   log "relaunching stopped chain session=$session spec=$remote_spec"
   tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
+    if tmux has-session -t "$session" 2>/dev/null; then
+      log "relaunch raced with existing tmux session; treating as relaunched: $session"
+      report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race" "$workspace" "$remote_spec"
+      rm -f "$launch_script"
+      return 0
+    fi
     log "failed to relaunch $session"
     report_item "$report_items" "$session" "restart" "restart_failed" "tmux relaunch failed" "$workspace" "$remote_spec"
     rm -f "$launch_script"
