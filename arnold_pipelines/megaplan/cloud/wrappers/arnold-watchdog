@@ -447,7 +447,7 @@ session_health_status() {
     return 0
   fi
 
-  if ps -eo args | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+  if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
     echo "alive"
     return 0
   fi
@@ -511,6 +511,10 @@ launch_chain_tick() {
   fi
 
   ensure_install_or_repair || log "editable install still unhealthy; relaunching anyway"
+  if tmux has-session -t "$session" 2>/dev/null; then
+    log "killing stale tmux session before relaunch: $session"
+    tmux kill-session -t "$session" 2>/dev/null || true
+  fi
 
   local safe log_relative launch_script quoted_command
   safe="$(safe_name "$session")"

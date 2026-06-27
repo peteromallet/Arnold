@@ -26,6 +26,7 @@ def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     text = _wrapper("arnold-watchdog")
 
     assert 'local remote_spec="$3"' in text
+    assert "ps -eww -o args=" in text
     assert 'grep -Fq -- "$remote_spec"' in text
     assert 'health="$(session_health_status "$session" "$workspace" "$remote_spec")"' in text
 
@@ -50,6 +51,7 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert '"$SRC_DIR" "$remote_spec" "$workspace"' in text
     assert "--project-dir %q >> %q 2>&1" in text
     assert "--project-dir %q --one" not in text
+    assert 'tmux kill-session -t "$session"' in text
 
 
 def test_watchdog_syncs_extra_skills_to_agent_skill_dirs() -> None:
