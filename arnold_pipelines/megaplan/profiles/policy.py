@@ -794,7 +794,12 @@ def apply_profile_expansion(
 
     preexpanded_tier_models = bool(getattr(args, "tier_models", None))
     cli_phase_models = list(getattr(args, "phase_model", None) or [])
-    raw_cli_steps = {pm.split("=", 1)[0] for pm in cli_phase_models if "=" in pm}
+    cli_phase_specs = {
+        pm.split("=", 1)[0]: pm.split("=", 1)[1]
+        for pm in cli_phase_models
+        if isinstance(pm, str) and "=" in pm
+    }
+    raw_cli_steps = set(cli_phase_specs)
     if preexpanded_tier_models:
         live_steps = getattr(args, "_live_phase_model_steps", set())
         cli_steps = set(live_steps) if isinstance(live_steps, set) else set()
@@ -847,6 +852,11 @@ def apply_profile_expansion(
             )
         except CliError:
             inherited_prep_models = {}
+        explicit_prep_spec = cli_phase_specs.get("prep")
+        if explicit_prep_spec:
+            inherited_prep_models = {
+                stage: explicit_prep_spec for stage in PREP_MODEL_STAGES
+            }
 
         cli_vendor = getattr(args, "vendor", None)
         cli_critic = getattr(args, "critic", None)
