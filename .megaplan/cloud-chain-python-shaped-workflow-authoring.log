@@ -1,0 +1,896 @@
+[chain] milestone m1-component-contract-grammar starting
+[chain] git fetch origin native-python-working-tree -> rc=0
+[chain] git symbolic-ref --short HEAD -> rc=0
+[chain] using refreshed origin/native-python-working-tree as the milestone fork point; local native-python-working-tree checkout refresh skipped
+[chain] git ls-remote --heads origin python-shaped-workflow-authoring-m1-contract-grammar -> rc=0
+[chain] cleaning worktree for automated branch checkout
+[chain] git reset --hard HEAD -> rc=0
+[chain] git clean -fd -e .megaplan -> rc=0
+[chain] git clean -fd .megaplan/epics -> rc=0
+[chain] git clean -fd .megaplan/schemas -> rc=0
+[chain] git clean -fd .megaplan/.state-locks -> rc=0
+[chain] git fetch origin python-shaped-workflow-authoring-m1-contract-grammar -> rc=0
+[chain] git fetch origin native-python-working-tree -> rc=0
+[chain] git checkout -B python-shaped-workflow-authoring-m1-contract-grammar origin/python-shaped-workflow-authoring-m1-contract-grammar -> rc=0
+[chain] git merge-base --is-ancestor origin/native-python-working-tree HEAD -> rc=0
+[chain] python-shaped-workflow-authoring-m1-contract-grammar already contains origin/native-python-working-tree
+[chain] initializing plan from /workspace/python-shaped-workflow-authoring/.megaplan/briefs/python-shaped-workflow-authoring/m1-component-contract-grammar.md
+[chain] launched plan=m1-component-contract-and-20260627-1635
+[chain] git add -A -> rc=0
+[chain] git reset -- .megaplan/cloud-chain-python-shaped-workflow-authoring.log.pre-prep-routing.20260627T163536Z -> rc=0
+[chain] git commit --allow-empty --no-verify -m megaplan: m1-component-contract-and-20260627-1635 init -> rc=0
+[chain] git add -A -> rc=0
+[chain] git commit --no-verify -m megaplan: m1-component-contract-and-20260627-1635 init-cleanup -> rc=0
+[chain] git fetch origin python-shaped-workflow-authoring-m1-contract-grammar -> rc=0
+[chain] git rebase origin/python-shaped-workflow-authoring-m1-contract-grammar -> rc=0
+[chain] git push --no-verify origin python-shaped-workflow-authoring-m1-contract-grammar -> rc=0
+[chain] gh pr list --head python-shaped-workflow-authoring-m1-contract-grammar --state open --json number,state -> rc=0
+[chain] reusing PR #116 for python-shaped-workflow-authoring-m1-contract-grammar
+[auto m1-component-contract-and-20260627-1635] iter 1 state=initialized next=prep valid_next=['prep', 'prep']
+[auto m1-component-contract-and-20260627-1635] running: megaplan prep --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] iter 2 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] (≧◡≦) ⚡ running 5 tools concurrently
+  [done] ⚡ 5/5 tools completed in 7.7s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  [tool] (◕ᴗ◕✿) 📖 arnold/workflow/source_comp...
+  [done] ┊ 📖 read      arnold/workflow/source_compiler.py  1.6s (2.0s)
+  [tool] (✿◠‿◠) 📖 arnold/workflow/source_comp...
+  [done] ┊ 📖 read      arnold/workflow/source_compiler.py  2.3s (2.6s)
+  [tool] (◕ᴗ◕✿) 📖 arnold/workflow/source_comp...
+  [done] ┊ 📖 read      arnold/workflow/source_compiler.py  1.6s (2.0s)
+  [tool] ♪(´ε` ) 🔎 AWF003|AWF004|missing.*work...
+  [done] ┊ 🔎 grep      AWF003|AWF004|missing.*workflow|...  0.8s (1.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 MISSING_WORKFLOW_DECLARATIO...
+  [done] ┊ 🔎 grep      MISSING_WORKFLOW_DECLARATION|MUL...  1.0s (1.5s)
+  [tool] (◕‿◕✿) 📖 tests/arnold/workflow/test_...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  2.0s (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 M2|M3
+  [done] ┊ 🔎 grep      M2|M3  1.3s (1.5s)
+  [tool] (｡◕‿◕｡) 📖 arnold/workflow/diagnostics.py
+  [done] ┊ 📖 read      arnold/workflow/diagnostics.py  1.8s (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 AUTHORING_INTRINSIC|RESERVE...
+  [done] ┊ 🔎 grep      AUTHORING_INTRINSIC|RESERVED_AUT...  1.0s (1.5s)
+  [tool] (★ω★) 📖 arnold/workflow/source_comp...
+  [done] ┊ 📖 read      arnold/workflow/source_compiler.py  1.8s (2.0s)
+  [tool] ( ˘▽˘)っ 🔎 AUTHORING_INTRINSIC_MODULE|...
+  [done] ┊ 🔎 grep      AUTHORING_INTRINSIC_MODULE|RESER...  1.2s (1.5s)
+  [tool] (★ω★) 🔎 author\.\.\.nsic|arnold\.\....
+  [done] ┊ 🔎 grep      author\.\.\.nsic|arnold\.\.\.rin...  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 authoring_intrinsic|arnold\...
+  [done] ┊ 🔎 grep      authoring_intrinsic|arnold\.work...  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 author
+  [done] ┊ 🔎 grep      author  1.2s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 AUTHORING_INTRINSIC = "auth...
+  [done] ┊ 🔎 grep      AUTHORING_INTRINSIC = "authoring...  0.8s (1.0s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.4s total (2.0s)
+  [tool] ( ˘▽˘)っ 🔎 ast\.For|isinstance.*ast\.For
+  [done] ┊ 🔎 grep      ast\.For|isinstance.*ast\.For  1.2s (1.5s)
+  [tool] (≧◡≦) 🔎 branching is outside
+  [done] ┊ 🔎 grep      branching is outside  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] ヾ(＾∇＾) 🔎 M2 authoring grammar|M2 lin...
+  [done] ┊ 🔎 grep      M2 authoring grammar|M2 linear w...  1.2s (1.5s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.6s total (2.0s)
+  [tool] (◕‿◕✿) 🔎 compiler intrinsic call is ...
+  [done] ┊ 🔎 grep      compiler intrinsic call is outside  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 compiler intrinsic call is ...
+  [done] ┊ 🔎 grep      compiler intrinsic call is outside  0.8s (1.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.0s)
+  [tool] (｡◕‿◕｡) 📖 arnold/workflow/compiler.py
+  [done] ┊ 📖 read      arnold/workflow/compiler.py  2.0s (2.5s)
+  [tool] (★ω★) 📖 arnold/workflow/diagnostics.py
+  [done] ┊ 📖 read      arnold/workflow/diagnostics.py  1.6s (2.0s)
+[auto m1-component-contract-and-20260627-1635] iter 3 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.6s total (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.7s total (2.5s)
+  [tool] (≧◡≦) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.8s (2.0s)
+  [tool] (≧◡≦) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.8s (2.0s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  2.0s (2.5s)
+  [tool] ヾ(＾∇＾) 🔎 chain.yaml
+  [done] ┊ 🔎 find      chain.yaml  1.2s (1.5s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ed-workflow-authoring/chain.yaml  2.1s (2.5s)
+  [tool] (｡◕‿◕｡) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] (｡◕‿◕｡) 🔎 grammar
+  [done] ┊ 🔎 grep      grammar  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 arnold\.workflow\.authoring...
+  [done] ┊ 🔎 grep      arnold\.workflow\.authoring\.v1  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 check_workflow_file
+  [done] ┊ 🔎 grep      check_workflow_file  1.0s (1.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.2s (2.5s)
+  [tool] (◕‿◕✿) 🔎 class ParsedWorkflowSource
+  [done] ┊ 🔎 grep      class ParsedWorkflowSource  0.8s (1.0s)
+  [tool] ( ˘▽˘)っ 🔎 class ParsedWorkflowSource
+  [done] ┊ 🔎 grep      class ParsedWorkflowSource  0.8s (1.0s)
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 4.7s total (2.5s)
+  [tool] ヾ(＾∇＾) 🔎 m3
+  [done] ┊ 🔎 grep      m3  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  1.0s (1.5s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...d_m3_branch_routes.expected.json  1.6s (2.0s)
+  [tool] (◕ᴗ◕✿) 🔎 _parse_branch_block
+  [done] ┊ 🔎 grep      _parse_branch_block  1.2s (1.5s)
+  [tool] (✿◠‿◠) 🔎 isinstance\(statement, ast\...
+  [done] ┊ 🔎 grep      isinstance\(statement, ast\.For\)  0.8s (1.0s)
+  [tool] (◕‿◕✿) 🔎 branching is outside
+  [done] ┊ 🔎 grep      branching is outside  1.0s (1.5s)
+  [tool] (◕‿◕✿) 🔎 isinstance\(statement, ast\...
+  [done] ┊ 🔎 grep      isinstance\(statement, ast\.If\)  1.2s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 isinstance\(statement, ast\...
+  [done] ┊ 🔎 grep      isinstance\(statement, ast\.(For...  1.0s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 isinstance\(statement, ast\...
+  [done] ┊ 🔎 grep      isinstance\(statement, ast\.With\)  0.8s (1.1s)
+  [tool] ♪(´ε` ) 🔎 FunctionDef
+  [done] ┊ 🔎 grep      FunctionDef  1.2s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  1.0s (1.5s)
+  [tool] ♪(´ε` ) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  0.9s (1.0s)
+  [tool] (｡◕‿◕｡) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.5s)
+  [tool] (≧◡≦) 🔎 isinstance\(statement, ast\...
+  [done] ┊ 🔎 grep      isinstance\(statement, ast\.If\):  0.8s (1.0s)
+  [tool] ♪(´ε` ) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.8s total (2.5s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...orted_control_flow.expected.json  1.8s (2.0s)
+  [tool] (≧◡≦) 🔎 ast\.For
+  [done] ┊ 🔎 grep      ast\.For  1.0s (1.5s)
+  [tool] (｡◕‿◕｡) ✍️ /workspace/python-shaped-wo...
+  [done] ┊ ✍️  write     ...ntract-and-20260627-1635/plan.md  1.8s (2.1s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ntract-and-20260627-1635/plan.md  1.9s (2.0s)
+[hermes-worker] Extracted JSON from reasoning tags
+[auto m1-component-contract-and-20260627-1635] iter 4 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.6s total (1.5s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.6s (2.0s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.2s (2.5s)
+  [tool] (◕‿◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.0s (2.5s)
+  [tool] (◕‿◕✿) 🔎 test_python_authoring
+  [done] ┊ 🔎 find      test_python_authoring  1.2s (1.5s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.2s total (1.6s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (✿◠‿◠) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 4.1s total (2.5s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  1.6s (2.0s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  1.8s (2.0s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  2.4s (2.5s)
+  [tool] (｡◕‿◕｡) 🔎 m3|M3|branch|loop|subflow
+  [done] ┊ 🔎 grep      m3|M3|branch|loop|subflow  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...m1-component-contract-grammar.md  2.2s (2.5s)
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.8s total (2.0s)
+  [tool] (≧◡≦) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] (≧◡≦) 🔎 M2 authoring grammar|M2 lin...
+  [done] ┊ 🔎 grep      M2 authoring grammar|M2 linear w...  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 outside the M2|M2 authoring...
+  [done] ┊ 🔎 grep      outside the M2|M2 authoring gram...  0.8s (1.0s)
+  [tool] ヾ(＾∇＾) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ld/workflow/test_static_scans.py  1.6s (2.0s)
+  [tool] (≧◡≦) 🔎 grammar_version.*v1|authori...
+  [done] ┊ 🔎 grep      grammar_version.*v1|authoring\.v1  0.8s (1.0s)
+  [tool] (◕ᴗ◕✿) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  0.8s (1.0s)
+  [tool] (★ω★) 🔎 M2 linear workflow subset|M...
+  [done] ┊ 🔎 grep      M2 linear workflow subset|M2 aut...  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...oring/invalid_function_header.py  2.0s (2.5s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...id_function_header.expected.json  1.9s (2.0s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ld/workflow/test_static_scans.py  2.0s (2.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ld/workflow/test_static_scans.py  2.0s (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 def _is_exclusion_line
+  [done] ┊ 🔎 grep      def _is_exclusion_line  1.0s (1.5s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ld/workflow/test_static_scans.py  1.8s (2.0s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ld/workflow/test_static_scans.py  2.4s (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 decorator
+  [done] ┊ 🔎 grep      decorator  1.2s (1.5s)
+  [tool] (◕‿◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...hon-shaped-authoring-contract.md  2.2s (2.5s)
+  [tool] ヾ(＾∇＾) 🔎 NEW_DOC_PATHS
+  [done] ┊ 🔎 grep      NEW_DOC_PATHS  0.8s (1.0s)
+  [tool] ♪(´ε` ) 🔎 NEW_DOC_PATHS =
+  [done] ┊ 🔎 grep      NEW_DOC_PATHS =   1.0s (1.5s)
+  [tool] (◕‿◕✿) 🔎 NEW_DOC_PATHS
+  [done] ┊ 🔎 grep      NEW_DOC_PATHS  1.2s (1.5s)
+[auto m1-component-contract-and-20260627-1635] iter 5 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.5s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 6.1s total (2.0s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.0s (2.5s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.8s (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 6.4s total (2.0s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.5s)
+  [tool] ヾ(＾∇＾) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] (★ω★) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.5s)
+  [tool] ♪(´ε` ) 🔎 outside the M2
+  [done] ┊ 🔎 grep      outside the M2  1.0s (1.0s)
+  [tool] (◕‿◕✿) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.9s total (2.0s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ld/workflow/test_static_scans.py  1.6s (2.0s)
+  [tool] (≧◡≦) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.9s (1.0s)
+  [tool] ヾ(＾∇＾) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] (✿◠‿◠) 🔎 glob\("\*\.py"\)
+  [done] ┊ 🔎 grep      glob\("\*\.py"\)  0.8s (1.2s)
+  [tool] ヾ(＾∇＾) 🔎 PipelineBuilder|Pipeline\.b...
+  [done] ┊ 🔎 grep      PipelineBuilder|Pipeline\.builde...  1.0s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 test_python_authoring
+  [done] ┊ 🔎 grep      test_python_authoring  1.2s (1.5s)
+  [tool] ♪(´ε` ) 🔎 M2|python-shaped-authoring-...
+  [done] ┊ 🔎 grep      M2|python-shaped-authoring-contract  0.8s (1.0s)
+  [tool] (★ω★) 🔎 M2|outside the M2
+  [done] ┊ 🔎 grep      M2|outside the M2  1.1s (1.5s)
+  [tool] ♪(´ε` ) 🔎 M2|outside the M2
+  [done] ┊ 🔎 grep      M2|outside the M2  1.2s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 *.expected.json
+  [done] ┊ 🔎 find      *.expected.json  0.8s (1.0s)
+  [tool] (◕ᴗ◕✿) 🔎 valid_m3|invalid_m3
+  [done] ┊ 🔎 grep      valid_m3|invalid_m3  1.1s (1.5s)
+  [tool] (✿◠‿◠) 🔎 assert.*diagnostic.*message...
+  [done] ┊ 🔎 grep      assert.*diagnostic.*message|asse...  1.0s (1.5s)
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 4.4s total (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 AWF002_UNSUPPORTED_SYNTAX
+  [done] ┊ 🔎 grep      AWF002_UNSUPPORTED_SYNTAX  1.0s (1.5s)
+  [tool] (◕‿◕✿) 🔎 check_workflow_file.*invali...
+  [done] ┊ 🔎 grep      check_workflow_file.*invalid_fun...  1.2s (1.5s)
+[auto m1-component-contract-and-20260627-1635] iter 6 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.9s total (1.5s)
+  [tool] ( ˘▽˘)っ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] ヾ(＾∇＾) ✍️ /workspace/test_probe.txt
+sandbox refused write_file: refusing write to /workspace/test_probe.txt: resolves to /workspace/test_probe.txt, which is outside the sandbox root/project directory /workspace/python-shaped-workflow-authoring. Use a path relative to the project directory or an absolute path within it.
+  [done] ┊ ✍️  write     /workspace/test_probe.txt  0.0s [error] (0.5s)
+Tool write_file returned error (0.00s): {"error": "sandbox: refusing write to /workspace/test_probe.txt: resolves to /workspace/test_probe.txt, which is outside the sandbox root/project directory /workspace/python-shaped-workflow-authoring.
+  [tool] ( ˘▽˘)っ 🔎 *
+  [done] ┊ 🔎 find      *  0.8s (1.0s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...g/arnold/workflow/diagnostics.py  2.0s (2.5s)
+  [tool] (≧◡≦) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.1s (2.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.8s (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.5s total (1.1s)
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] (≧◡≦) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 5.7s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.8s total (2.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ed-workflow-authoring/chain.yaml  2.0s (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 m3
+  [done] ┊ 🔎 grep      m3  1.0s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 m3
+  [done] ┊ 🔎 grep      m3  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  1.0s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  0.8s (1.0s)
+  [tool] ♪(´ε` ) 🔎 branching is outside the M2
+  [done] ┊ 🔎 grep      branching is outside the M2  1.0s (1.5s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...orted_control_flow.expected.json  1.8s (2.0s)
+  [tool] (｡◕‿◕｡) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...id_function_header.expected.json  2.5s (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 workflow decorator keyword ...
+  [done] ┊ 🔎 grep      workflow decorator keyword is ou...  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 compiler intrinsic call is ...
+  [done] ┊ 🔎 grep      compiler intrinsic call is outsi...  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.7s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.7s total (2.0s)
+  [tool] (✿◠‿◠) 🔎 workflow decorator keyword ...
+  [done] ┊ 🔎 grep      workflow decorator keyword is ou...  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 ParsedWorkflowSource
+  [done] ┊ 🔎 grep      ParsedWorkflowSource  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.0s (2.5s)
+  [tool] (✿◠‿◠) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.9s (1.0s)
+  [tool] (◕‿◕✿) 🔎 branching is outside the M2...
+  [done] ┊ 🔎 grep      branching is outside the M2 line...  1.0s (1.5s)
+  [tool] (◕‿◕✿) 🔎 async workflow functions ar...
+  [done] ┊ 🔎 grep      async workflow functions are out...  1.0s (1.5s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...workflow_authoring/components.py  2.1s (2.5s)
+[auto m1-component-contract-and-20260627-1635] iter 7 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.9s total (2.0s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.0s total (1.5s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.5s total (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.5s total (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.4s total (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.3s total (2.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.1s total (2.1s)
+  [tool] ヾ(＾∇＾) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  2.2s (2.5s)
+  [tool] (≧◡≦) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.5s total (2.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.8s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] (◕ᴗ◕✿) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] (★ω★) 🔎 M2|outside the M2|branching...
+  [done] ┊ 🔎 grep      M2|outside the M2|branching is o...  1.2s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 branching is outside|linear...
+  [done] ┊ 🔎 grep      branching is outside|linear work...  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 policy-slot
+  [done] ┊ 🔎 grep      policy-slot  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 def _parse_intrinsic_call
+  [done] ┊ 🔎 grep      def _parse_intrinsic_call  1.2s (1.5s)
+  [tool] (≧◡≦) 🔎 def _parse_intrinsic_call
+  [done] ┊ 🔎 grep      def _parse_intrinsic_call  1.0s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 M2 policy-slot
+  [done] ┊ 🔎 grep      M2 policy-slot  0.8s (1.0s)
+  [tool] (≧◡≦) 🔎 async workflow functions|wo...
+  [done] ┊ 🔎 grep      async workflow functions|workflo...  1.0s (1.5s)
+  [tool] ♪(´ε` ) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] ♪(´ε` ) 🔎 branching|async workflow|po...
+  [done] ┊ 🔎 grep      branching|async workflow|policy-...  0.8s (1.0s)
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.8s total (2.5s)
+  [tool] (≧◡≦) 🔎 UNSUPPORTED_SYNTAX
+  [done] ┊ 🔎 grep      UNSUPPORTED_SYNTAX  1.0s (1.5s)
+  [tool] (★ω★) 🔎 m2
+  [done] ┊ 🔎 grep      m2  1.0s (1.5s)
+[auto m1-component-contract-and-20260627-1635] iter 8 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] (◕ᴗ◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.5s total (2.0s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.2s total (2.0s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.1s (2.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.6s (2.0s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.2s (2.5s)
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.7s total (2.4s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] ♪(´ε` ) 🔎 m3/
+  [done] ┊ 🔎 grep      m3/  1.2s (1.5s)
+  [tool] (★ω★) 🔎 m3
+  [done] ┊ 🔎 grep      m3  0.9s (1.0s)
+  [tool] (◕‿◕✿) 🔎 \*\*\*
+  [done] ┊ 🔎 grep      \*\*\*  1.2s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 =\*\*\*
+  [done] ┊ 🔎 grep      =\*\*\*  0.8s (1.0s)
+  [tool] (≧◡≦) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.1s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.6s total (1.0s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...id_function_header.expected.json  2.2s (2.5s)
+  [tool] (◕‿◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ring/arnold/workflow/__init__.py  1.8s (2.0s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.4s (2.5s)
+  [tool] (◕‿◕✿) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 outside the
+  [done] ┊ 🔎 grep      outside the  1.0s (1.5s)
+  [tool] (✿◠‿◠) 🔎 "[a-z]+\.\.\.[a-z]+"
+  [done] ┊ 🔎 grep      "[a-z]+\.\.\.[a-z]+"  0.8s (1.0s)
+  [tool] ( ˘▽˘)っ 🔎 author\.\.\.nsic
+  [done] ┊ 🔎 grep      author\.\.\.nsic  1.0s (1.5s)
+  [tool] ♪(´ε` ) 🔎 AUTHORING_INTRINSIC
+  [done] ┊ 🔎 grep      AUTHORING_INTRINSIC  1.2s (1.6s)
+[auto m1-component-contract-and-20260627-1635] iter 9 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.1s total (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.5s total (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 6.6s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.3s (2.5s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.2s (2.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.0s (2.5s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.4s (2.5s)
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.5s total (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (◕‿◕✿) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 6.6s total (2.0s)
+  [tool] (✿◠‿◠) 🔎 for.*in|ast\.For|outside.*l...
+  [done] ┊ 🔎 grep      for.*in|ast\.For|outside.*linear  1.0s (1.5s)
+  [tool] ♪(´ε` ) 🔎 branching is outside|unsupp...
+  [done] ┊ 🔎 grep      branching is outside|unsupported...  0.9s (1.3s)
+  [tool] ヾ(＾∇＾) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  1.0s (1.5s)
+  [tool] (★ω★) 🔎 class WorkflowDeclaration|c...
+  [done] ┊ 🔎 grep      class WorkflowDeclaration|class ...  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.9s (1.1s)
+  [tool] (◕‿◕✿) 🔎 M2 authoring grammar|M2 pol...
+  [done] ┊ 🔎 grep      M2 authoring grammar|M2 policy-s...  1.2s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 outside the M2|outside the V1
+  [done] ┊ 🔎 grep      outside the M2|outside the V1  1.0s (1.5s)
+  [tool] (✿◠‿◠) 🔎 policy-slot|decorator keyword
+  [done] ┊ 🔎 grep      policy-slot|decorator keyword  0.9s (1.0s)
+  [tool] ヾ(＾∇＾) 🔎 branching is outside
+  [done] ┊ 🔎 grep      branching is outside  1.2s (1.5s)
+  [tool] (✿◠‿◠) 🔎 if.*decision|branch|unsuppo...
+  [done] ┊ 🔎 grep      if.*decision|branch|unsupported_...  0.8s (1.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ng/invalid_unsupported_syntax.py  2.3s (2.5s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...unsupported_syntax.expected.json  1.8s (2.2s)
+  [tool] (≧◡≦) 🔎 halt|suspend|transition
+  [done] ┊ 🔎 grep      halt|suspend|transition  1.0s (1.5s)
+  [tool] (★ω★) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+[auto m1-component-contract-and-20260627-1635] iter 10 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] (✿◠‿◠) 🔎 arnold/workflow/authoring.py
+  [done] ┊ 🔎 find      arnold/workflow/authoring.py  1.2s (1.5s)
+  [tool] (≧◡≦) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.2s (2.5s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.4s (2.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.0s (2.5s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.3s (2.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.8s (2.0s)
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.6s total (2.0s)
+  [tool] ヾ(＾∇＾) 🔎 *.py
+  [done] ┊ 🔎 find      *.py  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.7s total (2.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.8s total (2.0s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ing/arnold/workflow/authoring.py  1.6s (2.0s)
+  [tool] ヾ(＾∇＾) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] (✿◠‿◠) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.1s total (2.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  1.8s (2.0s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  2.0s (2.5s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  1.8s (2.0s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...flow/test_source_compiler_api.py  2.1s (2.5s)
+  [tool] (◕ᴗ◕✿) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  0.9s (1.0s)
+  [tool] (✿◠‿◠) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  1.0s (1.5s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] ♪(´ε` ) 🔎 def (check_workflow_source|...
+  [done] ┊ 🔎 grep      def (check_workflow_source|lower...  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 def check_workflow_source\(...
+  [done] ┊ 🔎 grep      def check_workflow_source\(sourc...  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 CheckWorkflowSourceResult
+  [done] ┊ 🔎 grep      CheckWorkflowSourceResult  0.8s (1.0s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ring/arnold/workflow/__init__.py  2.2s (2.5s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...alid_unsupported_control_flow.py  1.9s (2.0s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...orted_control_flow.expected.json  1.9s (2.0s)
+  [tool] (★ω★) 🔎 grammar_version
+  [done] ┊ 🔎 grep      grammar_version  1.1s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 SourceCompileError
+  [done] ┊ 🔎 grep      SourceCompileError  1.2s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 def _lower_workflow_source_...
+  [done] ┊ 🔎 grep      def _lower_workflow_source_result\(  0.8s (1.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 def parse_workflow_source\(
+  [done] ┊ 🔎 grep      def parse_workflow_source\(  1.0s (1.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...oring/m3/valid_m3_policy_refs.py  1.6s (2.0s)
+  [tool] ( ˘▽˘)っ 🔎 for section in brief
+  [done] ┊ 🔎 grep      for section in brief  0.8s (1.0s)
+  [tool] ( ˘▽˘)っ 🔎 ast\.For|ast\.AsyncFor
+  [done] ┊ 🔎 grep      ast\.For|ast\.AsyncFor  1.2s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 UnsupportedStatement|unsupp...
+  [done] ┊ 🔎 grep      UnsupportedStatement|unsupported...  0.8s (1.0s)
+  [tool] (◕‿◕✿) 🔎 ParsedUnsupportedStatement
+  [done] ┊ 🔎 grep      ParsedUnsupportedStatement  0.8s (1.0s)
+  [tool] (★ω★) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.6s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...id_function_header.expected.json  2.4s (2.5s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...oring/invalid_function_header.py  2.1s (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 policies=\[|policy=fast_ret...
+  [done] ┊ 🔎 grep      policies=\[|policy=fast_retry|po...  1.0s (1.5s)
+  [tool] (◕‿◕✿) 🔎 while True|if decision|elif...
+  [done] ┊ 🔎 grep      while True|if decision|elif|else:  0.8s (1.0s)
+  [36m◐ context ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 62% to compaction[0m  [2m131k threshold (50%) · approaching compaction[0m
+  [tool] (◕ᴗ◕✿) 🔎 transition\(|halt\(|suspend\(
+  [done] ┊ 🔎 grep      transition\(|halt\(|suspend\(  0.8s (1.1s)
+  [tool] ヾ(＾∇＾) 🔎 async def
+  [done] ┊ 🔎 grep      async def  1.0s (1.5s)
+  [tool] (≧◡≦) 🔎 async
+  [done] ┊ 🔎 grep      async  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ring/arnold/workflow/__init__.py  1.6s (2.0s)
+  [tool] ( ˘▽˘)っ 🔎 bare.*intrinsic|intrinsic.*...
+  [done] ┊ 🔎 grep      bare.*intrinsic|intrinsic.*bare|...  0.8s (1.0s)
+  [tool] (｡◕‿◕｡) 🔎 lower_workflow_source|lower...
+  [done] ┊ 🔎 grep      lower_workflow_source|lower_work...  1.2s (1.5s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...i/test_m5_workflow_source_cli.py  2.0s (2.4s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...anonical_megaplan_conformance.py  2.0s (2.5s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ing/arnold/workflow/authoring.py  2.4s (2.5s)
+[auto m1-component-contract-and-20260627-1635] iter 11 state=prepped next=plan valid_next=['plan']
+[auto m1-component-contract-and-20260627-1635] running: megaplan plan --plan m1-component-contract-and-20260627-1635
+[auto m1-component-contract-and-20260627-1635] phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED finalize -> codex:low (no premium credential or CLI route detected for vendor=claude); execute tier 1,2,3,4,5 -> codex:gpt-5.5 (no premium credential or CLI route detected for vendor=claude)
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin plan=hermes:kimi:kimi-k2.7-code shadows the profile default plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin prep=hermes:kimi:kimi-k2.7-code shadows the profile default prep=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique=hermes:kimi:kimi-k2.7-code shadows the profile default critique=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin critique_evaluator=hermes:kimi:kimi-k2.7-code shadows the profile default critique_evaluator=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin revise=hermes:kimi:kimi-k2.7-code shadows the profile default revise=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin gate=hermes:kimi:kimi-k2.7-code shadows the profile default gate=hermes:deepseek:deepseek-v4-pro, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin finalize=hermes:kimi:kimi-k2.7-code shadows the profile default finalize=codex:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin execute=hermes:kimi:kimi-k2.7-code shadows the profile default execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin feedback=hermes:kimi:kimi-k2.7-code shadows the profile default feedback=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_plan=hermes:kimi:kimi-k2.7-code shadows the profile default loop_plan=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin loop_execute=hermes:kimi:kimi-k2.7-code shadows the profile default loop_execute=claude:medium, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin review=hermes:kimi:kimi-k2.7-code shadows the profile default review=claude:low, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_researcher=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_researcher=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+M_WARN_STALE_PHASE_OVERRIDE persisted phase_model pin tiebreaker_challenger=hermes:kimi:kimi-k2.7-code shadows the profile default tiebreaker_challenger=claude:high, which has since changed. The persisted pin still wins. If this is stale, clear it with `megaplan override set-model` / `set-vendor`.
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.6s total (1.5s)
+  [tool] (｡◕‿◕｡) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] (≧◡≦) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  1.6s (2.0s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.1s (2.5s)
+  [tool] (◕‿◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.5s (2.5s)
+  [tool] ( ˘▽˘)っ 🔎 M2 authoring grammar
+  [done] ┊ 🔎 grep      M2 authoring grammar  0.8s (1.0s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.0s (2.5s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nold/workflow/source_compiler.py  2.2s (2.5s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.8s total (1.5s)
+  [tool] (◕‿◕✿) 🔎 tests/**/test_python_author...
+  [done] ┊ 🔎 find      tests/**/test_python_authoring*.py  0.8s (1.0s)
+  [tool] ♪(´ε` ) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...est_python_authoring_fixtures.py  2.4s (2.5s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.3s total (1.5s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] ヾ(＾∇＾) 🔎 tests/fixtures/workflow_aut...
+  [done] ┊ 🔎 find      tests/fixtures/workflow_authorin...  1.1s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 test_source_compiler_api
+  [done] ┊ 🔎 find      test_source_compiler_api  1.0s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 test_source_compiler
+  [done] ┊ 🔎 find      test_source_compiler  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 tests/arnold/workflow/*.py
+  [done] ┊ 🔎 find      tests/arnold/workflow/*.py  1.0s (1.5s)
+  [tool] (★ω★) 🔎 tests/arnold/workflow/test_...
+  [done] ┊ 🔎 find      tests/arnold/workflow/test_*.py  1.0s (1.5s)
+  [tool] (｡◕‿◕｡) 🔎 ^arnold/workflow/
+  [done] ┊ 🔎 find      ^arnold/workflow/  1.1s (1.6s)
+  [tool] (≧◡≦) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.1s total (2.0s)
+  [tool] (≧◡≦) 🔎 valid_direct_linear
+  [done] ┊ 🔎 find      valid_direct_linear  1.0s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 tests/fixtures/workflow_aut...
+  [done] ┊ 🔎 find      tests/fixtures/workflow_authorin...  1.2s (1.5s)
+  [tool] (≧◡≦) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...workflow_authoring/components.py  1.8s (2.0s)
+  [tool] ( ˘▽˘)っ 🔎 tests/fixtures/workflow_aut...
+  [done] ┊ 🔎 find      tests/fixtures/workflow_authoring/  1.0s (1.5s)
+  [tool] (≧◡≦) 🔎 valid_direct_linear\.py
+  [done] ┊ 🔎 find      valid_direct_linear\.py  0.9s (1.1s)
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.1s total (2.0s)
+  [tool] (｡◕‿◕｡) 🔎 tests/fixtures/workflow_aut...
+  [done] ┊ 🔎 find      tests/fixtures/workflow_authorin...  1.1s (1.5s)
+  [tool] (✿◠‿◠) 🔎 tests/fixtures/workflow_aut...
+  [done] ┊ 🔎 find      tests/fixtures/workflow_authorin...  1.0s (1.5s)
+  [tool] (★ω★) 🔎 \.py$
+  [done] ┊ 🔎 find      \.py$  0.9s (1.0s)
+  [tool] (≧◡≦) 🔎 *.py
+  [done] ┊ 🔎 find      *.py  1.0s (1.2s)
+  [tool] (★ω★) 🔎 *.expected.json
+  [done] ┊ 🔎 find      *.expected.json  1.1s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.8s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 pytest
+  [done] ┊ 🔎 find      pytest  1.2s (1.5s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...ld/workflow/test_static_scans.py  2.1s (2.5s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...g/arnold/workflow/diagnostics.py  1.8s (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...g/arnold/workflow/diagnostics.py  2.2s (2.5s)
+  [tool] ♪(´ε` ) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] (✿◠‿◠) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.2s (1.5s)
+  [tool] (◕‿◕✿) 🔎 M2
+  [done] ┊ 🔎 grep      M2  1.0s (1.5s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 4.1s total (2.5s)
+  [tool] (✿◠‿◠) 🔎 M2
+  [done] ┊ 🔎 grep      M2  0.8s (1.0s)
+  [tool] ٩(◕‿◕｡)۶ ✍️ /workspace/python-shaped-wo...
+  [done] ┊ ✍️  write     ...haped-workflow-authoring/plan.md  1.6s (1.9s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 M2|outside the|async workfl...
+  [done] ┊ 🔎 grep      M2|outside the|async workflow|br...  0.8s (1.0s)
+  [tool] (◕ᴗ◕✿) 🔎 async workflow functions ar...
+  [done] ┊ 🔎 grep      async workflow functions are out...  0.8s (1.0s)
+  [tool] (✿◠‿◠) 🔎 async def|policy=|policies=
+  [done] ┊ 🔎 grep      async def|policy=|policies=  0.8s (1.0s)
+  [tool] (｡◕‿◕｡) 🔎 outside the M2|outside the V1
+  [done] ┊ 🔎 grep      outside the M2|outside the V1  1.0s (1.5s)
+  [36m◐ context ▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱ 60% to compaction[0m  [2m131k threshold (50%) · approaching compaction[0m
+  [tool] (✿◠‿◠) 🔎 def _diagnostic
+  [done] ┊ 🔎 grep      def _diagnostic  1.0s (1.5s)
+[hermes-worker] Extracted JSON from reasoning tags
