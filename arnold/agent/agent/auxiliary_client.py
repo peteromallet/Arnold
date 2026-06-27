@@ -791,6 +791,20 @@ def _to_async_client(sync_client, model: str):
     return AsyncOpenAI(**async_kwargs), model
 
 
+def _resolve_explicit_provider_fallback(
+    async_mode: bool,
+    raw_codex: bool = False,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """Fall back to the auto chain when an explicit provider has no creds."""
+    fb_client, fb_model = _resolve_auto()
+    if fb_client is None:
+        return None, None
+    if raw_codex and isinstance(fb_client, CodexAuxiliaryClient):
+        return fb_client._real_client, fb_model
+    return (_to_async_client(fb_client, fb_model) if async_mode
+            else (fb_client, fb_model))
+
+
 def resolve_provider_client(
     provider: str,
     model: str = None,
@@ -861,8 +875,8 @@ def resolve_provider_client(
         client, default = _try_openrouter()
         if client is None:
             logger.warning("resolve_provider_client: openrouter requested "
-                           "but OPENROUTER_API_KEY not set")
-            return None, None
+                           "but OPENROUTER_API_KEY not set; falling back to auto")
+            return _resolve_explicit_provider_fallback(async_mode)
         final_model = model or default
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
@@ -872,8 +886,9 @@ def resolve_provider_client(
         client, default = _try_nous()
         if client is None:
             logger.warning("resolve_provider_client: nous requested "
-                           "but Nous Portal not configured (run: hermes login)")
-            return None, None
+                           "but Nous Portal not configured (run: hermes login); "
+                           "falling back to auto")
+            return _resolve_explicit_provider_fallback(async_mode)
         final_model = model or default
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
@@ -886,8 +901,10 @@ def resolve_provider_client(
             codex_token = _read_codex_access_token()
             if not codex_token:
                 logger.warning("resolve_provider_client: openai-codex requested "
-                               "but no Codex OAuth token found (run: hermes model)")
-                return None, None
+                               "but no Codex OAuth token found (run: hermes model); "
+                               "falling back to auto")
+                return _resolve_explicit_provider_fallback(
+                    async_mode, raw_codex=True)
             final_model = model or _CODEX_AUX_MODEL
             raw_client = OpenAI(api_key=codex_token, base_url=_CODEX_AUX_BASE_URL)
             return (raw_client, final_model)
@@ -895,8 +912,9 @@ def resolve_provider_client(
         client, default = _try_codex()
         if client is None:
             logger.warning("resolve_provider_client: openai-codex requested "
-                           "but no Codex OAuth token found (run: hermes model)")
-            return None, None
+                           "but no Codex OAuth token found (run: hermes model); "
+                           "falling back to auto")
+            return _resolve_explicit_provider_fallback(async_mode)
         final_model = model or default
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
@@ -912,9 +930,10 @@ def resolve_provider_client(
             if not custom_base or not custom_key:
                 logger.warning(
                     "resolve_provider_client: explicit custom endpoint requested "
-                    "but no API key was found (set explicit_api_key or OPENAI_API_KEY)"
+                    "but no API key was found (set explicit_api_key or OPENAI_API_KEY); "
+                    "falling back to auto"
                 )
-                return None, None
+                return _resolve_explicit_provider_fallback(async_mode)
             final_model = model or _read_main_model() or "gpt-4o-mini"
             client = OpenAI(api_key=custom_key, base_url=custom_base)
             return (_to_async_client(client, final_model) if async_mode
@@ -928,8 +947,8 @@ def resolve_provider_client(
                 return (_to_async_client(client, final_model) if async_mode
                         else (client, final_model))
         logger.warning("resolve_provider_client: custom/main requested "
-                       "but no endpoint credentials found")
-        return None, None
+                       "but no endpoint credentials found; falling back to auto")
+        return _resolve_explicit_provider_fallback(async_mode)
 
     # ── API-key providers from PROVIDER_REGISTRY ─────────────────────
     try:
@@ -947,8 +966,10 @@ def resolve_provider_client(
         if provider == "anthropic":
             client, default_model = _try_anthropic()
             if client is None:
-                logger.warning("resolve_provider_client: anthropic requested but no Anthropic credentials found")
-                return None, None
+                logger.warning("resolve_provider_client: anthropic requested "
+                               "but no Anthropic credentials found; falling "
+                               "back to auto")
+                return _resolve_explicit_provider_fallback(async_mode)
             final_model = model or default_model
             return (_to_async_client(client, final_model) if async_mode else (client, final_model))
 
@@ -959,9 +980,9 @@ def resolve_provider_client(
             if provider == "copilot":
                 tried_sources.append("gh auth token")
             logger.warning("resolve_provider_client: provider %s has no API "
-                           "key configured (tried: %s)",
+                           "key configured (tried: %s); falling back to auto",
                            provider, ", ".join(tried_sources))
-            return None, None
+            return _resolve_explicit_provider_fallback(async_mode)
 
         base_url = str(creds.get("base_url", "")).strip().rstrip("/") or pconfig.inference_base_url
 
