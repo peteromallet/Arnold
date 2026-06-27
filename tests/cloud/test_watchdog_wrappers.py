@@ -36,6 +36,9 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
 
     assert "plan_phase_health_status()" in text
     assert 'phase_health="$(plan_phase_health_status "$workspace")"' in text
+    assert 'latest_failure.get("kind") != "phase_failed"' in text
+    assert "success_after_failure" in text
+    assert 'f"recorded={recorded_at or' in text
     assert 'session alive but plan unhealthy' in text
     assert 'report_item "$report_items" "$session" "repair" "repair_running"' in text
     assert 'report_item "$report_items" "$session" "repair" "repair_completed"' in text
