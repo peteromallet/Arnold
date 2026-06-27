@@ -17,6 +17,54 @@ def _ensure_headless_env() -> None:
     os.environ["VIBECOMFY_HEADLESS"] = "1"
 
 
+def _load_credential_env_file(path: Path | str | None = None) -> None:
+    """Hydrate DEEPSEEK_API_KEY from a sibling .env if not already set.
+
+    The live agentic harness is meant to run with native DeepSeek API by default.
+    If DEEPSEEK_API_KEY is not in the environment, try the canonical project
+    credential file at ``$BANODOCO_WORKSPACE/brain-of-bndc/.env`` so a local run
+    does not silently fall back to OpenRouter.
+    """
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        return
+    candidate = path or os.environ.get("BANODOCO_BRAIN_ENV")
+    if candidate is None:
+        home = Path.home()
+        candidate = (
+            home
+            / "Documents"
+            / "banodoco-workspace"
+            / "brain-of-bndc"
+            / ".env"
+        )
+    candidate = Path(candidate)
+    if not candidate.is_file():
+        return
+    try:
+        for line in candidate.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and value and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
+
+def _ensure_deepseek_env() -> None:
+    """Point the hermes runtime at the native DeepSeek API by default.
+
+    This can be overridden by setting VIBECOMFY_OPENROUTER_BASE_URL explicitly
+    before invoking the runner.
+    """
+    _load_credential_env_file()
+    if not os.environ.get("VIBECOMFY_OPENROUTER_BASE_URL"):
+        os.environ["VIBECOMFY_OPENROUTER_BASE_URL"] = "https://api.deepseek.com/v1"
+
+
 def _load_workflow(path: str | None) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -55,6 +103,7 @@ def run_headless_scenario(
         A summary suitable for ``summary.json``.
     """
     _ensure_headless_env()
+    _ensure_deepseek_env()
 
     from vibecomfy.agent.contracts import HeadlessAgentRequest
     from vibecomfy.agent.service import run_headless

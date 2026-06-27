@@ -48,7 +48,7 @@ def run_tag(
             continue
         scenario.setdefault("id", scenario_path.stem)
         summary = run_headless_scenario(scenario, output_base=output_base, tag=tag)
-        summary["guard"] = guard_output_dir(summary["output_dir"])
+        summary["guard"] = guard_output_dir(summary["output_dir"], scenario=scenario)
         summaries.append(summary)
 
     overall_success = all(s["guard"]["live_agentic_success"] for s in summaries)
@@ -97,7 +97,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"scenarios: {summary['scenario_count']}")
         print(f"overall_success: {summary['overall_success']}")
         for s in summary["scenarios"]:
-            print(f"  {s['scenario_id']}: {s['status']} (live_agentic_success={s['guard']['live_agentic_success']})")
+            assessment = s["guard"].get("assessment", {})
+            errors = assessment.get("error_count", 0)
+            print(
+                f"  {s['scenario_id']}: {s['status']} "
+                f"(live_agentic_success={s['guard']['live_agentic_success']}, "
+                f"assessment_errors={errors})"
+            )
 
     return 0 if summary["overall_success"] or summary["scenario_count"] == 0 else 1
 

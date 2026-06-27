@@ -154,6 +154,47 @@ def test_title_fallback_uses_workflow_id_when_no_filename() -> None:
     assert envelope["data"]["title"] == "External workflow abc123"
 
 
+def test_enrich_row_summary_updates_row_without_dry_run_persistence(monkeypatch, tmp_path) -> None:
+    corpus_dir = tmp_path / "corpus"
+    cache_dir = tmp_path / "cache"
+    corpus_dir.mkdir()
+    workflow_path = corpus_dir / "abc123.json"
+    workflow_json = {
+        "nodes": {"1": {"class_type": "CheckpointLoaderSimple"}},
+        "edges": [],
+        "outputs": [{"output_type": "IMAGE"}],
+        "requirements": {"models": [], "custom_nodes": []},
+        "metadata": {"summary": {"_content_hash": "existing-hash"}},
+    }
+    workflow_path.write_text(json.dumps(workflow_json), encoding="utf-8")
+    row = _sample_row(corpus_path=str(workflow_path), summary={"title": "", "description": ""})
+
+    def fake_summarize(_adapter: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {
+            "title": "Enriched title",
+            "description": "Enriched description.",
+            "tags": ["enriched"],
+            "task_type": "text_to_image",
+            "media_type": "image",
+            "flags": {},
+            "complexity": 1,
+        }
+
+    monkeypatch.setattr("vibecomfy.ingest.summarize.summarize_workflow", fake_summarize)
+
+    assert ext_upload._enrich_row_summary(
+        row,
+        corpus_dir=corpus_dir,
+        cache_dir=cache_dir,
+        llm_client=object(),
+        persist=False,
+    )
+    assert row["summary"]["title"] == "Enriched title"
+    assert row["summary"]["_content_hash"] == "existing-hash"
+    persisted = json.loads(workflow_path.read_text(encoding="utf-8"))
+    assert persisted["metadata"]["summary"] == {"_content_hash": "existing-hash"}
+
+
 def test_external_id_uses_workflow_id_when_canonical_hash_missing() -> None:
     row = _sample_row()
     row["canonical_workflow_hash"] = ""

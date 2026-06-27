@@ -1,0 +1,132 @@
+{
+  "39": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "device": "default",
+      "type": "lumina2"
+    }
+  },
+  "40": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  },
+  "41": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+    }
+  },
+  "42": {
+    "class_type": "ConditioningZeroOut",
+    "inputs": {
+      "conditioning": [
+        "45",
+        0
+      ]
+    }
+  },
+  "43": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "44",
+        0
+      ],
+      "vae": [
+        "40",
+        0
+      ]
+    }
+  },
+  "44": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 1,
+      "denoise": 1,
+      "latent_image": [
+        "68",
+        0
+      ],
+      "model": [
+        "46",
+        0
+      ],
+      "negative": [
+        "42",
+        0
+      ],
+      "positive": [
+        "45",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "seed": 654256525221150,
+      "steps": 10
+    }
+  },
+  "45": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "39",
+        0
+      ],
+      "text": " with squares, circles, triangles random spread all over the image in random sizes, angles and colors. Some objects need to be in the overlapping part of the image, set against a white background.A seamless tileable image (or texture) is a design where the edges match up perfectly. When the image is repeated (tiled) in a grid, it creates a continuous pattern with no visible seams or boundaries between the copies"
+    }
+  },
+  "46": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "z_image_turbo_bf16.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "57": {
+    "class_type": "iToolsGridFiller",
+    "inputs": {
+      "images": [
+        "43",
+        0
+      ],
+      "widget_0": 2048,
+      "widget_1": 2048,
+      "widget_2": 4,
+      "widget_3": 4,
+      "widget_4": 0,
+      "widget_5": "#000000AA",
+      "widget_6": "rows"
+    }
+  },
+  "58": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "57",
+        0
+      ]
+    }
+  },
+  "66": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "43",
+        0
+      ]
+    }
+  },
+  "68": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "widget_0": 1024,
+      "widget_1": 1024,
+      "widget_2": 1
+    }
+  }
+}

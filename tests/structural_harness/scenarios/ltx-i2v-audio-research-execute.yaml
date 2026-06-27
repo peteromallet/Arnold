@@ -7,25 +7,31 @@ agents:
     dispatcher: fake
 tags: [m6, executor, research, implementation, audio-i2v-research-execute, structural, ltx]
 assessment:
+  subjective: true
   enforced:
-    - "research_result.json contains a RuneXX custom-audio source whose path is an existing ready template: ready_templates/video/ltx2_3_runexx_custom_audio.py or ready_templates/video/ltx2_3_runexx_lipsync_custom_audio.py."
-    - "research_result.json and implementation_payload.json contain NO research source path ending in .json; agent-facing research uses the .py workflow/template source."
-    - "implementation_payload.json contains research_summary and research_sources, proving run_executor passed research context into handle_agent_edit before implementation."
+    - "research_summary.json (derived from research_result.json) contains a RuneXX custom-audio source whose path is an existing ready template: ready_templates/video/ltx2_3_runexx_custom_audio.py or ready_templates/video/ltx2_3_runexx_lipsync_custom_audio.py."
+    - "research_summary.json and implementation_payload.json contain NO research source path ending in .json; agent-facing research uses the .py workflow/template source."
+    - "implementation_payload.json contains execution_protocol_notes.research_summary and/or research_context_packet, proving run_executor passed research context into handle_agent_edit before implementation."
     - "implementation_result.json exists and records an implementation message saying LoadAudio and LTX/RuneXX custom-audio nodes were added."
     - "compiled_api.json contains an audio input or audio-related node: LoadAudio, LTXVAudioVAEEncode, or RuneXXCustomAudioLipsync."
-    - "actions.jsonl records finalize_metadata with status=completed and records implementation.added_audio_node=true."
+    - "actions.jsonl records implementation.added_audio_node=true and implementation.received_research_summary=true."
   graded:
+    - "Routing correctness: For a clear edit request on an existing graph, the classifier should choose an edit route (adapt or revise) with implement=true, not route to clarify, respond, inspect, or research."
     - "The edit starts from an LTX image-to-video workflow identity, video/ltx2_3_i2v, rather than a generic audio-only workflow."
     - "The result demonstrates end-to-end executor behavior: classify, research, implementation, and reply all complete."
   observed:
-    - "Evidence includes executor_result.json, executor_report.json, research_result.json, implementation_result.json, implementation_payload.json, compiled_api.json, and actions.jsonl."
+    - "Evidence includes executor_result.json, executor_report.json, research_result.json, research_summary.json, implementation_result.json, implementation_payload.json, compiled_api.json, candidate.ui.json, graph_summary.json, messages.jsonl, metadata.json, and actions.jsonl."
 extras:
-  flow_kind: executor_research_execute_scripted
+  flow_kind: executor_full_pipeline
   required_frozen_evidence:
-    - evidence/executor_result.json
-    - evidence/executor_report.json
-    - evidence/research_result.json
-    - evidence/implementation_result.json
-    - evidence/implementation_payload.json
-    - evidence/compiled_api.json
     - evidence/actions.jsonl
+    - evidence/messages.jsonl
+    - evidence/graph_summary.json
+    - evidence/candidate.ui.json
+    - evidence/executor_report.json
+    - evidence/implementation_result.json
+    - evidence/research_summary.json
+    - evidence/research_result.json
+    - evidence/compiled_api.json
+    - evidence/executor_result.json
+    - evidence/metadata.json

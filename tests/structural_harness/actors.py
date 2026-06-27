@@ -1111,6 +1111,29 @@ def build_research_hotshot_xl_evidence(
         encoding="utf-8",
     )
 
+    metadata_path = root / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "entrypoint": "explore-hotshot-xl-workflow",
+                "layer": "agentic-structural",
+                "requirements": [
+                    "Full executor classify → research → reply pipeline (research route)"
+                ],
+                "artifact_paths": {
+                    "executor_result": str(executor_path),
+                    "executor_report": str(report_path),
+                    "implementation_result": str(implementation_path),
+                    "implementation_payload": str(implementation_payload_path),
+                    "messages": str(root / "messages.jsonl"),
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
     _write_actions(
         root / "actions.jsonl",
         [
@@ -1130,7 +1153,8 @@ def build_research_hotshot_xl_evidence(
                     implementation_payloads
                     and implementation_payloads[-1].get("research_brief")
                 ),
-            }
+            },
+            {"op": "reply", "message": executor_result.reply},
         ],
     )
     (root / "stdout.txt").write_text("", encoding="utf-8")
@@ -1141,10 +1165,12 @@ def build_research_hotshot_xl_evidence(
                 "# Explore Hotshot XL Research Route",
                 "",
                 "## 1. Executor Path",
-                f"Ran executor query {query!r} through the research-route agent-edit path.",
+                f"Ran the full executor classify → research → reply pipeline for query {query!r}.",
+                "The classifier chose the research route, so implementation was skipped.",
                 "",
                 "## 2. Frozen Evidence",
-                "Evidence is in executor_result.json, implementation_payload.json, and messages.jsonl.",
+                "Evidence is in executor_result.json, executor_report.json, implementation_result.json, "
+                "implementation_payload.json, messages.jsonl, metadata.json, and actions.jsonl.",
                 "",
             ]
         ),
@@ -1156,6 +1182,7 @@ def build_research_hotshot_xl_evidence(
         "executor_report_path": str(report_path),
         "implementation_result_path": str(implementation_path),
         "implementation_payload_path": str(implementation_payload_path),
+        "metadata_path": str(metadata_path),
         "messages_path": str(root / "messages.jsonl"),
         "actions_path": str(root / "actions.jsonl"),
         "report_path": str(root / "report.md"),
@@ -1297,6 +1324,29 @@ def build_distilled_faster_research_route_evidence(
         encoding="utf-8",
     )
 
+    metadata_path = root / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "entrypoint": "distilled-faster-research-route",
+                "layer": "agentic-structural",
+                "requirements": [
+                    "Full executor classify → research → reply pipeline (research route)"
+                ],
+                "artifact_paths": {
+                    "executor_result": str(executor_path),
+                    "executor_report": str(executor_report_path),
+                    "implementation_result": str(implementation_path),
+                    "implementation_payload": str(implementation_payload_path),
+                    "messages": str(root / "messages.jsonl"),
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
     _write_actions(
         root / "actions.jsonl",
         [
@@ -1317,6 +1367,7 @@ def build_distilled_faster_research_route_evidence(
                     and implementation_payloads[-1].get("research_brief")
                 ),
             },
+            {"op": "reply", "message": executor_result.reply},
         ],
     )
     (root / "stdout.txt").write_text("", encoding="utf-8")
@@ -1327,10 +1378,12 @@ def build_distilled_faster_research_route_evidence(
                 "# Distilled Faster Research Route",
                 "",
                 "## 1. Executor Path",
-                f"Ran executor query {query!r} through the research-route agent-edit path.",
+                f"Ran the full executor classify → research → reply pipeline for query {query!r}.",
+                "The classifier chose the research route, so implementation was skipped.",
                 "",
                 "## 2. Frozen Evidence",
-                "Evidence is in executor_result.json, implementation_payload.json, and messages.jsonl.",
+                "Evidence is in executor_result.json, executor_report.json, implementation_result.json, "
+                "implementation_payload.json, messages.jsonl, metadata.json, and actions.jsonl.",
                 "",
             ]
         ),
@@ -1342,6 +1395,7 @@ def build_distilled_faster_research_route_evidence(
         "executor_report_path": str(executor_report_path),
         "implementation_result_path": str(implementation_path),
         "implementation_payload_path": str(implementation_payload_path),
+        "metadata_path": str(metadata_path),
         "messages_path": str(root / "messages.jsonl"),
         "actions_path": str(root / "actions.jsonl"),
         "report_path": str(root / "report.md"),
@@ -1349,9 +1403,15 @@ def build_distilled_faster_research_route_evidence(
 
 
 def build_hotshot_16_frames_agent_edit_evidence(report_dir: Path) -> dict[str, Any]:
-    """Write evidence for the Hotshot agent-edit path on the downloaded workflow."""
-    from vibecomfy.comfy_nodes.agent.edit import handle_agent_edit
-    from vibecomfy.executor.research import ResearchResult
+    """Write evidence for the Hotshot agent-edit path through the full executor."""
+    from vibecomfy.comfy_nodes.agent.edit import handle_agent_edit as real_handle_agent_edit
+    from vibecomfy.executor.contracts import ClassifyDecision, ExecutorRequest
+    from vibecomfy.executor.core import run_executor
+    from vibecomfy.executor.research import (
+        PrecedentOption,
+        PrecedentPacket,
+        ResearchResult,
+    )
     from vibecomfy.schema import get_authoring_schema_provider
 
     root = report_dir.resolve()
@@ -1363,10 +1423,59 @@ def build_hotshot_16_frames_agent_edit_evidence(report_dir: Path) -> dict[str, A
         / "hotshot_base_unsaved_workflow_4.json"
     )
     graph = json.loads(fixture_path.read_text(encoding="utf-8"))
+    query = "Switch to generating 16 frames with Hotshot"
+    session_id = "agentic-hotshot-16-frames"
+
+    request = ExecutorRequest(
+        query=query,
+        graph=graph,
+        profile="default",
+        session_id=session_id,
+    )
+
+    def fake_classify(*_args: Any, **_kwargs: Any) -> ClassifyDecision:
+        return ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            effort="high",
+            plan_summary="Research Hotshot/AnimateDiff precedent, then adapt the graph.",
+            intent="edit",
+            route="adapt",
+            task="research_precedent",
+            research_goal="Find a Hotshot/AnimateDiff workflow precedent for 16-frame generation.",
+            search_directions=(
+                "Hotshot XL ComfyUI workflow 16 frames",
+                "ComfyUI AnimateDiff-Evolved Hotshot nodes",
+            ),
+            source_preferences=("workflows", "registry"),
+            model_families=("AnimateDiff", "Hotshot"),
+            change_goal="Switch the existing text-to-image workflow to generate 16 Hotshot frames.",
+        )
+
+    hotshot_packet = PrecedentPacket(
+        options=(
+            PrecedentOption(
+                source_class_type="HotshotXL_AnimateDiff_Workflow",
+                source_workflow_path="community/workflows/hotshot_xl_animatediff.json",
+                node_types=("ADE_AnimateDiffLoaderWithContext", "ADE_UseEvolvedSampling"),
+                description=(
+                    "Pattern: add ADE_AnimateDiffLoaderWithContext and "
+                    "ADE_UseEvolvedSampling around the existing model/sampler path."
+                ),
+            ),
+        ),
+        context_note="Hotshot XL AnimateDiff-Evolved workflow precedent.",
+    )
 
     def fake_research(query: str, **kwargs: Any) -> ResearchResult:
         sources = kwargs.get("sources") or kwargs.get("research_sources")
-        if "workflow" in query.casefold() or sources == ("workflows",):
+        is_workflow_query = (
+            "workflow" in query.casefold()
+            or sources == ("workflows",)
+            or "precedent" in query.casefold()
+        )
+        if is_workflow_query:
             return ResearchResult(
                 summary=(
                     "Found a Hotshot XL workflow precedent that uses AnimateDiff-Evolved "
@@ -1384,6 +1493,7 @@ def build_hotshot_16_frames_agent_edit_evidence(report_dir: Path) -> dict[str, A
                         "class_type": "HotshotXL_AnimateDiff_Workflow",
                     },
                 ),
+                precedent_packet=hotshot_packet,
             )
         return ResearchResult(
             summary=(
@@ -1413,12 +1523,12 @@ def build_hotshot_16_frames_agent_edit_evidence(report_dir: Path) -> dict[str, A
                             "schema": {
                                 "nodes": {
                                     "ADE_AnimateDiffLoaderWithContext": {
-                                        "input": {"required": {}, "optional": {}},
+                                        "input": {"required": {"model": ["MODEL", {}]}, "optional": {}},
                                         "output": ["MODEL"],
                                         "output_name": ["MODEL"],
                                     },
                                     "ADE_UseEvolvedSampling": {
-                                        "input": {"required": {}, "optional": {}},
+                                        "input": {"required": {"model": ["MODEL", {}]}, "optional": {}},
                                         "output": ["MODEL"],
                                         "output_name": ["MODEL"],
                                     },
@@ -1444,81 +1554,205 @@ def build_hotshot_16_frames_agent_edit_evidence(report_dir: Path) -> dict[str, A
             },
             {
                 "batch": (
-                    "hotshot_loader = ADE_AnimateDiffLoaderWithContext(near=ksampler)\n"
-                    "hotshot_sampler = ADE_UseEvolvedSampling(near=previewimage)\n"
+                    "hotshot_loader = ADE_AnimateDiffLoaderWithContext(\n"
+                    "    model=checkpointloadersimple.model, near=ksampler\n"
+                    ")\n"
+                    "hotshot_sampler = ADE_UseEvolvedSampling(\n"
+                    "    model=hotshot_loader.model, near=ksampler\n"
+                    ")\n"
+                    "ksampler.model = hotshot_sampler.model\n"
                     "done()"
                 ),
-                "message": "Added unresolved Hotshot/AnimateDiff custom nodes as a candidate.",
+                "message": "Added and wired Hotshot/AnimateDiff custom nodes into the sampler path.",
             },
         ]
     )
 
-    with mock.patch("vibecomfy.executor.research.research", side_effect=fake_research):
-        result = handle_agent_edit(
-            {
-                "graph": graph,
-                "task": "Switch to generating 16 frames with Hotshot",
-                "session_id": "agentic-hotshot-16-frames",
-                "max_batches": 4,
-                "max_consecutive_errors": 2,
-            },
+    implementation_payloads: list[dict[str, Any]] = []
+    session_root = root / "editor_sessions"
+
+    def fake_handle_agent_edit(payload: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        implementation_payloads.append(json.loads(json.dumps(payload)))
+        result = real_handle_agent_edit(
+            payload,
             schema_provider=get_authoring_schema_provider(),
             deepseek_client=lambda _messages: next(responses),
-            session_root=root / "editor_sessions",
+            session_root=session_root,
+            client_id=kwargs.get("client_id"),
         )
+        # Hoist the turn's messages.jsonl to the pack root for the assessor.
+        message_candidates = sorted(
+            (session_root / session_id / "turns").glob("*/messages.jsonl")
+        )
+        if message_candidates:
+            shutil.copy2(message_candidates[-1], root / "messages.jsonl")
+        return result
 
-    result_path = root / "agent_edit_result.json"
-    result_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
-    candidate_path = root / "candidate.ui.json"
-    candidate_path.write_text(json.dumps(result.get("graph", {}), indent=2, sort_keys=True), encoding="utf-8")
-    message_candidates = sorted((root / "editor_sessions" / "agentic-hotshot-16-frames" / "turns").glob("*/messages.jsonl"))
-    messages_path = message_candidates[0] if message_candidates else root / "messages.jsonl"
-    if messages_path.is_file():
-        shutil.copy2(messages_path, root / "messages.jsonl")
+    def fake_reply(
+        _query: str,
+        *,
+        implementation_message: str | None = None,
+        **_kwargs: Any,
+    ) -> str:
+        msg = implementation_message or "Added and wired Hotshot/AnimateDiff custom nodes into the sampler path."
+        return (
+            "I adapted the workflow toward 16-frame Hotshot generation. "
+            "I first found a Hotshot XL AnimateDiff-Evolved workflow precedent, "
+            "then resolved the missing custom-node classes through the Comfy Registry. "
+            f"{msg} "
+            "The nodes are provisional because the ComfyUI-AnimateDiff-Evolved pack is not "
+            "installed locally; install it to execute the workflow."
+        ).strip()
+
+    with _EXECUTOR_FAKE_LOCK:
+        with (
+            mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=fake_classify),
+            mock.patch("vibecomfy.executor.core.handle_agent_edit", side_effect=fake_handle_agent_edit),
+            mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=fake_reply),
+            mock.patch("vibecomfy.executor.research.research", side_effect=fake_research),
+        ):
+            executor_result = run_executor(request)
+
+    executor_payload = executor_result.to_dict()
+    executor_path = root / "executor_result.json"
+    executor_path.write_text(json.dumps(executor_payload, indent=2, sort_keys=True), encoding="utf-8")
+    report_payload = executor_payload.get("report", {})
+    executor_report_path = root / "executor_report.json"
+    executor_report_path.write_text(json.dumps(report_payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    research = executor_result.report.research
+    if research is None:
+        raise RuntimeError("Hotshot scenario did not produce research evidence.")
+    research_path = root / "research_result.json"
+    research_path.write_text(json.dumps(research.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+
+    implementation = executor_result.report.implementation
+    if implementation is None:
+        raise RuntimeError("Hotshot scenario did not produce implementation evidence.")
+    implementation_path = root / "implementation_result.json"
+    implementation_path.write_text(json.dumps(implementation.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
+
+    final_graph = implementation.graph or {}
+    compiled_api = _ui_graph_to_compiled_api(final_graph)
+    compiled_api_path = root / "compiled_api.json"
+    compiled_api_path.write_text(json.dumps(compiled_api, indent=2, sort_keys=True), encoding="utf-8")
+
+    candidate_ui_path = root / "candidate.ui.json"
+    candidate_ui_path.write_text(json.dumps(final_graph, indent=2, sort_keys=True), encoding="utf-8")
+
+    graph_nodes = [
+        node for node in final_graph.get("nodes", [])
+        if isinstance(node, dict)
+    ]
+
+    graph_summary = {
+        "node_count": len(graph_nodes),
+        "node_types": sorted(
+            {(node.get("class_type") or node.get("type") or "Unknown") for node in graph_nodes}
+        ),
+        "hotshot_nodes": [
+            {
+                "id": node.get("id"),
+                "class_type": node.get("class_type") or node.get("type"),
+                "input_links": [inp.get("link") for inp in node.get("inputs", []) if isinstance(inp, dict) and inp.get("link") is not None],
+                "output_links": [
+                    out.get("links") for out in node.get("outputs", [])
+                    if isinstance(out, dict) and out.get("links") is not None
+                ],
+            }
+            for node in graph_nodes
+            if (node.get("class_type") or node.get("type"))
+            in {"ADE_AnimateDiffLoaderWithContext", "ADE_UseEvolvedSampling"}
+        ],
+        "link_count": len(final_graph.get("links", [])),
+    }
+    graph_summary_path = root / "graph_summary.json"
+    graph_summary_path.write_text(json.dumps(graph_summary, indent=2, sort_keys=True), encoding="utf-8")
+
+    implementation_payload_path = root / "implementation_payload.json"
+    implementation_payload_path.write_text(
+        json.dumps(implementation_payloads[-1] if implementation_payloads else {}, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    metadata_path = root / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "entrypoint": "structural_harness",
+                "layer": "agentic-structural",
+                "requirements": [
+                    "Full executor classify → research → implement → reply pipeline"
+                ],
+                "artifact_paths": {
+                    "executor_result": str(executor_path),
+                    "executor_report": str(executor_report_path),
+                    "research_result": str(research_path),
+                    "implementation_result": str(implementation_path),
+                    "compiled_api": str(compiled_api_path),
+                    "candidate_ui": str(candidate_ui_path),
+                    "graph_summary": str(graph_summary_path),
+                    "implementation_payload": str(implementation_payload_path),
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
 
     _write_actions(
         root / "actions.jsonl",
         [
             {
-                "op": "agent-edit.run",
-                "task": "Switch to generating 16 frames with Hotshot",
+                "op": "executor.run",
+                "query": query,
                 "fixture": "tests/fixtures/agent_edit/hotshot_base_unsaved_workflow_4.json",
-                "ok": bool(result.get("ok")),
+                "plan": executor_result.report.plan.to_dict(),
             },
             {
                 "op": "research",
-                "source": "workflows",
-                "query": "Hotshot XL ComfyUI workflow 16 frames",
-                "workflow_pattern": "AnimateDiff-Evolved Hotshot motion module around sampler path",
+                "source_preferences": list(executor_result.report.plan.source_preferences or ()),
+                "precedent_packet_present": bool(
+                    research.precedent_packet is not None
+                ),
             },
             {
-                "op": "research",
-                "source": "registry",
-                "query": "ComfyUI-AnimateDiff-Evolved Hotshot XL nodes",
-                "candidate_pack": "ComfyUI-AnimateDiff-Evolved",
+                "op": "implementation",
+                "ran": implementation is not None,
+                "added_hotshot_nodes": any(
+                    (node.get("class_type") or node.get("type"))
+                    in {"ADE_AnimateDiffLoaderWithContext", "ADE_UseEvolvedSampling"}
+                    for node in graph_nodes
+                ),
             },
-            {
-                "op": "add_node",
-                "class_types": ["ADE_AnimateDiffLoaderWithContext", "ADE_UseEvolvedSampling"],
-                "validation_mode": "registry_provisional",
-            },
+            {"op": "reply", "message": executor_result.reply},
         ],
     )
     (root / "stdout.txt").write_text("", encoding="utf-8")
     (root / "stderr.txt").write_text("", encoding="utf-8")
     (root / "report.md").write_text(
         "# Hotshot Agent-Edit Structural Evidence\n\n"
-        "## 1. What ran\n\n"
-        "Ran agent-edit on the Hotshot base workflow with workflow precedent first, "
-        "then registry-backed custom-node evidence.\n\n"
-        "## 2. What changed\n\n"
-        "Added unresolved ComfyUI-AnimateDiff-Evolved custom nodes to the candidate graph.\n",
+        "Ran the full executor pipeline (classify → research → implement → reply) "
+        "on the Hotshot base workflow. The classifier chose the `adapt` route; "
+        "research found a Hotshot/AnimateDiff precedent and registry evidence; "
+        "implementation added ADE_AnimateDiffLoaderWithContext and "
+        "ADE_UseEvolvedSampling and wired them into the model/sampler path. "
+        "The reply explains the steps, sources, and the need to install "
+        "ComfyUI-AnimateDiff-Evolved.\n",
         encoding="utf-8",
     )
     return {
         "scenario": "hotshot-16-frames-agent-edit",
-        "agent_edit_result_path": str(result_path),
-        "candidate_ui_path": str(candidate_path),
+        "executor_result_path": str(executor_path),
+        "executor_report_path": str(executor_report_path),
+        "research_result_path": str(research_path),
+        "implementation_result_path": str(implementation_path),
+        "compiled_api_path": str(compiled_api_path),
+        "candidate_ui_path": str(candidate_ui_path),
+        "graph_summary_path": str(graph_summary_path),
+        "metadata_path": str(metadata_path),
+        "implementation_payload_path": str(implementation_payload_path),
         "messages_path": str(root / "messages.jsonl") if (root / "messages.jsonl").is_file() else None,
         "actions_path": str(root / "actions.jsonl"),
         "report_path": str(root / "report.md"),
@@ -1577,11 +1811,23 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
 
     def fake_handle_agent_edit(payload: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
         implementation_payloads.append(json.loads(json.dumps(payload)))
-        summary = payload.get("research_summary", "")
+        notes = payload.get("execution_protocol_notes") or {}
+        summary = notes.get("research_summary", "")
         sources = payload.get("research_sources", [])
-        has_ltx_audio_context = any(path in str(summary) for path in expected_source_paths) or any(
-            isinstance(source, dict) and source.get("path") in expected_source_paths
-            for source in sources
+        packet = payload.get("research_context_packet") or {}
+        packet_options = packet.get("options", []) if isinstance(packet, dict) else []
+        option_paths = {
+            str(opt.get("source_workflow_path"))
+            for opt in packet_options
+            if isinstance(opt, dict)
+        }
+        has_ltx_audio_context = (
+            any(path in str(summary) for path in expected_source_paths)
+            or any(
+                isinstance(source, dict) and source.get("path") in expected_source_paths
+                for source in sources
+            )
+            or any(path in option_paths for path in expected_source_paths)
         )
         graph = json.loads(json.dumps(payload["graph"]))
         if has_ltx_audio_context:
@@ -1614,6 +1860,23 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
                     [12, 12, 0, 3, 1, "AUDIO"],
                 ]
             )
+        messages_path = root / "messages.jsonl"
+        messages_path.write_text(
+            json.dumps(
+                {
+                    "turn_number": 0,
+                    "task": query,
+                    "batch": "add_audio_lipsync_nodes(graph)",
+                    "message": (
+                        "Added LoadAudio and LTX/RuneXX custom-audio lipsync nodes "
+                        "using executor-provided research context."
+                    ),
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         return {
             "ok": True,
             "graph": graph,
@@ -1629,7 +1892,12 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
         implementation_message: str | None = None,
         **_kwargs: Any,
     ) -> str:
-        return f"Implemented LTX audio input. {implementation_message or ''}".strip()
+        msg = implementation_message or "Added LTX/RuneXX audio-lipsync nodes."
+        return (
+            "I adapted the LTX I2V workflow to accept a custom audio clip. "
+            "Research surfaced the RuneXX custom-audio ready templates, and the edit "
+            f"added LoadAudio, LTXVAudioVAEEncode, and RuneXXCustomAudioLipsync. {msg}"
+        ).strip()
 
     with _EXECUTOR_FAKE_LOCK:
         with (
@@ -1659,14 +1927,75 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
     implementation_path = root / "implementation_result.json"
     implementation_path.write_text(json.dumps(implementation.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
 
-    compiled_api = _ui_graph_to_compiled_api(executor_result.graph or {})
+    final_graph = implementation.graph or {}
+    compiled_api = _ui_graph_to_compiled_api(final_graph)
     compiled_api_path = root / "compiled_api.json"
     compiled_api_path.write_text(json.dumps(compiled_api, indent=2, sort_keys=True), encoding="utf-8")
+
+    candidate_ui_path = root / "candidate.ui.json"
+    candidate_ui_path.write_text(json.dumps(final_graph, indent=2, sort_keys=True), encoding="utf-8")
+
+    graph_nodes = [
+        node for node in final_graph.get("nodes", [])
+        if isinstance(node, dict)
+    ]
+    graph_summary = {
+        "node_count": len(graph_nodes),
+        "node_types": sorted(
+            {(node.get("class_type") or node.get("type") or "Unknown") for node in graph_nodes}
+        ),
+        "audio_nodes": [
+            {
+                "id": node.get("id"),
+                "class_type": node.get("class_type") or node.get("type"),
+                "input_links": [inp.get("link") for inp in node.get("inputs", []) if isinstance(inp, dict) and inp.get("link") is not None],
+                "output_links": [
+                    out.get("links") for out in node.get("outputs", [])
+                    if isinstance(out, dict) and out.get("links") is not None
+                ],
+            }
+            for node in graph_nodes
+            if (node.get("class_type") or node.get("type"))
+            in {"LoadAudio", "LTXVAudioVAEEncode", "RuneXXCustomAudioLipsync"}
+        ],
+        "link_count": len(final_graph.get("links", [])),
+    }
+    graph_summary_path = root / "graph_summary.json"
+    graph_summary_path.write_text(json.dumps(graph_summary, indent=2, sort_keys=True), encoding="utf-8")
 
     implementation_payload_path = root / "implementation_payload.json"
     implementation_payload_path.write_text(
         json.dumps(implementation_payloads[-1] if implementation_payloads else {}, indent=2, sort_keys=True),
         encoding="utf-8",
+    )
+
+    # Concise research summary for the subjective assessor (the full
+    # research_result.json is huge and easily truncated in the prompt).
+    last_payload = implementation_payloads[-1] if implementation_payloads else {}
+    protocol_notes = last_payload.get("execution_protocol_notes") or {}
+    research_summary_text = protocol_notes.get("research_summary", "")
+    import re
+    found_paths = sorted(
+        set(re.findall(r"ready_templates/video/[^\s,)]+\.py", research_summary_text))
+    )
+    packet_options = (last_payload.get("research_context_packet") or {}).get("options", [])
+    option_paths = sorted(
+        {
+            str(opt.get("source_workflow_path"))
+            for opt in packet_options
+            if isinstance(opt, dict) and opt.get("source_workflow_path")
+        }
+    )
+    research_summary = {
+        "expected_ready_templates": list(expected_source_paths),
+        "found_ready_template_paths": found_paths,
+        "expected_found": any(path in found_paths for path in expected_source_paths),
+        "precedent_option_source_paths": option_paths,
+        "research_context_delivered": bool(research_summary_text),
+    }
+    research_summary_path = root / "research_summary.json"
+    research_summary_path.write_text(
+        json.dumps(research_summary, indent=2, sort_keys=True), encoding="utf-8"
     )
 
     metadata_path = root / "metadata.json"
@@ -1676,14 +2005,18 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
                 "entrypoint": "video/ltx2_3_i2v",
                 "layer": "agentic-structural",
                 "requirements": [
-                    "LTX/RuneXX custom audio context passed from research to implementation"
+                    "Full executor classify → research → implement → reply pipeline",
+                    "LTX/RuneXX custom audio context passed from research to implementation",
                 ],
                 "artifact_paths": {
                     "executor_result": str(executor_path),
                     "executor_report": str(executor_report_path),
                     "research_result": str(research_path),
+                    "research_summary": str(research_summary_path),
                     "implementation_result": str(implementation_path),
                     "compiled_api": str(compiled_api_path),
+                    "candidate_ui": str(candidate_ui_path),
+                    "graph_summary": str(graph_summary_path),
                     "implementation_payload": str(implementation_payload_path),
                 },
             },
@@ -1693,10 +2026,6 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
         encoding="utf-8",
     )
 
-    graph_nodes = [
-        node for node in (executor_result.graph or {}).get("nodes", [])
-        if isinstance(node, dict)
-    ]
     research_source_paths = [
         str(source.get("path"))
         for source in research.sources
@@ -1725,21 +2054,27 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
                 "ran": implementation is not None,
                 "received_research_summary": bool(
                     implementation_payloads
-                    and implementation_payloads[-1].get("research_summary")
+                    and (
+                        implementation_payloads[-1].get("research_summary")
+                        or (implementation_payloads[-1].get("execution_protocol_notes") or {}).get("research_summary")
+                    )
                 ),
                 "added_audio_node": any(
-                    node.get("class_type")
+                    (node.get("class_type") or node.get("type"))
                     in {"LoadAudio", "LTXVAudioVAEEncode", "RuneXXCustomAudioLipsync"}
                     for node in graph_nodes
                 ),
             },
-            {"op": "finalize_metadata", "status": "completed"},
+            {"op": "reply", "message": executor_result.reply},
         ],
     )
     (root / "stdout.txt").write_text("", encoding="utf-8")
     (root / "stderr.txt").write_text("", encoding="utf-8")
     (root / "report.md").write_text(
-        "Ran executor research plus implementation for LTX I2V custom audio and froze graph evidence.\n",
+        "Ran the full executor pipeline (classify → research → implement → reply) "
+        "for LTX I2V custom audio. Research surfaced the RuneXX custom-audio ready "
+        "templates; implementation added LoadAudio, LTXVAudioVAEEncode, and "
+        "RuneXXCustomAudioLipsync nodes wired into the video output path.\n",
         encoding="utf-8",
     )
     return {
@@ -1747,10 +2082,14 @@ def build_ltx_i2v_audio_research_execute_evidence(report_dir: Path) -> dict[str,
         "executor_result_path": str(executor_path),
         "executor_report_path": str(executor_report_path),
         "research_result_path": str(research_path),
+        "research_summary_path": str(research_summary_path),
         "implementation_result_path": str(implementation_path),
         "compiled_api_path": str(compiled_api_path),
+        "candidate_ui_path": str(candidate_ui_path),
+        "graph_summary_path": str(graph_summary_path),
         "metadata_path": str(metadata_path),
         "implementation_payload_path": str(implementation_payload_path),
+        "messages_path": str(root / "messages.jsonl") if (root / "messages.jsonl").is_file() else None,
         "actions_path": str(root / "actions.jsonl"),
         "report_path": str(root / "report.md"),
     }
@@ -1855,6 +2194,43 @@ def build_explain_simple_workflow_evidence(report_dir: Path) -> dict[str, Any]:
     report_path = root / "graph_report.txt"
     report_path.write_text(reply, encoding="utf-8")
 
+    messages_path = root / "messages.jsonl"
+    messages_path.write_text(
+        json.dumps(
+            {
+                "turn_number": 0,
+                "task": task,
+                "route": "inspect",
+                "message": reply,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    metadata_path = root / "metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "entrypoint": "explain-simple-workflow",
+                "layer": "agentic-structural",
+                "requirements": [
+                    "Full executor classify → inspect/reply pipeline (inspect route)"
+                ],
+                "artifact_paths": {
+                    "executor_result": str(executor_path),
+                    "executor_report": str(executor_report_path),
+                    "graph_report": str(report_path),
+                    "messages": str(messages_path),
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
     _write_actions(
         root / "actions.jsonl",
         [
@@ -1870,7 +2246,8 @@ def build_explain_simple_workflow_evidence(report_dir: Path) -> dict[str, Any]:
                 "task": task,
                 "fixture": "tests/fixtures/agent_edit/flat.json",
                 "node_count": len(graph.get("nodes", [])),
-            }
+            },
+            {"op": "reply", "message": reply},
         ],
     )
     (root / "stdout.txt").write_text("", encoding="utf-8")
@@ -1881,10 +2258,11 @@ def build_explain_simple_workflow_evidence(report_dir: Path) -> dict[str, Any]:
                 "# Explain Simple Workflow Inspect Route",
                 "",
                 "## 1. Executor Path",
-                "Ran the executor inspect path for a simple text-to-image workflow.",
+                "Ran the full executor classify → inspect/reply pipeline for a simple text-to-image workflow.",
+                "The classifier chose the inspect route, so research and implementation were skipped.",
                 "",
                 "## 2. Frozen Evidence",
-                "Evidence is in executor_result.json, executor_report.json, graph_report.txt, and actions.jsonl.",
+                "Evidence is in executor_result.json, executor_report.json, graph_report.txt, messages.jsonl, metadata.json, and actions.jsonl.",
                 "",
             ]
         ),
@@ -1895,6 +2273,8 @@ def build_explain_simple_workflow_evidence(report_dir: Path) -> dict[str, Any]:
         "executor_result_path": str(executor_path),
         "executor_report_path": str(executor_report_path),
         "graph_report_path": str(report_path),
+        "messages_path": str(messages_path),
+        "metadata_path": str(metadata_path),
         "actions_path": str(root / "actions.jsonl"),
         "report_path": str(root / "report.md"),
         "node_count": len(graph.get("nodes", [])),

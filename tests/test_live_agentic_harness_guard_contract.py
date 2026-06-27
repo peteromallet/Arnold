@@ -61,3 +61,54 @@ def test_agentic_guard_allows_blocked_real_agentic_artifacts(tmp_path: Path) -> 
     assert verdict["live_agentic_success"] is False
     assert verdict["dispatcher"] == DISPATCHER_REAL
     assert verdict["model_behavior"] == MODEL_BEHAVIOR_AGENTIC
+
+
+def test_agentic_guard_catches_unchanged_graph_and_upstream_errors(tmp_path: Path) -> None:
+    """Deep assessment fails a run that reports success but produced no edit."""
+    output_dir = tmp_path / "hotshot-failure"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+
+    response = {
+        "ok": True,
+        "graph_unchanged": True,
+        "no_candidate_reason": "no_changes",
+        "outcome": {"kind": "requires_custom_nodes"},
+        "gates": {
+            "ir_validate_ok": False,
+            "lower_ok": False,
+            "python_load_ok": False,
+            "queue_validate_ok": False,
+            "state_match_ok": True,
+            "ui_emit_ok": False,
+            "ui_fidelity_ok": False,
+            "ui_load_safe_ok": False,
+        },
+        "report": {
+            "executor": {
+                "plan": {
+                    "implement": True,
+                    "route": "adapt",
+                },
+            },
+        },
+        "warnings": ["hivemind: Hivemind HTTP error: HTTP Error 500: Internal Server Error"],
+    }
+    (output_dir / "response.json").write_text(json.dumps(response), encoding="utf-8")
+    (output_dir / "implementation_result.json").write_text(
+        json.dumps({"message": "The graph is unchanged."}),
+        encoding="utf-8",
+    )
+
+    scenario = {"id": "hotshot-failure", "assessment": {"expect_graph_changed": True}}
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["metadata_success"] is True
+    assert verdict["live_agentic_success"] is False
+    assessment = verdict["assessment"]
+    assert assessment["passed"] is False
+    assert assessment["expect_graph_changed"] is True
+    checks = {issue["check"] for issue in assessment["issues"] if issue["severity"] == "error"}
+    assert "graph_changed" in checks
+    assert "upstream_failure" in checks
+    assert "implementation_result" in checks
+    assert "gates" in checks

@@ -44,6 +44,7 @@ from scripts.upload_ready_templates_to_hivemind import (
 
 DEFAULT_MANIFEST = REPO_ROOT / "external_workflows" / "manifest.json"
 DEFAULT_CORPUS_DIR = REPO_ROOT / "external_workflows" / "corpus"
+DEFAULT_CACHE_DIR = REPO_ROOT / "external_workflows" / ".shadow" / "summary-cache"
 # Anonymous resource endpoint — no contributor key required once deployed.
 DEFAULT_CONTRIBUTE_URL = (
     "https://ujlwuvkrxlvoswwkerdf.supabase.co/functions/v1/contribute-resource"
@@ -116,6 +117,131 @@ def _summary_from_row(row: dict[str, Any]) -> dict[str, Any]:
         "flags": summary.get("flags") if isinstance(summary.get("flags"), dict) else {},
         "complexity": int(summary.get("complexity") or 1),
     }
+
+
+def _summary_needs_enrichment(row: dict[str, Any]) -> bool:
+    summary = row.get("summary")
+    if not isinstance(summary, dict):
+        return True
+    return not _clean_description(summary.get("title")) or not _clean_description(summary.get("description"))
+
+
+class _OpenAICompatibleLLMClient:
+    """Minimal chat-completions client for the workflow summarizer."""
+
+    def __init__(self, *, model: str, base_url: str, api_key: str) -> None:
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+        import requests  # noqa: PLC0415
+
+        self._session = requests.Session()
+        self._session.headers.update(
+            {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            }
+        )
+
+    def complete(self, prompt: str) -> str:
+        response = self._session.post(
+            f"{self.base_url}/chat/completions",
+            json={
+                "model": self.model,
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": 512,
+                "temperature": 0.3,
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+        data = response.json()
+        return str(data["choices"][0]["message"]["content"])
+
+
+def _build_llm_client(model: str) -> _OpenAICompatibleLLMClient:
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if model == "deepseek-chat" and deepseek_key:
+        return _OpenAICompatibleLLMClient(
+            model=model,
+            base_url="https://api.deepseek.com/v1",
+            api_key=deepseek_key,
+        )
+    if openai_key:
+        return _OpenAICompatibleLLMClient(
+            model=model,
+            base_url="https://api.openai.com/v1",
+            api_key=openai_key,
+        )
+    if deepseek_key:
+        return _OpenAICompatibleLLMClient(
+            model=model,
+            base_url="https://api.deepseek.com/v1",
+            api_key=deepseek_key,
+        )
+    raise ValueError(
+        "No API key available for enrichment. Set DEEPSEEK_API_KEY for DeepSeek "
+        "or OPENAI_API_KEY for OpenAI."
+    )
+
+
+def _existing_summary_content_hash(row: dict[str, Any], workflow_dict: dict[str, Any]) -> Any:
+    for candidate in (
+        row.get("summary") if isinstance(row.get("summary"), dict) else None,
+        workflow_dict.get("metadata", {}).get("summary")
+        if isinstance(workflow_dict.get("metadata"), dict)
+        and isinstance(workflow_dict.get("metadata", {}).get("summary"), dict)
+        else None,
+    ):
+        if isinstance(candidate, dict) and candidate.get("_content_hash"):
+            return candidate["_content_hash"]
+    return None
+
+
+def _enrich_row_summary(
+    row: dict[str, Any],
+    *,
+    corpus_dir: Path,
+    cache_dir: Path,
+    llm_client: Any,
+    persist: bool,
+) -> bool:
+    """Generate and attach a missing external-workflow summary.
+
+    Returns True when the row was enriched. In dry-run mode (*persist* false),
+    the manifest row is updated in memory only so envelopes reflect the summary.
+    """
+    if not _summary_needs_enrichment(row):
+        return False
+
+    corpus_path = _resolve_corpus_path(row, corpus_dir)
+    if corpus_path is None:
+        raise ValueError(f"cannot resolve corpus_path for workflow {row.get('workflow_id')}")
+    workflow_dict = json.loads(corpus_path.read_text(encoding="utf-8"))
+    if not isinstance(workflow_dict, dict):
+        raise ValueError(f"{corpus_path} must contain a JSON object")
+
+    from scripts.enrich_workflow_summaries import DictWorkflowAdapter  # noqa: PLC0415
+    from vibecomfy.ingest.summarize import summarize_workflow  # noqa: PLC0415
+
+    content_hash = _existing_summary_content_hash(row, workflow_dict)
+    adapter = DictWorkflowAdapter(workflow_dict)
+    summary = summarize_workflow(adapter, llm_client=llm_client, cache_dir=str(cache_dir))
+    if summary is None:
+        raise RuntimeError(f"failed to enrich summary for workflow {row.get('workflow_id')}")
+    if content_hash:
+        summary["_content_hash"] = content_hash
+
+    row["summary"] = summary
+    if persist:
+        metadata = workflow_dict.setdefault("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+            workflow_dict["metadata"] = metadata
+        metadata["summary"] = summary
+        corpus_path.write_text(json.dumps(workflow_dict, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return True
 
 
 def _provenance_from_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -455,7 +581,7 @@ def _find_existing_resource(
     rows = _postgrest_get_with_backoff(
         "external_resources",
         {
-            "select": "id,source,external_id,title,updated_at",
+            "select": "id,source,external_id,title,created_at",
             "source": f"eq.{key['source']}",
             "external_id": f"eq.{key['external_id']}",
             "limit": "2",
@@ -471,7 +597,7 @@ def _find_existing_resource(
         **key,
         "resource_id": first.get("id"),
         "title": first.get("title"),
-        "updated_at": first.get("updated_at"),
+        "created_at": first.get("created_at"),
         "duplicate_count": len(rows),
     }
 
@@ -508,7 +634,7 @@ def _find_existing_resources(
             rows = _postgrest_get_with_backoff(
                 "external_resources",
                 {
-                    "select": "id,source,external_id,title,updated_at",
+                    "select": "id,source,external_id,title,created_at",
                     "source": f"eq.{source}",
                     "external_id": _postgrest_in_values(chunk),
                     "limit": str(len(chunk) + 1),
@@ -529,7 +655,7 @@ def _find_existing_resources(
                     "external_id": external_id,
                     "resource_id": row.get("id"),
                     "title": row.get("title"),
-                    "updated_at": row.get("updated_at"),
+                    "created_at": row.get("created_at"),
                     "duplicate_count": 1,
                 }
     result: dict[tuple[str, str], dict[str, Any]] = {}
@@ -653,6 +779,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dry-run", action="store_true", help="Write envelopes without uploading")
     parser.add_argument("--out-dir", help="Directory for dry-run envelopes or upload responses")
     parser.add_argument(
+        "--enrich",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Generate missing workflow summaries before upload (default: on when --model is provided)",
+    )
+    parser.add_argument("--model", help="OpenAI-compatible model for enrichment, e.g. deepseek-chat or gpt-4o-mini")
+    parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=DEFAULT_CACHE_DIR,
+        help="On-disk LLM summary cache directory",
+    )
+    parser.add_argument(
         "--skip-existing",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -678,6 +817,8 @@ def main(argv: list[str] | None = None) -> int:
     root = _repo_root()
     manifest_path = args.manifest.resolve()
     corpus_dir = args.corpus_dir.resolve()
+    cache_dir = args.cache_dir.resolve()
+    enrich_enabled = bool(args.model) if args.enrich is None else bool(args.enrich)
 
     manifest = _load_manifest(manifest_path)
     workflows = manifest.get("workflows", [])
@@ -708,6 +849,54 @@ def main(argv: list[str] | None = None) -> int:
     contributor_key = os.environ.get("HIVEMIND_CONTRIBUTOR_KEY")
 
     results: list[dict[str, Any]] = []
+    manifest_modified = False
+    llm_client: Any = None
+    if enrich_enabled:
+        if not args.model:
+            print("error: --enrich requires --model", file=sys.stderr)
+            return 1
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for row in workflows:
+            workflow_id = str(row.get("workflow_id", "unknown"))
+            if not _summary_needs_enrichment(row):
+                continue
+            if llm_client is None:
+                try:
+                    llm_client = _build_llm_client(args.model)
+                except Exception as exc:  # noqa: BLE001
+                    print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+                    return 1
+            try:
+                enriched = _enrich_row_summary(
+                    row,
+                    corpus_dir=corpus_dir,
+                    cache_dir=cache_dir,
+                    llm_client=llm_client,
+                    persist=not args.dry_run,
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    json.dumps(
+                        {
+                            "workflow_id": workflow_id,
+                            "status": "error",
+                            "error": f"enrichment failed: {type(exc).__name__}: {exc}",
+                        },
+                        sort_keys=True,
+                    )
+                )
+                return 1
+            if enriched:
+                manifest_modified = True
+                print(json.dumps({"workflow_id": workflow_id, "status": "enriched"}, sort_keys=True), flush=True)
+        if manifest_modified and not args.dry_run:
+            manifest["summary_enrichment"] = {
+                "updated_at": _utcnow(),
+                "model": args.model,
+                "cache_dir": str(cache_dir),
+            }
+            _save_manifest(manifest, manifest_path)
+
     envelopes_by_id: dict[str, dict[str, Any]] = {}
     for row in workflows:
         workflow_id = str(row.get("workflow_id", "unknown"))

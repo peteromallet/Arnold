@@ -12,6 +12,7 @@ from tests.harness_common import (
     LIVE_AGENTIC_MODEL_BEHAVIORS,
     STATUS_SUCCESS,
 )
+from .assessor import assess_live_output_dir
 
 
 def load_flow_metadata(output_dir: Path | str) -> dict[str, Any]:
@@ -58,16 +59,31 @@ def validate_live_agentic_artifact(metadata: Mapping[str, Any]) -> None:
         )
 
 
-def guard_output_dir(output_dir: Path | str) -> dict[str, Any]:
-    """Inspect an artifact directory and return a strict verdict."""
+def guard_output_dir(
+    output_dir: Path | str,
+    scenario: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Inspect an artifact directory and return a strict verdict.
+
+    The verdict combines the metadata boundary check with a deep artifact
+    assessment (graph changed, errors, readiness blockers, upstream failures,
+    etc.).  *scenario* is optional; when provided it can declare explicit
+    expectations such as ``assessment.expect_graph_changed``.
+    """
     metadata = load_flow_metadata(output_dir)
     validate_live_agentic_artifact(metadata)
-    verdict = {
+
+    metadata_success = is_live_agentic_success(metadata)
+    assessment = assess_live_output_dir(output_dir, scenario=scenario)
+
+    verdict: dict[str, Any] = {
         "output_dir": str(output_dir),
         "flow_kind": metadata.get("flow_kind"),
         "status": metadata.get("status"),
         "dispatcher": metadata.get("dispatcher"),
         "model_behavior": metadata.get("model_behavior"),
-        "live_agentic_success": is_live_agentic_success(metadata),
+        "metadata_success": metadata_success,
+        "assessment": assessment,
+        "live_agentic_success": metadata_success and assessment["passed"],
     }
     return verdict

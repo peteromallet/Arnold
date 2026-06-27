@@ -1,0 +1,200 @@
+{
+  "12": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "ComfyUI_temp_krykx_00010_.png"
+    }
+  },
+  "15": {
+    "class_type": "IPAdapterModelLoader",
+    "inputs": {
+      "widget_0": "ip_plus_composition_sdxl.safetensors"
+    }
+  },
+  "16": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "model.safetensors"
+    }
+  },
+  "17": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": [
+        "12",
+        0
+      ],
+      "widget_0": "LANCZOS",
+      "widget_1": "pad",
+      "widget_2": 0.15
+    }
+  },
+  "20": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "clip_vision": [
+        "16",
+        0
+      ],
+      "image": [
+        "17",
+        0
+      ],
+      "ipadapter": [
+        "15",
+        0
+      ],
+      "model": [
+        "4",
+        0
+      ],
+      "widget_0": 0.9,
+      "widget_1": "ease in",
+      "widget_2": "concat",
+      "widget_3": 0,
+      "widget_4": 1,
+      "widget_5": "V only"
+    }
+  },
+  "24": {
+    "class_type": "IPAdapterAdvanced",
+    "inputs": {
+      "clip_vision": [
+        "25",
+        0
+      ],
+      "image": [
+        "28",
+        0
+      ],
+      "ipadapter": [
+        "26",
+        0
+      ],
+      "model": [
+        "20",
+        0
+      ],
+      "widget_0": 0.5,
+      "widget_1": "style transfer (SDXL)",
+      "widget_2": "concat",
+      "widget_3": 0,
+      "widget_4": 1,
+      "widget_5": "V only"
+    }
+  },
+  "25": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "SDXL/pytorch_model.bin"
+    }
+  },
+  "26": {
+    "class_type": "IPAdapterModelLoader",
+    "inputs": {
+      "widget_0": "ip-adapter_sdxl.safetensors"
+    }
+  },
+  "27": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "hannahsubmarine_simple_illustration_of_a_pink_gorilla_blue_ba_710c5e5f-417f-4ca5-8d49-5739d9be0344_2.webp"
+    }
+  },
+  "28": {
+    "class_type": "PrepImageForClipVision",
+    "inputs": {
+      "image": [
+        "27",
+        0
+      ],
+      "widget_0": "LANCZOS",
+      "widget_1": "pad",
+      "widget_2": 0.15
+    }
+  },
+  "3": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 6.5,
+      "denoise": 1,
+      "latent_image": [
+        "5",
+        0
+      ],
+      "model": [
+        "24",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "sampler_name": "ddpm",
+      "scheduler": "karras",
+      "seed": 37,
+      "steps": 35
+    }
+  },
+  "4": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "juggernaut_xl_6.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "widget_0": 1024,
+      "widget_1": 1024,
+      "widget_2": 1
+    }
+  },
+  "6": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "4",
+        1
+      ],
+      "text": "woman walking through city"
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "4",
+        1
+      ],
+      "text": "man"
+    }
+  },
+  "8": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "3",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    }
+  },
+  "9": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "IPAdapter",
+      "images": [
+        "8",
+        0
+      ]
+    }
+  }
+}
