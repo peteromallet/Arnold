@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.harness_common import OUTCOME_FAILED, OUTCOME_FAKE_NO_OP, OUTCOME_PASSED
+
 _HARNESS_RUNNER = Path(__file__).resolve().parents[2] / "tests" / "structural_harness" / "runner.py"
 
 
@@ -90,7 +92,7 @@ def test_structural_run_with_all_passing_returns_zero():
     for ss in scenarios:
         for run_rec in ss.get("runs", []):
             outcome = run_rec.get("outcome", "")
-            assert outcome == "passed", (
+            assert outcome == OUTCOME_PASSED, (
                 f"Expected 'passed' for all-passing scenario, got {outcome!r}."
             )
 
@@ -106,7 +108,7 @@ def test_summary_exit_code_treats_assessment_failure_as_failure():
         "batch_tag": "test",
         "scenario_count": 1,
         "outcome_counts": {
-            "failed": 1,
+            OUTCOME_FAILED: 1,
         },
         "has_undetermined": False,
         "has_blocked_or_error": False,
@@ -115,7 +117,7 @@ def test_summary_exit_code_treats_assessment_failure_as_failure():
                 "scenario_name": "test-scenario",
                 "runs": [
                     {
-                        "outcome": "failed",
+                        "outcome": OUTCOME_FAILED,
                         "dispatcher": "fake",
                         "assessment": {
                             "overall_passed": False,
@@ -123,7 +125,7 @@ def test_summary_exit_code_treats_assessment_failure_as_failure():
                         },
                     }
                 ],
-                "outcome_counts": {"failed": 1},
+                "outcome_counts": {OUTCOME_FAILED: 1},
                 "has_undetermined": False,
             }
         ],
@@ -134,7 +136,7 @@ def test_summary_exit_code_treats_assessment_failure_as_failure():
     single = {
         "runs": [
             {
-                "outcome": "failed",
+                "outcome": OUTCOME_FAILED,
                 "dispatcher": "fake",
                 "assessment": {
                     "overall_passed": False,
@@ -153,7 +155,7 @@ def test_summary_exit_code_fake_no_op_with_no_assessment_still_zero():
 
     summary = {
         "runs": [
-            {"outcome": "fake_no_op"},
+            {"outcome": OUTCOME_FAKE_NO_OP},
         ],
     }
     assert summary_exit_code(summary) == 0
@@ -167,7 +169,7 @@ def test_summary_exit_code_passed_returns_zero():
         "scenarios": [
             {
                 "runs": [
-                    {"outcome": "passed"},
+                    {"outcome": OUTCOME_PASSED},
                 ],
             }
         ],

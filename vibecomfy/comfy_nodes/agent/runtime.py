@@ -194,6 +194,8 @@ def _normalize_route(route: str | None) -> str:
     normalized = (route or "arnold").strip().lower()
     if normalized in {"auto", "anthropic", "openai-codex"}:
         return "arnold"
+    if normalized == "hermes":
+        return "openrouter"
     return normalized or "arnold"
 
 
@@ -530,13 +532,18 @@ def run_agent_turn_batch(
 
 
 def _requested_route(route: str | None) -> str:
-    """Canonical panel route name (claude->anthropic, codex->openai-codex)."""
+    """Canonical panel route name (claude->anthropic, codex->openai-codex).
+
+    The ``hermes`` dispatch agent id is exposed as a product route in headless
+    executor specs; for readiness/status purposes it is the same as the
+    OpenRouter browser-key route.
+    """
     requested = (route or "").strip().lower()
     if requested == "claude":
         return "anthropic"
     if requested == "codex":
         return "openai-codex"
-    if requested == "deepseek":
+    if requested in {"deepseek", "hermes"}:
         return "openrouter"
     return requested
 

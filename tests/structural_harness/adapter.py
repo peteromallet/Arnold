@@ -20,6 +20,17 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from tests.harness_common import (
+    DISPATCHER_FAKE,
+    DISPATCHER_FAKING,
+    FAKE_DISPATCHERS,
+    FLOW_KIND_LIVE_AGENTIC_HEADLESS,
+    FLOW_KIND_STRUCTURAL_CONTRACT,
+    MODEL_BEHAVIOR_AGENTIC,
+    MODEL_BEHAVIOR_SCRIPTED,
+    STATUS_SUCCESS,
+    build_flow_metadata,
+)
 from tests.structural_harness.actors import (
     build_explain_simple_workflow_evidence,
     build_m2_audio_positive_evidence,
@@ -127,14 +138,15 @@ def _derive_flow_kind(dispatcher: str, mode: str) -> str:
     """Auto-derive the flow classification when the scenario does not declare one.
 
     Deterministic (fake/faking) builders in structural mode are always
-    ``structural_contract`` — they exercise a structural contract, never a live
-    agent.  Live mode without a declared flow_kind defaults to ``live_agentic``.
+    ``structural_contract`` -- they exercise a structural contract, never a live
+    agent. Live mode without a declared flow_kind defaults to the live headless
+    agentic flow kind.
     """
-    if str(dispatcher) in {"fake", "faking"}:
-        return "structural_contract"
+    if str(dispatcher) in FAKE_DISPATCHERS:
+        return FLOW_KIND_STRUCTURAL_CONTRACT
     if mode == "live":
-        return "live_agentic"
-    return "structural_contract"
+        return FLOW_KIND_LIVE_AGENTIC_HEADLESS
+    return FLOW_KIND_STRUCTURAL_CONTRACT
 
 
 def _derive_model_behavior(dispatcher: str, mode: str) -> str:
@@ -144,9 +156,9 @@ def _derive_model_behavior(dispatcher: str, mode: str) -> str:
     experiments with a non-fake dispatcher. Fake/faking dispatchers are also
     scripted in every mode.
     """
-    if mode == "structural" or str(dispatcher) in {"fake", "faking"}:
-        return "scripted"
-    return "agentic"
+    if mode == "structural" or str(dispatcher) in FAKE_DISPATCHERS:
+        return MODEL_BEHAVIOR_SCRIPTED
+    return MODEL_BEHAVIOR_AGENTIC
 
 
 class VibeComfyProjectAdapter(FakeProjectAdapter):
@@ -227,17 +239,16 @@ class VibeComfyProjectAdapter(FakeProjectAdapter):
             flow_kind = _derive_flow_kind(dispatcher, mode_value)
 
         target = staging_root / "flow_metadata.json"
+        flow_metadata = build_flow_metadata(
+            flow_kind=flow_kind.strip() if isinstance(flow_kind, str) else "",
+            dispatcher=str(dispatcher),
+            model_behavior=_derive_model_behavior(dispatcher, mode_value),
+            entrypoint="structural_harness",
+            status=STATUS_SUCCESS,
+            extra={"mode": mode_value},
+        )
         target.write_text(
-            json.dumps(
-                {
-                    "flow_kind": flow_kind.strip() if isinstance(flow_kind, str) else "",
-                    "dispatcher": str(dispatcher),
-                    "mode": mode_value,
-                    "model_behavior": _derive_model_behavior(dispatcher, mode_value),
-                },
-                indent=2,
-                sort_keys=True,
-            ),
+            json.dumps(flow_metadata, indent=2, sort_keys=True),
             encoding="utf-8",
         )
         manifest["written"].append(str(target.relative_to(evidence_dir)))
@@ -349,11 +360,11 @@ class VibeComfyProjectAdapter(FakeProjectAdapter):
         if mode != "structural":
             return None
 
-        if run.dispatcher == "faking":
+        if run.dispatcher == DISPATCHER_FAKING:
             return build_faking_structural_chain(frozen_root)
         # Structural builders are deterministic shortcuts for the fake actor.
         # Real agents must produce their own frozen evidence.
-        if run.dispatcher != "fake":
+        if run.dispatcher != DISPATCHER_FAKE:
             return None
         builder = _M2_BUILDERS.get(scenario.name)
         if builder is None:

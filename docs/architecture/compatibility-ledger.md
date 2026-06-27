@@ -191,16 +191,17 @@ trigger.
 
 ### Clarify/noop forbidden-key guards
 
-- **Owner**: `vibecomfy/comfy_nodes/agent/routes.py`.
+- **Owner**: `vibecomfy/comfy_nodes/agent/executor_response.py`.
 - **Purpose**: `_NON_APPLYABLE_FORBIDDEN_KEYS` and
   `_strip_non_applyable_forbidden_fields` are the active production
-  route-envelope guard that prevents candidate/apply fields from leaking into
-  clarify/noop responses. `_CLARIFY_FORBIDDEN_KEYS` is a retained legacy alias
-  for documentation/test traceability, not a compatibility path with production
-  callers.
-- **Caller evidence**: `_sanitize_clarify_payload` and
-  `_make_not_applyable_payload` call `_strip_non_applyable_forbidden_fields`
-  before returning non-applyable response shapes. No production caller reads
+  executor route-envelope guard that prevents candidate/apply fields from
+  leaking into clarify/noop responses. `_CLARIFY_FORBIDDEN_KEYS` is a
+  retained legacy alias for documentation/test traceability, not a compatibility path
+  with production callers.
+- **Caller evidence**: `serialize_executor_result` and
+  `_sanitize_clarify_payload` call `_strip_non_applyable_forbidden_fields`
+  before returning non-applyable response shapes; `routes.py` re-exports the
+  helpers for legacy private callers. No production caller reads
   `_CLARIFY_FORBIDDEN_KEYS`; it aliases `_NON_APPLYABLE_FORBIDDEN_KEYS`.
 - **Fixture coverage**: Clarify/noop response tests in
   `tests/test_comfy_nodes_agent_edit.py` and forbidden-field assertions in

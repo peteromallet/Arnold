@@ -42,6 +42,7 @@ ALLOWED_ALIAS_FILES = {
         "vibecomfy/comfy_nodes/agent/audit.py",
         "vibecomfy/comfy_nodes/agent/contracts.py",
         "vibecomfy/comfy_nodes/agent/edit.py",
+        "vibecomfy/comfy_nodes/agent/executor_response.py",
         "vibecomfy/comfy_nodes/agent/gates.py",
         "vibecomfy/comfy_nodes/agent/routes.py",
         "vibecomfy/comfy_nodes/agent/session.py",
@@ -52,6 +53,7 @@ ALLOWED_ALIAS_FILES = {
     "candidate_graph": {
         "vibecomfy/comfy_nodes/agent/contracts.py",
         "vibecomfy/comfy_nodes/agent/edit.py",
+        "vibecomfy/comfy_nodes/agent/executor_response.py",
         "vibecomfy/comfy_nodes/agent/routes.py",
         "vibecomfy/comfy_nodes/agent/session.py",
         "vibecomfy/comfy_nodes/web/agent_edit_response_contract.js",

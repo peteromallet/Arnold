@@ -23,6 +23,129 @@ from vibecomfy.executor.core import (
 )
 
 
+def test_agent_executor_http_route_uses_shared_serializer_and_durable_helper(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_HEADLESS", "1")
+    routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")
+    executor_response = importlib.import_module("vibecomfy.comfy_nodes.agent.executor_response")
+    executor_durable = importlib.import_module("vibecomfy.comfy_nodes.agent.executor_durable")
+
+    assert routes._serialize_executor_result is executor_response.serialize_executor_result
+    assert routes.maybe_write_executor_only_durable_turn is (
+        executor_durable.maybe_write_executor_only_durable_turn
+    )
+
+    registered = {}
+
+    class _Routes:
+        def post(self, path):
+            def _decorator(fn):
+                registered[("POST", path)] = fn
+                return fn
+            return _decorator
+
+        def get(self, path):
+            def _decorator(fn):
+                registered[("GET", path)] = fn
+                return fn
+            return _decorator
+
+    real_aiohttp = sys.modules.get("aiohttp")
+    aiohttp_module = types.ModuleType("aiohttp")
+    aiohttp_module.web = types.SimpleNamespace(
+        json_response=lambda body, status=200: {"status": status, "body": body},
+    )
+    monkeypatch.setitem(sys.modules, "aiohttp", aiohttp_module)
+
+    class _Result:
+        ok = True
+
+        def to_dict(self):
+            return {
+                "ok": True,
+                "route": "inspect",
+                "reply": "This graph loads an image.",
+                "candidate": {"graph": {"nodes": [{"id": 1}], "links": []}},
+                "candidate_graph": {"nodes": [{"id": 1}], "links": []},
+                "graph": {"nodes": [{"id": 1}], "links": []},
+                "apply_eligible": True,
+                "apply_eligibility": {"applyable": True, "reason": "applyable"},
+                "eligibility": {"applyable": True, "reason": "applyable"},
+            }
+
+    captured: dict[str, object] = {}
+
+    def _fake_run_executor(request, *, client_id=None):
+        captured["executor_request"] = request
+        captured["client_id"] = client_id
+        return _Result()
+
+    def _fake_durable_helper(**kwargs):
+        captured["durable_kwargs"] = kwargs
+        response = dict(kwargs["response"])
+        response["session_id"] = "http-parity-session"
+        response["turn_id"] = "http-parity-turn"
+        response["detail_json_path"] = str(tmp_path / "response.json")
+        response["artifacts"] = {"response": "response.json", "chat": "chat.json"}
+        return response
+
+    async def _fake_to_thread(fn, /, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    executor_core = importlib.import_module("vibecomfy.executor.core")
+    monkeypatch.setattr(executor_core, "run_executor", _fake_run_executor)
+    monkeypatch.setattr(routes, "maybe_write_executor_only_durable_turn", _fake_durable_helper)
+    monkeypatch.setattr(routes.asyncio, "to_thread", _fake_to_thread)
+
+    class _Request:
+        query = {}
+
+        async def json(self):
+            return {
+                "query": "explain this",
+                "graph": {"nodes": [], "links": []},
+                "session_id": "../unsafe session",
+                "client_id": "client-http",
+            }
+
+    try:
+        routes.register_agent_edit_routes(types.SimpleNamespace(routes=_Routes()))
+        response = routes.asyncio.run(
+            registered[("POST", "/vibecomfy/agent-executor")](_Request())
+        )
+    finally:
+        if real_aiohttp is not None:
+            sys.modules["aiohttp"] = real_aiohttp
+        else:
+            sys.modules.pop("aiohttp", None)
+
+    assert response["status"] == 200
+    body = response["body"]
+    assert body["route"] == "inspect"
+    assert body["message"] == "This graph loads an image."
+    assert body["session_id"] == "http-parity-session"
+    assert body["turn_id"] == "http-parity-turn"
+    assert body["artifacts"] == {"response": "response.json", "chat": "chat.json"}
+    for forbidden_key in (
+        "candidate",
+        "candidate_graph",
+        "graph",
+        "apply_eligible",
+        "apply_eligibility",
+        "eligibility",
+    ):
+        assert forbidden_key not in body
+
+    durable_kwargs = captured["durable_kwargs"]
+    assert durable_kwargs["response"]["route"] == "inspect"
+    assert "candidate" not in durable_kwargs["response"]
+    assert durable_kwargs["payload"]["session_id"] == durable_kwargs["request"].session_id
+    assert durable_kwargs["payload"]["session_id"] != "../unsafe session"
+    assert captured["client_id"] == "client-http"
+
+
 def test_agent_executor_and_agent_edit_submit_share_executor_adapter(monkeypatch) -> None:
     monkeypatch.setenv("VIBECOMFY_HEADLESS", "1")
     routes = importlib.import_module("vibecomfy.comfy_nodes.agent.routes")

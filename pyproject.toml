@@ -65,6 +65,7 @@ intent = [
 
 [project.scripts]
 vibecomfy = "vibecomfy.cli:main"
+vibecomfy-agent = "vibecomfy.agent.__main__:main"
 
 [project.entry-points."vibecomfy.plugins"]
 # my_plugin = "my_pkg:register"

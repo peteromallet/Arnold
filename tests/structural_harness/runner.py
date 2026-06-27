@@ -16,10 +16,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from tests.harness_common import (
+    OUTCOME_BLOCKED_PREREQUISITE,
+    OUTCOME_SKIPPED_LIVE,
+    STRUCTURAL_DISPATCHERS,
+)
 from tests.structural_harness.adapter import VibeComfyProjectAdapter
 
 
-_STRUCTURAL_ACTORS = frozenset({"fake", "faking"})
+_STRUCTURAL_ACTORS = STRUCTURAL_DISPATCHERS
 
 
 def _resolve_repo_root() -> Path:
@@ -447,7 +452,7 @@ def run_chaining_family(
                 else:
                     for run_rec in ss.get("runs", []):
                         outcome = run_rec.get("outcome", "")
-                        if outcome in ("blocked_prerequisite", "skipped_live"):
+                        if outcome in (OUTCOME_BLOCKED_PREREQUISITE, OUTCOME_SKIPPED_LIVE):
                             batch_has_blocked_or_error = True
                         elif run_rec.get("errors"):
                             batch_has_blocked_or_error = True

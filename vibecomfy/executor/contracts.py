@@ -183,8 +183,6 @@ def _normalize_explicit_route(
     """
     if not route:
         return ""
-    if route in _ALLOWED_ROUTES:
-        return route
 
     if route == "requires_custom_nodes":
         if implement or intent == "edit" or task in {"edit_graph", "research_precedent"}:
@@ -203,6 +201,9 @@ def _normalize_explicit_route(
             },
         )
         return normalized
+
+    if route in _ALLOWED_ROUTES:
+        return route
 
     static_aliases = {
         "inspect_only": "inspect",
