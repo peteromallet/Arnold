@@ -491,6 +491,7 @@ if latest_failure.get("kind") != "phase_failed":
     raise SystemExit(0)
 
 phase = latest_failure.get("phase") or "unknown"
+recorded_at = latest_failure.get("recorded_at") or ""
 history = state.get("history") or []
 consecutive = 0
 for item in reversed(history):
@@ -505,20 +506,35 @@ for item in reversed(history):
 active = state.get("active_step") or {}
 active_phase = active.get("phase") or ""
 active_pid = active.get("worker_pid") or ""
+active_started = active.get("started_at") or ""
+current_state = state.get("current_state") or ""
 message = latest_failure.get("message") or ""
 
-if consecutive >= 2:
-    print(
-        "phase_failure:"
-        f"{state_path.parent.name}:"
-        f"{phase}:"
-        f"{consecutive}:"
-        f"active={active_phase or 'none'}:"
-        f"pid={active_pid or 'none'}:"
-        f"{message[:160]}"
-    )
-else:
+success_after_failure = False
+for item in history:
+    if item.get("step") != phase or item.get("result") != "success":
+        continue
+    timestamp = item.get("timestamp") or item.get("completed_at") or ""
+    if recorded_at and timestamp and timestamp > recorded_at:
+        success_after_failure = True
+        break
+
+if success_after_failure:
     print("ok")
+    raise SystemExit(0)
+
+print(
+    "phase_failure:"
+    f"{state_path.parent.name}:"
+    f"{phase}:"
+    f"consecutive={consecutive}:"
+    f"recorded={recorded_at or 'unknown'}:"
+    f"state={current_state or 'unknown'}:"
+    f"active={active_phase or 'none'}:"
+    f"started={active_started or 'unknown'}:"
+    f"pid={active_pid or 'none'}:"
+    f"{message[:160]}"
+)
 PY
 }
 
