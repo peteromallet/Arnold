@@ -90,7 +90,10 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"' in text
     assert 'PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"' in text
     assert 'MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"' in text
+    assert 'CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-1800}"' in text
     assert '--max_turns="$MAX_TURNS"' in text
+    assert 'CODEX_PROMPT="$RUN_DIR/codex-repair-prompt.md"' in text
+    assert 'CODEX_LOG="$RUN_DIR/codex-repair.log"' in text
     assert 'capture "subagent launcher skill"' in text
     assert 'RUN_CWD="$ARNOLD_SRC"' in text
     assert 'cd "$RUN_CWD"' in text
@@ -100,6 +103,11 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert "First read the \\$subagent-launcher SKILL.md" in text
     assert "then dispatch Codex through that skill" in text
     assert "If \\$subagent-launcher or Codex cannot be launched" in text
+    assert "launching Codex repair subagent" in text
+    assert 'codex exec --sandbox danger-full-access "$(cat "$CODEX_PROMPT")" </dev/null' in text
+    assert 'capture "codex repair subagent result"' in text
+    assert "launching Kimi goal operator" in text
+    assert text.index("launching Codex repair subagent") < text.index("launching Kimi goal operator")
 
 
 def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() -> None:
