@@ -51,6 +51,29 @@ def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
 
 
+def test_watchdog_guards_all_kimi_repair_paths_before_inline_operator_invocation() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    repair_start = text.index("repair_unhealthy_session() {")
+    launch_start = text.index("launch_chain_tick() {")
+    repair_block = text[repair_start:launch_start]
+    stopped_block = text[text.index('if [[ "$repair_attempted" == "0" ]]; then', launch_start):]
+
+    repair_guard = 'if kimi_operator_running "$session"; then'
+    repair_log = 'log "session unhealthy; Kimi repair already running session=$session reason=$reason"'
+    repair_invoke = 'log "session unhealthy: invoking Kimi goal operator before relaunch session=$session reason=$reason"'
+    stopped_log = 'log "session stopped; Kimi repair already running session=$session"'
+    stopped_invoke = 'log "session stopped: invoking Kimi goal operator before relaunch session=$session"'
+
+    assert repair_guard in repair_block
+    assert repair_log in repair_block
+    assert repair_block.index(repair_guard) < repair_block.index(repair_invoke)
+
+    assert repair_guard in stopped_block
+    assert stopped_log in stopped_block
+    assert stopped_block.index(repair_guard) < stopped_block.index(stopped_invoke)
+
+
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
     text = _wrapper("arnold-watchdog")
 

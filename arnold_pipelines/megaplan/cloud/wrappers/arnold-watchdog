@@ -610,6 +610,11 @@ repair_unhealthy_session() {
   local remote_spec="$3"
   local reason="$4"
 
+  if kimi_operator_running "$session"; then
+    log "session unhealthy; Kimi repair already running session=$session reason=$reason"
+    return 0
+  fi
+
   if [[ -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
     log "session unhealthy: invoking Kimi goal operator before relaunch session=$session reason=$reason"
     /usr/local/bin/arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec" >> "$LOG" 2>&1 \
@@ -674,12 +679,16 @@ launch_chain_tick() {
     repair_attempted=1
   fi
 
-  if [[ "$repair_attempted" == "0" && -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
-    log "session stopped: invoking Kimi goal operator before relaunch session=$session"
-    /usr/local/bin/arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec" >> "$LOG" 2>&1 \
-      || log "Kimi goal operator did not complete cleanly; falling back to direct relaunch"
-  elif [[ "$repair_attempted" == "0" ]]; then
-    log "Kimi goal operator missing; falling back to direct relaunch"
+  if [[ "$repair_attempted" == "0" ]]; then
+    if kimi_operator_running "$session"; then
+      log "session stopped; Kimi repair already running session=$session"
+    elif [[ -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
+      log "session stopped: invoking Kimi goal operator before relaunch session=$session"
+      /usr/local/bin/arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec" >> "$LOG" 2>&1 \
+        || log "Kimi goal operator did not complete cleanly; falling back to direct relaunch"
+    else
+      log "Kimi goal operator missing; falling back to direct relaunch"
+    fi
   fi
 
   ensure_install_or_repair || log "editable install still unhealthy; relaunching anyway"
