@@ -222,10 +222,10 @@ The diagnostic code table defined by later implementation must cover at least:
 - Alias or provenance loss.
 - Missing or malformed component export metadata.
 
-Diagnostic codes for future bounded control forms and `loop`, `halt`,
-`suspend`, or `transition` intrinsic semantics are reserved for M3 and later.
-V1 implementations must not use those codes to imply that the current grammar
-accepts the corresponding source forms.
+Diagnostic codes `AWF010` through `AWF017` are reserved for future bounded
+control forms and `loop`, `halt`, `suspend`, or `transition` intrinsic
+semantics in M3 and later. V1 implementations must not use those codes to
+imply that the current grammar accepts the corresponding source forms.
 
 Diagnostics must be emitted from static parsing and resolver checks. They must
 not require importing or executing workflow source.
