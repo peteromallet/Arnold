@@ -45,6 +45,13 @@ _CRITIQUE_UNVERIFIABLE_SHAPE_REASON = (
     "parallel critique worker output did not contain a usable check object for "
     "this lens after retry; operator review may be needed"
 )
+_SANDBOX_NAMESPACE_REASON_MARKERS = (
+    "bwrap",
+    "bubblewrap",
+    "sandbox namespace",
+    "no permissions to create new namespace",
+    "shell/file access is blocked in this environment",
+)
 
 
 class _RetryableCritiqueShapeError(Exception):
@@ -124,6 +131,50 @@ def _sanitize_critique_check_payload(payload: dict[str, Any]) -> dict[str, Any]:
     cleaned_payload = dict(payload)
     cleaned_payload["findings"] = clean_findings
     return cleaned_payload
+
+
+def _infer_unverifiable_cause(reason: str) -> tuple[str | None, bool | None, str | None]:
+    normalized = str(reason or "").lower()
+    if any(marker in normalized for marker in _SANDBOX_NAMESPACE_REASON_MARKERS):
+        return "sandbox_namespace", False, "sandbox_namespace"
+    if "rate limit" in normalized or "rate_limit" in normalized:
+        return "provider_rate_limit", True, "rate_limit"
+    if "capacity" in normalized or "quota" in normalized:
+        return "provider_capacity", True, "rate_limit"
+    return None, None, None
+
+
+def _flags_only_unverifiable_payload(
+    raw_payload: Any,
+    *,
+    check_id: str,
+    question: str,
+) -> dict[str, Any] | None:
+    if not isinstance(raw_payload, dict):
+        return None
+    flags = raw_payload.get("flags")
+    if not isinstance(flags, list) or not flags:
+        return None
+    flag = next((item for item in flags if isinstance(item, dict)), None)
+    if flag is None:
+        return None
+    category = str(flag.get("category", "")).strip().lower()
+    concern = str(flag.get("concern", "")).strip()
+    evidence = str(flag.get("evidence", "")).strip()
+    if category and category != "verifiability" and not (
+        evidence or concern
+    ):
+        return None
+    reason = evidence or concern or "the worker could not verify this check"
+    cause, retryable, error_kind = _infer_unverifiable_cause(reason)
+    return _unverifiable_check_payload(
+        check_id,
+        question,
+        reason,
+        cause=cause,
+        retryable=retryable,
+        error_kind=error_kind,
+    )
 
 
 def _run_check(
@@ -438,6 +489,13 @@ def run_parallel_critique(
                     [],
                     [],
                 )
+            _flags_only = _flags_only_unverifiable_payload(
+                raw_payload,
+                check_id=str(_cid),
+                question=str(unit.extra.get("question", "")),
+            )
+            if _flags_only is not None:
+                return (_flags_only, [], [])
         if isinstance(_checks_list, list) and len(_checks_list) != 1:
             _matching = [
                 item for item in _checks_list

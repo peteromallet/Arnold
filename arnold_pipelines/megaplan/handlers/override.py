@@ -930,7 +930,7 @@ def _override_force_proceed(
     if state["current_state"] == STATE_BLOCKED:
         if not (
             _last_gate_is_agent_availability_preflight_block(state)
-            or _last_gate_is_operational_unverifiable_block(state)
+            or _blocked_plan_has_operational_unverifiable_evidence(plan_dir, state)
         ):
             raise CliError(
                 "invalid_transition",
@@ -1120,6 +1120,42 @@ def _last_gate_is_operational_unverifiable_block(state: PlanState) -> bool:
         not has_high_complexity_unverifiable_checks(signals)
         and all(is_operational_unverifiable_check(check) for check in high_complexity)
     )
+
+
+def _blocked_plan_has_operational_unverifiable_evidence(
+    plan_dir: Path, state: PlanState
+) -> bool:
+    if _last_gate_is_operational_unverifiable_block(state):
+        return True
+
+    history = state.get("meta", {}).get("critique_unverifiable_checks", [])
+    if not isinstance(history, list) or not history:
+        return False
+    latest = history[-1]
+    if not isinstance(latest, dict):
+        return False
+    checks = latest.get("checks", [])
+    if not isinstance(checks, list):
+        return False
+
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if check.get("attention") != "high_complexity_unverifiable":
+            continue
+        check_id = str(check.get("id", "")).strip()
+        if not check_id:
+            continue
+        raw_path = plan_dir / f"critique_check_{check_id}_raw.txt"
+        if not raw_path.exists():
+            continue
+        try:
+            raw_text = raw_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if is_operational_unverifiable_check({"reason": raw_text}):
+            return True
+    return False
 
 
 def _override_recover_blocked(

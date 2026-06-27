@@ -33,6 +33,24 @@ def test_legacy_provider_capacity_reason_unverifiable_does_not_block_proceed() -
     assert has_high_complexity_unverifiable_checks({"unverifiable_checks": [check]}) == []
 
 
+def test_high_complexity_sandbox_namespace_unverifiable_does_not_block_proceed() -> None:
+    check = {
+        "id": "correctness",
+        "reason": (
+            "Attempts to inspect /workspace/tmp via local commands failed with "
+            "a sandbox namespace error."
+        ),
+        "cause": "sandbox_namespace",
+        "retryable": False,
+        "error_kind": "sandbox_namespace",
+        "attention": "high_complexity_unverifiable",
+        "complexity": 5,
+    }
+
+    assert is_operational_unverifiable_check(check)
+    assert has_high_complexity_unverifiable_checks({"unverifiable_checks": [check]}) == []
+
+
 def test_high_complexity_missing_repo_unverifiable_still_blocks_proceed() -> None:
     check = {
         "id": "correctness",
@@ -166,3 +184,45 @@ def test_missing_repo_downgrade_is_not_recoverable_from_blocked_state() -> None:
     }
 
     assert not _last_gate_is_operational_unverifiable_block(state)
+
+
+def test_historical_sandbox_raw_artifact_recovers_blocked_state(tmp_path) -> None:
+    from arnold_pipelines.megaplan.handlers.override import (
+        _blocked_plan_has_operational_unverifiable_evidence,
+    )
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "critique_check_correctness_raw.txt").write_text(
+        "bwrap: No permissions to create new namespace.",
+        encoding="utf-8",
+    )
+
+    state = {
+        "current_state": "blocked",
+        "last_gate": {
+            "recommendation": "ITERATE",
+            "passed": False,
+        },
+        "meta": {
+            "critique_unverifiable_checks": [
+                {
+                    "checks": [
+                        {
+                            "id": "correctness",
+                            "reason": (
+                                "parallel critique worker output did not contain a usable "
+                                "check object for this lens after retry; operator review "
+                                "may be needed"
+                            ),
+                            "attention": "high_complexity_unverifiable",
+                            "complexity": 4,
+                        }
+                    ],
+                    "iteration": 7,
+                }
+            ]
+        },
+    }
+
+    assert _blocked_plan_has_operational_unverifiable_evidence(plan_dir, state)

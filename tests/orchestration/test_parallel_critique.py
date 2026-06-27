@@ -68,3 +68,73 @@ def test_parallel_critique_persists_raw_output_on_worker_error(
     assert worker.payload["checks"][0]["id"] == "scope"
     assert worker.payload["checks"][0]["status"] == "unverifiable"
 
+
+def test_parallel_critique_flags_only_verifiability_payload_becomes_unverifiable_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+
+    def fake_prompt(*_args: Any, **_kwargs: Any) -> str:
+        return "critique prompt"
+
+    def fake_scatter_worker_units(**_kwargs):
+        return GenericScatterResult(
+            ordered_results=[
+                {
+                    "checks": [],
+                    "flags": [
+                        {
+                            "id": "cannot-access-local-path",
+                            "category": "verifiability",
+                            "concern": "shell/file access is blocked in this environment",
+                            "evidence": (
+                                "Attempts to inspect /workspace/tmp via local commands "
+                                "failed with a sandbox namespace error."
+                            ),
+                        }
+                    ],
+                    "verified_flag_ids": ["cannot-access-local-path"],
+                    "disputed_flag_ids": [],
+                }
+            ],
+            total_cost=0.0,
+            total_prompt_tokens=0,
+            total_completion_tokens=0,
+            total_tokens=0,
+            side_results=[],
+        )
+
+    monkeypatch.setattr(parallel_critique, "single_check_critique_prompt", fake_prompt)
+    monkeypatch.setattr(parallel_critique, "scatter_worker_units", fake_scatter_worker_units)
+
+    state = {
+        "config": {"mode": "code", "project_dir": str(tmp_path)},
+        "iteration": 1,
+    }
+    check = {
+        "id": "correctness",
+        "question": "Is the plan technically correct?",
+        "complexity": 4,
+        "_resolved_agent_mode": AgentMode(
+            agent="codex",
+            mode="fresh",
+            refreshed=False,
+            model="gpt-5.4",
+            resolved_model="gpt-5.4",
+        ),
+    }
+
+    worker = parallel_critique.run_parallel_critique(
+        state,
+        plan_dir,
+        root=tmp_path,
+        model="gpt-5.4",
+        checks=(check,),
+    )
+
+    payload = worker.payload["checks"][0]
+    assert payload["id"] == "correctness"
+    assert payload["status"] == "unverifiable"
+    assert payload["unverifiable_cause"] == "sandbox_namespace"
+    assert payload["unverifiable_error_kind"] == "sandbox_namespace"
