@@ -425,7 +425,13 @@ session_health_status() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
+  local wait_status
   if ! tmux has-session -t "$session" 2>/dev/null; then
+    wait_status="$(chain_wait_status "$workspace")"
+    if [[ "$wait_status" != "none" ]]; then
+      echo "$wait_status"
+      return 0
+    fi
     echo "stopped"
     return 0
   fi
@@ -452,12 +458,72 @@ session_health_status() {
     return 0
   fi
 
+  wait_status="$(chain_wait_status "$workspace")"
+  if [[ "$wait_status" != "none" ]]; then
+    echo "$wait_status"
+    return 0
+  fi
+
   echo "stopped"
 }
 
 kimi_operator_running() {
   local session="$1"
   pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1
+}
+
+chain_wait_status() {
+  local workspace="$1"
+  python3 - "$workspace" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plans_dir = workspace / ".megaplan" / "plans"
+chain_paths = sorted(
+    {
+        *plans_dir.glob(".chains/*.json"),
+        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *(workspace / ".megaplan").glob("**/chain_state.json"),
+    },
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+
+for path in chain_paths:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if payload.get("last_state") != "awaiting_pr_merge":
+        continue
+    pr_number = payload.get("pr_number")
+    if not pr_number:
+        print("awaiting_pr_merge")
+        raise SystemExit(0)
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(int(pr_number)), "--json", "state"],
+            cwd=workspace,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode == 0:
+            state = json.loads(proc.stdout or "{}").get("state", "")
+            if isinstance(state, str) and state.lower() == "merged":
+                print("none")
+                raise SystemExit(0)
+    except Exception:
+        pass
+    print("awaiting_pr_merge")
+    raise SystemExit(0)
+
+print("none")
+PY
 }
 
 plan_phase_health_status() {
@@ -593,6 +659,12 @@ launch_chain_tick() {
     fi
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
+    return 0
+  fi
+
+  if [[ "$health" == "awaiting_pr_merge" ]]; then
+    log "session awaiting PR merge: $session"
+    report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge" "$workspace" "$remote_spec"
     return 0
   fi
 
