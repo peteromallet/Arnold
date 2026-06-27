@@ -18,11 +18,14 @@ MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 TIMEOUT="${KIMI_GOAL_TIMEOUT_SECS:-3600}"
 MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"
+CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-1800}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_DIR="$ROOT/${TS}-${SAFE_SESSION}"
 LOG="$RUN_DIR/operator.log"
 PROMPT="$RUN_DIR/prompt.md"
+CODEX_PROMPT="$RUN_DIR/codex-repair-prompt.md"
+CODEX_LOG="$RUN_DIR/codex-repair.log"
 FACTS="$RUN_DIR/facts.txt"
 REPORT="$RUN_DIR/report.json"
 
@@ -143,6 +146,57 @@ Finish with a concise report containing:
 
 Do not ask the user for input. Keep iterating until the goal is satisfied or a non-automatable blocker remains.
 EOF
+
+cat > "$CODEX_PROMPT" <<EOF
+You are the Codex repair subagent launched by the cloud watchdog via the local \$subagent-launcher contract.
+
+Goal: workflows on this Hetzner worker should not pause unexpectedly. Investigate the current Megaplan/Arnold failure, fix the root cause in the Arnold editable install when source changes are needed, validate narrowly, commit and push to $SYNC_BRANCH, then leave enough evidence for the Kimi supervisor to relaunch or continue the run.
+
+Context:
+- Session: $SESSION
+- Active workflow workspace: $WORKSPACE
+- Chain spec: $REMOTE_SPEC
+- Arnold editable install source: $ARNOLD_SRC
+- Editable install branch: $SYNC_BRANCH
+- Facts file: $FACTS
+- Principles file: $PRINCIPLES_PATH
+
+Constraints:
+- Source fixes belong in $ARNOLD_SRC on $SYNC_BRANCH, not only in the active workflow checkout.
+- Keep the editable install branch independent from MEGAPLAN_REF and from the active workflow branch.
+- Codex phases should use the Codex plan/CLI path.
+- DeepSeek phases should use direct DeepSeek API credentials, not OpenRouter, unless the chain explicitly asks for OpenRouter.
+- Treat provider dependency errors as probable routing/config bugs.
+- Do not blindly repin all phases to one repair model.
+
+Evidence and plausible hypotheses:
+- The watchdog marked this run unhealthy; inspect the facts file, chain state, active logs, and relevant Arnold routing code.
+- A plausible class of failure is stale phase/provider routing or a provider resolver choosing OpenRouter for DeepSeek when direct DeepSeek credentials should be used.
+- Another plausible class is stale runtime pins shadowing intended profile/vendor defaults.
+- These are hypotheses only. Determine the actual cause from code and logs.
+
+Required output:
+- root_cause
+- source_changes
+- validation
+- pushed_commit
+- relaunch_or_supervisor_next_step
+- remaining_blockers
+EOF
+
+log "launching Codex repair subagent"
+if command -v codex >/dev/null 2>&1; then
+  (
+    cd "$ARNOLD_SRC" &&
+    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$CODEX_PROMPT")" </dev/null
+  ) > "$CODEX_LOG" 2>&1
+  codex_rc=$?
+  log "Codex repair subagent finished rc=$codex_rc"
+  capture "codex repair subagent result" bash -lc "printf 'rc=%s\nprompt=%s\nlog=%s\n' '$codex_rc' '$CODEX_PROMPT' '$CODEX_LOG'; tail -260 '$CODEX_LOG' 2>/dev/null"
+else
+  log "Codex CLI missing; Kimi must report Codex launch blocker"
+  capture "codex repair subagent result" bash -lc "echo 'codex CLI missing; command -v codex failed'"
+fi
 
 log "launching Kimi goal operator"
 RUN_CWD="$ARNOLD_SRC"
