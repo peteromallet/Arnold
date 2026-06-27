@@ -10,6 +10,21 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: &kimi_phase_model
+      - plan=hermes:kimi:kimi-k2.7-code
+      - prep=hermes:kimi:kimi-k2.7-code
+      - critique=hermes:kimi:kimi-k2.7-code
+      - critique_evaluator=hermes:kimi:kimi-k2.7-code
+      - revise=hermes:kimi:kimi-k2.7-code
+      - gate=hermes:kimi:kimi-k2.7-code
+      - finalize=hermes:kimi:kimi-k2.7-code
+      - execute=hermes:kimi:kimi-k2.7-code
+      - feedback=hermes:kimi:kimi-k2.7-code
+      - loop_plan=hermes:kimi:kimi-k2.7-code
+      - loop_execute=hermes:kimi:kimi-k2.7-code
+      - review=hermes:kimi:kimi-k2.7-code
+      - tiebreaker_researcher=hermes:kimi:kimi-k2.7-code
+      - tiebreaker_challenger=hermes:kimi:kimi-k2.7-code
     branch: python-shaped-workflow-authoring-m1-contract-grammar
     prep_clarify: false
     prep_direction: "Use docs/arnold/python-shaped-authoring-contract.md and the committed python-shaped-workflow-authoring milestone briefs as the source of truth. This milestone freezes the import-first component contract, grammar version, file layout, and source-oriented diagnostics contract before compiler implementation. Do not depend on arnold.pipeline.native or reintroduce _pipeline/stages compatibility surfaces."
@@ -21,6 +36,7 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: *kimi_phase_model
     branch: python-shaped-workflow-authoring-m2-compiler-core
     depends_on:
       - m1-component-contract-grammar
@@ -34,6 +50,7 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: *kimi_phase_model
     branch: python-shaped-workflow-authoring-m3-control-flow
     depends_on:
       - m2-compiler-core-linear-lowering
@@ -47,6 +64,7 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: *kimi_phase_model
     branch: python-shaped-workflow-authoring-m4-megaplan-migration
     depends_on:
       - m3-control-flow-policy-lowering
@@ -60,6 +78,7 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: *kimi_phase_model
     branch: python-shaped-workflow-authoring-m5-validator-cli
     depends_on:
       - m4-megaplan-component-migration
@@ -73,6 +92,7 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: *kimi_phase_model
     branch: python-shaped-workflow-authoring-m6-explain-shipped
     depends_on:
       - m5-validator-cli-ux
@@ -86,6 +106,7 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: *kimi_phase_model
     branch: python-shaped-workflow-authoring-m7-runtime-conformance
     depends_on:
       - m6-explain-render-shipped-pipelines
@@ -99,6 +120,7 @@ milestones:
     robustness: thorough
     depth: high
     with_prep: true
+    phase_model: *kimi_phase_model
     branch: python-shaped-workflow-authoring-m8-generated-conformance
     depends_on:
       - m7-runtime-conformance-installed-artifacts
