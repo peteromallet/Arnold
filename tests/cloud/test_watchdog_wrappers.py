@@ -88,9 +88,20 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
 
     assert 'ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"' in text
     assert 'SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"' in text
+    assert 'PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"' in text
     assert 'RUN_CWD="$ARNOLD_SRC"' in text
     assert 'cd "$RUN_CWD"' in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
-    assert "profile partnered-5 with the premium vendor set" in text
-    assert "profile `partnered-5`" not in text
-    assert "Do not \"repair\" a Claude/Shannon dependency error by installing Shannon" in text
+    assert "brief Codex from the terminal with the core issue, evidence, constraints, and plausible hypotheses" in text
+    assert "Do not prescribe the implementation" in text
+
+
+def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() -> None:
+    wrapper = _wrapper("arnold-kimi-goal-operator")
+    principles = _wrapper("principles.md")
+
+    assert "$PRINCIPLES_TEXT" in wrapper
+    assert "# Repair Principles" in wrapper
+    assert "Codex phases must run through the Codex plan/CLI path" in principles
+    assert "DeepSeek phases must run through the direct DeepSeek API credentials" in principles
+    assert "Point Codex in the right direction without prescribing the implementation" in principles
