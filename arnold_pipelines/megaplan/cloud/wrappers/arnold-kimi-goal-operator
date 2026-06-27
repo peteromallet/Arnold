@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -uo pipefail
+set -m   # job control: background subshells get separate process groups
 
 if [[ $# -lt 3 ]]; then
   echo "usage: arnold-kimi-goal-operator <session> <workspace> <remote-spec>" >&2
@@ -30,6 +31,36 @@ FACTS="$RUN_DIR/facts.txt"
 REPORT="$RUN_DIR/report.json"
 
 mkdir -p "$RUN_DIR"
+
+CHILD_PIDS=()
+CLEANUP_CHILDREN_RAN=0
+cleanup_children() {
+  local pid
+  local pgid
+  if [[ "$CLEANUP_CHILDREN_RAN" == "1" ]]; then
+    return
+  fi
+  CLEANUP_CHILDREN_RAN=1
+  for pid in "${CHILD_PIDS[@]:-}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+      if [[ -n "$pgid" ]] && kill -- -"$pgid" 2>/dev/null; then
+        :
+      else
+        kill "$pid" 2>/dev/null || true
+      fi
+    fi
+  done
+  sleep 0.5
+  for pid in "${CHILD_PIDS[@]:-}"; do
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -n "$pgid" ]]; then
+      kill -9 -- -"$pgid" 2>/dev/null || true
+    fi
+    kill -9 "$pid" 2>/dev/null || true
+  done
+}
+trap cleanup_children EXIT INT TERM HUP
 
 log() {
   echo "[kimi-goal $(date -Iseconds)] $*" | tee -a "$LOG"
@@ -189,13 +220,20 @@ if command -v codex >/dev/null 2>&1; then
   (
     cd "$ARNOLD_SRC" &&
     timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$CODEX_PROMPT")" </dev/null
-  ) > "$CODEX_LOG" 2>&1
-  codex_rc=$?
+  ) > "$CODEX_LOG" 2>&1 &
+  CODEX_PID=$!
+  CHILD_PIDS+=("$CODEX_PID")
+  if wait "$CODEX_PID"; then
+    codex_rc=0
+  else
+    codex_rc=$?
+  fi
   log "Codex repair subagent finished rc=$codex_rc"
   capture "codex repair subagent result" bash -lc "printf 'rc=%s\nprompt=%s\nlog=%s\n' '$codex_rc' '$CODEX_PROMPT' '$CODEX_LOG'; tail -260 '$CODEX_LOG' 2>/dev/null"
 else
   log "Codex CLI missing; Kimi must report Codex launch blocker"
   capture "codex repair subagent result" bash -lc "echo 'codex CLI missing; command -v codex failed'"
+  codex_rc=127
 fi
 
 log "launching Kimi goal operator"
@@ -213,8 +251,14 @@ fi
     --max_turns="$MAX_TURNS" \
     --enabled_toolsets='"terminal,file,code_execution,todo"' \
     --save_sample=True
-) >> "$LOG" 2>&1
-rc=$?
+) >> "$LOG" 2>&1 &
+AGENT_PID=$!
+CHILD_PIDS+=("$AGENT_PID")
+if wait "$AGENT_PID"; then
+  rc=0
+else
+  rc=$?
+fi
 
 if [[ $rc -eq 0 ]]; then
   log "Kimi goal operator completed"
