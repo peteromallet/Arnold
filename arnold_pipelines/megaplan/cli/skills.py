@@ -120,6 +120,14 @@ def _canonical_babysit_skill() -> str:
     )
 
 
+def _canonical_subagent_launcher_skill() -> str:
+    return (
+        resources.files("arnold_pipelines.megaplan")
+        .joinpath("skills", "subagent-launcher", "SKILL.md")
+        .read_text(encoding="utf-8")
+    )
+
+
 def _canonical_pre_commit_hook() -> str:
     return (
         resources.files("arnold_pipelines.megaplan")
@@ -159,6 +167,8 @@ def bundled_global_file(name: str) -> str:
         return _canonical_bakeoff_skill()
     if name == "babysit_skill.md":
         return _canonical_babysit_skill()
+    if name == "subagent_launcher_skill.md":
+        return _canonical_subagent_launcher_skill()
     if name == "claude_skill.md":
         return _canonical_composed("claude_skill.md")
     if name == "codex_skill.md":
@@ -189,10 +199,16 @@ _GLOBAL_TARGETS = [
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/megaplan-cloud", "data": "_codex_skills/megaplan-cloud", "install": "symlink"},
     {"agent": "claude", "detect": ".claude", "path": ".claude/skills/babysit/SKILL.md", "data": "babysit_skill.md", "install": "symlink"},
     {"agent": "codex", "detect": ".codex", "path": ".codex/skills/babysit", "data": "_codex_skills/babysit", "install": "symlink"},
+    {"agent": "claude", "detect": ".claude", "path": ".claude/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
+    {"agent": "codex", "detect": ".codex", "path": ".codex/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
+    {"agent": "hermes", "detect": ".hermes", "path": ".hermes/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
+    {"agent": "agents", "detect": ".agents", "path": ".agents/skills/subagent-launcher", "data": "skills/subagent-launcher", "install": "symlink"},
 ]
 
 
 def _resolve_bundle_path(data_name: str) -> Path:
+    if data_name.startswith("skills/"):
+        return Path(str(resources.files("arnold_pipelines.megaplan").joinpath(data_name)))
     return Path(str(resources.files("arnold_pipelines.megaplan").joinpath("data", data_name)))
 
 

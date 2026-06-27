@@ -1,0 +1,592 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+if [[ -f /workspace/.cloud-hot-env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . /workspace/.cloud-hot-env
+  set +a
+fi
+
+LOG="${CLOUD_WATCHDOG_LOG:-/workspace/watchdog.log}"
+REPORT_PATH="${CLOUD_WATCHDOG_REPORT_PATH:-/workspace/watchdog-report.json}"
+REPORT_ARCHIVE_DIR="${CLOUD_WATCHDOG_REPORT_ARCHIVE_DIR:-/workspace/watchdog-reports}"
+REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
+INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
+MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+REPAIR_WITH_CODEX="${CLOUD_WATCHDOG_CODEX_REPAIR:-0}"
+PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
+CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-1800}"
+SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
+SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
+SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
+EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
+ONCE="${1:-}"
+
+mkdir -p "$(dirname "$LOG")"
+
+log() {
+  echo "[watchdog $(date -Iseconds)] $*" | tee -a "$LOG"
+}
+
+json_field() {
+  local marker="$1"
+  local field="$2"
+  python3 - "$marker" "$field" <<'PY'
+import json
+import sys
+
+path, field = sys.argv[1], sys.argv[2]
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+value = payload.get(field)
+if not isinstance(value, str) or not value:
+    sys.exit(1)
+print(value)
+PY
+}
+
+safe_name() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
+}
+
+report_item() {
+  local path="$1"
+  local session="$2"
+  local action="$3"
+  local status="$4"
+  local message="$5"
+  local workspace="${6:-}"
+  local remote_spec="${7:-}"
+  python3 - "$path" "$session" "$action" "$status" "$message" "$workspace" "$remote_spec" <<'PY'
+import json
+import sys
+
+path, session, action, status, message, workspace, remote_spec = sys.argv[1:]
+payload = {
+    "session": session,
+    "action": action,
+    "status": status,
+    "message": message,
+}
+if workspace:
+    payload["workspace"] = workspace
+if remote_spec:
+    payload["remote_spec"] = remote_spec
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload, sort_keys=True) + "\n")
+PY
+}
+
+repo_url_with_token() {
+  local repo="$1"
+  if [[ "$repo" == https://github.com/* && "$repo" != https://*@github.com/* && -n "${GITHUB_TOKEN:-}" ]]; then
+    printf 'https://x-access-token:%s@github.com/%s' "$GITHUB_TOKEN" "${repo#https://github.com/}"
+  else
+    printf '%s' "$repo"
+  fi
+}
+
+emit_report() {
+  local items_path="$1"
+  local markers="$2"
+  local report_tmp
+  report_tmp="$(mktemp)"
+  python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_WITH_CODEX" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"
+import datetime as dt
+import json
+import os
+import shutil
+import sys
+
+items_path, markers, report_path, archive_dir, repair, push = sys.argv[1:]
+items = []
+if os.path.exists(items_path):
+    with open(items_path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                items.append(json.loads(line))
+issues = [
+    item for item in items
+    if item.get("status") not in {"alive", "restarted", "synced", "skipped"}
+]
+restarted = [item for item in items if item.get("status") == "restarted"]
+now = dt.datetime.now(dt.timezone.utc)
+timestamp = now.isoformat()
+archive_name = now.strftime("%Y%m%dT%H%M%SZ") + ".json"
+archive_path = os.path.join(archive_dir, archive_name) if archive_dir else ""
+payload = {
+    "timestamp_utc": timestamp,
+    "marker_dir": os.environ.get("CLOUD_WATCHDOG_MARKER_DIR", "/workspace/.megaplan/cloud-sessions"),
+    "markers_seen": int(markers),
+    "sessions_seen": len(items),
+    "alive_sessions": sum(1 for item in items if item.get("status") == "alive"),
+    "restarted_sessions": len(restarted),
+    "issue_count": len(issues),
+    "codex_repair_enabled": repair == "1",
+    "push_repairs_enabled": push == "1",
+    "latest_report_path": report_path,
+    "archive_report_path": archive_path,
+    "items": items,
+    "issues": issues,
+}
+os.makedirs(os.path.dirname(report_path) or ".", exist_ok=True)
+with open(report_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+if archive_path:
+    os.makedirs(archive_dir, exist_ok=True)
+    shutil.copyfile(report_path, archive_path)
+print(json.dumps(payload, sort_keys=True))
+PY
+  local summary
+  summary="$(cat "$report_tmp")"
+  log "report $summary"
+  if [[ -n "$REPORT_WEBHOOK" ]]; then
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$report_tmp" "$REPORT_WEBHOOK" >> "$LOG" 2>&1 \
+        && log "report webhook delivered" \
+        || log "report webhook delivery failed"
+    else
+      log "report webhook skipped; curl unavailable"
+    fi
+  fi
+  rm -f "$report_tmp"
+}
+
+refresh_editable_install() {
+  if [[ -d "$SRC_DIR" && -f "$SRC_DIR/pyproject.toml" ]]; then
+    log "refreshing Arnold editable install from $SRC_DIR"
+    python3 -m pip install --upgrade -e "$SRC_DIR[agent]" >> "$LOG" 2>&1 || return 1
+  elif [[ -x /usr/local/bin/mp-refresh-megaplan ]]; then
+    log "refreshing Arnold install with mp-refresh-megaplan fallback"
+    MEGAPLAN_REF="$SYNC_BRANCH" /usr/local/bin/mp-refresh-megaplan >> "$LOG" 2>&1 || return 1
+  else
+    log "mp-refresh-megaplan missing; skipping editable refresh"
+  fi
+
+  python3 - <<'PY' >> "$LOG" 2>&1
+import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+PY
+}
+
+ensure_editable_source_checkout() {
+  if [[ -d "$SRC_DIR/.git" ]]; then
+    return 0
+  fi
+
+  local repo="$SYNC_REPO"
+  if [[ -z "$repo" && -d /workspace/Arnold/.git ]]; then
+    repo="$(cd /workspace/Arnold && git remote get-url origin 2>/dev/null || true)"
+  fi
+  if [[ -z "$repo" ]]; then
+    log "editable source checkout missing at $SRC_DIR and no repo URL is configured"
+    return 1
+  fi
+
+  log "cloning editable source checkout branch=$SYNC_BRANCH into $SRC_DIR"
+  mkdir -p "$(dirname "$SRC_DIR")"
+  git clone --branch "$SYNC_BRANCH" "$(repo_url_with_token "$repo")" "$SRC_DIR" >> "$LOG" 2>&1
+}
+
+sync_skills_in_source() {
+  local source_dir="$1"
+  if [[ -f "$source_dir/scripts/generate_arnold_docs.py" ]]; then
+    log "regenerating Arnold docs/skills in $source_dir"
+    (cd "$source_dir" && python3 scripts/generate_arnold_docs.py --write) >> "$LOG" 2>&1 || {
+      log "generated docs/skills sync failed"
+      return 1
+    }
+  fi
+  if [[ -x "$source_dir/sync-skills.sh" ]]; then
+    log "syncing installed agent skills from $source_dir"
+    (cd "$source_dir" && ./sync-skills.sh) >> "$LOG" 2>&1 || {
+      log "installed skill sync failed"
+      return 1
+    }
+  else
+    log "sync-skills.sh missing or not executable in $source_dir; skipping installed skill symlinks"
+  fi
+  sync_extra_cloud_skills
+}
+
+sync_extra_cloud_skills() {
+  if [[ ! -d "$EXTRA_SKILLS_DIR" ]]; then
+    log "extra cloud skills dir missing at $EXTRA_SKILLS_DIR; skipping"
+    return 0
+  fi
+
+  local target_dirs=(
+    "$HOME/.claude/skills"
+    "$HOME/.codex/skills"
+    "$HOME/.agents/skills"
+    "$HOME/.hermes/skills"
+  )
+  local skill_dir name target_dir dest created skipped updated
+  created=0
+  skipped=0
+  updated=0
+  log "syncing extra cloud skills from $EXTRA_SKILLS_DIR"
+  for skill_dir in "$EXTRA_SKILLS_DIR"/*/; do
+    [[ -d "$skill_dir" && -f "$skill_dir/SKILL.md" ]] || continue
+    name="$(basename "$skill_dir")"
+    for target_dir in "${target_dirs[@]}"; do
+      mkdir -p "$target_dir"
+      dest="$target_dir/$name"
+      if [[ -L "$dest" ]]; then
+        ln -sfn "$skill_dir" "$dest"
+        updated=$((updated + 1))
+      elif [[ -e "$dest" ]]; then
+        skipped=$((skipped + 1))
+      else
+        ln -s "$skill_dir" "$dest"
+        created=$((created + 1))
+      fi
+    done
+  done
+  log "extra cloud skills synced created=$created updated=$updated skipped=$skipped"
+}
+
+sync_editable_source_branch() {
+  local report_items="$1"
+  if [[ "$SYNC_ENABLED" != "1" ]]; then
+    log "editable source sync disabled"
+    report_item "$report_items" "editable-install" "sync" "skipped" "sync disabled" "$SRC_DIR" "$SYNC_BRANCH"
+    return 0
+  fi
+  if [[ -z "$SYNC_BRANCH" ]]; then
+    log "editable source sync skipped; no branch configured"
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "no sync branch configured" "$SRC_DIR"
+    return 1
+  fi
+
+  ensure_editable_source_checkout || {
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "source checkout unavailable" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  if [[ ! -d "$SRC_DIR/.git" ]]; then
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "source checkout missing git metadata" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  fi
+
+  local before after status branch
+  before="$(cd "$SRC_DIR" && git rev-parse --short HEAD 2>/dev/null || true)"
+  log "syncing editable source branch=$SYNC_BRANCH dir=$SRC_DIR before=$before"
+  (
+    cd "$SRC_DIR" &&
+    git config --global --add safe.directory "$SRC_DIR" >/dev/null 2>&1 || true &&
+    git fetch origin "$SYNC_BRANCH" --prune &&
+    branch="$(git branch --show-current)" &&
+    if [[ "$branch" != "$SYNC_BRANCH" ]]; then
+      if [[ -n "$(git status --porcelain)" ]]; then
+        echo "cannot switch from $branch to $SYNC_BRANCH: checkout has local changes" >&2
+        exit 12
+      fi
+      git checkout "$SYNC_BRANCH"
+    fi &&
+    git pull --ff-only origin "$SYNC_BRANCH"
+  ) >> "$LOG" 2>&1 || {
+    log "editable source fetch/pull failed"
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "fetch/pull failed" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  sync_skills_in_source "$SRC_DIR" || {
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "skill sync failed" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  status="$(cd "$SRC_DIR" && git status --porcelain)"
+  if [[ -n "$status" ]]; then
+    log "committing editable source drift"
+    (
+      cd "$SRC_DIR" &&
+      git add -A &&
+      git commit -m "Sync cloud editable install and skills" &&
+      git push origin "$SYNC_BRANCH"
+    ) >> "$LOG" 2>&1 || {
+      log "editable source commit/push failed"
+      report_item "$report_items" "editable-install" "sync" "sync_failed" "commit/push failed" "$SRC_DIR" "$SYNC_BRANCH"
+      return 1
+    }
+  else
+    log "editable source has no drift to push"
+  fi
+
+  refresh_editable_install || {
+    log "editable install refresh after sync failed"
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "refresh failed" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  after="$(cd "$SRC_DIR" && git rev-parse --short HEAD 2>/dev/null || true)"
+  report_item "$report_items" "editable-install" "sync" "synced" "editable source branch synced and refreshed ($before -> $after)" "$SRC_DIR" "$SYNC_BRANCH"
+}
+
+codex_repair_editable_install() {
+  local reason="$1"
+  if [[ "$REPAIR_WITH_CODEX" != "1" ]]; then
+    log "editable install check failed; Codex repair disabled (set CLOUD_WATCHDOG_CODEX_REPAIR=1): $reason"
+    return 1
+  fi
+  if [[ ! -d "$SRC_DIR/.git" ]]; then
+    log "Codex repair skipped; source checkout missing at $SRC_DIR"
+    return 1
+  fi
+  if ! command -v codex >/dev/null 2>&1; then
+    log "Codex repair skipped; codex CLI unavailable"
+    return 1
+  fi
+
+  local prompt
+  prompt="$(mktemp)"
+  cat > "$prompt" <<EOF
+You are running inside an Arnold cloud worker. The editable Arnold install failed this watchdog check:
+
+$reason
+
+Working directory: $SRC_DIR
+
+Fix only the Arnold source checkout so the cloud worker can import and run:
+python3 -c "import arnold_pipelines.megaplan.cloud.cli"
+
+The editable install checkout must stay on branch $SYNC_BRANCH. Do not use
+MEGAPLAN_REF or the active workflow checkout branch to choose the repair branch.
+
+Keep the patch narrowly scoped. Run the smallest relevant verification. Do not ask for input.
+EOF
+
+  log "starting Codex editable-install repair in $SRC_DIR"
+  (
+    cd "$SRC_DIR" &&
+    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$prompt")" </dev/null
+  ) >> "$LOG" 2>&1
+  local rc=$?
+  rm -f "$prompt"
+  if [[ $rc -ne 0 ]]; then
+    log "Codex repair failed rc=$rc"
+    return "$rc"
+  fi
+
+  if ! (cd "$SRC_DIR" && python3 - <<'PY' >> "$LOG" 2>&1
+import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+PY
+  ); then
+    log "Codex repair completed but import check still fails"
+    return 1
+  fi
+
+  if (cd "$SRC_DIR" && git diff --quiet && git diff --cached --quiet); then
+    log "Codex repair produced no source changes"
+    return 0
+  fi
+
+  (
+    cd "$SRC_DIR" &&
+    git add -A &&
+    git commit -m "Fix cloud editable install from watchdog"
+  ) >> "$LOG" 2>&1 || {
+    log "repair commit failed"
+    return 1
+  }
+
+  if [[ "$PUSH_REPAIRS" == "1" ]]; then
+    log "pushing watchdog repair commit"
+    (cd "$SRC_DIR" && git push) >> "$LOG" 2>&1 || {
+      log "repair push failed"
+      return 1
+    }
+  else
+    log "repair committed locally; push disabled (set CLOUD_WATCHDOG_PUSH_REPAIRS=1)"
+  fi
+}
+
+ensure_install_or_repair() {
+  local output
+  output="$(mktemp)"
+  if refresh_editable_install > "$output" 2>&1; then
+    cat "$output" >> "$LOG"
+    rm -f "$output"
+    return 0
+  fi
+  local reason
+  reason="$(cat "$output")"
+  cat "$output" >> "$LOG"
+  rm -f "$output"
+  codex_repair_editable_install "$reason"
+}
+
+session_health_status() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    echo "stopped"
+    return 0
+  fi
+
+  if ps -eo args | grep -E "[p]ython[0-9.]* -m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+    echo "alive"
+    return 0
+  fi
+
+  local pane log_path
+  pane="$(tmux capture-pane -pt "$session" -S -120 2>/dev/null || true)"
+  if printf '%s\n' "$pane" | grep -Eq 'cmd exited rc=[1-9]|error retry [0-9]+/[0-9]+'; then
+    echo "retrying_failure"
+    return 0
+  fi
+
+  if [[ "$session" == "megaplan-chain" ]]; then
+    log_path="$workspace/.megaplan/cloud-chain.log"
+  else
+    log_path="$workspace/.megaplan/cloud-chain-${session}.log"
+  fi
+  if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
+    echo "chain_log_failure"
+    return 0
+  fi
+
+  echo "stopped"
+}
+
+repair_unhealthy_session() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local reason="$4"
+
+  if [[ -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
+    log "session unhealthy: invoking Kimi goal operator before relaunch session=$session reason=$reason"
+    /usr/local/bin/arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec" >> "$LOG" 2>&1 \
+      || log "Kimi goal operator did not complete cleanly; falling back to direct relaunch"
+  else
+    log "Kimi goal operator missing; falling back to direct relaunch"
+  fi
+
+  tmux kill-session -t "$session" 2>/dev/null || true
+}
+
+launch_chain_tick() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local report_items="$4"
+
+  if [[ ! -d "$workspace" ]]; then
+    log "skip $session: workspace missing: $workspace"
+    report_item "$report_items" "$session" "skip" "workspace_missing" "workspace missing" "$workspace" "$remote_spec"
+    return 1
+  fi
+  if [[ ! -f "$remote_spec" ]]; then
+    log "skip $session: chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    return 1
+  fi
+  local health
+  health="$(session_health_status "$session" "$workspace" "$remote_spec")"
+  if [[ "$health" == "alive" ]]; then
+    log "session alive: $session"
+    report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
+    return 0
+  fi
+
+  local repair_attempted=0
+  if [[ "$health" != "stopped" ]]; then
+    repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"
+    repair_attempted=1
+  fi
+
+  if [[ "$repair_attempted" == "0" && -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
+    log "session stopped: invoking Kimi goal operator before relaunch session=$session"
+    /usr/local/bin/arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec" >> "$LOG" 2>&1 \
+      || log "Kimi goal operator did not complete cleanly; falling back to direct relaunch"
+  elif [[ "$repair_attempted" == "0" ]]; then
+    log "Kimi goal operator missing; falling back to direct relaunch"
+  fi
+
+  ensure_install_or_repair || log "editable install still unhealthy; relaunching anyway"
+
+  local safe log_relative launch_script quoted_command
+  safe="$(safe_name "$session")"
+  if [[ "$session" == "megaplan-chain" ]]; then
+    log_relative=".megaplan/cloud-chain.log"
+  else
+    log_relative=".megaplan/cloud-chain-${session}.log"
+  fi
+  launch_script="$(mktemp)"
+  quoted_command=$(
+    printf 'MEGAPLAN_TRUSTED_CONTAINER=1 python3 -m arnold_pipelines.megaplan chain start --spec %q --one >> %q 2>&1' \
+      "$remote_spec" "$log_relative"
+  )
+  cat > "$launch_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd $(printf '%q' "$workspace")
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+EOF
+  chmod +x "$launch_script"
+
+  log "relaunching stopped chain session=$session spec=$remote_spec"
+  tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
+    log "failed to relaunch $session"
+    report_item "$report_items" "$session" "restart" "restart_failed" "tmux relaunch failed" "$workspace" "$remote_spec"
+    rm -f "$launch_script"
+    return 1
+  }
+  report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+}
+
+scan_once() {
+  log "scan start marker_dir=$MARKER_DIR"
+  local report_items
+  report_items="$(mktemp)"
+  sync_editable_source_branch "$report_items" || true
+  if [[ ! -d "$MARKER_DIR" ]]; then
+    log "scan complete: marker directory missing"
+    emit_report "$report_items" 0
+    rm -f "$report_items"
+    return 0
+  fi
+
+  local found=0
+  shopt -s nullglob
+  for marker in "$MARKER_DIR"/*.json; do
+    found=$((found + 1))
+    local session workspace remote_spec
+    session="$(json_field "$marker" session 2>/dev/null)" || {
+      log "skip invalid marker (missing session): $marker"
+      report_item "$report_items" "" "skip" "invalid_marker" "missing session: $marker"
+      continue
+    }
+    workspace="$(json_field "$marker" workspace 2>/dev/null)" || {
+      log "skip invalid marker (missing workspace): $marker"
+      report_item "$report_items" "$session" "skip" "invalid_marker" "missing workspace: $marker"
+      continue
+    }
+    remote_spec="$(json_field "$marker" remote_spec 2>/dev/null)" || {
+      log "skip invalid marker (missing remote_spec): $marker"
+      report_item "$report_items" "$session" "skip" "invalid_marker" "missing remote_spec: $marker" "$workspace"
+      continue
+    }
+    launch_chain_tick "$session" "$workspace" "$remote_spec" "$report_items" || true
+  done
+  shopt -u nullglob
+  log "scan complete markers=$found"
+  emit_report "$report_items" "$found"
+  rm -f "$report_items"
+}
+
+log "starting (interval=${INTERVAL}s marker_dir=$MARKER_DIR repair=$REPAIR_WITH_CODEX push=$PUSH_REPAIRS report=$REPORT_PATH)"
+while true; do
+  scan_once
+  if [[ "$ONCE" == "--once" ]]; then
+    exit 0
+  fi
+  sleep "$INTERVAL"
+done

@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+if [[ $# -lt 3 ]]; then
+  echo "usage: arnold-kimi-goal-operator <session> <workspace> <remote-spec>" >&2
+  exit 64
+fi
+
+SESSION="$1"
+WORKSPACE="$2"
+REMOTE_SPEC="$3"
+
+ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
+ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"
+SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"
+MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
+BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
+TIMEOUT="${KIMI_GOAL_TIMEOUT_SECS:-3600}"
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
+RUN_DIR="$ROOT/${TS}-${SAFE_SESSION}"
+LOG="$RUN_DIR/operator.log"
+PROMPT="$RUN_DIR/prompt.md"
+FACTS="$RUN_DIR/facts.txt"
+REPORT="$RUN_DIR/report.json"
+
+mkdir -p "$RUN_DIR"
+
+log() {
+  echo "[kimi-goal $(date -Iseconds)] $*" | tee -a "$LOG"
+}
+
+capture() {
+  local title="$1"
+  shift
+  {
+    echo
+    echo "### $title"
+    "$@" 2>&1 || true
+  } >> "$FACTS"
+}
+
+write_report() {
+  local status="$1"
+  local message="$2"
+  python3 - "$REPORT" "$status" "$message" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_DIR" <<'PY'
+import datetime as dt
+import json
+import sys
+
+path, status, message, session, workspace, remote_spec, run_dir = sys.argv[1:]
+payload = {
+    "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "status": status,
+    "message": message,
+    "session": session,
+    "workspace": workspace,
+    "remote_spec": remote_spec,
+    "run_dir": run_dir,
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+}
+
+log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC model=$MODEL"
+
+if [[ -z "${KIMI_API_KEY:-}" ]]; then
+  log "KIMI_API_KEY is missing; cannot run Kimi goal operator"
+  write_report "skipped" "KIMI_API_KEY missing"
+  exit 78
+fi
+
+capture "tmux sessions" tmux ls
+capture "processes" bash -lc "ps -eo pid,ppid,etime,stat,cmd | grep -E 'arnold|megaplan|codex|python|tmux' | grep -v grep | tail -120"
+capture "workspace files" bash -lc "ls -la '$WORKSPACE' '$WORKSPACE/.megaplan' '$WORKSPACE/.megaplan/cloud-sessions' 2>/dev/null"
+capture "chain marker" bash -lc "cat /workspace/.megaplan/cloud-sessions/${SESSION}.json 2>/dev/null || true"
+capture "chain state files" bash -lc "find '$WORKSPACE/.megaplan' -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | xargs -r -I{} sh -c 'echo --- {}; tail -200 {}'"
+capture "cloud chain logs" bash -lc "tail -240 '$WORKSPACE/.megaplan/cloud-chain.log' 2>/dev/null; tail -240 '$WORKSPACE/.megaplan/cloud-chain-${SESSION}.log' 2>/dev/null"
+capture "watchdog report" bash -lc "cat /workspace/watchdog-report.json 2>/dev/null || true"
+capture "watchdog log" bash -lc "tail -160 /workspace/watchdog.log 2>/dev/null || true"
+capture "arnold source git" bash -lc "cd '$ARNOLD_SRC' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
+capture "workspace git" bash -lc "cd '$WORKSPACE' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
+
+cat > "$PROMPT" <<EOF
+# Goal
+
+The user's invariant is: workflows on this Hetzner worker should never pause unexpectedly. If a Megaplan/Arnold workflow stops, stalls, or breaks, understand the root cause, fix that root cause at ROOT in the Arnold editable install, validate it, push it, refresh the install, unblock the current run, relaunch it, and keep checking until it appears to be running again.
+
+# Current Incident
+
+- Machine: Hetzner cloud worker container.
+- Session: $SESSION
+- Workspace: $WORKSPACE
+- Chain spec: $REMOTE_SPEC
+- Arnold editable install source: $ARNOLD_SRC
+- Arnold editable install branch: $SYNC_BRANCH
+- Facts file: $FACTS
+
+# Required Behavior
+
+1. Read the facts file and inspect the machine/repo as needed.
+2. Determine why this run stopped or became unhealthy. Do not assume a restart is enough.
+3. Before modifying Arnold source, confirm $ARNOLD_SRC is on $SYNC_BRANCH. Do not let MEGAPLAN_REF or the active workflow workspace branch choose the editable-install branch.
+4. If there is an Arnold/cloud/watchdog/root-cause bug, use Codex from the terminal to implement a focused fix in $ARNOLD_SRC. The fix belongs in the editable install source, not only in the run workspace.
+5. Validate the fix with the smallest relevant checks. At minimum, confirm:
+   - python3 -c "import arnold_pipelines.megaplan.cloud.cli"
+   - python3 -c "import arnold_pipelines.megaplan.chain"
+   - any focused test or smoke command you identify as relevant.
+6. Commit and push the root-cause fix from $ARNOLD_SRC to $SYNC_BRANCH if source changes were made and validation passes.
+7. Refresh the Arnold install from $ARNOLD_SRC after a pushed/validated fix.
+8. Unblock/relaunch the affected run safely. Do not bypass true human approval gates, PR merge waits, or quality gates that require human judgment; report those as legitimate blockers.
+9. Re-check after relaunch. The goal is complete only when the run is running/healthy, complete, or blocked solely on a true human/quality gate.
+
+# Output Contract
+
+Finish with a concise report containing:
+
+- classification: healthy | repaired_and_relaunched | legitimate_blocker | unresolved
+- root_cause
+- fix_summary
+- validation
+- pushed_commit
+- relaunch_result
+- remaining_blockers
+
+Do not ask the user for input. Keep iterating until the goal is satisfied or a non-automatable blocker remains.
+EOF
+
+log "launching Kimi goal operator"
+RUN_CWD="$ARNOLD_SRC"
+if [[ ! -d "$RUN_CWD" ]]; then
+  RUN_CWD="$WORKSPACE"
+fi
+(
+  cd "$RUN_CWD" &&
+  timeout "$TIMEOUT" python3 -m arnold.agent.run_agent \
+    --query="$(cat "$PROMPT")" \
+    --model="$MODEL" \
+    --api_key="$KIMI_API_KEY" \
+    --base_url="$BASE_URL" \
+    --max_turns=30 \
+    --enabled_toolsets='"terminal,file,code_execution,todo"' \
+    --save_sample=True
+) >> "$LOG" 2>&1
+rc=$?
+
+if [[ $rc -eq 0 ]]; then
+  log "Kimi goal operator completed"
+  write_report "completed" "Kimi goal operator completed"
+else
+  log "Kimi goal operator failed rc=$rc"
+  write_report "failed" "Kimi goal operator failed rc=$rc"
+fi
+
+exit "$rc"

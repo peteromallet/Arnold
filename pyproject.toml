@@ -82,6 +82,7 @@ artifacts = [
     "py.typed",
     "**/pipeline_ids.json",
     "**/SKILL.md",
+    "arnold_pipelines/megaplan/skills/**/*.py",
     "agentbox/systemd/*.service",
 ]
 exclude = [

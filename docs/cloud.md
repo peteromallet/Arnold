@@ -213,6 +213,56 @@ Without `--chain`, `cloud status` still runs remote `python -m arnold_pipelines.
 
 `cloud supervise --chain` runs a **one-shot supervisor tick** against the remote chain. It observes the chain, refreshes branch/PR sync state, and makes safe progress decisions. It never invents approvals, bypasses quality gates, or runs destructive git operations.
 
+### Resident cloud watchdog
+
+Every cloud container starts `/usr/local/bin/arnold-watchdog` in a dedicated
+tmux session named `watchdog`. The watchdog scans
+`/workspace/.megaplan/cloud-sessions/*.json` once per hour, treats each marker
+as an active chain that should be supervised, and leaves live tmux sessions
+alone. If a marked chain session has stopped, the watchdog first invokes
+`arnold-kimi-goal-operator`: a Kimi Code agent that inspects run state/logs,
+uses Codex for root-cause fixes in the Arnold editable install when needed,
+validates, commits/pushes, refreshes the install, and tries to unblock the
+current run. The watchdog then falls back to relaunching the chain as a
+one-shot `chain start --one` under `arnold-supervise` if needed. Every scan also
+writes a structured report and logs a single-line JSON summary; set a webhook
+URL to receive that report remotely.
+
+Useful environment variables:
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `CLOUD_WATCHDOG_INTERVAL_SECS` | `3600` | Seconds between scans. |
+| `CLOUD_WATCHDOG_LOG` | `/workspace/watchdog.log` | Watchdog log path. |
+| `CLOUD_WATCHDOG_REPORT_PATH` | `/workspace/watchdog-report.json` | Latest structured scan report. |
+| `CLOUD_WATCHDOG_REPORT_WEBHOOK` | unset | Optional HTTP endpoint that receives the full report JSON after each scan. |
+| `CLOUD_WATCHDOG_CODEX_REPAIR` | `0` | Set to `1` to let the watchdog run `codex exec` against the Arnold source checkout when editable-install import checks fail. |
+| `CLOUD_WATCHDOG_PUSH_REPAIRS` | `0` | Set to `1` to push watchdog repair commits after a successful Codex repair. |
+| `CLOUD_WATCHDOG_ARNOLD_SRC` | `/workspace/arnold` | Arnold source checkout used for Codex repair. |
+| `CLOUD_WATCHDOG_SYNC_ENABLED` | `1` | Set to `0` to disable the hourly editable-install source sync. |
+| `CLOUD_WATCHDOG_SYNC_BRANCH` | `editible-install` | Branch the watchdog keeps synced in the editable source checkout. Do not point this at the active workflow branch except for a deliberate one-off debug run. |
+| `CLOUD_WATCHDOG_SYNC_REPO` | `MEGAPLAN_REPO` or the primary workspace origin | Git repo URL used if the editable source checkout must be cloned. |
+| `CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS` | `1800` | Timeout for a Codex repair attempt. |
+| `KIMI_API_KEY` | unset | Required for `arnold-kimi-goal-operator`. |
+| `KIMI_GOAL_MODEL` | `kimi-k2.7-code` | Kimi model used by the goal operator. |
+| `KIMI_GOAL_TIMEOUT_SECS` | `3600` | Timeout for one Kimi diagnosis/repair goal attempt. |
+
+Run one scan manually inside the container:
+
+```bash
+/usr/local/bin/arnold-watchdog --once
+```
+
+At the start of every scan, the watchdog also maintains a separate editable
+Arnold source checkout, defaulting to `/workspace/arnold`. It clones the
+configured repo if missing, fetches and fast-forwards the sync branch,
+regenerates generated docs/skills when `scripts/generate_arnold_docs.py` is
+present, runs `sync-skills.sh` when present, commits/pushes any resulting drift,
+and refreshes the installed Arnold package from `/workspace/arnold`. If that
+source checkout is unavailable, it falls back to `/usr/local/bin/mp-refresh-megaplan`
+with `MEGAPLAN_REF` pinned to the sync branch. It does not force-push, reset, or
+mutate the active chain workspace to perform this sync.
+
 #### One-shot tick behavior
 
 Each invocation is a single observation + decision cycle:
