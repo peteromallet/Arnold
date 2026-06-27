@@ -285,17 +285,29 @@ Expected invariant:
 - `/workspace/Arnold` is the active megaplan checkout and may be on any
   per-plan or per-milestone branch.
 
-To force one watchdog tick for verification:
+### One-shot watchdog check/repair
+
+The hourly watchdog can be triggered immediately with `arnold-watchdog --once`.
+This is the manual "run the watchdog right now" path: it performs the same sync,
+inspection, repair, relaunch, report-write, and report-archive work as the
+hourly tick, then exits. Use it after hot-uploading wrapper/env/skill changes,
+after moving a new chain onto the worker, or when you want to battle-test the
+recovery path without waiting for the next hourly tick.
 
 ```bash
 ssh -p 22 root@159.69.51.216 \
-  "docker exec megaplan-cloud-agent bash -lc '/usr/local/bin/arnold-watchdog --once; python3 -m json.tool /workspace/watchdog-report.json'"
+  "docker exec megaplan-cloud-agent bash -lc 'timeout 900 /usr/local/bin/arnold-watchdog --once; rc=\$?; echo WATCHDOG_RC=\$rc; python3 -m json.tool /workspace/watchdog-report.json; echo REPORT_ARCHIVE; python3 -c \"import json; print(json.load(open(\\\"/workspace/watchdog-report.json\\\"))[\\\"archive_report_path\\\"])\"'"
 ```
 
-Use this after hot-uploading wrapper/env/skill changes. A successful tick should
-sync `/workspace/arnold`, refresh the editable install, inspect marked sessions,
-write `/workspace/watchdog-report.json`, and archive a timestamped report under
-`/workspace/watchdog-reports/`.
+Expected success shape:
+
+- `WATCHDOG_RC=0`;
+- `/workspace/watchdog-report.json` has `issue_count: 0` or a concrete
+  `issues[]` entry explaining the remaining blocker;
+- `archive_report_path` points at a unique timestamped JSON file under
+  `/workspace/watchdog-reports/`;
+- the active chain has a tmux session and, unless complete, an active
+  `arnold_pipelines.megaplan chain start` or worker process.
 
 ## Gotchas (learned the hard way)
 
