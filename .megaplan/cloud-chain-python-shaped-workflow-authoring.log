@@ -10808,3 +10808,651 @@ Traceback (most recent call last):
   File "/workspace/arnold/arnold/agent/run_agent.py", line 1283, in __init__
     raise RuntimeError(f"Failed to initialize OpenAI client: {e}")
 RuntimeError: Failed to initialize OpenAI client: Missing credentials. Please pass an `api_key`, `workload_identity`, `admin_api_key`, or set the `OPENAI_API_KEY` or `OPENAI_ADMIN_KEY` environment variable.
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] active step 'critique_evaluator' is orphaned — clearing before dispatch: The active step's recorded worker process (pid=1357041) is no longer alive; the phase is not actually running. Re-run the step or recover via override.
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan critique --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 2 state=critiqued next=gate valid_next=['gate', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan gate --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 3 state=critiqued next=revise valid_next=['revise', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan revise --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] iter 4 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan critique --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 5 state=critiqued next=gate valid_next=['gate', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan gate --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 6 state=critiqued next=revise valid_next=['revise', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan revise --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] iter 7 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan critique --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 8 state=critiqued next=gate valid_next=['gate', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan gate --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 9 state=critiqued next=revise valid_next=['revise', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan revise --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] iter 10 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan critique --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 11 state=critiqued next=gate valid_next=['gate', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan gate --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 12 state=critiqued next=revise valid_next=['revise', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan revise --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] iter 13 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan critique --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 14 state=critiqued next=gate valid_next=['gate', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan gate --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 15 state=critiqued next=revise valid_next=['revise', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan revise --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] iter 16 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan critique --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique
+[chain] git add -A -> rc=0
+[chain] no changes to commit after critique-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 17 state=critiqued next=gate valid_next=['gate', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan gate --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate
+[chain] git add -A -> rc=0
+[chain] no changes to commit after gate-cleanup
+[auto m2-compiler-core-and-linear-20260627-2056] iter 18 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 19 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 20 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 21 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 22 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 23 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] stalled at state=blocked for 5 iterations
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended stalled: stalled at 'blocked' for 5 iterations — manual intervention required
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended stalled",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "stalled",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "pr_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "last_pushed_commit": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=None valid_next=[]
+[auto m2-compiler-core-and-linear-20260627-2056] terminal state reached: blocked
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended blocked: plan entered terminal state 'blocked'
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "pr_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "last_pushed_commit": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=None valid_next=[]
+[auto m2-compiler-core-and-linear-20260627-2056] terminal state reached: blocked
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended blocked: plan entered terminal state 'blocked'
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "pr_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "last_pushed_commit": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=None valid_next=[]
+[auto m2-compiler-core-and-linear-20260627-2056] terminal state reached: blocked
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended blocked: plan entered terminal state 'blocked'
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "pr_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "last_pushed_commit": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=None valid_next=[]
+[auto m2-compiler-core-and-linear-20260627-2056] terminal state reached: blocked
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended blocked: plan entered terminal state 'blocked'
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "pr_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "last_pushed_commit": "078334f715bfb2da78847375ae623ddb168a3a1b",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "078334f715bfb2da78847375ae623ddb168a3a1b",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
