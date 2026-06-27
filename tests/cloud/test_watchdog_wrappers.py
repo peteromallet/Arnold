@@ -45,7 +45,8 @@ def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy()
 def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert "cd %q && MEGAPLAN_TRUSTED_CONTAINER=1 python3 -m arnold_pipelines.megaplan chain start" in text
+    assert "cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-}" in text
+    assert "python3 -P -m arnold_pipelines.megaplan chain start" in text
     assert '"$SRC_DIR" "$remote_spec" "$workspace"' in text
     assert "--project-dir %q --one" in text
 

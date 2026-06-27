@@ -941,9 +941,10 @@ def _chain_start_command(
     )
     prefix = ""
     if engine_dir:
-        prefix = f"cd {shlex.quote(engine_dir)} && "
+        engine_path = shlex.quote(engine_dir)
+        prefix = f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
     return (
-        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold_pipelines.megaplan chain start {flags} "
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
     )
 
