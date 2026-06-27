@@ -812,7 +812,7 @@ def _parse_function_workflow(
         diagnostics.append(
             _diagnostic(
                 DiagnosticCode.UNSUPPORTED_SYNTAX,
-                "async workflow functions are outside the M2 authoring grammar",
+                "async workflow functions are outside the V1 authoring grammar",
                 source_span=source_span_for_node(source_path, function),
             )
         )
@@ -885,7 +885,7 @@ def _validate_workflow_decorator(
             diagnostics.append(
                 _diagnostic(
                     DiagnosticCode.UNSUPPORTED_SYNTAX,
-                    "workflow decorator keyword is outside the M2 authoring grammar",
+                    "workflow decorator keyword is outside the V1 authoring grammar",
                     source_span=source_span_for_node(source_path, keyword),
                 )
             )
@@ -1156,7 +1156,7 @@ def _parse_statement_block(
             diagnostics.append(
                 _diagnostic(
                     DiagnosticCode.UNSUPPORTED_SYNTAX,
-                    "branching is outside the M2 linear workflow subset",
+                    "branching is outside the V1 linear workflow subset",
                     source_span=source_span_for_node(source_path, statement),
                 )
             )
@@ -2469,7 +2469,7 @@ def _parse_intrinsic_call(
         diagnostics.append(
             _diagnostic(
                 DiagnosticCode.UNSUPPORTED_SYNTAX,
-                "compiler intrinsic call is outside the M2 policy-slot subset",
+                "compiler intrinsic call is outside the V1 authoring grammar",
                 source_span=source_span_for_node(source_path, node),
             )
         )

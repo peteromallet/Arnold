@@ -1,0 +1,20 @@
+{
+  "success": false,
+  "error": "invalid_spec",
+  "message": "this chain requires a North Star anchor. Add:\n\nanchors:\n  north_star: NORTHSTAR.md\n\nPaths resolve relative to the chain.yaml directory."
+}
+{
+  "success": false,
+  "error": "invalid_spec",
+  "message": "this chain requires a North Star anchor. Add:\n\nanchors:\n  north_star: NORTHSTAR.md\n\nPaths resolve relative to the chain.yaml directory."
+}
+{
+  "success": false,
+  "error": "invalid_spec",
+  "message": "this chain requires a North Star anchor. Add:\n\nanchors:\n  north_star: NORTHSTAR.md\n\nPaths resolve relative to the chain.yaml directory."
+}
+{
+  "success": false,
+  "error": "invalid_spec",
+  "message": "this chain requires a North Star anchor. Add:\n\nanchors:\n  north_star: NORTHSTAR.md\n\nPaths resolve relative to the chain.yaml directory."
+}
