@@ -15,6 +15,10 @@ dispatcher with production-like tools.
 python -m tests.structural_harness.runner --mode structural --actor fake --tag run
 ```
 
+For the operator-level boundary matrix across structural, live-headless,
+browser harness, and browser e2e lanes, see
+`../../docs/testing/headless-agentic-harnesses.md`.
+
 ## Layout
 
 ```

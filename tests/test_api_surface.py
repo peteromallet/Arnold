@@ -6,11 +6,11 @@ import importlib
 PUBLIC_EXPORT_SNAPSHOTS = {
     "vibecomfy": [
         "Artifact", "Image", "Video", "Audio", "Latent", "Mask", "Handle",
-        "VibeWorkflow", "VibeNode", "VibeEdge", "VibeInput", "VibeOutput",
+        "VibeWorkflow", "RawWidgetPayload", "VibeNode", "VibeEdge", "VibeInput", "VibeOutput",
         "WorkflowRequirements", "WorkflowSource", "ValidationIssue", "ValidationReport",
         "workflow_from_file", "workflow_from_id", "workflow_from_template", "workflow_from_ready",
         "ready_template_ids", "load_workflow_any", "load_workflow_json", "load_template",
-        "ensure_plugins_loaded", "image", "video", "blocks", "patches",
+        "find_repo_root", "ensure_plugins_loaded", "image", "video", "blocks", "patches",
         "router", "run", "run_sync", "run_embedded", "run_embedded_sync",
     ],
     "vibecomfy.workflow": [

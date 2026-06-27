@@ -5,6 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.harness_common import (
+    DISPATCHER_FAKE,
+    DISPATCHER_FAKING,
+    FLOW_KIND_STRUCTURAL_CONTRACT,
+    MODEL_BEHAVIOR_AGENTIC,
+    MODEL_BEHAVIOR_SCRIPTED,
+    STATUS_SUCCESS,
+)
 from tests.structural_harness.adapter import VibeComfyProjectAdapter
 
 sisypy = pytest.importorskip("sisypy")
@@ -229,10 +237,13 @@ def test_capture_writes_flow_metadata_when_flow_kind_present(tmp_path: Path) -> 
         (evidence_dir / "flow_metadata.json").read_text(encoding="utf-8")
     )
     assert flow_metadata == {
-        "dispatcher": "fake",
+        "dispatcher": DISPATCHER_FAKE,
+        "entrypoint": "structural_harness",
+        "frontend": "not_used",
         "flow_kind": "direct_agent_edit_scripted",
         "mode": "structural",
-        "model_behavior": "scripted",
+        "model_behavior": MODEL_BEHAVIOR_SCRIPTED,
+        "status": STATUS_SUCCESS,
     }
     manifest = json.loads(
         (evidence_dir / "freeze_manifest.json").read_text(encoding="utf-8")
@@ -258,10 +269,11 @@ def test_capture_auto_derives_structural_contract_when_fake_dispatcher_no_explic
     flow_metadata = json.loads(
         (evidence_dir / "flow_metadata.json").read_text(encoding="utf-8")
     )
-    assert flow_metadata["flow_kind"] == "structural_contract"
-    assert flow_metadata["model_behavior"] == "scripted"
-    assert flow_metadata["dispatcher"] == "fake"
+    assert flow_metadata["flow_kind"] == FLOW_KIND_STRUCTURAL_CONTRACT
+    assert flow_metadata["model_behavior"] == MODEL_BEHAVIOR_SCRIPTED
+    assert flow_metadata["dispatcher"] == DISPATCHER_FAKE
     assert flow_metadata["mode"] == "structural"
+    assert flow_metadata["status"] == STATUS_SUCCESS
 
 
 def test_capture_never_labels_fake_dispatcher_as_agentic(
@@ -279,8 +291,8 @@ def test_capture_never_labels_fake_dispatcher_as_agentic(
     dir_a.mkdir(parents=True)
     adapter.capture(scenario_a, run_a, dir_a)
     fm_a = json.loads((dir_a / "flow_metadata.json").read_text(encoding="utf-8"))
-    assert fm_a["model_behavior"] == "scripted"
-    assert fm_a["flow_kind"] == "structural_contract"
+    assert fm_a["model_behavior"] == MODEL_BEHAVIOR_SCRIPTED
+    assert fm_a["flow_kind"] == FLOW_KIND_STRUCTURAL_CONTRACT
 
     # Case B: fake dispatcher with an explicit flow_kind — still scripted
     scenario_b = _scenario("case-b")
@@ -292,7 +304,7 @@ def test_capture_never_labels_fake_dispatcher_as_agentic(
     dir_b.mkdir(parents=True)
     adapter.capture(scenario_b, run_b, dir_b)
     fm_b = json.loads((dir_b / "flow_metadata.json").read_text(encoding="utf-8"))
-    assert fm_b["model_behavior"] == "scripted"
+    assert fm_b["model_behavior"] == MODEL_BEHAVIOR_SCRIPTED
     assert fm_b["flow_kind"] == "executor_research_scripted"
 
     # Case C: faking dispatcher — also scripted
@@ -304,8 +316,30 @@ def test_capture_never_labels_fake_dispatcher_as_agentic(
     dir_c.mkdir(parents=True)
     adapter.capture(scenario_c, run_c, dir_c)
     fm_c = json.loads((dir_c / "flow_metadata.json").read_text(encoding="utf-8"))
-    assert fm_c["model_behavior"] == "scripted"
-    assert fm_c["flow_kind"] == "structural_contract"
+    assert fm_c["model_behavior"] == MODEL_BEHAVIOR_SCRIPTED
+    assert fm_c["flow_kind"] == FLOW_KIND_STRUCTURAL_CONTRACT
+
+
+def test_capture_rejects_fake_or_faking_agentic_metadata_even_when_explicit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    adapter = VibeComfyProjectAdapter(name="vibecomfy", repo_root=tmp_path)
+    monkeypatch.setattr(
+        "tests.structural_harness.adapter._derive_model_behavior",
+        lambda dispatcher, mode: MODEL_BEHAVIOR_AGENTIC,
+    )
+
+    for dispatcher in (DISPATCHER_FAKE, DISPATCHER_FAKING):
+        scenario = _scenario(f"case-{dispatcher}")
+        run = _run()
+        run.mode = sisypy.RunMode.STRUCTURAL
+        run.dispatcher = dispatcher
+        evidence_dir = tmp_path / "reports" / dispatcher
+        evidence_dir.mkdir(parents=True)
+
+        with pytest.raises(ValueError, match="Fake/faking dispatchers cannot produce"):
+            adapter.capture(scenario, run, evidence_dir)
 
 
 def test_capture_never_labels_structural_mode_as_agentic_with_real_dispatcher_name(
@@ -327,9 +361,12 @@ def test_capture_never_labels_structural_mode_as_agentic_with_real_dispatcher_na
     )
     assert flow_metadata == {
         "dispatcher": "hermes",
+        "entrypoint": "structural_harness",
+        "frontend": "not_used",
         "flow_kind": "experimental_structural_contract",
         "mode": "structural",
-        "model_behavior": "scripted",
+        "model_behavior": MODEL_BEHAVIOR_SCRIPTED,
+        "status": STATUS_SUCCESS,
     }
 
 

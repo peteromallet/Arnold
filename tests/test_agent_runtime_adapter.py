@@ -51,6 +51,23 @@ def test_openrouter_readiness_does_not_report_contract_model(
     assert readiness["model"] == "deepseek/deepseek-v4-pro"
 
 
+def test_hermes_route_readiness_maps_to_openrouter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "test-key")
+
+    readiness = runtime.readiness(route="hermes", model="agent-edit")
+
+    assert readiness["ready"] is True
+    assert readiness["route"] == "openrouter"
+    assert readiness["model"] == "deepseek/deepseek-v4-pro"
+
+
+def test_normalize_route_maps_hermes_to_openrouter() -> None:
+    assert runtime._normalize_route("hermes") == "openrouter"
+    assert runtime._requested_route("hermes") == "openrouter"
+
+
 def test_provider_status_preserves_runtime_model_over_contract_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

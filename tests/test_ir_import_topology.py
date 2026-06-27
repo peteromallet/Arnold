@@ -4,35 +4,19 @@ Verifies that ``vibecomfy/ir/types.py`` has zero module-level imports
 from ``vibecomfy.contracts.*`` or ``vibecomfy.workflow`` (the source-level
 constraint the plan mandates for the IR leaf module).
 
-Also verifies via fresh subprocess that ``import vibecomfy.ir.types``
-leaves ``sys.modules`` free of ``vibecomfy.contracts.*`` and
-``vibecomfy.workflow``.
-
-.. note::
-
-   The subprocess check currently fails for two reasons:
-
-   1. ``vibecomfy/__init__.py`` pre-loads ``vibecomfy.contracts`` and
-      ``vibecomfy.workflow`` at package-init time via its own import chain.
-   2. ``vibecomfy/ir/workflow.py`` imports ``vibecomfy.contracts.validation``
-      at module level (a known carry-over from the original monolithic
-      ``workflow.py``, moved during M1 decomposition).
-
-   ``vibecomfy/ir/types.py`` itself is verified import-clean by the
-   source-level AST check (``test_ir_types_source_has_no_forbidden_imports``).
-   The subprocess tests are marked ``xfail`` until the two leak paths above
-   are addressed.
+The subprocess checks keep the remaining known leak explicit:
+``vibecomfy.ir.__init__`` imports ``vibecomfy.ir.workflow``, which imports
+``vibecomfy.contracts.validation`` at module level.
 """
 
 from __future__ import annotations
 
 import ast
+import json
 import os
 import pathlib
 import subprocess
 import sys
-
-import pytest
 
 # ── repo root (one level above tests/) ──────────────────────────────────────
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -41,6 +25,11 @@ _IR_TYPES = _REPO_ROOT / "vibecomfy" / "ir" / "types.py"
 FORBIDDEN_NAMESPACES: list[str] = [
     "vibecomfy.contracts",
     "vibecomfy.workflow",
+]
+KNOWN_IR_WORKFLOW_CONTRACT_IMPORTS: list[str] = [
+    "vibecomfy.contracts",
+    "vibecomfy.contracts.intent_nodes",
+    "vibecomfy.contracts.validation",
 ]
 
 
@@ -125,21 +114,20 @@ def _build_forbidden_check_script(import_target: str) -> str:
 
     forbidden_list_repr = repr(FORBIDDEN_NAMESPACES)
     return (
+        "import json\n"
         "import sys\n"
         f"import {import_target}\n"
         f"forbidden_prefixes = {forbidden_list_repr}\n"
+        "ir_workflow_loaded = 'vibecomfy.ir.workflow' in sys.modules\n"
         "found = sorted(\n"
         "    k for k in sys.modules\n"
         "    if any(k == pfx or k.startswith(pfx + '.') for pfx in forbidden_prefixes)\n"
         ")\n"
-        "if found:\n"
-        "    print('FORBIDDEN:' + ','.join(found))\n"
-        "    sys.exit(1)\n"
-        "print('CLEAN')\n"
+        "print(json.dumps({'found': found, 'ir_workflow_loaded': ir_workflow_loaded}))\n"
     )
 
 
-def _run_isolation_check(import_target: str) -> subprocess.CompletedProcess[str]:
+def _run_isolation_check(import_target: str) -> dict[str, object]:
     """Run the isolation check in a fresh subprocess with the repo root
     on ``PYTHONPATH``."""
     check_script = _build_forbidden_check_script(import_target)
@@ -149,75 +137,36 @@ def _run_isolation_check(import_target: str) -> subprocess.CompletedProcess[str]
         os.pathsep + existing if existing else ""
     )
 
-    return subprocess.run(
+    result = subprocess.run(
         [sys.executable, "-c", check_script],
         capture_output=True,
         text=True,
         timeout=30,
         env=env,
     )
+    assert result.returncode == 0, (
+        f"{import_target} import subprocess failed (rc={result.returncode}).\n"
+        f"stdout: {result.stdout.strip()}\n"
+        f"stderr: {result.stderr.strip()}"
+    )
+    return json.loads(result.stdout)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Two leak paths: (1) vibecomfy/__init__.py pre-loads contracts "
-        "and workflow at package-init time; (2) vibecomfy/ir/workflow.py "
-        "imports vibecomfy.contracts.validation at module level. "
-        "vibecomfy/ir/types.py is verified import-clean by "
-        "test_ir_types_source_has_no_forbidden_imports."
-    ),
-    strict=True,
-)
 def test_ir_types_import_isolation() -> None:
-    """Fresh subprocess: ``import vibecomfy.ir.types`` must leave
-    ``sys.modules`` free of ``vibecomfy.contracts.*`` and
-    ``vibecomfy.workflow``."""
-    result = _run_isolation_check("vibecomfy.ir.types")
+    """``import vibecomfy.ir.types`` still executes ``vibecomfy.ir.__init__``.
 
-    stdout = result.stdout.strip()
-    stderr = result.stderr.strip()
-
-    assert result.returncode == 0, (
-        f"ir.types import isolation subprocess failed (rc={result.returncode}).\n"
-        f"stdout: {stdout}\n"
-        f"stderr: {stderr}"
-    )
-    assert "CLEAN" in stdout, (
-        f"Expected 'CLEAN' in stdout, got: {stdout}\nstderr: {stderr}"
-    )
-
-
-@pytest.mark.xfail(
-    reason=(
-        "Two leak paths: (1) vibecomfy/__init__.py pre-loads contracts "
-        "and workflow at package-init time; (2) vibecomfy/ir/workflow.py "
-        "imports vibecomfy.contracts.validation at module level. "
-        "vibecomfy/ir/types.py is verified import-clean by "
-        "test_ir_types_source_has_no_forbidden_imports."
-    ),
-    strict=True,
-)
-def test_ir_import_isolation() -> None:
-    """Fresh subprocess: ``import vibecomfy.ir`` must leave
-    ``sys.modules`` free of ``vibecomfy.contracts.*`` and
-    ``vibecomfy.workflow``.
-
-    .. note::
-
-       ``vibecomfy.ir.__init__`` imports ``VibeWorkflow`` from
-       ``vibecomfy.ir.workflow``, so this exercises the full IR
-       import surface.
+    The remaining subprocess violation is intentionally limited to
+    ``vibecomfy.ir.workflow`` loading the contracts modules listed below.
     """
-    result = _run_isolation_check("vibecomfy.ir")
+    payload = _run_isolation_check("vibecomfy.ir.types")
 
-    stdout = result.stdout.strip()
-    stderr = result.stderr.strip()
+    assert payload["ir_workflow_loaded"] is True
+    assert payload["found"] == KNOWN_IR_WORKFLOW_CONTRACT_IMPORTS
 
-    assert result.returncode == 0, (
-        f"ir import isolation subprocess failed (rc={result.returncode}).\n"
-        f"stdout: {stdout}\n"
-        f"stderr: {stderr}"
-    )
-    assert "CLEAN" in stdout, (
-        f"Expected 'CLEAN' in stdout, got: {stdout}\nstderr: {stderr}"
-    )
+
+def test_ir_import_isolation() -> None:
+    """``import vibecomfy.ir`` has the same explicit workflow-only leak."""
+    payload = _run_isolation_check("vibecomfy.ir")
+
+    assert payload["ir_workflow_loaded"] is True
+    assert payload["found"] == KNOWN_IR_WORKFLOW_CONTRACT_IMPORTS

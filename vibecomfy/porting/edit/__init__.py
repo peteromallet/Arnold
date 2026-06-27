@@ -1,83 +1,82 @@
-"""Public API surface for the edit/ sub-package.
+"""Public API surface for the edit/ sub-package."""
 
-Re-exports all public names from the eight constituent modules.
-"""
+from __future__ import annotations
 
-from .session import (
-    BatchResult,
-    CompactDiagnostic,
-    DoneResult,
-    EditSession,
-    InputSlotInfo,
-    NodeDescriptor,
-    OutputSlotInfo,
-    StatementResult,
-)
+import importlib
+from typing import Any
 
-from .ops import (
-    AddNodeOp,
-    AgentDeltaTurnResult,
-    AnchorRef,
-    EDIT_OP_RESPONSE_SCHEMA_V2,
-    EditOp,
-    EditOpParseError,
-    LinkSourceRef,
-    LinkTargetRef,
-    NodeFieldTarget,
-    NodeTarget,
-    RemoveLinkOp,
-    RemoveNodeOp,
-    ReorderOp,
-    SetModeOp,
-    SetNodeFieldOp,
-    UpsertLinkOp,
-    normalize_delta_agent_response,
-    normalize_delta_test_client_response,
-    op_to_dict,
-    parse_edit_delta,
-    parse_edit_op,
-)
+_EXPORT_MODULES = {
+    "BatchResult": "vibecomfy.porting.edit.session",
+    "CompactDiagnostic": "vibecomfy.porting.edit.session",
+    "DoneResult": "vibecomfy.porting.edit.session",
+    "EditSession": "vibecomfy.porting.edit.session",
+    "InputSlotInfo": "vibecomfy.porting.edit.session",
+    "NodeDescriptor": "vibecomfy.porting.edit.session",
+    "OutputSlotInfo": "vibecomfy.porting.edit.session",
+    "StatementResult": "vibecomfy.porting.edit.session",
+    "AddNodeOp": "vibecomfy.porting.edit.ops",
+    "AgentDeltaTurnResult": "vibecomfy.porting.edit.ops",
+    "AnchorRef": "vibecomfy.porting.edit.ops",
+    "EDIT_OP_RESPONSE_SCHEMA_V2": "vibecomfy.porting.edit.ops",
+    "EditOp": "vibecomfy.porting.edit.ops",
+    "EditOpParseError": "vibecomfy.porting.edit.ops",
+    "LinkSourceRef": "vibecomfy.porting.edit.ops",
+    "LinkTargetRef": "vibecomfy.porting.edit.ops",
+    "NodeFieldTarget": "vibecomfy.porting.edit.ops",
+    "NodeTarget": "vibecomfy.porting.edit.ops",
+    "RemoveLinkOp": "vibecomfy.porting.edit.ops",
+    "RemoveNodeOp": "vibecomfy.porting.edit.ops",
+    "ReorderOp": "vibecomfy.porting.edit.ops",
+    "SetModeOp": "vibecomfy.porting.edit.ops",
+    "SetNodeFieldOp": "vibecomfy.porting.edit.ops",
+    "UpsertLinkOp": "vibecomfy.porting.edit.ops",
+    "normalize_delta_agent_response": "vibecomfy.porting.edit.ops",
+    "normalize_delta_test_client_response": "vibecomfy.porting.edit.ops",
+    "op_to_dict": "vibecomfy.porting.edit.ops",
+    "parse_edit_delta": "vibecomfy.porting.edit.ops",
+    "parse_edit_op": "vibecomfy.porting.edit.ops",
+    "FieldChange": "vibecomfy.porting.edit.types",
+    "EditLedger": "vibecomfy.porting.edit.ledger",
+    "ScopeState": "vibecomfy.porting.edit.ledger",
+    "DEFAULT_MAX_TOKENS": "vibecomfy.porting.edit.projection",
+    "ProjectionOptions": "vibecomfy.porting.edit.projection",
+    "ProjectionResult": "vibecomfy.porting.edit.projection",
+    "USER_STRING_FENCE": "vibecomfy.porting.edit.projection",
+    "estimate_tokens": "vibecomfy.porting.edit.projection",
+    "render_edit_projection": "vibecomfy.porting.edit.projection",
+    "ApplyResult": "vibecomfy.porting.edit.apply",
+    "ResolvedAddNodeSpec": "vibecomfy.porting.edit.apply",
+    "ResolvedFieldRef": "vibecomfy.porting.edit.apply",
+    "ResolvedLinkEndpoint": "vibecomfy.porting.edit.apply",
+    "ResolvedNodeRef": "vibecomfy.porting.edit.apply",
+    "ResolvedRemoveLinkRef": "vibecomfy.porting.edit.apply",
+    "ResolveResult": "vibecomfy.porting.edit.apply",
+    "apply_delta": "vibecomfy.porting.edit.apply",
+    "resolve_delta": "vibecomfy.porting.edit.apply",
+    "LintIndex": "vibecomfy.porting.edit.lint",
+    "LintIssue": "vibecomfy.porting.edit.lint",
+    "LintNormalization": "vibecomfy.porting.edit.lint",
+    "LintResult": "vibecomfy.porting.edit.lint",
+    "lint_delta": "vibecomfy.porting.edit.lint",
+    "NORMALIZE_ALLOW_LIST": "vibecomfy.porting.edit.normalize",
+    "is_normalize_available": "vibecomfy.porting.edit.normalize",
+    "normalize_allow_list_matches": "vibecomfy.porting.edit.normalize",
+    "normalize_compare": "vibecomfy.porting.edit.normalize",
+    "normalize_ui_json": "vibecomfy.porting.edit.normalize",
+}
 
-from .types import FieldChange
+__all__ = list(_EXPORT_MODULES)
 
-from .ledger import (
-    EditLedger,
-    ScopeState,
-)
 
-from .projection import (
-    DEFAULT_MAX_TOKENS,
-    ProjectionOptions,
-    ProjectionResult,
-    USER_STRING_FENCE,
-    estimate_tokens,
-    render_edit_projection,
-)
+def __getattr__(name: str) -> Any:
+    module_name = _EXPORT_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    module = importlib.import_module(module_name)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value
 
-from .apply import (
-    ApplyResult,
-    ResolvedAddNodeSpec,
-    ResolvedFieldRef,
-    ResolvedLinkEndpoint,
-    ResolvedNodeRef,
-    ResolvedRemoveLinkRef,
-    ResolveResult,
-    apply_delta,
-    resolve_delta,
-)
 
-from .lint import (
-    LintIndex,
-    LintIssue,
-    LintNormalization,
-    LintResult,
-    lint_delta,
-)
-
-from .normalize import (
-    NORMALIZE_ALLOW_LIST,
-    is_normalize_available,
-    normalize_allow_list_matches,
-    normalize_compare,
-    normalize_ui_json,
-)
+def __dir__() -> list[str]:
+    return sorted({*globals(), *__all__})

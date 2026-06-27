@@ -101,30 +101,31 @@ def _ensure_comfyui_root_on_path() -> None:
     _LOGGER.warning("Could not locate ComfyUI root (no server.py + nodes.py found).")
 
 
-_ensure_comfyui_root_on_path()
+if os.environ.get("VIBECOMFY_HEADLESS", "0") != "1":
+    _ensure_comfyui_root_on_path()
 
-try:
-    from server import PromptServer
+    try:
+        from server import PromptServer
 
-    _LOGGER.info("PromptServer imported; registering VibeComfy routes.")
+        _LOGGER.info("PromptServer imported; registering VibeComfy routes.")
 
-    @PromptServer.instance.routes.get("/vibecomfy/ping")
-    async def _vibecomfy_ping(request):  # type: ignore[no-untyped-def]
-        from aiohttp import web
+        @PromptServer.instance.routes.get("/vibecomfy/ping")
+        async def _vibecomfy_ping(request):  # type: ignore[no-untyped-def]
+            from aiohttp import web
 
-        return web.json_response({"status": "ok"})
+            return web.json_response({"status": "ok"})
 
-    from .agent import routes  # noqa: F401
+        from .agent import routes  # noqa: F401
 
-    _LOGGER.info("VibeComfy routes registered successfully.")
+        _LOGGER.info("VibeComfy routes registered successfully.")
 
-except ImportError as _route_import_exc:
-    _LOGGER.warning(
-        "Could not register VibeComfy agent routes (%s); "
-        "the ComfyUI server may not be available. "
-        "POST /vibecomfy/agent-edit and /vibecomfy/agent/status will not be served.",
-        _route_import_exc,
-    )
+    except ImportError as _route_import_exc:
+        _LOGGER.warning(
+            "Could not register VibeComfy agent routes (%s); "
+            "the ComfyUI server may not be available. "
+            "POST /vibecomfy/agent-edit and /vibecomfy/agent/status will not be served.",
+            _route_import_exc,
+        )
 
 
 def _strip_conditioning_keys(conditioning: list[Any], keys: set[str]) -> list[Any]:

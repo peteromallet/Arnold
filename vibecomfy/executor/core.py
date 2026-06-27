@@ -1203,6 +1203,7 @@ def run_executor(
     request: ExecutorRequest,
     *,
     client_id: str | None = None,
+    classify_only: bool = False,
 ) -> ExecutorResult:
     """Execute the full classify → research → implement → reply pipeline.
 
@@ -1210,6 +1211,11 @@ def run_executor(
     ----------
     request:
         The parsed executor request (query + optional graph/profile/etc.).
+    classify_only:
+        When True, run only the classify phase and return a diagnostic result
+        without invoking research, implement, or reply model calls.  This is
+        the honest dry-run seam: ``live=false`` is a product flag, but
+        ``classify_only`` guarantees no subsequent phases run.
 
     Returns
     -------
@@ -1236,7 +1242,6 @@ def run_executor(
     # ── Resolve profile specs ────────────────────────────────────────────
     try:
         classify_spec = _resolve_spec(request.profile, "classify")
-        reply_spec = _resolve_spec(request.profile, "reply")
     except Exception as exc:
         failure = classify_failure("profile", exc)
         return ExecutorResult.failure(
@@ -1250,7 +1255,6 @@ def run_executor(
         "executor.profile_resolved",
         **request_fields,
         classify=_spec_fields(classify_spec),
-        reply=_spec_fields(reply_spec),
     )
 
     # ── Build session context and graph reference map (M3) ────────────────
@@ -1337,6 +1341,53 @@ def run_executor(
                 message=str(exc),
                 report=report,
             )
+
+    # ── Classify-only dry-run exit ─────────────────────────────────────────
+    if classify_only:
+        _emit_executor_phase_event(
+            request,
+            executor_id=executor_id,
+            phase="research",
+            status="skipped",
+            client_id=client_id,
+        )
+        _emit_executor_phase_event(
+            request,
+            executor_id=executor_id,
+            phase="implement",
+            status="skipped",
+            client_id=client_id,
+        )
+        _emit_executor_phase_event(
+            request,
+            executor_id=executor_id,
+            phase="reply",
+            status="skipped",
+            client_id=client_id,
+        )
+        profiler_log(
+            LOGGER,
+            "executor.result",
+            **request_fields,
+            has_research=False,
+            has_implementation=False,
+            result_has_graph=False,
+            reply_preview="",
+            reason="classify_only",
+        )
+        report = Report(plan=plan)
+        route = _canonical_route_for_plan(plan)
+        task = plan.effective_task
+        parts = [f"[dry-run] classified route: {route}"]
+        if task:
+            parts.append(f"task: {task}")
+        if plan.plan_summary:
+            parts.append(f"summary: {plan.plan_summary}")
+        return ExecutorResult.success(
+            report=report,
+            graph=None,
+            reply="\n".join(parts),
+        )
 
     # ── Phase 2: research (standalone replies only) ──────────────────────
     if _should_prefetch_research(plan):
@@ -1502,6 +1553,21 @@ def run_executor(
 
     # ── Phase 4: reply (always via model) ────────────────────────────────
     route_behavior = _route_behavior(plan)
+    try:
+        reply_spec = _resolve_spec(request.profile, "reply")
+    except Exception as exc:
+        failure = classify_failure("profile", exc)
+        report = Report(
+            plan=plan,
+            research=research_result,
+            implementation=implementation_result,
+        )
+        return ExecutorResult.failure(
+            kind=failure.kind.value,
+            stage="profile",
+            message=failure.user_facing_message,
+            report=report,
+        )
     try:
         _emit_executor_phase_event(
             request,
