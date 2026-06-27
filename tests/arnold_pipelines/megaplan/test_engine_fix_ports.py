@@ -12,6 +12,10 @@ from arnold_pipelines.megaplan.blocker_recovery import (
 from arnold_pipelines.megaplan.execute.batch import _normalize_execute_capture_payload
 from arnold_pipelines.megaplan.execute.quality import _collect_execute_claimed_paths
 from arnold_pipelines.megaplan.model_seam import _normalize_plan_capture_payload
+from arnold_pipelines.megaplan.orchestration.plan_structure import (
+    PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
+    validate_plan_structure,
+)
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     _evidence_from_task_record,
 )
@@ -190,7 +194,11 @@ def test_structured_plan_payload_normalizes_to_canonical_schema() -> None:
     )
 
     assert "# Ship Fix" in normalized["plan"]
+    assert "### Step 1: Patch" in normalized["plan"]
     assert "- Edit file" in normalized["plan"]
+    assert PLAN_STRUCTURE_REQUIRED_STEP_ISSUE not in validate_plan_structure(
+        normalized["plan"]
+    )
     assert normalized["questions"] == ["Any blockers?"]
     assert normalized["success_criteria"] == [
         {"criterion": "Tests pass", "priority": "must", "requires": ["run_tests"]}
