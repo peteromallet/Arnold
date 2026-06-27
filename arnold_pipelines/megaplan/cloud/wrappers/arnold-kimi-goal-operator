@@ -17,6 +17,7 @@ PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/p
 MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 TIMEOUT="${KIMI_GOAL_TIMEOUT_SECS:-3600}"
+MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_DIR="$ROOT/${TS}-${SAFE_SESSION}"
@@ -83,6 +84,8 @@ capture "watchdog report" bash -lc "cat /workspace/watchdog-report.json 2>/dev/n
 capture "watchdog log" bash -lc "tail -160 /workspace/watchdog.log 2>/dev/null || true"
 capture "arnold source git" bash -lc "cd '$ARNOLD_SRC' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
 capture "workspace git" bash -lc "cd '$WORKSPACE' 2>/dev/null && git status --short && git branch --show-current && git log -1 --oneline || true"
+capture "subagent launcher skill" bash -lc "for p in /root/.codex/skills/subagent-launcher/SKILL.md /root/.hermes/skills/subagent-launcher/SKILL.md /root/.agents/skills/subagent-launcher/SKILL.md /root/.claude/skills/subagent-launcher/SKILL.md /workspace/arnold/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md; do echo --- \$p; test -f \"\$p\" && sed -n '1,180p' \"\$p\" || echo missing; done"
+capture "subagent launcher commands" bash -lc "command -v codex || true; ls -la /root/.codex/skills/subagent-launcher /root/.hermes/skills/subagent-launcher /workspace/arnold/arnold_pipelines/megaplan/skills/subagent-launcher 2>/dev/null || true"
 
 if [[ -f "$PRINCIPLES_PATH" ]]; then
   PRINCIPLES_TEXT="$(cat "$PRINCIPLES_PATH")"
@@ -115,7 +118,7 @@ $PRINCIPLES_TEXT
 1. Read the facts file and inspect the machine/repo as needed.
 2. Determine why this run stopped or became unhealthy. Do not assume a restart is enough.
 3. Before modifying Arnold source, confirm $ARNOLD_SRC is on $SYNC_BRANCH. Do not let MEGAPLAN_REF or the active workflow workspace branch choose the editable-install branch.
-4. If there is an Arnold/cloud/watchdog/root-cause bug that needs source changes, brief Codex from the terminal with the core issue, evidence, constraints, and plausible hypotheses. Do not prescribe the implementation; let Codex determine and apply the solution in $ARNOLD_SRC. The fix belongs in the editable install source, not only in the run workspace.
+4. If there is an Arnold/cloud/watchdog/root-cause bug that needs deep investigation or source changes, use the \$subagent-launcher skill shown in the facts file. Brief Codex through that skill with the core issue, evidence, constraints, and plausible hypotheses. Do not prescribe the implementation; let Codex determine and apply the solution in $ARNOLD_SRC. The fix belongs in the editable install source, not only in the run workspace.
 5. Validate the fix with the smallest relevant checks. At minimum, confirm:
    - python3 -c "import arnold_pipelines.megaplan.cloud.cli"
    - python3 -c "import arnold_pipelines.megaplan.chain"
@@ -152,7 +155,7 @@ fi
     --model="$MODEL" \
     --api_key="$KIMI_API_KEY" \
     --base_url="$BASE_URL" \
-    --max_turns=30 \
+    --max_turns="$MAX_TURNS" \
     --enabled_toolsets='"terminal,file,code_execution,todo"' \
     --save_sample=True
 ) >> "$LOG" 2>&1

@@ -89,11 +89,15 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'ARNOLD_SRC="${KIMI_GOAL_ARNOLD_SRC:-/workspace/arnold}"' in text
     assert 'SYNC_BRANCH="${KIMI_GOAL_SYNC_BRANCH:-${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}}"' in text
     assert 'PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"' in text
+    assert 'MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"' in text
+    assert '--max_turns="$MAX_TURNS"' in text
+    assert 'capture "subagent launcher skill"' in text
     assert 'RUN_CWD="$ARNOLD_SRC"' in text
     assert 'cd "$RUN_CWD"' in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
-    assert "brief Codex from the terminal with the core issue, evidence, constraints, and plausible hypotheses" in text
+    assert "Brief Codex through that skill with the core issue, evidence, constraints, and plausible hypotheses" in text
     assert "Do not prescribe the implementation" in text
+    assert "use the \\$subagent-launcher skill" in text
 
 
 def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() -> None:
@@ -104,4 +108,5 @@ def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() ->
     assert "# Repair Principles" in wrapper
     assert "Codex phases must run through the Codex plan/CLI path" in principles
     assert "DeepSeek phases must run through the direct DeepSeek API credentials" in principles
-    assert "Point Codex in the right direction without prescribing the implementation" in principles
+    assert "Deep investigations and source repairs must use the `$subagent-launcher` skill" in principles
+    assert "brief Codex through `$subagent-launcher`" in principles
