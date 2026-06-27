@@ -625,7 +625,7 @@ launch_chain_tick() {
   fi
   launch_script="$(mktemp)"
   quoted_command=$(
-    printf 'cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
       "$SRC_DIR" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
   )
   cat > "$launch_script" <<EOF
