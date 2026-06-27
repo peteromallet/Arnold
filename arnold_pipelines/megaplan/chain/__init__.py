@@ -1221,20 +1221,25 @@ def _read_typed_noop_completion_waiver(
     return False, "no typed no-op completion waiver found"
 
 
-def _finalize_output_has_empty_tasks(plan_dir: Path) -> tuple[bool, str]:
-    finalize_output = plan_dir / "finalize_output.json"
-    if not finalize_output.exists():
-        return False, "finalize_output.json not present"
-    try:
-        payload = json.loads(finalize_output.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        return True, f"finalize_output.json could not be read: {error}"
-    if not isinstance(payload, dict):
-        return True, "finalize_output.json payload is not an object"
-    tasks = payload.get("tasks")
-    if isinstance(tasks, list) and not tasks:
-        return True, "finalize_output.json tasks is empty"
-    return False, "finalize_output.json tasks is non-empty or absent"
+def _finalize_payload_has_empty_tasks(plan_dir: Path) -> tuple[bool, str]:
+    candidates = (
+        ("finalize.json", plan_dir / "finalize.json"),
+        ("finalize_output.json", plan_dir / "finalize_output.json"),
+    )
+    for label, path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return True, f"{label} could not be read: {error}"
+        if not isinstance(payload, dict):
+            return True, f"{label} payload is not an object"
+        tasks = payload.get("tasks")
+        if isinstance(tasks, list) and not tasks:
+            return True, f"{label} tasks is empty"
+        return False, f"{label} tasks is non-empty or absent"
+    return False, "no finalize artifact present"
 
 
 def _milestone_base_sha_from_plan_state(state: dict[str, Any]) -> str | None:
@@ -1467,7 +1472,7 @@ def _chain_completion_guard(
             f"execution evidence blocked completion: {reason}; {waiver_reason}",
         )
 
-    empty_finalize_tasks, finalize_reason = _finalize_output_has_empty_tasks(plan_dir)
+    empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(plan_dir)
     if empty_finalize_tasks and not waiver_ok:
         return False, f"{finalize_reason}; {waiver_reason}"
 
