@@ -44,6 +44,13 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
     assert 'report_item "$report_items" "$session" "repair" "repair_completed"' in text
 
 
+def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert 'pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]"' in text
+    assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
+
+
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
     text = _wrapper("arnold-watchdog")
 

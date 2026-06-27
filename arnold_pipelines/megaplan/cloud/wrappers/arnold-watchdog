@@ -457,7 +457,7 @@ session_health_status() {
 
 kimi_operator_running() {
   local session="$1"
-  ps -eww -o args= | grep -F "[a]rnold-kimi-goal-operator $session " >/dev/null 2>&1
+  pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1
 }
 
 plan_phase_health_status() {
