@@ -31,6 +31,16 @@ def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     assert 'health="$(session_health_status "$session" "$workspace" "$remote_spec")"' in text
 
 
+def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert "plan_phase_health_status()" in text
+    assert 'phase_health="$(plan_phase_health_status "$workspace")"' in text
+    assert 'session alive but plan unhealthy' in text
+    assert 'report_item "$report_items" "$session" "repair" "repair_running"' in text
+    assert 'report_item "$report_items" "$session" "repair" "repair_completed"' in text
+
+
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
     text = _wrapper("arnold-watchdog")
 
