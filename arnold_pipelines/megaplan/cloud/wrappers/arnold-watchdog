@@ -521,8 +521,8 @@ launch_chain_tick() {
   fi
   launch_script="$(mktemp)"
   quoted_command=$(
-    printf 'MEGAPLAN_TRUSTED_CONTAINER=1 python3 -m arnold_pipelines.megaplan chain start --spec %q --one >> %q 2>&1' \
-      "$remote_spec" "$log_relative"
+    printf 'cd %q && MEGAPLAN_TRUSTED_CONTAINER=1 python3 -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q --one >> %q 2>&1' \
+      "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
   )
   cat > "$launch_script" <<EOF
 #!/usr/bin/env bash

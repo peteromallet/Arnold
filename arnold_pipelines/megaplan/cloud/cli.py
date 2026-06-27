@@ -915,6 +915,8 @@ def _emit_deploy_report(
 def _chain_start_command(
     remote_spec_path: str,
     *,
+    project_dir: str | None = None,
+    engine_dir: str | None = None,
     one_shot: bool = False,
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
@@ -926,13 +928,23 @@ def _chain_start_command(
     consistent across all entry points.
     """
     flags = f"--spec {shlex.quote(remote_spec_path)}"
+    if project_dir:
+        flags += f" --project-dir {shlex.quote(project_dir)}"
     if one_shot:
         flags += " --one"
     if no_git_refresh:
         flags += " --no-git-refresh"
+    log_target = (
+        shlex.quote(str(PurePosixPath(project_dir) / log_relative))
+        if project_dir
+        else shlex.quote(log_relative)
+    )
+    prefix = ""
+    if engine_dir:
+        prefix = f"cd {shlex.quote(engine_dir)} && "
     return (
-        f"MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold_pipelines.megaplan chain start {flags} "
-        f">> {shlex.quote(log_relative)} 2>&1"
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold_pipelines.megaplan chain start {flags} "
+        f">> {log_target} 2>&1"
     )
 
 
@@ -973,14 +985,16 @@ def _refresh_then_chain_start_command(
     remote_spec_path: str,
     *,
     spec: CloudSpec | None = None,
+    project_dir: str | None = None,
     one_shot: bool = False,
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
     refresh = _megaplan_refresh_command(spec)
+    engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 || true; "
-        f"{_chain_start_command(remote_spec_path, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
+        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
     )
 
 
@@ -1011,6 +1025,7 @@ def _tmux_chain_launch_command(
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
+        project_dir=workspace,
         one_shot=one_shot,
         no_git_refresh=no_git_refresh,
         log_relative=log_relative,
