@@ -1,22 +1,22 @@
-"""End-to-end tests for the native-first ``arnold_pipelines/_template`` package.
+"""End-to-end tests for the workflow-first ``arnold_pipelines/_template`` package.
 
-Covers three concerns from the M6 native-first scaffold plan:
+Covers three concerns from the M2 package-contract phase:
 
 1. **Scanner exclusion** — the legacy megaplan-side pipeline discovery scanner
    must skip ``_template`` because its leading-underscore directory name
    triggers the skip rule.
-2. **Native-first build** — the skeleton ``build_pipeline()`` returns an
-   :class:`arnold.pipeline.Pipeline` with a compiled :class:`NativeProgram`
-   attached.
-3. **Determinism** — repeated builds produce the same native program identity.
+2. **Workflow-first build** — the skeleton ``build_pipeline()`` returns an
+   :class:`arnold.workflow.Pipeline` built from explicit nodes and routes.
+3. **Determinism** — repeated builds produce the same pipeline topology and,
+   after compilation, the same manifest hashes.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import arnold.pipeline as native_pipeline
-from arnold.pipeline.native import NativeProgram
+import arnold.workflow as workflow
+from arnold.workflow import Pipeline, compile_pipeline
 from arnold_pipelines._template import build_pipeline
 from arnold_pipelines.megaplan.runtime.discovery import _scan_dir_for_pipeline_modules
 
@@ -39,24 +39,37 @@ def test_template_excluded_by_legacy_scanner() -> None:
     assert not any("_template" in p for p in found_paths)
 
 
-def test_template_builds_native_pipeline() -> None:
+def test_template_builds_workflow_pipeline() -> None:
     pipeline = build_pipeline()
-    assert isinstance(pipeline, native_pipeline.Pipeline)
-    assert pipeline.native_program is not None
-    assert isinstance(pipeline.native_program, NativeProgram)
+    assert isinstance(pipeline, Pipeline)
+    assert pipeline.id == "my-pipeline"
+    step_ids = {step.id for step in pipeline.steps}
+    assert "start" in step_ids
+    assert "finish" in step_ids
 
 
-def test_template_native_program_has_expected_phases() -> None:
+def test_template_pipeline_has_expected_routes() -> None:
     pipeline = build_pipeline()
-    assert pipeline.native_program is not None
-    phase_names = {phase.name for phase in pipeline.native_program.phases}
-    assert "start" in phase_names
-    assert "finish" in phase_names
+    assert len(pipeline.routes) == 1
+    assert pipeline.routes[0].id == "start-finish"
+    assert pipeline.routes[0].source == "start"
+    assert pipeline.routes[0].target == "finish"
 
 
 def test_template_manifest_identity_is_deterministic() -> None:
     p1 = build_pipeline()
     p2 = build_pipeline()
-    assert p1.native_program is not None
-    assert p2.native_program is not None
-    assert p1.native_program.name == p2.native_program.name
+    m1 = compile_pipeline(p1)
+    m2 = compile_pipeline(p2)
+    assert m1.manifest_hash == m2.manifest_hash
+    assert m1.topology_hash == m2.topology_hash
+
+
+def test_template_compile_produces_valid_manifest() -> None:
+    pipeline = build_pipeline()
+    manifest = compile_pipeline(pipeline)
+    assert manifest.schema_version == workflow.WorkflowManifest.SCHEMA_VERSION
+    assert manifest.manifest_hash
+    assert manifest.topology_hash
+    assert any(node.id == "start" for node in manifest.nodes)
+    assert any(node.id == "finish" for node in manifest.nodes)

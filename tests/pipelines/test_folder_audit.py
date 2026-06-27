@@ -1,4 +1,9 @@
-"""Tests for the ``folder-audit`` pipeline."""
+"""Tests for the native-backed ``folder-audit`` compatibility pipeline.
+
+``arnold.pipelines.folder_audit`` remains native-backed during the M2
+migration. The active authoring contract for new packages is workflow-first;
+see ``tests/arnold_pipelines/test_template_e2e.py`` for the canonical scaffold.
+"""
 
 from __future__ import annotations
 
@@ -307,9 +312,9 @@ def test_native_pipeline_compiles_to_sequential_program() -> None:
     from arnold.pipeline.native.compiler import compile_pipeline
     from arnold.pipelines.folder_audit.native import (
         folder_audit_native,
-        ingest,
-        audit,
-        emit,
+        ingest,  # noqa: F401
+        audit,  # noqa: F401
+        emit,  # noqa: F401
     )
 
     # The compiler resolves phase/decision names from the calling frame's

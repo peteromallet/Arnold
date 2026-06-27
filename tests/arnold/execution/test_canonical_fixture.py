@@ -13,14 +13,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import pytest
 import yaml
 
 from arnold.execution import ExecutionRegistries, ExecutionState, run
 from arnold.execution.backend import NodeOutcome, NodeState
 from arnold.kernel import ControlBinding, ControlTarget, ControlTransition, ControlTransitionType, read_event_journal
 from arnold.manifest import NodeRef, manifest_coordinate
-from tests.arnold.execution.canonical_manifest import HASH_A, canonical_execution_manifest
+from tests.arnold.execution.canonical_manifest import canonical_execution_manifest
 
 FIXTURE_PATH = Path(__file__).parent.parent.parent / "fixtures" / "workflow" / "canonical_megaplan_shapes.yaml"
 GOLDEN_RUNTIME_PATH = (
