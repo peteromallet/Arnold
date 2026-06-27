@@ -26,6 +26,7 @@ from arnold_pipelines.megaplan._core import save_state, slugify
 from arnold_pipelines.megaplan._core.workflow import resume_plan
 from arnold_pipelines.megaplan.feature_flags import control_interface_routing_on
 from arnold_pipelines.megaplan.auto import drive as drive_auto
+from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env
 from arnold.control.interface import ControlTransition, RunStateView
 from arnold_pipelines.megaplan.control_interface import apply_transition
 from arnold_pipelines.megaplan.handlers import handle_init, handle_override
@@ -577,11 +578,12 @@ def _default_sprint_plan_name(sprint: Sprint) -> str:
 
 def _resume_runner(progress_env: dict[str, str] | None) -> Callable[[list[str], Path | None], tuple[int, str, str]]:
     def run(args: list[str], cwd: Path | None = None) -> tuple[int, str, str]:
-        env = None
+        env = megaplan_engine_env(dict(os.environ))
+        env["PYTHONSAFEPATH"] = "1"
         if progress_env:
-            env = {**dict(os.environ), **progress_env}
+            env.update(progress_env)
         proc = subprocess.run(
-            [sys.executable, "-m", "arnold_pipelines.megaplan", *args],
+            [sys.executable, "-P", "-m", "arnold_pipelines.megaplan", *args],
             cwd=str(cwd) if cwd else None,
             env=env,
             capture_output=True,
