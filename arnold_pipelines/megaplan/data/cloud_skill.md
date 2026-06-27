@@ -136,7 +136,10 @@ An operator loop may automatically handle infrastructure recovery:
 - rerun `megaplan auto` for states with an unambiguous valid next step;
 - recover provider quota/failure by switching to an already-approved fallback model/provider for the same phase;
 - continue a chain after a completed milestone;
+- advance a chain past a merged milestone PR (re-run `megaplan chain start` so it observes the merge and proceeds to the next milestone);
 - commit and push after each completed milestone when the user asked for push-after-sprint behavior.
+
+For an operator loop to progress a chain autonomously, the chain spec must set `merge_policy: auto`. With `review` or `manual`, the chain opens each milestone PR and halts at `awaiting_pr_merge` until a human merges it — the loop cannot merge PRs for you, so an unattended chain looks "stuck" when it is actually waiting on a manual merge. Set `merge_policy: auto` in `chain.yaml` for any cloud epic that should run without a human in the loop.
 
 An operator loop should **not** silently decide product or architecture questions, resolve merge conflicts, accept destructive cleanup, or ignore failing tests. Those are implementation decisions, not supervision. Surface them to the user or write a clear ticket unless the plan already contains an explicit settled decision that covers the case.
 
