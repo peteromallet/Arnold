@@ -97,6 +97,28 @@ _CODEX_AUX_MODEL = "gpt-5.2-codex"
 _CODEX_AUX_BASE_URL = "https://chatgpt.com/backend-api/codex"
 
 
+def _set_resolved_provider(client: Any, provider_name: str | None) -> Any:
+    """Tag a resolved client with the provider that actually won routing."""
+    if client is None:
+        return None
+    normalized = (provider_name or "").strip().lower()
+    if not normalized:
+        return client
+    try:
+        setattr(client, "_resolved_provider", normalized)
+    except Exception:
+        pass
+    return client
+
+
+def _get_resolved_provider(client: Any, default: str | None = None) -> str | None:
+    value = getattr(client, "_resolved_provider", None)
+    if isinstance(value, str) and value.strip():
+        return value.strip().lower()
+    normalized_default = (default or "").strip().lower()
+    return normalized_default or None
+
+
 # ── Codex Responses → chat.completions adapter ─────────────────────────────
 # All auxiliary consumers call client.chat.completions.create(**kwargs) and
 # read response.choices[0].message.content. This adapter translates those
@@ -496,7 +518,11 @@ def _read_codex_access_token() -> Optional[str]:
         return None
 
 
-def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
+def _resolve_api_key_provider(
+    *,
+    allow_anthropic: bool = True,
+    skip_providers: tuple[str, ...] = (),
+) -> Tuple[Optional[OpenAI], Optional[str]]:
     """Try each API-key provider in PROVIDER_REGISTRY order.
 
     Returns (client, model) for the first provider with usable runtime
@@ -508,10 +534,20 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
         logger.debug("Could not import PROVIDER_REGISTRY for API-key fallback")
         return None, None
 
+    skipped = {
+        item.strip().lower()
+        for item in skip_providers
+        if isinstance(item, str) and item.strip()
+    }
+
     for provider_id, pconfig in PROVIDER_REGISTRY.items():
         if pconfig.auth_type != "api_key":
             continue
+        if provider_id in skipped:
+            continue
         if provider_id == "anthropic":
+            if not allow_anthropic:
+                continue
             return _try_anthropic()
 
         creds = resolve_api_key_provider_credentials(provider_id)
@@ -529,7 +565,10 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
             from hermes_cli.models import copilot_default_headers
 
             extra["default_headers"] = copilot_default_headers()
-        return OpenAI(api_key=api_key, base_url=base_url, **extra), model
+        return _set_resolved_provider(
+            OpenAI(api_key=api_key, base_url=base_url, **extra),
+            provider_id,
+        ), model
 
     return None, None
 
@@ -567,8 +606,10 @@ def _try_openrouter() -> Tuple[Optional[OpenAI], Optional[str]]:
     if not or_key:
         return None, None
     logger.debug("Auxiliary client: OpenRouter")
-    return OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL,
-                   default_headers=_OR_HEADERS), _OPENROUTER_MODEL
+    return _set_resolved_provider(
+        OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL, default_headers=_OR_HEADERS),
+        "openrouter",
+    ), _OPENROUTER_MODEL
 
 
 def _try_nous() -> Tuple[Optional[OpenAI], Optional[str]]:
@@ -579,7 +620,10 @@ def _try_nous() -> Tuple[Optional[OpenAI], Optional[str]]:
     auxiliary_is_nous = True
     logger.debug("Auxiliary client: Nous Portal")
     return (
-        OpenAI(api_key=_nous_api_key(nous), base_url=_nous_base_url()),
+        _set_resolved_provider(
+            OpenAI(api_key=_nous_api_key(nous), base_url=_nous_base_url()),
+            "nous",
+        ),
         _NOUS_MODEL,
     )
 
@@ -651,16 +695,32 @@ def _try_custom_endpoint() -> Tuple[Optional[OpenAI], Optional[str]]:
         return None, None
     model = _read_main_model() or "gpt-4o-mini"
     logger.debug("Auxiliary client: custom endpoint (%s)", model)
-    return OpenAI(api_key=custom_key, base_url=custom_base), model
+    return _set_resolved_provider(
+        OpenAI(api_key=custom_key, base_url=custom_base),
+        "custom",
+    ), model
 
 
-def _try_codex() -> Tuple[Optional[Any], Optional[str]]:
+def _try_raw_codex() -> Tuple[Optional[OpenAI], Optional[str]]:
     codex_token = _read_codex_access_token()
     if not codex_token:
         return None, None
-    logger.debug("Auxiliary client: Codex OAuth (%s via Responses API)", _CODEX_AUX_MODEL)
-    real_client = OpenAI(api_key=codex_token, base_url=_CODEX_AUX_BASE_URL)
-    return CodexAuxiliaryClient(real_client, _CODEX_AUX_MODEL), _CODEX_AUX_MODEL
+    logger.debug("Auxiliary client: Codex OAuth raw client (%s)", _CODEX_AUX_MODEL)
+    return _set_resolved_provider(
+        OpenAI(api_key=codex_token, base_url=_CODEX_AUX_BASE_URL),
+        "openai-codex",
+    ), _CODEX_AUX_MODEL
+
+
+def _try_codex() -> Tuple[Optional[Any], Optional[str]]:
+    real_client, model = _try_raw_codex()
+    if real_client is None or model is None:
+        return None, None
+    logger.debug("Auxiliary client: Codex OAuth (%s via Responses API)", model)
+    return _set_resolved_provider(
+        CodexAuxiliaryClient(real_client, model),
+        "openai-codex",
+    ), model
 
 
 def _try_anthropic() -> Tuple[Optional[Any], Optional[str]]:
