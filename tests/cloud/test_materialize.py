@@ -7,6 +7,7 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.spec import (
     CloudSpec,
+    ChainSubSpec,
     RepoSpec,
     CodexSpec,
     MegaplanSpec,
@@ -14,7 +15,7 @@ from arnold_pipelines.megaplan.cloud.spec import (
     LocalSpec,
     SshSpec,
 )
-from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir
+from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_entrypoint
 
 
 def _ssh_spec() -> CloudSpec:
@@ -82,6 +83,33 @@ class TestMaterializeNoRailway:
             assert (dest / "entrypoint.sh").exists()
             assert (dest / "healthserver.py").exists()
             assert (dest / "wrappers").is_dir()
+            assert (dest / "wrappers" / "arnold-watchdog").exists()
+            assert (dest / "wrappers" / "arnold-kimi-goal-operator").exists()
+
+    def test_entrypoint_starts_cloud_watchdog(self) -> None:
+        """Cloud entrypoint must launch the resident watchdog loop."""
+        entrypoint = render_entrypoint(_ssh_spec())
+        assert "tmux has-session -t watchdog" in entrypoint
+        assert "/usr/local/bin/arnold-watchdog" in entrypoint
+
+    def test_entrypoint_marks_boot_chain_for_watchdog(self) -> None:
+        """Mode=chain boot runs must be discoverable by the resident watchdog."""
+        spec = _ssh_spec()
+        spec = CloudSpec(
+            provider=spec.provider,
+            repo=spec.repo,
+            agents=spec.agents,
+            codex=spec.codex,
+            mode="chain",
+            megaplan=spec.megaplan,
+            resources=spec.resources,
+            secrets=spec.secrets,
+            ssh=spec.ssh,
+            chain=ChainSubSpec(spec="/workspace/chain.yaml"),
+        )
+        entrypoint = render_entrypoint(spec)
+        assert "/workspace/.megaplan/cloud-sessions/agent.json" in entrypoint
+        assert '"source": "entrypoint-mode-chain"' in entrypoint
 
     def test_no_docker_compose_for_ssh(self) -> None:
         """SSH provider must NOT emit docker-compose.yaml."""

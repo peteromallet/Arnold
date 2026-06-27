@@ -386,7 +386,8 @@ def materialize_deploy_dir(spec: CloudSpec, dest: Path) -> None:
         (dest / spec.local.workdir).mkdir(parents=True, exist_ok=True)
 
     for name in ("mp-run", "mp-supervise", "mp-heartbeat", "mp-chain",
-                 "arnold-run", "arnold-supervise", "arnold-heartbeat", "arnold-chain"):
+                 "arnold-run", "arnold-supervise", "arnold-heartbeat", "arnold-chain",
+                 "arnold-watchdog", "arnold-kimi-goal-operator"):
         _write_text(
             wrappers_dir / name,
             wrappers.joinpath(name).read_text(encoding="utf-8"),
