@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -48,8 +49,8 @@ class RepairRunner:
         """An empty search path signals dry-run: do not execute anything."""
         return self._search_path is not None and len(self._search_path) == 0
 
-    def _argv_for_command(self, command: str) -> tuple[list[str], str | None]:
-        """Return (argv, cwd) for *command*.
+    def _argv_for_command(self, command: str) -> tuple[list[str], str | None, bool]:
+        """Return (argv, cwd, is_megaplan_subcommand) for *command*.
 
         Megaplan subcommands are rewritten to ``python -m arnold_pipelines.megaplan``,
         or to a ``megaplan`` executable found on the search path if one exists.
@@ -57,11 +58,11 @@ class RepairRunner:
         which the command should run, or None for the current directory.
         """
         if self._is_dry_run():
-            return [], None
+            return [], None, False
 
-        parts = command.split()
+        parts = shlex.split(command)
         if not parts:
-            return [], None
+            return [], None, False
 
         first = parts[0]
         # Detect an explicit project-dir marker injected by the CLI: "cd /path && cmd"
@@ -77,18 +78,27 @@ class RepairRunner:
             # otherwise fall back to the module invocation.
             megaplan_exe = shutil.which("megaplan", path=self._search_path)
             if megaplan_exe is not None:
-                return [megaplan_exe] + parts, cwd
-            return [self._python_bin, "-m", "arnold_pipelines.megaplan"] + parts, cwd
+                return [megaplan_exe] + parts, cwd, True
+            return [self._python_bin, "-P", "-m", "arnold_pipelines.megaplan"] + parts, cwd, True
 
         # Bare subcommands like "rm" or "kill" that are not standalone executables
         # but are safe shell builtins/utilities.
         if first in {"rm", "kill"}:
-            return ["/bin/bash", "-c", " ".join(parts)], cwd
+            return ["/bin/bash", "-c", " ".join(parts)], cwd, False
 
         executable = shutil.which(first, path=self._search_path)
         if executable is None:
-            return [], cwd
-        return [executable] + parts[1:], cwd
+            return [], cwd, False
+        return [executable] + parts[1:], cwd, False
+
+    def _megaplan_subcommand_env(self, base: dict[str, str] | None = None) -> dict[str, str]:
+        """Anchor Megaplan subprocesses to the editable install engine checkout."""
+
+        from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env
+
+        env = megaplan_engine_env(base)
+        env["PYTHONSAFEPATH"] = "1"
+        return env
 
     def run(
         self,
@@ -98,7 +108,7 @@ class RepairRunner:
         project_dir: str | None = None,
     ) -> RepairResult:
         """Execute *command* and return a structured result."""
-        argv, argv_cwd = self._argv_for_command(command)
+        argv, argv_cwd, is_megaplan_subcommand = self._argv_for_command(command)
         if not argv:
             return RepairResult(
                 status="command_unavailable",
@@ -115,7 +125,11 @@ class RepairRunner:
             except Exception:
                 pass
 
-        env = os.environ.copy()
+        env = (
+            self._megaplan_subcommand_env(os.environ.copy())
+            if is_megaplan_subcommand
+            else os.environ.copy()
+        )
         if cwd is not None:
             env["MEGAPLAN_PLAN_DIR"] = str(plan_dir) if plan_dir else cwd
             env["MEGAPLAN_PROJECT_DIR"] = cwd
