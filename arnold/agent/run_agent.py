@@ -880,6 +880,34 @@ def configure_logging(
                 logging.getLogger(quiet_logger).setLevel(logging.ERROR)
 
 
+def _infer_provider_from_base_url(base_url_lower: str) -> str | None:
+    if not base_url_lower:
+        return None
+    if "chatgpt.com/backend-api/codex" in base_url_lower:
+        return "openai-codex"
+    if "openrouter" in base_url_lower:
+        return "openrouter"
+    if "nousresearch" in base_url_lower:
+        return "nous"
+    if "api.deepseek.com" in base_url_lower:
+        return "deepseek"
+    if "api.kimi.com" in base_url_lower or "api.moonshot.ai" in base_url_lower:
+        return "kimi-coding"
+    if "api.z.ai" in base_url_lower:
+        return "zai"
+    if "api.fireworks.ai" in base_url_lower:
+        return "fireworks"
+    if "api.minimax.io" in base_url_lower:
+        return "minimax"
+    if "api.minimaxi.com" in base_url_lower:
+        return "minimax-cn"
+    if "api.xiaomimimo.com" in base_url_lower:
+        return "mimo"
+    if "api.githubcopilot.com" in base_url_lower:
+        return "copilot"
+    return None
+
+
 class AIAgent:
     """
     AI Agent with tool calling capabilities.
@@ -1025,6 +1053,10 @@ class AIAgent:
         self.base_url = base_url or OPENROUTER_BASE_URL
         provider_name = provider.strip().lower() if isinstance(provider, str) and provider.strip() else None
         self.provider = provider_name or "openrouter"
+        if provider_name is None:
+            inferred_provider = _infer_provider_from_base_url(self._base_url_lower)
+            if inferred_provider:
+                self.provider = inferred_provider
         self.acp_command = acp_command or command
         self.acp_args = list(acp_args or args or [])
         if api_mode in {"chat_completions", "codex_responses", "anthropic_messages"}:
@@ -1233,12 +1265,22 @@ class AIAgent:
             else:
                 # No explicit creds — use the centralized provider router
                 from arnold.agent.agent.auxiliary_client import resolve_provider_client
-                _routed_client, _ = resolve_provider_client(
+                _routed_client, routed_model = resolve_provider_client(
                     self.provider or "auto", model=self.model, raw_codex=True)
                 if _routed_client is not None:
+                    routed_provider = getattr(_routed_client, "_resolved_provider", None)
+                    if isinstance(routed_provider, str) and routed_provider.strip():
+                        self.provider = routed_provider.strip().lower()
+                    if isinstance(routed_model, str) and routed_model.strip():
+                        self.model = routed_model.strip()
+                    if self.provider == "openai-codex":
+                        self.api_mode = "codex_responses"
+                    elif self.api_mode == "codex_responses":
+                        self.api_mode = "chat_completions"
+                    self.base_url = str(_routed_client.base_url)
                     client_kwargs = {
                         "api_key": _routed_client.api_key,
-                        "base_url": str(_routed_client.base_url),
+                        "base_url": self.base_url,
                     }
                     # Preserve any default_headers the router set
                     if hasattr(_routed_client, '_default_headers') and _routed_client._default_headers:
