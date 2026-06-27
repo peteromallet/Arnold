@@ -95,9 +95,11 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'RUN_CWD="$ARNOLD_SRC"' in text
     assert 'cd "$RUN_CWD"' in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
-    assert "Brief Codex through that skill with the core issue, evidence, constraints, and plausible hypotheses" in text
-    assert "Do not prescribe the implementation" in text
-    assert "use the \\$subagent-launcher skill" in text
+    assert "Your Codex brief should contain the core issue, evidence, constraints, and plausible hypotheses only" in text
+    assert "do not prescribe the implementation" in text
+    assert "First read the \\$subagent-launcher SKILL.md" in text
+    assert "then dispatch Codex through that skill" in text
+    assert "If \\$subagent-launcher or Codex cannot be launched" in text
 
 
 def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() -> None:
@@ -108,5 +110,5 @@ def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() ->
     assert "# Repair Principles" in wrapper
     assert "Codex phases must run through the Codex plan/CLI path" in principles
     assert "DeepSeek phases must run through the direct DeepSeek API credentials" in principles
-    assert "Deep investigations and source repairs must use the `$subagent-launcher` skill" in principles
+    assert "read the launcher skill instructions" in principles
     assert "brief Codex through `$subagent-launcher`" in principles

@@ -118,15 +118,16 @@ $PRINCIPLES_TEXT
 1. Read the facts file and inspect the machine/repo as needed.
 2. Determine why this run stopped or became unhealthy. Do not assume a restart is enough.
 3. Before modifying Arnold source, confirm $ARNOLD_SRC is on $SYNC_BRANCH. Do not let MEGAPLAN_REF or the active workflow workspace branch choose the editable-install branch.
-4. If there is an Arnold/cloud/watchdog/root-cause bug that needs deep investigation or source changes, use the \$subagent-launcher skill shown in the facts file. Brief Codex through that skill with the core issue, evidence, constraints, and plausible hypotheses. Do not prescribe the implementation; let Codex determine and apply the solution in $ARNOLD_SRC. The fix belongs in the editable install source, not only in the run workspace.
-5. Validate the fix with the smallest relevant checks. At minimum, confirm:
+4. If the issue needs deep investigation or source changes, do not continue the repair entirely in your own context. First read the \$subagent-launcher SKILL.md from the facts file, then dispatch Codex through that skill. Your Codex brief should contain the core issue, evidence, constraints, and plausible hypotheses only; do not prescribe the implementation. Codex should determine and apply the solution in $ARNOLD_SRC.
+5. If \$subagent-launcher or Codex cannot be launched, report that as a blocker with the exact command/error instead of continuing as if the repair happened.
+6. Validate the fix with the smallest relevant checks. At minimum, confirm:
    - python3 -c "import arnold_pipelines.megaplan.cloud.cli"
    - python3 -c "import arnold_pipelines.megaplan.chain"
    - any focused test or smoke command you identify as relevant.
-6. Commit and push the root-cause fix from $ARNOLD_SRC to $SYNC_BRANCH if source changes were made and validation passes.
-7. Refresh the Arnold install from $ARNOLD_SRC after a pushed/validated fix.
-8. Unblock/relaunch the affected run safely. Do not bypass true human approval gates, PR merge waits, or quality gates that require human judgment; report those as legitimate blockers.
-9. Re-check after relaunch. The goal is complete only when the run is running/healthy, complete, or blocked solely on a true human/quality gate.
+7. Commit and push the root-cause fix from $ARNOLD_SRC to $SYNC_BRANCH if source changes were made and validation passes.
+8. Refresh the Arnold install from $ARNOLD_SRC after a pushed/validated fix.
+9. Unblock/relaunch the affected run safely. Do not bypass true human approval gates, PR merge waits, or quality gates that require human judgment; report those as legitimate blockers.
+10. Re-check after relaunch. The goal is complete only when the run is running/healthy, complete, or blocked solely on a true human/quality gate.
 
 # Output Contract
 
