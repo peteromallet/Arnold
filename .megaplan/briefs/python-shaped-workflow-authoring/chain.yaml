@@ -1,5 +1,8 @@
 base_branch: native-python-working-tree
 
+anchors:
+  north_star: NORTHSTAR.md
+
 milestones:
   - label: m1-component-contract-grammar
     idea: .megaplan/briefs/python-shaped-workflow-authoring/m1-component-contract-grammar.md
