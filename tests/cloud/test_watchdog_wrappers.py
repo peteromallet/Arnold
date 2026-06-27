@@ -91,3 +91,5 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'RUN_CWD="$ARNOLD_SRC"' in text
     assert 'cd "$RUN_CWD"' in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
+    assert "profile `partnered-5` with the premium vendor set" in text
+    assert "Do not \"repair\" a Claude/Shannon dependency error by installing Shannon" in text
