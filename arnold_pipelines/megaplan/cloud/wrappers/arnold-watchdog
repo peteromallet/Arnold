@@ -447,7 +447,7 @@ session_health_status() {
     return 0
   fi
 
-  if ps -eo args | grep -E "[p]ython[0-9.]* -m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+  if ps -eo args | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
     echo "alive"
     return 0
   fi
@@ -521,7 +521,7 @@ launch_chain_tick() {
   fi
   launch_script="$(mktemp)"
   quoted_command=$(
-    printf 'cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q --one >> %q 2>&1' \
+    printf 'cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
       "$SRC_DIR" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
   )
   cat > "$launch_script" <<EOF

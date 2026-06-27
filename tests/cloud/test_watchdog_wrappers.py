@@ -35,7 +35,7 @@ def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy()
 
     pane_check = "tmux capture-pane"
     retry_check = "retrying_failure"
-    process_check = 'grep -E "[p]ython[0-9.]* -m arnold_pipelines.megaplan chain start"'
+    process_check = 'grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start"'
 
     assert text.index(pane_check) < text.index(process_check)
     assert text.index(retry_check) < text.index(process_check)
@@ -48,7 +48,8 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     assert "cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-}" in text
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in text
     assert '"$SRC_DIR" "$remote_spec" "$workspace"' in text
-    assert "--project-dir %q --one" in text
+    assert "--project-dir %q >> %q 2>&1" in text
+    assert "--project-dir %q --one" not in text
 
 
 def test_watchdog_syncs_extra_skills_to_agent_skill_dirs() -> None:
