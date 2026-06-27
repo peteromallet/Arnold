@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-jury/schemas/final_judgment_schema.json",
+  "title": "Final Judgment",
+  "description": "The Blind Synthesizer's final output after aggregating all juror verdicts. Surfaces consensus, amplifies dissent, and produces an actionable final verdict.",
+  "type": "object",
+  "required": [
+    "final_verdict",
+    "final_confidence",
+    "verdict_rationale",
+    "jury_composition",
+    "verdict_distribution",
+    "consensus_points",
+    "amplified_dissents",
+    "fatal_flaw_analysis",
+    "information_gaps_consolidated",
+    "action_items",
+    "confidence_calibration"
+  ],
+  "properties": {
+    "final_verdict": {
+      "type": "string",
+      "enum": ["APPROVE", "CONDITIONAL_APPROVE", "SPLIT_DECISION", "CONDITIONAL_REJECT", "REJECT", "IMPASSE"],
+      "description": "SPLIT_DECISION = irreducible disagreement with no clear resolution. IMPASSE = insufficient information to decide."
+    },
+    "final_confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Calibrated confidence in the final verdict. Must be justified against juror confidences."
+    },
+    "verdict_rationale": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "Narrative explanation of the synthesis process and final conclusion."
+    },
+    "jury_composition": {
+      "type": "object",
+      "required": ["total_jurors", "valid_verdicts", "dropped_verdicts", "dropped_reasons"],
+      "properties": {
+        "total_jurors": {"type": "integer", "minimum": 3, "maximum": 5},
+        "valid_verdicts": {"type": "integer", "minimum": 0, "maximum": 5},
+        "dropped_verdicts": {"type": "integer", "minimum": 0},
+        "dropped_reasons": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "juror": {"type": "string"},
+              "reason": {"type": "string", "enum": ["TIMEOUT", "INVALID_JSON", "PARSE_ERROR", "CONTENT_POLICY"]}
+            }
+          }
+        }
+      }
+    },
+    "verdict_distribution": {
+      "type": "object",
+      "required": ["APPROVE", "CONDITIONAL_APPROVE", "ABSTAIN", "CONDITIONAL_REJECT", "REJECT"],
+      "properties": {
+        "APPROVE": {"type": "integer", "minimum": 0},
+        "CONDITIONAL_APPROVE": {"type": "integer", "minimum": 0},
+        "ABSTAIN": {"type": "integer", "minimum": 0},
+        "CONDITIONAL_REJECT": {"type": "integer", "minimum": 0},
+        "REJECT": {"type": "integer", "minimum": 0}
+      }
+    },
+    "consensus_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point", "jurors_in_agreement", "strength"],
+        "properties": {
+          "point": {"type": "string", "description": "What jurors agree on"},
+          "jurors_in_agreement": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^Juror [A-E]$"},
+            "minItems": 2
+          },
+          "strength": {
+            "type": "string",
+            "enum": ["STRONG", "MODERATE", "WEAK"],
+            "description": "STRONG = unanimous or near-unanimous with high confidence. WEAK = bare majority with low confidence."
+          }
+        }
+      }
+    },
+    "polarized_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point", "position_a", "position_b", "cannot_resolve_without"],
+        "properties": {
+          "point": {"type": "string"},
+          "position_a": {
+            "type": "object",
+            "properties": {
+              "jurors": {"type": "array", "items": {"type": "string"}},
+              "position": {"type": "string"}
+            }
+          },
+          "position_b": {
+            "type": "object",
+            "properties": {
+              "jurors": {"type": "array", "items": {"type": "string"}},
+              "position": {"type": "string"}
+            }
+          },
+          "cannot_resolve_without": {"type": "string"}
+        }
+      }
+    },
+    "amplified_dissents": {
+      "type": "array",
+      "description": "THE CORE OF THE SYSTEM. Every dissent is surfaced and evaluated. A fatal dissent can override the majority.",
+      "items": {
+        "type": "object",
+        "required": [
+          "dissenting_juror",
+          "concern",
+          "severity",
+          "synthesizer_assessment",
+          "overrides_majority"
+        ],
+        "properties": {
+          "dissenting_juror": {"type": "string", "pattern": "^Juror [A-E]$"},
+          "concern": {"type": "string"},
+          "severity": {
+            "type": "string",
+            "enum": ["LOW", "MODERATE", "HIGH", "FATAL"],
+            "description": "FATAL = this single concern justifies rejecting the proposal regardless of majority vote."
+          },
+          "other_jurors_addressed": {"type": "boolean"},
+          "other_jurors_dismissed_for_good_reason": {
+            "type": ["boolean", "string"],
+            "enum": [true, false, "PARTIALLY"]
+          },
+          "synthesizer_assessment": {"type": "string"},
+          "overrides_majority": {
+            "type": "boolean",
+            "description": "If true, this dissent alone changes the final verdict from what the majority would dictate."
+          },
+          "override_rationale": {"type": "string"}
+        }
+      }
+    },
+    "fatal_flaw_analysis": {
+      "type": "object",
+      "required": ["any_fatal_flaws_found", "flaws"],
+      "properties": {
+        "any_fatal_flaws_found": {"type": "boolean"},
+        "flaws": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["identified_by", "description", "synthesizer_validation", "validation_rationale"],
+            "properties": {
+              "identified_by": {"type": "string", "pattern": "^Juror [A-E]$"},
+              "description": {"type": "string"},
+              "corroborated_by": {"type": "array", "items": {"type": "string"}},
+              "contested_by": {"type": "array", "items": {"type": "string"}},
+              "synthesizer_validation": {
+                "type": "string",
+                "enum": ["VALIDATED", "DISPUTED", "UNCERTAIN"]
+              },
+              "validation_rationale": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "information_gaps_consolidated": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gap", "identified_by", "criticality"],
+        "properties": {
+          "gap": {"type": "string"},
+          "identified_by": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+          "criticality": {
+            "type": "string",
+            "enum": ["HIGH", "MEDIUM", "LOW"],
+            "description": "HIGH = decision should be PAUSED until this information is obtained."
+          },
+          "resolves": {"type": "string"}
+        }
+      }
+    },
+    "action_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "priority", "rationale"],
+        "properties": {
+          "action": {"type": "string"},
+          "priority": {"type": "string", "enum": ["IMMEDIATE", "HIGH", "MEDIUM", "LOW"]},
+          "rationale": {"type": "string"},
+          "precondition_for_decision": {"type": "boolean"}
+        }
+      }
+    },
+    "dissent_log": {
+      "type": "array",
+      "description": "Records each juror's self-dissent (they were all required to provide one). Useful for calibrating juror self-awareness.",
+      "items": {
+        "type": "object",
+        "required": ["juror", "their_verdict", "their_self_dissent"],
+        "properties": {
+          "juror": {"type": "string"},
+          "their_verdict": {"type": "string"},
+          "their_self_dissent": {"type": "string"},
+          "synthesizer_note": {"type": "string"}
+        }
+      }
+    },
+    "confidence_calibration": {
+      "type": "object",
+      "required": [
+        "juror_confidences",
+        "juror_confidence_mean",
+        "juror_confidence_std",
+        "verdict_entropy",
+        "final_confidence_justification"
+      ],
+      "properties": {
+        "juror_confidences": {
+          "type": "array",
+          "items": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+          "minItems": 3,
+          "maxItems": 5
+        },
+        "juror_confidence_mean": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "juror_confidence_std": {"type": "number", "minimum": 0.0},
+        "verdict_entropy": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Shannon entropy of verdict distribution. 0 = all same verdict. Higher = more disagreement."
+        },
+        "final_confidence_justification": {"type": "string"}
+      }
+    }
+  }
+}
