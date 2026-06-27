@@ -1251,6 +1251,8 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
 
     local_spec_path = Path(args.spec).expanduser().resolve()
     chain_spec = chain_module.load_spec(local_spec_path)
+    chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
+    chain_module.chain_spec.validate_paths(chain_spec, root, spec_path=local_spec_path)
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch

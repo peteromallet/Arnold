@@ -3151,9 +3151,18 @@ def run_chain_cli(
     if action == "status":
         try:
             spec = chain_spec.load_spec(spec_path)
+            anchor_requirement = chain_spec.validate_anchor_requirement(
+                spec,
+                spec_path,
+                require_anchor_override=getattr(args, "require_anchor", None),
+                missing_anchor_ack_override=getattr(args, "missing_anchor_ack", None),
+            )
+            chain_spec.validate_paths(spec, root, spec_path=spec_path)
             chain_state = chain_spec.load_chain_state(spec_path)
         except CliError as exc:
             return _emit_error(exc)
+        if anchor_requirement.warning:
+            writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
         runtime_overrides = chain_spec.load_runtime_policy(spec_path)
         effective_policy = chain_spec.effective_chain_policy(spec, runtime_overrides)
         summary = format_chain_status(spec, chain_state)
@@ -3167,6 +3176,11 @@ def run_chain_cli(
             "chain_state": chain_state.to_dict(),
             "summary": summary,
             "policy": effective_policy,
+            "anchor_requirement": {
+                "require_anchor": anchor_requirement.require_anchor,
+                "missing_anchor_ack": anchor_requirement.missing_anchor_ack,
+                "warning": anchor_requirement.warning,
+            },
         }
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0

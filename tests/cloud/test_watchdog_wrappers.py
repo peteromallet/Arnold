@@ -30,6 +30,18 @@ def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     assert 'health="$(session_health_status "$session" "$workspace" "$remote_spec")"' in text
 
 
+def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    pane_check = "tmux capture-pane"
+    retry_check = "retrying_failure"
+    process_check = 'grep -E "[p]ython[0-9.]* -m arnold_pipelines.megaplan chain start"'
+
+    assert text.index(pane_check) < text.index(process_check)
+    assert text.index(retry_check) < text.index(process_check)
+    assert '"error": "invalid_spec"' in text
+
+
 def test_watchdog_syncs_extra_skills_to_agent_skill_dirs() -> None:
     text = _wrapper("arnold-watchdog")
 
