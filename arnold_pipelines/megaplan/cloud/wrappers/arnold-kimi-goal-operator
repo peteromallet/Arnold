@@ -101,8 +101,8 @@ The user's invariant is: workflows on this Hetzner worker should never pause une
 # Routing Invariant
 
 The cloud workflow should use its chain/profile routing. For current high-tier
-cloud epics this usually means profile `partnered-5` with the premium vendor set
-to `codex`, plus any explicit non-premium phase routes in the chain spec.
+cloud epics this usually means profile partnered-5 with the premium vendor set
+to codex, plus any explicit non-premium phase routes in the chain spec.
 Do not "repair" a Claude/Shannon dependency error by installing Shannon, Bun, or
 Claude dependencies unless the chain spec explicitly selects Claude. If a
 Codex-backed run falls through to Claude/Shannon, classify that as the root-cause
