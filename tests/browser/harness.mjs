@@ -162,6 +162,38 @@ class FakeElement {
     }
   }
 
+  setAttribute(name, value) {
+    const normalizedName = String(name || "");
+    const normalizedValue = String(value == null ? "" : value);
+    this.attributes[normalizedName] = normalizedValue;
+    if (normalizedName === "id") {
+      this.id = normalizedValue;
+    } else if (normalizedName === "class") {
+      this.className = normalizedValue;
+    } else if (normalizedName === "title") {
+      this.title = normalizedValue;
+    } else if (normalizedName.startsWith("data-")) {
+      this.dataset[normalizedName.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = normalizedValue;
+    }
+  }
+
+  getAttribute(name) {
+    const normalizedName = String(name || "");
+    if (normalizedName === "id") {
+      return this.id || null;
+    }
+    if (normalizedName === "title") {
+      return this.title || null;
+    }
+    if (normalizedName.startsWith("data-")) {
+      const value = this.dataset[normalizedName.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
+      return value == null ? null : String(value);
+    }
+    return Object.prototype.hasOwnProperty.call(this.attributes, normalizedName)
+      ? this.attributes[normalizedName]
+      : null;
+  }
+
   focus() {
     this.ownerDocument.activeElement = this;
   }
@@ -244,6 +276,10 @@ class FakeDocument {
   }
 
   createElement(tagName) {
+    return new FakeElement(this, tagName);
+  }
+
+  createElementNS(_namespace, tagName) {
     return new FakeElement(this, tagName);
   }
 
@@ -888,7 +924,12 @@ export async function createBrowserHarness({
 
   function findButtons(label) {
     const buttons = document.body.querySelectorAll(
-      (node) => node.tagName === "BUTTON" && node.textContent === label,
+      (node) => node.tagName === "BUTTON"
+        && (
+          node.textContent === label
+          || node.getAttribute?.("aria-label") === label
+          || node.title === label
+        ),
     );
     const agentPanelOpen = document.getElementById("vibecomfy-agent-panel-root")?.dataset?.open === "1";
     return buttons.slice().sort((left, right) => {

@@ -5689,7 +5689,8 @@ test("Lifecycle B2/B5 rebaseline sync blocks submit while pending or in flight",
     await waitFor(() => rebaselineBodies.length === 1);
     assert.equal(submitButton.disabled, true);
     assert.equal(undoButton.disabled, true);
-    assert.equal(undoButton.textContent, "Undo Rebaseline...");
+    assert.equal(undoButton.textContent, "");
+    assert.equal(undoButton.getAttribute("aria-label"), "Undo Rebaseline...");
     assert.equal(panel.state.inFlightRebaseline instanceof Promise, true);
     assert.equal(rebaselineBodies[0].last_known_baseline_graph_hash, "baseline-before");
     assert.equal(panel.state.rebaselinePending?.reason, "undo");
@@ -5723,7 +5724,8 @@ test("Lifecycle B2/B5 rebaseline sync blocks submit while pending or in flight",
     assert.equal(submitButton.disabled, false);
     assert.equal(harness.requests.filter((entry) => entry.url === "/vibecomfy/agent-executor").length, 0);
     assert.equal(undoButton.disabled, true);
-    assert.equal(undoButton.textContent, "Undo Last Apply");
+    assert.equal(undoButton.textContent, "");
+    assert.equal(undoButton.getAttribute("aria-label"), "Undo Last Apply");
     assert.doesNotMatch(harness.textDump(), /rebaseline pending: undo/);
   } finally {
     await harness.dispose();
@@ -6150,8 +6152,7 @@ test("VibeComfy turn audits move from persistent history cards into expanded bub
 
     // Apply turn 1
     await harness.clickButton("Apply");
-    const afterApplyText = harness.textDump();
-    assert.match(afterApplyText, /Undo Last Apply/);
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-undo")?.getAttribute("aria-label"), "Undo Last Apply");
     assert.ok(
       panel.state.auditArtifacts.some((artifact) => artifact.auditRef?.path === "/tmp/audit-turn-0001-accept.json"),
       "accept audit artifact should be retained",
@@ -14040,7 +14041,8 @@ test("Lifecycle C1 stop aborts the in-flight submit, leaves no candidate, and on
     await waitFor(() => /Candidate ready after retry\./.test(harness.textDump()));
     await harness.clickButton("Apply");
     await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-undo")?.style.display !== "none");
-    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-undo")?.textContent, "Undo Last Apply");
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-undo")?.textContent, "");
+    assert.equal(harness.document.getElementById("vibecomfy-agent-panel-undo")?.getAttribute("aria-label"), "Undo Last Apply");
 
     await harness.clickButton("Undo Last Apply");
     await waitFor(() => harness.document.getElementById("vibecomfy-agent-panel-undo")?.style.display === "none");

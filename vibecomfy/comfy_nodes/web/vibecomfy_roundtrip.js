@@ -3350,10 +3350,18 @@ function createAgentPanelShell() {
   applyBtn.id = PANEL_IDS.apply;
   const rejectBtn = button("Reject", () => rejectAgentCandidate(currentAgentPanel()));
   rejectBtn.id = PANEL_IDS.reject;
-  const undoBtn = button("Undo Last Apply", () => undoLastApply(currentAgentPanel()));
+  const undoBtn = button("", () => undoLastApply(currentAgentPanel()));
   undoBtn.id = PANEL_IDS.undo;
+  undoBtn.dataset.vibecomfyAction = "undo";
+  undoBtn.title = "Undo Last Apply";
+  undoBtn.setAttribute("aria-label", "Undo Last Apply");
+  undoBtn.appendChild(makeUndoIcon());
   const newConvBtn = button("New conversation", () => newAgentConversation(currentAgentPanel()));
   newConvBtn.id = "vibecomfy-agent-panel-new-conversation";
+  submitBtn.dataset.vibecomfyAction = "submit";
+  stopBtn.dataset.vibecomfyAction = "stop";
+  applyBtn.dataset.vibecomfyAction = "apply";
+  rejectBtn.dataset.vibecomfyAction = "reject";
 
   // Keep all action buttons on a single line; stretch them to share the width
   // and shrink (with an ellipsis) rather than wrap when the panel is narrow.
@@ -3364,12 +3372,18 @@ function createAgentPanelShell() {
     b.style.overflow = "hidden";
     b.style.textOverflow = "ellipsis";
   }
+  Object.assign(undoBtn.style, {
+    flex: "0 0 34px",
+    width: "34px",
+    minWidth: "34px",
+    padding: "7px 0",
+  });
 
+  composerButtons.appendChild(undoBtn);
   composerButtons.appendChild(submitBtn);
   composerButtons.appendChild(stopBtn);
   composerButtons.appendChild(applyBtn);
   composerButtons.appendChild(rejectBtn);
-  composerButtons.appendChild(undoBtn);
   composerButtons.appendChild(newConvBtn);
   const havingIssuesBtn = button("?", () => showIssueModal(currentAgentPanel()));
   havingIssuesBtn.id = PANEL_IDS.havingIssues;
@@ -11237,6 +11251,28 @@ function button(label, onClick) {
     justifyContent: "center",
   });
   return node;
+}
+
+function makeUndoIcon() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 24 24");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("focusable", "false");
+  Object.assign(svg.style, {
+    display: "block",
+    flex: "0 0 auto",
+  });
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M9 7H5v4M5.5 10.5A7 7 0 1 0 8 5.3");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "2");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
+  svg.appendChild(path);
+  return svg;
 }
 
 function makeOverlay() {

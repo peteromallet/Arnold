@@ -231,11 +231,11 @@ export function syncComposerButtons(
     return;
   }
   const orderedButtons = [
+    panel.buttons.undo,
     panel.buttons.submit,
     panel.buttons.stop,
     panel.buttons.apply,
     panel.buttons.reject,
-    panel.buttons.undo,
     panel.buttons.newConversation,
   ];
   for (const btn of orderedButtons) {
@@ -396,12 +396,16 @@ export function renderComposerActions(panel, deps = {}) {
     || applying
     || Boolean(panel.state.inFlightRebaseline)
     || (rebaselinePending && !undoPending);
-  panel.buttons.undo.textContent =
+  const undoLabel =
     panel.state.inFlightRebaseline && undoPending
       ? "Undo Rebaseline..."
       : undoPending
         ? "Retry Undo Rebaseline"
         : "Undo Last Apply";
+  panel.buttons.undo.title = undoLabel;
+  if (typeof panel.buttons.undo.setAttribute === "function") {
+    panel.buttons.undo.setAttribute("aria-label", undoLabel);
+  }
   if (panel.buttons.newConversation) {
     // Disabled while a turn is processing; the in-flight escape hatch is Stop.
     panel.buttons.newConversation.disabled =
