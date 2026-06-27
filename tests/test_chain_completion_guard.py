@@ -139,9 +139,13 @@ def _record() -> dict[str, object]:
 def _write_chain_spec(root: Path) -> Path:
     idea = root / "idea.md"
     idea.write_text("ship milestone\n", encoding="utf-8")
+    north_star = root / "NORTHSTAR.md"
+    north_star.write_text("north star\n", encoding="utf-8")
     spec_path = root / "chain.yaml"
     spec_path.write_text(
         "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
         "milestones:\n"
         "  - label: m1\n"
         f"    idea: {idea}\n"
@@ -249,7 +253,18 @@ def test_authoritative_finalize_json_overrides_empty_scratch_template(
         finalize_tasks=[{"id": "T1"}],
     )
     (plan_dir / "finalize.json").write_text(
-        json.dumps({"tasks": [{"id": "T1"}]}) + "\n",
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                    }
+                ]
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     (plan_dir / "finalize_output.json").write_text(
