@@ -238,6 +238,35 @@ def test_empty_finalize_tasks_and_no_execution_batch_blocks(tmp_path: Path) -> N
     assert "no execution_batch_*.json" in reason
 
 
+def test_authoritative_finalize_json_overrides_empty_scratch_template(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    plan_dir = _write_plan(
+        tmp_path,
+        base_sha=base,
+        finalize_tasks=[{"id": "T1"}],
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": [{"id": "T1"}]}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize_output.json").write_text(
+        json.dumps({"tasks": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        _record(),
+        implementation_milestone=True,
+    )
+
+    assert ok is True
+    assert "finalize.json tasks is non-empty" in reason
+
+
 def test_empty_semantic_diff_from_milestone_base_blocks(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
