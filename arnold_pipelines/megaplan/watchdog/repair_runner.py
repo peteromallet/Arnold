@@ -49,6 +49,20 @@ class RepairRunner:
         """An empty search path signals dry-run: do not execute anything."""
         return self._search_path is not None and len(self._search_path) == 0
 
+    @staticmethod
+    def _with_default_profile(parts: list[str]) -> list[str]:
+        """Inject ``--profile partnered-5`` for allowlisted repair subcommands.
+
+        Megaplan repair commands (``doctor``/``auto``/``resume``/``chain``) inherit
+        the engine default profile when none is given. The meta-loop repair layer
+        runs under the partnered-5 profile (validated at
+        ``arnold_pipelines/megaplan/profiles/partnered-5.toml``); route repairs
+        through it unless the caller already pinned a ``--profile``.
+        """
+        if any(p == "--profile" or p.startswith("--profile=") for p in parts):
+            return parts
+        return parts + ["--profile", "partnered-5"]
+
     def _argv_for_command(self, command: str) -> tuple[list[str], str | None, bool]:
         """Return (argv, cwd, is_megaplan_subcommand) for *command*.
 
@@ -98,6 +112,12 @@ class RepairRunner:
 
         env = megaplan_engine_env(base)
         env["PYTHONSAFEPATH"] = "1"
+        # Meta-loop repairs default to the validated partnered-5 profile
+        # (arnold_pipelines/megaplan/profiles/partnered-5.toml). Plan configs that
+        # pin an explicit profile still win; this only fills the gap when a
+        # repair context would otherwise inherit the engine default "partnered".
+        env.setdefault("MEGAPLAN_DEFAULT_PROFILE", "partnered-5")
+        env.setdefault("MEGAPLAN_REPAIR_PROFILE", "partnered-5")
         return env
 
     def run(

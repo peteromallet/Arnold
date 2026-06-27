@@ -604,6 +604,146 @@ print(
 PY
 }
 
+plan_progress_stall_status() {
+  local workspace="$1"
+  python3 - "$workspace" "$MARKER_DIR" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+marker_dir = pathlib.Path(sys.argv[2])
+
+# Env-tunable thresholds (defaults from the cloud-watchdog progress-stall contract).
+ITER_MAX = int(os.environ.get("CLOUD_WATCHDOG_STALL_ITERATIONS", "8"))
+ATTEMPT_MAX = int(os.environ.get("CLOUD_WATCHDOG_STALL_ATTEMPTS", "10"))
+PLAN_GROWTH_MINS = int(os.environ.get("CLOUD_WATCHDOG_STALL_PLANGROWTH_MINS", "15"))
+EVENTS_MINS = int(os.environ.get("CLOUD_WATCHDOG_STALL_EVENTS_MINS", "10"))
+
+plans_dir = workspace / ".megaplan" / "plans"
+state_files = sorted(
+    plans_dir.glob("*/state.json"),
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+if not state_files:
+    print("ok")
+    raise SystemExit(0)
+
+state_path = state_files[0]
+plan_dir = state_path.parent
+plan_name = plan_dir.name
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"stall_unreadable:{plan_name}:{exc}")
+    raise SystemExit(0)
+
+now = dt.datetime.now(dt.timezone.utc)
+
+def _age_minutes(mtime_ts):
+    if not mtime_ts:
+        return None
+    try:
+        when = dt.datetime.fromtimestamp(mtime_ts, tz=dt.timezone.utc)
+    except (OSError, ValueError, OverflowError):
+        return None
+    return max(0, int((now - when).total_seconds() // 60))
+
+iteration = int(state.get("iteration") or 0)
+# Top-level iteration can lag the internal milestone counter; the recovery
+# layer records the live milestone iteration in latest_failure.metadata.iteration.
+latest_failure = state.get("latest_failure") or {}
+failure_meta = latest_failure.get("metadata") or {}
+milestone_iteration = iteration
+meta_iter = failure_meta.get("iteration")
+if isinstance(meta_iter, (int, float)) and meta_iter > milestone_iteration:
+    milestone_iteration = int(meta_iter)
+stall_count = int(failure_meta.get("stall_count") or 0)
+
+active_step = state.get("active_step") or {}
+attempt = int(active_step.get("attempt") or 0)
+
+plan_v_files = sorted(plan_dir.glob("plan_v*.md"))
+plan_v_count = len(plan_v_files)
+events_path = plan_dir / "events.ndjson"
+events_mtime = events_path.stat().st_mtime if events_path.exists() else 0
+
+# Tick-over-tick snapshot for "no growth while iteration advances" detection.
+snapshot_dir = marker_dir
+snapshot_dir.mkdir(parents=True, exist_ok=True)
+snapshot_path = snapshot_dir / f"{plan_name}.progress.json"
+prev = {}
+if snapshot_path.exists():
+    try:
+        prev = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        prev = {}
+
+unchanged_ticks = 0
+prev_iter = int(prev.get("iteration") or -1)
+prev_plan_count = int(prev.get("plan_v_count") or -1)
+if prev:
+    if plan_v_count == prev_plan_count and milestone_iteration >= prev_iter:
+        unchanged_ticks = int(prev.get("unchanged_ticks") or 0) + 1
+    elif plan_v_count != prev_plan_count:
+        unchanged_ticks = 0
+    else:
+        unchanged_ticks = int(prev.get("unchanged_ticks") or 0)
+
+snapshot = {
+    "iteration": milestone_iteration,
+    "plan_v_count": plan_v_count,
+    "events_mtime": events_mtime,
+    "unchanged_ticks": unchanged_ticks,
+    "ts": now.isoformat(),
+}
+try:
+    snapshot_path.write_text(json.dumps(snapshot, sort_keys=True) + "\n", encoding="utf-8")
+except Exception:
+    pass
+
+newest_plan_age = None
+if plan_v_files:
+    newest_mtime = max(p.stat().st_mtime for p in plan_v_files)
+    newest_plan_age = _age_minutes(newest_mtime)
+events_age = _age_minutes(events_mtime)
+
+signals = []
+if milestone_iteration >= ITER_MAX:
+    signals.append(f"iteration={milestone_iteration}>={ITER_MAX}")
+if attempt and attempt >= ATTEMPT_MAX:
+    signals.append(f"active_step.attempt={attempt}>={ATTEMPT_MAX}")
+if stall_count >= 3:
+    signals.append(f"stall_count={stall_count}")
+if (
+    unchanged_ticks >= 2
+    and milestone_iteration > prev_iter
+    and plan_v_count == prev_plan_count
+):
+    signals.append(f"plan_v_count={plan_v_count} unchanged-{unchanged_ticks}-ticks")
+if newest_plan_age is not None and newest_plan_age >= PLAN_GROWTH_MINS and milestone_iteration >= max(2, ITER_MAX - 2):
+    signals.append(f"plan_v_unchanged_{newest_plan_age}m")
+if events_age is not None and events_age >= EVENTS_MINS and state.get("current_state") not in {None, "completed", "abandoned", "awaiting_review"}:
+    signals.append(f"events_stale={events_age}m")
+
+if not signals:
+    print("ok")
+    raise SystemExit(0)
+
+detail = " ".join(signals)
+print(
+    f"progress_stall:{plan_name}:"
+    f"iteration={iteration}:"
+    f"attempt={attempt}:"
+    f"plan_v_count={plan_v_count}:"
+    f"{detail}"
+)
+PY
+}
+
 repair_unhealthy_session() {
   local session="$1"
   local workspace="$2"
@@ -661,6 +801,12 @@ launch_chain_tick() {
         report_item "$report_items" "$session" "repair" "repair_unavailable" "$phase_health" "$workspace" "$remote_spec"
       fi
       return 0
+    fi
+    local stall_health
+    stall_health="$(plan_progress_stall_status "$workspace")"
+    if [[ "$stall_health" != "ok" ]]; then
+      log "progress stall flagged session=$session detail=$stall_health"
+      report_item "$report_items" "$session" "observe" "progress_stall" "$stall_health" "$workspace" "$remote_spec"
     fi
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
