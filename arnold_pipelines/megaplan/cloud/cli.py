@@ -793,6 +793,7 @@ def _cloud_chain_launch_provenance(
 
 CHAIN_SESSION_NAME = "megaplan-chain"
 _CHAIN_LOG_RELATIVE = ".megaplan/cloud-chain.log"
+_CLOUD_HOT_ENV_PATH = "/workspace/.cloud-hot-env"
 _CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
 _CHAIN_VERIFY_ATTEMPTS = 6
 _CHAIN_VERIFY_SLEEP_SECONDS = 5
@@ -1106,10 +1107,13 @@ def _chain_start_command(
         if project_dir
         else shlex.quote(log_relative)
     )
-    prefix = ""
+    prefix = (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
     if engine_dir:
         engine_path = shlex.quote(engine_dir)
-        prefix = f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
     return (
         f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
         f">> {log_target} 2>&1"
