@@ -1,3 +1,5 @@
+// BROWSER/UI E2E TESTS.
+//
 // ── agent_panel_layout.spec.mjs ─────────────────────────────────────────────
 // Playwright layout spec: agent panel geometry, scroll, composer, and
 // error-surface assertions.

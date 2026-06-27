@@ -1,3 +1,5 @@
+// BROWSER/UI E2E TESTS.
+//
 import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
 import {

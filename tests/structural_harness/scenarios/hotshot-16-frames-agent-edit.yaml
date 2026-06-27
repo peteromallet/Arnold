@@ -12,20 +12,20 @@ tags:
   - hotshot
   - registry
 assessment:
-  enforced:
-    - "agent_edit_result.json parses as valid JSON with ok=true."
-    - "candidate.ui.json contains at least one node whose type is ADE_AnimateDiffLoaderWithContext or ADE_UseEvolvedSampling."
-    - "messages.jsonl contains a workflow research call with sources=[\"workflows\"] before any registry research call."
-    - "messages.jsonl contains a later research call with sources=[\"registry\"] before the add-node batch."
-    - "actions.jsonl contains op=agent-edit.run, op=research source=workflows, op=research source=registry, and op=add_node entries."
+  subjective: true
+  enforced: []
   graded:
-    - "The candidate graph adapts the workflow precedent and preserves unresolved registry-backed Hotshot/AnimateDiff custom-node classes instead of replacing Hotshot with an unrelated installed node."
+    - "Fulfillment: Did the agent-edit actually switch the workflow toward generating 16 frames with Hotshot? The candidate graph should include Hotshot/AnimateDiff custom nodes (ADE_AnimateDiffLoaderWithContext and ADE_UseEvolvedSampling) and should not have replaced the user's Hotshot request with unrelated installed nodes."
+    - "Research discipline: Was the research sequence sensible and efficient? The agent should search workflow precedent first (sources=[\"workflows\"]), then registry/schema for missing classes (sources=[\"registry\"]), then perform edits — without redundant or circular searches."
+    - "Wiring plausibility: Are the added nodes placed and wired in a way that could plausibly inject Hotshot/AnimateDiff motion into the existing sampler path, or is the edit structurally incomplete?"
+    - "Explanation quality: Does the agent report back what it did and why in terms the user can understand?"
   observed:
     - "The frozen evidence mentions ComfyUI-AnimateDiff-Evolved as the candidate custom-node pack."
+    - "Any inefficiencies, unnecessary searches, or missed opportunities to wire the new nodes."
 extras:
   flow_kind: direct_agent_edit_scripted
   required_frozen_evidence:
-    - evidence/agent_edit_result.json
-    - evidence/candidate.ui.json
-    - evidence/messages.jsonl
     - evidence/actions.jsonl
+    - evidence/messages.jsonl
+    - evidence/candidate.ui.json
+    - evidence/agent_edit_result.json

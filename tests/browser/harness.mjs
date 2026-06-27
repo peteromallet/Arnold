@@ -20,6 +20,9 @@ const EXECUTOR_PROGRESS_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes"
 const AGENT_TURN_FEED_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_turn_feed.js");
 const AGENT_STATUS_POLLER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_status_poller.js");
 const AGENT_CANDIDATE_ACTIONS_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "agent_candidate_actions.js");
+const ACTIVE_CANVAS_SCOPE_GUARD_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "active_canvas_scope_guard.js");
+const SCOPE_RESOLVER_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "scope_resolver.js");
+const SCOPED_SESSION_STORAGE_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "scoped_session_storage.js");
 const MARKDOWN_SOURCE = path.join(REPO_ROOT, "vibecomfy", "comfy_nodes", "web", "markdown.js");
 
 function clone(value) {
@@ -753,6 +756,9 @@ export async function createBrowserHarness({
   await writeFile(path.join(webRoot, "agent_turn_feed.js"), await readFile(AGENT_TURN_FEED_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "agent_status_poller.js"), await readFile(AGENT_STATUS_POLLER_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "agent_candidate_actions.js"), await readFile(AGENT_CANDIDATE_ACTIONS_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "active_canvas_scope_guard.js"), await readFile(ACTIVE_CANVAS_SCOPE_GUARD_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "scope_resolver.js"), await readFile(SCOPE_RESOLVER_SOURCE, "utf8"));
+  await writeFile(path.join(webRoot, "scoped_session_storage.js"), await readFile(SCOPED_SESSION_STORAGE_SOURCE, "utf8"));
   await writeFile(path.join(webRoot, "markdown.js"), await readFile(MARKDOWN_SOURCE, "utf8"));
 
   const apiEventListeners = {};

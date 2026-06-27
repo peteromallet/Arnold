@@ -107,17 +107,25 @@ if os.environ.get("VIBECOMFY_HEADLESS", "0") != "1":
     try:
         from server import PromptServer
 
-        _LOGGER.info("PromptServer imported; registering VibeComfy routes.")
+        # Guard against double registration. ComfyUI can import this module via
+        # multiple paths (e.g. the custom_nodes symlink and the package itself),
+        # which causes Python to execute it twice. PromptServer.instance is shared,
+        # so a single marker there prevents duplicate aiohttp routes.
+        if getattr(PromptServer.instance, "_vibecomfy_routes_registered", False):
+            _LOGGER.info("VibeComfy routes already registered; skipping.")
+        else:
+            PromptServer.instance._vibecomfy_routes_registered = True
+            _LOGGER.info("PromptServer imported; registering VibeComfy routes.")
 
-        @PromptServer.instance.routes.get("/vibecomfy/ping")
-        async def _vibecomfy_ping(request):  # type: ignore[no-untyped-def]
-            from aiohttp import web
+            @PromptServer.instance.routes.get("/vibecomfy/ping")
+            async def _vibecomfy_ping(request):  # type: ignore[no-untyped-def]
+                from aiohttp import web
 
-            return web.json_response({"status": "ok"})
+                return web.json_response({"status": "ok"})
 
-        from .agent import routes  # noqa: F401
+            from .agent import routes  # noqa: F401
 
-        _LOGGER.info("VibeComfy routes registered successfully.")
+            _LOGGER.info("VibeComfy routes registered successfully.")
 
     except ImportError as _route_import_exc:
         _LOGGER.warning(

@@ -5,7 +5,7 @@ prime state, dispatch actors in structural/no-GPU mode, freeze evidence packs,
 and classify success/failure from frozen evidence (not actor narrative).
 
 Structural/fake runs are deterministic contract tests, not live agentic tests.
-True live-agentic coverage belongs in ``tests.agentic_harness`` and must use a
+True live-agentic coverage belongs in ``tests.live_agentic_harness`` and must use a
 non-fake dispatcher that produces its own evidence.
 
 All imports from ``sisypy`` use the public API only — no sibling source reads.

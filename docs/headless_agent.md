@@ -1,4 +1,4 @@
-# Headless Agent Boundaries And Operator Commands
+# Headless And Live Agent Boundaries And Operator Commands
 
 This page defines the current headless agent lanes and the commands operators
 can run without starting the ComfyUI server. Keep these names precise:
@@ -12,7 +12,7 @@ headless path.
 |---|---|---|---|---|---|
 | Structural harness | `python -m tests.structural_harness.runner ...` | Deterministic fake/faking contract evidence | No | No | No |
 | Headless CLI/service | `python -m vibecomfy.agent ...`, `vibecomfy-agent ...` | Real executor path without HTTP route registration | No | No | Yes, unless blocked |
-| Live agentic harness | `python -m tests.agentic_harness.runner ...` | Scenario wrapper over the headless service with live-artifact guards | No | No | Yes for success |
+| Live agentic harness | `python -m tests.live_agentic_harness.runner ...` | Scenario wrapper over the headless service with live-artifact guards | No | No | Yes for success |
 | Browser harness | `pytest tests/browser/...` | Browser-facing JavaScript modules in the local test harness | No | No real browser | No |
 | Browser e2e | `node tests/e2e/run.mjs ...` | Real ComfyUI panel flow through Playwright Chromium | Yes | Yes | No, fixture provider is offline |
 
@@ -159,7 +159,7 @@ Use the live agentic harness when a scenario should only count as success if it
 produces real headless agentic artifacts:
 
 ```bash
-python -m tests.agentic_harness.runner \
+python -m tests.live_agentic_harness.runner \
   --tag live-headless-smoke \
   --json
 ```
@@ -167,15 +167,15 @@ python -m tests.agentic_harness.runner \
 Run against an explicit scenario directory and output root:
 
 ```bash
-python -m tests.agentic_harness.runner \
+python -m tests.live_agentic_harness.runner \
   --tag live-headless-smoke \
-  --scenarios-dir tests/agentic_harness/scenarios \
+  --scenarios-dir tests/live_agentic_harness/scenarios \
   --output-base out/agentic \
   --json
 ```
 
 Each scenario writes to `out/agentic/<tag>/<scenario_id>/` and is checked by
-`tests.agentic_harness.guard.guard_output_dir`. A live success requires all of:
+`tests.live_agentic_harness.guard.guard_output_dir`. A live success requires all of:
 
 - `flow_kind=live_agentic_headless`
 - `live=true`

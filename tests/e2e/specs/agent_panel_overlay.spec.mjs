@@ -1,3 +1,5 @@
+// BROWSER/UI E2E TESTS.
+//
 // ── agent_panel_overlay.spec.mjs ─────────────────────────────────────────────
 // Playwright overlay geometry spec: edited-node marker coverage and per-row
 // value-panel alignment through existing debug instrumentation.

@@ -2067,6 +2067,14 @@ def test_public_projection_helpers_do_not_leak_raw_rehydrate_fields() -> None:
     raw_latest_candidate = {
         **raw_response,
         "graph": {"nodes": [{"id": 1}], "links": []},
+        "report": {
+            "revision_evidence": {
+                "scoped_diff": {
+                    "summary": "1 changed node(s)",
+                    "changed_nodes": ["1"],
+                },
+            },
+        },
         "candidate": {"state": "candidate", "graph_hash": "graph-hash"},
     }
 
@@ -2143,6 +2151,18 @@ def test_public_projection_helpers_do_not_leak_raw_rehydrate_fields() -> None:
             }
         ),
     ]
+    assert public_latest_candidate(raw_latest_candidate)["report"] == raw_latest_candidate["report"]
+    assert (
+        public_chat_rehydrate_payload(
+            {
+                "ok": True,
+                "exists": True,
+                "session_id": "sess-1",
+                "latest_candidate": raw_latest_candidate,
+            }
+        )["latest_candidate"]["report"]
+        == raw_latest_candidate["report"]
+    )
 
     for value in public_values:
         assert value is not None

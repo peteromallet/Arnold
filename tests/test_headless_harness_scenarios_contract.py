@@ -1,3 +1,9 @@
+"""HEADLESS HARNESS CONTRACT TESTS.
+
+Contract tests for headless CLI/JSON/schema surfaces that do not need a live
+model, ComfyUI server, or browser.
+"""
+
 from __future__ import annotations
 
 import json
@@ -7,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from tests.agentic_harness.guard import guard_output_dir
+from tests.live_agentic_harness.guard import guard_output_dir
 
 
 def _read_json(path: Path) -> dict[str, Any]:

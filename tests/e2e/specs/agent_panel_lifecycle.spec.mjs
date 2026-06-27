@@ -1,3 +1,5 @@
+// BROWSER/UI E2E TESTS.
+//
 import { test, expect } from "@playwright/test";
 import {
   installFailureCapture,

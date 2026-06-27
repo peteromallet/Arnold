@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.agentic_harness.guard import guard_output_dir
+from tests.live_agentic_harness.guard import guard_output_dir
 from tests.harness_common import (
     DISPATCHER_FAKE,
     DISPATCHER_FAKING,

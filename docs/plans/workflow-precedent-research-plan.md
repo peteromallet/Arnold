@@ -882,7 +882,7 @@ Executor tests:
 - implementation still receives legacy `research_summary` and `research_sources`
   for compatibility.
 
-Agentic harness:
+Structural harness:
 
 - Update `ltx-i2v-audio-research-execute` so the evidence proves:
   - research found a local or Hivemind precedent;
@@ -909,4 +909,4 @@ Security tests:
 6. Refactor Hivemind upload into reusable code.
 7. Generate implementation briefs and pass them into `handle_agent_edit`.
 8. Add semantic task-satisfaction validation.
-9. Update executor and agentic harness tests.
+9. Update executor and structural harness tests.

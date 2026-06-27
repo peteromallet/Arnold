@@ -252,12 +252,12 @@ evidence; do not make compiled API JSON the reusable source of truth.
 | `ready_templates/` | Curated Python templates intended as starting points. |
 | `ready_templates/sources/` | Source ComfyUI workflows used for indexing, conversion, and coverage. |
 | `tests/structural_harness/` | Deterministic structural contract harness: adapter, runner, builders, scenarios, and briefs. |
-| `tests/agentic_harness/` | True live-agentic harness placeholder; no fake builders or scripted scenarios. |
+| `tests/live_agentic_harness/` | True live-agentic harness placeholder; no fake builders or scripted scenarios. |
 | `docs/` | Authoring, porting, runtime, testing, architecture, and migration docs. |
 | `docs/agent-skill/` | The single authored VibeComfy agent skill source. |
 | `scripts/` | Direct-run operational scripts, RunPod harnesses, sync helpers, and maintenance commands. |
 | `tools/` | Importable developer tools intended to run with `python -m tools.<name>`. |
-| `tests/` | Unit, integration, browser, parity, structural harness, and live-agentic placeholder tests. |
+| `tests/` | Unit, integration, browser, parity, structural harness, and live agentic harness tests. |
 | `.github/` | GitHub Actions workflows. |
 | `pyproject.toml`, `uv.lock` | Python package metadata and locked dependencies. |
 | `custom_nodes.lock` | Custom-node pack lockfile used by node install/restore flows. |

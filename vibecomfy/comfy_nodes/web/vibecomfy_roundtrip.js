@@ -13,7 +13,7 @@ import {
   saveScopeQueueGuardContext,
   getScopeQueueGuardContext,
   forgetScopeQueueGuardContext,
-} from \"./panel_runtime.js\";
+} from "./panel_runtime.js";
 import {
   consumeAgentPanelDirtySections,
   ensureScheduledAgentPanelDirtyFlush,
@@ -3311,7 +3311,7 @@ function createAgentPanelShell() {
     background: "#14161b",
   });
 
-  const promptRegion = panelSection(PANEL_IDS.promptRegion, "Prompt");
+  const promptRegion = panelSection(PANEL_IDS.promptRegion, "");
   promptRegion.section.style.border = "none";
   promptRegion.section.style.background = "transparent";
   promptRegion.section.style.padding = "0";
@@ -3371,25 +3371,25 @@ function createAgentPanelShell() {
   composerButtons.appendChild(rejectBtn);
   composerButtons.appendChild(undoBtn);
   composerButtons.appendChild(newConvBtn);
-  composer.appendChild(composerButtons);
-
-  const issueButtonRow = el("div");
-  Object.assign(issueButtonRow.style, {
-    display: "flex",
-    justifyContent: "center",
-  });
-  const havingIssuesBtn = button("Having issues?", () => showIssueModal(currentAgentPanel()));
+  const havingIssuesBtn = button("?", () => showIssueModal(currentAgentPanel()));
   havingIssuesBtn.id = PANEL_IDS.havingIssues;
+  havingIssuesBtn.title = "Having issues?";
+  if (typeof havingIssuesBtn.setAttribute === "function") {
+    havingIssuesBtn.setAttribute("aria-label", "Having issues?");
+  }
   setButtonEmphasis(havingIssuesBtn, true, "neutral");
   Object.assign(havingIssuesBtn.style, {
-    padding: "4px 7px",
-    fontSize: "10px",
+    flex: "0 0 28px",
+    width: "28px",
+    minWidth: "28px",
+    padding: "4px 0",
+    fontSize: "11px",
     color: "#9da1ac",
     background: "#171a20",
     borderColor: "#303541",
   });
-  issueButtonRow.appendChild(havingIssuesBtn);
-  composer.appendChild(issueButtonRow);
+  composerButtons.appendChild(havingIssuesBtn);
+  composer.appendChild(composerButtons);
 
   const composerNotice = el("div");
   composerNotice.id = PANEL_IDS.composerNotice;
@@ -3995,6 +3995,8 @@ async function _rehydrateChat(panel) {
         chatSessionPathResolved: payload.sessionPathResolved,
         chatDetailJsonPathResolved: payload.detailJsonPathResolved,
         sessionId: payload.sessionId,
+        latestTurnId: payload.latestTurnId,
+        latestCandidate: payload.latestCandidate,
       });
       if (successObligations.stale) {
         return;
@@ -4006,10 +4008,10 @@ async function _rehydrateChat(panel) {
       }
       fulfillAgentPanelCommitObligations(panel, successObligations, "rehydrate");
       resetThreadRenderState(panel);
-      renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD] });
       // ── T8: Pass requestScopeId so restoreLatestCandidateFromChat can
       // refuse cross-scope / cross-session candidate restores.
       restoreLatestCandidateFromChat(panel, payload, requestScopeId);
+      renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.META, RENDER_SECTIONS.THREAD] });
     } else {
       throw new Error(payload.raw?.error || "chat endpoint returned ok: false");
     }
@@ -4035,13 +4037,13 @@ async function _rehydrateChat(panel) {
 // sessionStorage map so the binding survives across panel reopens within
 // the same workflow scope.
 function _persistActiveSession(sessionId, scopeId = null) {
-  if (typeof sessionId === \"string\" && sessionId) {
+  if (typeof sessionId === "string" && sessionId) {
     _lsSet(LS_ACTIVE_SESSION_KEY, sessionId);
   }
   // ── T9: Also bind session → scope in sessionStorage ────────────────────
   const resolvedScopeId = scopeId || _activeScopeId();
   if (resolvedScopeId) {
-    if (typeof sessionId === \"string\" && sessionId) {
+    if (typeof sessionId === "string" && sessionId) {
       setScopedSessionId(resolvedScopeId, sessionId);
     }
   }
@@ -4099,6 +4101,14 @@ function restoreLatestCandidateFromChat(panel, payload, requestScopeId = null) {
 
   const eligibility = latestApplyCandidate?.eligibility;
   const normalizedEligibility = normalizeCandidateApplyEligibility(candidateGraph, eligibility);
+  if (
+    TERMINAL_CANDIDATE_STATES.has(String(latestApplyCandidate?.state || latest?.candidate?.state || latest?.state || ""))
+    || TERMINAL_CANDIDATE_ELIGIBILITY_REASONS.has(String(normalizedEligibility?.reason || eligibility?.reason || ""))
+    || latest?.action === "reject"
+    || latest?.action === "accept"
+  ) {
+    return;
+  }
   const restoredActionAllowed = Boolean(
     candidateGraph
     && (latestApplyCandidate?.applyable === true || normalizedEligibility?.applyable === true),
@@ -4158,7 +4168,7 @@ function restoreLatestCandidateFromChat(panel, payload, requestScopeId = null) {
 // ── T9: Return the active scope id from the current panel, if any. ────────
 function _activeScopeId() {
   const panel = currentAgentPanel();
-  if (panel?.state && typeof panel.state.chatScopeId === \"string\" && panel.state.chatScopeId) {
+  if (panel?.state && typeof panel.state.chatScopeId === "string" && panel.state.chatScopeId) {
     return panel.state.chatScopeId;
   }
   return null;
@@ -4302,6 +4312,8 @@ const BATCH_SOURCE_PRIORITY = {
   response: 2,
 };
 const BATCH_TERMINAL_STATUSES = new Set(["clarify", "done", "budget_exhausted"]);
+const TERMINAL_CANDIDATE_STATES = new Set(["accepted", "rejected", "superseded", "unknown"]);
+const TERMINAL_CANDIDATE_ELIGIBILITY_REASONS = new Set(["no_candidate", "superseded", "not_latest"]);
 
 function stableTurnSessionId(value) {
   return typeof value === "string" && value ? value : "none";
@@ -4523,10 +4535,6 @@ function outcomeIsNoop(outcome) {
   return Boolean(outcome && typeof outcome === "object" && outcome.kind === "noop");
 }
 
-function outcomeRequiresCustomNodes(outcome) {
-  return Boolean(outcome && typeof outcome === "object" && outcome.kind === "requires_custom_nodes");
-}
-
 function clarificationMessageFromOutcome(outcome, fallbackMessage = null) {
   if (!outcome || typeof outcome !== "object") {
     return fallbackMessage;
@@ -4662,6 +4670,9 @@ function normalizeChatRehydratePayload(rawPayload) {
     detailJsonPathResolved: typeof rawPayload.detailJsonPathResolved === "string"
       ? rawPayload.detailJsonPathResolved
       : (typeof rawPayload.detail_json_path_resolved === "string" ? rawPayload.detail_json_path_resolved : null),
+    latestTurnId: typeof rawPayload.latestTurnId === "string"
+      ? rawPayload.latestTurnId
+      : (typeof rawPayload.latest_turn_id === "string" ? rawPayload.latest_turn_id : null),
     latestCandidate:
       rawPayload.latestCandidate && typeof rawPayload.latestCandidate === "object"
         ? normalizeAgentEditResponse(rawPayload.latestCandidate, { endpoint: "chat:latest_candidate", allowLegacy: true })
@@ -6068,6 +6079,7 @@ function populateAgentBubbleDetail(target, panel, message, snapshot = null) {
 
 function collectDiffRows(report) {
   const ce = report?.change?.content_edits || {};
+  const scopedDiff = report?.revision_evidence?.scoped_diff || {};
   const rows = [];
   for (const uid of ce.preserved || []) {
     rows.push({ text: `preserved: ${uid}`, color: "#4caf50", title: null });
@@ -6108,11 +6120,38 @@ function collectDiffRows(report) {
       title: null,
     });
   }
+  if (!rows.length && typeof scopedDiff.summary === "string" && scopedDiff.summary.trim()) {
+    rows.push({ text: scopedDiff.summary.trim(), color: "#9ed0ff", title: null });
+  }
+  for (const nodeId of scopedDiff.changed_nodes || []) {
+    rows.push({ text: `changed_node: ${nodeId}`, color: "#ffc107", title: null });
+  }
+  for (const nodeId of scopedDiff.added_nodes || []) {
+    rows.push({ text: `added_node: ${nodeId}`, color: VC_COLORS.pending, title: null });
+  }
+  for (const nodeId of scopedDiff.removed_nodes || []) {
+    rows.push({ text: `removed_node: ${nodeId}`, color: "#ff7f7f", title: null });
+  }
+  for (const link of scopedDiff.added_links || []) {
+    rows.push({
+      text: `added_link: ${link?.origin_node ?? "?"}.${link?.origin_slot ?? "?"} -> ${link?.target_node ?? "?"}.${link?.target_slot ?? "?"}`,
+      color: "#4caf50",
+      title: safeJson(link),
+    });
+  }
+  for (const link of scopedDiff.removed_links || []) {
+    rows.push({
+      text: `removed_link: ${link?.origin_node ?? "?"}.${link?.origin_slot ?? "?"} -> ${link?.target_node ?? "?"}.${link?.target_slot ?? "?"}`,
+      color: "#ff7f7f",
+      title: safeJson(link),
+    });
+  }
   return rows;
 }
 
 function extractChangedNodeFeedback(report) {
   const ce = report?.change?.content_edits || {};
+  const scopedDiff = report?.revision_evidence?.scoped_diff || {};
   const items = [];
   for (const uid of ce.edited || []) {
     items.push({ uid, kind: "edited", color: "#ffc107", label: `Edited ${uid}` });
@@ -6144,6 +6183,15 @@ function extractChangedNodeFeedback(report) {
       label: `Virtual wire degraded ${uid || "unknown"}`,
       detail: item || null,
     });
+  }
+  for (const nodeId of scopedDiff.changed_nodes || []) {
+    items.push({ uid: String(nodeId), kind: "changed_node", color: "#ffc107", label: `Changed node ${nodeId}` });
+  }
+  for (const nodeId of scopedDiff.added_nodes || []) {
+    items.push({ uid: String(nodeId), kind: "added_node", color: VC_COLORS.pending, label: `Added node ${nodeId}` });
+  }
+  for (const nodeId of scopedDiff.removed_nodes || []) {
+    items.push({ uid: String(nodeId), kind: "removed_node", color: "#ff7f7f", label: `Removed node ${nodeId}` });
   }
   return items;
 }
@@ -7837,9 +7885,9 @@ function appendCandidateDetail(body, panel, message = null, snapshot = null) {
   }
   const affected = {
     preserved: rows.filter((item) => item.text.startsWith("preserved:")).length,
-    edited: rows.filter((item) => item.text.startsWith("edited:")).length,
-    added: rows.filter((item) => item.text.startsWith("new_auto_placed:")).length,
-    removed: rows.filter((item) => item.text.startsWith("removed:") || item.text.startsWith("removed_named:")).length,
+    edited: rows.filter((item) => item.text.startsWith("edited:") || item.text.startsWith("changed_node:")).length,
+    added: rows.filter((item) => item.text.startsWith("new_auto_placed:") || item.text.startsWith("added_node:") || item.text.startsWith("added_link:")).length,
+    removed: rows.filter((item) => item.text.startsWith("removed:") || item.text.startsWith("removed_named:") || item.text.startsWith("removed_node:") || item.text.startsWith("removed_link:")).length,
     helpers: rows.filter((item) => item.text.startsWith("stripped_helper:") || item.text.startsWith("virtual_wires_degraded:")).length,
     lowered: rows.filter((item) => item.text.startsWith("lowered:")).length,
   };
@@ -9160,7 +9208,7 @@ export function fulfillLifecycleTransitionObligations(panel, obligations = {}) {
   // the current prompt box content into the old scope's draft storage.
   if (obligations.departingScopeId) {
     const promptEl = getPanelElementById(panel, PANEL_IDS.prompt) || panel?.fields?.prompt;
-    const draftText = promptEl && typeof promptEl.value === \"string\" ? promptEl.value : \"\";
+    const draftText = promptEl && typeof promptEl.value === "string" ? promptEl.value : "";
     saveScopeDraft(obligations.departingScopeId, draftText || null);
     // ── T9: Save departing scope's queue guard context ──────────────────
     // The queue guard context lives on the runtime singleton, not on
@@ -9210,7 +9258,7 @@ export function fulfillLifecycleTransitionObligations(panel, obligations = {}) {
   // context before clearing, so scope B's guard survives new-conversation
   // or scope switch starting from scope A.
   if (obligations.queueGuardClearScope) {
-    const scopeId = typeof obligations.queueGuardClearScope === \"string\"
+    const scopeId = typeof obligations.queueGuardClearScope === "string"
       ? obligations.queueGuardClearScope
       : null;
     if (scopeId) {
@@ -9266,11 +9314,11 @@ function renderLifecycleTransition(panel, obligations = {}) {
     const draftText = getScopeDraft(obligations.restoreScopeDraft);
     if (draftText != null) {
       const promptEl = getPanelElementById(panel, PANEL_IDS.prompt) || panel?.fields?.prompt;
-      if (promptEl && typeof promptEl.value === \"string\") {
+      if (promptEl && typeof promptEl.value === "string") {
         promptEl.value = draftText;
         try {
-          if (typeof promptEl.dispatchEvent === \"function\" && typeof Event === \"function\") {
-            promptEl.dispatchEvent(new Event(\"input\", { bubbles: true }));
+          if (typeof promptEl.dispatchEvent === "function" && typeof Event === "function") {
+            promptEl.dispatchEvent(new Event("input", { bubbles: true }));
           }
         } catch (_e) { /* best-effort */ }
       }

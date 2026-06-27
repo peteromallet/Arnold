@@ -298,26 +298,34 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Report entries in tests/quarantine/*.txt that no longer match any collected test ID.",
     )
+    parser.addoption(
+        "--run-live",
+        action="store_true",
+        default=False,
+        help="Run opt-in live model/provider tests (calls real APIs; requires credentials).",
+    )
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     runpod_enabled = config.getoption("--runpod")
     runpod_full_enabled = config.getoption("--runpod-full")
+    run_live_enabled = config.getoption("--run-live")
     allow_runpod = runpod_enabled or runpod_full_enabled
     allow_runpod_full = runpod_full_enabled
-    if not (allow_runpod and allow_runpod_full):
-        selected: list[pytest.Item] = []
-        deselected: list[pytest.Item] = []
-        for item in items:
-            if "runpod_full" in item.keywords and not allow_runpod_full:
-                deselected.append(item)
-            elif "runpod" in item.keywords and not allow_runpod:
-                deselected.append(item)
-            else:
-                selected.append(item)
-        if deselected:
-            config.hook.pytest_deselected(items=deselected)
-            items[:] = selected
+    selected: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
+    for item in items:
+        if "runpod_full" in item.keywords and not allow_runpod_full:
+            deselected.append(item)
+        elif "runpod" in item.keywords and not allow_runpod:
+            deselected.append(item)
+        elif "live" in item.keywords and not run_live_enabled:
+            deselected.append(item)
+        else:
+            selected.append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
 
     if importlib.util.find_spec("pytest_rerunfailures") is None:
         warnings.warn(

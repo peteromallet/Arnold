@@ -61,6 +61,13 @@ const STATUS_AND_DEVELOPER_DIRTY_SECTIONS = Object.freeze([
   ...STATUS_DIRTY_SECTIONS,
   RENDER_SECTIONS.DEVELOPER,
 ]);
+const REVIEW_DIRTY_SECTIONS = Object.freeze([
+  RENDER_SECTIONS.META,
+  RENDER_SECTIONS.THREAD,
+  RENDER_SECTIONS.COMPOSER,
+  RENDER_SECTIONS.NOTICE,
+  RENDER_SECTIONS.DEVELOPER,
+]);
 const THREAD_DIRTY_SECTIONS = Object.freeze([RENDER_SECTIONS.THREAD]);
 const META_AND_THREAD_DIRTY_SECTIONS = Object.freeze([
   RENDER_SECTIONS.META,
@@ -1428,7 +1435,7 @@ function _handleCandidateResponse(panel, payload) {
   }
   return _obligations({
     render: true,
-    dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    dirtySections: REVIEW_DIRTY_SECTIONS,
     persistSession: panel.state.sessionId || null,
     setQueueGuardContext: {
       sessionId: panel.state.sessionId,
@@ -1712,6 +1719,34 @@ function _handleChatRehydrateSuccess(panel, payload) {
   const sessionId = typeof payload?.sessionId === "string" && payload.sessionId ? payload.sessionId : null;
   if (sessionId) {
     panel.state.sessionId = sessionId;
+  }
+  const latestCandidate =
+    payload?.latestCandidate && typeof payload.latestCandidate === "object"
+      ? payload.latestCandidate
+      : null;
+  const latestCandidateIsReviewable = latestCandidate?.outcome?.kind === "candidate";
+  const latestTurnId = typeof payload?.latestTurnId === "string" && payload.latestTurnId
+    ? payload.latestTurnId
+    : null;
+  const currentCandidateTurnId = typeof panel.state.turnId === "string" && panel.state.turnId
+    ? panel.state.turnId
+    : null;
+  const rehydrateCaughtUpToCandidate =
+    !currentCandidateTurnId
+    || (latestTurnId && latestTurnId >= currentCandidateTurnId);
+  if (
+    !latestCandidateIsReviewable
+    && rehydrateCaughtUpToCandidate
+    && panel.state.phase !== PANEL_STATE.SUBMITTING
+    && panel.state.phase !== PANEL_STATE.APPLYING
+  ) {
+    _handleInvalidateCandidate(panel, { repaint: false });
+    if (panel.state.phase === PANEL_STATE.AWAITING_REVIEW) {
+      panel.state.phase = PANEL_STATE.IDLE;
+    }
+    panel.state.applyAllowed = false;
+    panel.state.canvasApplyAllowed = false;
+    panel.state.queueAllowed = false;
   }
   if (Number.isFinite(payload?.requestEpoch)) {
     panel.state.chatRehydrateCommittedEpoch = Math.max(
@@ -2076,7 +2111,7 @@ function _handleChatRehydrateRestoreLatestCandidate(panel, payload) {
 
   return _obligations({
     render: false,
-    dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    dirtySections: REVIEW_DIRTY_SECTIONS,
     restored: true,
     invalidateCandidate: true,
     persistSession: panel.state.sessionId || null,

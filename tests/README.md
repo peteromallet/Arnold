@@ -16,7 +16,7 @@ are intentionally stable because tests, docs, and tools reference them directly.
 | `edgecases/` | Boundary, compatibility, concurrency, and failure-mode tests. |
 | `fixtures/` | Authored JSON/session/source-code fixtures loaded by tests and tools. |
 | `structural_harness/` | Deterministic structural contract harness: adapter, runner, builders, scenarios, and briefs. |
-| `agentic_harness/` | True live-agentic harness placeholder; no fake builders or scripted scenarios. |
+| `live_agentic_harness/` | True live-agentic harness placeholder; no fake builders or scripted scenarios. |
 | `intent/` | Intent-level edit correctness, falsification, perceptual hash, and judge-evaluation tests. |
 | `parity/` | Typed-handle parity and independent readback tests plus parity fixtures. |
 | `property/` | Property-based and fuzz-style tests. |
@@ -26,6 +26,21 @@ are intentionally stable because tests, docs, and tools reference them directly.
 | `snapshots/` | Committed API/class-type/widget baseline snapshots regenerated in place. |
 | `support/` | Shared support utilities used across test modules. |
 
+## Test taxonomy
+
+The word **"agentic"** is overloaded in this repo. We use these categories:
+
+| Category | Definition | Key locations |
+|---|---|---|
+| **Live agentic tests** | Run the real executor/agent path with **real model/provider calls**. Opt-in because they need credentials. | `tests/test_agentic_harness_live.py` — run with `--run-live` |
+| **Structural agentic tests** | Run the **real executor/agent-edit path on real workflows**, but with scripted/fake model responses. They produce real compiled graphs and frozen evidence. | `tests/structural_harness/scenarios/*.yaml` and `tests/structural_harness/actors*.py` |
+| **Headless harness contract tests** | Fake-backend tests proving the headless service and runner wire all the way through to `run_executor`. | `tests/test_headless_harness_contract.py`, `tests/test_headless_harness_runner_contract.py` |
+| **Executor contract tests** | Deterministic phase-wiring tests for `classify → research → implement → reply`; models are mocked. | `tests/test_executor_flows.py`, `tests/test_executor_contracts.py` |
+| **Agent-edit characterization tests** | DSL/session roundtrip invariants against real UI fixtures. | `tests/characterization/test_agent_edit_roundtrips.py` |
+| **Browser/UI e2e tests** | Boot ComfyUI, load a real graph, submit a prompt, apply a candidate, and assert a real canvas change. Model response is fixture-backed. | `tests/e2e/specs/`, `agent_edit_e2e.mjs` |
+
+So "agentic test" means: the real agent/executor workflow machinery is traversed on a real workflow. A live agentic test additionally calls a real model. A contract test only checks orchestration with mocks.
+
 ## Running
 
 ```bash
@@ -34,6 +49,13 @@ PYTHONHASHSEED=0 pytest tests/characterization/ -q
 pytest --runpod tests/smoke/ -q
 cd tests/e2e && npx playwright test
 pytest --known-failures-audit -q
+
+# Live agentic tests (real DeepSeek/OpenRouter calls; requires credentials)
+pytest tests/test_agentic_harness_live.py --run-live -q -s
+
+# Structural agentic scenarios (deterministic, real workflow edits)
+python -m tests.structural_harness.runner --tag structural-run
+python -m tests.structural_harness.runner --tag hotshot-run --name hotshot-16-frames-agent-edit
 ```
 
 The full suite has known baseline failures in this checkout. Use focused tests

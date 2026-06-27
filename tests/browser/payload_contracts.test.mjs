@@ -672,6 +672,7 @@ test("ResponseDetail projection exposes safe feedback and queue display only", (
   });
 
   const normalSnapshot = normalDetailSnapshotForRender(normalResponseDetail);
+  assert.equal(normalSnapshot.candidateGraphPresent, true);
   assert.deepEqual(normalSnapshot.lastAppliedChanges, normalResponseDetail.lastAppliedChanges);
   assert.deepEqual(normalSnapshot.queueDisplay, normalResponseDetail.queueDisplay);
   assertNormalProjectionHasNoForbiddenFieldOrValue(normalResponseDetail, {
@@ -684,6 +685,53 @@ test("ResponseDetail projection exposes safe feedback and queue display only", (
   const reprojected = projectResponseDetail(normalResponseDetail);
   assert.deepEqual(reprojected.lastAppliedChanges, normalResponseDetail.lastAppliedChanges);
   assert.deepEqual(reprojected.queueDisplay, normalResponseDetail.queueDisplay);
+});
+
+test("ResponseDetail render snapshot preserves explicit candidateGraphPresent flag", () => {
+  const snapshot = normalDetailSnapshotForRender({
+    turn: { turnId: "0002", status: "candidate" },
+    outcome: { kind: "candidate", summary: "Candidate ready." },
+    candidateGraphPresent: true,
+    candidate: {},
+  });
+
+  assert.equal(snapshot.candidateGraphPresent, true);
+});
+
+test("ResponseDetail projection preserves compact scoped diff evidence for candidate detail", () => {
+  const detail = projectResponseDetail({
+    session_id: "sess-scoped-diff",
+    turn_id: "0002",
+    outcome: { kind: "candidate", summary: "Candidate ready." },
+    candidate: { graph: { nodes: [] } },
+    report: {
+      revision_evidence: {
+        scoped_diff: {
+          summary: "3 changed node(s); 1 added link(s); 1 removed link(s)",
+          has_diff: true,
+          changed_nodes: ["6", "10", "34"],
+          added_links: [
+            { link_id: 59, origin_node: 6, origin_slot: 0, target_node: 34, target_slot: 0, type: "IMAGE" },
+          ],
+          removed_links: [
+            { link_id: 57, origin_node: 10, origin_slot: 0, target_node: 34, target_slot: 0, type: "IMAGE" },
+          ],
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(detail.candidate.report.revision_evidence.scoped_diff, {
+    summary: "3 changed node(s); 1 added link(s); 1 removed link(s)",
+    has_diff: true,
+    changed_nodes: ["6", "10", "34"],
+    added_links: [
+      { link_id: "59", origin_node: "6", origin_slot: "0", target_node: "34", target_slot: "0", type: "IMAGE" },
+    ],
+    removed_links: [
+      { link_id: "57", origin_node: "10", origin_slot: "0", target_node: "34", target_slot: "0", type: "IMAGE" },
+    ],
+  });
 });
 
 test("projection fixtures keep ExecutionEvent diagnostics explicit and cloned", () => {

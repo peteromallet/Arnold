@@ -651,7 +651,7 @@ const NON_APPLYABLE_ROUTES = new Set([
  * Uses the Decide → Research → Execute → Review framework.
  *
  * When a route is present and non-applyable (respond / research / inspect /
- * clarify), terminal states never set execute or review to \"done\" because
+ * clarify), terminal states never set execute or review to "done" because
  * those phases were never run.  Research-only routes set research=done;
  * respond/inspect/clarify leave research=pending.
  */

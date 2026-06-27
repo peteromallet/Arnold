@@ -50,6 +50,7 @@ from vibecomfy.comfy_nodes.agent.contracts import (
     TurnOutcome,
     classify_failure,
     failure_envelope,
+    public_chat_rehydrate_payload,
 )
 from vibecomfy.executor.contracts import (
     ReadinessReport,
@@ -7925,6 +7926,7 @@ def test_agent_edit_action_routes_reject_candidates_without_baseline_update(
     tmp_path: Path,
 ) -> None:
     from vibecomfy.comfy_nodes.agent.session import read_state
+    from vibecomfy.comfy_nodes.agent.edit import read_session_chat
     from vibecomfy.comfy_nodes.agent.routes import _handle_agent_edit_reject
 
     turn_id, submit_graph_hash, candidate_graph_hash = _allocate_action_candidate(
@@ -7960,6 +7962,8 @@ def test_agent_edit_action_routes_reject_candidates_without_baseline_update(
     state = read_state(tmp_path / "s2")
     assert state["baseline_turn_id"] is None
     assert state["turns"][turn_id]["state"] == "rejected"
+    chat = read_session_chat(tmp_path, "s2")
+    assert chat["latest_candidate"] is None
 
 
 def test_agent_edit_action_routes_cover_replay_conflict_state_mismatch_and_audit_redaction(
@@ -11403,6 +11407,89 @@ def test_latest_candidate_in_chat_response_includes_outcome(
     assert latest["outcome"]["kind"] == "candidate"
     assert len(latest["outcome"]["changes"]) == 1
     assert latest["outcome"]["changes"][0]["uid"] == "1"
+
+
+def test_latest_candidate_in_chat_response_preserves_report_evidence(
+    tmp_path: Path,
+) -> None:
+    """Reloaded candidate previews need the same compact report evidence as submit."""
+    session_id = "latest-candidate-report"
+    session_dir = session_dir_for(tmp_path, session_id)
+    turn_dir = session_dir / "turns" / "0000"
+    turn_dir.mkdir(parents=True)
+    graph = {
+        "nodes": [
+            {"id": 6, "type": "VAEDecode"},
+            {"id": 34, "type": "vibecomfy.exec"},
+        ],
+        "links": [[59, 6, 0, 34, 0, "IMAGE"]],
+    }
+    report = {
+        "revision_evidence": {
+            "scoped_diff": {
+                "summary": "2 changed node(s); 1 added link(s)",
+                "has_diff": True,
+                "changed_nodes": ["6", "34"],
+                "added_links": [
+                    {
+                        "link_id": 59,
+                        "origin_node": 6,
+                        "origin_slot": 0,
+                        "target_node": 34,
+                        "target_slot": 0,
+                        "type": "IMAGE",
+                    }
+                ],
+            }
+        }
+    }
+    response = {
+        "ok": True,
+        "session_id": session_id,
+        "turn_id": "0000",
+        "message": "Candidate with report.",
+        "graph": graph,
+        "candidate_graph_hash": "hash-report",
+        "canvas_apply_allowed": True,
+        "apply_allowed": True,
+        "queue_allowed": False,
+        "apply_eligibility": {
+            "applyable": True,
+            "reason": "queue_blocked_warning",
+            "message": "Apply allowed, Queue blocked.",
+            "warnings": ["queue_blocked"],
+        },
+        "report": report,
+        "outcome": {"kind": "candidate", "changes": []},
+    }
+    (turn_dir / "request.json").write_text(
+        json.dumps({"task": "edit"}), encoding="utf-8"
+    )
+    (turn_dir / "response.json").write_text(
+        json.dumps(response), encoding="utf-8"
+    )
+    (turn_dir / "candidate.ui.json").write_text(
+        json.dumps(graph), encoding="utf-8"
+    )
+    (session_dir / "session_state.json").write_text(
+        json.dumps({
+            "turns": {
+                "0000": {
+                    "state": "candidate",
+                    "candidate_graph_hash": "hash-report",
+                }
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    result = read_session_chat(tmp_path, session_id, max_messages=5)
+    latest = result["latest_candidate"]
+    assert latest is not None
+    assert latest["report"] == report
+
+    public = public_chat_rehydrate_payload(result)
+    assert public["latest_candidate"]["report"] == report
 
 
 def test_latest_candidate_excludes_noop_turns_and_still_has_outcome(

@@ -1,4 +1,4 @@
-# Headless Agentic And Harness Runbook
+# Headless And Live Harness Runbook
 
 This runbook separates the local test lanes that touch VibeComfy's agent
 surface. Keep the lane names precise: a structural harness pass is not proof of
@@ -11,7 +11,7 @@ live model behavior, and a headless dry run is not the same thing as
 |---|---|---|---|---|---|
 | Structural harness | `python -m tests.structural_harness.runner ...` | Deterministic fake/faking builders and frozen evidence | No | No | No |
 | Headless agent CLI | `python -m vibecomfy.agent ...` or `vibecomfy-agent ...` | Real executor path without ComfyUI HTTP routes | No | No | Yes, unless it intentionally records `blocked_prerequisite` |
-| Live agentic harness | `python -m tests.agentic_harness.runner ...` | Scenario wrapper over the headless service with strict live-artifact guard | No | No | Yes for success |
+| Live agentic harness | `python -m tests.live_agentic_harness.runner ...` | Scenario wrapper over the headless service with strict live-artifact guard | No | No | Yes for success |
 | Browser harness | `pytest tests/browser/...` | JavaScript/browser-facing modules under a node/jsdom-style harness | No | No real browser | No |
 | Browser e2e | `node tests/e2e/run.mjs ...` | Real ComfyUI process plus Playwright Chromium panel tests | Yes, launcher starts it | Yes | No, fixture provider is offline |
 
@@ -159,7 +159,7 @@ Use the live agentic harness for scenario-level headless runs that should count
 only when real agentic artifacts are produced:
 
 ```bash
-python -m tests.agentic_harness.runner \
+python -m tests.live_agentic_harness.runner \
   --tag live-headless-smoke \
   --json
 ```
@@ -167,16 +167,16 @@ python -m tests.agentic_harness.runner \
 Run against a custom scenario directory:
 
 ```bash
-python -m tests.agentic_harness.runner \
+python -m tests.live_agentic_harness.runner \
   --tag live-headless-smoke \
-  --scenarios-dir tests/agentic_harness/scenarios \
+  --scenarios-dir tests/live_agentic_harness/scenarios \
   --output-base out/agentic \
   --json
 ```
 
 The harness writes each scenario to
 `out/agentic/<tag>/<scenario_id>/` and then applies
-`tests.agentic_harness.guard.guard_output_dir`. A live success requires all of:
+`tests.live_agentic_harness.guard.guard_output_dir`. A live success requires all of:
 
 - `flow_kind=live_agentic_headless`
 - `live=true`

@@ -121,6 +121,28 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Filter scenarios by name (repeatable).",
     )
+    _ensure_alias(
+        parser,
+        "--subjective-assessment",
+        dest="subjective_assessment",
+        action="store_true",
+        default=False,
+        help="Re-assess frozen evidence with an LLM against the scenario's hidden rubric.",
+    )
+    _ensure_alias(
+        parser,
+        "--subjective-model",
+        dest="subjective_model",
+        default=None,
+        help="Model for subjective assessment (default: deepseek-chat via DeepSeek API).",
+    )
+    _ensure_alias(
+        parser,
+        "--subjective-base-url",
+        dest="subjective_base_url",
+        default=None,
+        help="API base URL for subjective assessment (default: https://api.deepseek.com/v1).",
+    )
     return parser
 
 
@@ -250,6 +272,22 @@ def _build_fallback_parser() -> argparse.ArgumentParser:
         help="Run without executing actors",
     )
     parser.add_argument(
+        "--subjective-assessment",
+        action="store_true",
+        default=False,
+        help="Re-assess frozen evidence with an LLM against the scenario's hidden rubric.",
+    )
+    parser.add_argument(
+        "--subjective-model",
+        default=None,
+        help="Model for subjective assessment (default: deepseek-chat via DeepSeek API).",
+    )
+    parser.add_argument(
+        "--subjective-base-url",
+        default=None,
+        help="API base URL for subjective assessment (default: https://api.deepseek.com/v1).",
+    )
+    parser.add_argument(
         "scenarios",
         nargs="*",
         help="Scenario names to run.",
@@ -346,6 +384,9 @@ def run_chaining_family(
     dry_run: bool = False,
     parallel: bool = False,
     capture_interval_sec: float | None = None,
+    subjective_assessment: bool = False,
+    subjective_model: str | None = None,
+    subjective_base_url: str | None = None,
 ) -> dict[str, Any]:
     """Run the chaining family of scenarios through the Sisypy harness.
 
@@ -379,7 +420,7 @@ def run_chaining_family(
     if mode != "structural":
         raise ValueError(
             "tests.structural_harness only runs structural contract scenarios; "
-            "true live-agentic coverage belongs in tests.agentic_harness."
+            "true live-agentic coverage belongs in tests.live_agentic_harness."
         )
     if actor not in _STRUCTURAL_ACTORS:
         raise ValueError(
@@ -420,6 +461,12 @@ def run_chaining_family(
         run_kwargs["parallel"] = parallel
     if capture_interval_sec is not None and _supports_parameter(run_all, "capture_interval_sec"):
         run_kwargs["capture_interval_sec"] = capture_interval_sec
+    if _supports_parameter(run_all, "subjective_assessment"):
+        run_kwargs["subjective_assessment"] = subjective_assessment
+    if _supports_parameter(run_all, "subjective_model"):
+        run_kwargs["subjective_model"] = subjective_model
+    if _supports_parameter(run_all, "subjective_base_url"):
+        run_kwargs["subjective_base_url"] = subjective_base_url
     try:
         return run_all(adapter, **run_kwargs)
     except TypeError as exc:
@@ -492,6 +539,9 @@ def main(argv: list[str] | None = None) -> dict[str, Any]:
         dry_run=args.dry_run,
         parallel=bool(getattr(args, "parallel", False)),
         capture_interval_sec=getattr(args, "capture_interval_sec", None),
+        subjective_assessment=getattr(args, "subjective_assessment", False),
+        subjective_model=getattr(args, "subjective_model", None),
+        subjective_base_url=getattr(args, "subjective_base_url", None),
     )
 
 

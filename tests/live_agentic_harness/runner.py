@@ -61,7 +61,7 @@ def run_tag(
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m tests.agentic_harness.runner")
+    parser = argparse.ArgumentParser(prog="python -m tests.live_agentic_harness.runner")
     parser.add_argument("--tag", required=True, help="Run tag (used in evidence path).")
     parser.add_argument(
         "--scenarios-dir",

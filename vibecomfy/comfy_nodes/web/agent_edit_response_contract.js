@@ -1146,7 +1146,43 @@ function safeCandidateReport(rawReport) {
       }) : null)
       .filter(Boolean);
   }
-  return Object.keys(change).length ? { change } : null;
+  const scopedDiff = rawReport.revision_evidence?.scoped_diff;
+  const safeScopedDiff = {};
+  if (isObject(scopedDiff)) {
+    for (const key of ["changed_nodes", "added_nodes", "removed_nodes", "target_node_ids"]) {
+      if (Array.isArray(scopedDiff[key])) {
+        safeScopedDiff[key] = scopedDiff[key].map(asStringOrNumber).filter(Boolean);
+      }
+    }
+    for (const key of ["added_links", "removed_links", "changed_links"]) {
+      if (Array.isArray(scopedDiff[key])) {
+        safeScopedDiff[key] = scopedDiff[key]
+          .map((item) => isObject(item) ? compactObject({
+            link_id: asStringOrNumber(item.link_id) || asStringOrNumber(item.linkId),
+            origin_node: asStringOrNumber(item.origin_node) || asStringOrNumber(item.originNode),
+            origin_slot: asStringOrNumber(item.origin_slot) || asStringOrNumber(item.originSlot),
+            target_node: asStringOrNumber(item.target_node) || asStringOrNumber(item.targetNode),
+            target_slot: asStringOrNumber(item.target_slot) || asStringOrNumber(item.targetSlot),
+            type: asString(item.type),
+          }) : null)
+          .filter(Boolean);
+      }
+    }
+    if (typeof scopedDiff.has_diff === "boolean") {
+      safeScopedDiff.has_diff = scopedDiff.has_diff;
+    }
+    if (typeof scopedDiff.summary === "string") {
+      safeScopedDiff.summary = scopedDiff.summary.slice(0, 500);
+    }
+  }
+  const report = {};
+  if (Object.keys(change).length) {
+    report.change = change;
+  }
+  if (Object.keys(safeScopedDiff).length) {
+    report.revision_evidence = { scoped_diff: safeScopedDiff };
+  }
+  return Object.keys(report).length ? report : null;
 }
 
 function safeProjectedCandidateReport(source, candidate) {

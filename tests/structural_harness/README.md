@@ -1,11 +1,12 @@
-# VibeComfy Deterministic Structural Contract Harness
+# Structural Agentic Tests
 
-This directory contains the deterministic Sisypy-compatible structural contract
-harness for VibeComfy.
+This directory contains **structural agentic tests**: deterministic scenarios
+that exercise real executor and agent-edit paths on real workflows, but use
+scripted model responses instead of real model/provider calls.
 
 Builders use fake/faking actors to freeze evidence for workflow, executor,
 routing, and failure-mode invariants. These runs are not live agentic tests.
-True live agentic tests belong in `tests/agentic_harness/` and must use a real
+True live agentic tests belong in `tests/live_agentic_harness/` and must use a real
 dispatcher with production-like tools.
 
 ## Quick start

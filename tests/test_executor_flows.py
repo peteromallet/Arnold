@@ -1,4 +1,6 @@
-"""Executor smoke/regression tests for the full classify → research → implement → reply pipeline.
+"""EXECUTOR CONTRACT TESTS.
+
+Executor smoke/regression tests for the full classify → research → implement → reply pipeline.
 
 Covers respond-only, research-only, simple edit, and graph-describe flows
 on ``default`` and ``openai`` profiles with fake model backend outputs.

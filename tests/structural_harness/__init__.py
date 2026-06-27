@@ -4,7 +4,7 @@ This package provides the Sisypy-compatible adapter, runner, builders, scenarios
 and briefs for deterministic structural contract testing.
 
 These tests are not live agentic tests. The true live-agentic lane is reserved
-for ``tests.agentic_harness`` and must use real dispatchers with production-like
+for ``tests.live_agentic_harness`` and must use real dispatchers with production-like
 tools.
 
 Layout:

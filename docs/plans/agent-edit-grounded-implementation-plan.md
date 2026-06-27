@@ -396,7 +396,7 @@ Expected evidence:
 5. Inline research packet plumbing and memory carry-over.
 6. Search output improvements without name ranking.
 7. Removal of remaining task-text heuristic bypasses.
-8. Agentic harness coverage.
+8. Structural and live agentic harness coverage.
 
 This order keeps each merge reviewable and avoids making the full behavior depend on an untested end-to-end rewrite.
 

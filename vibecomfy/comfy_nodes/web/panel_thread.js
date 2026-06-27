@@ -245,7 +245,7 @@ export function normalDetailSnapshotForRender(detail) {
     turn_id: detail.turn?.turnId || null,
     phase: detail.turn?.status || detail.outcome?.kind || null,
     message: outcomeSummary,
-    candidateGraphPresent: Boolean(detail.candidate?.graphHash),
+    candidateGraphPresent: Boolean(detail.candidateGraphPresent ?? detail.candidate?.graphHash),
     candidateReport: detail.candidate?.report || null,
     applyEligibility: detail.eligibility || null,
     changes: Array.isArray(detail.changes) ? detail.changes : [],

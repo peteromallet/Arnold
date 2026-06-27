@@ -1,3 +1,5 @@
+"""HEADLESS HARNESS CONTRACT TESTS."""
+
 from __future__ import annotations
 
 import json
@@ -198,14 +200,14 @@ def _patch_ready_graph_explanation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_fresh_executor_core(), "run_executor", fake_run_executor)
 
 
-def test_agentic_runner_summarizes_blocked_prerequisite_without_executor_import(
+def test_headless_harness_runner_summarizes_blocked_prerequisite_without_executor_import(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     _patch_not_ready(monkeypatch)
     sys.modules.pop("vibecomfy.executor.core", None)
 
-    from tests.agentic_harness.runner import run_tag
+    from tests.live_agentic_harness.runner import run_tag
 
     scenarios_dir = tmp_path / "scenarios"
     _write_scenario(
@@ -249,14 +251,14 @@ def test_agentic_runner_summarizes_blocked_prerequisite_without_executor_import(
     assert "vibecomfy.executor.core" not in sys.modules
 
 
-def test_agentic_runner_json_mode_reports_blocked_prerequisite(
+def test_headless_harness_runner_json_mode_reports_blocked_prerequisite(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _patch_not_ready(monkeypatch)
 
-    from tests.agentic_harness import runner
+    from tests.live_agentic_harness import runner
 
     scenarios_dir = tmp_path / "scenarios"
     _write_scenario(
@@ -292,7 +294,7 @@ def test_speed_distillation_scenario_blocks_cleanly_without_readiness(
 ) -> None:
     _patch_not_ready(monkeypatch)
 
-    from tests.agentic_harness.runner import run_tag
+    from tests.live_agentic_harness.runner import run_tag
 
     scenarios_dir = tmp_path / "scenarios"
     _write_scenario(scenarios_dir, _SPEED_DISTILLATION_SCENARIO)
@@ -320,7 +322,7 @@ def test_speed_distillation_scenario_records_live_research_evidence(
 ) -> None:
     _patch_ready_speed_research(monkeypatch)
 
-    from tests.agentic_harness.runner import run_tag
+    from tests.live_agentic_harness.runner import run_tag
 
     scenarios_dir = tmp_path / "scenarios"
     _write_scenario(scenarios_dir, _SPEED_DISTILLATION_SCENARIO)
@@ -372,7 +374,7 @@ def test_live_graph_explanation_scenario_uses_headless_inspect_respond_path(
     ):
         sys.modules.pop(module_name, None)
 
-    from tests.agentic_harness.runner import run_tag
+    from tests.live_agentic_harness.runner import run_tag
 
     scenarios_dir = tmp_path / "scenarios"
     _write_scenario(scenarios_dir, _GRAPH_EXPLANATION_SCENARIO)
@@ -407,7 +409,7 @@ def test_live_graph_explanation_scenario_uses_headless_inspect_respond_path(
     assert "No clarification is needed" in response["reply"]
     assert request["graph"]["3"]["class_type"] == "KSampler"
     assert flow_metadata["flow_kind"] == "live_agentic_headless"
-    assert flow_metadata["entrypoint"] == "agentic_harness"
+    assert flow_metadata["entrypoint"] == "live_agentic_harness"
     assert flow_metadata["frontend"] == "not_used"
     assert flow_metadata["live"] is True
     assert flow_metadata["dispatcher"] == "real"
@@ -424,7 +426,7 @@ def test_live_graph_explanation_scenario_uses_headless_inspect_respond_path(
 def test_live_graph_explanation_scenario_and_brief_are_headless_smoke_contract() -> None:
     scenario_path = (
         Path(__file__).resolve().parent
-        / "agentic_harness"
+        / "live_agentic_harness"
         / "scenarios"
         / "live-graph-explanation-smoke.json"
     )

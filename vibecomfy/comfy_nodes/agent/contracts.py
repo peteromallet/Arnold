@@ -138,6 +138,7 @@ PUBLIC_LATEST_CANDIDATE_FIELDS: tuple[str, ...] = (
     "message",
     "outcome",
     "graph",
+    "report",
     "candidate",
     "apply_eligibility",
     "eligibility",

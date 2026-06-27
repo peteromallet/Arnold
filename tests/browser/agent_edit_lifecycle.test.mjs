@@ -96,6 +96,13 @@ const STATUS_AND_DEVELOPER_DIRTY_SECTIONS = Object.freeze([
   ...STATUS_DIRTY_SECTIONS,
   RENDER_SECTIONS.DEVELOPER,
 ]);
+const REVIEW_DIRTY_SECTIONS = Object.freeze([
+  RENDER_SECTIONS.META,
+  RENDER_SECTIONS.THREAD,
+  RENDER_SECTIONS.COMPOSER,
+  RENDER_SECTIONS.NOTICE,
+  RENDER_SECTIONS.DEVELOPER,
+]);
 const THREAD_DIRTY_SECTIONS = Object.freeze([RENDER_SECTIONS.THREAD]);
 const META_AND_THREAD_DIRTY_SECTIONS = Object.freeze([
   RENDER_SECTIONS.META,
@@ -1313,6 +1320,69 @@ test("canonical candidate reject and new-conversation clear remove review state 
     queueGuardClear: true,
     refreshQueueGuard: true,
     toast: null,
+  });
+
+  const rehydrateObligations = transition(panel, "CHAT_REHYDRATE_SUCCESS", {
+    requestEpoch: 1,
+    sessionId: "sess-review-reject",
+    latestTurnId: "turn-review-reject",
+    messages: [
+      { role: "user", text: "previous", turn_id: "turn-review-reject" },
+      {
+        role: "agent",
+        text: "Rejected candidate should not reappear.",
+        turn_id: "turn-review-reject",
+        outcome: { kind: "candidate", changes: [] },
+      },
+    ],
+    latestCandidate: null,
+  });
+  assert.equal(panel.state.phase, PANEL_STATE.IDLE);
+  assertCandidateDefaults(panel.state);
+  assert.equal(panel.state.applyAllowed, false);
+  assert.equal(panel.state.canvasApplyAllowed, false);
+  assert.equal(panel.state.queueAllowed, false);
+  assert.deepEqual(rehydrateObligations, {
+    render: false,
+    dirtySections: META_AND_THREAD_DIRTY_SECTIONS,
+    persistSession: "sess-review-reject",
+  });
+
+  transition(panel, "OK_CANDIDATE_RESPONSE", {
+    result: {
+      ok: true,
+      message: "New candidate ready.",
+      outcome: { kind: "candidate", changes: [] },
+      candidate: {
+        state: "candidate",
+        graph: { nodes: [{ id: 42, type: "SaveImage" }], links: [] },
+        graph_hash: "candidate-hash-42",
+        turn_identity: {
+          session_id: "sess-review-reject",
+          turn_id: "0009",
+        },
+      },
+      apply_eligibility: {
+        applyable: true,
+        reason: "applyable",
+        warnings: [],
+      },
+    },
+    queueAllowed: true,
+  });
+  const staleRehydrateObligations = transition(panel, "CHAT_REHYDRATE_SUCCESS", {
+    requestEpoch: 2,
+    sessionId: "sess-review-reject",
+    latestTurnId: "0008",
+    messages: [],
+    latestCandidate: null,
+  });
+  assert.equal(panel.state.phase, PANEL_STATE.AWAITING_REVIEW);
+  assert.equal(panel.state.candidateGraphHash, "candidate-hash-42");
+  assert.deepEqual(staleRehydrateObligations, {
+    render: false,
+    dirtySections: META_AND_THREAD_DIRTY_SECTIONS,
+    persistSession: "sess-review-reject",
   });
 
   panel.state.chatMessages = [
@@ -2552,7 +2622,7 @@ test("Submit response transitions return deterministic dirty sections and invali
   });
   assert.deepEqual(candidateObligations, {
     render: true,
-    dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    dirtySections: REVIEW_DIRTY_SECTIONS,
     persistSession: "sess-candidate",
     setQueueGuardContext: {
       sessionId: "sess-candidate",
@@ -2881,7 +2951,7 @@ test("CHAT_REHYDRATE_RESTORE_LATEST_CANDIDATE atomically restores candidate, bas
 
   assert.deepEqual(obligations, {
     render: false,
-    dirtySections: STATUS_AND_DEVELOPER_DIRTY_SECTIONS,
+    dirtySections: REVIEW_DIRTY_SECTIONS,
     restored: true,
     invalidateCandidate: true,
     persistSession: "sess-new",

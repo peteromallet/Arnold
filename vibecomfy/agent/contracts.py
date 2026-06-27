@@ -132,11 +132,16 @@ class HeadlessAgentRequest:
     def to_executor_request(self) -> Any:
         """Return a frozen :class:`ExecutorRequest` from this headless request."""
         from vibecomfy.executor.contracts import ExecutorRequest  # noqa: PLC0415
+        from vibecomfy.comfy_nodes.agent.session import normalize_session_id  # noqa: PLC0415
+
+        session_id = self.session_id
+        if session_id is not None:
+            session_id = normalize_session_id(session_id)
 
         return ExecutorRequest(
             query=self.query,
             graph=self.graph,
-            session_id=self.session_id,
+            session_id=session_id,
             profile=self.profile,
             idempotency_key=self.idempotency_key,
         )

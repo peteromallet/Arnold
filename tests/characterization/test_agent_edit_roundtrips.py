@@ -1,4 +1,6 @@
-"""Characterization-gate agent-edit roundtrip tests.
+"""AGENT-EDIT CHARACTERIZATION TESTS.
+
+Characterization-gate agent-edit roundtrip tests.
 
 Drives ``EditSession`` through five representative DSL batches — widget-set,
 add-node, connect, disconnect, and multi-op — and asserts the structural

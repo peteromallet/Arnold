@@ -87,7 +87,7 @@ def run_headless_scenario(
         timeout=scenario.get("timeout"),
     )
 
-    result = run_headless(request, entrypoint="agentic_harness")
+    result = run_headless(request, entrypoint="live_agentic_harness")
     return {
         "scenario_id": scenario_id,
         "status": result.status,
