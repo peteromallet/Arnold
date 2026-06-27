@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Megaplan progress auditor every 5 hours
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=5h
+AccuracySec=5min
+Persistent=true
+Unit=megaplan-progress-audit.service
+
+[Install]
+WantedBy=timers.target

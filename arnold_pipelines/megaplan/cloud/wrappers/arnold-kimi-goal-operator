@@ -20,6 +20,13 @@ BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 TIMEOUT="${KIMI_GOAL_TIMEOUT_SECS:-3600}"
 MAX_TURNS="${KIMI_GOAL_MAX_TURNS:-120}"
 CODEX_TIMEOUT="${KIMI_GOAL_CODEX_TIMEOUT_SECS:-7200}"
+# Meta-loop repairs run under the validated partnered-5 profile
+# (arnold_pipelines/megaplan/profiles/partnered-5.toml). Propagate it as the
+# default so any megaplan repair subcommand dispatched by this operator's tools
+# (resume/auto/doctor/chain) inherits partnered-5 unless a caller pins one.
+DEFAULT_PROFILE="${KIMI_GOAL_DEFAULT_PROFILE:-partnered-5}"
+export MEGAPLAN_DEFAULT_PROFILE="$DEFAULT_PROFILE"
+export MEGAPLAN_REPAIR_PROFILE="$DEFAULT_PROFILE"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_DIR="$ROOT/${TS}-${SAFE_SESSION}"
