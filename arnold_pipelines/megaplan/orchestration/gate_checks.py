@@ -17,11 +17,35 @@ OPERATIONAL_UNVERIFIABLE_REASON_MARKERS = (
     "rate_limit",
     "quota",
     "capacity",
+    "bwrap",
+    "bubblewrap",
+    "sandbox namespace",
+    "no permissions to create new namespace",
+    "shell/file access is blocked in this environment",
+)
+OPERATIONAL_UNVERIFIABLE_CAUSES = frozenset(
+    {
+        "provider_rate_limit",
+        "provider_capacity",
+        "sandbox_namespace",
+    }
+)
+OPERATIONAL_UNVERIFIABLE_ERROR_KINDS = frozenset(
+    {
+        "rate_limit",
+        "sandbox_namespace",
+    }
 )
 
 
 def is_operational_unverifiable_check(check: dict[str, Any]) -> bool:
     """Return true when missing critique evidence is due to transient infrastructure."""
+    cause = str(check.get("cause", "")).lower()
+    if cause in OPERATIONAL_UNVERIFIABLE_CAUSES:
+        return True
+    error_kind = str(check.get("error_kind", "")).lower()
+    if error_kind in OPERATIONAL_UNVERIFIABLE_ERROR_KINDS:
+        return True
     reason = str(check.get("reason", "")).lower()
     return any(marker in reason for marker in OPERATIONAL_UNVERIFIABLE_REASON_MARKERS)
 
