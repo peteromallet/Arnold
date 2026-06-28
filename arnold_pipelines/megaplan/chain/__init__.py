@@ -88,6 +88,7 @@ from arnold_pipelines.megaplan.runtime.process import (
     megaplan_engine_root,
 )
 from arnold_pipelines.megaplan.anchors import AnchorCaptureRequest, attach_anchor_documents, resolve_anchor_path
+from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_PR_MERGE,
@@ -2001,6 +2002,52 @@ def _resumable_retry_state(root: Path, plan: str | None) -> str | None:
     return None
 
 
+def _awaiting_human_can_retry(root: Path, plan: str | None) -> bool:
+    """Return True when an awaiting-human plan is stale and should retry."""
+
+    if not plan:
+        return False
+    try:
+        plan_dir = resolve_plan_dir(root, plan)
+        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+        finalize = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    except (
+        CliError,
+        FileNotFoundError,
+        json.JSONDecodeError,
+        OSError,
+        UnicodeDecodeError,
+    ):
+        return False
+    if not isinstance(raw, dict) or raw.get("current_state") != "awaiting_human":
+        return False
+    if not isinstance(finalize, dict):
+        return False
+    user_actions = finalize.get("user_actions")
+    if not isinstance(user_actions, list) or not user_actions:
+        return False
+    resolutions = effective_user_action_resolutions(plan_dir, raw)
+    saw_retryable = False
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id")
+        if not isinstance(action_id, str) or not action_id:
+            continue
+        resolution = resolutions.get(action_id)
+        if not isinstance(resolution, dict):
+            return False
+        state = resolution.get("state") or resolution.get("resolution")
+        if state == "satisfied":
+            saw_retryable = True
+            continue
+        if state in {"accepted_blocked", "waived"}:
+            saw_retryable = True
+            continue
+        return False
+    return saw_retryable
+
+
 def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None:
     if not plan:
         return None
@@ -2193,11 +2240,18 @@ def _handle_outcome(
                 return "authority_blocked"
         return "advance"
     if status == "awaiting_human":
-        writer(
-            f"[chain] plan {outcome.plan} paused awaiting human action: "
-            f"{outcome.reason}\n"
-        )
-        return "stop"
+        if root is not None and _awaiting_human_can_retry(root, outcome.plan):
+            writer(
+                f"[chain] plan {outcome.plan} reported awaiting_human, but all user-action "
+                "resolutions allow resume; retrying milestone\n"
+            )
+            policy = spec.on_failure_policy
+        else:
+            writer(
+                f"[chain] plan {outcome.plan} paused awaiting human action: "
+                f"{outcome.reason}\n"
+            )
+            return "stop"
     if status == "infrastructure_error":
         writer(
             f"[chain] plan {outcome.plan} stopped on infrastructure error: "
