@@ -2032,14 +2032,14 @@ launch_chain_tick() {
   if [[ "$run_kind" == "chain" && "$remote_spec" != /* ]]; then
     remote_spec_path="$workspace/$remote_spec"
   fi
-  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-    log "skip $session: chain spec missing: $remote_spec"
-    report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
-    return 1
-  fi
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
   if [[ "$health" == "alive" ]]; then
+    if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
+      log "skip $session: chain spec missing: $remote_spec"
+      report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+      return 1
+    fi
     local phase_health
     phase_health="$(plan_phase_health_status "$workspace")"
     if [[ "$phase_health" != "ok" ]]; then
@@ -2075,6 +2075,18 @@ launch_chain_tick() {
     return 0
   fi
 
+  if [[ "$run_kind" == "plan" ]]; then
+    local terminal_status
+    terminal_status="$(plan_terminal_status "$workspace" "$plan_name")"
+    if [[ "$terminal_status" != "none" ]]; then
+      local terminal_plan_name terminal_state
+      IFS=$'\t' read -r terminal_plan_name terminal_state <<< "$terminal_status"
+      log "plan complete; skipping repair/relaunch session=$session state=$terminal_state plan=$terminal_plan_name"
+      report_item "$report_items" "$session" "observe" "complete" "plan complete" "$workspace" "$remote_spec"
+      return 0
+    fi
+  fi
+
   local plan_status_env
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name")"
   eval "$plan_status_env"
@@ -2095,16 +2107,10 @@ launch_chain_tick() {
     return 0
   fi
 
-  if [[ "$run_kind" == "plan" ]]; then
-    local terminal_status
-    terminal_status="$(plan_terminal_status "$workspace" "$plan_name")"
-    if [[ "$terminal_status" != "none" ]]; then
-      local terminal_plan_name terminal_state
-      IFS=$'\t' read -r terminal_plan_name terminal_state <<< "$terminal_status"
-      log "plan complete; skipping repair/relaunch session=$session state=$terminal_state plan=$terminal_plan_name"
-      report_item "$report_items" "$session" "observe" "complete" "plan complete" "$workspace" "$remote_spec"
-      return 0
-    fi
+  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
+    log "skip $session: chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    return 1
   fi
 
   # Repair + relaunch. The Kimi goal operator is BACKGROUND-DISPATCHED so it
