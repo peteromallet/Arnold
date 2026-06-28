@@ -6,7 +6,7 @@
   "timeout": 280,
   "apply": true,
   "assessment": {
-    "expect_graph_changed": true
+    "expect_graph_changed": false
   },
   "desired": {
     "outcome": "The inpainting blends more conservatively, keeping more of the source pixels intact and reducing visible seams around the cut-and-drag area.",

@@ -906,6 +906,153 @@ def test_run_batch_repl_product_path_only_runs_ingest_then_agent_batch_and_retur
     assert calls == ["ingest", "revision_evidence", "agent_batch"]
 
 
+def test_run_batch_repl_product_path_routes_adapt_apply_false_domain_mismatch_to_readonly(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    graph = _ui_graph()
+    graph["nodes"] = [
+        {"id": 1, "class_type": "Rodin3D_Regular"},
+        {"id": 2, "class_type": "Preview3D"},
+        {"id": 3, "class_type": "LoadImage"},
+    ]
+    state = AgentEditState(
+        task="Diagnose why this Rodin graph cannot be swapped to a Wan video template",
+        graph=graph,
+        request_payload={"apply": False},
+        schema_provider=None,
+        baseline_graph_hash=None,
+        submit_graph_hash=None,
+        submit_structural_graph_hash=None,
+        submitted_client_graph_hash=None,
+        submitted_client_structural_graph_hash=None,
+        session_dir=tmp_path,
+        turn_dir=tmp_path,
+        request_path=tmp_path / "request.json",
+        original_ui_path=tmp_path / "original.ui.json",
+        before_py_path=tmp_path / "before.py",
+        after_py_path=tmp_path / "after.py",
+        projection_path=tmp_path / "projection.txt",
+        model_request_path=tmp_path / "model_request.json",
+        model_response_path=tmp_path / "model_response.json",
+        candidate_ui_path=tmp_path / "candidate.ui.json",
+        messages_path=tmp_path / "messages.jsonl",
+        route="adapt",
+    )
+    state.executor_adaptation_plan = {
+        "selected_slice": {
+            "source_class_type": "video/wanvideo_wrapper_wan_animate",
+            "node_types": [
+                "WanVideoModelLoader",
+                "WanVideoSampler",
+                "WanVideoDecode",
+                "WanVideoVAELoader",
+                "WanVideoTextEncodeCached",
+                "LoadImage",
+            ],
+        }
+    }
+    context = TurnContext(session_id="runner-session", turn_id="runner-turn")
+    calls: list[tuple[str, Any, dict[str, Any]]] = []
+
+    def _fake_run_stage(name, passed_state, passed_context, fn=None, **kwargs):
+        calls.append((name, fn, kwargs))
+        assert passed_state is state
+        assert passed_context is context
+        return StageResult(stage=name, ok=True, blocking=False)
+
+    monkeypatch.setattr(agent_edit_module, "_run_stage", _fake_run_stage)
+
+    returned = _run_batch_repl_product_path(
+        state,
+        context,
+        deepseek_client="client",  # type: ignore[arg-type]
+        route="adapt",
+        model="model-x",
+        client_id="client-7",
+    )
+
+    assert returned is state
+    assert [name for name, _fn, _kwargs in calls] == ["ingest", "revision_evidence", "agent_batch"]
+    assert calls[-1][1] is agent_edit_module._stage_readonly_diagnostic_report
+    assert calls[-1][2]["no_candidate_reason"] == "domain_mismatch"
+    assert "different workflow domain" in calls[-1][2]["message"]
+
+
+def test_run_batch_repl_product_path_keeps_adapt_apply_true_on_agent_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    graph = _ui_graph()
+    graph["nodes"] = [
+        {"id": 1, "class_type": "Rodin3D_Regular"},
+        {"id": 2, "class_type": "Preview3D"},
+        {"id": 3, "class_type": "LoadImage"},
+    ]
+    state = AgentEditState(
+        task="Replace Rodin Large with Rodin Fusion",
+        graph=graph,
+        request_payload={"apply": True},
+        schema_provider=None,
+        baseline_graph_hash=None,
+        submit_graph_hash=None,
+        submit_structural_graph_hash=None,
+        submitted_client_graph_hash=None,
+        submitted_client_structural_graph_hash=None,
+        session_dir=tmp_path,
+        turn_dir=tmp_path,
+        request_path=tmp_path / "request.json",
+        original_ui_path=tmp_path / "original.ui.json",
+        before_py_path=tmp_path / "before.py",
+        after_py_path=tmp_path / "after.py",
+        projection_path=tmp_path / "projection.txt",
+        model_request_path=tmp_path / "model_request.json",
+        model_response_path=tmp_path / "model_response.json",
+        candidate_ui_path=tmp_path / "candidate.ui.json",
+        messages_path=tmp_path / "messages.jsonl",
+        route="adapt",
+    )
+    state.executor_adaptation_plan = {
+        "selected_slice": {
+            "source_class_type": "video/wanvideo_wrapper_wan_animate",
+            "node_types": [
+                "WanVideoModelLoader",
+                "WanVideoSampler",
+                "WanVideoDecode",
+                "WanVideoVAELoader",
+                "WanVideoTextEncodeCached",
+                "LoadImage",
+            ],
+        }
+    }
+    context = TurnContext(session_id="runner-session", turn_id="runner-turn")
+    calls: list[tuple[str, Any]] = []
+
+    def _fake_run_stage(name, passed_state, passed_context, fn=None, **kwargs):
+        calls.append((name, fn))
+        assert passed_state is state
+        assert passed_context is context
+        return StageResult(stage=name, ok=True, blocking=False)
+
+    monkeypatch.setattr(agent_edit_module, "_run_stage", _fake_run_stage)
+
+    returned = _run_batch_repl_product_path(
+        state,
+        context,
+        deepseek_client="client",  # type: ignore[arg-type]
+        route="adapt",
+        model="model-x",
+        client_id="client-7",
+    )
+
+    assert returned is state
+    assert calls[-1][1] is agent_edit_module._stage_agent_batch_repl
+
+
 def test_handle_agent_edit_preserves_stage_blocked_from_extracted_product_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4997,6 +5144,77 @@ def test_handle_agent_edit_batch_repl_clarify_after_edit_returns_edit_and_clarif
     assert result["batch_turns"][1]["field_changes"] == []
     audit = json.loads(Path(result["audit_ref"]["path"]).read_text(encoding="utf-8"))
     assert audit["metadata"]["batch_repl"]["exit_mode"] == "edit_clarify"
+
+
+def test_handle_agent_edit_batch_repl_edit_clarify_with_missing_custom_nodes_downgrades(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression guard for the requires_custom_nodes trigger being broadened to
+    # edit_clarify (the Moonvalley widget-guess path: agent lands an edit, then
+    # appends a clarifying question, while missing custom nodes were surfaced).
+    # Such a run must downgrade to requires_custom_nodes and drop the landed
+    # edit, NOT report it as a successful candidate. The `bool(resolver_candidates)`
+    # conjunct is what keeps the plain edit_clarify case above (real edit + a
+    # genuine follow-up question, no missing nodes) on the candidate path.
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary="Found registry-backed Hotshot custom-node evidence.",
+            sources=(
+                {
+                    "source": "comfy-registry",
+                    "class_type": "ComfyUI-AnimateDiff-Evolved",
+                    "pack": "ComfyUI-AnimateDiff-Evolved",
+                    "description": "Expected classes: ADE_AnimateDiffLoaderWithContext",
+                    "resolver_candidate": {
+                        "pack": {"slug": "ComfyUI-AnimateDiff-Evolved"},
+                        "expected_classes": ["ADE_AnimateDiffLoaderWithContext"],
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+
+    responses = iter(
+        [
+            {
+                "batch": 'research("Hotshot XL ComfyUI nodes", sources=["registry"])',
+                "message": "Looking for the Hotshot custom-node pack.",
+            },
+            {
+                "batch": 'saveimage.filename_prefix = "after"',
+                "message": "Adjusted the save prefix.",
+            },
+            {
+                "batch": 'clarify("Hotshot custom nodes are required before I can safely apply the workflow pattern.")',
+                "message": "Hotshot custom nodes are required before I can safely apply the workflow pattern.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch to generating 16 frames with Hotshot",
+            "session_id": "batch-edit-clarify-missing-custom-nodes",
+            "max_batches": 5,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    # The landed save-prefix edit must be dropped: the request cannot be
+    # satisfied without the missing custom nodes, so this is not a candidate.
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "requires_custom_nodes"
+    assert result["graph_unchanged"] is True
+    assert result["message"] == "Hotshot custom nodes are required before I can safely apply the workflow pattern."
 
 
 def test_handle_agent_edit_batch_repl_inline_edit_then_clarify_applies_edit_and_keeps_candidate(

@@ -388,8 +388,16 @@ def _build_batch_repl_response(
         turn_identity=turn_identity,
     )
     resolver_candidates = _resolver_candidates_from_batch_turns(state)
+    # A run that landed an edit AND still flagged missing custom nodes
+    # (resolver_candidates) is not a success: the edit cannot satisfy the
+    # request without those nodes. Treat edit_clarify the same as pure_clarify
+    # here so the agent cannot smuggle a fabricated edit through by appending a
+    # clarifying question (the Moonvalley widget-guess path). The
+    # `bool(resolver_candidates)` conjunct is load-bearing: legitimate
+    # edit_clarify runs (real edit + genuine follow-up question, no missing
+    # nodes) have empty resolver_candidates and stay on the candidate path.
     missing_custom_nodes_terminal = (
-        state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY
+        state.batch_exit_mode in (_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY)
         and bool(resolver_candidates)
     )
     if missing_custom_nodes_terminal:

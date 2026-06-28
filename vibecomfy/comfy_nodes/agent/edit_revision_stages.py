@@ -150,12 +150,15 @@ def _revision_readonly_message(state: AgentEditState) -> str:
     )
 
 
-def _stage_revision_readonly_report(
+def _stage_readonly_diagnostic_report(
     state: AgentEditState,
     _context: TurnContext,
     *,
     route: str | None = None,
     conversation_messages: list[dict[str, Any]] | None = None,
+    message: str | None = None,
+    report_payload: Mapping[str, Any] | None = None,
+    no_candidate_reason: str | None = None,
 ) -> StageResult:
     start = time.monotonic()
     state.ui_payload = json.loads(json.dumps(state.graph))
@@ -163,7 +166,11 @@ def _stage_revision_readonly_report(
     state.python_after = ""
     state.batch_exit_mode = _BATCH_EXIT_NOOP
     state.batch_turn_count = 0
-    state.user_message = _revision_readonly_message(state)
+    state.user_message = (
+        message.strip()
+        if isinstance(message, str) and message.strip()
+        else _revision_readonly_message(state)
+    )
     state.batch_final_summary = state.user_message
     state.batch_done_summary = state.user_message
     evidence_payload = (
@@ -177,6 +184,8 @@ def _stage_revision_readonly_report(
         "graph_unchanged": True,
         "queue_blockers": [],
     }
+    if isinstance(report_payload, Mapping):
+        state.report.update(json.loads(json.dumps(report_payload)))
     state.artifacts = {
         **(state.artifacts or {}),
         "request": str(state.request_path),
@@ -187,6 +196,15 @@ def _stage_revision_readonly_report(
         state,
         route=state.route or route,
         conversation_messages=conversation_messages,
+    )
+    resolved_no_candidate_reason = (
+        no_candidate_reason
+        if isinstance(no_candidate_reason, str) and no_candidate_reason
+        else (
+            state.revision_evidence.no_candidate_reason
+            if state.revision_evidence is not None
+            else "no_changes"
+        )
     )
     return StageResult(
         stage="agent_batch",
@@ -201,12 +219,23 @@ def _stage_revision_readonly_report(
         value={
             "mode": "read_only_revision_report",
             "graph_unchanged": True,
-            "no_candidate_reason": (
-                state.revision_evidence.no_candidate_reason
-                if state.revision_evidence is not None
-                else "no_changes"
-            ),
+            "no_candidate_reason": resolved_no_candidate_reason,
         },
+    )
+
+
+def _stage_revision_readonly_report(
+    state: AgentEditState,
+    context: TurnContext,
+    *,
+    route: str | None = None,
+    conversation_messages: list[dict[str, Any]] | None = None,
+) -> StageResult:
+    return _stage_readonly_diagnostic_report(
+        state,
+        context,
+        route=route,
+        conversation_messages=conversation_messages,
     )
 
 

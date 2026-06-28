@@ -6,7 +6,7 @@
   "timeout": 320,
   "apply": true,
   "assessment": {
-    "expect_graph_changed": true
+    "expect_graph_changed": false
   },
   "desired": {
     "outcome": "First preview renders the 3D model from directly above.",

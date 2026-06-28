@@ -6,7 +6,7 @@
   "timeout": 280,
   "apply": true,
   "assessment": {
-    "expect_graph_changed": true
+    "expect_graph_changed": false
   },
   "desired": {
     "outcome": "Output video is 5 seconds long with smooth motion at an appropriate frame rate.",

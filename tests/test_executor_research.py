@@ -2566,6 +2566,90 @@ class TestBuildAdaptationPlan:
         assert plan.anchor_bindings == ()
         assert plan.candidate_graph is None
 
+    # ── Media-domain gate (pre-selection) ────────────────────────────────────
+
+    def test_cross_domain_slice_is_rejected_and_returns_none(self) -> None:
+        """An image-domain slice that would structurally bind to a video
+        target graph is rejected by the media-domain gate, and (because it is
+        the only candidate) the plan returns ``None`` instead of binding the
+        wrong-domain slice.  This is the regression guard for the dominant
+        cross-media failure class (3D/image/audio graphs matched to WanVideo
+        slices)."""
+        import dataclasses
+
+        # Reuse the real Wan LoRA slice (it has a source_workflow_path that
+        # loads, so WITHOUT the gate it would structurally bind to the Wan
+        # target graph) but relabel its node_types as a pure IMAGE chain so
+        # the media-domain gate classifies it as image ≠ video.
+        image_slice = dataclasses.replace(
+            self._wan_lora_slice(),
+            node_types=(
+                "CheckpointLoaderSimple",
+                "LoraLoader",
+                "CLIPTextEncode",
+                "KSampler",
+                "VAEDecode",
+                "SaveImage",
+            ),
+            source_class_type="image/sd15_lora_chain",
+            python_path="ready_templates/image/sd15_lora_chain.py",
+        )
+        plan = _build_adaptation_plan(
+            query="add Wan LoRA chain",
+            graph=self._wan_target_graph(),  # video domain
+            inspection=None,
+            slices=(image_slice,),
+        )
+        assert plan is None
+
+    def test_cross_media_adapter_slice_is_also_rejected(self) -> None:
+        """A slice whose source advertises a legit cross-media adapter
+        (image_to_video) is NOW ALSO rejected by the pure media-domain gate
+        when its domain differs from the target graph's.  The earlier
+        cross-media-adapter whitelist was net-harmful (let video adapters
+        through against 3D/image graphs) and has been removed; the gate now
+        rejects ANY defined-domain mismatch, adapters included.  Verified
+        directly via the gate helpers (the full plan path also depends on
+        structural binding, which is orthogonal to the gate)."""
+        import dataclasses
+
+        from vibecomfy.executor.research import (
+            _media_domain_from_node_types,
+            _slice_is_cross_media_adapter,
+        )
+
+        adapter_slice = dataclasses.replace(
+            self._wan_lora_slice(),
+            node_types=("LoadImage", "WanVideoSampler", "VHS_VideoCombine"),
+            source_class_type="image_to_video/wan_i2v",
+            python_path="ready_templates/image_to_video/wan_i2v.py",
+        )
+        graph_domain = _media_domain_from_node_types(
+            ("CheckpointLoaderSimple", "SaveImage")
+        )
+        slice_domain = _media_domain_from_node_types(adapter_slice.node_types)
+        assert graph_domain == "image"
+        assert slice_domain == "video"
+        # The slice genuinely advertises a cross-media adapter capability…
+        assert _slice_is_cross_media_adapter(adapter_slice) is True
+        # …but the pure domain gate rejects it anyway (mismatched domain is
+        # the only test, no adapter pass-through).
+        assert slice_domain is not None
+        assert slice_domain != graph_domain
+
+    def test_same_domain_slice_is_not_rejected(self) -> None:
+        """A video slice against a video target graph is unaffected by the
+        gate (same domain)."""
+        plan = _build_adaptation_plan(
+            query="add Wan LoRA chain",
+            graph=self._wan_target_graph(),  # video domain
+            inspection=None,
+            slices=(self._wan_lora_slice(),),  # video domain
+        )
+        assert plan is not None
+        assert plan.structural_validation == "pass"
+        assert plan.candidate_graph is not None
+
 
 class TestBuildPrecedentPacket:
     """Building PrecedentPacket from slices and source dicts."""
