@@ -6,6 +6,7 @@ from pathlib import Path
 from arnold_pipelines.megaplan.blocker_recovery import evaluate_prerequisite_blockers
 from arnold_pipelines.megaplan.execute.batch import (
     _reset_resolved_prerequisite_blocked_tasks,
+    _sync_resolved_prerequisite_blocked_tasks,
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import BlockedTask
 
@@ -103,3 +104,31 @@ def test_resolved_prerequisite_blocked_tasks_reset_to_pending(
     assert task["evidence_files"] == []
     assert task["reviewer_verdict"] == ""
     assert "recorded_invocation_id" not in task
+
+
+def test_sync_resolved_prerequisite_blocked_tasks_reloads_stale_finalize_snapshot(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    _write_resolutions(plan_dir)
+    stale_finalize = _finalize_data()
+    persisted_finalize = _finalize_data()
+    persisted_finalize["tasks"][0]["status"] = "pending"
+    persisted_finalize["tasks"][0]["executor_notes"] = ""
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(persisted_finalize, indent=2),
+        encoding="utf-8",
+    )
+    state = {"meta": {"user_action_resolutions": []}}
+
+    synced_finalize, reset_ids = _sync_resolved_prerequisite_blocked_tasks(
+        stale_finalize,
+        plan_dir=plan_dir,
+        state=state,
+        log_label="test",
+    )
+
+    assert reset_ids == []
+    assert synced_finalize["tasks"][0]["status"] == "pending"
+    assert synced_finalize["tasks"][0]["executor_notes"] == ""
