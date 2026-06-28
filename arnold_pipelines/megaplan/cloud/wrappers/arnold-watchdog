@@ -2290,6 +2290,8 @@ launch_chain_tick() {
     return 0
   fi
 
+  # The repair loop leaves a persistent sidecar after 3 bounded failures so the
+  # watchdog reports needs-human instead of immediately re-arming automation.
   if [[ -f "$(repair_needs_human_path "$session")" ]]; then
     local repair_summary
     repair_summary="$(repair_needs_human_summary "$session")"
