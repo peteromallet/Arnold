@@ -2325,6 +2325,185 @@ def _build_candidate_graph(
     return candidate
 
 
+# ── Media-domain gate (pre-selection) ────────────────────────────────────────
+# Mirrors the node-class-type logic of
+# ``vibecomfy.analysis.workflow_summary.infer_media_type`` but operates on a
+# bare list of class_type strings (the only structural data a ``WorkflowSlice``
+# carries, since slices lack an ``outputs`` collection).  Output-type sets are
+# duplicated here so the gate is self-contained and does not couple research.py
+# to the analysis package's VibeWorkflow model.  Keep these in sync with
+# ``workflow_summary._VIDEO_OUTPUT_TYPES`` etc. when updating either.
+
+_MEDIA_DOMAIN_VIDEO_TYPES: frozenset[str] = frozenset({
+    "VHS_VideoCombine", "SaveVideo", "SaveAnimatedWEBP",
+    "SaveAnimatedPNG", "SaveAnimatedGIF", "SaveWEBM",
+    "VideoCombine", "WanVideoDecode", "WanVideoSampler",
+})
+_MEDIA_DOMAIN_AUDIO_TYPES: frozenset[str] = frozenset({
+    "SaveAudio", "SaveAudioMP3", "VHS_LoadAudio",
+})
+_MEDIA_DOMAIN_IMAGE_TYPES: frozenset[str] = frozenset({
+    "SaveImage", "PreviewImage", "SaveImageWebsocket",
+})
+_MEDIA_DOMAIN_3D_TYPES: frozenset[str] = frozenset({
+    "CreateCameraInfo", "EmptyLatentHunyuan3Dv2", "File3DToSplat",
+    "GetSplatCount", "Hunyuan3Dv2Conditioning",
+    "Hunyuan3Dv2ConditioningMultiView", "Load3D", "MergeSplat",
+    "MeshyAnimateModelNode", "MeshyImageToModelNode",
+    "MeshyMultiImageToModelNode", "MeshyRefineNode",
+    "MeshyRigModelNode", "MeshyTextToModelNode", "MeshyTextureNode",
+    "Preview3D", "Preview3DAdvanced", "RenderSplat", "Rodin3D_Detail",
+    "Rodin3D_Gen2", "Rodin3D_Gen25_Image", "Rodin3D_Gen25_Text",
+    "Rodin3D_Regular", "Rodin3D_Sketch", "Rodin3D_Smooth",
+    "SV3D_Conditioning", "Save3D", "SaveGLB", "SaveOBJ",
+    "SplatToFile3D", "SplatToMesh", "StableZero123",
+    "StableZero123_Conditioning", "StableZero123_Conditioning_Batched",
+    "Tencent3DPartNode", "Tencent3DTextureEditNode",
+    "TencentImageToModelNode", "TencentModelTo3DUVNode",
+    "TencentSmartTopologyNode", "TencentTextToModelNode",
+    "TransformSplat", "TripoConversionNode", "TripoImageToModelNode",
+    "TripoMultiviewToModelNode", "TripoP1ImageToModelNode",
+    "TripoP1MultiviewToModelNode", "TripoP1TextToModelNode",
+    "TripoRefineNode", "TripoRetargetNode", "TripoRigNode",
+    "TripoSR", "TripoSplatConditioning", "TripoSplatPreprocessImage",
+    "TripoSplatSamplingPreview", "TripoTextToModelNode",
+    "TripoTextureNode", "VAEDecodeHunyuan3D", "VAEDecodeTripoSplat",
+    "VoxelToMesh", "VoxelToMeshBasic",
+})
+
+# Substrings that mark a slice/source as a legit cross-media adapter.  When the
+# slice's domain differs from the graph's but one of these signals is present,
+# the slice is NOT rejected (it is a deliberate image→video / first-last-frame
+# / animate-character / *-to-* adapter, which is a valid cross-media operation).
+# NOTE: bare ``_to_`` / ``to_video`` are intentionally NOT signals on their own
+# — ``video_to_video`` is a same-media transform, not a cross-media adapter, and
+# must still be rejected when offered against a non-video graph.  Cross-media is
+# detected by an explicit ``<media>_to_<other_media>`` pattern where the two
+# media tokens differ (see ``_slice_is_cross_media_adapter``).
+_CROSS_MEDIA_ADAPTER_SIGNALS: tuple[str, ...] = (
+    "image_to_video",
+    "first_last_frame",
+    "first_middle_last_frame",
+    "image_to_image",
+    "animate_character",
+    "image_to_3d",
+    "image_to_audio",
+    "audio_to_video",
+    "audio_to_image",
+    "video_to_image",
+    "video_to_3d",
+    "text_to_image",
+    "text_to_video",
+    "text_to_3d",
+    "text_to_audio",
+    "i2v",
+    "i2i",
+)
+_MEDIA_TOKENS: tuple[str, ...] = ("image", "video", "audio", "3d", "text")
+
+
+def _media_domain_from_node_types(node_types: Any) -> str | None:
+    """Derive a media domain from a list of ComfyUI node class_type strings.
+
+    Returns one of ``image``, ``video``, ``audio``, ``3d``, ``multi`` — or
+    ``None`` when the inputs do not resolve to any single domain (caller should
+    treat ``None`` as "undecided, be permissive").
+
+    Mirrors the node-class-type branch of
+    :func:`vibecomfy.analysis.workflow_summary.infer_media_type`; the slice path
+    has no ``outputs`` collection so output types are inferred from class names.
+    """
+    if not node_types:
+        return None
+    class_types: set[str] = set()
+    for ct in node_types:
+        if isinstance(ct, str) and ct:
+            class_types.add(ct)
+    if not class_types:
+        return None
+
+    has_video = bool(
+        class_types & _MEDIA_DOMAIN_VIDEO_TYPES
+        or any("Video" in ct for ct in class_types)
+    )
+    has_audio = bool(class_types & _MEDIA_DOMAIN_AUDIO_TYPES)
+    has_image = bool(class_types & _MEDIA_DOMAIN_IMAGE_TYPES)
+    has_3d = bool(class_types & _MEDIA_DOMAIN_3D_TYPES)
+
+    categories = sum([has_video, has_audio, has_image, has_3d])
+    if categories > 1:
+        return "multi"
+    if has_video:
+        return "video"
+    if has_audio:
+        return "audio"
+    if has_3d:
+        return "3d"
+    if has_image:
+        return "image"
+    # No media signal at all (e.g. only Loaders/Encoders) → undecided.
+    return None
+
+
+def _graph_node_class_types(graph: dict | None) -> list[str]:
+    """Extract the list of ``class_type`` strings from a ComfyUI-API graph dict.
+
+    Accepts either the raw ComfyUI-API shape ``{node_id: {"class_type": str,
+    "inputs": ...}}`` or the vibecomfy wrapper bundle
+    ``{compiled_api: {node_id: {...}}, nodes, edges, ...}`` that production
+    passes as ``request.graph`` (see ``core.py``). The wrapper's top-level
+    values are not node dicts, so we descend into ``compiled_api`` when present.
+    """
+    if not isinstance(graph, dict):
+        return []
+    api_graph = graph.get("compiled_api") if isinstance(graph.get("compiled_api"), dict) else graph
+    out: list[str] = []
+    for node in api_graph.values():
+        if isinstance(node, Mapping):
+            ct = node.get("class_type")
+            if isinstance(ct, str) and ct:
+                out.append(ct)
+    return out
+
+
+def _slice_is_cross_media_adapter(
+    slice_obj: "WorkflowSlice",
+) -> bool:
+    """Return True when the slice advertises a legit cross-media capability.
+
+    Detected from the source class type / workflow path via explicit signals
+    (``image_to_video``, ``first_last_frame``, ``animate_character``, ``i2v``,
+    ``i2i``, …) PLUS a generic ``<media>_to_<other_media>`` pattern match where
+    the two media tokens *differ* — so ``image_to_video`` qualifies but
+    ``video_to_video`` (a same-media transform) does NOT.  When in doubt returns
+    False; the gate is independently permissive about undecided domains.
+    """
+    haystack_parts: list[str] = []
+    sct = getattr(slice_obj, "source_class_type", "") or ""
+    if isinstance(sct, str):
+        haystack_parts.append(sct)
+    swp = getattr(slice_obj, "source_workflow_path", "") or ""
+    if isinstance(swp, str):
+        haystack_parts.append(swp)
+    pp = getattr(slice_obj, "python_path", "") or ""
+    if isinstance(pp, str):
+        haystack_parts.append(pp)
+    haystack = " ".join(haystack_parts).lower().replace("-", "_").replace("\\", "/")
+    if any(signal in haystack for signal in _CROSS_MEDIA_ADAPTER_SIGNALS):
+        return True
+    # Generic "<media>_to_<other_media>" with differing tokens.  Catches
+    # variants not in the explicit list (e.g. "3d_to_image") while excluding
+    # same-media transforms ("video_to_video", "image_to_image" is already in
+    # the explicit list above as a deliberate exception).
+    for left in _MEDIA_TOKENS:
+        for right in _MEDIA_TOKENS:
+            if left == right:
+                continue
+            if f"{left}_to_{right}" in haystack:
+                return True
+    return False
+
+
 def _build_adaptation_plan(
     query: str,
     graph: dict | None,
@@ -2342,16 +2521,43 @@ def _build_adaptation_plan(
     if not slices:
         return None
 
+    # ── Media-domain gate (pre-selection) ────────────────────────────────────
+    # Compute the target graph's media domain once.  When the graph domain is
+    # undecided ("multi" or None), the gate is skipped entirely (permissive —
+    # do not block when we cannot confidently classify the target).  Any slice
+    # whose domain is DEFINED and differs from the graph's is rejected — NO
+    # exceptions, NO cross-media-adapter pass-through.  (The earlier whitelist
+    # for image_to_video / first_last_frame / *_to_* adapters was net-harmful:
+    # it let video adapters through against 3D/image graphs, flipping
+    # structural_validation fail→pass on slices that are still wrong for the
+    # query — see ``_slice_is_cross_media_adapter`` for the removed logic.)
+    graph_domain = _media_domain_from_node_types(_graph_node_class_types(graph))
+    gate_active = graph_domain not in (None, "multi")
+
     target_load = _normalize_target_graph(graph)
     selected_slice = slices[0]
     anchor_bindings: tuple[dict[str, str], ...] = ()
     structural_validation = "not_evaluated"
     candidate_graph: dict[str, Any] | None = None
+    bound = False  # True iff a gate-passing slice yielded a candidate graph
 
     if target_load is not None:
         structural_validation = "fail"
         if target_load.ok:
             for candidate_slice in slices:
+                # Media-domain gate: skip ANY slice whose domain is DEFINED
+                # and differs from the graph's.  No adapter pass-through — the
+                # pure domain gate.  Be permissive on undecided domains (slice
+                # domain None, or graph domain multi/None).
+                if gate_active:
+                    slice_domain = _media_domain_from_node_types(
+                        candidate_slice.node_types
+                    )
+                    if (
+                        slice_domain is not None
+                        and slice_domain != graph_domain
+                    ):
+                        continue
                 source_records = _selected_source_records(candidate_slice)
                 if not source_records:
                     continue
@@ -2373,7 +2579,35 @@ def _build_adaptation_plan(
                 anchor_bindings = candidate_anchor_bindings
                 candidate_graph = built_candidate_graph
                 structural_validation = "pass"
+                bound = True
                 break
+
+    # ── None-fallback ────────────────────────────────────────────────────────
+    # If the gate was active AND no slice bound AND the default ``slices[0]``
+    # (which the old code would have returned as a cross-domain misbinding) is
+    # itself a gate-rejected cross-domain slice (defined domain ≠ graph
+    # domain), return None instead.  This targets exactly the failure class
+    # the gate exists to fix: a 3D/image/audio graph whose ``slices[0]`` is a
+    # WanVideo/LTX video slice.  When ``slices[0]`` is same-domain but failed
+    # to bind for pure structural reasons, the original ``slices[0]``-with-fail
+    # behaviour is preserved — downstream diagnostics (``edit_revision_stages``)
+    # expect a slice to evaluate.  The caller (``research`` →
+    # ``core._execute_research`` → ``prompts``) treats ``adaptation_plan is
+    # None`` identically to the "no precedent" path (the plan is simply omitted
+    # from the agent payload), so this falls through to a no-plan /
+    # direct-edit path without crashing.
+    if (
+        gate_active
+        and not bound
+        and target_load is not None
+        and target_load.ok
+    ):
+        first_domain = _media_domain_from_node_types(slices[0].node_types)
+        if (
+            first_domain is not None
+            and first_domain != graph_domain
+        ):
+            return None
 
     # Build a neutral context note: the material below is not a winner,
     # recommendation, or required implementation — it is precedent context

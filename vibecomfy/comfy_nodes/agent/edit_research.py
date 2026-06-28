@@ -398,6 +398,109 @@ def _graph_class_types_missing_from_schema(
     return tuple(missing)
 
 
+def _graph_class_types(graph: Mapping[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(graph, Mapping):
+        return ()
+    nodes = graph.get("nodes")
+    values: list[Any]
+    if isinstance(nodes, list):
+        values = list(nodes)
+    elif isinstance(nodes, Mapping):
+        values = list(nodes.values())
+    else:
+        return ()
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for node in values:
+        if not isinstance(node, Mapping):
+            continue
+        raw = node.get("class_type") or node.get("type")
+        class_type = str(raw or "").strip()
+        if not class_type or class_type == "Unknown" or class_type in seen:
+            continue
+        seen.add(class_type)
+        ordered.append(class_type)
+    return tuple(ordered)
+
+
+def _adaptation_slice_domain_mismatch_diagnostic(
+    state: AgentEditState,
+    *,
+    route: str | None = None,
+) -> dict[str, Any] | None:
+    canonical_route = _canonical_agent_edit_route(state.route or route)
+    if canonical_route != "adapt":
+        return None
+    request_payload = state.request_payload if isinstance(state.request_payload, Mapping) else {}
+    if request_payload.get("apply") is not False:
+        return None
+    adaptation_plan = state.executor_adaptation_plan
+    if not isinstance(adaptation_plan, Mapping):
+        return None
+    selected_slice = adaptation_plan.get("selected_slice")
+    if not isinstance(selected_slice, Mapping):
+        return None
+    raw_selected_types = selected_slice.get("node_types")
+    if not isinstance(raw_selected_types, (list, tuple)):
+        return None
+    selected_types = [
+        str(item).strip()
+        for item in raw_selected_types
+        if str(item).strip() and str(item).strip() != "Unknown"
+    ]
+    if not selected_types:
+        return None
+    current_types = _graph_class_types(state.guard_original_ui or state.graph)
+    if not current_types:
+        return None
+    current_type_set = set(current_types)
+    overlap = [class_type for class_type in selected_types if class_type in current_type_set]
+    missing = [class_type for class_type in selected_types if class_type not in current_type_set]
+    unique_missing = list(dict.fromkeys(missing))
+    # Treat this as a domain mismatch only when the selected precedent barely
+    # overlaps the current graph. A few missing helper classes can still be a
+    # valid adaptation path; a mostly-disjoint slice should degrade to a
+    # read-only diagnosis for non-apply requests instead of crashing later.
+    if not unique_missing:
+        return None
+    if len(overlap) > 2 or len(unique_missing) < 5:
+        return None
+    source_class = str(selected_slice.get("source_class_type") or "").strip() or "the selected precedent"
+    missing_preview = ", ".join(unique_missing[:6])
+    if len(unique_missing) > 6:
+        missing_preview += f", and {len(unique_missing) - 6} more"
+    current_preview = ", ".join(current_types[:6])
+    if len(current_types) > 6:
+        current_preview += f", and {len(current_types) - 6} more"
+    message = (
+        "I found a precedent slice, but it belongs to a different workflow domain than "
+        "the current graph, so I left the graph unchanged. "
+        f"The selected slice from {source_class!r} expects node types such as {missing_preview}, "
+        f"while the current graph is built from {current_preview}. "
+        "That means the precedent is useful as diagnostic context, but not safe to lower into "
+        "this graph as a direct edit."
+    )
+    report_payload = {
+        "adaptation_domain_mismatch": {
+            "selected_slice_source_class_type": source_class,
+            "selected_slice_node_types": list(dict.fromkeys(selected_types)),
+            "selected_slice_missing_node_types": unique_missing,
+            "current_graph_node_types": list(current_types),
+            "shared_node_types": list(dict.fromkeys(overlap)),
+        },
+        "graph_facts": dict(state.graph_facts)
+        if isinstance(state.graph_facts, Mapping)
+        else {},
+        "read_only": True,
+        "graph_unchanged": True,
+    }
+    return {
+        "message": message,
+        "report_payload": report_payload,
+        "no_candidate_reason": "domain_mismatch",
+    }
+
+
 def _candidate_dict(candidate: Any) -> dict[str, Any] | None:
     if isinstance(candidate, Mapping):
         return dict(candidate)

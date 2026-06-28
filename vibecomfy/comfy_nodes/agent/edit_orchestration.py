@@ -148,6 +148,23 @@ def _run_batch_repl_product_path(
         route=state.route,
         conversation_messages=conversation_messages,
     )
+    readonly_diagnostic = _adaptation_slice_domain_mismatch_diagnostic(
+        state,
+        route=state.route or route,
+    )
+    if readonly_diagnostic is not None:
+        _run_stage(
+            "agent_batch",
+            state,
+            context,
+            _stage_readonly_diagnostic_report,
+            route=state.route,
+            conversation_messages=conversation_messages,
+            message=readonly_diagnostic.get("message"),
+            report_payload=readonly_diagnostic.get("report_payload"),
+            no_candidate_reason=readonly_diagnostic.get("no_candidate_reason"),
+        )
+        return state
     if (
         state.revision_evidence is not None
         and not state.revision_evidence.safe_candidate_possible

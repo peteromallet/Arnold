@@ -209,6 +209,7 @@ def _agent_edit_raw_output_names(node: Any) -> dict[int, str]:
             ),
             stacklevel=2,
         )
+        return {index: name for index, name in enumerate(ui_names) if name}
     ui_output_count = len(ui_names) if ui_names else None
     _node_local_arity_check(node, ui_output_count)
     if ui_names:

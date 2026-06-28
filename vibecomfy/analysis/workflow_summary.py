@@ -163,8 +163,29 @@ _IMAGE_OUTPUT_TYPES: frozenset[str] = frozenset({
 })
 
 _3D_OUTPUT_TYPES: frozenset[str] = frozenset({
-    "Save3D", "SaveGLB", "SaveOBJ", "Preview3D",
-    "TripoSR", "StableZero123",
+    "CreateCameraInfo", "EmptyLatentHunyuan3Dv2", "File3DToSplat",
+    "GetSplatCount", "Hunyuan3Dv2Conditioning",
+    "Hunyuan3Dv2ConditioningMultiView", "Load3D", "MergeSplat",
+    "MeshyAnimateModelNode", "MeshyImageToModelNode",
+    "MeshyMultiImageToModelNode", "MeshyRefineNode",
+    "MeshyRigModelNode", "MeshyTextToModelNode", "MeshyTextureNode",
+    "Preview3D", "Preview3DAdvanced", "RenderSplat", "Rodin3D_Detail",
+    "Rodin3D_Gen2", "Rodin3D_Gen25_Image", "Rodin3D_Gen25_Text",
+    "Rodin3D_Regular", "Rodin3D_Sketch", "Rodin3D_Smooth",
+    "SV3D_Conditioning", "Save3D", "SaveGLB", "SaveOBJ",
+    "SplatToFile3D", "SplatToMesh", "StableZero123",
+    "StableZero123_Conditioning", "StableZero123_Conditioning_Batched",
+    "Tencent3DPartNode", "Tencent3DTextureEditNode",
+    "TencentImageToModelNode", "TencentModelTo3DUVNode",
+    "TencentSmartTopologyNode", "TencentTextToModelNode",
+    "TransformSplat", "TripoConversionNode", "TripoImageToModelNode",
+    "TripoMultiviewToModelNode", "TripoP1ImageToModelNode",
+    "TripoP1MultiviewToModelNode", "TripoP1TextToModelNode",
+    "TripoRefineNode", "TripoRetargetNode", "TripoRigNode",
+    "TripoSR", "TripoSplatConditioning", "TripoSplatPreprocessImage",
+    "TripoSplatSamplingPreview", "TripoTextToModelNode",
+    "TripoTextureNode", "VAEDecodeHunyuan3D", "VAEDecodeTripoSplat",
+    "VoxelToMesh", "VoxelToMeshBasic",
 })
 
 
