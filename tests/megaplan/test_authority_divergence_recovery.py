@@ -144,6 +144,41 @@ def test_status_projects_execute_for_stale_recover_blocked_iteration_cap(
     assert response["valid_next"] == ["execute"]
 
 
+def test_status_projects_execute_for_stale_recover_blocked_failure(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    state = load_state(local_plan_fixture.plan_dir)
+    state["current_state"] = STATE_BLOCKED
+    state["resume_cursor"] = {
+        "phase": "execute",
+        "retry_strategy": "fresh_session",
+    }
+    state["latest_failure"] = {
+        "kind": "blocked_recovery_not_resolved",
+        "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal",
+        "phase": "recover-blocked",
+        "state": STATE_BLOCKED,
+    }
+    write_plan_state(local_plan_fixture.plan_dir, mode="replace", state=state)
+    atomic_write_phase_result(
+        local_plan_fixture.plan_dir,
+        PhaseResult(
+            phase="execute",
+            invocation_id="fixture-invocation",
+            exit_kind=ExitKind.blocked_by_quality.value,
+        ),
+    )
+
+    response = handle_status(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name, pending_human=False),
+    )
+
+    assert response["state"] == STATE_BLOCKED
+    assert response["next_step"] == "execute"
+    assert response["valid_next"] == ["execute"]
+
+
 def test_recover_blocked_allows_fixed_quality_rerun(
     local_plan_fixture: LocalPlanFixture,
 ) -> None:
