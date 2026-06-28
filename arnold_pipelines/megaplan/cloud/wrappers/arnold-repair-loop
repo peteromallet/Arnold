@@ -291,13 +291,14 @@ collect_failure_context_json() {
   python3 - "$workspace" "$session" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 workspace = pathlib.Path(sys.argv[1])
 session = sys.argv[2]
 
 
-def _tail_text(path: pathlib.Path, lines: int = 15) -> str:
+def _tail_text(path: pathlib.Path, lines: int = 20) -> str:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except Exception:
@@ -306,7 +307,89 @@ def _tail_text(path: pathlib.Path, lines: int = 15) -> str:
     return "\n".join(tail)
 
 
-def _latest_plan_state(root: pathlib.Path) -> pathlib.Path | None:
+def _load_json(path: pathlib.Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        ordered.append(text)
+    return ordered
+
+
+def _interesting_log_lines(text: str, limit: int = 8) -> list[str]:
+    if not text:
+        return []
+    patterns = (
+        "error",
+        "fatal",
+        "traceback",
+        "exception",
+        "failed",
+        "blocked",
+        "usage:",
+        "unrecognized arguments",
+        "missing authentication",
+        "missing credentials",
+        "credit",
+        "timeout",
+        "couldn't find remote ref",
+    )
+    picked: list[str] = []
+    for line in text.splitlines():
+        lower = line.lower()
+        if any(token in lower for token in patterns):
+            picked.append(line.strip())
+    return _unique_strings(picked)[-limit:]
+
+
+def _format_event_line(event: dict[str, object]) -> str:
+    kind = str(event.get("kind") or "event")
+    phase = str(event.get("phase") or "")
+    payload = event.get("payload")
+    details: list[str] = []
+    if isinstance(payload, dict):
+        for key in ("msg", "message", "error", "reason", "state", "status", "task_id", "base_branch", "provider"):
+            value = payload.get(key)
+            if value not in (None, "", [], {}):
+                rendered = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+                details.append(f"{key}={rendered}")
+    elif payload not in (None, "", [], {}):
+        details.append(str(payload))
+    prefix = f"{phase}:{kind}" if phase else kind
+    return f"{prefix} | {'; '.join(details[:4])}" if details else prefix
+
+
+def _events_tail(path: pathlib.Path, limit: int = 12) -> str:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    rendered: list[str] = []
+    for raw in lines[-limit:]:
+        try:
+            event = json.loads(raw)
+        except Exception:
+            rendered.append(raw.strip())
+            continue
+        if isinstance(event, dict):
+            rendered.append(_format_event_line(event))
+        else:
+            rendered.append(str(event))
+    return "\n".join(line for line in rendered if line)
+
+
+def _candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
     candidates = []
     for pattern in (
         ".megaplan/plans/*/state.json",
@@ -318,7 +401,7 @@ def _latest_plan_state(root: pathlib.Path) -> pathlib.Path | None:
             except OSError:
                 continue
     candidates.sort(reverse=True)
-    return candidates[0][1] if candidates else None
+    return [path for _, path in candidates]
 
 
 def _latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
@@ -337,6 +420,122 @@ def _latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
     return ordered[0][1] if ordered else None
 
 
+def _resolve_plan_state(root: pathlib.Path, preferred_plan_name: str) -> pathlib.Path | None:
+    candidates = _candidate_plan_states(root)
+    if preferred_plan_name:
+        preferred = [path for path in candidates if path.parent.name == preferred_plan_name]
+        if preferred:
+            return preferred[0]
+    return candidates[0] if candidates else None
+
+
+def _metadata_excerpt(metadata: object) -> dict[str, object]:
+    if not isinstance(metadata, dict):
+        return {}
+    excerpt: dict[str, object] = {}
+    for key in (
+        "stderr",
+        "stdout",
+        "output",
+        "raw_output",
+        "error",
+        "message",
+        "detail",
+        "details",
+        "reason",
+        "command",
+        "cmd",
+        "args",
+        "argv",
+        "exit_code",
+        "returncode",
+        "return_code",
+        "rc",
+        "iteration",
+        "provider",
+        "provider_error_code",
+        "status_code",
+        "retry_after_s",
+        "error_layer",
+        "stall_timeout_s",
+        "elapsed_s",
+        "missing_base_ref",
+        "checkpoint_reconciliation",
+        "max_iterations",
+    ):
+        value = metadata.get(key)
+        if value not in (None, "", [], {}):
+            excerpt[key] = value
+    return excerpt
+
+
+def _collect_signal_values(value: object, prefix: str = "", depth: int = 0) -> list[str]:
+    if depth > 4:
+        return []
+    signal_keys = {
+        "stderr",
+        "stdout",
+        "output",
+        "raw_output",
+        "error",
+        "errors",
+        "exception",
+        "traceback",
+        "message",
+        "detail",
+        "details",
+        "reason",
+        "status",
+        "exit_code",
+        "returncode",
+        "return_code",
+        "rc",
+        "command",
+        "cmd",
+        "args",
+        "argv",
+        "missing_base_ref",
+        "last_error",
+        "failure",
+    }
+    collected: list[str] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            if str(key).lower() in signal_keys and child not in (None, "", [], {}):
+                rendered = json.dumps(child, sort_keys=True) if isinstance(child, (dict, list)) else str(child)
+                collected.append(f"{child_prefix}: {rendered}")
+            collected.extend(_collect_signal_values(child, child_prefix, depth + 1))
+    elif isinstance(value, list):
+        for idx, child in enumerate(value[-25:]):
+            collected.extend(_collect_signal_values(child, f"{prefix}[{idx}]", depth + 1))
+    return collected
+
+
+def _classify_failure(signals: list[str], latest_failure: dict[str, object], chain_state: dict[str, object]) -> str:
+    combined = "\n".join(signals).lower()
+    kind = str(latest_failure.get("kind") or "").lower()
+    phase = str(latest_failure.get("phase") or "").lower()
+    last_state = str(chain_state.get("last_state") or "").lower()
+    if "unrecognized arguments" in combined or "usage:" in combined:
+        return "cli_or_argument_error"
+    if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":
+        return "git_or_branch_resolution_error"
+    if "authentication" in combined or "missing credentials" in combined or "api key" in combined or re.search(r"\b401\b", combined):
+        return "authentication_or_credentials_error"
+    if "credit balance is too low" in combined or "insufficient credits" in combined or "quota" in combined:
+        return "billing_or_quota_error"
+    if "timeout" in combined or "stall" in combined or kind == "stalled":
+        return "timeout_or_hang"
+    if "blocked" in combined or phase == "recover-blocked" or kind in {"execution_blocked", "iteration_cap"}:
+        return "blocked_state_or_recovery_error"
+    if "external_error" in kind:
+        return "external_dependency_error"
+    if "phase_callback_failed" in kind:
+        return "post_phase_callback_error"
+    return "unknown_failure_mode"
+
+
 log_candidates = []
 session_log = workspace / ".megaplan" / f"cloud-chain-{session}.log"
 default_log = workspace / ".megaplan" / "cloud-chain.log"
@@ -346,47 +545,73 @@ log_candidates.append(default_log)
 if session == "megaplan-chain":
     log_candidates.append(session_log)
 log_path = next((path for path in log_candidates if path.exists()), None)
-
-plan_latest_failure = {}
-plan_state_path = _latest_plan_state(workspace)
-if plan_state_path is not None:
-    try:
-        plan_state = json.loads(plan_state_path.read_text(encoding="utf-8"))
-    except Exception:
-        plan_state = {}
-    latest_failure = plan_state.get("latest_failure") or {}
-    metadata = latest_failure.get("metadata") or {}
-    plan_latest_failure = {
-        "plan_name": plan_state.get("name") or plan_state_path.parent.name,
-        "state_path": str(plan_state_path),
-        "current_state": plan_state.get("current_state") or plan_state.get("state") or "",
-        "phase": latest_failure.get("phase") or plan_state.get("phase") or "",
-        "iteration": plan_state.get("iteration"),
-        "kind": latest_failure.get("kind") or "",
-        "message": latest_failure.get("message") or "",
-        "metadata": {
-            "stderr": metadata.get("stderr") or "",
-            "exit_code": metadata.get("exit_code"),
-        },
-    }
+chain_log_tail = _tail_text(log_path, lines=20) if log_path is not None else ""
 
 chain_state_summary = {}
 chain_state_path = _latest_chain_state(workspace)
 if chain_state_path is not None:
-    try:
-        chain_state = json.loads(chain_state_path.read_text(encoding="utf-8"))
-    except Exception:
-        chain_state = {}
+    chain_state = _load_json(chain_state_path)
+    metadata = chain_state.get("metadata")
+    missing_base_ref = metadata.get("missing_base_ref") if isinstance(metadata, dict) else None
     chain_state_summary = {
         "path": str(chain_state_path),
         "current_plan_name": chain_state.get("current_plan_name") or "",
         "current_state": chain_state.get("current_state") or "",
         "last_state": chain_state.get("last_state") or "",
-        "missing_base_ref": chain_state.get("missing_base_ref"),
+        "missing_base_ref": missing_base_ref or chain_state.get("missing_base_ref"),
         "error": chain_state.get("error"),
+        "events": chain_state.get("events")[-5:] if isinstance(chain_state.get("events"), list) else [],
     }
+else:
+    chain_state = {}
+
+plan_latest_failure = {}
+plan_state_path = _resolve_plan_state(workspace, str(chain_state_summary.get("current_plan_name") or ""))
+plan_events_path = None
+plan_events_tail = ""
+if plan_state_path is not None:
+    plan_state = _load_json(plan_state_path)
+    latest_failure = plan_state.get("latest_failure") or {}
+    metadata = latest_failure.get("metadata") or {}
+    plan_events_path = plan_state_path.parent / "events.ndjson"
+    if plan_events_path.exists():
+        plan_events_tail = _events_tail(plan_events_path, limit=12)
+    plan_latest_failure = {
+        "plan_name": plan_state.get("name") or plan_state_path.parent.name,
+        "state_path": str(plan_state_path),
+        "events_path": str(plan_events_path) if plan_events_path is not None and plan_events_path.exists() else "",
+        "current_state": plan_state.get("current_state") or plan_state.get("state") or "",
+        "phase": latest_failure.get("phase") or plan_state.get("phase") or "",
+        "iteration": plan_state.get("iteration"),
+        "kind": latest_failure.get("kind") or "",
+        "message": latest_failure.get("message") or "",
+        "state": latest_failure.get("state") or "",
+        "recorded_at": latest_failure.get("recorded_at") or "",
+        "last_artifact": latest_failure.get("last_artifact") or "",
+        "suggested_action": latest_failure.get("suggested_action") or "",
+        "metadata": _metadata_excerpt(metadata),
+    }
+else:
+    latest_failure = {}
+
+raw_failure_signals = _unique_strings(
+    [
+        *_collect_signal_values(latest_failure, "plan.latest_failure"),
+        *_collect_signal_values(chain_state, "chain.state"),
+        *_collect_signal_values(chain_state_summary, "chain.summary"),
+        *_interesting_log_lines(chain_log_tail),
+        *_interesting_log_lines(plan_events_tail),
+    ]
+)
 
 payload = {
+    "failure_classification": _classify_failure(raw_failure_signals, latest_failure, chain_state),
+    "raw_failure_signals": raw_failure_signals,
+    "chain_log_tail": chain_log_tail,
+    "chain_log_path": str(log_path) if log_path is not None else "",
+    "chain_recent_events": chain_state_summary.get("events") or [],
+    "plan_events_tail": plan_events_tail,
+    "plan_events_path": str(plan_events_path) if plan_events_path is not None and plan_events_path.exists() else "",
     "mechanical_log_tail": _tail_text(log_path, lines=15) if log_path is not None else "",
     "mechanical_log_path": str(log_path) if log_path is not None else "",
     "plan_latest_failure": plan_latest_failure,
@@ -411,7 +636,10 @@ initial = payload.get("initial_facts") or {}
 latest_context = None
 for entry in reversed(iterations):
     if (
-        entry.get("mechanical_log_tail")
+        entry.get("raw_failure_signals")
+        or entry.get("chain_log_tail")
+        or entry.get("plan_events_tail")
+        or entry.get("mechanical_log_tail")
         or entry.get("plan_latest_failure")
         or entry.get("chain_state_summary")
     ):
@@ -423,10 +651,11 @@ if latest_context is None:
 plan_failure = latest_context.get("plan_latest_failure") or {}
 chain_state = latest_context.get("chain_state_summary") or {}
 metadata = plan_failure.get("metadata") or {}
-stderr = metadata.get("stderr") or plan_failure.get("stderr") or ""
-stderr_lines = stderr.splitlines()[:5]
-stderr_block = "\n".join(stderr_lines) if stderr_lines else "(none captured)"
-log_tail = latest_context.get("mechanical_log_tail") or latest_context.get("chain_log_tail") or "(none captured)"
+classification = latest_context.get("failure_classification") or "unknown_failure_mode"
+signals = latest_context.get("raw_failure_signals") or []
+signal_text = "\n\n".join(str(item).strip() for item in signals[:4] if str(item).strip()) or "(none captured)"
+log_tail = latest_context.get("chain_log_tail") or latest_context.get("mechanical_log_tail") or "(none captured)"
+events_tail = latest_context.get("plan_events_tail") or "(none captured)"
 
 plan_state = (
     plan_failure.get("current_state")
@@ -438,6 +667,9 @@ iteration = plan_failure.get("iteration")
 iteration_text = iteration if iteration not in (None, "") else "unknown"
 kind = plan_failure.get("kind") or "unknown"
 message = plan_failure.get("message") or "unknown"
+recorded_at = plan_failure.get("recorded_at") or "unknown"
+exit_code = metadata.get("exit_code")
+exit_code_text = str(exit_code) if exit_code not in (None, "") else "unknown"
 chain_last_state = chain_state.get("last_state") or "unknown"
 chain_current_state = chain_state.get("current_state") or "unknown"
 chain_plan_name = chain_state.get("current_plan_name") or "unknown"
@@ -452,38 +684,52 @@ chain_notes_text = f" ({'; '.join(chain_notes)})" if chain_notes else ""
 
 history_lines = []
 for item in iterations:
-    why = (
-        item.get("mechanical_detail")
-        or item.get("why")
-        or item.get("kimi_diagnosis")
-        or item.get("dev_hypothesis")
-        or "n/a"
-    )
+    attempted = item.get("dev_summary") or item.get("dev_hypothesis") or "n/a"
+    why = item.get("why") or item.get("kimi_diagnosis") or item.get("mechanical_detail") or "n/a"
     history_lines.append(
         f"- i{item.get('i')} model={item.get('dev_model') or item.get('dev_model_requested') or 'n/a'} "
-        f"sha={item.get('dev_fix_sha') or 'none'} mechanical={item.get('mechanical_launch') or 'n/a'} "
-        f"kimi={item.get('kimi_launch') or 'n/a'} why={why}"
+        f"attempted={attempted} outcome=mechanical:{item.get('mechanical_launch') or 'n/a'} "
+        f"kimi:{item.get('kimi_launch') or 'n/a'} why_not_enough={why}"
     )
 if not history_lines:
     history_lines.append("- none yet")
 
+detail_paths = [f"- repair data: {path}"]
+for label, value in (
+    ("plan state", plan_failure.get("state_path")),
+    ("plan events", plan_failure.get("events_path") or latest_context.get("plan_events_path")),
+    ("chain state", chain_state.get("path")),
+    ("chain log", latest_context.get("chain_log_path") or latest_context.get("mechanical_log_path")),
+):
+    if value:
+        detail_paths.append(f"- {label}: {value}")
+
 summary = "\n".join(
     [
-        "## Why the chain stopped (most recent failure)",
+        "## Incident Snapshot",
+        f"- failure classification: {classification}",
         f"- plan state: {plan_state} / phase {phase} / iter {iteration_text}",
         f"- chain state: last_state={chain_last_state} current_state={chain_current_state} current_plan={chain_plan_name}{chain_notes_text}",
-        f"- latest_failure: kind={kind} message={message}",
-        "- execute error:",
+        f"- latest_failure: kind={kind} recorded_at={recorded_at} exit_code={exit_code_text}",
+        f"- latest_failure message: {message}",
+        "- primary failure signal(s):",
         "```text",
-        stderr_block,
+        signal_text,
         "```",
-        "- chain log (last 15 lines):",
+        "- current chain narrative (last 20 chain-log lines):",
         "```text",
         log_tail,
         "```",
+        "- recent plan event journal tail:",
+        "```text",
+        events_tail,
+        "```",
         "",
-        "## Prior iterations (what was tried)",
+        "## Prior repair attempts",
         *history_lines,
+        "",
+        "## Full detail paths",
+        *detail_paths,
     ]
 )
 print(summary)
@@ -546,7 +792,14 @@ payload = {
         "marker_json": marker_json,
         "source_git": source_git,
         "workspace_git": workspace_git,
-        "chain_log_tail": chain_log,
+        "failure_context": failure_context_payload,
+        "chain_log_tail": failure_context_payload.get("chain_log_tail", chain_log),
+        "chain_log_path": failure_context_payload.get("chain_log_path", ""),
+        "chain_recent_events": failure_context_payload.get("chain_recent_events", []),
+        "plan_events_tail": failure_context_payload.get("plan_events_tail", ""),
+        "plan_events_path": failure_context_payload.get("plan_events_path", ""),
+        "failure_classification": failure_context_payload.get("failure_classification", ""),
+        "raw_failure_signals": failure_context_payload.get("raw_failure_signals", []),
         "mechanical_log_tail": failure_context_payload.get("mechanical_log_tail", ""),
         "mechanical_log_path": failure_context_payload.get("mechanical_log_path", ""),
         "plan_latest_failure": failure_context_payload.get("plan_latest_failure", {}),
@@ -645,6 +898,14 @@ entry = iterations[iteration - 1]
 entry["i"] = iteration
 entry["mechanical_launch"] = status
 entry["mechanical_detail"] = detail
+entry["failure_context"] = failure_context_payload
+entry["failure_classification"] = failure_context_payload.get("failure_classification", "")
+entry["raw_failure_signals"] = failure_context_payload.get("raw_failure_signals", [])
+entry["chain_log_tail"] = failure_context_payload.get("chain_log_tail", "")
+entry["chain_log_path"] = failure_context_payload.get("chain_log_path", "")
+entry["chain_recent_events"] = failure_context_payload.get("chain_recent_events", [])
+entry["plan_events_tail"] = failure_context_payload.get("plan_events_tail", "")
+entry["plan_events_path"] = failure_context_payload.get("plan_events_path", "")
 entry["mechanical_log_tail"] = failure_context_payload.get("mechanical_log_tail", "")
 entry["mechanical_log_path"] = failure_context_payload.get("mechanical_log_path", "")
 entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", {})
@@ -658,14 +919,17 @@ repair_data_record_kimi() {
   local status="$2"
   local report_path="$3"
   local turn_rc="$4"
-  python3 - "$DATA_FILE" "$iteration" "$status" "$report_path" "$turn_rc" <<'PY'
+  local failure_context
+  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION")"
+  python3 - "$DATA_FILE" "$iteration" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
 import json
 import pathlib
 import sys
 
-path, iteration_raw, status, report_path, turn_rc = sys.argv[1:]
+path, iteration_raw, status, report_path, turn_rc, failure_context = sys.argv[1:]
 iteration = int(iteration_raw)
 payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+failure_context_payload = json.loads(failure_context)
 report = {}
 report_file = pathlib.Path(report_path)
 if report_file.exists():
@@ -694,6 +958,16 @@ entry["why"] = (
     or report.get("classification")
     or ""
 )
+entry["failure_context"] = failure_context_payload
+entry["failure_classification"] = failure_context_payload.get("failure_classification", entry.get("failure_classification", ""))
+entry["raw_failure_signals"] = failure_context_payload.get("raw_failure_signals", entry.get("raw_failure_signals", []))
+entry["chain_log_tail"] = failure_context_payload.get("chain_log_tail", entry.get("chain_log_tail", ""))
+entry["chain_log_path"] = failure_context_payload.get("chain_log_path", entry.get("chain_log_path", ""))
+entry["chain_recent_events"] = failure_context_payload.get("chain_recent_events", entry.get("chain_recent_events", []))
+entry["plan_events_tail"] = failure_context_payload.get("plan_events_tail", entry.get("plan_events_tail", ""))
+entry["plan_events_path"] = failure_context_payload.get("plan_events_path", entry.get("plan_events_path", ""))
+entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", entry.get("plan_latest_failure", {}))
+entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", entry.get("chain_state_summary", {}))
 entry["kimi_report"] = report
 
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -806,30 +1080,30 @@ You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud sessio
 
 $failure_summary
 
-Full accumulated repair data: $DATA_FILE
-
 Session: $SESSION
 Workspace: $WORKSPACE
 Chain spec: $REMOTE_SPEC
 Editable Arnold source: $ARNOLD_SRC
 Editable source branch: $SYNC_BRANCH
-Repair data file (read this first): $DATA_FILE
+Repair data file: $DATA_FILE
 JSON report path (write this before exiting): $report_path
 Requested model label for this iteration: $requested_model
 Actual dispatch model: $dispatch_model
 
 Task:
-1. Read the accumulated repair data JSON and gather only the freshest facts needed on the current stop.
+1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
 2. Apply the narrowest safe root-cause fix in $ARNOLD_SRC on branch $SYNC_BRANCH.
 3. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
 4. If source changes pass validation, commit and push them.
 5. Do not relaunch the chain yourself. The wrapper will do the mechanical launch next.
-6. Keep the turn short. Pick the most likely fix from the accumulated evidence instead of broad exploration.
-7. Write a concise JSON report to $report_path with keys:
+6. Use the raw failure signal, chain narrative, and prior-attempt history to avoid repeating failed ideas.
+7. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
+8. Write a concise JSON report to $report_path with keys:
    classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers.
 
 Constraints:
 - Work only in $ARNOLD_SRC for source fixes.
+- Do not hardcode a workflow-specific workaround when a general engine fix is appropriate.
 - Do not ask for user input.
 - End the turn as soon as you have either a narrow fix or a concrete blocker.
 EOF
@@ -846,22 +1120,21 @@ You are the focused Kimi launch/diagnosis turn in the watchdog repair loop.
 
 $failure_summary
 
-Full accumulated repair data: $DATA_FILE
-
 Session: $SESSION
 Workspace: $WORKSPACE
 Chain spec: $REMOTE_SPEC
 Editable Arnold source: $ARNOLD_SRC
-Repair data file (read this first): $DATA_FILE
+Repair data file: $DATA_FILE
 JSON report path (write this before exiting): $report_path
 Relaunch command: $relaunch_command
 
 Task:
-1. Read the accumulated repair data JSON.
+1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need more detail.
 2. Try to start the chain safely. Prefer the exact relaunch command above if the session is not already up.
 3. If the chain comes up and appears live, stop and write a success report.
 4. If it does not come up, diagnose exactly why from the current logs/state and write that diagnosis.
-5. Keep the turn short; launch plus concrete diagnosis only.
+5. Use the raw failure signal and prior-attempt history to explain the current blocker concretely.
+6. Keep the turn short; launch plus concrete diagnosis only.
 
 Write a concise JSON report to $report_path with keys:
 classification, launch_result, diagnosis, why, remaining_blockers.
