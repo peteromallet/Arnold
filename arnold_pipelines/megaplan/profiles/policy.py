@@ -673,32 +673,34 @@ def apply_available_model_floor(
 ) -> dict[str, str]:
     result = dict(profile)
     local_degradations: list[dict[str, Any]] = []
-    if "finalize" in result:
-        original = result["finalize"]
+    for phase, original in list(result.items()):
         floored, reason = _best_available_floor_spec(original)
-        result["finalize"] = floored
-        _record_routing_degradation(
-            local_degradations,
-            phase="finalize",
-            tier=None,
-            from_spec=original,
-            to_spec=floored,
-            reason=reason,
-        )
+        if floored != original:
+            result[phase] = floored
+            _record_routing_degradation(
+                local_degradations,
+                phase=phase,
+                tier=None,
+                from_spec=original,
+                to_spec=floored,
+                reason=reason,
+            )
     if tier_models is not None:
-        execute_tiers = tier_models.get("execute")
-        if isinstance(execute_tiers, dict):
-            for tier_int, spec in list(execute_tiers.items()):
-                floored, reason = _best_available_floor_spec(spec)
-                execute_tiers[tier_int] = floored
-                _record_routing_degradation(
-                    local_degradations,
-                    phase="execute",
-                    tier=tier_int,
-                    from_spec=spec,
-                    to_spec=floored,
-                    reason=reason,
-                )
+        for phase in ("execute", "critique"):
+            tiers = tier_models.get(phase)
+            if isinstance(tiers, dict):
+                for tier_int, spec in list(tiers.items()):
+                    floored, reason = _best_available_floor_spec(spec)
+                    if floored != spec:
+                        tiers[tier_int] = floored
+                        _record_routing_degradation(
+                            local_degradations,
+                            phase=phase,
+                            tier=tier_int,
+                            from_spec=spec,
+                            to_spec=floored,
+                            reason=reason,
+                        )
     if degradations is not None:
         degradations.extend(local_degradations)
     _warn_routing_degradations(local_degradations)
