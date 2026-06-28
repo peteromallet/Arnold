@@ -464,6 +464,18 @@ def _rewrite_remote_workspace_path(remote_path: str, *, source_workspace: str, t
     return remote_path
 
 
+def _remote_chain_upload_path(remote_path: str, *, source_workspace: str, target_workspace: str) -> str:
+    rewritten = _rewrite_remote_workspace_path(
+        remote_path,
+        source_workspace=source_workspace,
+        target_workspace=target_workspace,
+    )
+    path = PurePosixPath(rewritten)
+    if path.is_absolute():
+        return str(path)
+    return str(PurePosixPath(target_workspace) / path)
+
+
 def _normalized_chain_upload_spec(
     local_spec_path: Path,
     *,
@@ -1507,7 +1519,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         uploads.append(
             (
                 local_source,
-                _rewrite_remote_workspace_path(
+                _remote_chain_upload_path(
                     milestone.idea,
                     source_workspace=spec.repo.workspace,
                     target_workspace=launch_ctx.workspace,
