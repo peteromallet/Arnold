@@ -529,6 +529,34 @@ def test_merged_pr_completion_allows_published_semantic_diff(tmp_path: Path) -> 
     assert "published PR target" in reason
 
 
+def test_merged_pr_completion_allows_published_semantic_diff_with_stale_local_head(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    local_branch = _git(tmp_path, "branch", "--show-current")
+    published_sha = _commit_published_semantic_change(
+        tmp_path,
+        base,
+        branch="published-semantic-stale-local",
+        return_to=local_branch,
+    )
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        {
+            **_record(),
+            "pr_number": 62,
+            "pr_state": "merged",
+            "pr_merge_sha": published_sha,
+        },
+        implementation_milestone=True,
+    )
+
+    assert ok is True
+    assert "published PR target" in reason
+
+
 def test_merged_pr_completion_queries_gh_when_only_pr_number_is_recorded(
     tmp_path: Path, monkeypatch
 ) -> None:
