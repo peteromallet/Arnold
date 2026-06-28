@@ -5765,8 +5765,76 @@ def _recovery_report_from_ui_payload(
             ),
         )
 
+    def _node_input_signature(node: Mapping[str, Any]) -> tuple[Any, ...]:
+        inputs = node.get("inputs")
+        if not isinstance(inputs, list):
+            return ()
+        signature: list[tuple[Any, ...]] = []
+        for item in inputs:
+            if not isinstance(item, Mapping):
+                continue
+            signature.append((item.get("name"), item.get("type"), item.get("link")))
+        return tuple(signature)
+
+    def _node_output_slots(node: Mapping[str, Any]) -> dict[tuple[Any, Any, Any], set[Any]]:
+        outputs = node.get("outputs")
+        slots: dict[tuple[Any, Any, Any], set[Any]] = {}
+        if not isinstance(outputs, list):
+            return slots
+        for item in outputs:
+            if not isinstance(item, Mapping):
+                continue
+            key = (item.get("name"), item.get("type"), item.get("slot_index"))
+            links = item.get("links")
+            slots[key] = set(links if isinstance(links, list) else [])
+        return slots
+
+    def _preexisting_schema_less_queue_safe(
+        *,
+        original_node: Mapping[str, Any] | None,
+        candidate_node: Mapping[str, Any],
+    ) -> tuple[bool, str]:
+        if original_node is None:
+            return (False, "new_schema_less_node")
+        if _connection_signature(original_node) == _connection_signature(candidate_node):
+            return (True, "connection_shape_unchanged")
+        if _node_input_signature(original_node) != _node_input_signature(candidate_node):
+            return (False, "schema_less_inputs_changed")
+        original_slots = _node_output_slots(original_node)
+        candidate_slots = _node_output_slots(candidate_node)
+        if set(original_slots) != set(candidate_slots):
+            return (False, "schema_less_output_slots_changed")
+        for key, original_links in original_slots.items():
+            candidate_links = candidate_slots.get(key, set())
+            if not original_links.issubset(candidate_links):
+                return (False, "schema_less_existing_output_links_removed")
+        return (True, "preexisting_output_fanout_only")
+
+    def _local_node_schema_evidence(class_type: str) -> dict[str, Any] | None:
+        try:
+            from vibecomfy.comfy_nodes import NODE_CLASS_MAPPINGS  # noqa: PLC0415
+        except Exception:
+            return None
+        node_cls = NODE_CLASS_MAPPINGS.get(class_type)
+        if node_cls is None:
+            return None
+        input_types = getattr(node_cls, "INPUT_TYPES", None)
+        if not callable(input_types):
+            return None
+        try:
+            input_types()
+        except Exception:
+            return None
+        return {
+            "provider": "vibecomfy_local_node_mapping",
+            "confidence": 1.0,
+            "schema_less": False,
+            "diagnostic": "trusted local VibeComfy node class schema",
+        }
+
     original_node_classes: dict[str, str] = {}
     original_node_connections: dict[str, tuple[Any, ...]] = {}
+    original_nodes_by_id: dict[str, Mapping[str, Any]] = {}
     original_nodes = (
         original_ui_payload.get("nodes")
         if isinstance(original_ui_payload, Mapping)
@@ -5780,6 +5848,7 @@ def _recovery_report_from_ui_payload(
             original_class_type = str(original_node.get("type", ""))
             if original_node_id and original_class_type:
                 original_node_classes[original_node_id] = original_class_type
+                original_nodes_by_id[original_node_id] = original_node
                 original_node_connections[original_node_id] = _connection_signature(
                     original_node
                 )
@@ -5798,6 +5867,26 @@ def _recovery_report_from_ui_payload(
         )
         schema = get_schema(class_type)
         if schema is None:
+            local_schema_evidence = _local_node_schema_evidence(class_type)
+            if local_schema_evidence is not None:
+                recovery.append(
+                    {
+                        "node_id": node_id,
+                        "class_type": class_type,
+                        **local_schema_evidence,
+                        "preexisting_ui_node": preexisting_ui_node,
+                        "ui_connection_shape_unchanged": ui_connection_shape_unchanged,
+                        "schema_less_safety": "local_node_schema",
+                        "widget_shape_verdict": "not_applicable",
+                    }
+                )
+                continue
+            schema_less_safe, schema_less_reason = _preexisting_schema_less_queue_safe(
+                original_node=original_nodes_by_id.get(node_id)
+                if preexisting_ui_node
+                else None,
+                candidate_node=node,
+            )
             recovery.append(
                 {
                     "node_id": node_id,
@@ -5807,6 +5896,8 @@ def _recovery_report_from_ui_payload(
                     "schema_less": True,
                     "preexisting_ui_node": preexisting_ui_node,
                     "ui_connection_shape_unchanged": ui_connection_shape_unchanged,
+                    "schema_less_queue_safe": schema_less_safe,
+                    "schema_less_safety": schema_less_reason,
                     "widget_shape_verdict": "not_applicable",
                     "diagnostic": "schema-less: no schema provider evidence for node",
                 }

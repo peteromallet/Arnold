@@ -332,6 +332,8 @@ def queue_stage_diagnostics(
                 and entry.get("ui_connection_shape_unchanged") is True
             ):
                 continue
+            if entry.get("schema_less_queue_safe") is True:
+                continue
             issues.append(
                 _queue_issue(
                     code="schema_less_queue_blocker",
@@ -344,6 +346,7 @@ def queue_stage_diagnostics(
                         "provider": entry.get("provider"),
                         "confidence": confidence,
                         "diagnostic": entry.get("diagnostic"),
+                        "schema_less_safety": entry.get("schema_less_safety"),
                     },
                     failure_kind=FailureKind.SCHEMA_LESS_QUEUE_BLOCKER,
                 )
