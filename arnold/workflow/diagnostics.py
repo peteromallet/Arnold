@@ -88,6 +88,8 @@ class DiagnosticCode(StrEnum):
     MALFORMED_POLICY_CONFIG = "AWF019_MALFORMED_POLICY_CONFIG"
     MALFORMED_CAPABILITY_METADATA = "AWF020_MALFORMED_CAPABILITY_METADATA"
     LOOP_POLICY_BINDING_MISMATCH = "AWF021_LOOP_POLICY_BINDING_MISMATCH"
+    MISSING_PROMPT_DEPENDENCY = "AWF022_MISSING_PROMPT_DEPENDENCY"
+    MISSING_RESOURCE_DEPENDENCY = "AWF023_MISSING_RESOURCE_DEPENDENCY"
 
 
 class DiagnosticFamily(StrEnum):
@@ -114,6 +116,8 @@ class DiagnosticFamily(StrEnum):
     MALFORMED_POLICY_CONFIG = "malformed_policy_config"
     MALFORMED_CAPABILITY_METADATA = "malformed_capability_metadata"
     LOOP_POLICY_BINDING_MISMATCH = "loop_policy_binding_mismatch"
+    MISSING_PROMPT_DEPENDENCY = "missing_prompt_dependency"
+    MISSING_RESOURCE_DEPENDENCY = "missing_resource_dependency"
 
 
 @dataclass(frozen=True)
@@ -288,6 +292,20 @@ DIAGNOSTIC_CODE_SPECS = (
         severity=DiagnosticSeverity.ERROR,
         message_template="loop policy binding does not match the canonical loop carrier",
         remediation="bind loop policy to the canonical tail carrier without replacing existing policy fields",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.MISSING_PROMPT_DEPENDENCY,
+        family=DiagnosticFamily.MISSING_PROMPT_DEPENDENCY,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="step component declares a static prompt dependency that is not satisfied",
+        remediation="attach a PromptComponent to the StepComponent or remove the static prompt_key metadata",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.MISSING_RESOURCE_DEPENDENCY,
+        family=DiagnosticFamily.MISSING_RESOURCE_DEPENDENCY,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="step component declares a static resource dependency that is not satisfied",
+        remediation="declare the required resource in component metadata resources or remove the dependency",
     ),
 )
 

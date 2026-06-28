@@ -94,6 +94,14 @@ def test_source_compiler_m3_diagnostic_registry_pins_control_flow_policy_codes()
             "AWF021_LOOP_POLICY_BINDING_MISMATCH",
             diagnostics.DiagnosticFamily.LOOP_POLICY_BINDING_MISMATCH,
         ),
+        diagnostics.DiagnosticCode.MISSING_PROMPT_DEPENDENCY: (
+            "AWF022_MISSING_PROMPT_DEPENDENCY",
+            diagnostics.DiagnosticFamily.MISSING_PROMPT_DEPENDENCY,
+        ),
+        diagnostics.DiagnosticCode.MISSING_RESOURCE_DEPENDENCY: (
+            "AWF023_MISSING_RESOURCE_DEPENDENCY",
+            diagnostics.DiagnosticFamily.MISSING_RESOURCE_DEPENDENCY,
+        ),
     }
 
     assert diagnostics.DIAGNOSTIC_SPECS is diagnostics.DIAGNOSTIC_CODE_SPECS
@@ -180,7 +188,10 @@ def test_source_compiler_compiles_direct_form_through_existing_manifest_contract
         ("execute-review", "execute", "review"),
         ("plan-execute", "plan", "execute"),
     ]
-    assert not hasattr(manifest.edges[0], "source_span")
+    assert {edge.id: edge.source_span.start_line for edge in manifest.edges if edge.source_span} == {
+        "execute-review": 12,
+        "plan-execute": 11,
+    }
     assert {node.id: node.source_span.start_line for node in manifest.nodes if node.source_span} == {
         "plan": 10,
         "execute": 11,
@@ -254,6 +265,47 @@ def test_source_compiler_accepts_exactly_one_direct_or_function_workflow_source_
         "review",
     ]
     assert diagnostics.DiagnosticCode.MULTIPLE_WORKFLOW_DECLARATIONS in _codes(mixed)
+
+
+@pytest.mark.parametrize(
+    ("fixture_name", "expected_code", "expected_remediation"),
+    [
+        (
+            "invalid_missing_workflow",
+            diagnostics.DiagnosticCode.MISSING_WORKFLOW_DECLARATION,
+            "add exactly one top-level workflow(...) declaration",
+        ),
+        (
+            "invalid_multiple_workflows",
+            diagnostics.DiagnosticCode.MULTIPLE_WORKFLOW_DECLARATIONS,
+            "keep a single top-level workflow(...) declaration per source file",
+        ),
+    ],
+)
+def test_source_compiler_workflow_declaration_diagnostics_pin_spans_and_remediation(
+    fixture_name: str,
+    expected_code: diagnostics.DiagnosticCode,
+    expected_remediation: str,
+) -> None:
+    source_path = FIXTURE_DIR / f"{fixture_name}.py"
+    expected = json.loads(
+        (FIXTURE_DIR / f"{fixture_name}.expected.json").read_text(encoding="utf-8")
+    )["expected_diagnostics"][0]
+
+    result = workflow.check_workflow_file(source_path)
+
+    assert not result.ok
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code is expected_code
+    assert diagnostic.remediation == expected_remediation
+    payload = _diagnostic_payloads(result)[0]
+    assert payload["code"] == expected["code"]
+    assert payload["message"] == expected["message"]
+    assert payload["source_span"] == {
+        "path": source_path.as_posix(),
+        **expected["source_span"],
+    }
 
 
 def test_source_compiler_parses_function_header_metadata_and_ordered_scope() -> None:
@@ -1608,6 +1660,102 @@ def flow(brief):
         _diagnostic_payloads(result)[0]["message"]
         == "branch route comparisons must not repeat literal targets"
     )
+
+
+def test_source_compiler_m3_route_ambiguity_diagnostics_are_explicit() -> None:
+    expected_codes = {}
+    for fixture_name in (
+        "invalid_m3_repeated_route_comparison",
+        "invalid_m3_ambiguous_route_metadata",
+        "invalid_m3_ambiguous_loop",
+    ):
+        expected = json.loads(
+            (M3_FIXTURE_DIR / f"{fixture_name}.expected.json").read_text(encoding="utf-8")
+        )["expected_diagnostics"][0]
+        expected_codes[fixture_name] = expected["code"]
+
+    assert expected_codes == {
+        "invalid_m3_repeated_route_comparison": "AWF011_DYNAMIC_ROUTING_CONDITION",
+        "invalid_m3_ambiguous_route_metadata": "AWF018_ROUTE_METADATA_MISMATCH",
+        "invalid_m3_ambiguous_loop": "AWF013_AMBIGUOUS_LOOP",
+    }
+    assert (
+        diagnostics.diagnostic_spec(diagnostics.DiagnosticCode.DYNAMIC_ROUTING_CONDITION).remediation
+        == "compare one prior decision output to one unique literal string per branch arm"
+    )
+    assert (
+        diagnostics.diagnostic_spec(diagnostics.DiagnosticCode.ROUTE_METADATA_MISMATCH).remediation
+        == "preserve route ids, labels, condition refs, and whitelisted metadata during lowering"
+    )
+    assert "while True" in diagnostics.diagnostic_spec(
+        diagnostics.DiagnosticCode.AMBIGUOUS_LOOP
+    ).remediation
+
+
+def test_source_compiler_reports_static_prompt_resource_dependency_diagnostics() -> None:
+    source_path = FIXTURE_DIR / "invalid_static_prompt_resource_dependencies.py"
+
+    result = workflow.check_workflow_file(source_path)
+
+    assert [diagnostic.code for diagnostic in result.diagnostics] == [
+        diagnostics.DiagnosticCode.MISSING_PROMPT_DEPENDENCY,
+        diagnostics.DiagnosticCode.MISSING_RESOURCE_DEPENDENCY,
+    ]
+    assert [diagnostic.source_span.start_line for diagnostic in result.diagnostics if diagnostic.source_span] == [
+        10,
+        11,
+    ]
+    assert result.diagnostics[0].remediation == (
+        "attach a PromptComponent to the StepComponent or remove the static prompt_key metadata"
+    )
+    assert result.diagnostics[0].details["prompt_key"] == "review"
+    assert result.diagnostics[1].remediation == (
+        "declare the required resource in component metadata resources or remove the dependency"
+    )
+    assert result.diagnostics[1].details["missing_resources"] == ("model",)
+    assert result.diagnostics[1].details["available_resources"] == ("cache",)
+
+
+def test_source_compiler_does_not_render_runtime_prompt_templates_as_awf_diagnostics() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import runtime_prompt_step
+
+workflow(id="runtime-prompt-boundary", steps=[runtime_prompt_step(id="draft")])
+"""
+    prompt = authoring.PromptComponent(
+        id="runtime_prompt",
+        provenance=authoring.ComponentProvenance(
+            module="project.workflow_components",
+            qualname="runtime_prompt",
+            export_name="runtime_prompt",
+        ),
+        template="{runtime_value_missing_until_dispatch}",
+        parameters=("runtime_value",),
+    )
+    resolver = _Resolver(
+        {
+            "project.workflow_components:runtime_prompt_step": authoring.StepComponent(
+                id="runtime_prompt_step",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="runtime_prompt_step",
+                    export_name="runtime_prompt_step",
+                ),
+                prompt=prompt,
+                metadata={"prompt_key": "runtime_prompt"},
+            )
+        }
+    )
+
+    result = workflow.check_workflow_source(
+        source,
+        source_path="runtime_prompt_boundary.py",
+        resolver=resolver,
+    )
+
+    assert result.ok
+    assert result.diagnostics == ()
 
 
 def test_source_compiler_m3_rejects_implicit_branch_fallthrough() -> None:
