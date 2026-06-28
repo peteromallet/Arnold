@@ -1272,23 +1272,13 @@ def handle_execute_one_batch(
         )
 
     tasks = finalize_data.get("tasks", [])
-    resolved_prereq_reset_ids = _reset_resolved_prerequisite_blocked_tasks(
+    finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
         finalize_data,
         plan_dir=plan_dir,
         state=state,
+        log_label="resolved-prereq-retry(batch)",
     )
     if resolved_prereq_reset_ids:
-        write_plan_artifact_json(
-            plan_dir,
-            "finalize.json",
-            finalize_data,
-            contract_context=None,
-        )
-        log.info(
-            "resolved-prereq-retry(batch): reset %d stale prerequisite-blocked task(s) to pending: %s",
-            len(resolved_prereq_reset_ids),
-            ", ".join(resolved_prereq_reset_ids),
-        )
         tasks = finalize_data.get("tasks", [])
     # In per-batch execute mode, finalize.json is only rewritten after the
     # final batch — between batches the per-task status overlay lives in
@@ -1912,6 +1902,41 @@ def _reset_resolved_prerequisite_blocked_tasks(
     return sorted(reset_ids)
 
 
+def _sync_resolved_prerequisite_blocked_tasks(
+    finalize_data: dict[str, Any],
+    *,
+    plan_dir: Path,
+    state: PlanState,
+    log_label: str,
+) -> tuple[dict[str, Any], list[str]]:
+    """Reload finalize state from disk and clear stale resolved prereq blocks."""
+    try:
+        refreshed = read_json(plan_dir / "finalize.json")
+    except (OSError, UnicodeDecodeError, ValueError):
+        refreshed = finalize_data
+    if isinstance(refreshed, dict):
+        finalize_data = refreshed
+    reset_ids = _reset_resolved_prerequisite_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        state=state,
+    )
+    if reset_ids:
+        write_plan_artifact_json(
+            plan_dir,
+            "finalize.json",
+            finalize_data,
+            contract_context=None,
+        )
+        log.info(
+            "%s: reset %d stale prerequisite-blocked task(s) to pending: %s",
+            log_label,
+            len(reset_ids),
+            ", ".join(reset_ids),
+        )
+    return finalize_data, reset_ids
+
+
 _BASELINE_VERIFICATION_MARKER = "introduce no new failures vs the recorded baseline"
 _BASELINE_UNAVAILABLE_BLOCKER_KIND = "baseline-unavailable-no-new-failures-checkpoint"
 
@@ -2491,23 +2516,13 @@ def handle_execute_auto_loop(
                 ", ".join(sorted(baseline_unavailable_ids)),
             )
 
-    resolved_prereq_reset_ids = _reset_resolved_prerequisite_blocked_tasks(
+    finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
         finalize_data,
         plan_dir=plan_dir,
         state=state,
+        log_label="resolved-prereq-retry",
     )
     if resolved_prereq_reset_ids:
-        write_plan_artifact_json(
-            plan_dir,
-            "finalize.json",
-            finalize_data,
-            contract_context=None,
-        )
-        log.info(
-            "resolved-prereq-retry: reset %d stale prerequisite-blocked task(s) to pending: %s",
-            len(resolved_prereq_reset_ids),
-            ", ".join(resolved_prereq_reset_ids),
-        )
         tasks = finalize_data.get("tasks", [])
 
     deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
@@ -2659,6 +2674,21 @@ def handle_execute_auto_loop(
                 for task in tasks
                 if task.get("status") == "blocked" and isinstance(task.get("id"), str)
             }
+        if blocked_task_ids:
+            finalize_data, resolved_prereq_reset_ids = _sync_resolved_prerequisite_blocked_tasks(
+                finalize_data,
+                plan_dir=plan_dir,
+                state=state,
+                log_label="resolved-prereq-retry(blocked-short-circuit)",
+            )
+            if resolved_prereq_reset_ids:
+                tasks = finalize_data.get("tasks", [])
+                blocked_task_ids = {
+                    task["id"]
+                    for task in tasks
+                    if task.get("status") == "blocked"
+                    and isinstance(task.get("id"), str)
+                }
         # Now, only short-circuit if blocked tasks remain (within-session)
         if blocked_task_ids:
             baseline_deviations = baseline_unavailable_checkpoint_deviations(
