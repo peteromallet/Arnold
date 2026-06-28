@@ -1079,6 +1079,43 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         baseline_head=baseline_head if isinstance(baseline_head, str) and baseline_head.strip() else None,
     )
     evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
+
+    def _authoritative_batch_task_overrides() -> dict[str, dict[str, Any]]:
+        overrides: dict[str, dict[str, Any]] = {}
+        for batch_path in sorted(
+            plan_dir.glob("execution_batch_*.json"),
+            key=_execution_batch_sort_key,
+        ):
+            try:
+                batch_payload = json.loads(batch_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                continue
+            if not isinstance(batch_payload, dict):
+                continue
+            batch_records = [
+                item
+                for item in (batch_payload.get("task_updates") or [])
+                if isinstance(item, dict)
+            ]
+            if not batch_records:
+                continue
+            batch_decisions: dict[str, AuthorityDecision] = {}
+            batch_completed = effective_execute_completed_task_ids(
+                batch_records,
+                plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state_payload,
+                evidence_nucleus=evidence_nucleus,
+                current_head=current_head,
+                decisions=batch_decisions,
+            )
+            for record in batch_records:
+                task_id = str(record.get("task_id") or record.get("id") or "")
+                if task_id and task_id in batch_completed:
+                    overrides[task_id] = dict(record)
+        return overrides
+
+    authoritative_batch_overrides = _authoritative_batch_task_overrides()
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
         key=_execution_batch_sort_key,
@@ -1093,6 +1130,66 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     if not isinstance(payload, dict):
         return False, f"{latest.name} payload is not an object"
 
+    finalize_path = plan_dir / "finalize.json"
+    finalize_payload: dict[str, Any] | None = None
+    authoritative_finalize_records: list[dict[str, Any]] | None = None
+    baseline_unavailable_task_ids: set[str] = set()
+    if finalize_path.exists():
+        try:
+            loaded_finalize_payload = json.loads(
+                finalize_path.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as error:
+            return False, f"finalize.json could not be read: {error}"
+        if isinstance(loaded_finalize_payload, dict):
+            finalize_payload = loaded_finalize_payload
+            finalize_tasks = finalize_payload.get("tasks")
+            if isinstance(finalize_tasks, list) and finalize_tasks:
+                finalize_records = [
+                    task for task in finalize_tasks if isinstance(task, dict)
+                ]
+                from arnold_pipelines.megaplan.execute.batch import (
+                    baseline_unavailable_checkpoint_ids,
+                )
+
+                finalize_ids = {
+                    str(task.get("id"))
+                    for task in finalize_records
+                    if isinstance(task.get("id"), str)
+                }
+                baseline_unavailable_task_ids = baseline_unavailable_checkpoint_ids(
+                    finalize_payload, finalize_ids
+                )
+                authoritative_finalize_records = [
+                    task
+                    for task in finalize_records
+                    if str(task.get("id") or "") not in baseline_unavailable_task_ids
+                ]
+                if authoritative_batch_overrides:
+                    overlaid_finalize_records: list[dict[str, Any]] = []
+                    for task in authoritative_finalize_records:
+                        task_id = str(task.get("id") or "")
+                        override = authoritative_batch_overrides.get(task_id)
+                        if override is None:
+                            overlaid_finalize_records.append(task)
+                            continue
+                        merged = dict(task)
+                        for field in (
+                            "files_changed",
+                            "commands_run",
+                            "evidence_files",
+                            "sections_written",
+                            "evidence",
+                        ):
+                            if field not in override:
+                                merged.pop(field, None)
+                        for key, value in override.items():
+                            if key == "task_id":
+                                continue
+                            merged[key] = value
+                        overlaid_finalize_records.append(merged)
+                    authoritative_finalize_records = overlaid_finalize_records
+
     task_records: list[dict[str, Any]] = []
     for key in ("task_updates", "tasks"):
         raw_records = payload.get(key)
@@ -1101,83 +1198,60 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     if not task_records:
         return False, f"{latest.name} has no task records"
 
-    batch_decisions: dict[str, AuthorityDecision] = {}
-    completed = effective_execute_completed_task_ids(
-        task_records,
-        plan_dir=plan_dir,
-        project_dir=project_dir,
-        state=state_payload,
-        evidence_nucleus=evidence_nucleus,
-        current_head=current_head,
-        decisions=batch_decisions,
-    )
-    if not completed:
-        return False, f"{latest.name} has no corroborated completed task IDs"
-    incomplete = _non_authoritative_task_reasons(
-        task_records, completed, batch_decisions
-    )
-    if incomplete:
-        return (
-            False,
-            f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
+    authoritative_task_records = [
+        task
+        for task in task_records
+        if str(task.get("task_id") or task.get("id") or "")
+        not in baseline_unavailable_task_ids
+    ]
+    if authoritative_task_records:
+        batch_decisions: dict[str, AuthorityDecision] = {}
+        completed = effective_execute_completed_task_ids(
+            authoritative_task_records,
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state_payload,
+            evidence_nucleus=evidence_nucleus,
+            current_head=current_head,
+            decisions=batch_decisions,
         )
-    finalize_path = plan_dir / "finalize.json"
-    if finalize_path.exists():
-        try:
-            finalize_payload = json.loads(finalize_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            return False, f"finalize.json could not be read: {error}"
-        finalize_tasks = (
-            finalize_payload.get("tasks")
-            if isinstance(finalize_payload, dict)
-            else None
+        if not completed:
+            return False, f"{latest.name} has no corroborated completed task IDs"
+        incomplete = _non_authoritative_task_reasons(
+            authoritative_task_records, completed, batch_decisions
         )
-        if isinstance(finalize_tasks, list) and finalize_tasks:
-            finalize_records = [
-                task for task in finalize_tasks if isinstance(task, dict)
-            ]
-            from arnold_pipelines.megaplan.execute.batch import (
-                baseline_unavailable_checkpoint_ids,
+        if incomplete:
+            return (
+                False,
+                f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
             )
 
-            finalize_ids = {
-                str(task.get("id"))
-                for task in finalize_records
-                if isinstance(task.get("id"), str)
-            }
-            baseline_unavailable = baseline_unavailable_checkpoint_ids(
-                finalize_payload, finalize_ids
+    if authoritative_finalize_records:
+        finalize_decisions: dict[str, AuthorityDecision] = {}
+        finalize_completed = effective_execute_completed_task_ids(
+            authoritative_finalize_records,
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state_payload,
+            evidence_nucleus=evidence_nucleus,
+            current_head=current_head,
+            decisions=finalize_decisions,
+        )
+        pending = _non_authoritative_task_reasons(
+            authoritative_finalize_records,
+            finalize_completed,
+            finalize_decisions,
+        )
+        pending.extend(
+            _finalize_records_missing_authority_fields(
+                authoritative_finalize_records
             )
-            authoritative_finalize_records = [
-                task
-                for task in finalize_records
-                if str(task.get("id") or "") not in baseline_unavailable
-            ]
-            finalize_decisions: dict[str, AuthorityDecision] = {}
-            finalize_completed = effective_execute_completed_task_ids(
-                authoritative_finalize_records,
-                plan_dir=plan_dir,
-                project_dir=project_dir,
-                state=state_payload,
-                evidence_nucleus=evidence_nucleus,
-                current_head=current_head,
-                decisions=finalize_decisions,
+        )
+        if pending:
+            return (
+                False,
+                f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
             )
-            pending = _non_authoritative_task_reasons(
-                authoritative_finalize_records,
-                finalize_completed,
-                finalize_decisions,
-            )
-            pending.extend(
-                _finalize_records_missing_authority_fields(
-                    authoritative_finalize_records
-                )
-            )
-            if pending:
-                return (
-                    False,
-                    f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
-                )
     return True, latest.name
 
 

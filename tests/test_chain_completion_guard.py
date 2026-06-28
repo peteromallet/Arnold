@@ -316,6 +316,175 @@ def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_h
     assert reason == "execution_batch_1.json"
 
 
+def test_latest_execution_batch_all_tasks_done_ignores_deferred_baseline_batch(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "finalized",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T2",
+                        "description": (
+                            "Introduce no new failures vs the recorded baseline; "
+                            "do not try to make pre-existing baseline failures "
+                            "pass; do not narrow to individual functions. The "
+                            "harness will run the authoritative post-execute "
+                            "verification — do not loop the suite."
+                        ),
+                        "status": "skipped",
+                        "kind": "test",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Deferred by harness: baseline_test_failures is null, "
+                            "so this no-new-failures checkpoint cannot compare "
+                            "against a recorded baseline."
+                        ),
+                    },
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_2.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T2",
+                        "status": "blocked",
+                        "commands_run": ["pytest"],
+                        "executor_notes": "Full-suite gate was deferred by the harness.",
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "execution_batch_2.json"
+
+
+def test_latest_execution_batch_all_tasks_done_prefers_authoritative_batch_update_over_stale_finalize(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "finalized",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "blocked",
+                        "kind": "code",
+                        "commands_run": ["find stale prerequisite"],
+                        "executor_notes": "Stale finalize snapshot.",
+                        "head_sha": base,
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_2.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T2",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "executor_notes": "Authoritative batch update.",
+                        "head_sha": head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "execution_batch_2.json"
+
+
 def test_latest_execution_batch_all_tasks_done_prefers_latest_recorded_head_over_stale_baseline(
     tmp_path: Path,
 ) -> None:
