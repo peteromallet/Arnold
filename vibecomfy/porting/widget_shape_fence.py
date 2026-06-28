@@ -106,6 +106,15 @@ def decide_widget_shape(
         is_new_node
         and raw_ui_node is not None
         and not _has_full_raw_ui_payload(raw_ui_node)
+        # A new node with a partial ``_ui`` stub (inputs/outputs stripped at
+        # ingest) is only "malformed" if it actually has a widget-shape problem
+        # (``static_reasons``) or no regenerable widget payload. When the widget
+        # shape is clean, regeneration rebuilds ``widgets_values`` from the IR,
+        # so the partial stub is irrelevant — fall through to regenerate/emit.
+        and (
+            static_reasons
+            or not _has_raw_widget_payload(raw_widget_payload, evidence)
+        )
     )
     if malformed_new_raw_ui:
         refuse_reasons = list(static_reasons)
