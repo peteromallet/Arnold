@@ -148,6 +148,7 @@ def load_chain_state() -> tuple[dict[str, object], str]:
         except Exception:
             spec_resolved = spec_path
         digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+        # Prefer the workspace-owned chain state; legacy locations stay fallback-only.
         candidates = (
             workspace / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
             spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
@@ -2207,6 +2208,7 @@ launch_chain_tick() {
   PLAN_STATUS_TIERS_TRIED=
   PLAN_STATUS_PUSHED_COMMITS=
   PLAN_STATUS_MANUAL_REVIEW=0
+  # If the helper emits nothing, keep the tick on the default non-attention path.
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
