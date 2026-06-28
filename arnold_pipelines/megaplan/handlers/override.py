@@ -1190,6 +1190,26 @@ def _override_recover_blocked(
             f"recover-blocked does not know how to resume phase {phase!r}",
             extra={"resume_cursor": resume_cursor},
         )
+    latest_failure = state.get("latest_failure")
+    if isinstance(latest_failure, dict) and latest_failure.get("kind") == "authority_divergence":
+        plan_name = state.get("name") or getattr(args, "plan", None) or plan_dir.name
+        rerun_command = f"megaplan {phase} --plan {plan_name}"
+        if phase == "execute":
+            rerun_command += " --confirm-destructive --user-approved"
+        raise CliError(
+            "rerun_phase_required",
+            (
+                "recover-blocked is only for explicit task or quality blockers. "
+                "This blocked plan needs a fresh phase rerun to regenerate "
+                "authority evidence; do not use recover-blocked here."
+            ),
+            extra={
+                "resume_cursor": resume_cursor,
+                "latest_failure": dict(latest_failure),
+                "rerun_command": rerun_command,
+                "suggested_recovery_commands": [rerun_command],
+            },
+        )
 
     finalize_path = plan_dir / "finalize.json"
     finalize_data = read_json(finalize_path) if finalize_path.exists() else {}

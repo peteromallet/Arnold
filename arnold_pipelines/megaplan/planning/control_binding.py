@@ -239,6 +239,26 @@ def _recovery_phase(state: Mapping[str, object]) -> tuple[str | None, str | None
     return None, None
 
 
+def _blocked_phase_rerun_target(
+    state: Mapping[str, object],
+    *,
+    phase: str,
+    recovered_state: str,
+    source: str | None,
+) -> ControlTargetRef | None:
+    latest_failure = state.get("latest_failure")
+    if not isinstance(latest_failure, Mapping):
+        return None
+    if latest_failure.get("kind") != "authority_divergence":
+        return None
+    return _workflow_step_target(
+        phase,
+        direction="recovery",
+        target_state=recovered_state,
+        source=source,
+    )
+
+
 def _awaiting_human_target(state: Mapping[str, object]) -> ControlTargetRef:
     clarification = state.get("clarification")
     source = clarification.get("source") if isinstance(clarification, Mapping) else None
@@ -796,6 +816,14 @@ class PlanningControlBinding:
             )
 
         if current_state == STATE_BLOCKED:
+            rerun_target = _blocked_phase_rerun_target(
+                state,
+                phase=phase,
+                recovered_state=recovered_state,
+                source=source,
+            )
+            if rerun_target is not None:
+                return (rerun_target,)
             return (
                 _workflow_step_target(
                     "recover-blocked",
@@ -983,6 +1011,26 @@ class PlanningControlBinding:
                     "invalid_resume_cursor",
                     f"recover-blocked does not know how to resume phase {phase!r}",
                     extra={"resume_cursor": dict(resume_cursor)},
+                )
+            latest_failure = state.get("latest_failure")
+            if isinstance(latest_failure, Mapping) and latest_failure.get("kind") == "authority_divergence":
+                plan_name = state.get("name") or "plan"
+                rerun_command = f"megaplan {phase} --plan {plan_name}"
+                if phase == "execute":
+                    rerun_command += " --confirm-destructive --user-approved"
+                raise CliError(
+                    "rerun_phase_required",
+                    (
+                        "recover-blocked is only for explicit task or quality blockers. "
+                        "This blocked plan needs a fresh phase rerun to regenerate "
+                        "authority evidence; do not use recover-blocked here."
+                    ),
+                    extra={
+                        "resume_cursor": dict(resume_cursor),
+                        "latest_failure": dict(latest_failure),
+                        "rerun_command": rerun_command,
+                        "suggested_recovery_commands": [rerun_command],
+                    },
                 )
 
             plan_dir = _plan_dir(state, transition)
