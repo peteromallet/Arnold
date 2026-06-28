@@ -2379,6 +2379,7 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
+                state = chain_spec.load_chain_state(spec_path)
                 state.pr_number = _ensure_milestone_pr(
                     root,
                     milestone,
@@ -2412,6 +2413,7 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=None
                 )
+                state = chain_spec.load_chain_state(spec_path)
             eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
             eff_robustness = (
                 state.robustness_bumps.get(milestone.label)
@@ -2466,6 +2468,7 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
+                state = chain_spec.load_chain_state(spec_path)
                 state.pr_number = _ensure_milestone_pr(
                     root,
                     milestone,
@@ -2645,6 +2648,7 @@ def run_chain(
             _capture_sync_state(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
             )
+            state = chain_spec.load_chain_state(spec_path)
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"
