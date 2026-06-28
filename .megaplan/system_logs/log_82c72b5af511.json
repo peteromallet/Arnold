@@ -1,0 +1,63 @@
+{
+  "id": "log_82c72b5af511",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5392,
+      "schema_version": 1,
+      "ts_utc": "2026-06-28T00:14:25.675784+00:00",
+      "ts_rel_init_s": 11842.888969,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "t6_add_focused_api_regressions",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "t6_add_focused_api_regressions",
+          "declared_outputs": {
+            "files_changed": [
+              "tests/arnold/workflow/test_source_compiler_api.py"
+            ],
+            "commands_run": [
+              "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+            ]
+          },
+          "linked_evidence_count": 4,
+          "evidence_count": 93,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 93,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-28T00:14:25.673847+00:00"
+      },
+      "transaction_id": "37a507a8c65858d2",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-compiler-core-and-linear-20260627-2056",
+  "occurred_at": "2026-06-28T00:14:25.675858Z"
+}

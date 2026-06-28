@@ -1,0 +1,79 @@
+[launch_hermes_agent] model=deepseek:deepseek-v4-pro → resolved=deepseek-v4-pro toolsets=['file', 'terminal'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] WARNING: 'terminal' toolset is enabled but the megaplan sandbox is NOT installed in this entrypoint. Shell commands will run with the invoking user's privileges.
+[launch_hermes_agent] streaming forced (provider + max_tokens > 4096)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 5 tools concurrently
+  [done] ⚡ 5/5 tools completed in 9.8s total (2.5s)
+  ┊ 📖 read      ...act-and-20260627-1635/state.json  2.1s
+  ┊ 📖 read      ...7-1635/step_receipt_gate_v2.json  1.8s
+  ┊ 📖 read      ...7-1635/step_receipt_gate_v1.json  2.0s
+  ┊ 📖 read      ...ract-and-20260627-1635/gate.json  2.0s
+  ┊ 📖 read      ...-20260627-1635/phase_result.json  1.8s
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.8s total (2.0s)
+  ┊ 🔎 grep      resolve_provider_client|OPENROUT...  1.2s
+  ┊ 📖 read      ...horing/arnold/agent/run_agent.py  1.6s
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  ┊ 🔎 grep      resolve_provider_client|OPENROUT...  0.8s
+  ┊ 📖 read      ...on-shaped-workflow-authoring.log  1.6s
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.6s total (2.0s)
+  ┊ 🔎 grep      ModelBudgetError|input budget ex...  0.8s
+  ┊ 📖 read      ...lines/megaplan/workers/hermes.py  1.8s
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.0s total (2.5s)
+  ┊ 📖 read      ...ex-separated-engine.outcome.json  2.0s
+  ┊ 🔎 grep      budget exceeded|internal_error.*...  1.0s
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.0s total (1.5s)
+  ┊ 🔎 grep      iter (9[5-9]|10[0-9])  1.0s
+  ┊ 🔎 grep      internal_error.*gate|phase_faile...  1.0s
+  [tool] ♪(´ε` ) 🔎 resolve_provider_client|ope...
+  [done] ┊ 🔎 grep      resolve_provider_client|openrout...  1.0s (1.5s)
+  [tool] (★ω★) 🔎 def resolve_provider_client
+  [done] ┊ 🔎 grep      def resolve_provider_client  0.8s (1.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 openrouter requested
+  [done] ┊ 🔎 grep      openrouter requested  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 OPENROUTER_API_KEY
+  [done] ┊ 🔎 grep      OPENROUTER_API_KEY  1.0s (1.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...horing/arnold/agent/run_agent.py  2.0s (2.5s)
+  [tool] (｡◕‿◕｡) 🔎 def resolve_provider_client
+  [done] ┊ 🔎 grep      def resolve_provider_client  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      .../agent/agent/auxiliary_client.py  1.6s (2.0s)
+  [tool] (｡◕‿◕｡) 🔎 provider.*openrouter|AIAgent
+  [done] ┊ 🔎 grep      provider.*openrouter|AIAgent  1.0s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 AIAgent\(
+  [done] ┊ 🔎 grep      AIAgent\(  1.2s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...lines/megaplan/workers/hermes.py  2.2s (2.5s)
+  [tool] (｡◕‿◕｡) 🔎 _make_agent\(
+  [done] ┊ 🔎 grep      _make_agent\(  0.8s (1.0s)
+  [tool] (≧◡≦) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...lines/megaplan/workers/hermes.py  2.2s (2.5s)
+  [tool] (◕‿◕✿) 🔎 agent_kwargs
+  [done] ┊ 🔎 grep      agent_kwargs  0.8s (1.0s)
+  [tool] ( ˘▽˘)っ 🔎 def resolve_model
+  [done] ┊ 🔎 grep      def resolve_model  1.2s (1.5s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...nes/megaplan/runtime/key_pool.py  1.8s (2.0s)
+  [tool] (≧◡≦) 🔎 hermes:|model_actual|model_...
+  [done] ┊ 🔎 grep      hermes:|model_actual|model_confi...  1.2s (1.5s)
+  [tool] (✿◠‿◠) 🔎 hermes:|strip.*prefix|model...
+  [done] ┊ 🔎 grep      hermes:|strip.*prefix|model.*split  1.0s (1.5s)
+  [tool] (◕‿◕✿) 🔎 def run_hermes_phase
+  [done] ┊ 🔎 grep      def run_hermes_phase  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...lines/megaplan/workers/hermes.py  2.0s (2.5s)
+  [tool] (✿◠‿◠) 🔎 phase_model.*gate|hermes:de...
+  [done] ┊ 🔎 grep      phase_model.*gate|hermes:deepseek  0.8s (1.0s)
+  [tool] ヾ(＾∇＾) 🔎 def.*phase.*model|phase_mod...
+  [done] ┊ 🔎 grep      def.*phase.*model|phase_model.*s...  1.2s (1.5s)
+  [tool] ( ˘▽˘)っ 🔎 def parse_agent_spec
+  [done] ┊ 🔎 grep      def parse_agent_spec  1.0s (1.5s)
+  [tool] (≧◡≦) 🔎 def parse_agent_spec
+  [done] ┊ 🔎 grep      def parse_agent_spec  1.0s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...horing/arnold/agent/contracts.py  1.8s (2.0s)
+[launch_hermes_agent] done in 158.2s

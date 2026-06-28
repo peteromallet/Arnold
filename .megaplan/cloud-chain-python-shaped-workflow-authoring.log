@@ -11759,3 +11759,924 @@ RuntimeError: Failed to initialize OpenAI client: Missing credentials. Please pa
 [chain] git rebase origin/python-shaped-workflow-authoring-m2-compiler-core -> rc=0
 [chain] git push --no-verify origin python-shaped-workflow-authoring-m2-compiler-core -> rc=0
 [auto m2-compiler-core-and-linear-20260627-2056] execute blocked by quality gates — retrying (1/1)
+[auto m2-compiler-core-and-linear-20260627-2056] execute failed — escalate-up streak 1/2
+[auto m2-compiler-core-and-linear-20260627-2056] iter 14 state=finalized next=execute valid_next=['execute', 'override replan', 'step']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan m2-compiler-core-and-linear-20260627-2056
+[chain] git add -A -> rc=0
+[chain] git reset -- .megaplan/cloud-chain-python-shaped-workflow-authoring.log .megaplan/system_logs/log_59806a5400aa.json .megaplan/system_logs/log_c1765162ff7a.json -> rc=0
+[chain] git commit --no-verify -m megaplan: m2-compiler-core-and-linear-20260627-2056 execute -> rc=0
+[chain] git add -A -> rc=0
+[chain] git commit --no-verify -m megaplan: m2-compiler-core-and-linear-20260627-2056 execute-cleanup -> rc=0
+[chain] git fetch origin python-shaped-workflow-authoring-m2-compiler-core -> rc=0
+[chain] git rebase origin/python-shaped-workflow-authoring-m2-compiler-core -> rc=0
+[chain] git push --no-verify origin python-shaped-workflow-authoring-m2-compiler-core -> rc=0
+[auto m2-compiler-core-and-linear-20260627-2056] execute blocked by quality gates and retry cap reached (1) — bailing
+[chain] execute result=blocked for m2-compiler-core-and-linear-20260627-2056; treating as real block: execution_batch_10.json has no corroborated completed task IDs
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended worker_blocked: execute blocked by quality gates after 2 attempt(s); retry cap 1 reached
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended worker_blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "worker_blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "pr_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "last_pushed_commit": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "ced5924d2a2e5f0269cc245df15bce1613da0427",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 2 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 3 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 4 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 5 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 6 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 7 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 8 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 9 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 10 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 11 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 12 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 13 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 14 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 15 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 16 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 17 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 18 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 19 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 20 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 21 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 22 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 23 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 24 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 25 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 26 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 27 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 28 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 29 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 30 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 31 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 32 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 33 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 34 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 35 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 36 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 37 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 38 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 39 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 40 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 41 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 42 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 43 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 44 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 45 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 46 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 47 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 48 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 49 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 50 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 51 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 52 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 53 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 54 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 55 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 56 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 57 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 58 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 59 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 60 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 61 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 62 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 63 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 64 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 65 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 66 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 67 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 68 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 69 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 70 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 71 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 72 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 73 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 74 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 75 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 76 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 77 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 78 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 79 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 80 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 81 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 82 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 83 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 84 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 85 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 86 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 87 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 88 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 89 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 90 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 91 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 92 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 93 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 94 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 95 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 96 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 97 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 98 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 99 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 100 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 101 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 102 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 103 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 104 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 105 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 106 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 107 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 108 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 109 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 110 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 111 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 112 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 113 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 114 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 115 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 116 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 117 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 118 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 119 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] iter 120 state=blocked next=recover-blocked valid_next=['recover-blocked']
+[auto m2-compiler-core-and-linear-20260627-2056] running: megaplan override recover-blocked --reason megaplan auto: recover blocked plan after blocker resolution --plan m2-compiler-core-and-linear-20260627-2056
+[auto m2-compiler-core-and-linear-20260627-2056] command 'recover-blocked' exited 1: {"success": false, "error": "blocked_recovery_not_resolved", "message": "recover-blocked requires every current blocker to be explicitly resolved as non-terminal"}
+[auto m2-compiler-core-and-linear-20260627-2056] hit max_iterations=120
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended cap: exceeded max_iterations=120
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended cap",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "cap",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "pr_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "last_pushed_commit": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "8a0e5fabb5d1c9fa9ba15604d891a64b930dbe05",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=None valid_next=[]
+[auto m2-compiler-core-and-linear-20260627-2056] terminal state reached: blocked
+[chain] execute result=blocked for m2-compiler-core-and-linear-20260627-2056; treating as real block: execution_batch_10.json has no corroborated completed task IDs
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended blocked: plan entered terminal state 'blocked'
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "pr_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "last_pushed_commit": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "8a0e5fabb5d1c9fa9ba15604d891a64b930dbe05",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=None valid_next=[]
+[auto m2-compiler-core-and-linear-20260627-2056] terminal state reached: blocked
+[chain] execute result=blocked for m2-compiler-core-and-linear-20260627-2056; treating as real block: execution_batch_10.json has no corroborated completed task IDs
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended blocked: plan entered terminal state 'blocked'
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "pr_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "last_pushed_commit": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "8a0e5fabb5d1c9fa9ba15604d891a64b930dbe05",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
+[chain] milestone m2-compiler-core-linear-lowering starting
+[chain] resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering
+[auto m2-compiler-core-and-linear-20260627-2056] iter 1 state=blocked next=None valid_next=[]
+[auto m2-compiler-core-and-linear-20260627-2056] terminal state reached: blocked
+[chain] execute result=blocked for m2-compiler-core-and-linear-20260627-2056; treating as real block: execution_batch_10.json has no corroborated completed task IDs
+[chain] plan m2-compiler-core-and-linear-20260627-2056 ended blocked: plan entered terminal state 'blocked'
+{
+  "status": "stopped",
+  "reason": "milestone m2-compiler-core-linear-lowering ended blocked",
+  "chain_state": {
+    "schema_version": 0,
+    "current_milestone_index": 1,
+    "current_plan_name": "m2-compiler-core-and-linear-20260627-2056",
+    "current_milestone_base_sha": null,
+    "last_state": "blocked",
+    "pr_number": 117,
+    "pr_state": "open",
+    "completed": [
+      {
+        "label": "m1-component-contract-grammar",
+        "plan": "m1-component-contract-and-20260627-1635",
+        "status": "done",
+        "pr_number": 116,
+        "pr_state": "merged",
+        "full_suite_backstop": {
+          "mode": "shadow",
+          "status": "failed",
+          "blocks": false,
+          "reason": "full_suite_backstop_mode=shadow: recorded only",
+          "passed": 317,
+          "failed": 23,
+          "failing_tests": [
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_inventory_main_passes",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_discover_filters_legacy_duplicate",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_hash_check_rejects_invalid_hash",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_check_detects_stale_output",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_identity_report_is_derived_from_current_manifests",
+            "tests/arnold/workflow/test_m5_inventory_scanners.py::test_registry_main_passes",
+            "tests/arnold/workflow/test_static_scans.py::test_python_authoring_docs_do_not_teach_prohibited_surfaces",
+            "tests/cli/test_m5_dispatch.py::test_top_level_dispatch_routes_workflow_without_importing_legacy_modules",
+            "tests/cli/test_m5_operators.py::test_operator_status_reports_progress",
+            "tests/cli/test_m5_operators.py::test_operator_trace_prints_events",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_check_passes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_describe_includes_manifest_metadata",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dot_emits_digraph",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_dry_run_reports_routes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_manifest_emits_json",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_fake_backend_completes",
+            "tests/cli/test_m5_workflow_cli.py::test_workflow_run_local_backend_writes_journal",
+            "tests/cli/test_m6_workflow_explain.py::test_shipped_example_compiles",
+            "tests/test_generate_arnold_docs.py::test_reference_registry_is_stable_and_reports_non_workflow_identities",
+            "tests/test_generate_arnold_docs.py::test_required_public_examples_render_for_workflow_and_native_sources",
+            "tests/test_generate_arnold_docs.py::test_workflow_entries_still_validate_as_workflow_manifests",
+            "tests/test_watchdog_cli.py::test_terminal_stale_lock_becomes_cleanup_candidate",
+            "tests/test_watchdog_cli.py::test_watchdog_works_with_broken_megaplan_cli"
+          ],
+          "newly_failing": [],
+          "deleted_tests": [],
+          "baseline_failing_count": 23,
+          "current_failing_count": 23,
+          "delta_computed": true,
+          "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_import_boundaries.py tests/arnold/patterns/test_patterns.py tests/arnold/workflow/test_authoring_contract.py tests/arnold/workflow/test_authoring_runtime_equivalence.py tests/arnold/workflow/test_canonical_megaplan_conformance.py tests/arnold/workflow/test_compiler.py tests/arnold/workflow/test_diagnostics_contract.py tests/arnold/workflow/test_dsl.py tests/arnold/workflow/test_import_boundaries.py tests/arnold/workflow/test_inspect_and_dry_run.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold/workflow/test_manifest_hashes.py tests/arnold/workflow/test_manifest_serialization.py tests/arnold/workflow/test_python_authoring_fixtures.py tests/arnold/workflow/test_refs.py tests/arnold/workflow/test_serialization_and_hooks.py tests/arnold/workflow/test_source_compiler_api.py tests/arnold/workflow/test_validation.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/test_generate_arnold_docs.py tests/test_watchdog_cli.py tests/arnold/workflow/test_static_scans.py --tb=no -q --no-header -rA",
+          "duration_s": 6.117690156999743,
+          "ran": true,
+          "artifact": "full_suite_backstop.json"
+        }
+      }
+    ],
+    "branch_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "pr_head": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "last_pushed_commit": "5f94ff452a878e9a5ec420e60062f3cf38ca4da1",
+    "dirty_flag": false,
+    "sync_state": "clean",
+    "extra_repos": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "extra_repo_sync": [],
+    "completion_contract_mode": "shadow",
+    "full_suite_backstop_mode": "shadow",
+    "retry_counts": {},
+    "ladder_stage": {},
+    "profile_bumps": {},
+    "robustness_bumps": {},
+    "depth_bumps": {},
+    "enforce_revise_counts": {},
+    "metadata": {
+      "execution_environment": {
+        "schema_version": 1,
+        "created_phase": "chain_start",
+        "last_observed_phase": "chain_start",
+        "project_root": "/workspace/python-shaped-workflow-authoring",
+        "target_root": "/workspace/python-shaped-workflow-authoring",
+        "work_dir": "/workspace/python-shaped-workflow-authoring",
+        "engine_root": "/workspace/arnold",
+        "target_head": "8a0e5fabb5d1c9fa9ba15604d891a64b930dbe05",
+        "target_base": "a58cda89189b58656b180cacb64e80125b947ccc",
+        "target_base_ref": "native-python-working-tree",
+        "target_fallback_reason": null
+      }
+    }
+  },
+  "events": [
+    {
+      "msg": "milestone m2-compiler-core-linear-lowering starting"
+    },
+    {
+      "msg": "resuming existing plan m2-compiler-core-and-linear-20260627-2056 for m2-compiler-core-linear-lowering"
+    }
+  ],
+  "base_branch": "native-python-working-tree"
+}
