@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -48,6 +49,51 @@ def _load_reap_module(tmp_path: Path):
     return module
 
 
+def _extract_repair_stall_program() -> str:
+    text = _wrapper("arnold-watchdog")
+    start = text.index("reap_stalled_repair_candidates() {")
+    marker = (
+        "python3 - \"$MARKER_DIR\" \"$KIMI_OPERATOR_ROOT\" "
+        "\"$REAP_STALL_GRACE_SECS\" \"$REAP_STALL_IDLE_SECS\" "
+        "\"$REAP_AGE_SECS\" <<'PY'"
+    )
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def _run_repair_stall(
+    tmp_path: Path,
+    ps_rows: str,
+    marker_dir: Path,
+    operator_root: Path,
+    grace_secs: int = 900,
+    idle_secs: int = 600,
+    reap_age_secs: int = 7200,
+) -> list[str]:
+    program = _extract_repair_stall_program()
+    prog_path = tmp_path / "_repair_stall_prog.py"
+    prog_path.write_text(program, encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(prog_path),
+            str(marker_dir),
+            str(operator_root),
+            str(grace_secs),
+            str(idle_secs),
+            str(reap_age_secs),
+        ],
+        input=ps_rows,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return [line for line in result.stdout.strip().splitlines() if line]
+
+
 def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -84,7 +130,11 @@ def test_watchdog_reaper_is_wired_into_scan_and_report_summary() -> None:
 
     assert 'REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"' in text
     assert 'REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"' in text
+    assert 'REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"' in text
+    assert 'REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"' in text
+    assert 'KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"' in text
     assert "reap_stale_repairs()" in text
+    assert "reap_stalled_repair_candidates()" in text
     assert 'reap_stale_repairs "$report_items"' in text
     assert '"reaped_repairs": len(reaped)' in text
     assert 'report_item "$report_items" "${session:-}" "reap" "reaped"' in text
@@ -188,6 +238,64 @@ def test_watchdog_reap_decision_helper_reaps_only_stale_cloud_repairs(tmp_path: 
     assert non_arnold["reason"] == "non_target"
 
 
+def test_watchdog_progress_reap_decision_uses_log_idle_and_fails_safe(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    operator_root = tmp_path / "kimi-goal-operator"
+    marker_dir.mkdir()
+    operator_root.mkdir()
+    now = time.time()
+
+    stale_dir = operator_root / "20260628T000000Z-demo-session"
+    stale_dir.mkdir()
+    stale_operator = stale_dir / "operator.log"
+    stale_codex = stale_dir / "codex-repair.log"
+    stale_operator.write_text("operator\n", encoding="utf-8")
+    stale_codex.write_text("codex\n", encoding="utf-8")
+    stale_ts = now - 901
+    os.utime(stale_operator, (stale_ts, stale_ts))
+    os.utime(stale_codex, (stale_ts, stale_ts))
+    os.utime(stale_dir, (stale_ts, stale_ts))
+
+    stale_rows = (
+        "4100 4000 4100 1800 "
+        "/usr/local/bin/arnold-kimi-goal-operator demo-session /tmp/ws /tmp/spec.json\n"
+    )
+    stale_out = _run_repair_stall(tmp_path, stale_rows, marker_dir, operator_root)
+    assert len(stale_out) == 1
+    stale_fields = stale_out[0].split("\t")
+    assert stale_fields[0] == "4100"
+    assert stale_fields[6] == "stalled"
+    assert stale_fields[7].startswith("stall_idle_")
+    assert stale_fields[8] == str(stale_dir)
+    assert int(stale_fields[9]) >= 600
+    snapshot = marker_dir / "demo-session.reap-progress.json"
+    snap_payload = json.loads(snapshot.read_text(encoding="utf-8"))
+    assert snap_payload["operator_dir"] == str(stale_dir)
+    assert "last_advance_ts" in snap_payload
+
+    active_dir = operator_root / "20260628T000500Z-active-session"
+    active_dir.mkdir()
+    active_operator = active_dir / "operator.log"
+    active_operator.write_text("still making progress\n", encoding="utf-8")
+    active_ts = now - 30
+    os.utime(active_operator, (active_ts, active_ts))
+    os.utime(active_dir, (active_ts, active_ts))
+    active_rows = (
+        "5100 5000 5100 1800 "
+        "/usr/local/bin/arnold-kimi-goal-operator active-session /tmp/ws /tmp/spec.json\n"
+    )
+    assert _run_repair_stall(tmp_path, active_rows, marker_dir, operator_root) == []
+    active_snapshot = marker_dir / "active-session.reap-progress.json"
+    assert active_snapshot.exists()
+
+    unmappable_rows = (
+        "6100 6000 6100 1800 "
+        "/usr/local/bin/arnold-kimi-goal-operator missing-session /tmp/ws /tmp/spec.json\n"
+    )
+    assert _run_repair_stall(tmp_path, unmappable_rows, marker_dir, operator_root) == []
+    assert not (marker_dir / "missing-session.reap-progress.json").exists()
+
+
 def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -278,6 +386,39 @@ fi
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["running", "cleared"]
+
+
+def test_watchdog_complete_teardown_collects_setsid_descendant_pgids(tmp_path: Path) -> None:
+    ps_path = tmp_path / "ps"
+    ps_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        "100 1 100\n"
+        "101 100 100\n"
+        "102 101 102\n"
+        "103 102 102\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    ps_path.chmod(ps_path.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_tree_pgids"),
+            """
+PATH=%s:$PATH
+repair_tree_pgids 100 100
+""".strip() % str(tmp_path),
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().split() == ["100", "102"]
 
 
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
