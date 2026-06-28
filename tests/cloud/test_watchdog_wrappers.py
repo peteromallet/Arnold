@@ -22,6 +22,10 @@ def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
 
 
+def _discover_wrapper() -> str:
+    return _wrapper("arnold-cloud-discover")
+
+
 def _extract_wrapper_function(name: str) -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index(f"{name}() {{")
@@ -100,6 +104,31 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
     return subprocess.run(
         ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
+def _run_discover(
+    tmp_path: Path,
+    *,
+    marker_dir: Path,
+    src_dir: Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    return subprocess.run(
+        [
+            "bash",
+            str(WRAPPER_DIR / "arnold-cloud-discover"),
+            "tmux-unmarked",
+            "--marker-dir",
+            str(marker_dir),
+            "--src-dir",
+            str(src_dir or REPO_ROOT),
+        ],
         capture_output=True,
         text=True,
         env=env,
@@ -512,6 +541,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
             _extract_wrapper_function("adopt_unmarked_tmux_sessions"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"DISCOVER_BIN={str(WRAPPER_DIR / 'arnold-cloud-discover')!r}",
             "adopt_unmarked_tmux_sessions",
         ]
     )
@@ -560,6 +590,7 @@ def test_watchdog_does_not_adopt_non_arnold_tmux_sessions(tmp_path: Path) -> Non
             _extract_wrapper_function("adopt_unmarked_tmux_sessions"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"DISCOVER_BIN={str(WRAPPER_DIR / 'arnold-cloud-discover')!r}",
             "adopt_unmarked_tmux_sessions",
         ]
     )
@@ -567,6 +598,56 @@ def test_watchdog_does_not_adopt_non_arnold_tmux_sessions(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == ""
     assert not marker_dir.exists()
+
+
+def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_supervisors(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = Path("/workspace/test-shared-discover-vibecomfy")
+    (workspace / ".megaplan" / "plans" / "shared-discover-plan").mkdir(parents=True, exist_ok=True)
+
+    tmux_path = tmp_path / "tmux"
+    tmux_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        f"vibecomfy-shared-discover\t4000\t{workspace}\t"
+        "cd "
+        f"{workspace}"
+        " && python3 -m arnold_pipelines.megaplan init --project-dir . "
+        "--idea-file .megaplan/briefs/shared.md --name shared-discover-plan --auto-start\n"
+        f"watchdog-demo\t5000\t{workspace}\tbash -lc '/usr/local/bin/arnold-watchdog --once'\n"
+        f"kimi-helper\t6000\t{workspace}\tbash -lc '/usr/local/bin/arnold-kimi-goal-operator demo'\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    tmux_path.chmod(tmux_path.stat().st_mode | stat.S_IXUSR)
+
+    ps_path = tmp_path / "ps"
+    ps_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        "4000 1 bash -lc bootstrap\n"
+        "4001 4000 python3 -m arnold_pipelines.megaplan init --project-dir . "
+        "--idea-file .megaplan/briefs/shared.md --name shared-discover-plan --auto-start\n"
+        "5000 1 bash -lc /usr/local/bin/arnold-watchdog --once\n"
+        "6000 1 bash -lc /usr/local/bin/arnold-kimi-goal-operator demo\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    ps_path.chmod(ps_path.stat().st_mode | stat.S_IXUSR)
+
+    result = _run_discover(tmp_path, marker_dir=marker_dir)
+    assert result.returncode == 0, result.stderr
+    lines = [line for line in result.stdout.strip().splitlines() if line]
+    assert len(lines) == 1
+    fields = lines[0].split("\t")
+    assert fields[0] == "vibecomfy-shared-discover"
+    assert fields[1] == str(workspace)
+    assert fields[2] == ".megaplan/briefs/shared.md"
+    assert fields[3] == "plan"
+    assert fields[4] == "shared-discover-plan"
+    assert "python3 -P -m arnold_pipelines.megaplan auto --plan shared-discover-plan" in fields[5]
 
 
 def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path) -> None:
@@ -851,6 +932,7 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
 
     # In-container: iterates active markers, 5h window, deepseek dispatch.
     assert 'MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"' in text
+    assert 'DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"' in text
     assert 'AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"' in text
     assert 'DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"' in text
     assert 'SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"' in text
@@ -864,6 +946,54 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     # Evidence-citing required output shape.
     assert "hypothesis" in text
     assert "recommendation" in text
+
+
+def _extract_auditor_worklist_program() -> str:
+    text = _wrapper("arnold-progress-auditor")
+    marker = (
+        "python3 - \"$MARKER_DIR\" \"$WORKLIST\" \"$AUDIT_WINDOW_HOURS\" "
+        "\"$DISCOVER_BIN\" \"/workspace\" \"$ARNOLD_SRC\" <<'PY'"
+    )
+    start = text.index(marker)
+    start = text.index("\n", start) + 1
+    end = text.index("\nPY\n", start)
+    return text[start:end]
+
+
+def _run_auditor_worklist_builder(
+    tmp_path: Path,
+    *,
+    marker_dir: Path,
+    worklist: Path,
+    window_hours: float,
+    discover_bin: Path,
+    workspace_root: Path,
+    arnold_src: Path,
+) -> list[dict]:
+    program = _extract_auditor_worklist_program()
+    prog_path = tmp_path / "_auditor_worklist.py"
+    prog_path.write_text(program, encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(prog_path),
+            str(marker_dir),
+            str(worklist),
+            str(window_hours),
+            str(discover_bin),
+            str(workspace_root),
+            str(arnold_src),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return [
+        json.loads(line)
+        for line in worklist.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
 
 
 def test_repair_runner_defaults_meta_loop_repairs_to_partnered_5() -> None:
@@ -955,8 +1085,8 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
     gather_dir.mkdir()
     worklist = tmp_path / "worklist"
     worklist.write_text(json.dumps({
-        "name": "m2-mock", "session": "m2-mock",
-        "workspace": str(workspace), "updated": _iso_hours_ago(0.1),
+        "name": "m2-mock", "plan": "m2-mock", "session": "m2-mock",
+        "workspace": str(workspace), "updated": _iso_hours_ago(0.1), "sources": ["marker"],
     }) + "\n", encoding="utf-8")
 
     wrapper_text = _wrapper("arnold-progress-auditor")
@@ -1031,6 +1161,149 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
 def _iso_hours_ago(hours: float) -> str:
     when = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)
     return when.isoformat().replace("+00:00", "Z")
+
+
+def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_arnold(
+    tmp_path: Path,
+) -> None:
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    arnold_src = workspace_root / "arnold"
+    (arnold_src / ".megaplan" / "plans" / "should-not-scan").mkdir(parents=True)
+
+    chain_ws = workspace_root / "vibecomfy-god-file-splits"
+    bootstrap_ws = workspace_root / "vibecomfy-per-workflow-window-chat-20260628"
+    done_ws = workspace_root / "python-shaped-workflow-authoring"
+    for ws in (chain_ws, bootstrap_ws, done_ws):
+        (ws / ".megaplan" / "plans").mkdir(parents=True)
+
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "chain-session.json").write_text(
+        json.dumps({"session": "chain-session", "workspace": str(chain_ws), "updated_at": _iso_hours_ago(0.2)}),
+        encoding="utf-8",
+    )
+
+    def write_recent_plan(workspace: Path, name: str, *, state_recent: bool = True, events_recent: bool = False) -> None:
+        plan_dir = workspace / ".megaplan" / "plans" / name
+        state = {"name": name, "current_state": "done", "history": [], "meta": {}}
+        _write_plan(plan_dir, state, plan_v_bodies={"plan_v1.md": "v1"}, events_body="{}\n" if events_recent else "")
+        recent_ts = time.time() - 300
+        stale_ts = time.time() - (9 * 3600)
+        state_path = plan_dir / "state.json"
+        events_path = plan_dir / "events.ndjson"
+        os.utime(state_path, (recent_ts if state_recent else stale_ts, recent_ts if state_recent else stale_ts))
+        if events_path.exists():
+            os.utime(events_path, (recent_ts if events_recent else stale_ts, recent_ts if events_recent else stale_ts))
+
+    write_recent_plan(chain_ws, "m2-chain", state_recent=True)
+    write_recent_plan(bootstrap_ws, "m1-bootstrap", state_recent=False, events_recent=True)
+    write_recent_plan(done_ws, "m5-done", state_recent=False, events_recent=True)
+    write_recent_plan(done_ws, "m6-done", state_recent=True, events_recent=False)
+    write_recent_plan(arnold_src, "should-not-scan", state_recent=True)
+
+    discover_bin = tmp_path / "discover_stub.sh"
+    discover_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        f"bootstrap-session\t{bootstrap_ws}\t.megaplan/briefs/bootstrap.md\tplan\tm1-bootstrap\tignored\n"
+        f"chain-session-live\t{chain_ws}\t/tmp/spec.yaml\tchain\t\tignored\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    discover_bin.chmod(discover_bin.stat().st_mode | stat.S_IXUSR)
+
+    worklist = tmp_path / "worklist.jsonl"
+    entries = _run_auditor_worklist_builder(
+        tmp_path,
+        marker_dir=marker_dir,
+        worklist=worklist,
+        window_hours=6,
+        discover_bin=discover_bin,
+        workspace_root=workspace_root,
+        arnold_src=arnold_src,
+    )
+
+    observed = {(entry["workspace"], entry["plan"]): set(entry["sources"]) for entry in entries}
+    assert (str(chain_ws), "m2-chain") in observed
+    assert observed[(str(chain_ws), "m2-chain")] == {"marker", "tmux", "workspace_activity"}
+    assert (str(bootstrap_ws), "m1-bootstrap") in observed
+    assert observed[(str(bootstrap_ws), "m1-bootstrap")] == {"tmux", "workspace_activity"}
+    assert (str(done_ws), "m5-done") in observed
+    assert observed[(str(done_ws), "m5-done")] == {"workspace_activity"}
+    assert (str(done_ws), "m6-done") in observed
+    assert observed[(str(done_ws), "m6-done")] == {"workspace_activity"}
+    assert all(entry["workspace"] != str(arnold_src) for entry in entries)
+
+
+def test_auditor_gather_includes_done_plan_with_recent_events_mtime(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_dir = workspace / ".megaplan" / "plans" / "m6-done"
+    state = {
+        "name": "m6-done",
+        "iteration": 1,
+        "current_state": "done",
+        "active_step": {"phase": "review", "attempt": 8},
+        "latest_failure": {"kind": "stalled", "message": "stale failure record"},
+        "last_gate": {"recommendation": "PASS"},
+        "meta": {"weighted_scores": [7.0, 6.0, 4.0], "plan_deltas": [1.0, 1.0, 1.0], "significant_counts": [1, 1, 1]},
+        "history": [
+            {"step": "gate", "result": "iterate", "timestamp": _iso_hours_ago(1.0)},
+            {"step": "gate", "result": "iterate", "timestamp": _iso_hours_ago(2.0)},
+            {"step": "gate", "result": "blocked", "timestamp": _iso_hours_ago(3.0)},
+        ],
+    }
+    _write_plan(plan_dir, state, plan_v_bodies={"plan_v1.md": "v1"}, events_body="{}\n{}\n")
+    stale_ts = time.time() - (9 * 3600)
+    recent_ts = time.time() - 120
+    os.utime(plan_dir / "state.json", (stale_ts, stale_ts))
+    os.utime(plan_dir / "events.ndjson", (recent_ts, recent_ts))
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": "m6-done",
+                "session": "done-session",
+                "sources": ["workspace_activity"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    wrapper_text = _wrapper("arnold-progress-auditor")
+    g_marker = "python3 - \"$WORKLIST\" \"$GATHER_DIR\" \"$AUDIT_WINDOW_HOURS\" \"$ARNOLD_SRC\" \"$stall_summary\" <<'PY'"
+    g_start = wrapper_text.index(g_marker)
+    g_start = wrapper_text.index("\n", g_start) + 1
+    g_end = wrapper_text.index("\nPY\n", g_start)
+    gather_prog = wrapper_text[g_start:g_end]
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(gather_prog, encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(gather_path),
+            str(worklist),
+            str(gather_dir),
+            "6",
+            str(tmp_path),
+            "none",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected done plan with recent events mtime to be included"
+    assert findings[0]["plan"] == "m6-done"
+    assert findings[0]["session"] == "done-session"
+    assert findings[0]["sources"] == ["workspace_activity"]
 
 
 def test_arnold_progress_auditor_produces_evidence_cited_report_via_mocked_deepseek(tmp_path) -> None:

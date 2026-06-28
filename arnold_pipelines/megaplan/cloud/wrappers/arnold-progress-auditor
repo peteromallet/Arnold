@@ -7,7 +7,8 @@
 # re-invokes itself there. When invoked inside the container it runs the audit.
 #
 # In-container loop:
-#   * iterate active markers in /workspace/.megaplan/cloud-sessions/
+#   * discover candidate workspaces/plans from markers, live tmux sessions, and
+#     recent workspace activity inside the audit window
 #   * gather the last AUDIT_WINDOW_HOURS (default 6h) of activity per plan
 #     (plan_v*.md count/sizes, iteration/attempt progression, gate verdicts,
 #     critique trend, events.ndjson growth, progress_stall flags from
@@ -52,6 +53,7 @@ REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
 REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
 ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-/workspace/arnold}"
+DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
 AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
 SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
@@ -82,29 +84,133 @@ log() {
   echo "[progress-auditor $(date -Iseconds)] $*"
 }
 
-# Gather all active sessions (skip markers whose plan workspace is missing).
-python3 - "$MARKER_DIR" "$WORKLIST" <<'PY'
-import json, os, pathlib, sys
-marker_dir, out = sys.argv[1], sys.argv[2]
-entries = []
-for p in sorted(pathlib.Path(marker_dir).glob("*.json")):
-    name = p.stem
+# Build the plan worklist from marker, tmux, and workspace-activity discovery.
+python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "/workspace" "$ARNOLD_SRC" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+marker_dir, out, window_h, discover_bin, workspace_root, arnold_src = sys.argv[1:7]
+window = float(window_h)
+cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=window)
+workspace_root_path = pathlib.Path(workspace_root)
+arnold_src_path = pathlib.Path(arnold_src).resolve()
+
+
+def _recent_mtime(path: pathlib.Path) -> bool:
     try:
-        payload = json.loads(p.read_text(encoding="utf-8"))
+        return dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc) >= cutoff
+    except OSError:
+        return False
+
+
+def _plan_dirs(workspace: pathlib.Path) -> list[pathlib.Path]:
+    plans_root = workspace / ".megaplan" / "plans"
+    try:
+        if not plans_root.is_dir():
+            return []
+        return sorted(p for p in plans_root.iterdir() if p.is_dir())
+    except OSError:
+        return []
+
+
+def _merge(entries: dict[tuple[str, str], dict], workspace: pathlib.Path, plan_dir: pathlib.Path, session: str, source: str, updated: str = "") -> None:
+    key = (str(workspace), plan_dir.name)
+    entry = entries.setdefault(
+        key,
+        {
+            "workspace": str(workspace),
+            "plan": plan_dir.name,
+            "session": session or workspace.name,
+            "updated": updated,
+            "sources": [],
+        },
+    )
+    if not entry.get("session") and session:
+        entry["session"] = session
+    if updated and not entry.get("updated"):
+        entry["updated"] = updated
+    if source not in entry["sources"]:
+        entry["sources"].append(source)
+
+
+entries: dict[tuple[str, str], dict] = {}
+
+# (a) Marker-discovered workspaces.
+for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
     except Exception:
         continue
-    workspace = payload.get("workspace") or payload.get("workspace_dir")
-    if not workspace or not os.path.isdir(workspace):
+    workspace_raw = payload.get("workspace") or payload.get("workspace_dir")
+    if not workspace_raw:
         continue
-    session = payload.get("session") or name
+    workspace = pathlib.Path(workspace_raw)
+    if not workspace.is_dir():
+        continue
+    session = payload.get("session") or marker_path.stem
     updated = payload.get("updated_at") or payload.get("created_at") or ""
-    entries.append({"name": name, "session": session, "workspace": workspace, "updated": updated})
-with open(out, "w", encoding="utf-8") as h:
-    for e in entries:
-        h.write(json.dumps(e) + "\n")
+    for plan_dir in _plan_dirs(workspace):
+        _merge(entries, workspace, plan_dir, session, "marker", updated)
+
+# (b) Tmux-discovered live marker-less workspaces.
+try:
+    discover_proc = subprocess.run(
+        ["bash", discover_bin, "tmux-unmarked", "--marker-dir", marker_dir, "--src-dir", arnold_src],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+except OSError:
+    discover_proc = None
+
+if discover_proc and discover_proc.returncode == 0:
+    for raw in discover_proc.stdout.splitlines():
+        if not raw.strip():
+            continue
+        try:
+            session, workspace_raw, _remote_spec, _run_kind, _plan_name, _relaunch_command = raw.split("\t", 5)
+        except ValueError:
+            continue
+        workspace = pathlib.Path(workspace_raw)
+        if not workspace.is_dir():
+            continue
+        for plan_dir in _plan_dirs(workspace):
+            _merge(entries, workspace, plan_dir, session, "tmux")
+
+# (c) Workspace-activity-discovered plans with recent state/events.
+try:
+    workspace_children = sorted(workspace_root_path.iterdir())
+except OSError:
+    workspace_children = []
+
+for workspace in workspace_children:
+    try:
+        resolved = workspace.resolve()
+    except OSError:
+        continue
+    if not workspace.is_dir() or workspace.name.startswith("."):
+        continue
+    if resolved == arnold_src_path:
+        continue
+    plans = _plan_dirs(workspace)
+    if not plans:
+        continue
+    for plan_dir in plans:
+        state_path = plan_dir / "state.json"
+        events_path = plan_dir / "events.ndjson"
+        if _recent_mtime(state_path) or _recent_mtime(events_path):
+            _merge(entries, workspace, plan_dir, workspace.name, "workspace_activity")
+
+with open(out, "w", encoding="utf-8") as handle:
+    for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
 PY
 
-log "auditing markers=$(wc -l < "$WORKLIST" | tr -d ' ') window_hours=$AUDIT_WINDOW_HOURS"
+log "auditing plans=$(wc -l < "$WORKLIST" | tr -d ' ') window_hours=$AUDIT_WINDOW_HOURS"
 
 # Collect the watchdog progress_stall flags so the auditor can cite them.
 stall_summary="none"
@@ -128,7 +234,6 @@ fi
 # Build per-plan evidence + decide which need a research subagent.
 python3 - "$WORKLIST" "$GATHER_DIR" "$AUDIT_WINDOW_HOURS" "$ARNOLD_SRC" "$stall_summary" <<'PY'
 import datetime as dt
-import glob
 import json
 import os
 import pathlib
@@ -155,94 +260,113 @@ def _recent_iso(ts_str):
         return False
     return when >= cutoff
 
-def _plan_evidence(workspace):
-    plans_dir = pathlib.Path(workspace) / ".megaplan" / "plans"
-    out = []
-    for state_path in sorted(plans_dir.glob("*/state.json")):
-        plan_dir = state_path.parent
+def _plan_evidence(entry):
+    workspace = entry["workspace"]
+    plan = entry["plan"]
+    plan_dir = pathlib.Path(workspace) / ".megaplan" / "plans" / plan
+    state_path = plan_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    plan_v_files = sorted(plan_dir.glob("plan_v*.md"))
+    recent_v = []
+    for p in plan_v_files:
         try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-        except Exception:
+            if dt.datetime.fromtimestamp(p.stat().st_mtime, tz=dt.timezone.utc) >= cutoff:
+                recent_v.append(p)
+        except OSError:
             continue
-        # Activity cutoff: keep plans with any plan_v touched inside the window,
-        # or a state update inside ~2x the window.
-        plan_v_files = sorted(plan_dir.glob("plan_v*.md"))
-        recent_v = [p for p in plan_v_files if dt.datetime.fromtimestamp(p.stat().st_mtime, tz=dt.timezone.utc) >= cutoff]
-        if not recent_v and not _recent_iso(state.get("created_at")):
-            state_mtime = state_path.stat().st_mtime
-            if dt.datetime.fromtimestamp(state_mtime, tz=dt.timezone.utc) < cutoff:
-                continue
 
-        sizes = {p.name: p.stat().st_size for p in plan_v_files}
-        events_path = plan_dir / "events.ndjson"
-        events_size = events_path.stat().st_size if events_path.exists() else 0
+    try:
+        state_mtime = dt.datetime.fromtimestamp(state_path.stat().st_mtime, tz=dt.timezone.utc)
+    except OSError:
+        state_mtime = None
+    events_path = plan_dir / "events.ndjson"
+    try:
         events_mtime = events_path.stat().st_mtime if events_path.exists() else 0
-        last_gate = state.get("last_gate") or {}
-        latest_failure = state.get("latest_failure") or {}
-        meta = state.get("meta") or {}
-        scores = meta.get("weighted_scores") or []
-        plan_deltas = meta.get("plan_deltas") or []
-        counts = meta.get("significant_counts") or []
-        active = state.get("active_step") or {}
+    except OSError:
+        events_mtime = 0
+    events_recent = bool(events_mtime) and dt.datetime.fromtimestamp(events_mtime, tz=dt.timezone.utc) >= cutoff
 
-        # recent gate verdicts from history
-        history = state.get("history") or []
-        recent_history = []
-        for item in history:
-            ts = item.get("timestamp") or item.get("completed_at") or ""
-            if _recent_iso(ts):
-                recent_history.append({"step": item.get("step"), "result": item.get("result"), "ts": ts})
-        gates = [h for h in recent_history if h.get("step") == "gate"]
-        gate_iterate = sum(1 for g in gates if g.get("result") in ("iterate", "ITERATE", "blocked"))
-        gate_total = len(gates)
+    if not recent_v and not _recent_iso(state.get("created_at")):
+        if (state_mtime is None or state_mtime < cutoff) and not events_recent:
+            return None
 
-        evidence = {
-            "plan": plan_dir.name,
-            "workspace": workspace,
-            "current_state": state.get("current_state"),
-            "iteration": state.get("iteration"),
-            "active_step_phase": active.get("phase"),
-            "active_step_attempt": active.get("attempt"),
-            "plan_v_count": len(plan_v_files),
-            "plan_v_sizes": sizes,
-            "events_size": events_size,
-            "events_mtime_age_min": int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
-            "last_gate_recommendation": last_gate.get("recommendation"),
-            "last_gate_score": scores[-1] if scores else None,
-            "score_trajectory": scores,
-            "plan_deltas": plan_deltas,
-            "significant_counts": counts,
-            "recent_gate_total": gate_total,
-            "recent_gate_iterate": gate_iterate,
-            "latest_failure_kind": latest_failure.get("kind"),
-            "latest_failure_message": (latest_failure.get("message") or "")[:240],
-            "latest_failure_metadata": latest_failure.get("metadata"),
-        }
-        out.append(evidence)
-    return out
+    sizes = {}
+    for p in plan_v_files:
+        try:
+            sizes[p.name] = p.stat().st_size
+        except OSError:
+            continue
+    events_size = events_path.stat().st_size if events_path.exists() else 0
+    last_gate = state.get("last_gate") or {}
+    latest_failure = state.get("latest_failure") or {}
+    meta = state.get("meta") or {}
+    scores = meta.get("weighted_scores") or []
+    plan_deltas = meta.get("plan_deltas") or []
+    counts = meta.get("significant_counts") or []
+    active = state.get("active_step") or {}
+
+    history = state.get("history") or []
+    recent_history = []
+    for item in history:
+        ts = item.get("timestamp") or item.get("completed_at") or ""
+        if _recent_iso(ts):
+            recent_history.append({"step": item.get("step"), "result": item.get("result"), "ts": ts})
+    gates = [h for h in recent_history if h.get("step") == "gate"]
+    gate_iterate = sum(1 for g in gates if g.get("result") in ("iterate", "ITERATE", "blocked"))
+    gate_total = len(gates)
+
+    return {
+        "plan": plan_dir.name,
+        "workspace": workspace,
+        "session": entry.get("session") or pathlib.Path(workspace).name,
+        "sources": entry.get("sources") or [],
+        "current_state": state.get("current_state"),
+        "iteration": state.get("iteration"),
+        "active_step_phase": active.get("phase"),
+        "active_step_attempt": active.get("attempt"),
+        "plan_v_count": len(plan_v_files),
+        "plan_v_sizes": sizes,
+        "events_size": events_size,
+        "events_mtime_age_min": int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
+        "last_gate_recommendation": last_gate.get("recommendation"),
+        "last_gate_score": scores[-1] if scores else None,
+        "score_trajectory": scores,
+        "plan_deltas": plan_deltas,
+        "significant_counts": counts,
+        "recent_gate_total": gate_total,
+        "recent_gate_iterate": gate_iterate,
+        "latest_failure_kind": latest_failure.get("kind"),
+        "latest_failure_message": (latest_failure.get("message") or "")[:240],
+        "latest_failure_metadata": latest_failure.get("metadata"),
+    }
 
 findings = []
 for entry in plans:
-    for ev in _plan_evidence(entry["workspace"]):
-        # Suspicion heuristics — evidence-only, no auto-fix.
-        reasons = []
-        v_sizes = list(ev["plan_v_sizes"].values())
-        if ev["plan_v_count"] >= 4 and len(set(v_sizes)) >= 3:
-            reasons.append(f"plan_v refreshed {ev['plan_v_count']}x in {int(window)}h ({min(v_sizes)}->{max(v_sizes)} bytes)")
-        if ev["recent_gate_iterate"] >= 3:
-            reasons.append(f"gate=ITERATE/blocked {ev['recent_gate_iterate']}/{ev['recent_gate_total']} recent times")
-        scores = ev["score_trajectory"]
-        if len(scores) >= 3 and scores[-1] is not None and scores[-1] < scores[0] and scores[-1] <= 5:
-            reasons.append(f"score regression {scores[0]}->{scores[-1]}")
-        if ev["active_step_attempt"] and int(ev["active_step_attempt"]) >= 8:
-            reasons.append(f"step on attempt {ev['active_step_attempt']}")
-        if ev["latest_failure_kind"] in ("stalled", "phase_failed", "execution_blocked"):
-            reasons.append(f"{ev['latest_failure_kind']}: {ev['latest_failure_message']}")
-        if not reasons:
-            continue
-        ev["reasons"] = reasons
-        ev["session"] = entry["session"]
-        findings.append(ev)
+    ev = _plan_evidence(entry)
+    if ev is None:
+        continue
+    # Suspicion heuristics — evidence-only, no auto-fix.
+    reasons = []
+    v_sizes = list(ev["plan_v_sizes"].values())
+    if ev["plan_v_count"] >= 4 and len(set(v_sizes)) >= 3:
+        reasons.append(f"plan_v refreshed {ev['plan_v_count']}x in {int(window)}h ({min(v_sizes)}->{max(v_sizes)} bytes)")
+    if ev["recent_gate_iterate"] >= 3:
+        reasons.append(f"gate=ITERATE/blocked {ev['recent_gate_iterate']}/{ev['recent_gate_total']} recent times")
+    scores = ev["score_trajectory"]
+    if len(scores) >= 3 and scores[-1] is not None and scores[-1] < scores[0] and scores[-1] <= 5:
+        reasons.append(f"score regression {scores[0]}->{scores[-1]}")
+    if ev["active_step_attempt"] and int(ev["active_step_attempt"]) >= 8:
+        reasons.append(f"step on attempt {ev['active_step_attempt']}")
+    if ev["latest_failure_kind"] in ("stalled", "phase_failed", "execution_blocked"):
+        reasons.append(f"{ev['latest_failure_kind']}: {ev['latest_failure_message']}")
+    if not reasons:
+        continue
+    ev["reasons"] = reasons
+    findings.append(ev)
 
 with open(os.path.join(gather_dir, "findings.json"), "w", encoding="utf-8") as h:
     json.dump({"window_hours": window, "stall_summary": stall_summary, "findings": findings}, h, indent=2, sort_keys=True)
