@@ -14,7 +14,7 @@ from vibecomfy.porting.edit.ops import (
     UpsertLinkOp,
 )
 from vibecomfy.porting.resolution import _find_named_slot
-from vibecomfy.porting.widgets.schema import effective_widget_names_for_class
+from vibecomfy.porting.widgets.schema import ui_widget_value_names_for_class
 from vibecomfy.schema import schema_for
 
 if TYPE_CHECKING:
@@ -63,7 +63,7 @@ def _widget_value_for_field(node: Mapping[str, Any], class_type: str, field_name
     if isinstance(widgets_values, Mapping):
         return widgets_values[field_name] if field_name in widgets_values else _MISSING_WIDGET_VALUE
     if isinstance(widgets_values, list):
-        widget_names = effective_widget_names_for_class(class_type, allow_object_info_fallback=True)
+        widget_names = ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True)
         for index, name in enumerate(widget_names):
             if name == field_name and index < len(widgets_values):
                 return widgets_values[index]

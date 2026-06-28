@@ -32,7 +32,10 @@ from .ops import (
 from vibecomfy.porting.object_info.consume import output_names as cached_output_names
 from vibecomfy.porting.report import PortIssue
 from vibecomfy.porting.emit.ui import materialize_litegraph_node
-from vibecomfy.porting.widgets.schema import effective_widget_names_for_class
+from vibecomfy.porting.widgets.schema import (
+    effective_widget_names_for_class,
+    ui_widget_value_names_for_class,
+)
 from vibecomfy.schema import InputSpec, schema_for, socket_types_compatible
 
 
@@ -1671,7 +1674,7 @@ def _widget_name_for_input(slot: Any) -> str | None:
 
 
 def _widget_index_for_field(class_type: str, field_name: str) -> int | None:
-    widget_names = effective_widget_names_for_class(class_type, allow_object_info_fallback=True)
+    widget_names = ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True)
     for index, name in enumerate(widget_names):
         if name == field_name:
             return index
@@ -2390,7 +2393,7 @@ def _reorder_names(node: Mapping[str, Any], class_type: str, axis: str) -> tuple
         values = node.get("widgets_values")
         if not isinstance(values, list):
             return None
-        names = list(effective_widget_names_for_class(class_type, allow_object_info_fallback=True))
+        names = list(ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True))
         if len(names) < len(values):
             recovered = _widget_names_from_input_stubs(node.get("inputs"))
             if len(recovered) >= len(values):

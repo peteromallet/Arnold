@@ -7,7 +7,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .ledger import EditLedger, ScopeState
 from .ops import NodeTarget
-from vibecomfy.porting.widgets.schema import effective_widget_names_for_class
+from vibecomfy.porting.widgets.schema import ui_widget_value_names_for_class
 from vibecomfy.schema import schema_for
 
 
@@ -243,7 +243,7 @@ def _field_rows(node: Mapping[str, Any], class_type: str) -> list[tuple[str, Any
     rows: list[tuple[str, Any, str]] = []
     widgets = node.get("widgets_values")
     if isinstance(widgets, list):
-        names = list(effective_widget_names_for_class(class_type, allow_object_info_fallback=True))
+        names = list(ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True))
         if len(names) < len(widgets):
             recovered = _widget_names_from_inputs(node.get("inputs"))
             if len(recovered) >= len(widgets):

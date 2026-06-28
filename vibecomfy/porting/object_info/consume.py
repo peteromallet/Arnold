@@ -26,11 +26,14 @@ INDEX_PATH: Path = CACHE_DIR / "index.json"
 # fail-closed schema errors actionable ("refresh the snapshot").
 METADATA_PATH: Path = Path(__file__).resolve().parent.parent.parent / "comfy_metadata.json"
 
-# ComfyUI types that are link-only sockets — NOT widget controls.
-# These are excluded from object_info_widget_order.
+# ComfyUI types that are link-only sockets, not literal widget controls.
+# These are filtered from object_info_widget_value_order.
 _WIDGET_LIKE_TYPES: frozenset[str] = frozenset({
     "MODEL", "CLIP", "VAE", "IMAGE", "LATENT", "CONDITIONING", "MASK",
-    "AUDIO", "VIDEO", "hidden",
+    "AUDIO", "VIDEO", "CONTROL_NET", "HIDDEN",
+})
+_LITERAL_WIDGET_TYPES: frozenset[str] = frozenset({
+    "BOOLEAN", "COMBO", "ENUM", "FLOAT", "INT", "STRING",
 })
 
 _CURATED_WIDGET_ORDERS: dict[str, list[str | None]] = {
@@ -465,6 +468,46 @@ def object_info_widget_order(class_type: str) -> list[str | None]:
     if class_type in _CURATED_WIDGET_ORDERS and "apply_to_all" not in order:
         return list(_CURATED_WIDGET_ORDERS[class_type])
     return order
+
+
+def object_info_widget_value_order(class_type: str) -> list[str]:
+    """Return object_info widget names aligned to UI ``widgets_values``.
+
+    Older cache entries may preserve the full INPUT_TYPES order with ``None``
+    placeholders, and some also retain named link sockets such as
+    ``control_net``. LiteGraph ``widgets_values`` only stores literal widgets,
+    so callers that write by field name need the compact literal-only order.
+    """
+
+    entry = _resolve_class_type(class_type)
+    order = object_info_widget_order(class_type)
+    if entry is None:
+        return [str(name) for name in order if isinstance(name, str) and name]
+
+    input_specs = {name: spec for name, spec in _iter_input_specs(entry)}
+    names: list[str] = []
+    for name in order:
+        if not isinstance(name, str) or not name:
+            continue
+        spec = input_specs.get(name)
+        if spec is not None and not _input_spec_is_widget_value(spec):
+            continue
+        names.append(name)
+    return names
+
+
+def _input_spec_is_widget_value(spec: list[Any]) -> bool:
+    if not spec:
+        return False
+    head = spec[0]
+    if isinstance(head, list):
+        return True
+    input_type = _normalize_input_type(head).upper()
+    if input_type in _LITERAL_WIDGET_TYPES:
+        return True
+    if input_type in _WIDGET_LIKE_TYPES:
+        return False
+    return not input_type.isupper()
 
 
 def effective_widget_names_for_class(class_type: str, *, allow_object_info_fallback: bool = False) -> list[str | None]:
