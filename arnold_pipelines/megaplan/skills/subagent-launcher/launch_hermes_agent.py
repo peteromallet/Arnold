@@ -184,16 +184,18 @@ def _add_fallback_megaplan_paths() -> None:
 
 def _import_runtime():
     """Import Hermes runtime from legacy megaplan or current Arnold checkout."""
+    # Try 1: legacy top-level megaplan package
     try:
         import megaplan.agent  # noqa: F401 — installs hermes sys.path
         from run_agent import AIAgent
         from hermes_state import SessionDB
         from megaplan.runtime.key_pool import resolve_model
-
         return AIAgent, SessionDB, resolve_model
     except ModuleNotFoundError as legacy_exc:
         if legacy_exc.name not in {"megaplan", "run_agent", "hermes_state"}:
             raise
+    # Try 2: arnold.pipelines.megaplan (old vendored layout)
+    try:
         vendored_agent = Path.cwd() / "arnold" / "pipelines" / "megaplan" / "agent"
         if vendored_agent.exists():
             vendored_agent_str = str(vendored_agent)
@@ -202,8 +204,14 @@ def _import_runtime():
         from arnold.agent.run_agent import AIAgent
         from arnold.pipelines.megaplan.agent.hermes_state import SessionDB
         from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
-
         return AIAgent, SessionDB, resolve_model
+    except ModuleNotFoundError:
+        pass
+    # Try 3: arnold_pipelines.megaplan (current editable-install layout)
+    from arnold_pipelines.megaplan.agent.run_agent import AIAgent
+    from arnold_pipelines.megaplan.agent.hermes_state import SessionDB
+    from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
+    return AIAgent, SessionDB, resolve_model
 
 
 def _no_op_stream(_text: str) -> None:
