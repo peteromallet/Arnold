@@ -149,6 +149,10 @@ def _implementation_payload_from_report(
                     notes[key] = value
             if research.get("summary"):
                 notes["research_summary"] = research["summary"]
+            for key in ("sources", "warnings"):
+                value = research.get(key)
+                if value:
+                    notes[f"research_{key}"] = value
             if notes:
                 notes["_discardability"] = (
                     "This research context is provided as evidence only. "
@@ -158,6 +162,14 @@ def _implementation_payload_from_report(
             packet = research.get("precedent_packet")
             if isinstance(packet, Mapping):
                 payload["research_context_packet"] = dict(packet)
+            else:
+                context_packet = {
+                    key: research[key]
+                    for key in ("summary", "sources", "warnings", "precedent_slices")
+                    if research.get(key)
+                }
+                if context_packet:
+                    payload["research_context_packet"] = context_packet
         else:
             payload["research_summary"] = research.get("summary", "")
             payload["research_sources"] = research.get("sources", [])
