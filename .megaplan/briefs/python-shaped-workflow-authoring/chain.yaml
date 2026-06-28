@@ -127,7 +127,7 @@ on_failure:
   abort: stop_chain
 on_escalate:
   abort: stop_chain
-merge_policy: review
+merge_policy: auto
 driver:
   robustness: thorough
   auto_approve: true
