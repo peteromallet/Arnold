@@ -28,6 +28,32 @@ def test_argv_for_megaplan_subcommand_uses_safe_module_invocation(monkeypatch) -
     assert is_megaplan_subcommand is True
 
 
+def test_argv_for_megaplan_subcommand_ignores_console_script_on_path(monkeypatch) -> None:
+    def fake_which(cmd: str, path=None) -> str | None:
+        if cmd == "megaplan":
+            return "/tmp/fake-megaplan"
+        return None
+
+    monkeypatch.setattr("shutil.which", fake_which)
+
+    runner = RepairRunner(python_bin="python3")
+
+    argv, cwd, is_megaplan_subcommand = runner._argv_for_command("chain start --spec demo")
+
+    assert argv == [
+        "python3",
+        "-P",
+        "-m",
+        "arnold_pipelines.megaplan",
+        "chain",
+        "start",
+        "--spec",
+        "demo",
+    ]
+    assert cwd is None
+    assert is_megaplan_subcommand is True
+
+
 def test_run_anchors_megaplan_subcommand_to_editable_engine(
     monkeypatch,
     tmp_path: Path,
