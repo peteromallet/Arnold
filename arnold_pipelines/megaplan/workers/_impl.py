@@ -86,6 +86,7 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
 from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
+_CODEX_WORKER_CHANNEL = "codex_cli"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
 
 # Shared mapping from step name to schema filename, used by both
@@ -3178,6 +3179,7 @@ def _run_codex_step_uncapped(
                     session_id=timeout_session_id,
                     trace_output=str(error.extra.get("raw_output", "")) if json_trace else None,
                     rendered_prompt=prompt,
+                    worker_channel=_CODEX_WORKER_CHANNEL,
                 )
             timeout_session_id = session.get("id") if persistent else None
             if timeout_session_id is None:
@@ -3317,6 +3319,7 @@ def _run_codex_step_uncapped(
             session_id=extract_session_id(raw),
             trace_output=raw if json_trace else None,
             rendered_prompt=prompt,
+            worker_channel=_CODEX_WORKER_CHANNEL,
         )
     try:
         capture_outcome = capture_step_output(
@@ -3474,6 +3477,7 @@ def _run_codex_step_uncapped(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
+        worker_channel=_CODEX_WORKER_CHANNEL,
     )
 
 
@@ -3641,6 +3645,7 @@ def run_codex_prep_step(
         session_id=extract_session_id(raw),
         rendered_prompt=prompt,
         model_actual=model,
+        worker_channel=_CODEX_WORKER_CHANNEL,
     )
 
 
