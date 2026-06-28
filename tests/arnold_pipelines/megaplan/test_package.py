@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 
-import arnold_pipelines
 import arnold_pipelines.megaplan as megaplan
 
 
@@ -78,11 +77,9 @@ def test_removed_names_not_directly_importable() -> None:
 
 def test_build_pipeline_returns_pipeline_type() -> None:
     """build_pipeline() must return arnold.workflow.dsl.Pipeline."""
-    from arnold.workflow.dsl import Pipeline
-
     pipeline = megaplan.build_pipeline()
-    assert isinstance(pipeline, Pipeline), (
-        f"build_pipeline() returned {type(pipeline)}, expected Pipeline"
+    assert type(pipeline).__module__ == "arnold.workflow.dsl" and type(pipeline).__name__ == "Pipeline", (
+        f"build_pipeline() returned {type(pipeline)}, expected arnold.workflow.dsl.Pipeline"
     )
 
 

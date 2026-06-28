@@ -4,6 +4,12 @@ This module declares the neutral data shapes consumed by the future
 Python-shaped source compiler. It is intentionally not a runtime, registry,
 discovery system, or graph builder: workflow source is parsed statically and
 these objects describe imports the compiler may resolve.
+
+Ownership:
+    This module owns resolver-facing component and call contract objects.  It
+    does not parse source or lower manifests.  Shared scalar ref validation is
+    delegated to ``arnold.workflow.refs`` so explicit DSL objects and source
+    compiler validation accept and reject the same ref alphabet.
 """
 
 from __future__ import annotations
@@ -12,6 +18,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Mapping
+
+from arnold.workflow.refs import require_ref
 
 GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
 
@@ -343,9 +351,7 @@ def _require_qualname(name: str, value: str) -> str:
 
 
 def _require_ref(name: str, value: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{name} must be a non-empty string")
-    return value
+    return require_ref(name, value)
 
 
 workflow = IntrinsicDeclaration("workflow")

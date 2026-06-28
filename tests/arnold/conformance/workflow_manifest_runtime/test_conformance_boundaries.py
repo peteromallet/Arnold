@@ -12,6 +12,13 @@ from pathlib import Path
 
 
 FORBIDDEN = ("arnold.pipelines.megaplan",)
+RUNTIME_RUNNER_MODULES = (
+    "arnold.execution",
+    "arnold.pipeline",
+    "arnold.runner",
+    "arnold.kernel",
+    "arnold.agent",
+)
 
 
 def _scan_forbidden(package_root: Path) -> dict[str, tuple[str, ...]]:
@@ -35,6 +42,31 @@ def _scan_forbidden(package_root: Path) -> dict[str, tuple[str, ...]]:
     return violations
 
 
+def _scan_runtime_runner_imports(package_root: Path) -> dict[str, tuple[str, ...]]:
+    """Return files that import real execution/runner modules in test/fixture code."""
+
+    violations: dict[str, tuple[str, ...]] = {}
+    for source in sorted(package_root.rglob("*.py")):
+        try:
+            tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        except SyntaxError:
+            continue
+        hits: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    for prefix in RUNTIME_RUNNER_MODULES:
+                        if alias.name == prefix or alias.name.startswith(prefix + "."):
+                            hits.add(prefix)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                for prefix in RUNTIME_RUNNER_MODULES:
+                    if node.module == prefix or node.module.startswith(prefix + "."):
+                        hits.add(prefix)
+        if hits:
+            violations[str(source)] = tuple(sorted(hits))
+    return violations
+
+
 def test_conformance_package_does_not_import_deleted_product_package() -> None:
     root = Path(__file__).parents[4]
     violations = _scan_forbidden(root / "arnold" / "conformance")
@@ -45,3 +77,11 @@ def test_agent_package_does_not_import_deleted_product_package() -> None:
     root = Path(__file__).parents[4]
     violations = _scan_forbidden(root / "arnold" / "agent")
     assert violations == {}, f"arnold.agent imports deleted product package: {violations}"
+
+
+def test_fixture_validation_tests_do_not_invoke_real_execution_runners() -> None:
+    """Fixture validation must be compile-time only; no real runner imports."""
+
+    root = Path(__file__).parents[4]
+    violations = _scan_runtime_runner_imports(root / "tests" / "arnold" / "conformance" / "workflow_manifest_runtime")
+    assert violations == {}, f"fixture validation tests import runtime runners: {violations}"

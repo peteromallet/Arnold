@@ -26,6 +26,7 @@ def dry_run(manifest: WorkflowManifest) -> dict[str, Any]:
       - ``possible_routes``: forward control routes the runner may traverse.
       - ``unresolved_inputs``: inputs with no bound ``value_ref``.
       - ``suspension_point_count``: number of suspension routes.
+      - ``topology_summary``: node/edge counts and entry/exit sets.
     """
 
     possible_routes = tuple(
@@ -53,6 +54,15 @@ def dry_run(manifest: WorkflowManifest) -> dict[str, Any]:
     if manifest.policy is not None:
         suspension_count += len(manifest.policy.suspension_routes)
 
+    sources = {edge.source for edge in manifest.edges}
+    targets = {edge.target for edge in manifest.edges}
+    topology_summary = {
+        "node_count": len(manifest.nodes),
+        "edge_count": len(manifest.edges),
+        "entry_nodes": tuple(sorted(node.id for node in manifest.nodes if node.id not in targets)),
+        "exit_nodes": tuple(sorted(node.id for node in manifest.nodes if node.id not in sources)),
+    }
+
     return {
         "id": manifest.id,
         "manifest_hash": manifest.manifest_hash,
@@ -61,6 +71,7 @@ def dry_run(manifest: WorkflowManifest) -> dict[str, Any]:
         "possible_routes": possible_routes,
         "unresolved_inputs": unresolved_inputs,
         "suspension_point_count": suspension_count,
+        "topology_summary": topology_summary,
     }
 
 

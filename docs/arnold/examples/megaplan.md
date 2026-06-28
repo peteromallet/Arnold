@@ -188,6 +188,13 @@ possible_routes:
   source: tiebreaker_run
   target: tiebreaker_decide
 suspension_point_count: 4
+topology_summary:
+  edge_count: 23
+  entry_nodes:
+  - prep
+  exit_nodes:
+  - halt
+  node_count: 12
 unresolved_inputs: {}
 ```
 

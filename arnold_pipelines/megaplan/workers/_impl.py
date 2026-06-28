@@ -699,10 +699,12 @@ def run_command(
     progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
-    # Codex CLI interprets a trailing "-" as "read the prompt from stdin".  When
-    # stdin is a pipe/file this reliably wedges (the CLI blocks reading forever).
-    # Write the prompt to a temp file and pass "@/path/to/file" instead, sealing
-    # stdin with DEVNULL.  This applies to any command whose last argument is "-".
+    # Codex CLI (v0.137+) interprets a trailing "-" as "read the prompt from
+    # stdin".  Older versions wedged on piped stdin, so the code previously wrote
+    # the prompt to a temp file and passed "@/path/to/file".  Modern Codex treats
+    # "@file" as a reference/attachment rather than the prompt itself, causing the
+    # worker to hang waiting for instructions.  We now write the prompt to a temp
+    # file and feed that file as stdin while keeping the trailing "-".
     stdin_path: Path | None = None
     if stdin_text is not None and command and command[-1] == "-":
         stdin_handle = tempfile.NamedTemporaryFile(
@@ -712,19 +714,19 @@ def run_command(
         stdin_handle.flush()
         stdin_handle.close()
         stdin_path = Path(stdin_handle.name)
-        command = list(command)
-        command[-1] = f"@{stdin_path}"
-        stdin_text = None
+        # Keep the trailing "-" so codex reads the prompt from stdin.
 
     try:
         started = time.monotonic()
         timeout = timeout or get_effective("execution", "worker_timeout_seconds")
         if activity_callback is None and activity_guard is None:
+            stdin_file: Any | None = None
             try:
+                if stdin_path is not None:
+                    stdin_file = open(stdin_path, "rb")
                 process = subprocess.run(
                     command,
-                    input=stdin_text,
-                    stdin=subprocess.DEVNULL if stdin_text is None else None,
+                    stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
                     text=True,
                     cwd=str(cwd),
                     capture_output=True,
@@ -753,6 +755,8 @@ def run_command(
                     f"Command not found: {command[0]}",
                 ) from exc
             finally:
+                if stdin_file is not None:
+                    stdin_file.close()
                 if stdin_path is not None:
                     stdin_path.unlink(missing_ok=True)
             return CommandResult(
@@ -765,14 +769,13 @@ def run_command(
             )
 
         stdin_path = None
-        stdin_file: Any | None = None
+        stdin_file = None
         try:
             if stdin_text is not None:
                 # Large prompts written to a PIPE can deadlock: the producer
                 # blocks when the pipe buffer fills before the consumer has
                 # started draining stdin. Writing the prompt to a temp file and
-                # letting the child read directly from that file avoids the
-                # pipe-buffer race entirely.
+                # letting the child read that file via stdin avoids the race.
                 stdin_handle = tempfile.NamedTemporaryFile(
                     "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(cwd))
                 )

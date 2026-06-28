@@ -166,6 +166,23 @@ def resolve_cursor(
             ),
         )
 
+    if alias.target_manifest_hash != native_manifest_hash:
+        return CursorResolution(
+            cursor=None,
+            resolution=ReplayResolution(
+                decision=ReplayDecision.QUARANTINE,
+                reason=(
+                    "legacy alias target manifest hash does not match native manifest hash"
+                ),
+            ),
+            quarantine=QuarantineRecord(
+                run_id=run_id or "",
+                original_manifest_hash=native_manifest_hash,
+                observed_manifest_hash=requested.manifest_hash,
+                reason="ambiguous legacy alias target for cursor manifest_hash",
+            ),
+        )
+
     rewritten = ReplayCursor(
         manifest_hash=alias.target_manifest_hash,
         reentry_id=requested.reentry_id,

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from arnold.workflow.compiler import CompileDiagnosticError, compile_pipeline
+from arnold.workflow.compiler import (
+    CompileDiagnosticError,
+    compile_pattern_block,
+    compile_pipeline,
+)
 from arnold.workflow.dry_run import dry_run, to_data
 from arnold.workflow.dsl import (
     INTERNAL_EXPORTS,
@@ -28,7 +32,7 @@ from arnold.workflow.source_compiler import (
     lower_workflow_file,
     lower_workflow_source,
 )
-from arnold.manifest.refs import (
+from arnold.workflow.refs import (
     EdgeRef,
     HookRef,
     ImportRef,
@@ -39,6 +43,9 @@ from arnold.manifest.refs import (
     SourceRef,
     SourceSpan,
     ValueRef,
+    as_hook_ref,
+    as_import_ref,
+    as_optional_hook_ref,
     canonical_alias,
     manifest_coordinate,
 )
@@ -71,6 +78,7 @@ from arnold.manifest.manifests import (
 from arnold.workflow.validation import (
     ManifestValidationError,
     ManifestValidationIssue,
+    RuntimeRef,
     check_neutral_import_boundary,
     validate_manifest,
 )
@@ -99,6 +107,9 @@ __all__ = [
     "SourceCompileError",
     "Step",
     "ValueRef",
+    "as_hook_ref",
+    "as_import_ref",
+    "as_optional_hook_ref",
     "AuthorityRequirement",
     "BudgetPolicy",
     "CapabilityRequirement",
@@ -123,11 +134,13 @@ __all__ = [
     "WorkflowPolicy",
     "ManifestValidationError",
     "ManifestValidationIssue",
+    "RuntimeRef",
     "canonical_json",
     "canonical_alias",
     "check_neutral_import_boundary",
     "check_workflow_file",
     "check_workflow_source",
+    "compile_pattern_block",
     "compile_pipeline",
     "compile_workflow_file",
     "compile_workflow_source",
