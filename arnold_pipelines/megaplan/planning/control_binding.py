@@ -222,6 +222,7 @@ def _string_from_path(raw_state: Mapping[str, object], path: tuple[str, ...]) ->
 
 
 def _recovery_phase(state: Mapping[str, object]) -> tuple[str | None, str | None]:
+    helper_phases = {"recover-blocked", "resume-clarify", "status", "step"}
     candidates = (
         ("resume_cursor", "phase"),
         ("active_step", "name"),
@@ -235,6 +236,8 @@ def _recovery_phase(state: Mapping[str, object]) -> tuple[str | None, str | None
     for path in candidates:
         phase = _string_from_path(state, path)
         if phase is not None:
+            if phase in helper_phases:
+                continue
             return phase, ".".join(path)
     return None, None
 
@@ -249,7 +252,11 @@ def _blocked_phase_rerun_target(
     latest_failure = state.get("latest_failure")
     if not isinstance(latest_failure, Mapping):
         return None
-    if latest_failure.get("kind") != "authority_divergence":
+    failure_kind = latest_failure.get("kind")
+    rerun_from_stale_recovery_helper = (
+        failure_kind == "iteration_cap" and source == "phase_result.phase"
+    )
+    if failure_kind != "authority_divergence" and not rerun_from_stale_recovery_helper:
         return None
     return _workflow_step_target(
         phase,
