@@ -175,7 +175,7 @@ def _implementation_payload_from_report(
             payload["research_sources"] = research.get("sources", [])
             payload["executor_research"] = dict(research)
 
-    if route_text == "research":
+    if route_text in {"research", "adapt"}:
         brief = {
             key: classification[key]
             for key in ("research_goal", "search_directions", "source_preferences", "avoid")

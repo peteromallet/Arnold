@@ -92,6 +92,11 @@ _CLASSIFY_SYSTEM = (
     "- When a graph edit will need research, make at least one search direction "
     "ask for concrete node combinations or workflow wiring evidence, not just "
     "high-level technique names.\n"
+    "- When route=\"adapt\" is chosen because the current graph already contains "
+    "custom/branded nodes, search directions must name the exact visible class "
+    "type(s) and fields/sockets from the graph reference map first. Do not start "
+    "with broad ecosystem terms such as a model family, nodepack, or tutorial "
+    "topic when an exact current class type is visible.\n"
     "- Use avoid to block generic searches such as stopword-only fragments, "
     "unsupported guessed class names, or treating weak Discord/forum snippets "
     "as authoritative without workflow/registry evidence.\n"
@@ -133,6 +138,13 @@ _CLASSIFY_SYSTEM = (
     "critique. Use route=\"inspect\" only when the user explicitly asks why, "
     "how, explain, analyze, or what the graph is doing without asking for an "
     "improvement.\n"
+    "- If visual/result feedback targets a workflow that contains visible "
+    "custom/branded node classes (for example Qwen, AnimateDiff/ADE, VHS, "
+    "ReActor, IP-Adapter, EasyUse/easy, rgthree, Inspire, Wan/VACE/LTX, Rodin, "
+    "or node labels with spaces/symbols/prefixes from custom packs), prefer "
+    "route=\"adapt\" so implementation receives exact-class schema/research "
+    "context before mutating those nodes. The search directions should cite the "
+    "specific current class names, not just the visual complaint.\n"
     "- A simple, concrete graph edit request with no research needed "
     "→ route=\"revise\".\n"
     "- A concrete edit that targets or must preserve a custom-node / non-core "
@@ -328,13 +340,24 @@ def build_classify_messages(
     # ── graph reference map ──────────────────────────────────────────────
     if isinstance(graph_reference_map, dict) and graph_reference_map:
         ref_lines = []
+        schema_fragile_labels: list[str] = []
         for node_id, label in sorted(graph_reference_map.items(), key=lambda kv: _ref_sort_key(kv[0])):
-            ref_lines.append(f"  id={node_id}: {label}")
+            label_text = str(label)
+            ref_lines.append(f"  id={node_id}: {label_text}")
+            if _looks_schema_fragile_label(label_text):
+                schema_fragile_labels.append(f"id={node_id}: {label_text}")
         if ref_lines:
             parts.append(
                 "\nCurrent graph node reference map (use these ids to resolve "
                 "\"that node\", \"the KSampler\", etc.):\n"
                 + "\n".join(ref_lines[:30])
+            )
+        if schema_fragile_labels:
+            parts.append(
+                "\nSchema-fragile/custom node hint (if the requested edit touches "
+                "or depends on these classes, route adapt and research/search the "
+                "exact class names first):\n"
+                + "\n".join(schema_fragile_labels[:20])
             )
 
     return [
@@ -349,6 +372,38 @@ def _ref_sort_key(node_id: str) -> tuple[int, str]:
         return (0, str(int(node_id)).zfill(8))
     except (ValueError, TypeError):
         return (1, node_id)
+
+
+def _looks_schema_fragile_label(label: str) -> bool:
+    """Heuristic hint for class families where local schema may be incomplete."""
+    text = str(label)
+    lower = text.lower()
+    branded_markers = (
+        "qwen",
+        "animatediff",
+        "ade_",
+        "vhs_",
+        "reactor",
+        "ipadapter",
+        "ip-adapter",
+        "easy ",
+        "rgthree",
+        "inspire",
+        "wan",
+        "vace",
+        "ltx",
+        "rodin",
+        "gguf",
+        "faceswap",
+        "face swap",
+        "modelscope",
+    )
+    if any(marker in lower for marker in branded_markers):
+        return True
+    # Core ComfyUI classes are usually simple CamelCase without symbols/spaces.
+    # Spaces, slashes, emoji/punctuation, or lowercase prefixes often identify
+    # custom-pack nodes whose widgets/slots need exact schema hydration.
+    return any(ch in text for ch in (" ", "/", "|", "+", "-", "✨", "//"))
 
 
 # ── reply prompt ─────────────────────────────────────────────────────────────
