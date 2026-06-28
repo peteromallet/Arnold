@@ -2368,7 +2368,7 @@ def run_chain(
         ):
             plan_name = state.current_plan_name
             log(f"resuming existing plan {plan_name} for {milestone.label}")
-            if use_pr and state.pr_number is None:
+            if use_pr and milestone.branch:
                 _checkout_milestone_branch(
                     root,
                     milestone.branch or "",
@@ -2379,15 +2379,16 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
-                state = chain_spec.load_chain_state(spec_path)
-                state.pr_number = _ensure_milestone_pr(
-                    root,
-                    milestone,
-                    base_branch=spec.base_branch,
-                    writer=writer,
-                )
-                state.pr_state = "open"
-                chain_spec.save_chain_state(spec_path, state)
+                if state.pr_number is None:
+                    state = chain_spec.load_chain_state(spec_path)
+                    state.pr_number = _ensure_milestone_pr(
+                        root,
+                        milestone,
+                        base_branch=spec.base_branch,
+                        writer=writer,
+                    )
+                    state.pr_state = "open" if state.pr_number is not None else None
+                    chain_spec.save_chain_state(spec_path, state)
         else:
             _refresh_base_branch(
                 root,
