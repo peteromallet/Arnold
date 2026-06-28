@@ -5,7 +5,7 @@ UI (litegraph) emitter, and supporting helpers for formatting, naming,
 and node-kwarg extraction.
 """
 
-from .emitter import (  # noqa: F401
+from vibecomfy.porting.emitter import (  # noqa: F401
     EmissionDiagnostic,
     EmissionSeverity,
     READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT,
