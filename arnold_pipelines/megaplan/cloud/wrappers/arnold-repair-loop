@@ -23,6 +23,8 @@ MARKER_PATH="$MARKER_DIR/$SESSION.json"
 ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
 DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"
+FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
+FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
 ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
@@ -46,7 +48,7 @@ LOG="$RUN_DIR/operator.log"
 DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"
 NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 
-mkdir -p "$RUN_DIR" "$DATA_DIR"
+mkdir -p "$RUN_DIR" "$DATA_DIR" "$FINDINGS_DIR"
 
 CHILD_PIDS=()
 CLEANUP_CHILDREN_RAN=0
@@ -927,8 +929,110 @@ entry["dev_summary"] = (
 )
 entry["dev_validation"] = report.get("validation") or []
 entry["dev_report"] = report
+entry["structural_pattern"] = report.get("structural_pattern") or ""
+entry["other_instantiations"] = report.get("other_instantiations") or []
+entry["human_review_recommendation"] = report.get("human_review_recommendation") or ""
+entry["findings_doc_path"] = report.get("findings_doc_path") or ""
+entry["findings_doc_appended"] = bool(report.get("findings_doc_appended"))
 
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+append_repair_finding_if_reported() {
+  local iteration="$1"
+  local report_path="$2"
+  local dev_model="$3"
+  python3 - "$report_path" "$FINDINGS_DOC" "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$ARNOLD_SRC" "$DATA_FILE" "$dev_model" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import sys
+
+(
+    report_path_raw,
+    findings_doc_raw,
+    iteration,
+    session,
+    workspace,
+    remote_spec,
+    arnold_src,
+    data_file,
+    dev_model,
+) = sys.argv[1:]
+report_path = pathlib.Path(report_path_raw)
+findings_doc = pathlib.Path(findings_doc_raw)
+if not report_path.exists():
+    raise SystemExit(0)
+try:
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+structural_pattern = str(report.get("structural_pattern") or "").strip()
+if not structural_pattern:
+    raise SystemExit(0)
+if report.get("findings_doc_appended") is True:
+    raise SystemExit(0)
+
+def _as_lines(value: object) -> list[str]:
+    if value in (None, "", [], {}):
+        return []
+    if isinstance(value, list):
+        lines = []
+        for item in value:
+            text = str(item).strip()
+            if text:
+                lines.append(text)
+        return lines
+    text = str(value).strip()
+    return [text] if text else []
+
+now = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+fixed_lines = _as_lines(
+    report.get("what_tried")
+    or report.get("fix_summary")
+    or report.get("source_changes")
+    or report.get("root_cause")
+    or report.get("hypothesis")
+)
+instantiations = _as_lines(report.get("other_instantiations"))
+recommendations = _as_lines(report.get("human_review_recommendation") or report.get("recommendation"))
+remaining = _as_lines(report.get("remaining_blockers"))
+
+lines = [
+    "",
+    f"## {now} -- {session} -- dev-fix iteration {iteration}",
+    "",
+    f"- Workspace: `{workspace}`",
+    f"- Chain spec: `{remote_spec}`",
+    f"- Arnold source: `{arnold_src}`",
+    f"- Repair data: `{data_file}`",
+    f"- Dev model: `{dev_model}`",
+    f"- Dev report: `{report_path}`",
+    "",
+    "### Immediate Root / Fix",
+]
+lines.extend(f"- {line}" for line in fixed_lines) if fixed_lines else lines.append("- Not reported.")
+lines.extend(["", "### Deeper Pattern", f"- {structural_pattern}", "", "### Other Instantiations To Review"])
+lines.extend(f"- {line}" for line in instantiations) if instantiations else lines.append("- Not reported.")
+lines.extend(["", "### Human Review Recommendation"])
+lines.extend(f"- {line}" for line in recommendations) if recommendations else lines.append("- Not reported.")
+if remaining:
+    lines.extend(["", "### Remaining Blockers"])
+    lines.extend(f"- {line}" for line in remaining)
+lines.append("")
+
+findings_doc.parent.mkdir(parents=True, exist_ok=True)
+if not findings_doc.exists():
+    findings_doc.write_text(
+        "# Watchdog Repair Persistent Problems\n\n"
+        "Structural findings noticed by repair-loop dev-fix agents. These are "
+        "not formal megaplan tickets yet; review and promote the important ones.\n",
+        encoding="utf-8",
+    )
+with findings_doc.open("a", encoding="utf-8") as handle:
+    handle.write("\n".join(lines))
 PY
 }
 
@@ -1142,24 +1246,30 @@ Chain spec: $REMOTE_SPEC
 Editable Arnold source: $ARNOLD_SRC
 Editable source branch: $SYNC_BRANCH
 Repair data file: $DATA_FILE
+Persistent findings doc: $FINDINGS_DOC
 JSON report path (write this before exiting): $report_path
 Requested model label for this iteration: $requested_model
 Actual dispatch model: $dispatch_model
 
 Task:
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
-2. Apply the narrowest safe root-cause fix in $ARNOLD_SRC on branch $SYNC_BRANCH.
-3. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
-4. If source changes pass validation, commit and push them.
-5. Do not relaunch the chain yourself. The wrapper will do the mechanical launch next.
-6. Use the raw failure signal, chain narrative, and prior-attempt history to avoid repeating failed ideas.
-7. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
-8. Write a concise JSON report to $report_path with keys:
-   classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers.
+2. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
+3. Apply the narrowest safe root-cause fix in $ARNOLD_SRC on branch $SYNC_BRANCH, but prefer a general engine fix over a workflow-specific patch when the evidence supports it.
+4. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
+5. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
+6. If source changes pass validation, commit and push them.
+7. Do not relaunch the chain yourself. The wrapper will do the mechanical launch next.
+8. Use the raw failure signal, chain narrative, and prior-attempt history to avoid repeating failed ideas.
+9. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
+10. Write a concise JSON report to $report_path with keys:
+   classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
+   structural_pattern, other_instantiations, human_review_recommendation,
+   findings_doc_path, findings_doc_appended.
 
 Constraints:
 - Work only in $ARNOLD_SRC for source fixes.
 - Do not hardcode a workflow-specific workaround when a general engine fix is appropriate.
+- If you find a pattern such as flags positioned wrong across multiple dispatch sites or stale recovery logic duplicated in several places, fix what you can now and persist the broader findings in $FINDINGS_DOC.
 - Do not ask for user input.
 - End the turn as soon as you have either a narrow fix or a concrete blocker.
 EOF
@@ -1239,6 +1349,7 @@ run_dev_fix_turn() {
   fi
   after_sha="$(cd "$ARNOLD_SRC" && git rev-parse HEAD 2>/dev/null || true)"
   repair_data_record_dev "$iteration" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
+  append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
 }
 
 run_kimi_launch_turn() {
