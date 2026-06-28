@@ -75,6 +75,7 @@ from vibecomfy.porting.resolution import (
     ResolutionIssue,
     build_lg_id_maps,
 )
+from vibecomfy.porting.edit._ir_utils import _canonical_input_name_for_class
 
 
 _IMAGE_CONCAT_MULTI_INPUT_RE = re.compile(r"^image_(\d+)$")
@@ -849,11 +850,32 @@ def _lint_add_node(
             ), "rejected"
 
         # Validate input names when inputs are provided
+        canonical_fields = dict(op.fields)
+        canonical_inputs = dict(op.inputs)
+        try:
+            schema_inputs: dict[str, Any] = getattr(schema, "inputs", {}) or {}
+        except Exception:
+            schema_inputs = {}
+        if schema_inputs:
+            canonical_fields = {
+                _canonical_input_name_for_class(schema_inputs, op.class_type.strip(), str(name)): value
+                for name, value in op.fields.items()
+            }
+            canonical_inputs = {
+                _canonical_input_name_for_class(schema_inputs, op.class_type.strip(), str(name)): value
+                for name, value in op.inputs.items()
+            }
+            if canonical_fields != dict(op.fields) or canonical_inputs != dict(op.inputs):
+                op = AddNodeOp(
+                    op=op.op,
+                    scope_path=op.scope_path,
+                    class_type=op.class_type,
+                    fields=canonical_fields,
+                    inputs=canonical_inputs,
+                    anchor=op.anchor,
+                )
+
         if op.inputs:
-            try:
-                schema_inputs: dict[str, Any] = getattr(schema, "inputs", {}) or {}
-            except Exception:
-                schema_inputs = {}
             for input_name in op.inputs:
                 if input_name not in schema_inputs and not _is_dynamic_add_node_input(
                     class_type=op.class_type.strip(),

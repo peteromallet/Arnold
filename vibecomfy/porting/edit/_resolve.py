@@ -40,6 +40,8 @@ from vibecomfy.porting.edit._parse import (
 )
 from vibecomfy.porting.edit._ir_utils import (
     _MISSING_WIDGET_VALUE,
+    _canonical_input_name_for_class,
+    _input_spec_for_field,
     _link_origin,
     _normalize_ir_type,
     _output_slot_name,
@@ -1150,8 +1152,10 @@ class _ResolveMixin:
                     name,
                     direction="input",
                 )
+            else:
+                name = _canonical_input_name_for_class(schema_inputs, class_type, name)
             if _is_graph_reference_value(keyword.value):
-                socket_type = _normalize_ir_type(getattr(schema_inputs.get(name), "type", None))
+                socket_type = _normalize_ir_type(getattr(_input_spec_for_field(schema_inputs, name), "type", None))
                 target = _ResolvedTargetField(node=fake_target_node, field_name=name, socket_type=socket_type)
                 endpoint, endpoint_issues = self._resolve_rhs_endpoint(keyword.value, target=target)
                 if endpoint_issues:
@@ -1417,7 +1421,8 @@ class _ResolveMixin:
         )
         schema = schema_for(self.schema_provider, node_ref.class_type)
         schema_inputs = getattr(schema, "inputs", {}) or {}
-        schema_input = schema_inputs.get(field_name)
+        field_name = _canonical_input_name_for_class(schema_inputs, node_ref.class_type, field_name)
+        schema_input = _input_spec_for_field(schema_inputs, field_name)
         raw_input = _find_named_slot(node_ref.node.get("inputs"), field_name)
         widget_value = _widget_value_for_field(node_ref.node, node_ref.class_type, field_name)
         if raw_input is None and schema_input is None and widget_value is _MISSING_WIDGET_VALUE and field_name != "mode":

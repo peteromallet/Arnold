@@ -13,6 +13,7 @@ from vibecomfy.porting.edit.ops import (
     SetNodeFieldOp,
     UpsertLinkOp,
 )
+from vibecomfy.porting.identity.codec import to_raw_name
 from vibecomfy.porting.resolution import _find_named_slot
 from vibecomfy.porting.widgets.schema import ui_widget_value_names_for_class
 from vibecomfy.schema import schema_for
@@ -56,6 +57,51 @@ def _output_slot_name(node: Mapping[str, Any], slot_index: int, schema_provider:
 
 
 _MISSING_WIDGET_VALUE = object()
+
+
+def _canonical_schema_input_name(schema_inputs: Mapping[str, Any], field_name: str) -> str:
+    """Map a Pythonic field alias back to the raw Comfy schema input name."""
+    if field_name in schema_inputs:
+        return field_name
+    try:
+        return to_raw_name(field_name, {str(name): str(name) for name in schema_inputs})
+    except (KeyError, ValueError):
+        return field_name
+
+
+def _canonical_input_name_for_class(
+    schema_inputs: Mapping[str, Any],
+    class_type: str,
+    field_name: str,
+) -> str:
+    canonical = _canonical_schema_input_name(schema_inputs, field_name)
+    if canonical != field_name:
+        return canonical
+    try:
+        from vibecomfy.porting.object_info.consume import get_class  # noqa: PLC0415
+
+        entry = get_class(class_type)
+    except Exception:
+        entry = None
+    if not isinstance(entry, Mapping):
+        return field_name
+    object_info_inputs: dict[str, str] = {}
+    raw_inputs = entry.get("inputs")
+    if isinstance(raw_inputs, Mapping):
+        for group in raw_inputs.values():
+            if not isinstance(group, Mapping):
+                continue
+            for name in group:
+                object_info_inputs[str(name)] = str(name)
+    return _canonical_schema_input_name(object_info_inputs, field_name)
+
+
+def _input_spec_for_field(schema_inputs: Mapping[str, Any], field_name: str) -> Any:
+    spec = schema_inputs.get(field_name)
+    if spec is not None:
+        return spec
+    canonical = _canonical_schema_input_name(schema_inputs, field_name)
+    return schema_inputs.get(canonical)
 
 
 def _widget_value_for_field(node: Mapping[str, Any], class_type: str, field_name: str) -> Any:

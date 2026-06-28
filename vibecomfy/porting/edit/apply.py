@@ -32,6 +32,10 @@ from .ops import (
 from vibecomfy.porting.object_info.consume import output_names as cached_output_names
 from vibecomfy.porting.report import PortIssue
 from vibecomfy.porting.emit.ui import materialize_litegraph_node
+from vibecomfy.porting.edit._ir_utils import (
+    _canonical_input_name_for_class,
+    _input_spec_for_field,
+)
 from vibecomfy.porting.widgets.schema import (
     effective_widget_names_for_class,
     ui_widget_value_names_for_class,
@@ -1076,25 +1080,31 @@ def _resolve_set_node_field(
 
     schema = schema_for(schema_provider, class_type)
     schema_inputs = getattr(schema, "inputs", {}) or {}
-    schema_input = schema_inputs.get(op.target.field_path)
+    field_path = _canonical_input_name_for_class(schema_inputs, class_type, op.target.field_path)
+    target = (
+        op.target
+        if field_path == op.target.field_path
+        else NodeFieldTarget(op.target.scope_path, op.target.uid, field_path)
+    )
+    schema_input = _input_spec_for_field(schema_inputs, field_path)
 
-    raw_input = _find_named_slot(node.get("inputs"), op.target.field_path)
-    raw_input_index = _find_named_slot_index(node.get("inputs"), op.target.field_path)
+    raw_input = _find_named_slot(node.get("inputs"), field_path)
+    raw_input_index = _find_named_slot_index(node.get("inputs"), field_path)
     widgets_values = node.get("widgets_values")
-    widget_key = op.target.field_path if isinstance(widgets_values, Mapping) and op.target.field_path in widgets_values else None
+    widget_key = field_path if isinstance(widgets_values, Mapping) and field_path in widgets_values else None
     if raw_input is not None:
-        input_name = op.target.field_path
+        input_name = field_path
         if isinstance(raw_input.get("link"), int):
             automatic_link_removal = raw_input["link"]
 
-    widget_index = _widget_index_for_field(class_type, op.target.field_path)
+    widget_index = _widget_index_for_field(class_type, field_path)
     widget_stub_name = _widget_name_for_input(raw_input)
     used_schema_less_widget_recovery = False
-    if widget_index is None and widget_stub_name == op.target.field_path:
-        widget_index = _widget_index_from_input_stubs(node.get("inputs"), op.target.field_path)
+    if widget_index is None and widget_stub_name == field_path:
+        widget_index = _widget_index_from_input_stubs(node.get("inputs"), field_path)
         used_schema_less_widget_recovery = widget_index is not None
     if widget_index is None and isinstance(widgets_values, list):
-        match = re.fullmatch(r"widget_(\d+)", op.target.field_path)
+        match = re.fullmatch(r"widget_(\d+)", field_path)
         if match is not None:
             positional_index = int(match.group(1))
             if 0 <= positional_index < len(widgets_values):
@@ -1108,7 +1118,8 @@ def _resolve_set_node_field(
                 detail={
                     "scope_path": op.target.scope_path,
                     "uid": op.target.uid,
-                    "field_path": op.target.field_path,
+                    "field_path": field_path,
+                    "requested_field_path": op.target.field_path,
                     "class_type": class_type,
                 },
             )
@@ -1121,7 +1132,8 @@ def _resolve_set_node_field(
                 detail={
                     "scope_path": op.target.scope_path,
                     "uid": op.target.uid,
-                    "field_path": op.target.field_path,
+                    "field_path": field_path,
+                    "requested_field_path": op.target.field_path,
                     "class_type": class_type,
                 },
             )
@@ -1131,7 +1143,7 @@ def _resolve_set_node_field(
         value=op.value,
         spec=schema_input,
         class_type=class_type,
-        input_name=op.target.field_path,
+        input_name=field_path,
         context="set_node_field",
     )
     if value_issues:
@@ -1147,7 +1159,8 @@ def _resolve_set_node_field(
                 detail={
                     "scope_path": op.target.scope_path,
                     "uid": op.target.uid,
-                    "field_path": op.target.field_path,
+                    "field_path": field_path,
+                    "requested_field_path": op.target.field_path,
                     "class_type": class_type,
                     "widget_index": widget_index,
                 },
@@ -1162,14 +1175,15 @@ def _resolve_set_node_field(
                 detail={
                     "scope_path": op.target.scope_path,
                     "uid": op.target.uid,
-                    "field_path": op.target.field_path,
+                    "field_path": field_path,
+                    "requested_field_path": op.target.field_path,
                     "link_id": automatic_link_removal,
                 },
             )
         )
     return (
         ResolvedFieldRef(
-            target=op.target,
+            target=target,
             node=node,
             class_type=class_type,
             node_id=node.get("id"),
@@ -1337,6 +1351,23 @@ def _resolve_add_node(
         ]
 
     schema_inputs = getattr(schema, "inputs", {}) or {}
+    fields = {
+        _canonical_input_name_for_class(schema_inputs, op.class_type, str(field_name)): value
+        for field_name, value in op.fields.items()
+    }
+    inputs = {
+        _canonical_input_name_for_class(schema_inputs, op.class_type, str(input_name)): source
+        for input_name, source in op.inputs.items()
+    }
+    if fields != dict(op.fields) or inputs != dict(op.inputs):
+        op = AddNodeOp(
+            op=op.op,
+            scope_path=op.scope_path,
+            class_type=op.class_type,
+            fields=fields,
+            inputs=inputs,
+            anchor=op.anchor,
+        )
     issues = []
     for input_name, spec in schema_inputs.items():
         required = bool(getattr(spec, "required", False))
@@ -1356,7 +1387,7 @@ def _resolve_add_node(
                 )
             )
     for field_name, value in op.fields.items():
-        spec = schema_inputs.get(field_name)
+        spec = _input_spec_for_field(schema_inputs, field_name)
         if spec is None:
             issues.append(
                 _issue(
@@ -1395,7 +1426,7 @@ def _resolve_add_node(
                     },
                 )
             ]
-        spec = schema_inputs.get(input_name) or _dynamic_add_node_input_spec(
+        spec = _input_spec_for_field(schema_inputs, input_name) or _dynamic_add_node_input_spec(
             class_type=op.class_type,
             input_name=input_name,
             fields=op.fields,
