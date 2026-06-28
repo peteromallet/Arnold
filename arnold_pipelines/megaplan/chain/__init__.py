@@ -1470,7 +1470,10 @@ def _chain_completion_guard(
 
     plan_state = _read_plan_state_payload_from_dir(plan_dir)
     current_state = plan_state.get("current_state")
-    if current_state != STATE_DONE:
+    if _completion_record_is_merged_pr(record):
+        if not implementation_milestone:
+            return True, "merged PR milestone accepted without implementation checks"
+    elif current_state != STATE_DONE:
         return (
             False,
             f"plan {plan_name} current_state={current_state!r} is not terminal-success "
