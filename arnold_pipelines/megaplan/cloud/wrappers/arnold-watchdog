@@ -28,6 +28,7 @@ REPORT_ARCHIVE_DIR="${CLOUD_WATCHDOG_REPORT_ARCHIVE_DIR:-/workspace/watchdog-rep
 REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 REPAIR_WITH_CODEX="${CLOUD_WATCHDOG_CODEX_REPAIR:-0}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
@@ -41,6 +42,9 @@ SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
 EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
 KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
+REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
+PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"
+KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
 
@@ -972,6 +976,9 @@ session_health_status() {
 kimi_operator_running() {
   local session="$1"
   local pgid_path pgid
+  if pgrep -f "arnold-repair-loop[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
+    return 0
+  fi
   if pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
     return 0
   fi
@@ -982,15 +989,18 @@ kimi_operator_running() {
   kill -0 -- "-$pgid" >/dev/null 2>&1 || return 1
   ps -eo pgid=,args= 2>/dev/null \
     | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
-    | grep -Eq 'arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec'
+    | grep -Eq 'arnold-repair-loop|arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec|launch_hermes_agent\.py'
 }
 
 # Per-session repair-cycle marker. The watchdog sets it when a stopped session
 # gets a mechanical relaunch; if the session re-stops before becoming healthy,
-# the next tick escalates to Kimi. Once Kimi is actually dispatched, its PGID
-# sidecar distinguishes "Kimi currently/ran" from the mechanical-first stage.
+# the next tick escalates to the primary repair operator. The historical
+# ".kimi-*" sidecars stay in place because the deduper/reaper already keys on
+# them and the focused Kimi fallback reuses the same process-group tracking.
+# Once repair is actually dispatched, its PGID sidecar distinguishes
+# "repair currently/ran" from the mechanical-first stage.
 # Cleared whenever the session is observed healthy or the direct relaunch
-# fallback consumes the cycle after Kimi exits without recovery.
+# fallback consumes the cycle after the repair operator exits without recovery.
 kimi_dispatch_marker_path() {
   printf '%s/%s.kimi-dispatch' "$MARKER_DIR" "$1"
 }
@@ -1005,6 +1015,37 @@ session_marker_path() {
 
 repair_progress_snapshot_path() {
   printf '%s/%s.reap-progress.json' "$MARKER_DIR" "$1"
+}
+
+repair_needs_human_path() {
+  printf '%s/%s.needs-human.json' "$REPAIR_DATA_DIR" "$1"
+}
+
+repair_needs_human_summary() {
+  local session="$1"
+  python3 - "$(repair_needs_human_path "$session")" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    print("repair loop exhausted; needs human")
+    raise SystemExit(0)
+summary = payload.get("summary")
+repair_data_path = payload.get("repair_data_path")
+discord_status = payload.get("discord_status")
+parts = []
+if isinstance(summary, str) and summary:
+    parts.append(summary)
+if isinstance(repair_data_path, str) and repair_data_path:
+    parts.append(f"repair_data={repair_data_path}")
+if isinstance(discord_status, str) and discord_status:
+    parts.append(f"discord={discord_status}")
+print("; ".join(parts) if parts else "repair loop exhausted; needs human")
+PY
 }
 
 default_plan_relaunch_command() {
@@ -1056,6 +1097,7 @@ clear_session_tracking_artifacts() {
   local plan_name="${2:-}"
   rm -f "$(session_marker_path "$session")" 2>/dev/null || true
   kimi_dispatch_marker_clear "$session"
+  rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
   if [[ -n "$plan_name" ]]; then
     rm -f "$MARKER_DIR/$plan_name.progress.json" 2>/dev/null || true
   fi
@@ -1131,24 +1173,25 @@ mechanical_relaunch_attempted_previously() {
     && ! kimi_operator_running "$session"
 }
 
-# Background-dispatch the Kimi goal operator so it never blocks the tick. The
-# operator fixes the root cause and relaunches the run on its own; this returns
+# Background-dispatch the bounded repair loop so it never blocks the tick. The
+# loop owns dev-fix -> mechanical-launch -> Kimi-launch escalation and returns
 # immediately so the watchdog can scan the next session and write its report.
-# Returns 0 if dispatched, 1 if the operator binary is missing.
+# Keep the historical dispatch_kimi_repair seam because the watchdog tests and
+# extracted shell harnesses stub that function name directly.
 dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
   local pgid_path
-  if [[ ! -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
+  if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     return 1
   fi
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
-  setsid bash -c 'echo "$$" > "$0"; exec /usr/local/bin/arnold-kimi-goal-operator "$@"' \
-    "$pgid_path" "$session" "$workspace" "$remote_spec" \
+  setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
+    _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
     >> "$LOG" 2>&1 < /dev/null &
-  log "Kimi goal operator background-dispatched session=$session pid=$!"
+  log "repair loop background-dispatched session=$session pid=$!"
   return 0
 }
 
@@ -1158,16 +1201,18 @@ import re
 import sys
 
 SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
+REPAIR_LOOP_RE = re.compile(r"(^|[\s/])arnold-repair-loop\s+([^\s]+)")
 KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
 CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
 RUN_AGENT_HINTS = (
     "workflows on this Hetzner worker should never pause unexpectedly",
     "cloud watchdog",
-    "Kimi goal operator",
+    "Kimi launch/diagnosis turn",
 )
 CODEX_HINTS = (
-    "Codex repair subagent launched by the cloud watchdog",
-    "leave enough evidence for the Kimi supervisor",
+    "You are the watchdog repair-loop dev-fix agent",
+    "bounded 3-iteration repair loop",
+    "repair data file",
     "workflows on this Hetzner worker should not pause unexpectedly",
 )
 PROTECTED_HINTS = (
@@ -1179,9 +1224,10 @@ RULE_PRIORITY = {
     "age_backstop": 1,
 }
 KIND_PRIORITY = {
-    "arnold-kimi-goal-operator": 0,
-    "arnold.agent.run_agent": 1,
-    "codex exec": 2,
+    "arnold-repair-loop": 0,
+    "arnold-kimi-goal-operator": 1,
+    "arnold.agent.run_agent": 2,
+    "codex exec": 3,
 }
 
 
@@ -1202,6 +1248,9 @@ def parse_ps_row(raw: str):
 
 
 def extract_session(kind: str, args: str) -> str:
+    if kind == "arnold-repair-loop":
+        match = REPAIR_LOOP_RE.search(args)
+        return match.group(2) if match else ""
     if kind == "arnold-kimi-goal-operator":
         match = KIMI_RE.search(args)
         return match.group(2) if match else ""
@@ -1212,6 +1261,9 @@ def extract_session(kind: str, args: str) -> str:
 def classify_kind(args: str) -> str:
     if any(hint in args for hint in PROTECTED_HINTS):
         return ""
+    repair_loop_match = REPAIR_LOOP_RE.search(args)
+    if repair_loop_match:
+        return "arnold-repair-loop"
     kimi_match = KIMI_RE.search(args)
     if kimi_match:
         return "arnold-kimi-goal-operator"
@@ -1324,7 +1376,7 @@ PY
 }
 
 reap_stalled_repair_candidates() {
-  python3 - "$MARKER_DIR" "$KIMI_OPERATOR_ROOT" "$REAP_STALL_GRACE_SECS" "$REAP_STALL_IDLE_SECS" "$REAP_AGE_SECS" <<'PY'
+  python3 - "$MARKER_DIR" "$REPAIR_OPERATOR_ROOT" "$REAP_STALL_GRACE_SECS" "$REAP_STALL_IDLE_SECS" "$REAP_AGE_SECS" <<'PY'
 import datetime as dt
 import json
 import pathlib
@@ -1338,16 +1390,18 @@ stall_idle_secs = int(sys.argv[4])
 reap_age_secs = int(sys.argv[5])
 
 SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
+REPAIR_LOOP_RE = re.compile(r"(^|[\s/])arnold-repair-loop\s+([^\s]+)")
 KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
 CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
 RUN_AGENT_HINTS = (
     "workflows on this Hetzner worker should never pause unexpectedly",
     "cloud watchdog",
-    "Kimi goal operator",
+    "Kimi launch/diagnosis turn",
 )
 CODEX_HINTS = (
-    "Codex repair subagent launched by the cloud watchdog",
-    "leave enough evidence for the Kimi supervisor",
+    "You are the watchdog repair-loop dev-fix agent",
+    "bounded 3-iteration repair loop",
+    "repair data file",
     "workflows on this Hetzner worker should not pause unexpectedly",
 )
 PROTECTED_HINTS = (
@@ -1355,9 +1409,10 @@ PROTECTED_HINTS = (
     "arnold-progress-auditor",
 )
 KIND_PRIORITY = {
-    "arnold-kimi-goal-operator": 0,
-    "arnold.agent.run_agent": 1,
-    "codex exec": 2,
+    "arnold-repair-loop": 0,
+    "arnold-kimi-goal-operator": 1,
+    "arnold.agent.run_agent": 2,
+    "codex exec": 3,
 }
 RECENT_WINDOW_SECS = max(reap_age_secs, stall_grace_secs + stall_idle_secs, 1800)
 now = dt.datetime.now(dt.timezone.utc)
@@ -1380,6 +1435,9 @@ def parse_ps_row(raw: str):
 
 
 def extract_session(kind: str, args: str) -> str:
+    if kind == "arnold-repair-loop":
+        match = REPAIR_LOOP_RE.search(args)
+        return match.group(2) if match else ""
     if kind == "arnold-kimi-goal-operator":
         match = KIMI_RE.search(args)
         return match.group(2) if match else ""
@@ -1390,6 +1448,9 @@ def extract_session(kind: str, args: str) -> str:
 def classify_kind(args: str) -> str:
     if any(hint in args for hint in PROTECTED_HINTS):
         return ""
+    repair_loop_match = REPAIR_LOOP_RE.search(args)
+    if repair_loop_match:
+        return "arnold-repair-loop"
     kimi_match = KIMI_RE.search(args)
     if kimi_match:
         return "arnold-kimi-goal-operator"
@@ -1437,9 +1498,8 @@ def find_recent_operator_dir(session: str):
     for path in operator_root.glob(f"*-{safe_session}"):
         if not path.is_dir():
             continue
-        operator_log = path / "operator.log"
-        codex_log = path / "codex-repair.log"
-        mtimes = [file_stats(path)[0], file_stats(operator_log)[0], file_stats(codex_log)[0]]
+        log_paths = [candidate for candidate in path.glob("*.log") if candidate.is_file()]
+        mtimes = [file_stats(path)[0], *(file_stats(candidate)[0] for candidate in log_paths)]
         newest_mtime = max(mtimes)
         if newest_mtime <= 0:
             continue
@@ -1458,19 +1518,18 @@ def assess_session_progress(session: str) -> dict[str, object]:
     if operator_dir is None:
         return {"mapped": False, "reason": "unmappable"}
 
-    operator_log = operator_dir / "operator.log"
-    codex_log = operator_dir / "codex-repair.log"
-    log_mtime, log_size = file_stats(operator_log)
-    codex_mtime, codex_size = file_stats(codex_log)
-    if max(log_mtime, codex_mtime) <= 0:
+    log_paths = [candidate for candidate in operator_dir.glob("*.log") if candidate.is_file()]
+    stats = [(candidate.name, *file_stats(candidate)) for candidate in log_paths]
+    if not stats:
         return {"mapped": False, "reason": "no_logs"}
+    stats.sort(key=lambda item: (item[1], item[2], item[0]), reverse=True)
+    newest_name, newest_mtime, newest_size = stats[0]
 
     snapshot = {
         "operator_dir": str(operator_dir),
-        "log_mtime": log_mtime,
-        "log_size": log_size,
-        "codex_log_mtime": codex_mtime,
-        "codex_log_size": codex_size,
+        "log_name": newest_name,
+        "log_mtime": newest_mtime,
+        "log_size": newest_size,
     }
     snapshot_dir = snapshot_path_for(session).parent
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -1484,22 +1543,21 @@ def assess_session_progress(session: str) -> dict[str, object]:
 
     same_observation = (
         prev.get("operator_dir") == snapshot["operator_dir"]
+        and prev.get("log_name") == snapshot["log_name"]
         and prev.get("log_mtime") == snapshot["log_mtime"]
         and prev.get("log_size") == snapshot["log_size"]
-        and prev.get("codex_log_mtime") == snapshot["codex_log_mtime"]
-        and prev.get("codex_log_size") == snapshot["codex_log_size"]
     )
     if same_observation:
         last_advance = (
             iso_to_dt(prev.get("last_advance_ts"))
             or iso_to_dt(prev.get("ts"))
-            or dt.datetime.fromtimestamp(max(log_mtime, codex_mtime), tz=dt.timezone.utc)
+            or dt.datetime.fromtimestamp(newest_mtime, tz=dt.timezone.utc)
         )
     else:
         if prev:
             last_advance = now
         else:
-            last_advance = dt.datetime.fromtimestamp(max(log_mtime, codex_mtime), tz=dt.timezone.utc)
+            last_advance = dt.datetime.fromtimestamp(newest_mtime, tz=dt.timezone.utc)
     idle_secs = max(0, int((now - last_advance).total_seconds()))
 
     persisted = dict(snapshot)
@@ -2087,35 +2145,35 @@ repair_unhealthy_session() {
   local remote_spec="$3"
   local reason="$4"
 
-  # Background-dispatch: never block the tick on the Kimi operator (it can run
-  # up to its 60-min timeout). Returns 0 when Kimi is running or just dispatched
-  # (caller must NOT relaunch -- Kimi relaunches on success); returns 1 when the
-  # direct tmux relaunch fallback is needed (Kimi missing, or already tried and
-  # exited without reviving the session).
+  # Background-dispatch: never block the tick on the repair operator (it can run
+  # up to its 60-min timeout). Returns 0 when repair is running or just
+  # dispatched (caller must NOT relaunch -- the operator relaunches on success);
+  # returns 1 when the direct tmux relaunch fallback is needed (repair missing,
+  # or already tried and exited without reviving the session).
   if kimi_operator_running "$session"; then
-    log "session unhealthy; Kimi repair already running session=$session reason=$reason"
+    log "session unhealthy; repair already running session=$session reason=$reason"
     return 0
   fi
   if mechanical_relaunch_attempted_previously "$session"; then
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-      log "session unhealthy after mechanical relaunch: background-dispatched Kimi goal operator session=$session reason=$reason"
+      log "session unhealthy after mechanical relaunch: background-dispatched repair loop session=$session reason=$reason"
       tmux kill-session -t "$session" 2>/dev/null || true
       return 0
     fi
-    log "session unhealthy after mechanical relaunch; Kimi goal operator missing -> direct relaunch session=$session reason=$reason"
+    log "session unhealthy after mechanical relaunch; repair loop missing -> direct relaunch session=$session reason=$reason"
     return 1
   fi
   if kimi_dispatch_failed_previously "$session"; then
-    log "session unhealthy; Kimi tried and exited without recovery -> direct relaunch session=$session reason=$reason"
+    log "session unhealthy; repair loop tried and exited without recovery -> direct relaunch session=$session reason=$reason"
     kimi_dispatch_marker_clear "$session"
     return 1
   fi
   if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-    log "session unhealthy: background-dispatched Kimi goal operator session=$session reason=$reason"
+    log "session unhealthy: background-dispatched repair loop session=$session reason=$reason"
     tmux kill-session -t "$session" 2>/dev/null || true
     return 0
   fi
-  log "session unhealthy; Kimi goal operator missing -> direct relaunch session=$session reason=$reason"
+  log "session unhealthy; repair loop missing -> direct relaunch session=$session reason=$reason"
   return 1
 }
 
@@ -2153,13 +2211,13 @@ launch_chain_tick() {
     phase_health="$(plan_phase_health_status "$workspace")"
     if [[ "$phase_health" != "ok" ]]; then
       if kimi_operator_running "$session"; then
-        log "session alive but plan unhealthy; Kimi repair already running session=$session reason=$phase_health"
+        log "session alive but plan unhealthy; repair already running session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_running" "$phase_health" "$workspace" "$remote_spec"
       elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-        log "session alive but plan unhealthy: background-dispatched Kimi goal operator session=$session reason=$phase_health"
+        log "session alive but plan unhealthy: background-dispatched repair loop session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_dispatched" "$phase_health" "$workspace" "$remote_spec"
       else
-        log "session alive but plan unhealthy; Kimi goal operator missing session=$session reason=$phase_health"
+        log "session alive but plan unhealthy; repair loop missing session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_unavailable" "$phase_health" "$workspace" "$remote_spec"
       fi
       return 0
@@ -2170,9 +2228,11 @@ launch_chain_tick() {
       log "progress stall flagged session=$session detail=$stall_health"
       report_item "$report_items" "$session" "observe" "progress_stall" "$stall_health" "$workspace" "$remote_spec"
     fi
-    # Alive and phase-healthy: any prior Kimi dispatch succeeded, so clear its
-    # marker so a future stop dispatches Kimi fresh instead of falling back.
+    # Alive and phase-healthy: any prior repair dispatch succeeded, so clear the
+    # marker so a future stop dispatches the primary repair fresh instead of
+    # falling back.
     kimi_dispatch_marker_clear "$session"
+    rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
     return 0
@@ -2230,37 +2290,46 @@ launch_chain_tick() {
     return 0
   fi
 
+  if [[ -f "$(repair_needs_human_path "$session")" ]]; then
+    local repair_summary
+    repair_summary="$(repair_needs_human_summary "$session")"
+    log "session marked needs human by repair loop session=$session summary=$repair_summary"
+    report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+    return 0
+  fi
+
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
     log "skip $session: chain spec missing: $remote_spec"
     report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
     return 1
   fi
 
-  # Repair + relaunch. The Kimi goal operator is BACKGROUND-DISPATCHED so it
-  # never blocks the tick (it can run up to its 60-min timeout and relaunches the
-  # run itself on success). The watchdog's direct tmux relaunch runs only as a
-  # fallback: when Kimi is unavailable, or when Kimi was already dispatched and
-  # has since exited without reviving the session (marker present + not running).
+  # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
+  # it never blocks the tick (it can run up to its 60-min timeout and relaunches
+  # the run itself on success). The watchdog's direct tmux relaunch runs only as
+  # a fallback: when repair is unavailable, or when it was already dispatched
+  # and has since exited without reviving the session (marker present + not
+  # running).
   if [[ "$health" != "stopped" ]]; then
     if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"; then
-      # Kimi running or just background-dispatched; it owns the relaunch.
+      # Repair running or just background-dispatched; it owns the relaunch.
       report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
       return 0
     fi
   else
     if kimi_operator_running "$session"; then
-      log "session stopped; Kimi repair already running session=$session"
-      report_item "$report_items" "$session" "repair" "repair_running" "Kimi repair already running" "$workspace" "$remote_spec"
+      log "session stopped; repair already running session=$session"
+      report_item "$report_items" "$session" "repair" "repair_running" "repair already running" "$workspace" "$remote_spec"
       return 0
     elif mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-        log "session stopped after mechanical relaunch: background-dispatched Kimi goal operator session=$session"
-        report_item "$report_items" "$session" "repair" "repair_dispatched" "Kimi goal operator dispatched after mechanical relaunch" "$workspace" "$remote_spec"
+        log "session stopped after mechanical relaunch: background-dispatched repair loop session=$session"
+        report_item "$report_items" "$session" "repair" "repair_dispatched" "repair loop dispatched after mechanical relaunch" "$workspace" "$remote_spec"
         return 0
       fi
-      log "session stopped after mechanical relaunch; Kimi goal operator missing -> direct relaunch session=$session"
+      log "session stopped after mechanical relaunch; repair loop missing -> direct relaunch session=$session"
     elif kimi_dispatch_failed_previously "$session"; then
-      log "session stopped; Kimi tried and exited without recovery -> direct relaunch session=$session"
+      log "session stopped; repair loop tried and exited without recovery -> direct relaunch session=$session"
       kimi_dispatch_marker_clear "$session"
     else
       log "session stopped; mechanical relaunch first session=$session"
