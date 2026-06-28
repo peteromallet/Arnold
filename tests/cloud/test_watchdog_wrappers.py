@@ -2052,12 +2052,16 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
 
     assert 'DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"' in text
     assert 'NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"' in text
+    assert 'FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"' in text
+    assert 'FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"' in text
     assert 'REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"' in text
     assert "acquire_repair_lock()" in text
     assert 'if ! flock -n "$REPAIR_LOCK_FD"; then' in text
     assert "acquire_repair_lock || exit 75" in text
     assert "repair_data_init()" in text
     assert "repair_data_record_dev()" in text
+    assert "append_repair_finding_if_reported()" in text
+    assert 'append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"' in text
     assert "repair_data_record_mechanical()" in text
     assert "repair_data_record_kimi()" in text
     assert "collect_failure_context_json()" in text
@@ -2084,6 +2088,13 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "current chain narrative (last 20 chain-log lines)" in text
     assert "## Prior repair attempts" in text
     assert "Repair data file: $DATA_FILE" in text
+    assert "Persistent findings doc: $FINDINGS_DOC" in text
+    assert "Go to the deepest structural level" in text
+    assert "Do not just fix the one symptom that caused this stop" in text
+    assert "append it to the findings doc at $FINDINGS_DOC" in text
+    assert "structural_pattern, other_instantiations, human_review_recommendation" in text
+    assert "findings_doc_path, findings_doc_appended" in text
+    assert 'entry["structural_pattern"] = report.get("structural_pattern") or ""' in text
     assert "do not relaunch the chain yourself" in text.lower()
 
 
