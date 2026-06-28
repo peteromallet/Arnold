@@ -711,6 +711,31 @@ class MultiStore(Store):
         rows.sort(key=lambda msg: (float(msg.rank or 0), msg.sent_at, msg.id), reverse=True)
         return rows[:limit]
 
+    def list_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 20,
+        exclude_ids: Sequence[str] = (),
+    ) -> list[Message]:
+        # Conversation messages may live in either backend; merge, dedupe, and
+        # return the last ``limit`` chronologically (oldest first).
+        exclude = set(exclude_ids)
+        seen: set[str] = set()
+        rows: list[Message] = []
+        for backend in (self.file, self.db):
+            for message in backend.list_conversation_messages(
+                conversation_id,
+                limit=limit,
+                exclude_ids=tuple(exclude),
+            ):
+                if message.id in seen or message.id in exclude:
+                    continue
+                seen.add(message.id)
+                rows.append(message)
+        rows.sort(key=lambda message: (message.sent_at, message.id))
+        return rows[-limit:] if limit else []
+
     def record_tool_call(self, *, turn_id: str, tool_name: str, operation_kind: str, arguments: dict[str, Any], result: dict[str, Any], duration_ms: int, idempotency_key: str | None = None) -> ToolCall:
         for backend in (self.file, self.db):
             try:
