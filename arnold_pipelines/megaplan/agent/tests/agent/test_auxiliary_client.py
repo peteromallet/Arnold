@@ -519,19 +519,18 @@ class TestExplicitProviderRouting:
             client, model = resolve_provider_client("deepseek")
             assert client is not None
 
-    def test_explicit_deepseek_falls_back_to_kimi_when_deepseek_key_missing(self, monkeypatch):
+    def test_explicit_deepseek_returns_none_when_deepseek_key_missing(self, monkeypatch):
         monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
 
         with patch("agent.auxiliary_client.OpenAI") as mock_openai:
             mock_openai.return_value = MagicMock()
             client, model = resolve_provider_client("deepseek", model="deepseek-v4-pro")
 
-        assert client is not None
-        assert model == "kimi-k2-turbo-preview"
-        assert getattr(client, "_resolved_provider", None) == "kimi-coding"
-        assert mock_openai.call_args.kwargs["api_key"] == "kimi-test-key"
+        assert client is None
+        assert model is None
+        mock_openai.assert_not_called()
 
-    def test_explicit_codex_falls_back_to_kimi_when_oauth_unavailable(self, monkeypatch):
+    def test_explicit_codex_returns_none_when_oauth_unavailable(self, monkeypatch):
         monkeypatch.setenv("KIMI_API_KEY", "kimi-test-key")
 
         with (
@@ -544,10 +543,9 @@ class TestExplicitProviderRouting:
             mock_openai.return_value = MagicMock()
             client, model = resolve_provider_client("openai-codex", raw_codex=True)
 
-        assert client is not None
-        assert model == "kimi-k2-turbo-preview"
-        assert getattr(client, "_resolved_provider", None) == "kimi-coding"
-        assert mock_openai.call_args.kwargs["api_key"] == "kimi-test-key"
+        assert client is None
+        assert model is None
+        mock_openai.assert_not_called()
 
     def test_explicit_zai(self, monkeypatch):
         """provider='zai' should use GLM_API_KEY."""

@@ -804,6 +804,23 @@ def _resolve_unavailable_provider_fallback(
     return None, None
 
 
+def _resolve_explicit_provider_unavailable(
+    requested_provider: str,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """Fail closed for explicit provider requests.
+
+    Auto-selection is allowed to fall through the provider chain, but an
+    explicitly requested backend must not silently hop vendors. Callers use the
+    ``None`` result to surface a concrete missing-credentials error instead of
+    mutating routing under the hood.
+    """
+    logger.warning(
+        "resolve_provider_client: explicit provider %s unavailable; not falling back",
+        requested_provider,
+    )
+    return None, None
+
+
 def _resolve_explicit_codex_client(*, raw_codex: bool) -> Tuple[Optional[Any], Optional[str]]:
     """Resolve Codex credentials with refresh support for explicit routing."""
     try:
@@ -1001,7 +1018,7 @@ def resolve_provider_client(
     if provider == "openrouter":
         client, default = _try_openrouter()
         if client is None:
-            return _resolve_unavailable_provider_fallback(provider, raw_codex=raw_codex)
+            return _resolve_explicit_provider_unavailable(provider)
         final_model = model or default
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
@@ -1010,7 +1027,7 @@ def resolve_provider_client(
     if provider == "nous":
         client, default = _try_nous()
         if client is None:
-            return _resolve_unavailable_provider_fallback(provider, raw_codex=raw_codex)
+            return _resolve_explicit_provider_unavailable(provider)
         final_model = model or default
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
@@ -1022,13 +1039,13 @@ def resolve_provider_client(
             # access to responses.stream() (e.g., the main agent loop).
             raw_client, default = _resolve_explicit_codex_client(raw_codex=True)
             if raw_client is None:
-                return _resolve_unavailable_provider_fallback(provider, raw_codex=raw_codex)
+                return _resolve_explicit_provider_unavailable(provider)
             final_model = model or default
             return (raw_client, final_model)
         # Standard path: wrap in CodexAuxiliaryClient adapter
         client, default = _resolve_explicit_codex_client(raw_codex=False)
         if client is None:
-            return _resolve_unavailable_provider_fallback(provider, raw_codex=raw_codex)
+            return _resolve_explicit_provider_unavailable(provider)
         final_model = model or default
         return (_to_async_client(client, final_model) if async_mode
                 else (client, final_model))
@@ -1082,7 +1099,7 @@ def resolve_provider_client(
         if provider == "anthropic":
             client, default_model = _try_anthropic()
             if client is None:
-                return _resolve_unavailable_provider_fallback(provider, raw_codex=raw_codex)
+                return _resolve_explicit_provider_unavailable(provider)
             final_model = model or default_model
             return (_to_async_client(client, final_model) if async_mode else (client, final_model))
 
@@ -1095,7 +1112,7 @@ def resolve_provider_client(
             logger.warning("resolve_provider_client: provider %s has no API "
                            "key configured (tried: %s)",
                            provider, ", ".join(tried_sources))
-            return _resolve_unavailable_provider_fallback(provider, raw_codex=raw_codex)
+            return _resolve_explicit_provider_unavailable(provider)
 
         base_url = str(creds.get("base_url", "")).strip().rstrip("/") or pconfig.inference_base_url
 
