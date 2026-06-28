@@ -227,24 +227,6 @@ if isinstance(latest_failure, dict):
             else:
                 failure_recorded_at = value
 
-if not current_state and isinstance(chain_state, dict):
-    metadata = chain_state.get("metadata")
-    missing_base_ref = metadata.get("missing_base_ref") if isinstance(metadata, dict) else None
-    if chain_state.get("last_state") == "missing_base_ref" or isinstance(missing_base_ref, dict):
-        current_state = "manual_review"
-        retry_strategy = "manual_review"
-        failure_kind = "missing_base_ref"
-        if isinstance(missing_base_ref, dict):
-            base_branch = missing_base_ref.get("base_branch")
-            message = missing_base_ref.get("message")
-            recorded_at = missing_base_ref.get("recorded_at")
-            if isinstance(message, str) and message:
-                failure_message = message
-            elif isinstance(base_branch, str) and base_branch:
-                failure_message = f"base branch missing on origin: {base_branch}"
-            if isinstance(recorded_at, str) and recorded_at:
-                failure_recorded_at = recorded_at
-
 tiers_tried: list[str] = []
 history = state.get("history")
 if isinstance(history, list):
