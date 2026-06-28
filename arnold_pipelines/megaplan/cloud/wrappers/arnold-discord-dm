@@ -2,10 +2,19 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[4]
+def _resolve_root() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "arnold_pipelines" / "megaplan" / "discord_dm.py").exists():
+            return parent
+    return Path(os.environ.get("MEGAPLAN_DISCORD_DM_ARNOLD_SRC", "/workspace/arnold"))
+
+
+ROOT = _resolve_root()
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
