@@ -20,7 +20,7 @@ from arnold_pipelines.megaplan.workflows.planning import build_pipeline
 
 
 def build_and_compile_pipeline(**kwargs: Any) -> Any:
-    """Build the M3 pipeline and compile it to a ``WorkflowManifest``."""
+    """Build the M4 pipeline and compile it to a ``WorkflowManifest``."""
     return compile_pipeline(build_pipeline(**kwargs))
 
 
