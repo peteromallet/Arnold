@@ -133,7 +133,11 @@ class BlockerRecoveryEvaluation:
     def can_continue(self) -> bool:
         # Empty means the original failure source disappeared, for example a
         # stale recorded test failure now passes. Let recovery advance.
-        return all(blocker.is_non_terminal for blocker in self.blockers)
+        #
+        # `recover-blocked` resumes the predecessor phase so that rerun-required
+        # blockers (for example quality findings marked `fixed`) can actually be
+        # re-executed. Only terminal blockers must keep recovery pinned.
+        return all(not blocker.is_terminal for blocker in self.blockers)
 
     @property
     def has_terminal_blockers(self) -> bool:
