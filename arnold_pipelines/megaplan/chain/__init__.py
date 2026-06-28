@@ -1435,7 +1435,7 @@ def _published_pr_semantic_diff_nonempty_from_base(
     record: dict[str, Any],
     *,
     chain_state: ChainState | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool | None, str]:
     target, source = _published_pr_target_from_record(record, chain_state)
     if target is None:
         pr_number = record.get("pr_number")
@@ -1444,7 +1444,7 @@ def _published_pr_semantic_diff_nonempty_from_base(
         elif isinstance(pr_number, str) and pr_number.strip().isdigit():
             target, source = _published_pr_target_from_gh(root, int(pr_number.strip()))
     if target is None:
-        return False, f"published PR target unavailable: {source}"
+        return None, f"published PR target unavailable: {source}"
     return _semantic_diff_nonempty_between_refs(
         root,
         base_sha,
@@ -1473,7 +1473,7 @@ def _chain_completion_guard(
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
-    if not is_merged_pr and current_state != STATE_DONE:
+    if implementation_milestone and current_state != STATE_DONE:
         return (
             False,
             f"plan {plan_name} current_state={current_state!r} is not terminal-success "
@@ -1494,9 +1494,6 @@ def _chain_completion_guard(
     )
 
     if is_merged_pr:
-        diff_ok, diff_reason = _semantic_diff_nonempty_from_base(root, milestone_base_sha)
-        if not diff_ok and not waiver_ok:
-            return False, f"{diff_reason}; {waiver_reason}"
         published_diff_ok, published_diff_reason = (
             _published_pr_semantic_diff_nonempty_from_base(
                 root,
@@ -1505,14 +1502,34 @@ def _chain_completion_guard(
                 chain_state=chain_state,
             )
         )
-        if not published_diff_ok and not waiver_ok:
+        local_diff_ok = False
+        local_diff_reason = ""
+        if published_diff_ok is not True:
+            local_diff_ok, local_diff_reason = _semantic_diff_nonempty_from_base(
+                root, milestone_base_sha
+            )
+        if published_diff_ok is True:
+            if waiver_ok:
+                return True, f"typed no-op waiver accepted: {waiver_reason}"
+            reason_parts: list[str] = []
+            if local_diff_reason:
+                if local_diff_ok:
+                    reason_parts.append(local_diff_reason)
+                else:
+                    reason_parts.append(f"local HEAD advisory: {local_diff_reason}")
+            reason_parts.append(published_diff_reason)
+            return True, f"completion guard passed: {'; '.join(reason_parts)}"
+        if published_diff_ok is None:
+            if not local_diff_ok and not waiver_ok:
+                return False, f"{local_diff_reason}; {published_diff_reason}; {waiver_reason}"
+            if waiver_ok:
+                return True, f"typed no-op waiver accepted: {waiver_reason}"
+            return True, f"completion guard passed: {local_diff_reason}; {published_diff_reason}"
+        if not waiver_ok:
             return False, f"{published_diff_reason}; {waiver_reason}"
         if waiver_ok:
             return True, f"typed no-op waiver accepted: {waiver_reason}"
-        reason_parts = [diff_reason]
-        if published_diff_reason is not None:
-            reason_parts.append(published_diff_reason)
-        return True, f"completion guard passed: {'; '.join(reason_parts)}"
+        return True, f"completion guard passed: {published_diff_reason}"
 
     authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not authoritative and not waiver_ok:
