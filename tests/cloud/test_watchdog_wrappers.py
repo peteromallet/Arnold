@@ -786,7 +786,6 @@ kimi_dispatch_failed_previously() { return 1; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
-resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 plan_attention_status_env() {
@@ -812,9 +811,67 @@ EOF
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tcomplete\tplan complete\t" in report
+    assert "spec_missing" not in report
     assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
+
+
+def test_watchdog_manual_review_plan_state_reports_needs_human_not_complete(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 3,
+            "current_state": "manual_review",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "iteration_cap", "message": "review required"},
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tneeds_human\tmanual_review halt;" in report
+    assert "\tobserve\tcomplete\t" not in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_nonterminal_plan_state_mechanically_relaunches_before_kimi(tmp_path: Path) -> None:
@@ -866,7 +923,7 @@ tmux() {
   return 0
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
