@@ -13,7 +13,7 @@ from vibecomfy.porting.edit.ops import (
     SetNodeFieldOp,
     UpsertLinkOp,
 )
-from vibecomfy.porting.identity.codec import to_raw_name
+from vibecomfy.identity.codec import to_raw_name
 from vibecomfy.porting.resolution import _find_named_slot
 from vibecomfy.porting.widgets.schema import ui_widget_value_names_for_class
 from vibecomfy.schema import schema_for

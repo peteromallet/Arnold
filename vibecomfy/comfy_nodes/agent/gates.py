@@ -138,7 +138,13 @@ def update_queue_gate(
     if blockers is None:
         blockers = _queue_blocker_issues(results)
     validate_ok = results["validate"].ok if "validate" in results else True
-    queue_stage_ok = results["queue_validate"].ok if "queue_validate" in results else not blockers
+    queue_stage_present = "queue_validate" in results
+    explicit_blocker_analysis = queue_blockers is not None
+    queue_stage_ok = (
+        results["queue_validate"].ok
+        if queue_stage_present
+        else explicit_blocker_analysis and not blockers
+    )
     ok = validate_ok and queue_stage_ok and not blockers
     context.set_gate(
         "queue_validate_ok",
@@ -151,7 +157,7 @@ def update_queue_gate(
                 "blockers": list(blockers),
                 "validate_stage_present": "validate" in results,
                 "validate_ok": validate_ok,
-                "queue_validate_stage_present": "queue_validate" in results,
+                "queue_validate_stage_present": queue_stage_present,
                 "queue_validate_stage_ok": queue_stage_ok,
             },
         ),

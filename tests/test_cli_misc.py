@@ -209,7 +209,7 @@ def test_inspect_field_text_renders_chain(capsys: pytest.CaptureFixture[str]) ->
 
 
 def test_check_json_emits_structured_report(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    from vibecomfy.checks import CheckReport, CheckResult
+    from vibecomfy.commands._checks import CheckReport, CheckResult
 
     monkeypatch.setattr(
         "vibecomfy.commands.check.run_checks",

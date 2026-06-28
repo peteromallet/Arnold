@@ -9,9 +9,7 @@ source_modules =
     vibecomfy.workflow
     vibecomfy.metadata
     vibecomfy.contracts.ir
-    vibecomfy._workflow_helpers
-    vibecomfy._helper_resolve
-    vibecomfy._widget_aliases
+    vibecomfy._compile
 forbidden_modules =
     vibecomfy.porting
     vibecomfy.commands

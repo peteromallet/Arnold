@@ -12,8 +12,8 @@ from vibecomfy.porting.object_info import CACHE_DIR, get_class
 # TODO(repo-root): migrate to vibecomfy.utils.find_repo_root() once this tool's
 # script-mode import path is package-import-safe.
 ROOT = Path(__file__).resolve().parents[1]
-GENERATED_DIR = ROOT / "vibecomfy" / "nodes" / "_generated"
 NODES_DIR = ROOT / "vibecomfy" / "nodes"
+GENERATED_HEADER = "# GENERATED FILE — do not hand-edit; regenerate via `python -m tools.generate_node_shims`."
 
 HELPER_CLASSES = {
     "GetNode",
@@ -248,7 +248,7 @@ _LOCAL_SCHEMA_ENTRIES: dict[str, dict[str, Any]] = {}
 
 
 def main() -> None:
-    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    NODES_DIR.mkdir(parents=True, exist_ok=True)
     pack_files = _cache_pack_files()
     target_modules = _target_modules(pack_files)
     _prune_stale_thin_shims(target_modules, pack_files)
@@ -258,22 +258,13 @@ def main() -> None:
         exports = _write_module(module, sorted(classes_by_module.get(module, set())))
         _write_stub_module(module, sorted(classes_by_module.get(module, set())))
         all_exports[module] = exports
-        _write_reexport_module(module)
-        _write_reexport_stub_module(module)
-    _write_generated_init(target_modules)
-    _write_generated_init_stub()
     _write_nodes_init(target_modules, all_exports)
     _write_nodes_init_stub(all_exports)
     print(f"generated {sum(len(v) for v in all_exports.values())} wrappers across {len(target_modules)} modules")
 
 
 def _target_modules(pack_files: list[Path]) -> tuple[str, ...]:
-    modules = list(BASE_TARGET_MODULES)
-    for path in pack_files:
-        module = _module_for_pack_file(path.name)
-        if module not in modules:
-            modules.append(module)
-    return tuple(modules)
+    return BASE_TARGET_MODULES
 
 
 def _cache_pack_files() -> list[Path]:
@@ -325,9 +316,8 @@ def _prune_stale_thin_shims(target_modules: tuple[str, ...], pack_files: list[Pa
 
 def _candidate_thin_shim_paths() -> list[Path]:
     candidates: list[Path] = []
-    for directory in (GENERATED_DIR, NODES_DIR):
-        for suffix in (".py", ".pyi"):
-            candidates.extend(sorted(directory.glob(f"*{suffix}")))
+    for suffix in (".py", ".pyi"):
+        candidates.extend(sorted(NODES_DIR.glob(f"*{suffix}")))
     return candidates
 
 
@@ -336,40 +326,19 @@ def _is_prunable_thin_shim(path: Path) -> bool:
         return False
     if not path.is_file():
         return False
-    if path.parent == GENERATED_DIR:
-        return _has_generated_thin_wrapper_marker(path)
     if path.parent == NODES_DIR:
-        return _is_generated_reexport_shim(path)
+        return _has_generated_thin_wrapper_marker(path)
     return False
 
 
 def _has_generated_thin_wrapper_marker(path: Path) -> bool:
     text = path.read_text(encoding="utf-8")
+    if text.startswith(GENERATED_HEADER):
+        return True
     if path.suffix == ".py":
         return text.startswith('"""Auto-generated thin wrappers for ComfyUI node classes.')
     if path.suffix == ".pyi":
         return text.startswith('"""Type stubs for generated ComfyUI node wrappers."""')
-    return False
-
-
-def _is_generated_reexport_shim(path: Path) -> bool:
-    text = path.read_text(encoding="utf-8").strip()
-    module = path.stem
-    if path.suffix == ".py":
-        expected = "\n".join([
-            f"from vibecomfy.nodes._generated import {module} as _generated",
-            f"from vibecomfy.nodes._generated.{module} import *",
-            "",
-            "__all__ = list(_generated.__all__)",
-        ])
-        return text == expected
-    if path.suffix == ".pyi":
-        expected = "\n".join([
-            f"from vibecomfy.nodes._generated.{module} import *",
-            "",
-            "__all__: list[str]",
-        ])
-        return text == expected
     return False
 
 
@@ -397,6 +366,7 @@ def _write_module(module: str, class_types: list[str]) -> list[str]:
     class_types_by_export: dict[str, str] = {}
     used_names: set[str] = set()
     lines = [
+        GENERATED_HEADER,
         '"""Auto-generated thin wrappers for ComfyUI node classes.',
         "",
         "Regenerate via: python -m tools.generate_node_shims",
@@ -427,7 +397,7 @@ def _write_module(module: str, class_types: list[str]) -> list[str]:
     lines.append(f"__all__ = {export_names!r}")
     lines.append(f"__vibecomfy_class_types__ = {class_types_by_export!r}")
     lines.append("")
-    (GENERATED_DIR / f"{module}.py").write_text("\n".join(lines), encoding="utf-8")
+    (NODES_DIR / f"{module}.py").write_text("\n".join(lines), encoding="utf-8")
     return export_names
 
 
@@ -484,6 +454,7 @@ def _write_stub_module(module: str, class_types: list[str]) -> list[str]:
     export_names: list[str] = []
     used_names: set[str] = set()
     lines = [
+        GENERATED_HEADER,
         '"""Type stubs for generated ComfyUI node wrappers."""',
         "from __future__ import annotations",
         "",
@@ -506,7 +477,7 @@ def _write_stub_module(module: str, class_types: list[str]) -> list[str]:
         lines.append("")
     lines.append(f"__all__: list[str]")
     lines.append("")
-    (GENERATED_DIR / f"{module}.pyi").write_text("\n".join(lines), encoding="utf-8")
+    (NODES_DIR / f"{module}.pyi").write_text("\n".join(lines), encoding="utf-8")
     return export_names
 
 
@@ -643,63 +614,23 @@ def _unique_name(value: str, used: set[str]) -> str:
     return candidate
 
 
-def _write_reexport_module(module: str) -> None:
-    (NODES_DIR / f"{module}.py").write_text(
-        "\n".join([
-            f"from vibecomfy.nodes._generated import {module} as _generated",
-            f"from vibecomfy.nodes._generated.{module} import *",
-            "",
-            "__all__ = list(_generated.__all__)",
-            "",
-        ]),
-        encoding="utf-8",
-    )
-
-
-def _write_reexport_stub_module(module: str) -> None:
-    (NODES_DIR / f"{module}.pyi").write_text(
-        "\n".join([
-            f"from vibecomfy.nodes._generated.{module} import *",
-            "",
-            "__all__: list[str]",
-            "",
-        ]),
-        encoding="utf-8",
-    )
-
-
-def _write_generated_init(target_modules: tuple[str, ...]) -> None:
-    (GENERATED_DIR / "__init__.py").write_text(
-        "\n".join([
-            f"MODULES = {list(target_modules)!r}",
-            "__all__: list[str] = []",
-            "",
-        ]),
-        encoding="utf-8",
-    )
-
-
-def _write_generated_init_stub() -> None:
-    (GENERATED_DIR / "__init__.pyi").write_text("__all__: list[str]\n", encoding="utf-8")
-
-
 def _write_nodes_init(target_modules: tuple[str, ...], _all_exports: dict[str, list[str]]) -> None:
     lines = [
         "from __future__ import annotations",
         "",
         "from importlib import import_module",
         "",
-        "from vibecomfy.nodes._generated import MODULES as _MODULES",
+        f"MODULES = {list(target_modules)!r}",
         "",
         "",
         "def _load_exports() -> list[str]:",
         "    exports: set[str] = set()",
-        "    for module_name in _MODULES:",
+        "    for module_name in MODULES:",
         '        module = import_module(f"vibecomfy.nodes.{module_name}")',
         '        for name in getattr(module, "__all__", ()):',
         "            globals()[name] = getattr(module, name)",
         "            exports.add(name)",
-        "    return sorted(exports)",
+        '    return [*sorted(exports), "MODULES"]',
         "",
         "",
         "__all__ = _load_exports()",
@@ -711,7 +642,7 @@ def _write_nodes_init(target_modules: tuple[str, ...], _all_exports: dict[str, l
 
 
 def _write_nodes_init_stub(all_exports: dict[str, list[str]]) -> None:
-    lines = ["from __future__ import annotations", ""]
+    lines = ["from __future__ import annotations", "", "MODULES: list[str]", ""]
     for module in all_exports:
         lines.append(f"from vibecomfy.nodes.{module} import *")
     lines.append("")

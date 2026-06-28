@@ -127,16 +127,16 @@ PY
 mkdir -p input custom_nodes out/corpus_matrix/comfyui out/corpus_matrix/logs
 cp -a ready_templates/sources/input/. input/
 # Smoke audio + audio-bearing guide videos (speech_smoke.wav + ltx_smoke_guide.mp4 etc.)
-# come from committed fixtures via vibecomfy.fixtures. Falls back to synthetic
+# come from committed fixtures via vibecomfy.testing.smoke_fixtures. Falls back to synthetic
 # fixtures if any committed asset is missing or if VIBECOMFY_FIXTURES_REGENERATE=1.
-$PY -m vibecomfy.fixtures copy --target input
+$PY -m vibecomfy.testing.smoke_fixtures copy --target input
 "$PY" - <<'PY'
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
 # Synthetic image fixtures that are not (yet) committed to ready_templates/sources/input/.
-# Audio + guide videos are handled by `python -m vibecomfy.fixtures copy` above.
+# Audio + guide videos are handled by `python -m vibecomfy.testing.smoke_fixtures copy` above.
 input_dir = Path("input")
 input_dir.mkdir(exist_ok=True)
 image = Image.new("RGB", (256, 256), (36, 42, 52))

@@ -71,10 +71,20 @@ class _ParseExecuteMixin:
             parsed.expanded,
             placement_facts=placement_facts,
         )
-        failed_edit = any(
-            self._is_edit_statement(statement) and not statement.ok
-            for statement in statement_results
-        )
+        saw_landed_edit = False
+        saw_failed_edit = False
+        failed_edit = False
+        for statement in statement_results:
+            if not self._is_edit_statement(statement):
+                continue
+            if statement.landed:
+                saw_landed_edit = True
+                continue
+            if not statement.ok and (saw_landed_edit or saw_failed_edit):
+                failed_edit = True
+                break
+            if not statement.ok:
+                saw_failed_edit = True
         if failed_edit:
             self._restore_snapshot(snapshot)
             rollback_diag = _diag(
@@ -110,6 +120,8 @@ class _ParseExecuteMixin:
                 landed_ops=(),
                 field_changes=(),
             )
+        if saw_failed_edit and not landed_ops:
+            self._restore_snapshot(snapshot)
         field_changes, statement_results = self._build_field_changes(
             landed_ops,
             statement_results,

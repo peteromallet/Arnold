@@ -1,15 +1,15 @@
-"""Tests for vibecomfy.porting.identity.scope (T8 — sg_key + scoped inner uids)."""
+"""Tests for vibecomfy.identity.scope (T8 — sg_key + scoped inner uids)."""
 from __future__ import annotations
 
 import itertools
 
-from vibecomfy.porting.identity.scope import (
+from vibecomfy.identity.scope import (
     compose_scope_path,
     mint_inner_uid,
     sanitize_subgraph_name,
     sg_key,
 )
-from vibecomfy.porting.identity.uid import parse_uid
+from vibecomfy.identity.uid import parse_uid
 
 
 def _def(name=None, *, nodes=None, links=None, graph_uuid="uuid-1"):

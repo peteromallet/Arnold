@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibecomfy.checks import (
+from vibecomfy.commands._checks import (
     check_known_node_packs_usage_scan,
     check_legacy_file_presence,
     check_non_vendor_stale_legacy_references,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from vibecomfy import runpod_setup
+from vibecomfy.commands import runpod_setup
 from vibecomfy.registry.models_loader import canonical_filename, load_registry
 
 

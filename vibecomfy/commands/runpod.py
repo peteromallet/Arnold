@@ -7,7 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vibecomfy import runpod_setup
+from vibecomfy.commands import runpod_setup
 
 
 def _runpod_lifecycle_root() -> Path:
