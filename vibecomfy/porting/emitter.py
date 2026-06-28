@@ -1593,13 +1593,13 @@ def _node_local_class_defaults(node: Any) -> dict[str, Any]:
 
 
 def _node_local_output_names(node: Any) -> list[str]:
-    from vibecomfy.porting.emit_ready import _node_local_output_names as _impl  # noqa: PLC0415
+    from vibecomfy.porting.emit.emit_ready import _node_local_output_names as _impl  # noqa: PLC0415
 
     return _impl(node)
 
 
 def _node_local_arity_check(node: Any, ui_output_count: int | None) -> int:
-    from vibecomfy.porting.emit_ready import _node_local_arity_check as _impl  # noqa: PLC0415
+    from vibecomfy.porting.emit.emit_ready import _node_local_arity_check as _impl  # noqa: PLC0415
 
     return _impl(node, ui_output_count)
 
@@ -1618,7 +1618,7 @@ def emit_ready_template_python(
     strict_variable_name_locks: bool = False,
     object_info_identities: dict[str, Any] | None = None,
 ) -> str:
-    from vibecomfy.porting.emit_ready import emit_ready_template_python as _emit_ready_template_python  # noqa: PLC0415
+    from vibecomfy.porting.emit.emit_ready import emit_ready_template_python as _emit_ready_template_python  # noqa: PLC0415
 
     return _emit_ready_template_python(
         workflow,
@@ -1723,7 +1723,7 @@ def emit_agent_edit_python(
     same lower-level workflow preparation and locked variable-name plumbing, but
     emits a compact edit surface rather than runnable scratchpad code.
     """
-    from vibecomfy.porting.emit_agent_edit import emit_agent_edit_python as _emit_agent_edit_python  # noqa: PLC0415
+    from vibecomfy.porting.emit.emit_agent_edit import emit_agent_edit_python as _emit_agent_edit_python  # noqa: PLC0415
 
     return _emit_agent_edit_python(
         workflow,
@@ -1787,7 +1787,7 @@ def _prepare_workflow_for_emit(
         for nid, node in workflow.nodes.items()
         if node.class_type not in UI_ONLY_CLASS_TYPES or str(nid) in ui_only_passthroughs
     }
-    from vibecomfy.porting.emit_ready import _declared_exec_outputs  # noqa: PLC0415
+    from vibecomfy.porting.emit.emit_ready import _declared_exec_outputs  # noqa: PLC0415
 
     for node in workflow_nodes.values():
         declared_exec_outputs = _declared_exec_outputs(node)

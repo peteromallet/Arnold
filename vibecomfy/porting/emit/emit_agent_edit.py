@@ -3,8 +3,8 @@ from __future__ import annotations
 import ast
 from typing import Any, Mapping, TYPE_CHECKING
 
-from vibecomfy.porting.emit_prepare import _emit_agent_edit_lines, _prepare_workflow_for_emit
-from vibecomfy.porting.emit_subgraph import (
+from vibecomfy.porting.emit.emit_prepare import _emit_agent_edit_lines, _prepare_workflow_for_emit
+from vibecomfy.porting.emit.emit_subgraph import (
     _apply_subgraph_names_to_prepared,
     _emit_subgraph_functions,
     _subgraph_definitions_from_raw,

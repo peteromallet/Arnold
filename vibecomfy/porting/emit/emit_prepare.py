@@ -17,12 +17,12 @@ from typing import Any, Mapping
 from vibecomfy.errors import ArityDisagreementError, ConversionParityError
 from vibecomfy._compile._helpers import RESOLVABLE_HELPER_CLASS_TYPES
 from vibecomfy.porting.widgets.aliases import resolve_widget_key_with_provenance
-from vibecomfy.porting.emit_constants import (
+from vibecomfy.porting.emit.emit_constants import (
     UI_ONLY_CLASS_TYPES,
     _AGENT_EDIT_STRING_ELIDE_THRESHOLD,
     _ui_widget_aliases,
 )
-from vibecomfy.porting.emit_kwargs import (
+from vibecomfy.porting.emit.emit_kwargs import (
     _is_link,
     _safe_var,
     _topological_node_order,
@@ -33,7 +33,7 @@ from vibecomfy.porting.emit_kwargs import (
     _format_value,
     _declared_ui_output_names,
 )
-from vibecomfy.porting.emit_ready import (
+from vibecomfy.porting.emit.emit_ready import (
     _declared_exec_outputs,
     _node_local_arity_check,
     _node_local_output_names,
@@ -115,7 +115,7 @@ def _prepare_workflow_for_emit(
 
     if apply_overrides:
         # Lazy import to avoid circular dependency
-        from vibecomfy.porting.emit_ready import _apply_overrides  # noqa: PLC0415
+        from vibecomfy.porting.emit.emit_ready import _apply_overrides  # noqa: PLC0415
         _apply_overrides(workflow_nodes, edges_in, apply_overrides.get("patches") or [])
 
     # Dead-branch pruning produces minimal templates for authoring, but it drops
@@ -124,7 +124,7 @@ def _prepare_workflow_for_emit(
     # live canvas (agent-edit), pruning must be disabled so every node survives.
     if prune_dead_branches:
         # Lazy import to avoid circular dependency
-        from vibecomfy.porting.emit_ready import _prune_dead_branches_for_emit  # noqa: PLC0415
+        from vibecomfy.porting.emit.emit_ready import _prune_dead_branches_for_emit  # noqa: PLC0415
         workflow_nodes, edges_in = _prune_dead_branches_for_emit(
             workflow_nodes,
             edges_in,

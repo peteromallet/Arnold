@@ -18,12 +18,12 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Mapping
 
-from vibecomfy.porting.emit_constants import (
+from vibecomfy.porting.emit.emit_constants import (
     UI_ONLY_CLASS_TYPES,
     _translate_widget_for_key,
     _ui_widget_aliases,
 )
-from vibecomfy.porting.emit_kwargs import (
+from vibecomfy.porting.emit.emit_kwargs import (
     _apply_locked_variable_names,
     _assignment_target,
     _compute_output_variable_names,

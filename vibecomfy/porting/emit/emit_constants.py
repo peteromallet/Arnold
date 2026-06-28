@@ -2,7 +2,7 @@
 
 This module is carved from :mod:`vibecomfy.porting.emitter` as part of the
 M2 structural-decomposition epic (Step 6).  It is a leaf-level consumer of
-:mod:`vibecomfy.porting.emit_kwargs`.
+:mod:`vibecomfy.porting.emit.emit_kwargs`.
 
 All names exported here remain importable from ``vibecomfy.porting.emitter``
 via explicit re-exports so that existing callers are unaffected.
@@ -19,7 +19,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Mapping
 
-from vibecomfy.porting.emit_kwargs import (
+from vibecomfy.porting.emit.emit_kwargs import (
     _format_value,
     _is_link,
     _is_schema_default,

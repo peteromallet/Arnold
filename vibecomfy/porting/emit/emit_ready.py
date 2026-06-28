@@ -39,7 +39,7 @@ from typing import Any, Mapping
 
 from vibecomfy.node_packs import LockEntry, read_lockfile
 from vibecomfy.porting.widgets.aliases import resolve_widget_key_with_provenance
-from vibecomfy.porting.emit_constants import (
+from vibecomfy.porting.emit.emit_constants import (
     _LOAD_IMAGE_FAMILY,
     _looks_like_placeholder_filename,
     _apply_ready_template_metadata_defaults,
@@ -60,7 +60,7 @@ from vibecomfy.porting.emit_constants import (
     _SECTION_ORDER,
     _SECTION_NODE_THRESHOLD,
 )
-from vibecomfy.porting.emit_kwargs import (
+from vibecomfy.porting.emit.emit_kwargs import (
     _format_value,
     _first_output_var,
     _id_sort_key,
@@ -80,7 +80,7 @@ from vibecomfy.porting.emit_kwargs import (
     _topological_node_order,
     _node_kwargs,
 )
-from vibecomfy.porting.emit_subgraph import (
+from vibecomfy.porting.emit.emit_subgraph import (
     _SubgraphDef,
     _subgraph_definitions_from_raw,
     _subgraph_emitted_node_id,
@@ -623,7 +623,7 @@ def _emit_ready_template_python_inner(
     variable_name_locks: Mapping[str, str] | None = None,
     strict_variable_name_locks: bool = False,
 ) -> str:
-    from vibecomfy.porting.emit_prepare import _prepare_workflow_for_emit  # noqa: PLC0415
+    from vibecomfy.porting.emit.emit_prepare import _prepare_workflow_for_emit  # noqa: PLC0415
     metadata = dict(ready_metadata)
     requirements = dict(ready_requirements)
     if apply_overrides:
