@@ -5677,6 +5677,8 @@ def _stage_summarize(state: AgentEditState, context: TurnContext) -> StageResult
 def _recovery_report_from_ui_payload(
     ui_payload: Mapping[str, Any] | None,
     schema_provider: Any,
+    *,
+    original_ui_payload: Mapping[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build a queue-diagnostics recovery report by re-resolving each UI node.
 
@@ -5694,6 +5696,73 @@ def _recovery_report_from_ui_payload(
     get_schema = getattr(schema_provider, "get_schema", None)
     if not callable(get_schema):
         return recovery
+
+    def _connection_signature(node: Mapping[str, Any]) -> tuple[Any, ...]:
+        inputs = node.get("inputs")
+        outputs = node.get("outputs")
+
+        def _input_signature(item: Any) -> tuple[Any, ...] | None:
+            if not isinstance(item, Mapping):
+                return None
+            return (
+                item.get("name"),
+                item.get("type"),
+                item.get("link"),
+            )
+
+        def _output_signature(item: Any) -> tuple[Any, ...] | None:
+            if not isinstance(item, Mapping):
+                return None
+            links = item.get("links")
+            if isinstance(links, list):
+                links_sig: Any = tuple(links)
+            else:
+                links_sig = links
+            return (
+                item.get("name"),
+                item.get("type"),
+                item.get("slot_index"),
+                links_sig,
+            )
+
+        return (
+            tuple(
+                sig
+                for sig in (
+                    _input_signature(item)
+                    for item in (inputs if isinstance(inputs, list) else [])
+                )
+                if sig is not None
+            ),
+            tuple(
+                sig
+                for sig in (
+                    _output_signature(item)
+                    for item in (outputs if isinstance(outputs, list) else [])
+                )
+                if sig is not None
+            ),
+        )
+
+    original_node_classes: dict[str, str] = {}
+    original_node_connections: dict[str, tuple[Any, ...]] = {}
+    original_nodes = (
+        original_ui_payload.get("nodes")
+        if isinstance(original_ui_payload, Mapping)
+        else None
+    )
+    if isinstance(original_nodes, list):
+        for original_node in original_nodes:
+            if not isinstance(original_node, Mapping):
+                continue
+            original_node_id = str(original_node.get("id", ""))
+            original_class_type = str(original_node.get("type", ""))
+            if original_node_id and original_class_type:
+                original_node_classes[original_node_id] = original_class_type
+                original_node_connections[original_node_id] = _connection_signature(
+                    original_node
+                )
+
     for node in nodes:
         if not isinstance(node, Mapping):
             continue
@@ -5701,6 +5770,11 @@ def _recovery_report_from_ui_payload(
         class_type = str(node.get("type", ""))
         if not class_type:
             continue
+        preexisting_ui_node = original_node_classes.get(node_id) == class_type
+        ui_connection_shape_unchanged = (
+            preexisting_ui_node
+            and original_node_connections.get(node_id) == _connection_signature(node)
+        )
         schema = get_schema(class_type)
         if schema is None:
             recovery.append(
@@ -5710,6 +5784,8 @@ def _recovery_report_from_ui_payload(
                     "provider": None,
                     "confidence": None,
                     "schema_less": True,
+                    "preexisting_ui_node": preexisting_ui_node,
+                    "ui_connection_shape_unchanged": ui_connection_shape_unchanged,
                     "widget_shape_verdict": "not_applicable",
                     "diagnostic": "schema-less: no schema provider evidence for node",
                 }
@@ -5722,6 +5798,8 @@ def _recovery_report_from_ui_payload(
                     "provider": getattr(schema, "source_provider", None),
                     "confidence": getattr(schema, "confidence", None),
                     "schema_less": False,
+                    "preexisting_ui_node": preexisting_ui_node,
+                    "ui_connection_shape_unchanged": ui_connection_shape_unchanged,
                     "widget_shape_verdict": "not_applicable",
                 }
             )
@@ -5733,7 +5811,9 @@ def _stage_summarize_v2(state: AgentEditState, context: TurnContext) -> StageRes
     recovery_report = (state.report or {}).get("recovery")
     if not recovery_report and state.ui_payload is not None:
         recovery_report = _recovery_report_from_ui_payload(
-            state.ui_payload, state.schema_provider
+            state.ui_payload,
+            state.schema_provider,
+            original_ui_payload=state.graph,
         )
     queue_result = queue_stage_result(
         recovery_report=recovery_report,

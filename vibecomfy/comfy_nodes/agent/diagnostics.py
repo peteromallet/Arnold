@@ -327,6 +327,11 @@ def queue_stage_diagnostics(
             )
             continue
         if entry.get("schema_less") is True:
+            if (
+                entry.get("preexisting_ui_node") is True
+                and entry.get("ui_connection_shape_unchanged") is True
+            ):
+                continue
             issues.append(
                 _queue_issue(
                     code="schema_less_queue_blocker",
