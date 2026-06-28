@@ -16,13 +16,15 @@ BEHAVIORAL_GOLDENS = (
 
 
 def _base_ref() -> str:
-    # In CI, compare against the PR target branch; locally fall back to origin/main.
-    base = os.environ.get("GITHUB_BASE_REF", "main")
-    ref = f"origin/{base}"
-    # Make sure the base ref is available in CI (actions/checkout may not fetch it).
-    if "GITHUB_BASE_REF" in os.environ:
+    # In PR CI, compare against the target branch; locally fall back to origin/main.
+    # Push CI does not set GITHUB_BASE_REF, so compare against the previous commit.
+    base = os.environ.get("GITHUB_BASE_REF")
+    if base:
         subprocess.run(["git", "fetch", "origin", base], check=False, capture_output=True)
-    return ref
+        return f"origin/{base}"
+    if os.environ.get("GITHUB_EVENT_NAME") == "push":
+        return "HEAD^"
+    return "origin/main"
 
 
 @pytest.mark.parametrize("fixture", BEHAVIORAL_GOLDENS)
