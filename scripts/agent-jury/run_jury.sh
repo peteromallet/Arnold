@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# agent-jury/run_jury.sh
+# scripts/agent-jury/run_jury.sh
 # Pi-native jury execution script
 # Runs the full blind deliberation pipeline using llama.cpp on a Raspberry Pi
 # ============================================================================
