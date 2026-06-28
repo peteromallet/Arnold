@@ -1436,9 +1436,9 @@ def test_watchdog_refresh_syncs_cloud_runtime_wrappers() -> None:
     assert 'local wrapper_dest_dir="/usr/local/bin"' in text
     assert 'local support_dest_dir="/usr/local/share/arnold-watchdog"' in text
     assert 'if [[ -f "$dest" ]] && cmp -s "$wrapper" "$dest"; then' in text
-    assert 'install -m 0755 "$wrapper" "$wrapper_dest_dir/$(basename "$wrapper")"' in text
+    assert 'install -m 0755 "$wrapper" "$dest"' in text
     assert 'if [[ ! -f "$dest" ]] || ! cmp -s "$wrapper_src_dir/principles.md" "$dest"; then' in text
-    assert 'install -m 0644 "$wrapper_src_dir/principles.md" "$support_dest_dir/principles.md"' in text
+    assert 'install -m 0644 "$wrapper_src_dir/principles.md" "$dest"' in text
     assert 'sync_cloud_runtime_wrappers >> "$LOG" 2>&1 || return 1' in text
 
 
