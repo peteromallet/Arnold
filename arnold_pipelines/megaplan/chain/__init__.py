@@ -2019,7 +2019,10 @@ def _awaiting_human_can_retry(root: Path, plan: str | None) -> bool:
         UnicodeDecodeError,
     ):
         return False
-    if not isinstance(raw, dict) or raw.get("current_state") != "awaiting_human":
+    if not isinstance(raw, dict):
+        return False
+    current_state = raw.get("current_state")
+    if current_state not in {"awaiting_human", "finalized"}:
         return False
     if not isinstance(finalize, dict):
         return False
