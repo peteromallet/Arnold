@@ -1,101 +1,124 @@
 # Epic Chaining Strategy
 
-## Goal
+## Recommendation
 
-Arnold already has a solid unit for one epic: `megaplan chain`, backed by
-`ChainSpec`, `ChainState`, `run_chain()`, optional supervisor routing, and
-cloud status/supervision. The missing layer is one level up: a durable,
-resumable sequence of epics where each item in the sequence is itself a
-`chain.yaml`.
+Yes, conditionally: epic-chaining should be framed as **`megaplan chain`, one
+level up**.
 
-This note recommends the smallest addition that gives first-class cross-epic
-ordering, handoffs, resume, and supervision without flattening or rewriting the
-existing chain model.
+That analogy holds if the parent layer reuses the **same ordered-unit
+contract** that `run_chain()` already uses for milestones:
 
-## What Exists Today
+- durable spec-path-keyed state
+- one active unit at a time
+- resume the active unit on restart
+- append to `completed[]` only after authoritative completion
+- advance the cursor only after that append
+- honor `--one`
+- map failure to `stop` / `skip` / `retry`
 
-The current chain contract is already strong enough to reuse directly:
+It stops being “chain one level up” if we flatten epics into milestone schema
+or build a separate orchestration model with different state and advancement
+rules.
 
-- `arnold_pipelines/megaplan/chain/spec.py`
-  - `ChainSpec` carries `base_branch`, `milestones`, `on_failure`,
-    `on_escalate`, `merge_policy`, `prerequisite_policy`,
-    `validation_policy`, `review_policy`, and driver knobs.
-  - `ChainState` persists `current_milestone_index`, `current_plan_name`,
-    `last_state`, `pr_number`, `pr_state`, `completed[]`, retry counters,
-    bump state, sync state, workspace/session metadata, and freeform
-    `metadata`.
-  - `_state_path_for()` writes deterministic digest-keyed state under
-    `.megaplan/plans/.chains/<spec>-<digest>.json`.
-- `arnold_pipelines/megaplan/chain/__init__.py`
-  - `run_chain()` resumes by loading the same child state file, advances only
-    after authoritative completion, and already handles mid-milestone resume,
-    PR-merge waits, retries, and no-push local-base integration.
-  - `build_chain_parser()` and `run_chain_cli()` define the current
-    `chain start|status|verify|override` surface.
-- `arnold_pipelines/megaplan/supervisor/chain_runner.py`
-  - The flag-on path already treats a chain as an ordered node list and keeps a
-    separate `SupervisorState` keyed by the spec path.
-  - The supervisor owns the neutral ladder and child retries; the child chain
-    is already the right unit of work for escalation.
-- `arnold_pipelines/megaplan/chain/git_ops.py`
-  - `_refresh_base_branch()` and `_checkout_milestone_branch()` already define
-    the intended branching rule: fork from refreshed `origin/<base_branch>`
-    when pushing, or from the local base branch in no-push mode.
-- `arnold_pipelines/megaplan/chain/status.py` and
-  `arnold_pipelines/megaplan/cloud/supervise.py`
-  - chain status is already classifiable into `running`, `complete`,
-    `awaiting_pr_merge`, `awaiting_human_verify`, `human_prerequisite`,
-    `quality_gate`, and `stale_bookkeeping`.
-  - cloud supervision is already mechanical-relaunch-first: it restarts only
-    when the session is safely recoverable, advances after merged PRs, and
-    refuses human/quality decisions.
+## Concept Map
 
-`docs/megaplan-epic.md` also establishes the current product contract:
+| `megaplan chain` today | Epic-chain parent | Maps cleanly? | Notes |
+|---|---|---|---|
+| `chain.yaml` `milestones[]` | meta-spec `epics[]` | Yes | Same shape: ordered units declared in YAML. The only change is the unit type. |
+| one milestone run | one child epic run | Yes, with delegation | A milestone unit runs `_init_plan()` + `_drive_plan_with_blocked_execute_recovery()` inside `run_chain()`. An epic unit should instead call the existing child `megaplan chain start --spec <child>`. |
+| `ChainState.current_milestone_index` | `current_epic_index` | Yes | Same cursor semantics as [`ChainState` in `spec.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/spec.py:545). |
+| `ChainState.current_plan_name` | `current_epic_id` / `current_spec_path` | Partial | Parent needs an “active unit” field, but the child epic keeps its own `current_plan_name` in the child `.chains/` state. |
+| `ChainState.completed[]` | `completed[]` of child epics | Yes | Same append-on-authoritative-completion rule; the record payload changes from milestone facts to child-epic boundary facts. |
+| milestone `done` then `idx += 1` | child epic `done` then `idx += 1` | Yes | Same advance rule used in the main milestone loop in [`run_chain()`](/workspace/arnold/arnold_pipelines/megaplan/chain/__init__.py:2422). |
+| milestone PR / merge lifecycle | child epic PR / merge lifecycle | Mostly | The lifecycle already exists inside the child chain. The parent should observe child status, not own a second PR lifecycle. |
+| `merge_policy` | child epic `merge_policy` | Semantic match, not a new parent field | In current chain, `merge_policy` decides whether the unit pauses at `awaiting_pr_merge` or auto-merges before advance. For epic-chaining, that remains the child epic’s concern. |
+| `on_failure` / `on_escalate` with `stop_chain` / `skip_milestone` / `retry_milestone` | parent `on_failure` with `stop_epic_chain` / `skip_epic` / `retry_epic` | Yes | Same decision switch as `_handle_outcome()`; only the unit names change. |
+| `--one` | single-epic step | Yes | Same pause-after-one-completed-unit behavior as [`run_chain(..., one=True)`](/workspace/arnold/arnold_pipelines/megaplan/chain/__init__.py:2956). |
 
-- an epic is an ordered list of sprint-sized milestones in one `chain.yaml`
-- milestones depend on artifacts produced by earlier milestones
-- state is sticky and resumable per spec path
-- `base_branch` is the integration branch for the epic
+## What The Current Chain Already Gives Us
 
-That existing model should remain intact. Epic-chaining should compose it, not
-replace it.
+The existing chain driver already defines the parent behavior we want:
 
-## The Unit And The Handoff
+- `ChainState` persists `current_milestone_index`, `current_plan_name`,
+  `last_state`, `pr_number`, `pr_state`, `completed[]`, retry/bump state,
+  workspace/session metadata, and `metadata`; see
+  [`arnold_pipelines/megaplan/chain/spec.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/spec.py:545).
+- `_state_path_for()` writes deterministic digest-keyed state under
+  `.megaplan/plans/.chains/<spec>-<digest>.json`; see
+  [`spec.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/spec.py:694).
+- `run_chain()` loads state, resumes the active unit, skips already-completed
+  units, appends to `completed[]`, advances `current_milestone_index`, and
+  pauses on `--one`; see the main milestone loop in
+  [`chain/__init__.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/__init__.py:2422).
+- `_handle_outcome()` already reduces terminal child status to
+  `advance` / `stop` / `retry` / `skip`, with persisted retry counters and
+  escalation policy; see
+  [`chain/__init__.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/__init__.py:2024).
+- `docs/megaplan-epic.md` already defines an epic as an ordered list of
+  sprint-sized megaplans driven by `megaplan chain`, with sticky state, PR
+  lifecycle, and `--one`; see
+  [`docs/megaplan-epic.md`](/workspace/arnold/docs/megaplan-epic.md:11).
 
-The right unit is one child epic, meaning one existing `chain.yaml` plus its
-own child chain state and optional child supervisor state.
+That is why the right mental model is not “new orchestration concept.” It is
+“same orchestration concept, different unit.”
 
-The right cross-epic handoff is a composite of three things:
+## Maximal-Reuse Design
 
-1. `merged_base`
-   - The primary handoff is the repository state that landed on the shared
-     `base_branch`.
-   - In push/PR mode, this means the merged result on `base_branch`.
-   - In `--no-push` mode, this means the last local integration commit on the
-     base branch, which child chains already record in `completed[]` as
-     `local_commit_sha`.
-2. `artifacts`
-   - The next epic should be able to assert that specific repo artifacts exist
-     in the merged base tree.
-   - Keep v1 checks intentionally small:
-     - `exists`
-     - `contains_text`
-   - Anything more semantic should stay inside a milestone or validation gate,
-     not become a general-purpose cross-epic DSL.
-3. `north_star`
-   - Carry the top-level North Star forward as a program-level anchor.
-   - The child epic may still declare its own `anchors.north_star`, but the
-     meta-layer should have one shared anchor for the whole sequence.
+### Recommendation
 
-Recommendation: define the cross-epic handoff as
-`{base ref + explicit artifact assertions + inherited North Star}`. A git ref
-alone is too implicit; artifact checks alone ignore the integration boundary.
+Build a **thin parent `megaplan epic-chain` driver** that **reuses the chain
+engine’s outer state/advance semantics** and delegates unit execution to the
+existing child chain driver.
+
+That is the smallest change that is still honestly “chain one level up.”
+
+### Why not fully generalize `run_chain()`?
+
+The outer loop generalizes cleanly. The unit body does not.
+
+The current milestone body in `run_chain()` is tightly bound to milestone-plan
+operations:
+
+- `_refresh_base_branch()`
+- `_checkout_milestone_branch()`
+- `_init_plan()`
+- `_drive_plan_with_blocked_execute_recovery()`
+- `_commit_and_push_phase()`
+- milestone completion guards and full-suite backstop handling
+
+Those are the right behaviors **inside** a child epic. Re-parameterizing them
+so the same function can drive both plans and child chains would be larger and
+harder to reason about than a thin parent wrapper.
+
+### Smallest-change implementation shape
+
+The parent should mirror the current chain loop, but substitute “child epic”
+for “milestone”:
+
+1. Load `EpicChainSpec` and digest-keyed `EpicChainState`.
+2. If `current_epic_index < 0`, initialize it to `0`.
+3. If the active child epic is already in progress, re-enter
+   `megaplan chain start --spec <child-spec>`.
+4. Read the child chain’s durable state/status.
+5. If the child is still running, blocked on PR merge, or blocked on human or
+   quality input, return that parent state without advancing.
+6. If the child is authoritatively complete, verify cross-epic handoff, append
+   a completed record, bump `current_epic_index`, clear current-epic fields,
+   and persist atomically.
+7. If `--one` is set, stop after one completed child epic.
+
+In code terms: reuse the **shape** of `ChainState`, `_state_path_for()`,
+`load_*_state()`, `save_*_state()`, the `while idx < len(units)` loop, and the
+`advance` / `stop` / `retry` / `skip` switch. Do **not** reimplement
+milestone-level git/PR/plan orchestration at the parent layer.
+
+If a later refactor is warranted, extract only the generic ordered-unit cursor
+logic from `run_chain()` into shared helpers. Do not try to make the entire
+milestone engine polymorphic in v1.
 
 ## Declaration Shape
 
-### Option A: Meta-chain spec plus thin `megaplan epic-chain` driver
-
-Example:
+The parent spec should look like chain spec one level up:
 
 ```yaml
 base_branch: main
@@ -119,64 +142,25 @@ epics:
             text: "WorkflowPolicy"
 
 on_failure:
-  abort: stop_chain
-on_escalate:
-  abort: stop_chain
+  abort: stop_epic_chain
 ```
 
-Properties:
+Use a new meta-spec, not nested `milestones:`:
 
-- ordered list, just like `milestones:` today
-- each item points at an existing child `chain.yaml`
-- cross-epic handoff is declared where the consumer needs it
-- child chain specs remain authoritative for milestone-level behavior
+- current `MilestoneSpec` expects `idea`, not child `chain.yaml` references
+- current milestone execution initializes and drives plans, not child chains
+- child epics already have their own state files under `.chains/`
 
-### Option B: Independent `megaplan chain start` launches plus convention/script
+## Parent State
 
-This is cheapest to prototype, but it is not a real orchestration surface.
-
-- no first-class persisted answer to “epic 2 of 5”
-- no top-level resume point across epic boundaries
-- handoff checks live in ad hoc shell/script logic
-- cloud/watchdog sees only whichever child chain happens to be active
-
-This is acceptable as an operator habit, but weak as a product contract.
-
-### Option C: One nested `chain.yaml` where milestones are epic specs
-
-This is the wrong abstraction.
-
-- current `MilestoneSpec` expects `idea`, not child chain specs
-- milestone state and epic state are different grains
-- nested PR/base-branch semantics become ambiguous
-- child chain resume/state files either disappear or must be reimplemented
-- supervisor ladder and chain status would need a second interpretation layer
-
-This has the highest implementation cost and the least conceptual clarity.
-
-### Recommendation
-
-Recommend **Option A**: a **meta-chain spec** plus a **thin new
-`megaplan epic-chain` driver**.
-
-Why:
-
-- It is the smallest addition that preserves real top-level state and resume.
-- It reuses the existing child chain driver unchanged.
-- It keeps child chain failure semantics, PR lifecycle, and supervision intact.
-- It avoids flattening two different units of work into one schema.
-
-## Cross-Epic State And Resume
-
-Mirror the existing digest-keyed pattern.
-
-Recommended state path:
+Use the same digest-keyed persistence pattern as chain state, but at the epic
+grain:
 
 ```text
 .megaplan/plans/.epic_chains/<spec-stem>-<digest>.json
 ```
 
-Recommended `EpicChainState` shape:
+The parent state should intentionally mirror `ChainState`:
 
 ```json
 {
@@ -184,15 +168,15 @@ Recommended `EpicChainState` shape:
   "current_epic_index": 1,
   "current_epic_id": "native-python-pipelines-completion",
   "current_spec_path": ".megaplan/briefs/native-python-pipelines-completion/chain.yaml",
-  "last_state": "running",
+  "last_state": "awaiting_pr_merge",
   "completed": [
     {
       "id": "python-shaped-workflow-authoring",
       "spec": ".megaplan/briefs/python-shaped-workflow-authoring/chain.yaml",
       "status": "done",
       "base_branch": "main",
-      "merged_commit": "abc123",
       "pr_number": 456,
+      "pr_state": "merged",
       "child_state_path": ".megaplan/plans/.chains/chain-<digest>.json",
       "handoff_verified": {
         "artifacts": [
@@ -207,202 +191,124 @@ Recommended `EpicChainState` shape:
 }
 ```
 
-Important design point: do **not** duplicate child chain progress inside the
-meta-state. The child chain already has its own durable `ChainState`. The
-meta-state should only store:
+Two important differences from `ChainState` are intentional:
 
-- which child epic is active
-- which child epics are complete/skipped/stopped
-- the boundary facts needed to advance to the next epic
-
-Resume behavior:
-
-- crash mid-epic:
-  - reload `EpicChainState`
-  - re-enter the same child `megaplan chain start --spec <child>`
-  - child chain resumes from its own `ChainState`
-- crash after child epic finished but before boundary commit:
-  - on restart, read the child chain status
-  - if the child already classifies as complete, re-run handoff verification
-    and advance idempotently
-- crash mid-boundary:
-  - boundary advancement must be a single reconcile step:
-    verify child completion, verify handoff, write completed entry, bump
-    `current_epic_index`, fsync/atomic replace
-
-This is exactly the same pattern the current chain driver uses around merged PR
-advancement: observe durable child state, then reconcile and advance.
+- `current_plan_name` does not belong in parent state; the child epic already
+  owns that in its own `ChainState`.
+- parent `pr_number` / `pr_state` are boundary observations about the active
+  child epic, not a separate parent-owned PR workflow.
 
 ## Failure Semantics
 
-The meta-layer should treat the child epic as authoritative for milestone-level
-retries and escalations.
+The semantic mapping is clean:
 
-That means:
+- child epic `done` -> parent verifies handoff, appends to `completed[]`,
+  advances
+- child epic `awaiting_pr_merge` -> parent stays on the same child epic
+- child epic `awaiting_human_verify`, `human_prerequisite`, or `quality_gate`
+  -> parent blocks without auto-skipping
+- child epic `stopped` or `blocked` -> parent applies its own
+  `stop_epic_chain` / `skip_epic` / `retry_epic` policy
 
-- child milestone failure is handled inside the child chain by its own
-  `on_failure_policy`, retry counters, bump state, or supervisor ladder
-- the epic-chain should react only to the child epic’s top-level status
+This should reuse the same decision model as `_handle_outcome()` rather than
+inventing a second escalation ladder above the child chain. The child epic
+already owns milestone retries, tier bumps, and escalation.
 
-Recommended mapping:
+## Where The Analogy Genuinely Diverges
 
-- child returns `done`
-  - verify handoff, then advance
-- child returns `awaiting_pr_merge`
-  - epic-chain pauses at the boundary; same child epic remains active
-- child returns `awaiting_human_verify`, `human_prerequisite`, or
-  `quality_gate`
-  - epic-chain is blocked; do not auto-skip
-- child returns `stopped` or `blocked`
-  - apply epic-chain `on_failure`
+### 1. Units are chains, not plans
 
-Recommended epic-chain policy surface:
+This is the real seam.
 
-- `stop_chain` default
-- `retry_epic`
-- `skip_epic`
+A milestone unit in `run_chain()` is a single plan lifecycle. A parent epic
+unit is a full child `megaplan chain start`, with its own:
 
-Default should be conservative: **one epic failing halts the whole epic-chain**.
+- `ChainSpec`
+- `.megaplan/plans/.chains/<child>.json`
+- `current_milestone_index`
+- `current_plan_name`
+- `completed[]`
 
-Why not add a second tier ladder at the meta-layer:
+So the parent should store only boundary facts, not duplicate child progress.
 
-- the child chain already has laddered retry/escalation behavior
-- supervisor-tier routing already moves escalation into the neutral ladder in
-  `supervisor.chain_runner.run_chain()`
-- a second automatic ladder above that would be hard to reason about and would
-  blur whether the failure belongs to the child epic or the program plan
+### 2. Merge policy stays at the child level
 
-## Supervision
+Current chain behavior is:
 
-Recommendation: supervise the **epic-chain session** as the top-level unit, but
-keep **per-epic child chain state** as the detailed source of truth.
+- if a milestone PR is not merged and `merge_policy == "review"`, the chain
+  persists `last_state = awaiting_pr_merge` and waits
+- if `merge_policy` allows auto-merge, the chain enables merge and advances
+  only after merge is durable
 
-That gives the right split:
+That behavior already exists in the child chain loop in
+[`chain/__init__.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/__init__.py:2804).
+The parent should observe the child’s status and wait; it should not invent a
+second merge policy.
 
-- one top-level marker/session for liveness, restart, logs, and operator
-  attachment
-- one active child chain for milestone-level progress and existing status
-  classification
+### 3. The base branch advances across epic boundaries
 
-How this fits the current cloud/watchdog model:
+This is different in scope, but not in model.
 
-- `cloud_supervise_tick()` already does the right high-level thing:
-  - mechanical relaunch first
-  - advance only after durable facts say it is safe
-  - refuse human prerequisite / quality gate / unmerged PR cases
-- epic-chain should reuse that policy, but point it at:
-  - the epic-chain session marker
-  - the active child chain state referenced by `EpicChainState`
+Current chain git behavior already assumes downstream units build on the latest
+integrated base:
 
-Operationally:
+- `_refresh_base_branch()` refreshes `origin/<base_branch>` before new unit
+  work; see
+  [`git_ops.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/git_ops.py:35).
+- `_checkout_milestone_branch(..., from_origin=True)` forks or rebases onto the
+  refreshed `origin/<base_branch>` so later units see prior merged work; see
+  [`git_ops.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/git_ops.py:332).
 
-- dead epic-chain tmux session + resumable child state
-  - restart the top-level session
-  - top-level driver reloads meta-state
-  - active child chain resumes from child state
-- merged PR at child epic boundary
-  - restart/wake the top-level session
-  - top-level driver reconciles the completed child epic and advances
-- human/manual-review boundary
-  - do not auto-advance
-  - surface the active child epic id and child plan name in the report
-  - keep any existing manual-review or Discord escalation path at the child
-    plan/epic level
+That means the parent usually does **not** need to pass “branch from the
+previous epic’s merged tip” explicitly. The normal child-chain contract already
+does that, provided:
 
-This matches the recent direction in `docs/cloud.md`: slot-first, recoverable,
-mechanical relaunch only when state says it is safe.
+- all child epics use the same `base_branch`
+- the parent validates that invariant
 
-## Base Branch And Branch Lifecycle Across Epics
+In `--no-push` mode, the parent should still record the child’s local
+integration commit so the handoff is explicit, just as current chain state
+records `local_commit_sha` in completed milestone entries.
 
-Recommendation: default to an **advancing base branch**, not a fixed base SHA.
+### 4. One program North Star, narrower child North Stars
 
-That matches current child-chain behavior:
+Current chain already supports an epic-level north-star anchor plus optional
+milestone-level north stars via `_attach_chain_anchors_to_plan()`.
 
-- milestones already fork from refreshed `origin/<base_branch>` when pushing
-- milestones already integrate locally onto `base_branch` in `--no-push` mode
-- downstream work is expected to build on the integrated output of earlier work
+Epic-chaining should apply the same pattern one level up:
 
-For epic-chaining, that means:
+- the parent carries the program North Star across all child epics
+- each child epic may still narrow that with its own `anchors.north_star`
 
-- epic N finishes by integrating onto `base_branch`
-- epic N+1 starts from the same `base_branch` name, now at a newer commit
-- the handoff commit from epic N becomes the minimum expected ancestor for
-  epic N+1
+### 5. Supervision is split-level
 
-Do **not** rewrite child chain specs at runtime in v1. Instead:
+The parent session should be the top-level liveness object. The active child
+epic should remain the detailed execution object.
 
-- the meta-spec may carry a top-level `base_branch`
-- the driver validates that each child `chain.yaml` resolves to the same
-  `base_branch`
-- if a child epic intentionally diverges, treat that as an explicit special
-  case, not the default program flow
+That matches the current status and supervision model:
 
-`merge_policy` should remain a child-epic concern in v1:
+- `chain/status.py` classifies chain state into `running`, `complete`,
+  `awaiting_pr_merge`, `awaiting_human_verify`, `human_prerequisite`,
+  `quality_gate`, and `stale_bookkeeping`; see
+  [`status.py`](/workspace/arnold/arnold_pipelines/megaplan/chain/status.py:169).
+- the supervisor-backed chain runner already treats a chain as an ordered node
+  list with its own durable `SupervisorState`; see
+  [`supervisor/chain_runner.py`](/workspace/arnold/arnold_pipelines/megaplan/supervisor/chain_runner.py:89).
 
-- each child chain already knows whether it is `auto` or `review`
-- the epic-chain driver should wait for authoritative completion and then move
-  on
-- no new top-level merge policy needs to be invented unless the product later
-  wants a program-wide default/override
-
-## Concrete Recommendation
-
-Build a **thin `megaplan epic-chain` layer** with these rules:
-
-1. New declaration shape
-   - one YAML meta-spec listing ordered `epics:`
-   - each epic points at an existing child `chain.yaml`
-   - each epic after the first may declare `handoff_from_previous`
-2. New persisted state
-   - `.megaplan/plans/.epic_chains/<spec>-<digest>.json`
-   - stores only the top-level cursor and boundary facts
-   - child progress stays in existing child `ChainState`
-3. New driver
-   - `megaplan epic-chain start --spec ...`
-   - `megaplan epic-chain status --spec ...`
-   - internally calls the existing child chain driver/status surfaces
-4. Failure semantics
-   - child epic owns milestone retries/escalation
-   - epic-chain default is `stop_chain`
-   - optional `retry_epic` / `skip_epic`
-5. Supervision
-   - one top-level session/marker per epic-chain
-   - existing chain/cloud/watchdog logic reused against the active child epic
-   - mechanical relaunch-first stays unchanged
-6. Base-branch policy
-   - default sequential flow advances the shared `base_branch`
-   - validate child specs; do not mutate them in v1
-
-## What Already Exists Vs What Must Be Built
-
-Already exists:
-
-- child epic parsing, state, resume, and PR lifecycle
-- child epic status classification
-- child supervisor ladder
-- cloud restart/advance/block policy
-
-Must be built:
-
-- `EpicChainSpec`
-- `EpicChainState`
-- `megaplan epic-chain start|status`
-- handoff verification helper for `exists` / `contains_text`
-- cloud/status adapter for the new top-level session type if first-class cloud
-  launch/status is desired
-
-Should not be built in v1:
-
-- nested epic-as-milestone `chain.yaml`
-- a second automatic escalation ladder above the child chain ladder
-- runtime mutation of child `base_branch`
-- a large cross-epic artifact validation language
+So the parent should supervise the meta-chain session, while the child chain
+and child supervisor state remain the source of truth for the active epic.
 
 ## Bottom Line
 
-The smallest principled design is: **one new meta-chain layer whose items are
-existing child epics**.
+The right v1 is:
 
-That keeps the current `megaplan chain` contract intact, adds a durable answer
-to “which epic are we on?”, makes handoffs explicit, and plugs naturally into
-the existing supervision model without inventing a second orchestration system.
+- a new parent spec that lists child epics
+- a new parent state file under `.epic_chains/`
+- a thin parent driver whose loop and state semantics mirror `megaplan chain`
+- delegation of actual unit execution to existing child `megaplan chain`
+  runs
+
+That is the smallest design that is honestly **“`megaplan chain`, one level
+up”**. It maximizes reuse of the current chain model, keeps child epic state
+authoritative, and only diverges where the unit itself changes from “plan” to
+“chain.”
