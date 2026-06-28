@@ -13,6 +13,8 @@ from arnold_pipelines.megaplan.blocker_recovery import (
 from arnold_pipelines.megaplan.execute.batch import (
     _normalize_execute_capture_payload,
     _repair_missing_user_action_gate,
+    _resolve_batch_artifact_number,
+    _task_to_global_batch_number_map,
 )
 from arnold_pipelines.megaplan.execute.quality import _collect_execute_claimed_paths
 from arnold_pipelines.megaplan.model_seam import _normalize_plan_capture_payload
@@ -404,3 +406,27 @@ def test_structured_plan_payload_normalizes_to_canonical_schema() -> None:
     assert normalized["assumptions"] == ["Repo is clean"]
     assert normalized["changed_surfaces"] == ["src/thing.py"]
     assert normalized["test_blast_radius"]["strategy"] == "scoped"
+
+
+def test_resumed_partial_batch_keeps_original_artifact_number() -> None:
+    global_batches = [
+        ["T2"],
+        ["T1"],
+        ["m7-01"],
+        ["m7-02", "m7-05"],
+        ["m7-03", "m7-06"],
+        ["m7-04", "m7-07", "m7-10"],
+        ["m7-08"],
+    ]
+    global_batch_lookup = {
+        tuple(batch): index + 1 for index, batch in enumerate(global_batches)
+    }
+
+    artifact_number = _resolve_batch_artifact_number(
+        ["m7-07"],
+        global_batch_lookup=global_batch_lookup,
+        task_to_batch_number=_task_to_global_batch_number_map(global_batches),
+        batch_index=1,
+    )
+
+    assert artifact_number == 6

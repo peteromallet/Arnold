@@ -421,6 +421,48 @@ def _resolve_tier_spec(
     return agent, _mode, model
 
 
+def _task_to_global_batch_number_map(
+    global_batches: list[list[str]],
+) -> dict[str, int]:
+    """Map each task ID to its 1-indexed global batch number."""
+
+    mapping: dict[str, int] = {}
+    for batch_number, batch in enumerate(global_batches, start=1):
+        for task_id in batch:
+            if isinstance(task_id, str) and task_id:
+                mapping[task_id] = batch_number
+    return mapping
+
+
+def _resolve_batch_artifact_number(
+    batch_task_ids: Iterable[str],
+    *,
+    global_batch_lookup: dict[tuple[str, ...], int],
+    task_to_batch_number: dict[str, int],
+    batch_index: int,
+) -> int:
+    """Choose the durable artifact slot for an auto-loop batch.
+
+    Resumed execute runs often work on the unfinished subset of an original
+    global batch. Exact tuple matching is too strict for that case because the
+    remaining task list no longer equals the original batch tuple.
+    """
+
+    batch_tuple = tuple(batch_task_ids)
+    exact = global_batch_lookup.get(batch_tuple)
+    if exact is not None:
+        return exact
+
+    candidate_numbers = {
+        task_to_batch_number[task_id]
+        for task_id in batch_tuple
+        if task_id in task_to_batch_number
+    }
+    if len(candidate_numbers) == 1:
+        return next(iter(candidate_numbers))
+    return batch_index
+
+
 # Private marker set: dispatcher return paths stamp one of these four values.
 # Handlers later read _phase_outcome to derive the correct ExitKind for
 # phase_result.json emission.
@@ -2600,6 +2642,7 @@ def handle_execute_auto_loop(
     global_batch_lookup = {
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
+    task_to_batch_number = _task_to_global_batch_number_map(global_batches)
     no_pending_execution = not pending_tasks and not rework_mode
     batches_to_run = (
         [review_rework_task_ids]
@@ -2687,10 +2730,11 @@ def handle_execute_auto_loop(
     batch_to_tier: list[dict[str, Any]] = []
 
     for batch_index, batch_task_ids in enumerate(batches_to_run, start=1):
-        batch_number_for_artifact = (
-            1
-            if single_batch_mode
-            else global_batch_lookup.get(tuple(batch_task_ids), batch_index)
+        batch_number_for_artifact = 1 if single_batch_mode else _resolve_batch_artifact_number(
+            batch_task_ids,
+            global_batch_lookup=global_batch_lookup,
+            task_to_batch_number=task_to_batch_number,
+            batch_index=batch_index,
         )
         batch_sense_check_ids = (
             all_sense_check_ids
