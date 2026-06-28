@@ -4182,13 +4182,17 @@ def drive(
 
     # Hit iteration cap.
     log(f"hit max_iterations={max_iterations}")
+    resume_cursor = _failure_resume_cursor_for_step(
+        last_phase or "status",
+        plan_dir=plan_dir,
+    )
     _record_failure(
         plan_dir=plan_dir,
         kind="iteration_cap",
         message=f"exceeded max_iterations={max_iterations}",
         current_state=None,
         phase=last_phase,
-        resume_cursor={"phase": last_phase or "status", "retry_strategy": "manual_review"},
+        resume_cursor={**resume_cursor, "retry_strategy": "manual_review"},
         suggested_action="Review automation progress before resuming.",
         metadata={"max_iterations": max_iterations},
     )
