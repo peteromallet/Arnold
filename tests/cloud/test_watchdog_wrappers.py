@@ -665,6 +665,99 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     assert "chain start" not in result.stdout
 
 
+def test_watchdog_completed_plan_marker_is_cleared_without_repair(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"iteration": 1, "current_state": "done", "active_step": None},
+        events_body="{}\n",
+    )
+
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text("marker\n", encoding="utf-8")
+    progress_path = marker_dir / f"{plan_name}.progress.json"
+    progress_path.write_text("{}\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("session_marker_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("clear_session_tracking_artifacts"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert not marker_path.exists()
+    assert not progress_path.exists()
+    assert "completed" in report_path.read_text(encoding="utf-8")
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_resolves_relative_chain_specs_against_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("launch_chain_tick"),
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo alive; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_dispatch_marker_clear() { :; }
+""".strip(),
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "alive" in report
+    assert "spec_missing" not in report
+
+
+def test_watchdog_scan_ignores_progress_snapshot_markers() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert "*.progress.json|*.reap-progress.json" in text
+
+
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:
     text = _wrapper("arnold-chain")
 
