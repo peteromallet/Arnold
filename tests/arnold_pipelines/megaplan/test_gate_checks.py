@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from arnold_pipelines.megaplan.orchestration.gate_checks import (
     has_high_complexity_unverifiable_checks,
     is_operational_unverifiable_check,
@@ -226,3 +229,56 @@ def test_historical_sandbox_raw_artifact_recovers_blocked_state(tmp_path) -> Non
     }
 
     assert _blocked_plan_has_operational_unverifiable_evidence(plan_dir, state)
+
+
+def test_build_gate_signals_routes_unverifiable_checks_to_execute_contract(
+    tmp_path: Path,
+) -> None:
+    from arnold_pipelines.megaplan.orchestration.gate_signals import build_gate_signals
+    from arnold_pipelines.megaplan.prompts.gate import _gate_signals_for_prompt
+
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "plan_v1.md").write_text("# Plan\n", encoding="utf-8")
+    (plan_dir / "faults.json").write_text(
+        json.dumps({"flags": []}),
+        encoding="utf-8",
+    )
+    required_checks = [
+        {
+            "id": "route-metadata",
+            "question": "Are product route metadata exports complete?",
+            "reason": "execute-only property; requires test-backed verification",
+            "attention": "high_complexity_unverifiable",
+            "complexity": 5,
+        }
+    ]
+    (plan_dir / "critique_v1.json").write_text(
+        json.dumps({"unverifiable_checks": required_checks}),
+        encoding="utf-8",
+    )
+    state = {
+        "iteration": 1,
+        "idea": "Ship control flow policy support",
+        "plan_versions": [{"version": 1, "file": "plan_v1.md"}],
+        "meta": {"weighted_scores": []},
+        "config": {"project_dir": str(tmp_path), "robustness": "full"},
+    }
+
+    gate_signals = build_gate_signals(plan_dir, state, root=tmp_path)
+
+    assert gate_signals["signals"]["weighted_score"] == 0
+    assert gate_signals["signals"]["unverifiable_checks"] == required_checks
+    assert gate_signals["signals"]["execution_acceptance_contract"] == {
+        "scope": "execute",
+        "verification_mode": "verification_suite",
+        "required_checks": required_checks,
+    }
+    assert not any(
+        "critique degraded:" in warning for warning in gate_signals["warnings"]
+    )
+
+    projected = _gate_signals_for_prompt(gate_signals)
+    prompt_signals = projected["signals"]
+    assert "unverifiable_checks" not in prompt_signals
+    assert "execution_acceptance_contract" not in prompt_signals

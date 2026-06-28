@@ -363,6 +363,42 @@ def _read_finalize(plan_dir: Path) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+def _read_execution_acceptance_contract(plan_dir: Path) -> dict[str, Any] | None:
+    gate = _read_json(plan_dir / "gate.json")
+    if isinstance(gate, dict):
+        signals = gate.get("signals")
+        if isinstance(signals, dict):
+            contract = signals.get("execution_acceptance_contract")
+            if isinstance(contract, dict):
+                return contract
+            legacy = signals.get("unverifiable_checks")
+            if isinstance(legacy, list) and legacy:
+                return {
+                    "scope": "execute",
+                    "verification_mode": "verification_suite",
+                    "required_checks": legacy,
+                }
+
+    for path in sorted(plan_dir.glob("gate_signals_v*.json"), reverse=True):
+        payload = _read_json(path)
+        if not isinstance(payload, dict):
+            continue
+        signals = payload.get("signals")
+        if not isinstance(signals, dict):
+            continue
+        contract = signals.get("execution_acceptance_contract")
+        if isinstance(contract, dict):
+            return contract
+        legacy = signals.get("unverifiable_checks")
+        if isinstance(legacy, list) and legacy:
+            return {
+                "scope": "execute",
+                "verification_mode": "verification_suite",
+                "required_checks": legacy,
+            }
+    return None
+
+
 def _evidence_id(
     kind: str,
     subject: CompletionSubject,
@@ -407,6 +443,21 @@ def _suite_run_record(plan_dir: Path, phase: str, run_id: str) -> dict[str, Any]
     if str(record.get("run_id", "")) != run_id:
         return None
     return record
+
+
+def _latest_suite_run_result(plan_dir: Path, phase: str) -> Any | None:
+    from arnold_pipelines.megaplan.orchestration.suite_runs_log import (
+        _record_to_result,
+        latest_run_for_phase,
+    )
+
+    record = latest_run_for_phase(plan_dir, phase)
+    if not isinstance(record, dict):
+        return None
+    try:
+        return _record_to_result(record)
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _provider_evidence_ref(
@@ -1532,6 +1583,149 @@ class GreenSuiteProvider:
         )
 
 
+class ExecuteAcceptanceContractProvider:
+    """execution_acceptance_contract — verify execute-only checks via the suite."""
+
+    kind = "execution_acceptance_contract"
+
+    def collect(self, ctx: CompletionContext) -> EvidenceRef:
+        contract = _read_execution_acceptance_contract(ctx.plan_dir)
+        if not isinstance(contract, dict):
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.not_applicable,
+                summary="no execute acceptance contract exported from gate",
+                details={},
+                ctx=ctx,
+                trust_class=TrustClass.claim,
+                source="gate.json|gate_signals_v*.json",
+                provider=type(self).__name__,
+            )
+
+        required_checks = contract.get("required_checks")
+        if not isinstance(required_checks, list) or not required_checks:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.not_applicable,
+                summary="execute acceptance contract has no required checks",
+                details={"contract": contract},
+                ctx=ctx,
+                trust_class=TrustClass.claim,
+                source="gate.json|gate_signals_v*.json",
+                provider=type(self).__name__,
+            )
+
+        verification = _latest_suite_run_result(ctx.plan_dir, "verification")
+        if verification is None:
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unknown,
+                summary="execute acceptance contract has no recorded verification suite run",
+                details={
+                    "contract": contract,
+                    "required_check_count": len(required_checks),
+                },
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="verification/suite_runs.ndjson",
+                provider=type(self).__name__,
+            )
+
+        baseline = _latest_suite_run_result(ctx.plan_dir, "baseline")
+        details = {
+            "contract": contract,
+            "required_check_count": len(required_checks),
+            "suite_status": verification.status,
+            "suite_run_id": verification.run_id,
+        }
+        if verification.status == "passed":
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.satisfied,
+                summary=(
+                    "verification suite satisfied the execute acceptance contract "
+                    f"for {len(required_checks)} check(s)"
+                ),
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+                provider=type(self).__name__,
+            )
+        if verification.status == "not_applicable":
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=(
+                    "execute acceptance contract requires verification evidence, "
+                    "but the verification suite was not applicable"
+                ),
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+                provider=type(self).__name__,
+            )
+        if verification.status == "failed":
+            if baseline is not None:
+                if not baseline.collections_parse_ok or not verification.collections_parse_ok:
+                    return _provider_evidence_ref(
+                        kind=self.kind,
+                        status=EvidenceStatus.unsatisfied,
+                        summary=(
+                            "execute acceptance contract verification failed: "
+                            "suite delta is not computable"
+                        ),
+                        details=details,
+                        ctx=ctx,
+                        trust_class=TrustClass.evidence,
+                        source="gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+                        provider=type(self).__name__,
+                    )
+                delta = compute_delta(baseline, verification)
+                details["delta"] = delta.to_dict()
+                if not delta.newly_failing and not delta.deleted_tests:
+                    return _provider_evidence_ref(
+                        kind=self.kind,
+                        status=EvidenceStatus.satisfied,
+                        summary=(
+                            "verification suite satisfied the execute acceptance contract "
+                            f"for {len(required_checks)} check(s) with no new regressions"
+                        ),
+                        details=details,
+                        ctx=ctx,
+                        trust_class=TrustClass.evidence,
+                        source="gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+                        provider=type(self).__name__,
+                    )
+            return _provider_evidence_ref(
+                kind=self.kind,
+                status=EvidenceStatus.unsatisfied,
+                summary=(
+                    "execute acceptance contract verification failed: "
+                    f"verification suite has {len(verification.failures)} failing test(s)"
+                ),
+                details=details,
+                ctx=ctx,
+                trust_class=TrustClass.evidence,
+                source="gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+                provider=type(self).__name__,
+            )
+        return _provider_evidence_ref(
+            kind=self.kind,
+            status=EvidenceStatus.unknown,
+            summary=(
+                "execute acceptance contract could not be verified because "
+                f"suite evidence is {verification.status}"
+            ),
+            details=details,
+            ctx=ctx,
+            trust_class=TrustClass.evidence,
+            source="gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+            provider=type(self).__name__,
+        )
+
+
 class ReviewDispositionProvider:
     """review_disposition — was review a genuine success or a force-proceed?
 
@@ -1663,6 +1857,7 @@ DEFAULT_PROVIDERS: tuple[EvidenceProvider, ...] = (
     LandedDiffProvider(),
     WorkerDidWorkProvider(),
     GreenSuiteProvider(),
+    ExecuteAcceptanceContractProvider(),
     ReviewDispositionProvider(),
     DeclaredNoopProvider(),
 )
