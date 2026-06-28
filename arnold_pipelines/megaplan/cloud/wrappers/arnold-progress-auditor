@@ -20,9 +20,10 @@
 #   * write /workspace/audit-reports/<ts>-audit.{json,md}, append one line to
 #     /workspace/audit-report.log
 #
-# TWO-MODE: passive findings get logged (report); ACTIONABLE findings — a plan
-# stuck looping / retrying constantly (phase_failed / stalled / execution_blocked)
-# — get a Codex root-cause fix + push; the watchdog then relaunches the chain.
+# MODEL-JUDGED: for each suspicious plan, Codex subjectively decides whether it's
+# a GENUINE non-critical deadlock (stuck looping/retrying) -> root-cause + fix +
+# push to editible-install (the watchdog relaunches the chain), or PASSIVE ->
+# document only. No hardcoded fix-vs-report rule.
 set -uo pipefail
 
 CONTAINER="${MEGAPLAN_CLOUD_CONTAINER:-megaplan-cloud-agent}"
@@ -241,9 +242,6 @@ for entry in plans:
             continue
         ev["reasons"] = reasons
         ev["session"] = entry["session"]
-        # TWO-MODE classification: a hard/recurring failure the plan is stuck
-        # retrying is actionable (audit fixes + pushes); other signals are passive (log).
-        ev["actionable"] = ev["latest_failure_kind"] in ("stalled", "phase_failed", "execution_blocked")
         findings.append(ev)
 
 with open(os.path.join(gather_dir, "findings.json"), "w", encoding="utf-8") as h:
@@ -265,9 +263,7 @@ dispatch_one() {
   plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
   workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
   reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
-  local actionable
-  actionable="$(python3 -c "import json,sys; print('1' if json.load(open(sys.argv[1])).get('actionable') else '0')" "$gather_file")"
-  log "plan=$plan actionable=$actionable reasons=$reasons"
+  log "plan=$plan reasons=$reasons"
 
   local brief="$GATHER_DIR/brief-${plan}.md"
   {
@@ -281,50 +277,34 @@ dispatch_one() {
     cat "$gather_file"
     echo '```'
     echo
-    if [[ "$actionable" == "1" ]]; then
-      cat <<EOF
-You are the audit FIXER. This plan is stuck looping / retrying on a hard failure
-($reasons) — a non-critical deadlock the run cannot break on its own. Root-cause
-it from the evidence above and the workspace, then FIX the root cause in
-$ARNOLD_SRC on the editible-install branch (Arnold source only — do NOT touch the
-running chain's project tree). Keep the fix narrow and safe; validate with
-python3 -m py_compile and a focused test where possible. Commit and push to
-origin/editible-install — the cloud watchdog will relaunch the chain on your fix
-on its next tick (mirroring the 1h watchdog repair). If you cannot safely fix it,
-say so plainly with the specific blocker and apply no fix. Cite specific evidence.
-Under 250 words.
+    cat <<EOF
+You are the audit agent for plan $plan. Suspicious signals: $reasons. Evidence
+JSON is above. Make a SUBJECTIVE judgement: is this a GENUINE non-critical
+deadlock the run cannot break on its own (stuck looping / retrying constantly,
+blocking real progress) — or PASSIVE (legitimate thorough iteration, a completed
+milestone's stale failure record, a transient one-off already recovered from,
+cosmetic drift)? Weigh the evidence: is the milestone completed? is the failure
+recent or stale? are plan revisions actually changing content? is it advancing?
+
+If GENUINELY STUCK: root-cause it from the evidence + workspace, FIX the root
+cause in $ARNOLD_SRC on the editible-install branch (Arnold source only — do NOT
+touch the running chain's project tree), keep it narrow + safe, validate with
+python3 -m py_compile and a focused test, commit + push to origin/editible-install.
+The cloud watchdog relaunches the chain on your fix.
+
+If PASSIVE: do NOT fix. Return a hypothesis (likely cause of the lack of
+convergence) + a recommendation (highest-leverage next action for the operator).
+
+Start with your verdict on its own line — FIXED <commit-sha> or PASSIVE — then
+cite SPECIFIC evidence (iteration/attempt counts, gate verdicts, exact failure
+messages, whether the milestone is completed, plan_v churn). Under 250 words.
 EOF
-    else
-      cat <<EOF
-You are the audit orchestrator. First read
-\`$SUBAGENT_SKILL\`.
 
-Then use that skill to deploy DeepSeek research subagents with provider
-\`deepseek\` and model \`$DEEPSEEK_MODEL\` that investigate this suspicious plan in
-depth using the gathered evidence above and any supporting files under the
-workspace needed to verify facts. Launch exactly one DeepSeek research
-subagent unless the first investigation leaves a concrete unresolved
-contradiction that requires a second opinion.
-
-Return concise evidence-based findings with:
-
-1. **hypothesis**: the most likely root cause of the lack of convergence.
-2. **recommendation**: the single highest-leverage next action for the operator
-   (NOT an auto-fix — this is report-only).
-
-Your synthesis must cite SPECIFIC references to what actually happened:
-iteration counts, attempt counts, gate verdicts/counts, exact failure messages,
-score movement, and plan_v churn when relevant.
-
-Keep the whole response under 250 words. No preamble. If DeepSeek subagents
-cannot be launched, say so plainly and still synthesize the evidence yourself.
-EOF
-    fi
   } > "$brief"
 
   local resp_path="$GATHER_DIR/resp-${plan}.txt"
   if command -v codex >/dev/null 2>&1; then
-    log "dispatching Codex audit mode=$([ "$actionable" = 1 ] && echo fixer || echo orchestrator) plan=$plan deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
+    log "dispatching Codex audit plan=$plan deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
     (
       cd "$workspace" &&
       if [[ -f /workspace/.cloud-hot-env ]]; then
