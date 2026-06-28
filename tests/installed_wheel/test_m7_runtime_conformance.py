@@ -22,14 +22,12 @@ from zipfile import ZipFile
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-_DELETED_PATHS = (
-    "arnold/pipelines/megaplan",
-    "arnold_pipelines/megaplan/_pipeline",
-    "arnold_pipelines/megaplan/stages",
-    "arnold_pipelines/megaplan/_compatibility",
+from arnold.conformance.deleted_surfaces import (
+    DELETED_ARTIFACT_PATH_PREFIXES,
+    DELETED_IMPORT_MODULES,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _clean_venv_env(venv_dir: Path) -> dict[str, str]:
@@ -147,14 +145,14 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             ), "missing megaplan skill doc"
 
             # Negative: deleted legacy surfaces stay out of the wheel.
-            for deleted in _DELETED_PATHS:
+            for deleted in DELETED_ARTIFACT_PATH_PREFIXES:
                 assert not any(deleted in name for name in names), (
                     f"wheel still contains deleted path: {deleted}"
                 )
 
         with tarfile.open(sdist, "r:gz") as tar:
             sdist_names = tar.getnames()
-            for deleted in _DELETED_PATHS:
+            for deleted in DELETED_ARTIFACT_PATH_PREFIXES:
                 assert not any(deleted in name for name in sdist_names), (
                     f"sdist still contains deleted path: {deleted}"
                 )
@@ -314,12 +312,7 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
         assert "sha256:" in result.stdout
 
         # Deleted legacy surfaces remain unimportable in the installed venv.
-        for deleted_module in (
-            "arnold.pipelines.megaplan",
-            "arnold_pipelines.megaplan._pipeline",
-            "arnold_pipelines.megaplan.stages",
-            "arnold_pipelines.megaplan._compatibility",
-        ):
+        for deleted_module in DELETED_IMPORT_MODULES:
             result = subprocess.run(
                 [str(python), "-c", f"import {deleted_module}"],
                 capture_output=True,

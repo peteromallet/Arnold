@@ -21,17 +21,17 @@ class NativeTarget:
 
 # These are the nine active M3 packages that must already be native-backed.
 ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
-    NativeTarget("arnold.pipelines.megaplan.pipelines.creative", "creative"),
-    NativeTarget("arnold.pipelines.megaplan.pipelines.doc", "doc"),
-    NativeTarget("arnold.pipelines.megaplan.pipelines.jokes", "jokes"),
-    NativeTarget("arnold.pipelines.megaplan.pipelines.live_supervisor", "live-supervisor"),
+    NativeTarget("arnold_pipelines.megaplan.pipelines.creative", "creative"),
+    NativeTarget("arnold_pipelines.megaplan.pipelines.doc", "doc"),
+    NativeTarget("arnold_pipelines.megaplan.pipelines.jokes", "jokes"),
+    NativeTarget("arnold_pipelines.megaplan.pipelines.live_supervisor", "live-supervisor"),
     NativeTarget(
-        "arnold.pipelines.megaplan.pipelines.writing_panel_strict",
+        "arnold_pipelines.megaplan.pipelines.writing_panel_strict",
         "writing-panel-strict",
     ),
-    NativeTarget("arnold.pipelines.megaplan.pipelines.epic_blitz", "epic-blitz"),
+    NativeTarget("arnold_pipelines.megaplan.pipelines.epic_blitz", "epic-blitz"),
     NativeTarget(
-        "arnold.pipelines.megaplan.pipelines.select_tournament",
+        "arnold_pipelines.megaplan.pipelines.select_tournament",
         "select-tournament",
     ),
     NativeTarget("arnold.pipelines.folder_audit", "folder-audit"),
@@ -79,7 +79,7 @@ def test_active_targets_import_from_canonical_arnold_pipeline_paths(
     module = _import_target(target)
 
     assert module.__name__ == target.module_path
-    assert module.__name__.startswith("arnold.pipelines.")
+    assert module.__name__.startswith(("arnold_pipelines.", "arnold.pipelines."))
 
 
 @pytest.mark.parametrize("target", ACTIVE_NATIVE_TARGETS, ids=_target_id)
