@@ -1,10 +1,10 @@
 """emit_constants.py — constant classification, model-path, and wrapper helpers.
 
-This module is carved from :mod:`vibecomfy.porting.emit.emitter` as part of the
+This module is carved from :mod:`vibecomfy.porting.emitter` as part of the
 M2 structural-decomposition epic (Step 6).  It is a leaf-level consumer of
 :mod:`vibecomfy.porting.emit_kwargs`.
 
-All names exported here remain importable from ``vibecomfy.porting.emit.emitter``
+All names exported here remain importable from ``vibecomfy.porting.emitter``
 via explicit re-exports so that existing callers are unaffected.
 """
 

@@ -15,7 +15,7 @@ from vibecomfy.porting.layout.placement import (
     InferredAnchorHint,
     infer_add_node_anchor_hint,
 )
-from vibecomfy.porting.identity.codec import to_raw_name
+from vibecomfy.identity.codec import to_raw_name
 from vibecomfy.schema import schema_for, socket_types_compatible
 
 from vibecomfy.porting.edit._session_types import (

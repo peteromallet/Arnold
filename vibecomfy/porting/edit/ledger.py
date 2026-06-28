@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Literal, Mapping, Sequence
 
 from vibecomfy.porting.report import PortIssue
-from vibecomfy.porting.identity.scope import compose_scope_path, sg_key
-from vibecomfy.porting.identity.uid import make_uid
+from vibecomfy.identity.scope import compose_scope_path, sg_key
+from vibecomfy.identity.uid import make_uid
 
 
 _MINTED_UID_RE = re.compile(r"^n(\d+)$")

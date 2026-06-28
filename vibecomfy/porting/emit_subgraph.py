@@ -1,9 +1,9 @@
 """emit_subgraph.py — subgraph definition, naming, and emission helpers.
 
-This module is carved from :mod:`vibecomfy.porting.emit.emitter` as part of the
+This module is carved from :mod:`vibecomfy.porting.emitter` as part of the
 M2 structural-decomposition epic (Step 5).
 
-All names exported here remain importable from ``vibecomfy.porting.emit.emitter``
+All names exported here remain importable from ``vibecomfy.porting.emitter``
 via explicit re-exports so that existing callers are unaffected.
 """
 
@@ -232,7 +232,7 @@ def _disambiguated_subgraph_slugs(raw_by_id: Mapping[str, Mapping[str, Any]]) ->
 
 def _build_subgraph_def(raw: Mapping[str, Any], *, slug: str, source_path: str | None) -> _SubgraphDef:
     from vibecomfy.ingest.normalize import normalize_to_api
-    from vibecomfy.porting.identity.uid import make_uid, mint_local_uid
+    from vibecomfy.identity.uid import make_uid, mint_local_uid
     from vibecomfy.workflow import VibeEdge as _Edge, VibeNode as _Node
 
     subgraph_id = str(raw["id"])

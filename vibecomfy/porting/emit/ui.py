@@ -78,7 +78,7 @@ from vibecomfy.contracts.intent_nodes import (
     validate_intent_node_contract,
     validate_runtime_code_contract,
 )
-from vibecomfy.porting.identity.uid import mint_local_uid
+from vibecomfy.identity.uid import mint_local_uid
 from vibecomfy.porting.widgets.aliases import widget_names_for_class, widget_names_from_schema
 from vibecomfy.workflow import VibeEdge, VibeNode
 

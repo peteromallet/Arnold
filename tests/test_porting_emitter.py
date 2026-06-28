@@ -1958,7 +1958,7 @@ def test_flat_ready_template_reimport_yields_same_uids() -> None:
 import json
 from pathlib import Path
 import pytest
-from vibecomfy.porting.emit.emitter import (
+from vibecomfy.porting.emitter import (
     EmissionDiagnostic,
     _use_object_info_identities,
     _identity_for_node,

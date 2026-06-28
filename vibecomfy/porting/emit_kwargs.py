@@ -1,10 +1,10 @@
 """emit_kwargs.py — variable-name, topology, and node-kwargs helpers.
 
-This module is the foundation seam carved from :mod:`vibecomfy.porting.emit.emitter`
+This module is the foundation seam carved from :mod:`vibecomfy.porting.emitter`
 as part of the M2 structural-decomposition epic (Step 4).  It is a leaf-level
 module: it does not import from any other ``emit_*.py`` module.
 
-All names exported here remain importable from ``vibecomfy.porting.emit.emitter``
+All names exported here remain importable from ``vibecomfy.porting.emitter``
 via explicit re-exports so that existing callers are unaffected.
 """
 
@@ -259,7 +259,7 @@ def _locked_variable_uid_map(
     scope_path: str = "",
     diagnostics: "list[Any] | None" = None,
 ) -> dict[str, str]:
-    from vibecomfy.porting.identity.uid import make_uid
+    from vibecomfy.identity.uid import make_uid
     # Import EmissionDiagnostic and warning constants lazily to avoid circular
     # import (emitter.py imports from emit_kwargs.py at module level).
     from vibecomfy.porting.emitter import (  # noqa: PLC0415

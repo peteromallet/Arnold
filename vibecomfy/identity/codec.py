@@ -8,13 +8,13 @@ name can be recovered when the set of candidate names (the "context") is known.
 
 Usage
 -----
-    from vibecomfy.porting.identity.codec import to_python_identifier, to_raw_name
+    from vibecomfy.identity.codec import to_python_identifier, to_raw_name
 
     encoded = to_python_identifier("in")            # "in_"
     decoded = to_raw_name("in_", context={"in": "in", "out": "out"})  # "in"
 
     # Batch encoding with collision avoidance:
-    from vibecomfy.porting.identity.codec import encode_slot_names
+    from vibecomfy.identity.codec import encode_slot_names
     mapping = encode_slot_names(["in", "in_", "out"])
     # mapping == {"in": "in_", "in_": "in_2", "out": "out"}
 """

@@ -169,7 +169,7 @@ def _prepare_workflow_for_emit(
 # ---------------------------------------------------------------------------
 
 def _agent_edit_output_aliases(node: Any) -> dict[int, str]:
-    from vibecomfy.porting.identity.codec import encode_slot_names, to_python_identifier
+    from vibecomfy.identity.codec import encode_slot_names, to_python_identifier
 
     output_names = _agent_edit_raw_output_names(node)
     if not output_names:
@@ -300,7 +300,7 @@ def _agent_edit_slot_alias_parts(node: Any, output_aliases: Mapping[int, str]) -
 # ---------------------------------------------------------------------------
 
 def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
-    from vibecomfy.porting.identity.codec import encode_slot_names, to_python_identifier
+    from vibecomfy.identity.codec import encode_slot_names, to_python_identifier
 
     workflow_nodes = prepared["nodes"]
     edges_in = prepared["edges_in"]
