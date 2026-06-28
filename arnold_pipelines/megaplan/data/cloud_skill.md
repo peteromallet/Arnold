@@ -136,11 +136,22 @@ An operator loop may automatically handle infrastructure recovery:
 - rerun `megaplan auto` for states with an unambiguous valid next step;
 - recover provider quota/failure by switching to an already-approved fallback model/provider for the same phase;
 - continue a chain after a completed milestone;
+- advance a chain past a merged milestone PR (re-run `megaplan chain start` so it observes the merge and proceeds to the next milestone);
 - commit and push after each completed milestone when the user asked for push-after-sprint behavior.
+
+For an operator loop to progress a chain autonomously, the chain spec must set `merge_policy: auto`. With `review` or `manual`, the chain opens each milestone PR and halts at `awaiting_pr_merge` until a human merges it — the loop cannot merge PRs for you, so an unattended chain looks "stuck" when it is actually waiting on a manual merge. Set `merge_policy: auto` in `chain.yaml` for any cloud epic that should run without a human in the loop.
 
 An operator loop should **not** silently decide product or architecture questions, resolve merge conflicts, accept destructive cleanup, or ignore failing tests. Those are implementation decisions, not supervision. Surface them to the user or write a clear ticket unless the plan already contains an explicit settled decision that covers the case.
 
-Today this operator loop is usually a small project-local shell script under `.megaplan/` plus tmux. Treat that as an operational shim, not the ideal abstraction. The durable Megaplan feature should be first-class cloud supervision: built-in early check, hourly tick, provider fallback policy, single-PR chain mode, and push-after-milestone support.
+### Built-in cloud supervision (automated operator loop)
+
+Two always-on supervisors run the recovery loop; the operator watches *them*, not the chain.
+
+**1h watchdog** (`/usr/local/bin/arnold-watchdog`, `megaplan-watchdog-ensure.timer` keep-alive): syncs the editable install; per session detects **stopped/flap/`retrying_failure`** → **Kimi→Codex repair**, falling back to **direct relaunch**; honors **`awaiting_pr_merge`**; flags **`progress_stall`** (alive but not progressing). Report: `/workspace/watchdog-report.json` (archived `/workspace/watchdog-reports/`).
+
+**6h progress auditor** (`/usr/local/bin/arnold-progress-auditor`, `megaplan-progress-audit.timer`): reviews the last 6h per plan; for suspicious ones dispatches **Codex** (may deploy DeepSeek) to **judge** — confident fixable deadlock/inefficiency → **fix + push to `editible-install`** (watchdog relaunches); else → document. Verdicts `FIXED <sha>` / `PASSIVE`. Report: `/workspace/audit-reports/`.
+
+Recovery path: watchdog fixes hard stops; auditor fixes inefficiency/deadlocks the liveness check can't see. Operator job = **meta-loop** (hourly): watchdog alive + reporting, plan progressing, `blocked_recovery_not_resolved` not climbing, auditor verdicts landing. See `docs/hetzner-watchdog-meta-loop.md`.
 
 ## Gotchas (learned the hard way)
 

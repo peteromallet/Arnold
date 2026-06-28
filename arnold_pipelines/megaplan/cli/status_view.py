@@ -306,6 +306,27 @@ def _projected_target_ids(
     ]
 
 
+def _recovery_projection_state(
+    state: dict[str, Any],
+    *,
+    plan_dir: Path,
+) -> dict[str, Any]:
+    resume_cursor = state.get("resume_cursor")
+    cursor_phase = (
+        resume_cursor.get("phase")
+        if isinstance(resume_cursor, dict)
+        else None
+    )
+    if cursor_phase not in {"recover-blocked", "resume-clarify", "status", "step"}:
+        return state
+    phase_result = read_phase_result(plan_dir)
+    if phase_result is None or not isinstance(phase_result.phase, str) or not phase_result.phase:
+        return state
+    projected = dict(state)
+    projected["phase_result"] = {"phase": phase_result.phase}
+    return projected
+
+
 def _projected_valid_next(state: dict[str, Any]) -> list[str]:
     history = state.get("history")
     last = history[-1] if isinstance(history, list) and history else None
@@ -825,7 +846,8 @@ def _build_active_step(active_step: Any, *, plan_dir: Path) -> dict[str, Any] | 
 
 
 def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse:
-    next_steps = _projected_valid_next(state) or infer_next_steps(state)
+    projection_state = _recovery_projection_state(state, plan_dir=plan_dir)
+    next_steps = _projected_valid_next(projection_state) or infer_next_steps(projection_state)
     if state.get("current_state") == STATE_BLOCKED:
         last_gate = state.get("last_gate") or {}
         preflight = last_gate.get("preflight_results") if isinstance(last_gate, dict) else None

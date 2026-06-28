@@ -25,6 +25,7 @@ working unchanged.
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -372,6 +373,8 @@ def _normalize_native_capture_payload(
         invocation.metadata.get("compatibility_validation_step")
         or invocation.metadata.get("validation_step")
     )
+    if step == "plan":
+        return _normalize_plan_capture_payload(payload)
     if step == "review":
         return _normalize_review_capture_payload(payload)
     if step == "execute":
@@ -808,12 +811,17 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         parts.append(overview)
     steps = payload.get("steps")
     if isinstance(steps, list):
+        step_number = 1
         for step in steps:
             if isinstance(step, Mapping):
                 step_title = _optional_str(step.get("title") or step.get("name"))
                 step_desc = _optional_str(step.get("description") or step.get("details"))
                 if step_title:
-                    parts.append(f"### {step_title}")
+                    if re.match(r"(?i)^step\s+\d+:", step_title):
+                        parts.append(f"### {step_title}")
+                    else:
+                        parts.append(f"### Step {step_number}: {step_title}")
+                    step_number += 1
                 if step_desc:
                     parts.append(step_desc)
                 substeps = step.get("substeps") or step.get("instructions")

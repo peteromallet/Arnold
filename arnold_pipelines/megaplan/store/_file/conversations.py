@@ -145,6 +145,22 @@ class FileConversationMixin:
             for score, msg in hits[:limit]
         ]
 
+    def list_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 20,
+        exclude_ids: Sequence[str] = (),
+    ) -> list[Message]:
+        exclude = set(exclude_ids)
+        rows = [
+            message
+            for message in self._messages()
+            if message.conversation_id == conversation_id and message.id not in exclude
+        ]
+        rows.sort(key=lambda message: (_utc_key(message.sent_at), message.id))
+        return rows[-limit:] if limit else []
+
     def record_tool_call(
         self,
         *,

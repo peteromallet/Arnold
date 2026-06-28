@@ -81,6 +81,35 @@ def test_plan_recovery_prefers_later_structured_plan_over_summary_payload(
         "codex_recovery:raw_output",
     )
 
+def test_plan_capture_normalizes_extra_model_metadata() -> None:
+    invocation = StepInvocation(
+        kind="model",
+        metadata={
+            "validation_step": "plan",
+            "compatibility_validation_step": "plan",
+        },
+    )
+    outcome = capture_step_output(
+        invocation,
+        {
+            "source": "model-added-metadata",
+            "title": "Ship Fix",
+            "overview": "Do the work.",
+            "steps": [
+                {
+                    "title": "Patch worker (`arnold_pipelines/megaplan/workers/hermes.py`)",
+                    "substeps": ["Promote valid raw markdown."],
+                }
+            ],
+            "questions": [],
+            "success_criteria": [{"criterion": "Tests pass", "priority": "must"}],
+            "assumptions": [],
+        },
+    )
+
+    assert "source" not in outcome.legacy_payload
+    assert "### Step 1: Patch worker" in outcome.legacy_payload["plan"]
+
 
 def test_plan_audit_rejects_numbered_list_without_step_headings() -> None:
     payload = {

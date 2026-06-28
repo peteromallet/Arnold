@@ -200,15 +200,18 @@ class ResidentRuntime:
                 in_burst_with=[msg_id for msg_id in message_ids if msg_id != item.message.id] or None,
                 idempotency_key=deterministic_idempotency_key("resident-message-turn", item.message.id, turn.id),
             )
+        burst = tuple({"role": "user", "content": item.event.content} for item in items)
+        history = self._build_history(conversation.id, exclude_ids=message_ids)
+        request_messages = (*history, *burst)
         model_seam_metadata = self._model_seam_metadata(
             conversation_id=conversation.id,
-            messages=tuple({"role": "user", "content": item.event.content} for item in items),
+            messages=request_messages,
             system_prompt=system_prompt,
             hot_context=hot_context,
         )
         request = AgentRequest(
             conversation_id=conversation.id,
-            messages=tuple({"role": "user", "content": item.event.content} for item in items),
+            messages=request_messages,
             system_prompt=system_prompt,
             hot_context=hot_context,
             model_seam_metadata=model_seam_metadata,
@@ -271,6 +274,28 @@ class ResidentRuntime:
                 duration_ms=record.duration_ms,
                 idempotency_key=deterministic_idempotency_key("resident-tool-call", turn_id, record.id),
             )
+
+    def _build_history(self, conversation_id: str, *, exclude_ids: Sequence[str]) -> tuple[dict[str, Any], ...]:
+        """Reconstruct the last N prior messages as user/assistant turns for context.
+
+        ``exclude_ids`` drops the current burst, which is already persisted before
+        the turn runs, so it is not double-counted as history.
+        """
+        if self.config.history_window <= 0:
+            return ()
+        rows = self.store.list_conversation_messages(
+            conversation_id,
+            limit=self.config.history_window,
+            exclude_ids=exclude_ids,
+        )
+        history: list[dict[str, Any]] = []
+        for message in rows:
+            content = message.content
+            if not (content and content.strip()):
+                continue
+            role = "user" if message.direction == "inbound" else "assistant"
+            history.append({"role": role, "content": content})
+        return tuple(history)
 
     def _model_seam_metadata(
         self,

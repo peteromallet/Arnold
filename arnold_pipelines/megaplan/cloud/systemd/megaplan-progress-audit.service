@@ -1,0 +1,8 @@
+[Unit]
+Description=Megaplan 5-hour DeepSeek plan progress audit
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/arnold-progress-auditor

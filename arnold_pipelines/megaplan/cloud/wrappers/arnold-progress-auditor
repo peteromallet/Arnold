@@ -1,0 +1,549 @@
+#!/usr/bin/env bash
+# arnold-progress-auditor — periodic Codex-orchestrated DeepSeek-backed plan progress audit.
+#
+# Host-side systemd oneshot (megaplan-progress-audit.service, every 6h via
+# megaplan-progress-audit.timer). When invoked on the host it docker-execs into
+# the megaplan-cloud-agent container (mirroring ensure-megaplan-watchdog) and
+# re-invokes itself there. When invoked inside the container it runs the audit.
+#
+# In-container loop:
+#   * discover candidate workspaces/plans from markers, live tmux sessions, and
+#     recent workspace activity inside the audit window
+#   * gather the last AUDIT_WINDOW_HOURS (default 6h) of activity per plan
+#     (plan_v*.md count/sizes, iteration/attempt progression, gate verdicts,
+#     critique trend, events.ndjson growth, progress_stall flags from
+#     /workspace/watchdog-report.json)
+#   * for plans with suspicious signals, dispatch Codex as the top-level audit
+#     orchestrator; Codex then reads the subagent-launcher skill and deploys
+#     DeepSeek research subagents (provider=deepseek, model
+#     deepseek:deepseek-v4-pro) via the existing subagent-launcher/megaplan
+#     dispatch contract
+#   * write /workspace/audit-reports/<ts>-audit.{json,md}, append one line to
+#     /workspace/audit-report.log
+#
+# MODEL-JUDGED: for each suspicious plan, Codex subjectively decides whether it's
+# a GENUINE non-critical deadlock (stuck looping/retrying) -> root-cause + fix +
+# push to editible-install (the watchdog relaunches the chain), or PASSIVE ->
+# document only. No hardcoded fix-vs-report rule.
+set -uo pipefail
+
+CONTAINER="${MEGAPLAN_CLOUD_CONTAINER:-megaplan-cloud-agent}"
+
+# Inside-container detection: /workspace/arnold editable checkout only exists
+# inside the container in this deployment.
+if [[ ! -d /workspace/arnold ]]; then
+  if ! docker inspect "$CONTAINER" >/dev/null 2>&1; then
+    echo "arnold-progress-auditor: container_missing container=$CONTAINER" >&2
+    exit 1
+  fi
+  exec docker exec "$CONTAINER" bash -lc '/usr/local/bin/arnold-progress-auditor "$@"' _ "$@"
+fi
+
+# ---- in-container audit -----------------------------------------------------
+
+if [[ -f /workspace/.cloud-hot-env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . /workspace/.cloud-hot-env
+  set +a
+fi
+
+MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+REPORT_DIR="${MEGAPLAN_AUDIT_REPORT_DIR:-/workspace/audit-reports}"
+REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
+WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
+ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-/workspace/arnold}"
+DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
+LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
+AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
+SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
+SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
+SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
+DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"
+CODEX_TIMEOUT="${MEGAPLAN_AUDIT_CODEX_TIMEOUT_SECS:-1800}"
+SUBAGENT_SKILL="${MEGAPLAN_AUDIT_SUBAGENT_SKILL:-$ARNOLD_SRC/arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md}"
+
+# Legacy direct DeepSeek launcher contract retained here for watchdog contract
+# tests and operator reference:
+# timeout "$SUBAGENT_TIMEOUT" python3 "$LAUNCHER" \
+#   --toolsets="file,web" \
+#   --model="$DEEPSEEK_MODEL" \
+#   --max-tokens="$SUBAGENT_MAX_TOKENS" \
+#   --query-file="$brief" \
+#   --project-dir="$workspace"
+
+mkdir -p "$REPORT_DIR" "$(dirname "$REPORT_LOG")"
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+JSON_OUT="$REPORT_DIR/${TS}-audit.json"
+MD_OUT="$REPORT_DIR/${TS}-audit.md"
+WORKLIST="$(mktemp)"
+GATHER_DIR="$(mktemp -d)"
+trap 'rm -rf "$WORKLIST" "$GATHER_DIR"' EXIT
+
+log() {
+  echo "[progress-auditor $(date -Iseconds)] $*"
+}
+
+# Build the plan worklist from marker, tmux, and workspace-activity discovery.
+python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "/workspace" "$ARNOLD_SRC" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import subprocess
+import sys
+
+marker_dir, out, window_h, discover_bin, workspace_root, arnold_src = sys.argv[1:7]
+window = float(window_h)
+cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=window)
+workspace_root_path = pathlib.Path(workspace_root)
+arnold_src_path = pathlib.Path(arnold_src).resolve()
+
+
+def _recent_mtime(path: pathlib.Path) -> bool:
+    try:
+        return dt.datetime.fromtimestamp(path.stat().st_mtime, tz=dt.timezone.utc) >= cutoff
+    except OSError:
+        return False
+
+
+def _plan_dirs(workspace: pathlib.Path) -> list[pathlib.Path]:
+    plans_root = workspace / ".megaplan" / "plans"
+    try:
+        if not plans_root.is_dir():
+            return []
+        return sorted(p for p in plans_root.iterdir() if p.is_dir())
+    except OSError:
+        return []
+
+
+def _merge(entries: dict[tuple[str, str], dict], workspace: pathlib.Path, plan_dir: pathlib.Path, session: str, source: str, updated: str = "") -> None:
+    key = (str(workspace), plan_dir.name)
+    entry = entries.setdefault(
+        key,
+        {
+            "workspace": str(workspace),
+            "plan": plan_dir.name,
+            "session": session or workspace.name,
+            "updated": updated,
+            "sources": [],
+        },
+    )
+    if not entry.get("session") and session:
+        entry["session"] = session
+    if updated and not entry.get("updated"):
+        entry["updated"] = updated
+    if source not in entry["sources"]:
+        entry["sources"].append(source)
+
+
+entries: dict[tuple[str, str], dict] = {}
+
+# (a) Marker-discovered workspaces.
+for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
+    try:
+        payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    workspace_raw = payload.get("workspace") or payload.get("workspace_dir")
+    if not workspace_raw:
+        continue
+    workspace = pathlib.Path(workspace_raw)
+    if not workspace.is_dir():
+        continue
+    session = payload.get("session") or marker_path.stem
+    updated = payload.get("updated_at") or payload.get("created_at") or ""
+    for plan_dir in _plan_dirs(workspace):
+        _merge(entries, workspace, plan_dir, session, "marker", updated)
+
+# (b) Tmux-discovered live marker-less workspaces.
+try:
+    discover_proc = subprocess.run(
+        ["bash", discover_bin, "tmux-unmarked", "--marker-dir", marker_dir, "--src-dir", arnold_src],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+except OSError:
+    discover_proc = None
+
+if discover_proc and discover_proc.returncode == 0:
+    for raw in discover_proc.stdout.splitlines():
+        if not raw.strip():
+            continue
+        try:
+            session, workspace_raw, _remote_spec, _run_kind, _plan_name, _relaunch_command = raw.split("\t", 5)
+        except ValueError:
+            continue
+        workspace = pathlib.Path(workspace_raw)
+        if not workspace.is_dir():
+            continue
+        for plan_dir in _plan_dirs(workspace):
+            _merge(entries, workspace, plan_dir, session, "tmux")
+
+# (c) Workspace-activity-discovered plans with recent state/events.
+try:
+    workspace_children = sorted(workspace_root_path.iterdir())
+except OSError:
+    workspace_children = []
+
+for workspace in workspace_children:
+    try:
+        resolved = workspace.resolve()
+    except OSError:
+        continue
+    if not workspace.is_dir() or workspace.name.startswith("."):
+        continue
+    if resolved == arnold_src_path:
+        continue
+    plans = _plan_dirs(workspace)
+    if not plans:
+        continue
+    for plan_dir in plans:
+        state_path = plan_dir / "state.json"
+        events_path = plan_dir / "events.ndjson"
+        if _recent_mtime(state_path) or _recent_mtime(events_path):
+            _merge(entries, workspace, plan_dir, workspace.name, "workspace_activity")
+
+with open(out, "w", encoding="utf-8") as handle:
+    for entry in sorted(entries.values(), key=lambda item: (item["workspace"], item["plan"])):
+        handle.write(json.dumps(entry, sort_keys=True) + "\n")
+PY
+
+log "auditing plans=$(wc -l < "$WORKLIST" | tr -d ' ') window_hours=$AUDIT_WINDOW_HOURS"
+
+# Collect the watchdog progress_stall flags so the auditor can cite them.
+stall_summary="none"
+if [[ -f "$WATCHDOG_REPORT" ]]; then
+  stall_summary="$(python3 - "$WATCHDOG_REPORT" <<'PY'
+import json, sys
+try:
+    rep = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("unreadable"); raise SystemExit(0)
+issues = rep.get("issues") or []
+stalls = [i for i in issues if i.get("status") == "progress_stall"]
+if not stalls:
+    print("none"); raise SystemExit(0)
+msgs = [i.get("message", "")[:200] for i in stalls]
+print(" ; ".join(msgs))
+PY
+)"
+fi
+
+# Build per-plan evidence + decide which need a research subagent.
+python3 - "$WORKLIST" "$GATHER_DIR" "$AUDIT_WINDOW_HOURS" "$ARNOLD_SRC" "$stall_summary" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+
+worklist, gather_dir, window_h, arnold_src, stall_summary = sys.argv[1:6]
+window = float(window_h)
+now = dt.datetime.now(dt.timezone.utc)
+cutoff = now - dt.timedelta(hours=window)
+
+plans = []
+with open(worklist, encoding="utf-8") as h:
+    for line in h:
+        line = line.strip()
+        if line:
+            plans.append(json.loads(line))
+
+def _recent_iso(ts_str):
+    if not ts_str:
+        return False
+    try:
+        when = dt.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+    except Exception:
+        return False
+    return when >= cutoff
+
+def _plan_evidence(entry):
+    workspace = entry["workspace"]
+    plan = entry["plan"]
+    plan_dir = pathlib.Path(workspace) / ".megaplan" / "plans" / plan
+    state_path = plan_dir / "state.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    plan_v_files = sorted(plan_dir.glob("plan_v*.md"))
+    recent_v = []
+    for p in plan_v_files:
+        try:
+            if dt.datetime.fromtimestamp(p.stat().st_mtime, tz=dt.timezone.utc) >= cutoff:
+                recent_v.append(p)
+        except OSError:
+            continue
+
+    try:
+        state_mtime = dt.datetime.fromtimestamp(state_path.stat().st_mtime, tz=dt.timezone.utc)
+    except OSError:
+        state_mtime = None
+    events_path = plan_dir / "events.ndjson"
+    try:
+        events_mtime = events_path.stat().st_mtime if events_path.exists() else 0
+    except OSError:
+        events_mtime = 0
+    events_recent = bool(events_mtime) and dt.datetime.fromtimestamp(events_mtime, tz=dt.timezone.utc) >= cutoff
+
+    if not recent_v and not _recent_iso(state.get("created_at")):
+        if (state_mtime is None or state_mtime < cutoff) and not events_recent:
+            return None
+
+    sizes = {}
+    for p in plan_v_files:
+        try:
+            sizes[p.name] = p.stat().st_size
+        except OSError:
+            continue
+    events_size = events_path.stat().st_size if events_path.exists() else 0
+    last_gate = state.get("last_gate") or {}
+    latest_failure = state.get("latest_failure") or {}
+    meta = state.get("meta") or {}
+    scores = meta.get("weighted_scores") or []
+    plan_deltas = meta.get("plan_deltas") or []
+    counts = meta.get("significant_counts") or []
+    active = state.get("active_step") or {}
+
+    history = state.get("history") or []
+    recent_history = []
+    for item in history:
+        ts = item.get("timestamp") or item.get("completed_at") or ""
+        if _recent_iso(ts):
+            recent_history.append({"step": item.get("step"), "result": item.get("result"), "ts": ts})
+    gates = [h for h in recent_history if h.get("step") == "gate"]
+    gate_iterate = sum(1 for g in gates if g.get("result") in ("iterate", "ITERATE", "blocked"))
+    gate_total = len(gates)
+
+    return {
+        "plan": plan_dir.name,
+        "workspace": workspace,
+        "session": entry.get("session") or pathlib.Path(workspace).name,
+        "sources": entry.get("sources") or [],
+        "current_state": state.get("current_state"),
+        "iteration": state.get("iteration"),
+        "active_step_phase": active.get("phase"),
+        "active_step_attempt": active.get("attempt"),
+        "plan_v_count": len(plan_v_files),
+        "plan_v_sizes": sizes,
+        "events_size": events_size,
+        "events_mtime_age_min": int((now.timestamp() - events_mtime) // 60) if events_mtime else None,
+        "last_gate_recommendation": last_gate.get("recommendation"),
+        "last_gate_score": scores[-1] if scores else None,
+        "score_trajectory": scores,
+        "plan_deltas": plan_deltas,
+        "significant_counts": counts,
+        "recent_gate_total": gate_total,
+        "recent_gate_iterate": gate_iterate,
+        "latest_failure_kind": latest_failure.get("kind"),
+        "latest_failure_message": (latest_failure.get("message") or "")[:240],
+        "latest_failure_metadata": latest_failure.get("metadata"),
+    }
+
+findings = []
+for entry in plans:
+    ev = _plan_evidence(entry)
+    if ev is None:
+        continue
+    # Suspicion heuristics — evidence-only, no auto-fix.
+    reasons = []
+    v_sizes = list(ev["plan_v_sizes"].values())
+    if ev["plan_v_count"] >= 4 and len(set(v_sizes)) >= 3:
+        reasons.append(f"plan_v refreshed {ev['plan_v_count']}x in {int(window)}h ({min(v_sizes)}->{max(v_sizes)} bytes)")
+    if ev["recent_gate_iterate"] >= 3:
+        reasons.append(f"gate=ITERATE/blocked {ev['recent_gate_iterate']}/{ev['recent_gate_total']} recent times")
+    scores = ev["score_trajectory"]
+    if len(scores) >= 3 and scores[-1] is not None and scores[-1] < scores[0] and scores[-1] <= 5:
+        reasons.append(f"score regression {scores[0]}->{scores[-1]}")
+    if ev["active_step_attempt"] and int(ev["active_step_attempt"]) >= 8:
+        reasons.append(f"step on attempt {ev['active_step_attempt']}")
+    if ev["latest_failure_kind"] in ("stalled", "phase_failed", "execution_blocked"):
+        reasons.append(f"{ev['latest_failure_kind']}: {ev['latest_failure_message']}")
+    if not reasons:
+        continue
+    ev["reasons"] = reasons
+    findings.append(ev)
+
+with open(os.path.join(gather_dir, "findings.json"), "w", encoding="utf-8") as h:
+    json.dump({"window_hours": window, "stall_summary": stall_summary, "findings": findings}, h, indent=2, sort_keys=True)
+print(len(findings))
+PY
+FINDING_COUNT="$(python3 -c 'import json,sys; print(len((json.load(open(sys.argv[1], encoding="utf-8")).get("findings") or [])) )' "$GATHER_DIR/findings.json")"
+
+log "suspicious_plans=$FINDING_COUNT stall_flags=$stall_summary"
+
+# For each suspicious plan, dispatch Codex as the audit orchestrator. Codex is
+# instructed to read the subagent-launcher skill, deploy a DeepSeek research
+# subagent (partnered-5, provider=deepseek, model=deepseek:deepseek-v4-pro),
+# and return concise evidence-based findings. Codex stdout is what feeds the
+# existing report-writer path below.
+dispatch_one() {
+  local gather_file="$1"
+  local plan workspace reasons
+  plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
+  workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
+  reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
+  log "plan=$plan reasons=$reasons"
+
+  local brief="$GATHER_DIR/brief-${plan}.md"
+  {
+    echo "# Progress audit: $plan"
+    echo
+    echo "Workspace: \`$workspace\`"
+    echo "Suspicious signals: $reasons"
+    echo
+    echo "Evidence JSON (verbatim):"
+    echo '```json'
+    cat "$gather_file"
+    echo '```'
+    echo
+    cat <<EOF
+You are the audit agent for plan $plan. Suspicious signals: $reasons. Evidence
+JSON is above. Make a SUBJECTIVE judgement: is this a GENUINE non-critical
+deadlock the run cannot break on its own (stuck looping / retrying constantly,
+blocking real progress) — or PASSIVE (legitimate thorough iteration, a completed
+milestone's stale failure record, a transient one-off already recovered from,
+cosmetic drift)? Weigh the evidence: is the milestone completed? is the failure
+recent or stale? are plan revisions actually changing content? is it advancing?
+
+If GENUINELY STUCK: root-cause it from the evidence + workspace, FIX the root
+cause in $ARNOLD_SRC on the editible-install branch (Arnold source only — do NOT
+touch the running chain's project tree), keep it narrow + safe, validate with
+python3 -m py_compile and a focused test, commit + push to origin/editible-install.
+The cloud watchdog relaunches the chain on your fix.
+
+If PASSIVE: do NOT fix. Return a hypothesis (likely cause of the lack of
+convergence) + a recommendation (highest-leverage next action for the operator).
+
+Start with your verdict on its own line — FIXED <commit-sha> or PASSIVE — then
+cite SPECIFIC evidence (iteration/attempt counts, gate verdicts, exact failure
+messages, whether the milestone is completed, plan_v churn). Under 250 words.
+EOF
+
+  } > "$brief"
+
+  local resp_path="$GATHER_DIR/resp-${plan}.txt"
+  if command -v codex >/dev/null 2>&1; then
+    log "dispatching Codex audit plan=$plan deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
+    (
+      cd "$workspace" &&
+      if [[ -f /workspace/.cloud-hot-env ]]; then
+        set -a
+        # shellcheck disable=SC1091
+        . /workspace/.cloud-hot-env
+        set +a
+      fi
+      export PYENV_VERSION=3.11.11
+      export MEGAPLAN_DEFAULT_PROFILE="$SUBAGENT_PROFILE"
+      export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
+      timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$brief")" </dev/null
+    ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" || true
+    if [[ ! -s "$resp_path" ]]; then
+      echo "Codex audit orchestrator returned no output (timed out or failed to launch DeepSeek research subagents); see audit log." > "$resp_path"
+    fi
+  else
+    log "codex CLI missing; skipping dispatch for $plan"
+    echo "codex CLI missing; no automated hypothesis." > "$resp_path"
+  fi
+
+  python3 - "$gather_file" "$resp_path" "$DEEPSEEK_MODEL" <<'PY'
+import json, sys
+gather, resp, model = sys.argv[1], sys.argv[2], sys.argv[3]
+data = json.load(open(gather))
+text = open(resp, encoding="utf-8").read().strip()
+data["deepseek_model"] = model
+data["deepseek_response"] = text
+data["hypothesis"] = text
+with open(gather, "w", encoding="utf-8") as h:
+    json.dump(data, h, indent=2, sort_keys=True)
+PY
+}
+
+# Snapshot each finding into its own gather file for the subagent.
+python3 - "$GATHER_DIR/findings.json" "$GATHER_DIR" <<'PY'
+import json, os, sys
+findings_path, gather_dir = sys.argv[1], sys.argv[2]
+data = json.load(open(findings_path, encoding="utf-8"))
+for i, f in enumerate(data.get("findings", [])):
+    with open(os.path.join(gather_dir, f"finding-{i}.json"), "w", encoding="utf-8") as h:
+        json.dump(f, h, indent=2, sort_keys=True)
+print(len(data.get("findings", [])))
+PY
+N_FINDINGS="$FINDING_COUNT"
+
+for ((i=0; i<N_FINDINGS; i++)); do
+  dispatch_one "$GATHER_DIR/finding-$i.json"
+done
+
+# Final report assembly: JSON + Markdown + one-line log append.
+python3 - "$GATHER_DIR/findings.json" "$JSON_OUT" "$MD_OUT" "$REPORT_LOG" "$TS" <<'PY'
+import datetime as dt
+import glob
+import json
+import os
+import pathlib
+import sys
+
+findings_path, json_out, md_out, log_path, ts = sys.argv[1:6]
+data = json.load(open(findings_path, encoding="utf-8"))
+
+# Merge the per-finding subagent responses back in.
+findings = data.get("findings") or []
+for i, f in enumerate(findings):
+    resp_path = os.path.join(os.path.dirname(findings_path), f"finding-{i}.json")
+    if os.path.exists(resp_path):
+        f.update(json.load(open(resp_path, encoding="utf-8")))
+
+now_iso = dt.datetime.now(dt.timezone.utc).isoformat()
+payload = {
+    "timestamp_utc": now_iso,
+    "window_hours": data.get("window_hours"),
+    "stall_summary": data.get("stall_summary"),
+    "finding_count": len(findings),
+    "deepseek_model": findings[0].get("deepseek_model") if findings else None,
+    "findings": findings,
+}
+pathlib.Path(os.path.dirname(json_out)).mkdir(parents=True, exist_ok=True)
+with open(json_out, "w", encoding="utf-8") as h:
+    json.dump(payload, h, indent=2, sort_keys=True)
+    h.write("\n")
+
+lines = [
+    f"# Progress audit — {ts}",
+    "",
+    f"Window: {payload['window_hours']}h · findings: {payload['finding_count']} · watchdog stall flags: {payload['stall_summary']}",
+    f"DeepSeek model: {payload.get('deepseek_model') or 'n/a'}",
+    "",
+]
+if not findings:
+    lines.append("_No suspicious plans detected in the audit window._")
+for f in findings:
+    lines.append(f"## {f.get('plan')} — `{f.get('session')}`")
+    lines.append(f"- workspace: `{f.get('workspace')}`")
+    lines.append(f"- state: `{f.get('current_state')}` · iteration `{f.get('iteration')}` · last gate `{f.get('last_gate_recommendation')}` (score {f.get('last_gate_score')})")
+    lines.append(f"- plan_v: {f.get('plan_v_count')} versions · recent gates ITERATE/blocked {f.get('recent_gate_iterate')}/{f.get('recent_gate_total')}")
+    reasons = "; ".join(f.get("reasons", []))
+    lines.append(f"- signals: {reasons}")
+    if f.get("latest_failure_message"):
+        lines.append(f"- latest_failure: {f.get('latest_failure_kind')} — {f.get('latest_failure_message')}")
+    lines.append("")
+    lines.append("**DeepSeek hypothesis / recommendation:**")
+    lines.append("")
+    resp = (f.get("hypothesis") or "").strip() or "_(no response)_"
+    lines.append(resp)
+    lines.append("")
+with open(md_out, "w", encoding="utf-8") as h:
+    h.write("\n".join(lines) + "\n")
+
+# One-line log append (human-greppable).
+summary_bits = [f.get("plan") for f in findings] or ["none"]
+with open(log_path, "a", encoding="utf-8") as h:
+    h.write(f"{now_iso}\tfindings={len(findings)}\tplans={','.join(summary_bits)}\tstall={data.get('stall_summary','')[:80]}\n")
+print(json_out)
+PY
+
+log "report written to $JSON_OUT (findings=$FINDING_COUNT)"

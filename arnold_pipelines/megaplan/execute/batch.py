@@ -77,13 +77,10 @@ from arnold_pipelines.megaplan.orchestration.execution_evidence import (
 )
 from arnold_pipelines.megaplan.orchestration.phase_result import Deviation
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
-    scheduler_completed_ids,
+    effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.plan_contracts import (
     pre_existing_task_ids_from_contract,
-)
-from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
-    EvidenceExecutionWindow,
 )
 from arnold_pipelines.megaplan.calibration import query_route_if_enabled
 from arnold_pipelines.megaplan.prompts import (
@@ -149,6 +146,45 @@ _MODEL_SEAM_PROVIDER_PREFIXES = frozenset(
 )
 
 
+def _repair_missing_user_action_gate(
+    finalize_data: dict[str, Any],
+    plan_dir: Path,
+    state: PlanState,
+) -> bool:
+    raw_actions = finalize_data.get("user_actions", [])
+    tasks = finalize_data.get("tasks", [])
+    if not isinstance(raw_actions, list) or not isinstance(tasks, list) or not tasks:
+        return False
+    if not any(
+        isinstance(action, dict) and action.get("phase") == "before_execute"
+        for action in raw_actions
+    ):
+        return False
+
+    from arnold_pipelines.megaplan.blocker_recovery import (
+        find_synthetic_before_execute_gate,
+    )
+
+    gate_task_id, _protected = find_synthetic_before_execute_gate(finalize_data)
+    if gate_task_id is not None:
+        return False
+
+    from arnold_pipelines.megaplan.handlers.finalize import (
+        _ensure_user_actions_pre_gate_task,
+        _render_user_actions_md,
+    )
+
+    _ensure_user_actions_pre_gate_task(finalize_data, state)
+    if find_synthetic_before_execute_gate(finalize_data)[0] is None:
+        return False
+    write_plan_artifact_json(
+        plan_dir, "finalize.json", finalize_data, contract_context=None
+    )
+    atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(finalize_data))
+    atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="execute"))
+    return True
+
+
 def _pre_existing_task_ids(plan_dir: Path) -> set[str]:
     """Read pre-existing task IDs persisted in ``contract.json``."""
 
@@ -209,57 +245,6 @@ def _scheduler_completed_ids_for_tasks(
     state: PlanState | None = None,
     decisions: dict[str, Any] | None = None,
 ) -> set[str]:
-    current_head = _best_effort_git_head(root)
-    execution_window = _execution_window_from_state(
-        state,
-        root=root,
-        current_head=current_head,
-    )
-    completed = scheduler_completed_ids(
-        tasks,
-        plan_dir=plan_dir,
-        current_head=current_head,
-        execution_window=execution_window,
-        decisions=decisions,
-    )
-    # Baseline-unavailable checkpoints are deferred by the harness during
-    # finalize (status="skipped" with an executor note). They are not real
-    # work items, so dependents should still be scheduled.
-    skipped_with_reason = {
-        task["id"]
-        for task in tasks
-        if isinstance(task, dict)
-        and isinstance(task.get("id"), str)
-        and task.get("status") == "skipped"
-        and isinstance(task.get("executor_notes"), str)
-        and task["executor_notes"].strip()
-    }
-    if skipped_with_reason:
-        completed = completed | skipped_with_reason
-    return completed
-
-
-def _execution_window_from_state(
-    state: PlanState | None,
-    *,
-    root: Path | None,
-    current_head: str | None,
-) -> EvidenceExecutionWindow | None:
-    if state is None or current_head is None:
-        return None
-    meta = state.get("meta") if isinstance(state, dict) else None
-    baseline = (
-        meta.get("execution_baseline")
-        if isinstance(meta, dict) and isinstance(meta.get("execution_baseline"), dict)
-        else None
-    )
-    if not isinstance(baseline, dict):
-        return None
-    base_sha = _string_or_none(baseline.get("base_sha")) or _string_or_none(
-        baseline.get("head")
-    )
-    if base_sha is None:
-        return None
     config = state.get("config") if isinstance(state, dict) else None
     configured_project_dir = (
         config.get("project_dir") if isinstance(config, dict) else None
@@ -269,20 +254,15 @@ def _execution_window_from_state(
         if isinstance(configured_project_dir, str) and configured_project_dir
         else root
     )
-    if project_dir is None:
-        return None
-    return EvidenceExecutionWindow(
+    current_head = _best_effort_git_head(project_dir)
+    return effective_execute_completed_task_ids(
+        tasks,
+        plan_dir=plan_dir,
         project_dir=project_dir,
-        base_sha=base_sha,
-        head_sha=current_head,
-        base_ref=_string_or_none(baseline.get("base_ref")),
+        state=state,
+        current_head=current_head,
+        decisions=decisions,
     )
-
-
-def _string_or_none(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
-
-
 def _best_effort_git_head(root: Path | None) -> str | None:
     if root is None:
         return None
@@ -439,6 +419,48 @@ def _resolve_tier_spec(
         phase, tier_args
     )
     return agent, _mode, model
+
+
+def _task_to_global_batch_number_map(
+    global_batches: list[list[str]],
+) -> dict[str, int]:
+    """Map each task ID to its 1-indexed global batch number."""
+
+    mapping: dict[str, int] = {}
+    for batch_number, batch in enumerate(global_batches, start=1):
+        for task_id in batch:
+            if isinstance(task_id, str) and task_id:
+                mapping[task_id] = batch_number
+    return mapping
+
+
+def _resolve_batch_artifact_number(
+    batch_task_ids: Iterable[str],
+    *,
+    global_batch_lookup: dict[tuple[str, ...], int],
+    task_to_batch_number: dict[str, int],
+    batch_index: int,
+) -> int:
+    """Choose the durable artifact slot for an auto-loop batch.
+
+    Resumed execute runs often work on the unfinished subset of an original
+    global batch. Exact tuple matching is too strict for that case because the
+    remaining task list no longer equals the original batch tuple.
+    """
+
+    batch_tuple = tuple(batch_task_ids)
+    exact = global_batch_lookup.get(batch_tuple)
+    if exact is not None:
+        return exact
+
+    candidate_numbers = {
+        task_to_batch_number[task_id]
+        for task_id in batch_tuple
+        if task_id in task_to_batch_number
+    }
+    if len(candidate_numbers) == 1:
+        return next(iter(candidate_numbers))
+    return batch_index
 
 
 # Private marker set: dispatcher return paths stamp one of these four values.
@@ -842,12 +864,17 @@ def _count_execute_tracking(
     *,
     active_task_ids: set[str],
     active_sense_check_ids: set[str],
+    completed_task_ids: set[str] | None = None,
 ) -> tuple[int, int, int, int]:
     tracked_tasks = sum(
         1
         for task in finalize_data.get("tasks", [])
         if task.get("id") in active_task_ids
-        and task.get("status") in TERMINAL_TASK_STATUSES
+        and (
+            task.get("id") in completed_task_ids
+            if completed_task_ids is not None
+            else task.get("status") in TERMINAL_TASK_STATUSES
+        )
     )
     acknowledged_checks = sum(
         1
@@ -1159,7 +1186,7 @@ def _run_and_merge_batch(
             artifact_prefix=f"execution_batch_{batch_number}",
             keys=("files_changed",),
         )
-    _stamp_head_sha_on_task_records(payload, finalize_data, root)
+    _stamp_head_sha_on_task_records(payload, finalize_data, project_dir)
     atomic_write_json(batch_artifact_path(plan_dir, batch_number), payload)
     atomic_write_json(plan_dir / "execution_audit.json", execution_audit)
     write_plan_artifact_json(plan_dir, "finalize.json", finalize_data, contract_context=None)
@@ -1216,6 +1243,10 @@ def handle_execute_one_batch(
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
+    if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
+        log.info(
+            "backfilled missing before_execute user-action gate for stale finalize payload"
+        )
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
@@ -1466,6 +1497,12 @@ def handle_execute_one_batch(
     tracked_tasks = [
         task for task in all_tasks if isinstance(task.get("id"), str)
     ]
+    effective_completed_ids = _scheduler_completed_ids_for_tasks(
+        tracked_tasks,
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
     batch_blocked_ids = [
         task.get("id")
         for task in tracked_tasks
@@ -1477,10 +1514,7 @@ def handle_execute_one_batch(
         blocking_reasons.append(blocked_task_reason)
     if result.routing_degradations:
         blocking_reasons.extend(result.routing_degradations)
-    all_tracked = all(
-        task.get("status") in {"done", "skipped"}
-        for task in tracked_tasks
-    )
+    all_tracked = all(task.get("id") in effective_completed_ids for task in tracked_tasks)
     any_done = any(task.get("status") == "done" for task in tracked_tasks)
     if all_tracked and tracked_tasks and not any_done:
         blocking_reasons.append(
@@ -1587,10 +1621,15 @@ def handle_execute_one_batch(
             cost_usd=result.worker.cost_usd,
             session_id=result.worker.session_id,
             trace_output=result.worker.trace_output,
+            rendered_prompt=result.worker.rendered_prompt,
+            model_actual=result.worker.model_actual,
             prompt_tokens=result.worker.prompt_tokens,
             completion_tokens=result.worker.completion_tokens,
             total_tokens=result.worker.total_tokens,
             rate_limit=result.worker.rate_limit,
+            worker_channel=result.worker.worker_channel,
+            auth_channel=result.worker.auth_channel,
+            auth_metadata=result.worker.auth_metadata,
         )
         receipt_metrics = execute_metrics(aggregate_payload, drift)
         receipt_metrics["batches"] = batch_payloads
@@ -2292,6 +2331,10 @@ def handle_execute_auto_loop(
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
+    if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
+        log.info(
+            "backfilled missing before_execute user-action gate for stale finalize payload"
+        )
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
@@ -2599,6 +2642,7 @@ def handle_execute_auto_loop(
     global_batch_lookup = {
         tuple(batch): index + 1 for index, batch in enumerate(global_batches)
     }
+    task_to_batch_number = _task_to_global_batch_number_map(global_batches)
     no_pending_execution = not pending_tasks and not rework_mode
     batches_to_run = (
         [review_rework_task_ids]
@@ -2665,6 +2709,11 @@ def handle_execute_auto_loop(
     rate_limits: list[dict[str, Any] | None] = []
     timeout_error: CliError | None = None
     latest_session_id: str | None = None
+    latest_model_actual: str | None = None
+    latest_worker_channel: str | None = None
+    latest_auth_channel: str | None = None
+    latest_auth_metadata: dict[str, Any] | None = None
+    latest_rendered_prompt: str | None = None
     blocking_reasons: list[str] = []
     routing_degradations: list[str] = []
     timeout_recovery: StepResponse | None = None
@@ -2681,10 +2730,11 @@ def handle_execute_auto_loop(
     batch_to_tier: list[dict[str, Any]] = []
 
     for batch_index, batch_task_ids in enumerate(batches_to_run, start=1):
-        batch_number_for_artifact = (
-            1
-            if single_batch_mode
-            else global_batch_lookup.get(tuple(batch_task_ids), batch_index)
+        batch_number_for_artifact = 1 if single_batch_mode else _resolve_batch_artifact_number(
+            batch_task_ids,
+            global_batch_lookup=global_batch_lookup,
+            task_to_batch_number=task_to_batch_number,
+            batch_index=batch_index,
         )
         batch_sense_check_ids = (
             all_sense_check_ids
@@ -2863,6 +2913,11 @@ def handle_execute_auto_loop(
         total_total_tokens += int(result.worker.total_tokens or 0)
         rate_limits.append(result.worker.rate_limit)
         latest_session_id = result.worker.session_id
+        latest_model_actual = result.worker.model_actual
+        latest_worker_channel = result.worker.worker_channel
+        latest_auth_channel = result.worker.auth_channel
+        latest_auth_metadata = result.worker.auth_metadata
+        latest_rendered_prompt = result.worker.rendered_prompt
         apply_session_update(
             state,
             "execute",
@@ -3035,11 +3090,18 @@ def handle_execute_auto_loop(
     )
     finalize_hash = sha256_file(plan_dir / "finalize.json")
 
+    completed_task_ids = _scheduler_completed_ids_for_tasks(
+        finalize_data.get("tasks", []),
+        plan_dir=plan_dir,
+        root=root,
+        state=state,
+    )
     tracked_tasks, total_tasks, acknowledged_checks, total_checks = (
         _count_execute_tracking(
             finalize_data,
             active_task_ids=active_task_ids,
             active_sense_check_ids=active_sense_check_ids,
+            completed_task_ids=completed_task_ids,
         )
     )
     aggregate_pre_existing_ids = _pre_existing_task_ids(plan_dir)
@@ -3131,10 +3193,15 @@ def handle_execute_auto_loop(
         cost_usd=total_cost_usd,
         session_id=latest_session_id,
         trace_output="".join(trace_chunks) if trace_chunks else None,
+        rendered_prompt=latest_rendered_prompt,
+        model_actual=latest_model_actual,
         prompt_tokens=total_prompt_tokens,
         completion_tokens=total_completion_tokens,
         total_tokens=total_total_tokens,
         rate_limit=aggregate_rate_limits(rate_limits),
+        worker_channel=latest_worker_channel,
+        auth_channel=latest_auth_channel,
+        auth_metadata=latest_auth_metadata,
     )
     receipt_metrics = execute_metrics(aggregate_payload, drift)
     receipt_metrics["batches"] = batch_payloads

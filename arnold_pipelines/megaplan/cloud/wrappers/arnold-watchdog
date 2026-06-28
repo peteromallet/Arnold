@@ -1,0 +1,2297 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+if [[ -f /workspace/.cloud-hot-env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . /workspace/.cloud-hot-env
+  set +a
+fi
+
+SELF_PATH="${BASH_SOURCE[0]:-$0}"
+if command -v readlink >/dev/null 2>&1; then
+  SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
+fi
+WATCHDOG_ARGS=("$@")
+WATCHDOG_STARTED_AT="$(date +%s)"
+LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"
+LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"
+if [[ "$LOCK_HELD" != "1" ]] && command -v flock >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  export CLOUD_WATCHDOG_LOCK_HELD=1
+  exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
+fi
+
+LOG="${CLOUD_WATCHDOG_LOG:-/workspace/watchdog.log}"
+REPORT_PATH="${CLOUD_WATCHDOG_REPORT_PATH:-/workspace/watchdog-report.json}"
+REPORT_ARCHIVE_DIR="${CLOUD_WATCHDOG_REPORT_ARCHIVE_DIR:-/workspace/watchdog-reports}"
+REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
+INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
+MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+REPAIR_WITH_CODEX="${CLOUD_WATCHDOG_CODEX_REPAIR:-0}"
+PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
+CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
+REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
+REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
+REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
+REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
+SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
+SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
+SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
+EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
+KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
+DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
+ONCE="${1:-}"
+
+mkdir -p "$(dirname "$LOG")"
+
+log() {
+  echo "[watchdog $(date -Iseconds)] $*" | tee -a "$LOG"
+}
+
+maybe_reexec_updated_watchdog() {
+  local wrapper_mtime
+  wrapper_mtime="$(stat -c %Y "$SELF_PATH" 2>/dev/null || echo 0)"
+  [[ "$wrapper_mtime" =~ ^[0-9]+$ ]] || return 0
+  if (( wrapper_mtime > WATCHDOG_STARTED_AT )); then
+    log "watchdog wrapper updated on disk; re-execing current script"
+    exec bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
+  fi
+}
+
+json_field() {
+  local marker="$1"
+  local field="$2"
+  python3 - "$marker" "$field" <<'PY'
+import json
+import sys
+
+path, field = sys.argv[1], sys.argv[2]
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+value = payload.get(field)
+if not isinstance(value, str) or not value:
+    sys.exit(1)
+print(value)
+PY
+}
+
+safe_name() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
+}
+
+report_item() {
+  local path="$1"
+  local session="$2"
+  local action="$3"
+  local status="$4"
+  local message="$5"
+  local workspace="${6:-}"
+  local remote_spec="${7:-}"
+  python3 - "$path" "$session" "$action" "$status" "$message" "$workspace" "$remote_spec" <<'PY'
+import json
+import sys
+
+path, session, action, status, message, workspace, remote_spec = sys.argv[1:]
+payload = {
+    "session": session,
+    "action": action,
+    "status": status,
+    "message": message,
+}
+if workspace:
+    payload["workspace"] = workspace
+if remote_spec:
+    payload["remote_spec"] = remote_spec
+with open(path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload, sort_keys=True) + "\n")
+PY
+}
+
+plan_attention_status_env() {
+  local workspace="$1"
+  local remote_spec_path="$2"
+  local run_kind="${3:-chain}"
+  local plan_name="${4:-}"
+  python3 - "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" <<'PY'
+import hashlib
+import json
+import shlex
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1])
+remote_spec_raw = sys.argv[2]
+run_kind = sys.argv[3]
+plan_name = sys.argv[4]
+
+
+def emit(name: str, value: str) -> None:
+    print(f"{name}={shlex.quote(value)}")
+
+
+def add_unique(values: list[str], value: str | None) -> None:
+    if isinstance(value, str) and value and value not in values:
+        values.append(value)
+
+
+resolved_plan_name = plan_name if isinstance(plan_name, str) and plan_name else ""
+chain_state = {}
+if run_kind == "chain" and remote_spec_raw:
+    spec_path = Path(remote_spec_raw)
+    try:
+        spec_resolved = spec_path.resolve()
+    except Exception:
+        spec_resolved = spec_path
+    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+    candidates = (
+        spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+        spec_resolved.with_name("chain_state.json"),
+    )
+    for candidate in candidates:
+        try:
+            raw = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(raw, dict):
+            chain_state = raw
+            current_plan = raw.get("current_plan_name")
+            if isinstance(current_plan, str) and current_plan and "/" not in current_plan:
+                resolved_plan_name = current_plan
+            break
+
+plans_dir = workspace / ".megaplan" / "plans"
+state_path = None
+if resolved_plan_name:
+    candidate = plans_dir / resolved_plan_name / "state.json"
+    try:
+        candidate.relative_to(plans_dir)
+        state_path = candidate
+    except Exception:
+        state_path = None
+elif run_kind == "plan":
+    state_paths = sorted(
+        plans_dir.glob("*/state.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if state_paths:
+        state_path = state_paths[0]
+        resolved_plan_name = state_path.parent.name
+
+state = {}
+if state_path is not None:
+    try:
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        raw_state = {}
+    if isinstance(raw_state, dict):
+        state = raw_state
+        if not resolved_plan_name:
+            name = raw_state.get("name")
+            if isinstance(name, str) and name:
+                resolved_plan_name = name
+
+current_state = state.get("current_state")
+if not isinstance(current_state, str):
+    current_state = ""
+resume_cursor = state.get("resume_cursor")
+retry_strategy = ""
+if isinstance(resume_cursor, dict):
+    value = resume_cursor.get("retry_strategy")
+    if isinstance(value, str):
+        retry_strategy = value
+latest_failure = state.get("latest_failure")
+failure_kind = ""
+failure_message = ""
+failure_phase = ""
+failure_recorded_at = ""
+if isinstance(latest_failure, dict):
+    for key, target in (
+        ("kind", "failure_kind"),
+        ("message", "failure_message"),
+        ("phase", "failure_phase"),
+        ("recorded_at", "failure_recorded_at"),
+    ):
+        value = latest_failure.get(key)
+        if isinstance(value, str):
+            if target == "failure_kind":
+                failure_kind = value
+            elif target == "failure_message":
+                failure_message = value
+            elif target == "failure_phase":
+                failure_phase = value
+            else:
+                failure_recorded_at = value
+
+tiers_tried: list[str] = []
+history = state.get("history")
+if isinstance(history, list):
+    for entry in history:
+        if not isinstance(entry, dict) or entry.get("step") != "execute":
+            continue
+        batches = entry.get("batch_to_tier")
+        if not isinstance(batches, list):
+            continue
+        for batch in batches:
+            if not isinstance(batch, dict):
+                continue
+            actual_agent = batch.get("actual_agent")
+            actual_model = batch.get("actual_model")
+            if isinstance(actual_agent, str) and isinstance(actual_model, str) and actual_agent and actual_model:
+                add_unique(tiers_tried, f"{actual_agent}:{actual_model}")
+                continue
+            tier_model_spec = batch.get("tier_model_spec")
+            if isinstance(tier_model_spec, str) and tier_model_spec:
+                add_unique(tiers_tried, tier_model_spec)
+                continue
+            resolved_agent = batch.get("resolved_agent")
+            resolved_model = batch.get("resolved_model")
+            if isinstance(resolved_agent, str) and isinstance(resolved_model, str) and resolved_agent and resolved_model:
+                add_unique(tiers_tried, f"{resolved_agent}:{resolved_model}")
+if not tiers_tried:
+    execute_tiers = (((state.get("config") or {}).get("tier_models") or {}).get("execute"))
+    if isinstance(execute_tiers, dict):
+        def sort_key(item: tuple[str, object]) -> tuple[int, str]:
+            key = item[0]
+            try:
+                return (0, int(key))
+            except Exception:
+                return (1, str(key))
+
+        for _, spec in sorted(execute_tiers.items(), key=sort_key):
+            if isinstance(spec, str) and spec:
+                add_unique(tiers_tried, spec)
+
+pushed_commits: list[str] = []
+for raw in (
+    chain_state.get("last_pushed_commit"),
+    chain_state.get("branch_head"),
+    chain_state.get("pr_head"),
+    state.get("last_pushed_commit"),
+    state.get("branch_head"),
+    state.get("pr_head"),
+):
+    add_unique(pushed_commits, raw if isinstance(raw, str) else None)
+
+manual_review = current_state == "manual_review" or retry_strategy == "manual_review"
+
+emit("PLAN_STATUS_FOUND", "1" if state else "0")
+emit("PLAN_STATUS_PLAN_NAME", resolved_plan_name)
+emit("PLAN_STATUS_CURRENT_STATE", current_state)
+emit("PLAN_STATUS_RETRY_STRATEGY", retry_strategy)
+emit("PLAN_STATUS_FAILURE_KIND", failure_kind)
+emit("PLAN_STATUS_FAILURE_MESSAGE", failure_message)
+emit("PLAN_STATUS_FAILURE_PHASE", failure_phase)
+emit("PLAN_STATUS_FAILURE_RECORDED_AT", failure_recorded_at)
+emit("PLAN_STATUS_TIERS_TRIED", ", ".join(tiers_tried))
+emit("PLAN_STATUS_PUSHED_COMMITS", ", ".join(pushed_commits))
+emit("PLAN_STATUS_MANUAL_REVIEW", "1" if manual_review else "0")
+PY
+}
+
+notify_needs_human() {
+  local report_items="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local run_kind="${5:-chain}"
+  local health="${6:-stopped}"
+  local summary="$7"
+  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin
+  payload_tmp="$(mktemp)"
+  dm_result_tmp="$(mktemp)"
+  discord_dm_bin="${DISCORD_DM_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
+  python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
+    "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
+    "${PLAN_STATUS_FAILURE_KIND:-}" "${PLAN_STATUS_FAILURE_MESSAGE:-}" "${PLAN_STATUS_FAILURE_PHASE:-}" \
+    "${PLAN_STATUS_FAILURE_RECORDED_AT:-}" "${PLAN_STATUS_TIERS_TRIED:-}" "${PLAN_STATUS_PUSHED_COMMITS:-}" <<'PY'
+import datetime as dt
+import json
+import sys
+
+(
+    path,
+    session,
+    workspace,
+    remote_spec,
+    run_kind,
+    health,
+    summary,
+    plan_name,
+    current_state,
+    retry_strategy,
+    failure_kind,
+    failure_message,
+    failure_phase,
+    failure_recorded_at,
+    tiers_tried,
+    pushed_commits,
+) = sys.argv[1:]
+
+payload = {
+    "event": "cloud_watchdog_needs_human",
+    "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "session": session,
+    "workspace": workspace,
+    "remote_spec": remote_spec,
+    "run_kind": run_kind,
+    "health": health,
+    "summary": summary,
+    "plan": {
+        "name": plan_name,
+        "current_state": current_state,
+        "retry_strategy": retry_strategy,
+        "latest_failure": {
+            "kind": failure_kind,
+            "message": failure_message,
+            "phase": failure_phase,
+            "recorded_at": failure_recorded_at,
+        },
+        "tiers_tried": [item for item in tiers_tried.split(", ") if item],
+        "pushed_commit_shas": [item for item in pushed_commits.split(", ") if item],
+    },
+}
+failure_parts = [part for part in (failure_kind, failure_message, failure_phase) if part]
+fields = [
+    {"label": "Session", "value": session, "style": "code"},
+    {"label": "Workspace", "value": workspace, "style": "code"},
+]
+if remote_spec:
+    fields.append({"label": "Spec", "value": remote_spec, "style": "code"})
+fields.extend(
+    [
+        {"label": "Run kind", "value": run_kind},
+        {"label": "Health", "value": health},
+        {"label": "Plan", "value": plan_name or "<unknown>", "style": "code"},
+        {"label": "Summary", "value": summary},
+        {"label": "Failure", "value": " - ".join(failure_parts) if failure_parts else summary},
+    ]
+)
+tiers = payload["plan"]["tiers_tried"]
+if tiers:
+    fields.append({"label": "Tiers tried", "value": tiers, "style": "code_list", "joiner": " -> "})
+commits = payload["plan"]["pushed_commit_shas"]
+if commits:
+    fields.append({"label": "Pushed commits", "value": commits, "style": "code_list", "joiner": ", "})
+payload.update(
+    {
+        "title": f"Megaplan needs human review - {session}",
+        "fields": fields,
+        "next_action": "Needs human review. Inspect the workspace, review the failure, and decide whether to resume, repair, or clean up.",
+    }
+)
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+
+  delivered=0
+  webhook_delivered=0
+  if [[ -x "$discord_dm_bin" ]]; then
+    if "$discord_dm_bin" < "$payload_tmp" > "$dm_result_tmp" 2>>"$LOG"; then
+      read -r dm_status dm_reason < <(python3 - "$dm_result_tmp" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("invalid unknown")
+    raise SystemExit(0)
+print("ok" if payload.get("ok") else "failed", payload.get("reason") or "")
+PY
+)
+      if [[ "$dm_status" == "ok" ]]; then
+        delivered=1
+        log "needs-human discord dm delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      elif [[ "$dm_reason" == "missing_config" ]]; then
+        log "needs-human discord dm skipped; DISCORD_BOT_TOKEN or DISCORD_DM_USER_ID unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      else
+        log "needs-human discord dm delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      fi
+    else
+      log "needs-human discord dm helper failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+    fi
+  else
+    log "needs-human discord dm helper unavailable session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+  fi
+
+  if [[ "$delivered" != "1" && -n "$REPORT_WEBHOOK" && "${dm_reason:-}" != "missing_config" ]]; then
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$payload_tmp" "$REPORT_WEBHOOK" >> "$LOG" 2>&1; then
+        webhook_delivered=1
+        log "needs-human webhook delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      else
+        log "needs-human webhook delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      fi
+    else
+      log "needs-human webhook skipped; curl unavailable session=$session"
+    fi
+  else
+    if [[ "$delivered" != "1" ]]; then
+      log "needs-human webhook unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+    fi
+  fi
+
+  report_item "$report_items" "$session" "observe" "needs_human" "$summary" "$workspace" "$remote_spec"
+  if [[ "$delivered" == "1" ]]; then
+    report_item "$report_items" "$session" "notify" "discord_dm_sent" "needs-human Discord DM delivered" "$workspace" "$remote_spec"
+  fi
+  if [[ "$webhook_delivered" == "1" ]]; then
+    report_item "$report_items" "$session" "notify" "webhook_sent" "needs-human webhook delivered" "$workspace" "$remote_spec"
+  fi
+  rm -f "$payload_tmp" "$dm_result_tmp"
+}
+
+adopt_unmarked_tmux_sessions() {
+  local discover_bin="${DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
+  [[ -f "$discover_bin" ]] || return 0
+
+  local started_at
+  started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  while IFS=$'\t' read -r session workspace remote_spec run_kind plan_name relaunch_command; do
+    [[ -n "${session:-}" ]] || continue
+    mkdir -p "$MARKER_DIR"
+    python3 -c 'import json, sys
+marker_path, session, workspace, remote_spec, started_at, run_kind, plan_name, relaunch_command = sys.argv[1:]
+payload = {"session": session, "workspace": workspace, "remote_spec": remote_spec, "started_at": started_at}
+if run_kind == "plan":
+    payload["run_kind"] = "plan"
+    payload["plan_name"] = plan_name
+    payload["relaunch_command"] = relaunch_command
+with open(marker_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, sort_keys=True)
+' "$MARKER_DIR/$session.json" "$session" "$workspace" "$remote_spec" "$started_at" "${run_kind:-chain}" "${plan_name:-}" "${relaunch_command:-}"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$session" "$workspace" "$remote_spec" "${run_kind:-chain}" "${plan_name:-}"
+  done < <(bash "$discover_bin" tmux-unmarked --marker-dir "$MARKER_DIR" --src-dir "$SRC_DIR")
+}
+
+repo_url_with_token() {
+  local repo="$1"
+  if [[ "$repo" == https://github.com/* && "$repo" != https://*@github.com/* && -n "${GITHUB_TOKEN:-}" ]]; then
+    printf 'https://x-access-token:%s@github.com/%s' "$GITHUB_TOKEN" "${repo#https://github.com/}"
+  else
+    printf '%s' "$repo"
+  fi
+}
+
+emit_report() {
+  local items_path="$1"
+  local markers="$2"
+  local report_tmp
+  report_tmp="$(mktemp)"
+  python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_WITH_CODEX" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"
+import datetime as dt
+import json
+import os
+import shutil
+import sys
+
+items_path, markers, report_path, archive_dir, repair, push = sys.argv[1:]
+items = []
+if os.path.exists(items_path):
+    with open(items_path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line:
+                items.append(json.loads(line))
+issues = [
+    item for item in items
+    if item.get("status") not in {"alive", "complete", "completed", "restarted", "synced", "skipped"}
+]
+restarted = [item for item in items if item.get("status") == "restarted"]
+reaped = [item for item in items if item.get("status") == "reaped"]
+needs_human = [item for item in items if item.get("status") == "needs_human"]
+webhook_notifications = [
+    item for item in items
+    if item.get("action") == "notify" and item.get("status") == "webhook_sent"
+]
+now = dt.datetime.now(dt.timezone.utc)
+timestamp = now.isoformat()
+archive_name = now.strftime("%Y%m%dT%H%M%SZ") + ".json"
+archive_path = os.path.join(archive_dir, archive_name) if archive_dir else ""
+payload = {
+    "timestamp_utc": timestamp,
+    "marker_dir": os.environ.get("CLOUD_WATCHDOG_MARKER_DIR", "/workspace/.megaplan/cloud-sessions"),
+    "markers_seen": int(markers),
+    "sessions_seen": len(items),
+    "alive_sessions": sum(1 for item in items if item.get("status") == "alive"),
+    "restarted_sessions": len(restarted),
+    "reaped_repairs": len(reaped),
+    "needs_human_sessions": len(needs_human),
+    "webhook_notifications_sent": len(webhook_notifications),
+    "issue_count": len(issues),
+    "codex_repair_enabled": repair == "1",
+    "push_repairs_enabled": push == "1",
+    "latest_report_path": report_path,
+    "archive_report_path": archive_path,
+    "items": items,
+    "issues": issues,
+}
+os.makedirs(os.path.dirname(report_path) or ".", exist_ok=True)
+with open(report_path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+if archive_path:
+    os.makedirs(archive_dir, exist_ok=True)
+    shutil.copyfile(report_path, archive_path)
+print(json.dumps(payload, sort_keys=True))
+PY
+  local summary
+  summary="$(cat "$report_tmp")"
+  log "report $summary"
+  if [[ -n "$REPORT_WEBHOOK" ]]; then
+    if command -v curl >/dev/null 2>&1; then
+      curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$report_tmp" "$REPORT_WEBHOOK" >> "$LOG" 2>&1 \
+        && log "report webhook delivered" \
+        || log "report webhook delivery failed"
+    else
+      log "report webhook skipped; curl unavailable"
+    fi
+  fi
+  rm -f "$report_tmp"
+}
+
+sync_cloud_runtime_wrappers() {
+  local wrapper_src_dir="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers"
+  local wrapper_dest_dir="/usr/local/bin"
+  local support_dest_dir="/usr/local/share/arnold-watchdog"
+  local wrapper
+  [[ -d "$wrapper_src_dir" ]] || return 0
+
+  mkdir -p "$wrapper_dest_dir" "$support_dest_dir"
+  for wrapper in "$wrapper_src_dir"/arnold-* "$wrapper_src_dir"/mp-*; do
+    [[ -f "$wrapper" ]] || continue
+    install -m 0755 "$wrapper" "$wrapper_dest_dir/$(basename "$wrapper")" || return 1
+  done
+  if [[ -f "$wrapper_src_dir/principles.md" ]]; then
+    install -m 0644 "$wrapper_src_dir/principles.md" "$support_dest_dir/principles.md" || return 1
+  fi
+}
+
+refresh_editable_install() {
+  if [[ -d "$SRC_DIR" && -f "$SRC_DIR/pyproject.toml" ]]; then
+    log "refreshing Arnold editable install from $SRC_DIR"
+    python3 -m pip install --upgrade -e "$SRC_DIR[agent]" >> "$LOG" 2>&1 || return 1
+  elif [[ -x /usr/local/bin/mp-refresh-megaplan ]]; then
+    log "refreshing Arnold install with mp-refresh-megaplan fallback"
+    MEGAPLAN_REF="$SYNC_BRANCH" /usr/local/bin/mp-refresh-megaplan >> "$LOG" 2>&1 || return 1
+  else
+    log "mp-refresh-megaplan missing; skipping editable refresh"
+  fi
+
+  sync_cloud_runtime_wrappers >> "$LOG" 2>&1 || return 1
+
+  python3 - <<'PY' >> "$LOG" 2>&1
+import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+PY
+}
+
+ensure_editable_source_checkout() {
+  if [[ -d "$SRC_DIR/.git" ]]; then
+    return 0
+  fi
+
+  local repo="$SYNC_REPO"
+  if [[ -z "$repo" && -d /workspace/Arnold/.git ]]; then
+    repo="$(cd /workspace/Arnold && git remote get-url origin 2>/dev/null || true)"
+  fi
+  if [[ -z "$repo" ]]; then
+    log "editable source checkout missing at $SRC_DIR and no repo URL is configured"
+    return 1
+  fi
+
+  log "cloning editable source checkout branch=$SYNC_BRANCH into $SRC_DIR"
+  mkdir -p "$(dirname "$SRC_DIR")"
+  git clone --branch "$SYNC_BRANCH" "$(repo_url_with_token "$repo")" "$SRC_DIR" >> "$LOG" 2>&1
+}
+
+sync_skills_in_source() {
+  local source_dir="$1"
+  if [[ -f "$source_dir/scripts/generate_arnold_docs.py" ]]; then
+    log "regenerating Arnold docs/skills in $source_dir"
+    (cd "$source_dir" && python3 scripts/generate_arnold_docs.py --write) >> "$LOG" 2>&1 || {
+      log "generated docs/skills sync failed"
+      return 1
+    }
+  fi
+  if [[ -x "$source_dir/sync-skills.sh" ]]; then
+    log "syncing installed agent skills from $source_dir"
+    (cd "$source_dir" && ./sync-skills.sh) >> "$LOG" 2>&1 || {
+      log "installed skill sync failed"
+      return 1
+    }
+  else
+    log "sync-skills.sh missing or not executable in $source_dir; skipping installed skill symlinks"
+  fi
+  sync_extra_cloud_skills
+}
+
+sync_extra_cloud_skills() {
+  if [[ ! -d "$EXTRA_SKILLS_DIR" ]]; then
+    log "extra cloud skills dir missing at $EXTRA_SKILLS_DIR; skipping"
+    return 0
+  fi
+
+  local target_dirs=(
+    "$HOME/.claude/skills"
+    "$HOME/.codex/skills"
+    "$HOME/.agents/skills"
+    "$HOME/.hermes/skills"
+  )
+  local skill_dir name target_dir dest created skipped updated
+  created=0
+  skipped=0
+  updated=0
+  log "syncing extra cloud skills from $EXTRA_SKILLS_DIR"
+  for skill_dir in "$EXTRA_SKILLS_DIR"/*/; do
+    [[ -d "$skill_dir" && -f "$skill_dir/SKILL.md" ]] || continue
+    name="$(basename "$skill_dir")"
+    for target_dir in "${target_dirs[@]}"; do
+      mkdir -p "$target_dir"
+      dest="$target_dir/$name"
+      if [[ -L "$dest" ]]; then
+        ln -sfn "$skill_dir" "$dest"
+        updated=$((updated + 1))
+      elif [[ -e "$dest" ]]; then
+        skipped=$((skipped + 1))
+      else
+        ln -s "$skill_dir" "$dest"
+        created=$((created + 1))
+      fi
+    done
+  done
+  log "extra cloud skills synced created=$created updated=$updated skipped=$skipped"
+}
+
+sync_editable_source_branch() {
+  local report_items="$1"
+  if [[ "$SYNC_ENABLED" != "1" ]]; then
+    log "editable source sync disabled"
+    report_item "$report_items" "editable-install" "sync" "skipped" "sync disabled" "$SRC_DIR" "$SYNC_BRANCH"
+    return 0
+  fi
+  if [[ -z "$SYNC_BRANCH" ]]; then
+    log "editable source sync skipped; no branch configured"
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "no sync branch configured" "$SRC_DIR"
+    return 1
+  fi
+
+  ensure_editable_source_checkout || {
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "source checkout unavailable" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  if [[ ! -d "$SRC_DIR/.git" ]]; then
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "source checkout missing git metadata" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  fi
+
+  local before after status branch
+  before="$(cd "$SRC_DIR" && git rev-parse --short HEAD 2>/dev/null || true)"
+  log "syncing editable source branch=$SYNC_BRANCH dir=$SRC_DIR before=$before"
+  (
+    cd "$SRC_DIR" &&
+    git config --global --add safe.directory "$SRC_DIR" >/dev/null 2>&1 || true &&
+    git fetch origin "$SYNC_BRANCH" --prune &&
+    branch="$(git branch --show-current)" &&
+    if [[ "$branch" != "$SYNC_BRANCH" ]]; then
+      if [[ -n "$(git status --porcelain)" ]]; then
+        echo "cannot switch from $branch to $SYNC_BRANCH: checkout has local changes" >&2
+        exit 12
+      fi
+      git checkout "$SYNC_BRANCH"
+    fi &&
+    git pull --ff-only origin "$SYNC_BRANCH"
+  ) >> "$LOG" 2>&1 || {
+    log "editable source fetch/pull failed"
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "fetch/pull failed" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  sync_skills_in_source "$SRC_DIR" || {
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "skill sync failed" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  status="$(cd "$SRC_DIR" && git status --porcelain)"
+  if [[ -n "$status" ]]; then
+    log "committing editable source drift"
+    (
+      cd "$SRC_DIR" &&
+      git add -A &&
+      git commit -m "Sync cloud editable install and skills" &&
+      git push origin "$SYNC_BRANCH"
+    ) >> "$LOG" 2>&1 || {
+      log "editable source commit/push failed"
+      report_item "$report_items" "editable-install" "sync" "sync_failed" "commit/push failed" "$SRC_DIR" "$SYNC_BRANCH"
+      return 1
+    }
+  else
+    log "editable source has no drift to push"
+  fi
+
+  refresh_editable_install || {
+    log "editable install refresh after sync failed"
+    report_item "$report_items" "editable-install" "sync" "sync_failed" "refresh failed" "$SRC_DIR" "$SYNC_BRANCH"
+    return 1
+  }
+
+  after="$(cd "$SRC_DIR" && git rev-parse --short HEAD 2>/dev/null || true)"
+  report_item "$report_items" "editable-install" "sync" "synced" "editable source branch synced and refreshed ($before -> $after)" "$SRC_DIR" "$SYNC_BRANCH"
+}
+
+codex_repair_editable_install() {
+  local reason="$1"
+  if [[ "$REPAIR_WITH_CODEX" != "1" ]]; then
+    log "editable install check failed; Codex repair disabled (set CLOUD_WATCHDOG_CODEX_REPAIR=1): $reason"
+    return 1
+  fi
+  if [[ ! -d "$SRC_DIR/.git" ]]; then
+    log "Codex repair skipped; source checkout missing at $SRC_DIR"
+    return 1
+  fi
+  if ! command -v codex >/dev/null 2>&1; then
+    log "Codex repair skipped; codex CLI unavailable"
+    return 1
+  fi
+
+  local prompt
+  prompt="$(mktemp)"
+  cat > "$prompt" <<EOF
+You are running inside an Arnold cloud worker. The editable Arnold install failed this watchdog check:
+
+$reason
+
+Working directory: $SRC_DIR
+
+Fix only the Arnold source checkout so the cloud worker can import and run:
+python3 -c "import arnold_pipelines.megaplan.cloud.cli"
+
+The editable install checkout must stay on branch $SYNC_BRANCH. Do not use
+MEGAPLAN_REF or the active workflow checkout branch to choose the repair branch.
+
+Keep the patch narrowly scoped. Run the smallest relevant verification. Do not ask for input.
+EOF
+
+  log "starting Codex editable-install repair in $SRC_DIR"
+  (
+    cd "$SRC_DIR" &&
+    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$prompt")" </dev/null
+  ) >> "$LOG" 2>&1
+  local rc=$?
+  rm -f "$prompt"
+  if [[ $rc -ne 0 ]]; then
+    log "Codex repair failed rc=$rc"
+    return "$rc"
+  fi
+
+  if ! (cd "$SRC_DIR" && python3 - <<'PY' >> "$LOG" 2>&1
+import arnold_pipelines.megaplan.cloud.cli  # noqa: F401
+PY
+  ); then
+    log "Codex repair completed but import check still fails"
+    return 1
+  fi
+
+  if (cd "$SRC_DIR" && git diff --quiet && git diff --cached --quiet); then
+    log "Codex repair produced no source changes"
+    return 0
+  fi
+
+  (
+    cd "$SRC_DIR" &&
+    git add -A &&
+    git commit -m "Fix cloud editable install from watchdog"
+  ) >> "$LOG" 2>&1 || {
+    log "repair commit failed"
+    return 1
+  }
+
+  if [[ "$PUSH_REPAIRS" == "1" ]]; then
+    log "pushing watchdog repair commit"
+    (cd "$SRC_DIR" && git push) >> "$LOG" 2>&1 || {
+      log "repair push failed"
+      return 1
+    }
+  else
+    log "repair committed locally; push disabled (set CLOUD_WATCHDOG_PUSH_REPAIRS=1)"
+  fi
+}
+
+ensure_install_or_repair() {
+  local output
+  output="$(mktemp)"
+  if refresh_editable_install > "$output" 2>&1; then
+    cat "$output" >> "$LOG"
+    rm -f "$output"
+    return 0
+  fi
+  local reason
+  reason="$(cat "$output")"
+  cat "$output" >> "$LOG"
+  rm -f "$output"
+  codex_repair_editable_install "$reason"
+}
+
+session_health_status() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local wait_status
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    if [[ "$run_kind" == "chain" ]]; then
+      wait_status="$(chain_wait_status "$workspace")"
+      if [[ "$wait_status" != "none" ]]; then
+        echo "$wait_status"
+        return 0
+      fi
+    fi
+    echo "stopped"
+    return 0
+  fi
+
+  local pane log_path
+  pane="$(tmux capture-pane -pt "$session" -S -120 2>/dev/null || true)"
+  if printf '%s\n' "$pane" | grep -Eq 'cmd exited rc=[1-9]|error retry [0-9]+/[0-9]+'; then
+    echo "retrying_failure"
+    return 0
+  fi
+
+  if [[ "$run_kind" == "chain" ]]; then
+    if [[ "$session" == "megaplan-chain" ]]; then
+      log_path="$workspace/.megaplan/cloud-chain.log"
+    else
+      log_path="$workspace/.megaplan/cloud-chain-${session}.log"
+    fi
+    if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "invalid_spec"|invalid_spec|"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
+      echo "chain_log_failure"
+      return 0
+    fi
+
+    if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+      echo "alive"
+      return 0
+    fi
+
+    wait_status="$(chain_wait_status "$workspace")"
+    if [[ "$wait_status" != "none" ]]; then
+      echo "$wait_status"
+      return 0
+    fi
+  elif [[ -n "$plan_name" ]]; then
+    if ps -eww -o args= \
+      | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan (init|auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)" \
+      | grep -Eq -- "(--plan[=[:space:]]$plan_name|--name[=[:space:]]$plan_name.*--auto-start|--auto-start.*--name[=[:space:]]$plan_name)"; then
+      echo "alive"
+      return 0
+    fi
+    if ps -eww -o args= \
+      | grep -E "[a]rnold (auto|resume)|[m]egaplan (auto|resume)" \
+      | grep -Fq -- "--plan $plan_name"; then
+      echo "alive"
+      return 0
+    fi
+  fi
+
+  echo "stopped"
+}
+
+kimi_operator_running() {
+  local session="$1"
+  local pgid_path pgid
+  if pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
+    return 0
+  fi
+  pgid_path="$(kimi_pgid_path "$session")"
+  [[ -r "$pgid_path" ]] || return 1
+  read -r pgid < "$pgid_path" || return 1
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 -- "-$pgid" >/dev/null 2>&1 || return 1
+  ps -eo pgid=,args= 2>/dev/null \
+    | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
+    | grep -Eq 'arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec'
+}
+
+# Per-session repair-cycle marker. The watchdog sets it when a stopped session
+# gets a mechanical relaunch; if the session re-stops before becoming healthy,
+# the next tick escalates to Kimi. Once Kimi is actually dispatched, its PGID
+# sidecar distinguishes "Kimi currently/ran" from the mechanical-first stage.
+# Cleared whenever the session is observed healthy or the direct relaunch
+# fallback consumes the cycle after Kimi exits without recovery.
+kimi_dispatch_marker_path() {
+  printf '%s/%s.kimi-dispatch' "$MARKER_DIR" "$1"
+}
+
+kimi_pgid_path() {
+  printf '%s/%s.kimi-pgid' "$MARKER_DIR" "$1"
+}
+
+session_marker_path() {
+  printf '%s/%s.json' "$MARKER_DIR" "$1"
+}
+
+repair_progress_snapshot_path() {
+  printf '%s/%s.reap-progress.json' "$MARKER_DIR" "$1"
+}
+
+default_plan_relaunch_command() {
+  local plan_name="$1"
+  local workspace="$2"
+  local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
+    "$SRC_DIR" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
+}
+
+resolve_relaunch_command() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local relaunch_command="${6:-}"
+
+  if [[ -n "$relaunch_command" ]]; then
+    printf '%s' "$relaunch_command"
+    return 0
+  fi
+  if [[ "$run_kind" == "plan" ]]; then
+    [[ -n "$plan_name" ]] || return 1
+    default_plan_relaunch_command "$plan_name" "$workspace"
+    return 0
+  fi
+
+  local log_relative
+  if [[ "$session" == "megaplan-chain" ]]; then
+    log_relative=".megaplan/cloud-chain.log"
+  else
+    log_relative=".megaplan/cloud-chain-${session}.log"
+  fi
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    "$SRC_DIR" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
+}
+
+kimi_dispatch_marker_set() {
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$(kimi_dispatch_marker_path "$1")" 2>/dev/null || true
+}
+
+kimi_dispatch_marker_clear() {
+  rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")" 2>/dev/null || true
+}
+
+clear_session_tracking_artifacts() {
+  local session="$1"
+  local plan_name="${2:-}"
+  rm -f "$(session_marker_path "$session")" 2>/dev/null || true
+  kimi_dispatch_marker_clear "$session"
+  if [[ -n "$plan_name" ]]; then
+    rm -f "$MARKER_DIR/$plan_name.progress.json" 2>/dev/null || true
+  fi
+}
+
+plan_terminal_status() {
+  local workspace="$1"
+  local plan_name="$2"
+  python3 - "$workspace" "$plan_name" <<'PY'
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plan_name = sys.argv[2]
+plans_dir = workspace / ".megaplan" / "plans"
+state_paths = []
+if plan_name:
+    state_paths.append(plans_dir / plan_name / "state.json")
+else:
+    state_paths.extend(
+        sorted(
+            plans_dir.glob("*/state.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    )
+if not state_paths:
+    print("none")
+    raise SystemExit(0)
+
+state_path = state_paths[0]
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    print("none")
+    raise SystemExit(0)
+
+current_state = state.get("current_state")
+if current_state == "done":
+    print(f"{state_path.parent.name}\t{current_state}")
+else:
+    print("none")
+PY
+}
+
+kill_kimi_repair_tree() {
+  local session="$1"
+  local pgid_path pgid root_pid
+  pgid_path="$(kimi_pgid_path "$session")"
+  [[ -r "$pgid_path" ]] || return 1
+  read -r pgid < "$pgid_path" || return 1
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  root_pid="$(ps -eo pid=,pgid= 2>/dev/null | awk -v target="$pgid" '$2 == target {print $1; exit}')"
+  if [[ "$root_pid" =~ ^[0-9]+$ ]]; then
+    kill_repair_tree_complete "$root_pid" "$pgid"
+  else
+    kill_process_group "$pgid"
+  fi
+}
+
+kimi_dispatch_failed_previously() {
+  local session="$1"
+  [[ -f "$(kimi_dispatch_marker_path "$session")" ]] \
+    && [[ -f "$(kimi_pgid_path "$session")" ]] \
+    && ! kimi_operator_running "$session"
+}
+
+mechanical_relaunch_attempted_previously() {
+  local session="$1"
+  [[ -f "$(kimi_dispatch_marker_path "$session")" ]] \
+    && [[ ! -f "$(kimi_pgid_path "$session")" ]] \
+    && ! kimi_operator_running "$session"
+}
+
+# Background-dispatch the Kimi goal operator so it never blocks the tick. The
+# operator fixes the root cause and relaunches the run on its own; this returns
+# immediately so the watchdog can scan the next session and write its report.
+# Returns 0 if dispatched, 1 if the operator binary is missing.
+dispatch_kimi_repair() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local pgid_path
+  if [[ ! -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
+    return 1
+  fi
+  pgid_path="$(kimi_pgid_path "$session")"
+  kimi_dispatch_marker_set "$session"
+  setsid bash -c 'echo "$$" > "$0"; exec /usr/local/bin/arnold-kimi-goal-operator "$@"' \
+    "$pgid_path" "$session" "$workspace" "$remote_spec" \
+    >> "$LOG" 2>&1 < /dev/null &
+  log "Kimi goal operator background-dispatched session=$session pid=$!"
+  return 0
+}
+
+reap_stale_repair_candidates() {
+  python3 - "$REAP_AGE_SECS" "$REAP_ORPHAN_AGE_SECS" <<'PY'
+import re
+import sys
+
+SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
+KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
+CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
+RUN_AGENT_HINTS = (
+    "workflows on this Hetzner worker should never pause unexpectedly",
+    "cloud watchdog",
+    "Kimi goal operator",
+)
+CODEX_HINTS = (
+    "Codex repair subagent launched by the cloud watchdog",
+    "leave enough evidence for the Kimi supervisor",
+    "workflows on this Hetzner worker should not pause unexpectedly",
+)
+PROTECTED_HINTS = (
+    "arnold-watchdog",
+    "arnold-progress-auditor",
+)
+RULE_PRIORITY = {
+    "orphan_fast_path": 0,
+    "age_backstop": 1,
+}
+KIND_PRIORITY = {
+    "arnold-kimi-goal-operator": 0,
+    "arnold.agent.run_agent": 1,
+    "codex exec": 2,
+}
+
+
+def parse_ps_row(raw: str):
+    parts = raw.strip().split(None, 4)
+    if len(parts) < 5:
+        return None
+    try:
+        return {
+            "pid": int(parts[0]),
+            "ppid": int(parts[1]),
+            "pgid": int(parts[2]),
+            "etimes": int(parts[3]),
+            "args": parts[4],
+        }
+    except ValueError:
+        return None
+
+
+def extract_session(kind: str, args: str) -> str:
+    if kind == "arnold-kimi-goal-operator":
+        match = KIMI_RE.search(args)
+        return match.group(2) if match else ""
+    match = SESSION_RE.search(args)
+    return match.group(1) if match else ""
+
+
+def classify_kind(args: str) -> str:
+    if any(hint in args for hint in PROTECTED_HINTS):
+        return ""
+    kimi_match = KIMI_RE.search(args)
+    if kimi_match:
+        return "arnold-kimi-goal-operator"
+    if "arnold.agent.run_agent" in args:
+        session = extract_session("arnold.agent.run_agent", args)
+        if session and any(hint in args for hint in RUN_AGENT_HINTS):
+            return "arnold.agent.run_agent"
+    if CODEX_RE.search(args):
+        session = extract_session("codex exec", args)
+        if session and any(hint in args for hint in CODEX_HINTS):
+            return "codex exec"
+    return ""
+
+
+def decide_reap(row: dict[str, object], age_secs: int, orphan_age_secs: int) -> dict[str, object]:
+    args = str(row.get("args") or "")
+    kind = classify_kind(args)
+    session = extract_session(kind, args) if kind else ""
+    decision = {
+        "pid": int(row.get("pid") or 0),
+        "ppid": int(row.get("ppid") or 0),
+        "pgid": int(row.get("pgid") or 0),
+        "etimes": int(row.get("etimes") or 0),
+        "kind": kind,
+        "session": session,
+        "reap": False,
+        "rule": "",
+        "reason": "non_target" if not kind else "under_age",
+    }
+    if not kind:
+        return decision
+    if (
+        kind in {"arnold.agent.run_agent", "codex exec"}
+        and decision["ppid"] == 1
+        and decision["etimes"] > orphan_age_secs
+    ):
+        decision["reap"] = True
+        decision["rule"] = "orphan_fast_path"
+        decision["reason"] = "orphaned_ppid_1"
+        return decision
+    if decision["etimes"] > age_secs:
+        decision["reap"] = True
+        decision["rule"] = "age_backstop"
+        decision["reason"] = "elapsed_exceeded"
+    return decision
+
+
+def choose_reap_candidates(rows: list[dict[str, object]], age_secs: int, orphan_age_secs: int):
+    candidates = [
+        decide_reap(row, age_secs, orphan_age_secs)
+        for row in rows
+    ]
+    candidates = [item for item in candidates if item["reap"]]
+    candidates.sort(
+        key=lambda item: (
+            item["session"] or "",
+            item["pgid"],
+            RULE_PRIORITY[item["rule"]],
+            KIND_PRIORITY[item["kind"]],
+            -item["etimes"],
+            item["pid"],
+        )
+    )
+    seen_sessions = set()
+    seen_pgids = set()
+    selected = []
+    for item in candidates:
+        session = item["session"]
+        pgid = item["pgid"]
+        if session and session in seen_sessions:
+            continue
+        if pgid in seen_pgids:
+            continue
+        selected.append(item)
+        if session:
+            seen_sessions.add(session)
+        seen_pgids.add(pgid)
+    return selected
+
+
+def main() -> int:
+    age_secs = int(sys.argv[1])
+    orphan_age_secs = int(sys.argv[2])
+    rows = []
+    for raw in sys.stdin:
+        row = parse_ps_row(raw)
+        if row:
+            rows.append(row)
+    for item in choose_reap_candidates(rows, age_secs, orphan_age_secs):
+        print(
+            "\t".join(
+                [
+                    str(item["pid"]),
+                    str(item["ppid"]),
+                    str(item["pgid"]),
+                    str(item["etimes"]),
+                    str(item["kind"]),
+                    str(item["session"]),
+                    str(item["rule"]),
+                    str(item["reason"]),
+                ]
+            )
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY
+}
+
+reap_stalled_repair_candidates() {
+  python3 - "$MARKER_DIR" "$KIMI_OPERATOR_ROOT" "$REAP_STALL_GRACE_SECS" "$REAP_STALL_IDLE_SECS" "$REAP_AGE_SECS" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import re
+import sys
+
+marker_dir = pathlib.Path(sys.argv[1])
+operator_root = pathlib.Path(sys.argv[2])
+stall_grace_secs = int(sys.argv[3])
+stall_idle_secs = int(sys.argv[4])
+reap_age_secs = int(sys.argv[5])
+
+SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
+KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
+CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
+RUN_AGENT_HINTS = (
+    "workflows on this Hetzner worker should never pause unexpectedly",
+    "cloud watchdog",
+    "Kimi goal operator",
+)
+CODEX_HINTS = (
+    "Codex repair subagent launched by the cloud watchdog",
+    "leave enough evidence for the Kimi supervisor",
+    "workflows on this Hetzner worker should not pause unexpectedly",
+)
+PROTECTED_HINTS = (
+    "arnold-watchdog",
+    "arnold-progress-auditor",
+)
+KIND_PRIORITY = {
+    "arnold-kimi-goal-operator": 0,
+    "arnold.agent.run_agent": 1,
+    "codex exec": 2,
+}
+RECENT_WINDOW_SECS = max(reap_age_secs, stall_grace_secs + stall_idle_secs, 1800)
+now = dt.datetime.now(dt.timezone.utc)
+
+
+def parse_ps_row(raw: str):
+    parts = raw.strip().split(None, 4)
+    if len(parts) < 5:
+        return None
+    try:
+        return {
+            "pid": int(parts[0]),
+            "ppid": int(parts[1]),
+            "pgid": int(parts[2]),
+            "etimes": int(parts[3]),
+            "args": parts[4],
+        }
+    except ValueError:
+        return None
+
+
+def extract_session(kind: str, args: str) -> str:
+    if kind == "arnold-kimi-goal-operator":
+        match = KIMI_RE.search(args)
+        return match.group(2) if match else ""
+    match = SESSION_RE.search(args)
+    return match.group(1) if match else ""
+
+
+def classify_kind(args: str) -> str:
+    if any(hint in args for hint in PROTECTED_HINTS):
+        return ""
+    kimi_match = KIMI_RE.search(args)
+    if kimi_match:
+        return "arnold-kimi-goal-operator"
+    if "arnold.agent.run_agent" in args:
+        session = extract_session("arnold.agent.run_agent", args)
+        if session and any(hint in args for hint in RUN_AGENT_HINTS):
+            return "arnold.agent.run_agent"
+    if CODEX_RE.search(args):
+        session = extract_session("codex exec", args)
+        if session and any(hint in args for hint in CODEX_HINTS):
+            return "codex exec"
+    return ""
+
+
+def safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", value)
+
+
+def iso_to_dt(raw: object):
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def file_stats(path: pathlib.Path) -> tuple[float, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return (0.0, 0)
+    return (float(stat.st_mtime), int(stat.st_size))
+
+
+def snapshot_path_for(session: str) -> pathlib.Path:
+    return marker_dir / f"{session}.reap-progress.json"
+
+
+def find_recent_operator_dir(session: str):
+    if not session or not operator_root.is_dir():
+        return None
+    safe_session = safe_name(session)
+    candidates = []
+    for path in operator_root.glob(f"*-{safe_session}"):
+        if not path.is_dir():
+            continue
+        operator_log = path / "operator.log"
+        codex_log = path / "codex-repair.log"
+        mtimes = [file_stats(path)[0], file_stats(operator_log)[0], file_stats(codex_log)[0]]
+        newest_mtime = max(mtimes)
+        if newest_mtime <= 0:
+            continue
+        age_secs = max(0, int((now - dt.datetime.fromtimestamp(newest_mtime, tz=dt.timezone.utc)).total_seconds()))
+        if age_secs > RECENT_WINDOW_SECS:
+            continue
+        candidates.append((newest_mtime, path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], str(item[1])), reverse=True)
+    return candidates[0][1]
+
+
+def assess_session_progress(session: str) -> dict[str, object]:
+    operator_dir = find_recent_operator_dir(session)
+    if operator_dir is None:
+        return {"mapped": False, "reason": "unmappable"}
+
+    operator_log = operator_dir / "operator.log"
+    codex_log = operator_dir / "codex-repair.log"
+    log_mtime, log_size = file_stats(operator_log)
+    codex_mtime, codex_size = file_stats(codex_log)
+    if max(log_mtime, codex_mtime) <= 0:
+        return {"mapped": False, "reason": "no_logs"}
+
+    snapshot = {
+        "operator_dir": str(operator_dir),
+        "log_mtime": log_mtime,
+        "log_size": log_size,
+        "codex_log_mtime": codex_mtime,
+        "codex_log_size": codex_size,
+    }
+    snapshot_dir = snapshot_path_for(session).parent
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    prev = {}
+    snapshot_path = snapshot_path_for(session)
+    if snapshot_path.exists():
+        try:
+            prev = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except Exception:
+            prev = {}
+
+    same_observation = (
+        prev.get("operator_dir") == snapshot["operator_dir"]
+        and prev.get("log_mtime") == snapshot["log_mtime"]
+        and prev.get("log_size") == snapshot["log_size"]
+        and prev.get("codex_log_mtime") == snapshot["codex_log_mtime"]
+        and prev.get("codex_log_size") == snapshot["codex_log_size"]
+    )
+    if same_observation:
+        last_advance = (
+            iso_to_dt(prev.get("last_advance_ts"))
+            or iso_to_dt(prev.get("ts"))
+            or dt.datetime.fromtimestamp(max(log_mtime, codex_mtime), tz=dt.timezone.utc)
+        )
+    else:
+        if prev:
+            last_advance = now
+        else:
+            last_advance = dt.datetime.fromtimestamp(max(log_mtime, codex_mtime), tz=dt.timezone.utc)
+    idle_secs = max(0, int((now - last_advance).total_seconds()))
+
+    persisted = dict(snapshot)
+    persisted["last_advance_ts"] = last_advance.isoformat()
+    persisted["ts"] = now.isoformat()
+    try:
+        snapshot_path.write_text(json.dumps(persisted, sort_keys=True) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+    return {
+        "mapped": True,
+        "operator_dir": str(operator_dir),
+        "idle_secs": idle_secs,
+        "stalled": idle_secs >= stall_idle_secs,
+    }
+
+
+rows_by_session = {}
+progress_cache = {}
+for raw in sys.stdin:
+    row = parse_ps_row(raw)
+    if not row:
+        continue
+    kind = classify_kind(str(row["args"]))
+    if not kind:
+        continue
+    session = extract_session(kind, str(row["args"]))
+    if not session:
+        continue
+    row["kind"] = kind
+    row["session"] = session
+    rows_by_session.setdefault(session, []).append(row)
+
+candidates = []
+for session, rows in rows_by_session.items():
+    progress = progress_cache.setdefault(session, assess_session_progress(session))
+    if not progress.get("mapped"):
+        continue
+    eligible = [row for row in rows if int(row["etimes"]) >= stall_grace_secs]
+    if not eligible or not progress.get("stalled"):
+        continue
+    eligible.sort(
+        key=lambda row: (
+            KIND_PRIORITY[str(row["kind"])],
+            -int(row["etimes"]),
+            int(row["pid"]),
+        )
+    )
+    chosen = eligible[0]
+    candidates.append(
+        {
+            "pid": int(chosen["pid"]),
+            "ppid": int(chosen["ppid"]),
+            "pgid": int(chosen["pgid"]),
+            "etimes": int(chosen["etimes"]),
+            "kind": str(chosen["kind"]),
+            "session": session,
+            "rule": "stalled",
+            "reason": f"stall_idle_{int(progress['idle_secs'])}s",
+            "operator_dir": str(progress["operator_dir"]),
+            "idle_secs": int(progress["idle_secs"]),
+        }
+    )
+
+candidates.sort(
+    key=lambda item: (
+        item["session"],
+        KIND_PRIORITY[item["kind"]],
+        -item["etimes"],
+        item["pid"],
+    )
+)
+seen_pgids = set()
+for item in candidates:
+    pgid = item["pgid"]
+    if pgid in seen_pgids:
+        continue
+    seen_pgids.add(pgid)
+    print(
+        "\t".join(
+            [
+                str(item["pid"]),
+                str(item["ppid"]),
+                str(item["pgid"]),
+                str(item["etimes"]),
+                item["kind"],
+                item["session"],
+                item["rule"],
+                item["reason"],
+                item["operator_dir"],
+                str(item["idle_secs"]),
+            ]
+        )
+    )
+PY
+}
+
+kill_process_group() {
+  local pgid="$1"
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  kill -- "-$pgid" >/dev/null 2>&1 || return 1
+  sleep 0.5
+  if kill -0 -- "-$pgid" >/dev/null 2>&1; then
+    kill -9 -- "-$pgid" >/dev/null 2>&1 || true
+    sleep 0.2
+  fi
+  ! kill -0 -- "-$pgid" >/dev/null 2>&1
+}
+
+repair_tree_pgids() {
+  local root_pid="$1"
+  local root_pgid="$2"
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$root_pgid" =~ ^[0-9]+$ ]] || return 1
+  python3 - "$root_pid" "$root_pgid" <<'PY'
+import subprocess
+import sys
+
+root_pid = int(sys.argv[1])
+root_pgid = int(sys.argv[2])
+proc = subprocess.run(
+    ["ps", "-eo", "pid=,ppid=,pgid="],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+children = {}
+pgids = {}
+for line in proc.stdout.splitlines():
+    parts = line.strip().split()
+    if len(parts) != 3:
+        continue
+    try:
+        pid = int(parts[0])
+        ppid = int(parts[1])
+        pgid = int(parts[2])
+    except ValueError:
+        continue
+    children.setdefault(ppid, []).append(pid)
+    pgids[pid] = pgid
+
+seen_groups = [root_pgid]
+
+def walk(pid: int) -> None:
+    for child in children.get(pid, []):
+        child_pgid = pgids.get(child)
+        if child_pgid and child_pgid not in seen_groups:
+            seen_groups.append(child_pgid)
+        walk(child)
+
+walk(root_pid)
+print(" ".join(str(group) for group in seen_groups))
+PY
+}
+
+kill_pid_and_descendants() {
+  local root_pid="$1"
+  local pid_list
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 1
+  pid_list="$(
+    python3 - "$root_pid" <<'PY'
+import subprocess
+import sys
+
+root = int(sys.argv[1])
+proc = subprocess.run(
+    ["ps", "-eo", "pid=,ppid="],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+children = {}
+for line in proc.stdout.splitlines():
+    parts = line.strip().split()
+    if len(parts) != 2:
+        continue
+    try:
+        pid = int(parts[0])
+        ppid = int(parts[1])
+    except ValueError:
+        continue
+    children.setdefault(ppid, []).append(pid)
+
+order = []
+
+def walk(pid: int) -> None:
+    for child in children.get(pid, []):
+        walk(child)
+        order.append(child)
+
+walk(root)
+order.append(root)
+print(" ".join(str(pid) for pid in order))
+PY
+  )"
+  [[ -n "$pid_list" ]] || return 1
+  local pid
+  for pid in $pid_list; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+  sleep 0.5
+  for pid in $pid_list; do
+    kill -0 "$pid" >/dev/null 2>&1 || continue
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  done
+  ! kill -0 "$root_pid" >/dev/null 2>&1
+}
+
+kill_repair_tree_complete() {
+  local root_pid="$1"
+  local root_pgid="$2"
+  local groups group
+  local tried=1
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$root_pgid" =~ ^[0-9]+$ ]] || return 1
+  groups="$(repair_tree_pgids "$root_pid" "$root_pgid" 2>/dev/null || true)"
+  if [[ -z "$groups" ]]; then
+    groups="$root_pgid"
+  fi
+  for group in $groups; do
+    if kill_process_group "$group"; then
+      tried=0
+    fi
+  done
+  if kill_pid_and_descendants "$root_pid"; then
+    tried=0
+  fi
+  for group in $groups; do
+    if kill -0 -- "-$group" >/dev/null 2>&1; then
+      return 1
+    fi
+  done
+  ! kill -0 "$root_pid" >/dev/null 2>&1 || return 1
+  return "$tried"
+}
+
+reap_stale_repairs() {
+  local report_items="$1"
+  local ps_rows candidates marker_path workspace remote_spec
+  local pid ppid pgid etimes kind session rule reason operator_dir stall_idle
+  local live_pgid session_pgid method message
+  declare -A seen_sessions=()
+  declare -A seen_pgids=()
+  ps_rows="$(mktemp)"
+  candidates="$(mktemp)"
+  ps -eww -o pid=,ppid=,pgid=,etimes=,args= 2>/dev/null > "$ps_rows"
+  reap_stale_repair_candidates < "$ps_rows" \
+    | awk -F'\t' 'BEGIN{OFS="\t"} {print $1,$2,$3,$4,$5,$6,$7,$8,"",""}' > "$candidates"
+  reap_stalled_repair_candidates < "$ps_rows" >> "$candidates"
+  while IFS=$'\t' read -r pid ppid pgid etimes kind session rule reason operator_dir stall_idle; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if [[ -n "$session" && -n "${seen_sessions[$session]:-}" ]]; then
+      continue
+    fi
+    if [[ -n "${seen_pgids[$pgid]:-}" ]]; then
+      continue
+    fi
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      continue
+    fi
+    method=""
+    session_pgid=""
+    if [[ -n "$session" ]]; then
+      marker_path="$(session_marker_path "$session")"
+      if [[ -r "$(kimi_pgid_path "$session")" ]]; then
+        read -r session_pgid < "$(kimi_pgid_path "$session")" || session_pgid=""
+        live_pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+        if [[ ! "$session_pgid" =~ ^[0-9]+$ || "$session_pgid" != "$live_pgid" ]]; then
+          session_pgid=""
+        fi
+      fi
+    else
+      marker_path=""
+    fi
+    if [[ -n "$session_pgid" ]] && kill_repair_tree_complete "$pid" "$session_pgid"; then
+      method="session_pgid_complete:$session_pgid"
+    elif kill_repair_tree_complete "$pid" "$pgid"; then
+      method="pgid_complete:$pgid"
+    elif kill_pid_and_descendants "$pid"; then
+      method="pid_tree:$pid"
+    else
+      log "stale repair reap failed pid=$pid kind=$kind session=${session:-unknown} rule=$rule age=${etimes}s"
+      continue
+    fi
+    workspace=""
+    remote_spec=""
+    if [[ -n "$marker_path" && -f "$marker_path" ]]; then
+      workspace="$(json_field "$marker_path" workspace 2>/dev/null || true)"
+      remote_spec="$(json_field "$marker_path" remote_spec 2>/dev/null || true)"
+    fi
+    message="reaped stale repair pid=$pid kind=$kind session=${session:-unknown} rule=$rule reason=$reason age=${etimes}s method=$method"
+    if [[ "$rule" == "stalled" ]]; then
+      message="$message idle=${stall_idle:-unknown}s"
+      if [[ -n "$operator_dir" ]]; then
+        message="$message operator_dir=$operator_dir"
+      fi
+    fi
+    log "$message"
+    report_item "$report_items" "${session:-}" "reap" "reaped" "$message" "$workspace" "$remote_spec"
+    if [[ -n "$session" ]]; then
+      kimi_dispatch_marker_clear "$session"
+      seen_sessions["$session"]=1
+    fi
+    seen_pgids["$pgid"]=1
+  done < "$candidates"
+  rm -f "$ps_rows" "$candidates"
+}
+
+chain_wait_status() {
+  local workspace="$1"
+  python3 - "$workspace" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plans_dir = workspace / ".megaplan" / "plans"
+chain_paths = sorted(
+    {
+        *plans_dir.glob(".chains/*.json"),
+        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *(workspace / ".megaplan").glob("**/chain_state.json"),
+    },
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+
+for path in chain_paths:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if payload.get("last_state") != "awaiting_pr_merge":
+        continue
+    pr_number = payload.get("pr_number")
+    if not pr_number:
+        print("awaiting_pr_merge")
+        raise SystemExit(0)
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(int(pr_number)), "--json", "state"],
+            cwd=workspace,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode == 0:
+            state = json.loads(proc.stdout or "{}").get("state", "")
+            if isinstance(state, str) and state.lower() == "merged":
+                print("none")
+                raise SystemExit(0)
+    except Exception:
+        pass
+    print("awaiting_pr_merge")
+    raise SystemExit(0)
+
+print("none")
+PY
+}
+
+plan_phase_health_status() {
+  local workspace="$1"
+  python3 - "$workspace" <<'PY'
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plans_dir = workspace / ".megaplan" / "plans"
+state_files = sorted(
+    plans_dir.glob("*/state.json"),
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+if not state_files:
+    print("ok")
+    raise SystemExit(0)
+
+state_path = state_files[0]
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"state_unreadable:{state_path.parent.name}:{exc}")
+    raise SystemExit(0)
+
+latest_failure = state.get("latest_failure") or {}
+if latest_failure.get("kind") != "phase_failed":
+    print("ok")
+    raise SystemExit(0)
+
+phase = latest_failure.get("phase") or "unknown"
+recorded_at = latest_failure.get("recorded_at") or ""
+history = state.get("history") or []
+consecutive = 0
+for item in reversed(history):
+    if item.get("step") == phase and item.get("result") == "error":
+        consecutive += 1
+        continue
+    if item.get("step") == phase and item.get("result") == "success":
+        break
+    if consecutive:
+        break
+
+active = state.get("active_step") or {}
+active_phase = active.get("phase") or ""
+active_pid = active.get("worker_pid") or ""
+active_started = active.get("started_at") or ""
+current_state = state.get("current_state") or ""
+message = latest_failure.get("message") or ""
+
+success_after_failure = False
+for item in history:
+    if item.get("step") != phase or item.get("result") != "success":
+        continue
+    timestamp = item.get("timestamp") or item.get("completed_at") or ""
+    if recorded_at and timestamp and timestamp > recorded_at:
+        success_after_failure = True
+        break
+
+if success_after_failure:
+    print("ok")
+    raise SystemExit(0)
+
+print(
+    "phase_failure:"
+    f"{state_path.parent.name}:"
+    f"{phase}:"
+    f"consecutive={consecutive}:"
+    f"recorded={recorded_at or 'unknown'}:"
+    f"state={current_state or 'unknown'}:"
+    f"active={active_phase or 'none'}:"
+    f"started={active_started or 'unknown'}:"
+    f"pid={active_pid or 'none'}:"
+    f"{message[:160]}"
+)
+PY
+}
+
+plan_progress_stall_status() {
+  local workspace="$1"
+  python3 - "$workspace" "$MARKER_DIR" <<'PY'
+import datetime as dt
+import json
+import os
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+marker_dir = pathlib.Path(sys.argv[2])
+
+# Env-tunable thresholds (defaults from the cloud-watchdog progress-stall contract).
+ITER_MAX = int(os.environ.get("CLOUD_WATCHDOG_STALL_ITERATIONS", "8"))
+ATTEMPT_MAX = int(os.environ.get("CLOUD_WATCHDOG_STALL_ATTEMPTS", "10"))
+PLAN_GROWTH_MINS = int(os.environ.get("CLOUD_WATCHDOG_STALL_PLANGROWTH_MINS", "15"))
+EVENTS_MINS = int(os.environ.get("CLOUD_WATCHDOG_STALL_EVENTS_MINS", "10"))
+
+plans_dir = workspace / ".megaplan" / "plans"
+state_files = sorted(
+    plans_dir.glob("*/state.json"),
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+if not state_files:
+    print("ok")
+    raise SystemExit(0)
+
+state_path = state_files[0]
+plan_dir = state_path.parent
+plan_name = plan_dir.name
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception as exc:
+    print(f"stall_unreadable:{plan_name}:{exc}")
+    raise SystemExit(0)
+
+now = dt.datetime.now(dt.timezone.utc)
+
+def _age_minutes(mtime_ts):
+    if not mtime_ts:
+        return None
+    try:
+        when = dt.datetime.fromtimestamp(mtime_ts, tz=dt.timezone.utc)
+    except (OSError, ValueError, OverflowError):
+        return None
+    return max(0, int((now - when).total_seconds() // 60))
+
+iteration = int(state.get("iteration") or 0)
+# Top-level iteration can lag the internal milestone counter; the recovery
+# layer records the live milestone iteration in latest_failure.metadata.iteration.
+latest_failure = state.get("latest_failure") or {}
+failure_meta = latest_failure.get("metadata") or {}
+milestone_iteration = iteration
+meta_iter = failure_meta.get("iteration")
+if isinstance(meta_iter, (int, float)) and meta_iter > milestone_iteration:
+    milestone_iteration = int(meta_iter)
+stall_count = int(failure_meta.get("stall_count") or 0)
+
+active_step = state.get("active_step") or {}
+attempt = int(active_step.get("attempt") or 0)
+
+plan_v_files = sorted(plan_dir.glob("plan_v*.md"))
+plan_v_count = len(plan_v_files)
+events_path = plan_dir / "events.ndjson"
+events_mtime = events_path.stat().st_mtime if events_path.exists() else 0
+
+# Tick-over-tick snapshot for "no growth while iteration advances" detection.
+snapshot_dir = marker_dir
+snapshot_dir.mkdir(parents=True, exist_ok=True)
+snapshot_path = snapshot_dir / f"{plan_name}.progress.json"
+prev = {}
+if snapshot_path.exists():
+    try:
+        prev = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except Exception:
+        prev = {}
+
+unchanged_ticks = 0
+prev_iter = int(prev.get("iteration") or -1)
+prev_plan_count = int(prev.get("plan_v_count") or -1)
+if prev:
+    if plan_v_count == prev_plan_count and milestone_iteration >= prev_iter:
+        unchanged_ticks = int(prev.get("unchanged_ticks") or 0) + 1
+    elif plan_v_count != prev_plan_count:
+        unchanged_ticks = 0
+    else:
+        unchanged_ticks = int(prev.get("unchanged_ticks") or 0)
+
+snapshot = {
+    "iteration": milestone_iteration,
+    "plan_v_count": plan_v_count,
+    "events_mtime": events_mtime,
+    "unchanged_ticks": unchanged_ticks,
+    "ts": now.isoformat(),
+}
+try:
+    snapshot_path.write_text(json.dumps(snapshot, sort_keys=True) + "\n", encoding="utf-8")
+except Exception:
+    pass
+
+newest_plan_age = None
+if plan_v_files:
+    newest_mtime = max(p.stat().st_mtime for p in plan_v_files)
+    newest_plan_age = _age_minutes(newest_mtime)
+events_age = _age_minutes(events_mtime)
+
+signals = []
+if milestone_iteration >= ITER_MAX:
+    signals.append(f"iteration={milestone_iteration}>={ITER_MAX}")
+if attempt and attempt >= ATTEMPT_MAX:
+    signals.append(f"active_step.attempt={attempt}>={ATTEMPT_MAX}")
+if stall_count >= 3:
+    signals.append(f"stall_count={stall_count}")
+if (
+    unchanged_ticks >= 2
+    and milestone_iteration > prev_iter
+    and plan_v_count == prev_plan_count
+):
+    signals.append(f"plan_v_count={plan_v_count} unchanged-{unchanged_ticks}-ticks")
+if newest_plan_age is not None and newest_plan_age >= PLAN_GROWTH_MINS and milestone_iteration >= max(2, ITER_MAX - 2):
+    signals.append(f"plan_v_unchanged_{newest_plan_age}m")
+if events_age is not None and events_age >= EVENTS_MINS and state.get("current_state") not in {None, "completed", "abandoned", "awaiting_review"}:
+    signals.append(f"events_stale={events_age}m")
+
+if not signals:
+    print("ok")
+    raise SystemExit(0)
+
+detail = " ".join(signals)
+print(
+    f"progress_stall:{plan_name}:"
+    f"iteration={iteration}:"
+    f"attempt={attempt}:"
+    f"plan_v_count={plan_v_count}:"
+    f"{detail}"
+)
+PY
+}
+
+repair_unhealthy_session() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local reason="$4"
+
+  # Background-dispatch: never block the tick on the Kimi operator (it can run
+  # up to its 60-min timeout). Returns 0 when Kimi is running or just dispatched
+  # (caller must NOT relaunch -- Kimi relaunches on success); returns 1 when the
+  # direct tmux relaunch fallback is needed (Kimi missing, or already tried and
+  # exited without reviving the session).
+  if kimi_operator_running "$session"; then
+    log "session unhealthy; Kimi repair already running session=$session reason=$reason"
+    return 0
+  fi
+  if mechanical_relaunch_attempted_previously "$session"; then
+    if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+      log "session unhealthy after mechanical relaunch: background-dispatched Kimi goal operator session=$session reason=$reason"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      return 0
+    fi
+    log "session unhealthy after mechanical relaunch; Kimi goal operator missing -> direct relaunch session=$session reason=$reason"
+    return 1
+  fi
+  if kimi_dispatch_failed_previously "$session"; then
+    log "session unhealthy; Kimi tried and exited without recovery -> direct relaunch session=$session reason=$reason"
+    kimi_dispatch_marker_clear "$session"
+    return 1
+  fi
+  if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+    log "session unhealthy: background-dispatched Kimi goal operator session=$session reason=$reason"
+    tmux kill-session -t "$session" 2>/dev/null || true
+    return 0
+  fi
+  log "session unhealthy; Kimi goal operator missing -> direct relaunch session=$session reason=$reason"
+  return 1
+}
+
+launch_chain_tick() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local report_items="$4"
+  local run_kind="${5:-chain}"
+  local plan_name="${6:-}"
+  local relaunch_command="${7:-}"
+  local remote_spec_path="$remote_spec"
+
+  if [[ -n "$plan_name" ]]; then
+    run_kind="plan"
+  fi
+
+  if [[ ! -d "$workspace" ]]; then
+    log "skip $session: workspace missing: $workspace"
+    report_item "$report_items" "$session" "skip" "workspace_missing" "workspace missing" "$workspace" "$remote_spec"
+    return 1
+  fi
+  if [[ "$run_kind" == "chain" && "$remote_spec" != /* ]]; then
+    remote_spec_path="$workspace/$remote_spec"
+  fi
+  local health
+  health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+  if [[ "$health" == "alive" ]]; then
+    if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
+      log "skip $session: chain spec missing: $remote_spec"
+      report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+      return 1
+    fi
+    local phase_health
+    phase_health="$(plan_phase_health_status "$workspace")"
+    if [[ "$phase_health" != "ok" ]]; then
+      if kimi_operator_running "$session"; then
+        log "session alive but plan unhealthy; Kimi repair already running session=$session reason=$phase_health"
+        report_item "$report_items" "$session" "repair" "repair_running" "$phase_health" "$workspace" "$remote_spec"
+      elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        log "session alive but plan unhealthy: background-dispatched Kimi goal operator session=$session reason=$phase_health"
+        report_item "$report_items" "$session" "repair" "repair_dispatched" "$phase_health" "$workspace" "$remote_spec"
+      else
+        log "session alive but plan unhealthy; Kimi goal operator missing session=$session reason=$phase_health"
+        report_item "$report_items" "$session" "repair" "repair_unavailable" "$phase_health" "$workspace" "$remote_spec"
+      fi
+      return 0
+    fi
+    local stall_health
+    stall_health="$(plan_progress_stall_status "$workspace")"
+    if [[ "$stall_health" != "ok" ]]; then
+      log "progress stall flagged session=$session detail=$stall_health"
+      report_item "$report_items" "$session" "observe" "progress_stall" "$stall_health" "$workspace" "$remote_spec"
+    fi
+    # Alive and phase-healthy: any prior Kimi dispatch succeeded, so clear its
+    # marker so a future stop dispatches Kimi fresh instead of falling back.
+    kimi_dispatch_marker_clear "$session"
+    log "session alive: $session"
+    report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
+    return 0
+  fi
+
+  if [[ "$health" == "awaiting_pr_merge" ]]; then
+    log "session awaiting PR merge: $session"
+    report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge" "$workspace" "$remote_spec"
+    return 0
+  fi
+
+  if [[ "$run_kind" == "plan" ]]; then
+    local terminal_status
+    terminal_status="$(plan_terminal_status "$workspace" "$plan_name")"
+    if [[ "$terminal_status" != "none" ]]; then
+      local terminal_plan_name terminal_state
+      IFS=$'\t' read -r terminal_plan_name terminal_state <<< "$terminal_status"
+      log "plan complete; skipping repair/relaunch session=$session state=$terminal_state plan=$terminal_plan_name"
+      report_item "$report_items" "$session" "observe" "complete" "plan complete" "$workspace" "$remote_spec"
+      return 0
+    fi
+  fi
+
+  local plan_status_env
+  plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name")"
+  eval "$plan_status_env"
+  if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
+    local human_summary
+    human_summary="manual_review halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; retry=${PLAN_STATUS_RETRY_STRATEGY:-unknown}; failure=${PLAN_STATUS_FAILURE_KIND:-unknown}"
+    if [[ -n "${PLAN_STATUS_FAILURE_MESSAGE:-}" ]]; then
+      human_summary="$human_summary; detail=${PLAN_STATUS_FAILURE_MESSAGE}"
+    fi
+    if [[ -n "${PLAN_STATUS_TIERS_TRIED:-}" ]]; then
+      human_summary="$human_summary; tiers=${PLAN_STATUS_TIERS_TRIED}"
+    fi
+    if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
+      human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
+    fi
+    log "session requires human review session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+    notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
+    return 0
+  fi
+
+  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
+    log "skip $session: chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    return 1
+  fi
+
+  # Repair + relaunch. The Kimi goal operator is BACKGROUND-DISPATCHED so it
+  # never blocks the tick (it can run up to its 60-min timeout and relaunches the
+  # run itself on success). The watchdog's direct tmux relaunch runs only as a
+  # fallback: when Kimi is unavailable, or when Kimi was already dispatched and
+  # has since exited without reviving the session (marker present + not running).
+  if [[ "$health" != "stopped" ]]; then
+    if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"; then
+      # Kimi running or just background-dispatched; it owns the relaunch.
+      report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
+      return 0
+    fi
+  else
+    if kimi_operator_running "$session"; then
+      log "session stopped; Kimi repair already running session=$session"
+      report_item "$report_items" "$session" "repair" "repair_running" "Kimi repair already running" "$workspace" "$remote_spec"
+      return 0
+    elif mechanical_relaunch_attempted_previously "$session"; then
+      if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        log "session stopped after mechanical relaunch: background-dispatched Kimi goal operator session=$session"
+        report_item "$report_items" "$session" "repair" "repair_dispatched" "Kimi goal operator dispatched after mechanical relaunch" "$workspace" "$remote_spec"
+        return 0
+      fi
+      log "session stopped after mechanical relaunch; Kimi goal operator missing -> direct relaunch session=$session"
+    elif kimi_dispatch_failed_previously "$session"; then
+      log "session stopped; Kimi tried and exited without recovery -> direct relaunch session=$session"
+      kimi_dispatch_marker_clear "$session"
+    else
+      log "session stopped; mechanical relaunch first session=$session"
+      kimi_dispatch_marker_set "$session"
+    fi
+  fi
+
+  ensure_install_or_repair || log "editable install still unhealthy; relaunching anyway"
+  if tmux has-session -t "$session" 2>/dev/null; then
+    log "killing stale tmux session before relaunch: $session"
+    tmux kill-session -t "$session" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      tmux has-session -t "$session" 2>/dev/null || break
+      sleep 0.2
+    done
+  fi
+
+  local safe log_relative launch_script quoted_command
+  safe="$(safe_name "$session")"
+  launch_script="$(mktemp)"
+  quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
+    log "unable to determine relaunch command session=$session kind=$run_kind"
+    report_item "$report_items" "$session" "restart" "needs_attention" "unable to determine relaunch command" "$workspace" "$remote_spec"
+    rm -f "$launch_script"
+    return 1
+  }
+  cat > "$launch_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd $(printf '%q' "$workspace")
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+EOF
+  chmod +x "$launch_script"
+
+  log "relaunching stopped session=$session kind=$run_kind spec=$remote_spec"
+  tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
+    if tmux has-session -t "$session" 2>/dev/null; then
+      log "relaunch raced with existing tmux session; treating as relaunched: $session"
+      report_item "$report_items" "$session" "restart" "restarted" "session exists after relaunch race" "$workspace" "$remote_spec"
+      rm -f "$launch_script"
+      return 0
+    fi
+    log "failed to relaunch $session"
+    report_item "$report_items" "$session" "restart" "restart_failed" "tmux relaunch failed" "$workspace" "$remote_spec"
+    rm -f "$launch_script"
+    return 1
+  }
+  report_item "$report_items" "$session" "restart" "restarted" "stopped session relaunched" "$workspace" "$remote_spec"
+}
+
+scan_once() {
+  log "scan start marker_dir=$MARKER_DIR"
+  maybe_reexec_updated_watchdog
+  local report_items
+  report_items="$(mktemp)"
+  sync_editable_source_branch "$report_items" || true
+  maybe_reexec_updated_watchdog
+  while IFS=$'\t' read -r adopted_session adopted_workspace adopted_remote_spec adopted_kind adopted_plan_name; do
+    [[ -n "$adopted_session" ]] || continue
+    log "adopted marker-less tmux session=$adopted_session kind=${adopted_kind:-chain}"
+    report_item "$report_items" "$adopted_session" "adopt" "adopted" "adopted marker-less tmux session" "$adopted_workspace" "$adopted_remote_spec"
+  done < <(adopt_unmarked_tmux_sessions)
+  if [[ ! -d "$MARKER_DIR" ]]; then
+    log "scan complete: marker directory missing"
+    emit_report "$report_items" 0
+    rm -f "$report_items"
+    return 0
+  fi
+
+  local found=0
+  shopt -s nullglob
+  for marker in "$MARKER_DIR"/*.json; do
+    case "$marker" in
+      *.progress.json|*.reap-progress.json)
+        continue
+        ;;
+    esac
+    found=$((found + 1))
+    local session workspace remote_spec run_kind plan_name relaunch_command
+    session="$(json_field "$marker" session 2>/dev/null)" || {
+      log "skip invalid marker (missing session): $marker"
+      report_item "$report_items" "" "skip" "invalid_marker" "missing session: $marker"
+      continue
+    }
+    workspace="$(json_field "$marker" workspace 2>/dev/null)" || {
+      log "skip invalid marker (missing workspace): $marker"
+      report_item "$report_items" "$session" "skip" "invalid_marker" "missing workspace: $marker"
+      continue
+    }
+    remote_spec="$(json_field "$marker" remote_spec 2>/dev/null)" || {
+      log "skip invalid marker (missing remote_spec): $marker"
+      report_item "$report_items" "$session" "skip" "invalid_marker" "missing remote_spec: $marker" "$workspace"
+      continue
+    }
+    run_kind="$(json_field "$marker" run_kind 2>/dev/null || true)"
+    plan_name="$(json_field "$marker" plan_name 2>/dev/null || true)"
+    relaunch_command="$(json_field "$marker" relaunch_command 2>/dev/null || true)"
+    launch_chain_tick "$session" "$workspace" "$remote_spec" "$report_items" "${run_kind:-chain}" "$plan_name" "$relaunch_command" || true
+  done
+  shopt -u nullglob
+  reap_stale_repairs "$report_items"
+  log "scan complete markers=$found"
+  emit_report "$report_items" "$found"
+  rm -f "$report_items"
+}
+
+log "starting (interval=${INTERVAL}s marker_dir=$MARKER_DIR repair=$REPAIR_WITH_CODEX push=$PUSH_REPAIRS report=$REPORT_PATH)"
+while true; do
+  scan_once
+  if [[ "$ONCE" == "--once" ]]; then
+    exit 0
+  fi
+  sleep "$INTERVAL"
+done

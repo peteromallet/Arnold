@@ -533,6 +533,21 @@ class Store(Protocol):
     def load_messages(self, message_ids: Sequence[str]) -> list[Message]:
         ...
 
+    def list_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 20,
+        exclude_ids: Sequence[str] = (),
+    ) -> list[Message]:
+        """Return up to the last ``limit`` messages for a conversation, oldest first.
+
+        Not epic-scoped: filters purely by ``conversation_id``. ``exclude_ids``
+        drops the current burst (already persisted before a turn is handled) so
+        it is not double-counted as history.
+        """
+        ...
+
     def update_message(self, message_id: str, *, idempotency_key: str | None = None,
         **changes: Any) -> Message:
         ...

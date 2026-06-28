@@ -2,17 +2,27 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan.auto import DriverOutcome
-from arnold_pipelines.megaplan.chain import _drive_plan
+from arnold_pipelines.megaplan.chain import (
+    _drive_plan,
+    _init_plan,
+    _plan_state,
+    load_chain_state,
+    run_chain,
+    save_chain_state,
+)
 from arnold_pipelines.megaplan.chain.git_ops import (
     _clean_worktree_for_chain,
     _commit_and_push_phase,
     _commit_phase,
+    _checkout_milestone_branch,
     _ensure_milestone_pr,
     _require_git_worktree_root,
 )
@@ -43,6 +53,26 @@ def _init_repo(repo: Path) -> None:
     (repo / "README.md").write_text("base\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-m", "initial")
+    _git(repo, "branch", "-M", "main")
+
+
+def _write_chain_spec(root: Path) -> Path:
+    idea = root / "idea.md"
+    idea.write_text("ship milestone\n", encoding="utf-8")
+    north_star = root / "NORTHSTAR.md"
+    north_star.write_text("north star\n", encoding="utf-8")
+    spec_path = root / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {idea}\n"
+        "    branch: test/m1\n",
+        encoding="utf-8",
+    )
+    return spec_path
 
 
 def _worktree_registered(repo: Path, target: Path) -> bool:
@@ -156,6 +186,113 @@ def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:
     assert any("gh executable not found" in message for message in messages)
 
 
+def test_checkout_existing_milestone_reconciles_with_refreshed_base(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+    messages: list[str] = []
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "chain.yaml").write_text("profile: partnered-5\n", encoding="utf-8")
+    _git(source, "add", "chain.yaml")
+    _git(source, "commit", "-m", "base")
+    _git(source, "branch", "-M", "native-python-working-tree")
+    _git(source, "push", "-u", "origin", "native-python-working-tree")
+
+    _git(source, "checkout", "-b", "epic-m1")
+    (source / "milestone.txt").write_text("m1\n", encoding="utf-8")
+    _git(source, "add", "milestone.txt")
+    _git(source, "commit", "-m", "milestone")
+    _git(source, "push", "-u", "origin", "epic-m1")
+
+    _git(source, "checkout", "native-python-working-tree")
+    (source / "chain.yaml").write_text(
+        "profile: hermes:kimi:kimi-k2.7-code\n",
+        encoding="utf-8",
+    )
+    _git(source, "add", "chain.yaml")
+    _git(source, "commit", "-m", "route through kimi")
+    _git(source, "push", "origin", "native-python-working-tree")
+
+    _git(
+        tmp_path,
+        "clone",
+        "--branch",
+        "native-python-working-tree",
+        str(origin),
+        str(runner),
+    )
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+
+    _checkout_milestone_branch(
+        runner,
+        "epic-m1",
+        base_branch="native-python-working-tree",
+        writer=messages.append,
+        from_origin=True,
+    )
+
+    assert _git(runner, "branch", "--show-current").stdout.strip() == "epic-m1"
+    assert "hermes:kimi:kimi-k2.7-code" in (runner / "chain.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert (runner / "milestone.txt").read_text(encoding="utf-8") == "m1\n"
+    remote_branch = _git(
+        runner,
+        "rev-parse",
+        "origin/epic-m1",
+    ).stdout.strip()
+    local_branch = _git(runner, "rev-parse", "HEAD").stdout.strip()
+    assert remote_branch == local_branch
+    assert any("git rebase origin/native-python-working-tree -> rc=0" in m for m in messages)
+
+
+def test_chain_child_python_commands_use_safe_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    idea = root / "idea.md"
+    idea.write_text("do the thing\n", encoding="utf-8")
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **_kwargs):
+        calls.append(list(cmd))
+        if "init" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"plan": "plan-x"}\n', "")
+        if "status" in cmd:
+            return subprocess.CompletedProcess(cmd, 0, '{"state": "planned"}\n', "")
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.subprocess.run",
+        fake_run,
+    )
+
+    assert (
+        _init_plan(
+            root,
+            str(idea),
+            robustness="thorough",
+            auto_approve=True,
+            phase_model=["prep=hermes:kimi:kimi-k2.7-code"],
+            writer=lambda _message: None,
+        )
+        == "plan-x"
+    )
+    assert _plan_state(root, "plan-x", timeout=30) == "planned"
+
+    for cmd in calls:
+        assert cmd[:3] == [sys.executable, "-P", "-m"]
+
+
 def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -203,6 +340,78 @@ def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
     assert ["git", "rebase", "--abort"] in subprocess_calls
     assert ["git", "push", "--no-verify", "--force-with-lease", "origin", "branch-x"] in run_command_calls
     assert any("warning: git rebase --abort failed" in message for message in messages)
+
+
+def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"plan-m1","current_state":"planned"}\n',
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="failed",
+            pr_number=118,
+            pr_state="merged",
+        ),
+    )
+
+    checkout_calls: list[tuple[str, str, bool]] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state",
+        lambda *_args, **_kwargs: "planned",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda _root, branch, *, base_branch, writer, from_origin=False: checkout_calls.append(
+            (branch, base_branch, from_origin)
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("_ensure_milestone_pr should not run when PR state exists")
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    result = run_chain(spec_path, root, writer=lambda _message: None)
+
+    assert result["status"] == "stopped"
+    assert checkout_calls == [("test/m1", "main", True)]
+    saved = load_chain_state(spec_path)
+    assert saved.pr_number == 118
+    assert saved.pr_state == "merged"
 
 
 def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monkeypatch) -> None:

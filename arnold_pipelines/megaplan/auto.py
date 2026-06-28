@@ -56,7 +56,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
-    corroborated_completed_task_ids,
+    effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 from arnold_pipelines.megaplan.store import PlanRepository
@@ -229,6 +229,14 @@ NON_RETRYABLE_INFRASTRUCTURE_ERROR_CODES = frozenset(
     }
 )
 
+NON_RETRYABLE_RECOVER_BLOCKED_ERROR_CODES = frozenset(
+    {
+        "blocked_recovery_not_resolved",
+        "external_error_resume_required",
+        "rerun_phase_required",
+    }
+)
+
 
 def _extract_cli_error_payload(stdout: str, stderr: str) -> dict[str, Any] | None:
     """Return the structured CliError payload emitted by phase subprocesses.
@@ -348,6 +356,17 @@ def _non_retryable_infrastructure_error_payload(
     if payload is None:
         return None
     if payload.get("error") not in NON_RETRYABLE_INFRASTRUCTURE_ERROR_CODES:
+        return None
+    return payload
+
+
+def _non_retryable_recover_blocked_error_payload(
+    stdout: str, stderr: str
+) -> dict[str, Any] | None:
+    payload = _extract_cli_error_payload(stdout, stderr)
+    if payload is None:
+        return None
+    if payload.get("error") not in NON_RETRYABLE_RECOVER_BLOCKED_ERROR_CODES:
         return None
     return payload
 
@@ -1975,10 +1994,19 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
     tasks = _finalize_tasks(plan_dir)
     if not tasks:
         return True, []
+    state_data = _read_state_data(plan_dir)
+    project_dir = None
+    if isinstance(state_data, dict):
+        config = state_data.get("config")
+        raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
+        if isinstance(raw_project_dir, str) and raw_project_dir:
+            project_dir = Path(raw_project_dir)
     decisions: dict[str, AuthorityDecision] = {}
-    completed = corroborated_completed_task_ids(
+    completed = effective_execute_completed_task_ids(
         tasks,
         plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state_data,
         decisions=decisions,
     )
     missing: list[str] = []
@@ -3745,6 +3773,42 @@ def drive(
             # Non-phase commands (e.g. 'override add-note') that failed —
             # preserve existing exit-code-based handling.
             log(f"command '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+            recover_blocked_payload = (
+                _non_retryable_recover_blocked_error_payload(out, err)
+                if next_step == "recover-blocked"
+                else None
+            )
+            if recover_blocked_payload is not None:
+                error_code = str(recover_blocked_payload.get("error") or "recover_blocked_failed")
+                message = str(
+                    recover_blocked_payload.get("message")
+                    or f"command '{next_step}' exited {code}"
+                )
+                _record_failure(
+                    plan_dir=plan_dir,
+                    kind=error_code,
+                    message=message,
+                    current_state=STATE_BLOCKED,
+                    phase=last_phase,
+                    resume_cursor=_failure_resume_cursor_for_step(next_step, plan_dir=plan_dir),
+                    last_artifact=_latest_artifact_name(plan_dir),
+                    suggested_action="Resolve the blocker or use the suggested recovery command before resuming automation.",
+                    metadata={
+                        "exit_code": code,
+                        "stderr": err.strip(),
+                        "stdout": out.strip()[-400:],
+                        "iteration": iteration,
+                        "cli_error": recover_blocked_payload,
+                    },
+                )
+                return _outcome(
+                    "blocked",
+                    final_state=STATE_BLOCKED,
+                    iterations=iteration,
+                    reason=message,
+                    last_phase=last_phase,
+                    blocking_reasons=[error_code],
+                )
             _record_failure(
                 plan_dir=plan_dir,
                 kind="phase_failed",
@@ -4118,13 +4182,17 @@ def drive(
 
     # Hit iteration cap.
     log(f"hit max_iterations={max_iterations}")
+    resume_cursor = _failure_resume_cursor_for_step(
+        last_phase or "status",
+        plan_dir=plan_dir,
+    )
     _record_failure(
         plan_dir=plan_dir,
         kind="iteration_cap",
         message=f"exceeded max_iterations={max_iterations}",
         current_state=None,
         phase=last_phase,
-        resume_cursor={"phase": last_phase or "status", "retry_strategy": "manual_review"},
+        resume_cursor={**resume_cursor, "retry_strategy": "manual_review"},
         suggested_action="Review automation progress before resuming.",
         metadata={"max_iterations": max_iterations},
     )

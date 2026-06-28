@@ -163,6 +163,29 @@ class DBConversationMixin:
         ).fetchall()
         return [MessageSearchHit(**row) for row in rows]
 
+    def list_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 20,
+        exclude_ids: Sequence[str] = (),
+    ) -> list[Message]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT * FROM messages
+                WHERE conversation_id = %s
+                  AND NOT (id = ANY(%s::text[]))
+                ORDER BY sent_at DESC, id DESC
+                LIMIT %s
+            ) recent
+            ORDER BY sent_at ASC, id ASC
+            """,
+            [conversation_id, list(exclude_ids), limit],
+        ).fetchall()
+        return [Message(**row) for row in rows]
+
     def find_unprocessed_messages(
         self,
         epic_id: str,

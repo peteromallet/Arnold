@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -16,6 +17,7 @@ from arnold.runtime.durable_ops import (
 )
 from arnold_pipelines.megaplan.chain.spec import load_spec, validate_paths
 from arnold_pipelines.megaplan.chain.status import ChainStatusSnapshot, build_chain_status_snapshot
+from arnold_pipelines.megaplan.discord_dm import send_discord_dm
 from arnold_pipelines.megaplan.types import CliError
 
 from agentbox.completion import format_completion_dm
@@ -43,6 +45,7 @@ from agentbox.worktrees import WorktreeAllocation, branch_name
 
 
 MEGAPLAN_CHAIN_OPERATION_TYPE = "megaplan_chain"
+LOGGER = logging.getLogger(__name__)
 
 
 class MegaplanChainLaunchError(RuntimeError):
@@ -300,9 +303,14 @@ class MegaplanChainHandler:
                     "persisted_operation_state": updated.state.value,
                 },
             )
-        if is_terminal_operation_state(updated.state) and "completion_dm" not in updated.metadata:
-            _record_completion_dm(config, operation_id, updated)
         _record_pr_and_ci(config, operation_id, updated, snapshot)
+        if is_terminal_operation_state(updated.state) and "completion_dm" not in updated.metadata:
+            refreshed = load_agentbox_operation(
+                config,
+                operation_id,
+                operation_types=(MEGAPLAN_CHAIN_OPERATION_TYPE,),
+            )
+            _record_completion_dm(config, operation_id, refreshed)
         return updated
 
     def resume(self, config: AgentBoxConfig, operation_id: str) -> Any:
@@ -786,6 +794,7 @@ def _record_completion_dm(config: AgentBoxConfig, operation_id: str, run: Any) -
     dm = _build_completion_dm(run)
     update_agentbox_operation(config, operation_id, metadata={"completion_dm": dm})
     append_event(paths, "megaplan_chain.completion_dm_ready", payload={"completion_dm": dm})
+    _send_completion_dm(run, fallback_text=dm)
 
 
 def _build_completion_dm(run: Any) -> str:
@@ -814,6 +823,49 @@ def _build_completion_dm(run: Any) -> str:
         branch_status=branch_status,
         next_action="Run `agentbox cleanup survey` to review branch/PR cleanup options.",
     )
+
+
+def _send_completion_dm(run: Any, *, fallback_text: str) -> None:
+    try:
+        payload = _build_completion_dm_payload(run, fallback_text=fallback_text)
+        send_discord_dm(payload)
+    except Exception:
+        LOGGER.warning("Completion Discord DM send crashed for operation %s", run.id, exc_info=True)
+
+
+def _build_completion_dm_payload(run: Any, *, fallback_text: str) -> dict[str, Any]:
+    repo_names = run.metadata.get("repo_names") or []
+    first_repo = repo_names[0] if repo_names else None
+    branch = branch_name(run.id, first_repo) if first_repo else None
+    pr_info = (run.metadata.get("pr_info") or {}).get(first_repo) or {}
+    ci_status = (run.metadata.get("ci_status") or {}).get(first_repo)
+    validation = run.metadata.get("validation") or {}
+
+    fields: list[dict[str, Any]] = [
+        {"label": "Operation", "value": run.id, "style": "code"},
+        {"label": "State", "value": run.state.value, "style": "code"},
+    ]
+    if validation:
+        fields.append({"label": "Validation", "value": validation.get("status", "unknown"), "style": "code"})
+    if branch:
+        fields.append({"label": "Branch", "value": branch, "style": "code"})
+    if pr_info.get("number") is not None:
+        fields.append({"label": "PR", "value": str(pr_info['number']), "style": "code"})
+    if ci_status:
+        fields.append({"label": "CI", "value": ci_status, "style": "code"})
+
+    links: list[dict[str, str]] = []
+    pr_url = pr_info.get("url")
+    if isinstance(pr_url, str) and pr_url:
+        links.append({"label": "PR", "url": pr_url})
+
+    return {
+        "title": f"Megaplan chain complete - {run.id}",
+        "summary": fallback_text.splitlines()[0] if fallback_text else "",
+        "fields": fields,
+        "links": links,
+        "next_action": "Run `agentbox cleanup survey` to review branch/PR cleanup options.",
+    }
 
 
 def _record_pr_and_ci(

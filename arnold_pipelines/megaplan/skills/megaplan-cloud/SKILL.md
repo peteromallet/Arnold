@@ -142,6 +142,173 @@ An operator loop should **not** silently decide product or architecture question
 
 Today this operator loop is usually a small project-local shell script under `.megaplan/` plus tmux. Treat that as an operational shim, not the ideal abstraction. The durable Megaplan feature should be first-class cloud supervision: built-in early check, hourly tick, provider fallback policy, single-PR chain mode, and push-after-milestone support.
 
+## Hourly editable-install sync
+
+On SSH/Hetzner workers, the resident watchdog keeps a separate editable Arnold
+source checkout synced before it inspects chain sessions. This checkout is
+`/workspace/arnold` and must stay on the dedicated `editible-install` branch
+unless `CLOUD_WATCHDOG_SYNC_BRANCH` is deliberately set for a one-off debug
+case. It is intentionally separate from the active workflow checkout, whose
+branch varies per megaplan. The sync step:
+
+- clones the configured Arnold repo into `/workspace/arnold` if missing;
+- fetches and fast-forwards the sync branch;
+- regenerates generated docs/skills with `python scripts/generate_arnold_docs.py --write` when present;
+- runs `./sync-skills.sh` when present so bundled skills are linked into the agent skill dirs;
+- commits and pushes any resulting source drift back to the sync branch;
+- refreshes the installed Arnold package from `/workspace/arnold`, falling back
+  to `/usr/local/bin/mp-refresh-megaplan` with `MEGAPLAN_REF` pinned to the sync
+  branch only when the source checkout is unavailable.
+
+It does not force-push, reset, or mutate the active chain workspace. Disable
+with `CLOUD_WATCHDOG_SYNC_ENABLED=0` only when deliberately debugging the
+editable install.
+
+## SSH hot-upload operations
+
+For SSH/Hetzner workers, use `python scripts/cloud_hot_upload.py` when a
+running container needs a narrow wrapper/runtime/env hotfix and rebuilding the
+Docker image would be too slow. It reads the SSH host, port, container, volumes,
+and remote deploy dir from `cloud.yaml`, dry-runs by default, uploads files with
+`docker exec`/SSH, verifies remote `sha256sum`, and reports container/tmux
+state.
+
+Default workflow-manifest-runtime dry run:
+
+```bash
+python scripts/cloud_hot_upload.py \
+  --wrapper arnold-watchdog \
+  --wrapper arnold-kimi-goal-operator \
+  --verify
+```
+
+Apply and restart the watchdog tmux session:
+
+```bash
+python scripts/cloud_hot_upload.py \
+  --wrapper arnold-watchdog \
+  --wrapper arnold-kimi-goal-operator \
+  --restart-session watchdog \
+  --apply
+```
+
+Use this as an operational hotfix, then make the durable repo/image-template
+change too. For token/env changes that only need to affect tmux sessions
+restarted through the helper, use `--env-name NAME` after exporting the local
+value; it writes `/workspace/.cloud-hot-env` inside the container. For full
+Docker env replacement, pass a local file outside the repo with
+`--env-file /secure/path/.env --recreate-container --apply`; never commit secret
+material and remember that Docker only applies env-file changes when the
+container is recreated. See `docs/cloud-hot-upload.md` for examples.
+
+## Hetzner check-in runbook
+
+For SSH/Hetzner workers, verify the live machine directly instead of inferring
+health from local state. Read the target host/container from the active
+`cloud.yaml`; for the current Arnold worker this is typically:
+
+```bash
+ssh -p 22 root@159.69.51.216
+docker exec -it megaplan-cloud-agent bash
+```
+
+Minimum check-in:
+
+```bash
+# Host/container resilience.
+hostname
+systemctl is-active megaplan-watchdog-ensure.timer 2>/dev/null || true
+systemctl list-timers megaplan-watchdog-ensure.timer --no-pager 2>/dev/null || true
+tail -20 /var/log/megaplan-watchdog-ensure.log 2>/dev/null || true
+docker ps --filter name=megaplan-cloud-agent --format '{{.Names}} {{.Status}} {{.Image}}'
+docker inspect -f 'restart={{.HostConfig.RestartPolicy.Name}}' megaplan-cloud-agent
+
+# Inside the container.
+docker exec megaplan-cloud-agent bash -lc '
+  echo SESSIONS
+  tmux ls 2>/dev/null || true
+
+  echo PROCS
+  pgrep -af "arnold-watchdog|arnold-supervise|arnold_pipelines.megaplan chain start" || true
+
+  echo REPORT
+  python3 -m json.tool /workspace/watchdog-report.json 2>/dev/null || true
+
+  echo REPORT_ARCHIVES
+  ls -lt /workspace/watchdog-reports 2>/dev/null | head || true
+
+  echo WATCHDOG_LOG
+  tail -80 /workspace/watchdog.log 2>/dev/null || true
+
+  echo AGENT_PANE
+  tmux capture-pane -pt agent -S -80 2>/dev/null || true
+
+  echo RECENT_EVENTS
+  find /workspace/Arnold/.megaplan/plans -name events.ndjson -print 2>/dev/null |
+    sort | tail -1 | xargs -r tail -20
+'
+```
+
+Interpretation:
+
+- `watchdog` tmux session should exist and log `starting (interval=3600s ...)`.
+- `agent` tmux session alone is not enough; confirm an active
+  `python3 -m arnold_pipelines.megaplan chain start ...` process or fresh
+  `llm_token_heartbeat` events.
+- `/workspace/watchdog-report.json` is the latest report. Timestamped history
+  lives under `/workspace/watchdog-reports/`.
+- `issue_count: 0` means the last watchdog tick saw no actionable issue.
+- If `CLOUD_WATCHDOG_REPORT_WEBHOOK` is unset, reports are stored locally only.
+
+Always distinguish the two Arnold checkouts:
+
+```bash
+docker exec megaplan-cloud-agent bash -lc '
+  echo EDITABLE_INSTALL
+  cd /workspace/arnold &&
+    printf "path=%s\nbranch=%s\ncommit=%s\n" "$PWD" "$(git branch --show-current)" "$(git rev-parse --short HEAD)"
+
+  echo ACTIVE_WORKFLOW
+  cd /workspace/Arnold &&
+    printf "path=%s\nbranch=%s\ncommit=%s\n" "$PWD" "$(git branch --show-current)" "$(git rev-parse --short HEAD)"
+
+  echo WATCHDOG_SYNC_BRANCH
+  grep -n "^SYNC_BRANCH=" /usr/local/bin/arnold-watchdog
+  grep -E "^export CLOUD_WATCHDOG_SYNC_BRANCH=" /workspace/.cloud-hot-env 2>/dev/null || true
+'
+```
+
+Expected invariant:
+
+- `/workspace/arnold` is the editable install/runtime checkout and should be on
+  `editible-install`.
+- `/workspace/Arnold` is the active megaplan checkout and may be on any
+  per-plan or per-milestone branch.
+
+### One-shot watchdog check/repair
+
+The hourly watchdog can be triggered immediately with `arnold-watchdog --once`.
+This is the manual "run the watchdog right now" path: it performs the same sync,
+inspection, repair, relaunch, report-write, and report-archive work as the
+hourly tick, then exits. Use it after hot-uploading wrapper/env/skill changes,
+after moving a new chain onto the worker, or when you want to battle-test the
+recovery path without waiting for the next hourly tick.
+
+```bash
+ssh -p 22 root@159.69.51.216 \
+  "docker exec megaplan-cloud-agent bash -lc 'timeout 900 /usr/local/bin/arnold-watchdog --once; rc=\$?; echo WATCHDOG_RC=\$rc; python3 -m json.tool /workspace/watchdog-report.json; echo REPORT_ARCHIVE; python3 -c \"import json; print(json.load(open(\\\"/workspace/watchdog-report.json\\\"))[\\\"archive_report_path\\\"])\"'"
+```
+
+Expected success shape:
+
+- `WATCHDOG_RC=0`;
+- `/workspace/watchdog-report.json` has `issue_count: 0` or a concrete
+  `issues[]` entry explaining the remaining blocker;
+- `archive_report_path` points at a unique timestamped JSON file under
+  `/workspace/watchdog-reports/`;
+- the active chain has a tmux session and, unless complete, an active
+  `arnold_pipelines.megaplan chain start` or worker process.
+
 ## Gotchas (learned the hard way)
 
 1. **`chain_state.json` committed in the project repo poisons fresh chains.** The chain runner derives state from `<chain.yaml dir>/chain_state.json`. If a prior chain committed that file, every `git clone` on the worker re-seeds stale state (`completed: [...prior milestones]`, `current_milestone_index: N`); the new chain skips early milestones and crashes at a later `git checkout main` against leftover working-tree dirt. Fix: `rm` it on the worker after clone. Durable fix: `git rm chain_state.json` + add to `.gitignore` on the branch. Don't trust `git checkout -- .` as cleanup — it restores tracked files including this one.

@@ -35,6 +35,8 @@ def _gate_signals_for_prompt(gate_signals: Mapping[str, Any]) -> dict[str, Any]:
         projected_signals = dict(signals)
         projected_signals.pop("debt_overlaps", None)
         projected_signals.pop("escalated_debt_subsystems", None)
+        projected_signals.pop("unverifiable_checks", None)
+        projected_signals.pop("execution_acceptance_contract", None)
         projected["signals"] = projected_signals
     warnings = gate_signals.get("warnings")
     if isinstance(warnings, list):
