@@ -87,8 +87,9 @@ def classify_external_error_payload(
     ):
         error_kind = "balance"
     elif status_code in (401, 403) or re.search(
-        r"\b(unauthori[sz]ed|forbidden|invalid api key|bad api key|"
-        r"api key|authentication|permission denied)\b",
+        r"(\b(unauthori[sz]ed|forbidden|invalid api[_ -]?key|bad api[_ -]?key|"
+        r"api[_ -]?key|authentication|permission denied|missing credentials?)\b|"
+        r"\b(?:openrouter|openai)_api_key\b.*\bnot set\b)",
         combined,
     ):
         error_kind = "auth"
