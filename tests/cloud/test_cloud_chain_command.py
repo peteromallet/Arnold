@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from arnold_pipelines.megaplan.cloud.cli import (
     _chain_start_command,
     _remote_chain_upload_path,
+    _remote_chain_workspace_path,
 )
 
 
@@ -26,3 +29,13 @@ def test_remote_chain_upload_path_anchors_relative_briefs_to_workspace() -> None
     )
 
     assert path == "/workspace/vibecomfy-god-file-splits/.megaplan/briefs/god-file-splits/m1.md"
+
+
+def test_remote_chain_workspace_path_preserves_spec_relative_path() -> None:
+    path = _remote_chain_workspace_path(
+        Path("/workspace/.megaplan/briefs/god-file-splits/chain.yaml"),
+        local_root=Path("/workspace"),
+        target_workspace="/workspace/vibecomfy-god-file-splits",
+    )
+
+    assert path == "/workspace/vibecomfy-god-file-splits/.megaplan/briefs/god-file-splits/chain.yaml"

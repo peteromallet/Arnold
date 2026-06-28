@@ -476,6 +476,16 @@ def _remote_chain_upload_path(remote_path: str, *, source_workspace: str, target
     return str(PurePosixPath(target_workspace) / path)
 
 
+def _remote_chain_workspace_path(local_path: Path, *, local_root: Path, target_workspace: str) -> str:
+    path = local_path.expanduser().resolve()
+    root = local_root.expanduser().resolve()
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return str(PurePosixPath(target_workspace) / path.name)
+    return str(PurePosixPath(target_workspace).joinpath(*relative.parts))
+
+
 def _normalized_chain_upload_spec(
     local_spec_path: Path,
     *,
@@ -848,6 +858,7 @@ def _chain_identity_for(local_spec_path: Path, chain_spec: Any) -> tuple[str, st
 
 def _derive_chain_launch_context(
     *,
+    root: Path,
     spec: CloudSpec,
     local_spec_path: Path,
     chain_spec: Any,
@@ -865,7 +876,11 @@ def _derive_chain_launch_context(
         if spec.repo.workspace_explicit
         else f"/workspace/{slug}-{digest[:8]}/{_repo_dir_name(spec.repo.url)}"
     )
-    remote_spec_path = str(PurePosixPath(workspace) / "chain.yaml")
+    remote_spec_path = _remote_chain_workspace_path(
+        local_spec_path,
+        local_root=root,
+        target_workspace=workspace,
+    )
     state_path = str(chain_module._state_path_for(Path(remote_spec_path)))
     log_relative = f".megaplan/cloud-chain-{session_name}.log"
     log_path = str(PurePosixPath(workspace) / log_relative)
@@ -1477,6 +1492,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         chain_spec.stall_threshold = spec.driver.max_stall_iterations
         driver_overrides["max_stall_iterations"] = spec.driver.max_stall_iterations
     launch_ctx = _derive_chain_launch_context(
+        root=root,
         spec=spec,
         local_spec_path=local_spec_path,
         chain_spec=chain_spec,
