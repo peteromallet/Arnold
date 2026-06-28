@@ -141,7 +141,7 @@ if os.path.exists(items_path):
                 items.append(json.loads(line))
 issues = [
     item for item in items
-    if item.get("status") not in {"alive", "restarted", "synced", "skipped"}
+    if item.get("status") not in {"alive", "completed", "restarted", "synced", "skipped"}
 ]
 restarted = [item for item in items if item.get("status") == "restarted"]
 reaped = [item for item in items if item.get("status") == "reaped"]
@@ -596,6 +596,45 @@ kimi_dispatch_marker_set() {
 
 kimi_dispatch_marker_clear() {
   rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")" 2>/dev/null || true
+}
+
+clear_session_tracking_artifacts() {
+  local session="$1"
+  local plan_name="${2:-}"
+  rm -f "$(session_marker_path "$session")" 2>/dev/null || true
+  kimi_dispatch_marker_clear "$session"
+  if [[ -n "$plan_name" ]]; then
+    rm -f "$MARKER_DIR/$plan_name.progress.json" 2>/dev/null || true
+  fi
+}
+
+plan_terminal_status() {
+  local workspace="$1"
+  local plan_name="$2"
+  python3 - "$workspace" "$plan_name" <<'PY'
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plan_name = sys.argv[2]
+if not plan_name:
+    print("none")
+    raise SystemExit(0)
+
+state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+except Exception:
+    print("none")
+    raise SystemExit(0)
+
+current_state = state.get("current_state")
+if current_state in {"done", "cancelled", "aborted"}:
+    print(str(current_state))
+else:
+    print("none")
+PY
 }
 
 kill_kimi_repair_tree() {
@@ -1605,13 +1644,21 @@ launch_chain_tick() {
   local run_kind="${5:-chain}"
   local plan_name="${6:-}"
   local relaunch_command="${7:-}"
+  local remote_spec_path="$remote_spec"
+
+  if [[ -n "$plan_name" ]]; then
+    run_kind="plan"
+  fi
 
   if [[ ! -d "$workspace" ]]; then
     log "skip $session: workspace missing: $workspace"
     report_item "$report_items" "$session" "skip" "workspace_missing" "workspace missing" "$workspace" "$remote_spec"
     return 1
   fi
-  if [[ "$run_kind" == "chain" && ! -f "$remote_spec" ]]; then
+  if [[ "$run_kind" == "chain" && "$remote_spec" != /* ]]; then
+    remote_spec_path="$workspace/$remote_spec"
+  fi
+  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
     log "skip $session: chain spec missing: $remote_spec"
     report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
     return 1
@@ -1652,6 +1699,17 @@ launch_chain_tick() {
     log "session awaiting PR merge: $session"
     report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge" "$workspace" "$remote_spec"
     return 0
+  fi
+
+  if [[ "$run_kind" == "plan" ]]; then
+    local terminal_status
+    terminal_status="$(plan_terminal_status "$workspace" "$plan_name")"
+    if [[ "$terminal_status" != "none" ]]; then
+      clear_session_tracking_artifacts "$session" "$plan_name"
+      log "plan already completed; clearing marker session=$session state=$terminal_status plan=$plan_name"
+      report_item "$report_items" "$session" "observe" "completed" "plan already $terminal_status; marker cleared" "$workspace" "$remote_spec"
+      return 0
+    fi
   fi
 
   # Repair + relaunch. The Kimi goal operator is BACKGROUND-DISPATCHED so it
@@ -1745,6 +1803,11 @@ scan_once() {
   local found=0
   shopt -s nullglob
   for marker in "$MARKER_DIR"/*.json; do
+    case "$marker" in
+      *.progress.json|*.reap-progress.json)
+        continue
+        ;;
+    esac
     found=$((found + 1))
     local session workspace remote_spec run_kind plan_name relaunch_command
     session="$(json_field "$marker" session 2>/dev/null)" || {
