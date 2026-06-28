@@ -20,6 +20,13 @@ def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
 
 
+def _extract_wrapper_function(name: str) -> str:
+    text = _wrapper("arnold-watchdog")
+    start = text.index(f"{name}() {{")
+    end = text.index("\n}\n", start) + 3
+    return text[start:end]
+
+
 def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -55,6 +62,8 @@ def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     text = _wrapper("arnold-watchdog")
 
     assert 'pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]"' in text
+    assert 'printf \'%s/%s.kimi-pgid\' "$MARKER_DIR" "$1"' in text
+    assert 'kill -0 -- "-$pgid"' in text
     assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
 
 
@@ -65,13 +74,15 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
     # 60-min repair on one session cannot block the tick from scanning/reporting
     # the other sessions.
     assert "dispatch_kimi_repair()" in text
-    assert "setsid /usr/local/bin/arnold-kimi-goal-operator" in text
+    assert 'setsid bash -c \'echo "$$" > "$0"; exec /usr/local/bin/arnold-kimi-goal-operator "$@"\'' in text
     assert "kimi_dispatch_marker_set" in text
     assert "kimi_dispatch_failed_previously" in text
     # The direct-relaunch fallback consumes the marker (Kimi tried + exited w/o recovery).
     assert "session stopped; Kimi tried and exited without recovery -> direct relaunch" in text
     # The marker is cleared once the session is observed alive + healthy.
     assert "kimi_dispatch_marker_clear" in text
+    assert 'rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")"' in text
+    assert 'kill -- "-$pgid"' in text
 
     # No bare synchronous foreground Kimi invocation remains: every operator
     # call site either guards (kimi_operator_running), dispatches in the
@@ -82,6 +93,61 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
                 "setsid", "dispatch_kimi_repair", "kimi_operator_running",
                 "kimi_dispatch", "log ",
             )), f"bare synchronous Kimi invocation remains: {ln!r}"
+
+
+def test_watchdog_kimi_operator_running_falls_back_to_pgid_pidfile_and_clear_removes_it(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    session = "demo-session"
+    pgid_path = marker_dir / f"{session}.kimi-pgid"
+    marker_path = marker_dir / f"{session}.kimi-dispatch"
+    pgid_path.write_text("4242\n", encoding="utf-8")
+    marker_path.write_text("2026-06-28T00:00:00Z\n", encoding="utf-8")
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("kimi_operator_running"),
+            f"""
+MARKER_DIR={str(marker_dir)!r}
+pgrep() {{
+  return 1
+}}
+kill() {{
+  if [[ "$#" -eq 3 && "$1" == "-0" && "$2" == "--" && "$3" == "-4242" ]]; then
+    return 0
+  fi
+  return 1
+}}
+ps() {{
+  cat <<'EOF'
+ 4242 python3 -m arnold.agent.run_agent --goal repair
+EOF
+}}
+if kimi_operator_running {session!r}; then
+  echo running
+else
+  echo stopped
+fi
+kimi_dispatch_marker_clear {session!r}
+if [[ ! -e {str(pgid_path)!r} && ! -e {str(marker_path)!r} ]]; then
+  echo cleared
+fi
+""".strip(),
+        ]
+    )
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == ["running", "cleared"]
 
 
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:

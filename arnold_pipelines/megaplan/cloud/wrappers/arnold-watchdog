@@ -469,7 +469,18 @@ session_health_status() {
 
 kimi_operator_running() {
   local session="$1"
-  pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1
+  local pgid_path pgid
+  if pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
+    return 0
+  fi
+  pgid_path="$(kimi_pgid_path "$session")"
+  [[ -r "$pgid_path" ]] || return 1
+  read -r pgid < "$pgid_path" || return 1
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 -- "-$pgid" >/dev/null 2>&1 || return 1
+  ps -eo pgid=,args= 2>/dev/null \
+    | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
+    | grep -Eq 'arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec'
 }
 
 # Per-session marker proving we background-dispatched the Kimi goal operator.
@@ -481,12 +492,26 @@ kimi_dispatch_marker_path() {
   printf '%s/%s.kimi-dispatch' "$MARKER_DIR" "$1"
 }
 
+kimi_pgid_path() {
+  printf '%s/%s.kimi-pgid' "$MARKER_DIR" "$1"
+}
+
 kimi_dispatch_marker_set() {
   date -u +%Y-%m-%dT%H:%M:%SZ > "$(kimi_dispatch_marker_path "$1")" 2>/dev/null || true
 }
 
 kimi_dispatch_marker_clear() {
-  rm -f "$(kimi_dispatch_marker_path "$1")" 2>/dev/null || true
+  rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")" 2>/dev/null || true
+}
+
+kill_kimi_repair_tree() {
+  local session="$1"
+  local pgid_path pgid
+  pgid_path="$(kimi_pgid_path "$session")"
+  [[ -r "$pgid_path" ]] || return 1
+  read -r pgid < "$pgid_path" || return 1
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  kill -- "-$pgid" >/dev/null 2>&1
 }
 
 kimi_dispatch_failed_previously() {
@@ -502,11 +527,14 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
+  local pgid_path
   if [[ ! -x /usr/local/bin/arnold-kimi-goal-operator ]]; then
     return 1
   fi
+  pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
-  setsid /usr/local/bin/arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec" \
+  setsid bash -c 'echo "$$" > "$0"; exec /usr/local/bin/arnold-kimi-goal-operator "$@"' \
+    "$pgid_path" "$session" "$workspace" "$remote_spec" \
     >> "$LOG" 2>&1 < /dev/null &
   log "Kimi goal operator background-dispatched session=$session pid=$!"
   return 0
