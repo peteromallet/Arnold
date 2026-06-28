@@ -114,17 +114,22 @@ def is_task_satisfied(
     }
     diagnostics.update(normalization_diagnostics)
 
-    missing_outputs = _missing_declared_outputs(declared_outputs, linked_refs)
     resolved_current_head = current_head or (
         execution_window.head_sha if execution_window is not None else None
     )
-    stale_evidence = _stale_evidence(
+    per_ref_stale = _per_ref_stale_evidence(
         linked_refs,
         resolved_current_head,
         current_code_hash,
         execution_window=execution_window,
     )
-    explicit_status = _explicit_terminal_status(linked_refs)
+    effective_refs = _prefer_fresh_linked_refs(linked_refs, per_ref_stale)
+    diagnostics["effective_linked_evidence_count"] = len(effective_refs)
+    missing_outputs = _missing_declared_outputs(declared_outputs, effective_refs)
+    stale_evidence = tuple(
+        reason for ref in effective_refs for reason in per_ref_stale.get(id(ref), ())
+    )
+    explicit_status = _explicit_terminal_status(effective_refs)
 
     would_block: list[str] = []
     if not linked_refs:
@@ -133,22 +138,22 @@ def is_task_satisfied(
         would_block.append(f"missing_output:{missing}")
     for stale in stale_evidence:
         would_block.append(f"stale_evidence:{stale}")
-    for ref in linked_refs:
+    for ref in effective_refs:
         if ref.status == EvidenceStatus.unsatisfied:
             would_block.append(f"unsatisfied_evidence:{ref.kind}")
 
     if explicit_status in {EvidenceStatus.waived, EvidenceStatus.not_applicable}:
         status = explicit_status
         would_block = []
-    elif any(ref.status == EvidenceStatus.unsatisfied for ref in linked_refs):
+    elif any(ref.status == EvidenceStatus.unsatisfied for ref in effective_refs):
         status = EvidenceStatus.unsatisfied
     elif missing_outputs:
         status = EvidenceStatus.unsatisfied
     elif any(item.startswith("head_mismatch") or item.startswith("code_hash_mismatch") for item in stale_evidence):
         status = EvidenceStatus.unsatisfied
-    elif stale_evidence or not linked_refs:
+    elif stale_evidence or not effective_refs:
         status = EvidenceStatus.unknown
-    elif any(ref.status == EvidenceStatus.unknown for ref in linked_refs):
+    elif any(ref.status == EvidenceStatus.unknown for ref in effective_refs):
         status = EvidenceStatus.unknown
     else:
         status = EvidenceStatus.satisfied
@@ -156,7 +161,7 @@ def is_task_satisfied(
     diagnostics["status"] = status.value
     return TaskSatisfactionResult(
         status=status,
-        evidence=linked_refs,
+        evidence=effective_refs,
         diagnostics=diagnostics,
         missing_outputs=missing_outputs,
         stale_evidence=stale_evidence,
@@ -257,6 +262,32 @@ def _missing_declared_outputs(
             if not any(_ref_matches_declared_output(ref, field_name, value) for ref in linked_refs):
                 missing.append(f"{field_name}:{value}")
     return tuple(missing)
+
+
+def _per_ref_stale_evidence(
+    refs: tuple[EvidenceRef, ...],
+    current_head: str | None,
+    current_code_hash: str | None,
+    *,
+    execution_window: EvidenceExecutionWindow | None = None,
+) -> dict[int, tuple[str, ...]]:
+    return {
+        id(ref): _stale_evidence(
+            (ref,),
+            current_head,
+            current_code_hash,
+            execution_window=execution_window,
+        )
+        for ref in refs
+    }
+
+
+def _prefer_fresh_linked_refs(
+    refs: tuple[EvidenceRef, ...],
+    per_ref_stale: Mapping[int, tuple[str, ...]],
+) -> tuple[EvidenceRef, ...]:
+    fresh = tuple(ref for ref in refs if not per_ref_stale.get(id(ref)))
+    return fresh or refs
 
 
 def _stale_evidence(

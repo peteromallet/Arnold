@@ -520,6 +520,49 @@ class TestTaskSatisfactionStaleHead:
         assert not result.satisfied
         assert any("head_mismatch" in s for s in result.stale_evidence)
 
+    def test_is_task_satisfied_prefers_fresh_linked_evidence_over_stale_finalize_copy(
+        self,
+    ) -> None:
+        from arnold_pipelines.megaplan.orchestration.evidence_contract import (
+            EvidenceRef,
+            EvidenceStatus,
+        )
+        from arnold_pipelines.megaplan.orchestration.task_satisfaction import (
+            is_task_satisfied,
+        )
+
+        task = {"task_id": "T1", "commands_run": ["pytest tests/test_example.py -q"]}
+        evidence = (
+            EvidenceRef(
+                kind="task_commands_run",
+                status=EvidenceStatus.satisfied,
+                summary="stale finalize evidence",
+                subject="T1",
+                details={
+                    "task_id": "T1",
+                    "commands_run": ["pytest tests/test_example.py -q"],
+                    "head_sha": "stale-head",
+                },
+            ),
+            EvidenceRef(
+                kind="task_commands_run",
+                status=EvidenceStatus.satisfied,
+                summary="fresh execution evidence",
+                subject="T1",
+                details={
+                    "task_id": "T1",
+                    "commands_run": ["pytest tests/test_example.py -q"],
+                    "head_sha": "fresh-head",
+                },
+            ),
+        )
+
+        result = is_task_satisfied(task, evidence, current_head="fresh-head")
+
+        assert result.satisfied is True
+        assert result.stale_evidence == ()
+        assert len(result.evidence) == 1
+
 
 class TestBlastRadiusFallback:
     def test_compute_default_blast_radius_falls_back_when_no_mirror(self, tmp_path: Path) -> None:
