@@ -8,8 +8,12 @@ from arnold_pipelines.megaplan.auto import _execute_completion_authority
 from arnold_pipelines.megaplan.blocker_recovery import (
     _extract_nodeids,
     evaluate_blocker_recovery,
+    find_synthetic_before_execute_gate,
 )
-from arnold_pipelines.megaplan.execute.batch import _normalize_execute_capture_payload
+from arnold_pipelines.megaplan.execute.batch import (
+    _normalize_execute_capture_payload,
+    _repair_missing_user_action_gate,
+)
 from arnold_pipelines.megaplan.execute.quality import _collect_execute_claimed_paths
 from arnold_pipelines.megaplan.model_seam import _normalize_plan_capture_payload
 from arnold_pipelines.megaplan.orchestration.plan_structure import (
@@ -279,6 +283,95 @@ def test_execute_completion_authority_uses_execution_window_and_explained_skips(
 
     assert ok is True
     assert missing == []
+
+
+def test_find_synthetic_before_execute_gate_ignores_baseline_checkpoint_root() -> None:
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Introduce no new failures vs the recorded baseline;",
+                "depends_on": [],
+                "status": "skipped",
+            },
+            {
+                "id": "m7-01",
+                "description": "Real work.",
+                "depends_on": ["T1"],
+                "status": "done",
+            },
+            {
+                "id": "m7-02",
+                "description": "More work.",
+                "depends_on": ["T1", "m7-01"],
+                "status": "pending",
+            },
+        ]
+    }
+
+    assert find_synthetic_before_execute_gate(finalize_data) == (None, ())
+
+
+def test_execute_repairs_missing_user_action_gate_for_stale_finalize(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    plan_dir = project_dir / ".megaplan" / "plans" / "p"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "config": {
+            "mode": "code",
+            "project_dir": str(project_dir),
+        }
+    }
+    finalize_data = {
+        "tasks": [
+            {
+                "id": "T1",
+                "description": "Introduce no new failures vs the recorded baseline;",
+                "depends_on": [],
+                "status": "skipped",
+                "reviewer_verdict": "deferred_baseline_unavailable",
+            },
+            {
+                "id": "m7-06-runtime-deletion-target-purge",
+                "description": "Delete runtime targets.",
+                "depends_on": ["T1"],
+                "status": "blocked",
+            },
+        ],
+        "sense_checks": [],
+        "watch_items": [],
+        "user_actions": [
+            {
+                "id": "ua-01-reclassify-deletion-targets",
+                "description": "Confirm the deletion contract is authoritative.",
+                "phase": "before_execute",
+                "blocks_task_ids": ["m7-06-runtime-deletion-target-purge"],
+                "rationale": "Needed before destructive deletion proceeds.",
+                "requires_human_only_reason": "Maintainer decision.",
+            }
+        ],
+    }
+
+    repaired = _repair_missing_user_action_gate(finalize_data, plan_dir, state)
+
+    assert repaired is True
+    assert finalize_data["tasks"][0]["description"].startswith("Read user_actions.md.")
+    assert finalize_data["tasks"][0]["id"] == "T2"
+    assert finalize_data["tasks"][1]["id"] == "T1"
+    assert finalize_data["tasks"][2]["id"] == "m7-06-runtime-deletion-target-purge"
+    assert "T2" in finalize_data["tasks"][1]["depends_on"]
+    assert "T2" in finalize_data["tasks"][2]["depends_on"]
+    assert find_synthetic_before_execute_gate(finalize_data) == (
+        "T2",
+        ("T1", "m7-06-runtime-deletion-target-purge"),
+    )
+    assert (plan_dir / "finalize.json").is_file()
+    assert (plan_dir / "user_actions.md").read_text(encoding="utf-8").startswith(
+        "# User Actions"
+    )
 
 
 def test_structured_plan_payload_normalizes_to_canonical_schema() -> None:
