@@ -478,7 +478,7 @@ class VibeWorkflow:
         When seed is given it becomes the local uid component (extrinsic identity).
         When omitted, the counter value provides authored creation-order identity.
         """
-        from vibecomfy.porting.identity.uid import make_uid
+        from vibecomfy.identity.uid import make_uid
         self._uid_counter += 1
         local = seed if seed is not None else f"n{self._uid_counter}"
         return make_uid("", local)
