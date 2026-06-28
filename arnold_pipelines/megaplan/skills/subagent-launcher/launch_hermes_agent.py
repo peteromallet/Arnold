@@ -200,8 +200,8 @@ def _import_runtime():
             if vendored_agent_str not in sys.path:
                 sys.path.insert(0, vendored_agent_str)
         from arnold.agent.run_agent import AIAgent
-        from arnold.pipelines.megaplan.agent.hermes_state import SessionDB
-        from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
+        from arnold_pipelines.megaplan.agent.hermes_state import SessionDB
+        from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
 
         return AIAgent, SessionDB, resolve_model
 
