@@ -48,6 +48,7 @@ PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-r
 KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
+PRIMARY_REPAIR_BASENAME="$(basename "$PRIMARY_REPAIR_BIN")"
 
 mkdir -p "$(dirname "$LOG")"
 
@@ -977,7 +978,7 @@ session_health_status() {
 kimi_operator_running() {
   local session="$1"
   local pgid_path pgid
-  if pgrep -f "arnold-repair-loop[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
+  if pgrep -f "/$PRIMARY_REPAIR_BASENAME[[:space:]]+$session([[:space:]]|$)" >/dev/null 2>&1; then
     return 0
   fi
   if pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]" >/dev/null 2>&1; then
@@ -1000,7 +1001,7 @@ repair_loop_running_anywhere() {
       return 0
     fi
   fi
-  pgrep -f 'arnold-repair-loop([[:space:]]|$)' >/dev/null 2>&1
+  pgrep -f "/$PRIMARY_REPAIR_BASENAME([[:space:]]|$)" >/dev/null 2>&1
 }
 
 repair_loop_busy_state() {

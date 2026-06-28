@@ -357,6 +357,7 @@ def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     text = _wrapper("arnold-watchdog")
 
     assert 'pgrep -f "arnold-kimi-goal-operator[[:space:]]+$session[[:space:]]"' in text
+    assert 'pgrep -f "/$PRIMARY_REPAIR_BASENAME[[:space:]]+$session([[:space:]]|$)"' in text
     assert 'printf \'%s/%s.kimi-pgid\' "$MARKER_DIR" "$1"' in text
     assert 'kill -0 -- "-$pgid"' in text
     assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
