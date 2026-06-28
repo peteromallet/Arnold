@@ -17,6 +17,8 @@ MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_WITH_CODEX="${CLOUD_WATCHDOG_CODEX_REPAIR:-0}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
+REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
+REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
 SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
@@ -115,6 +117,7 @@ issues = [
     if item.get("status") not in {"alive", "restarted", "synced", "skipped"}
 ]
 restarted = [item for item in items if item.get("status") == "restarted"]
+reaped = [item for item in items if item.get("status") == "reaped"]
 now = dt.datetime.now(dt.timezone.utc)
 timestamp = now.isoformat()
 archive_name = now.strftime("%Y%m%dT%H%M%SZ") + ".json"
@@ -126,6 +129,7 @@ payload = {
     "sessions_seen": len(items),
     "alive_sessions": sum(1 for item in items if item.get("status") == "alive"),
     "restarted_sessions": len(restarted),
+    "reaped_repairs": len(reaped),
     "issue_count": len(issues),
     "codex_repair_enabled": repair == "1",
     "push_repairs_enabled": push == "1",
@@ -496,6 +500,10 @@ kimi_pgid_path() {
   printf '%s/%s.kimi-pgid' "$MARKER_DIR" "$1"
 }
 
+session_marker_path() {
+  printf '%s/%s.json' "$MARKER_DIR" "$1"
+}
+
 kimi_dispatch_marker_set() {
   date -u +%Y-%m-%dT%H:%M:%SZ > "$(kimi_dispatch_marker_path "$1")" 2>/dev/null || true
 }
@@ -538,6 +546,294 @@ dispatch_kimi_repair() {
     >> "$LOG" 2>&1 < /dev/null &
   log "Kimi goal operator background-dispatched session=$session pid=$!"
   return 0
+}
+
+reap_stale_repair_candidates() {
+  python3 - "$REAP_AGE_SECS" "$REAP_ORPHAN_AGE_SECS" <<'PY'
+import re
+import sys
+
+SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
+KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
+CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
+RUN_AGENT_HINTS = (
+    "workflows on this Hetzner worker should never pause unexpectedly",
+    "cloud watchdog",
+    "Kimi goal operator",
+)
+CODEX_HINTS = (
+    "Codex repair subagent launched by the cloud watchdog",
+    "leave enough evidence for the Kimi supervisor",
+    "workflows on this Hetzner worker should not pause unexpectedly",
+)
+PROTECTED_HINTS = (
+    "arnold-watchdog",
+    "arnold-progress-auditor",
+)
+RULE_PRIORITY = {
+    "orphan_fast_path": 0,
+    "age_backstop": 1,
+}
+KIND_PRIORITY = {
+    "arnold-kimi-goal-operator": 0,
+    "arnold.agent.run_agent": 1,
+    "codex exec": 2,
+}
+
+
+def parse_ps_row(raw: str):
+    parts = raw.strip().split(None, 4)
+    if len(parts) < 5:
+        return None
+    try:
+        return {
+            "pid": int(parts[0]),
+            "ppid": int(parts[1]),
+            "pgid": int(parts[2]),
+            "etimes": int(parts[3]),
+            "args": parts[4],
+        }
+    except ValueError:
+        return None
+
+
+def extract_session(kind: str, args: str) -> str:
+    if kind == "arnold-kimi-goal-operator":
+        match = KIMI_RE.search(args)
+        return match.group(2) if match else ""
+    match = SESSION_RE.search(args)
+    return match.group(1) if match else ""
+
+
+def classify_kind(args: str) -> str:
+    if any(hint in args for hint in PROTECTED_HINTS):
+        return ""
+    kimi_match = KIMI_RE.search(args)
+    if kimi_match:
+        return "arnold-kimi-goal-operator"
+    if "arnold.agent.run_agent" in args:
+        session = extract_session("arnold.agent.run_agent", args)
+        if session and any(hint in args for hint in RUN_AGENT_HINTS):
+            return "arnold.agent.run_agent"
+    if CODEX_RE.search(args):
+        session = extract_session("codex exec", args)
+        if session and any(hint in args for hint in CODEX_HINTS):
+            return "codex exec"
+    return ""
+
+
+def decide_reap(row: dict[str, object], age_secs: int, orphan_age_secs: int) -> dict[str, object]:
+    args = str(row.get("args") or "")
+    kind = classify_kind(args)
+    session = extract_session(kind, args) if kind else ""
+    decision = {
+        "pid": int(row.get("pid") or 0),
+        "ppid": int(row.get("ppid") or 0),
+        "pgid": int(row.get("pgid") or 0),
+        "etimes": int(row.get("etimes") or 0),
+        "kind": kind,
+        "session": session,
+        "reap": False,
+        "rule": "",
+        "reason": "non_target" if not kind else "under_age",
+    }
+    if not kind:
+        return decision
+    if (
+        kind in {"arnold.agent.run_agent", "codex exec"}
+        and decision["ppid"] == 1
+        and decision["etimes"] > orphan_age_secs
+    ):
+        decision["reap"] = True
+        decision["rule"] = "orphan_fast_path"
+        decision["reason"] = "orphaned_ppid_1"
+        return decision
+    if decision["etimes"] > age_secs:
+        decision["reap"] = True
+        decision["rule"] = "age_backstop"
+        decision["reason"] = "elapsed_exceeded"
+    return decision
+
+
+def choose_reap_candidates(rows: list[dict[str, object]], age_secs: int, orphan_age_secs: int):
+    candidates = [
+        decide_reap(row, age_secs, orphan_age_secs)
+        for row in rows
+    ]
+    candidates = [item for item in candidates if item["reap"]]
+    candidates.sort(
+        key=lambda item: (
+            item["session"] or "",
+            item["pgid"],
+            RULE_PRIORITY[item["rule"]],
+            KIND_PRIORITY[item["kind"]],
+            -item["etimes"],
+            item["pid"],
+        )
+    )
+    seen_sessions = set()
+    seen_pgids = set()
+    selected = []
+    for item in candidates:
+        session = item["session"]
+        pgid = item["pgid"]
+        if session and session in seen_sessions:
+            continue
+        if pgid in seen_pgids:
+            continue
+        selected.append(item)
+        if session:
+            seen_sessions.add(session)
+        seen_pgids.add(pgid)
+    return selected
+
+
+def main() -> int:
+    age_secs = int(sys.argv[1])
+    orphan_age_secs = int(sys.argv[2])
+    rows = []
+    for raw in sys.stdin:
+        row = parse_ps_row(raw)
+        if row:
+            rows.append(row)
+    for item in choose_reap_candidates(rows, age_secs, orphan_age_secs):
+        print(
+            "\t".join(
+                [
+                    str(item["pid"]),
+                    str(item["ppid"]),
+                    str(item["pgid"]),
+                    str(item["etimes"]),
+                    str(item["kind"]),
+                    str(item["session"]),
+                    str(item["rule"]),
+                    str(item["reason"]),
+                ]
+            )
+        )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+PY
+}
+
+kill_process_group() {
+  local pgid="$1"
+  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
+  kill -- "-$pgid" >/dev/null 2>&1 || return 1
+  sleep 0.5
+  if kill -0 -- "-$pgid" >/dev/null 2>&1; then
+    kill -9 -- "-$pgid" >/dev/null 2>&1 || true
+    sleep 0.2
+  fi
+  ! kill -0 -- "-$pgid" >/dev/null 2>&1
+}
+
+kill_pid_and_descendants() {
+  local root_pid="$1"
+  local pid_list
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 1
+  pid_list="$(
+    python3 - "$root_pid" <<'PY'
+import subprocess
+import sys
+
+root = int(sys.argv[1])
+proc = subprocess.run(
+    ["ps", "-eo", "pid=,ppid="],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+children = {}
+for line in proc.stdout.splitlines():
+    parts = line.strip().split()
+    if len(parts) != 2:
+        continue
+    try:
+        pid = int(parts[0])
+        ppid = int(parts[1])
+    except ValueError:
+        continue
+    children.setdefault(ppid, []).append(pid)
+
+order = []
+
+def walk(pid: int) -> None:
+    for child in children.get(pid, []):
+        walk(child)
+        order.append(child)
+
+walk(root)
+order.append(root)
+print(" ".join(str(pid) for pid in order))
+PY
+  )"
+  [[ -n "$pid_list" ]] || return 1
+  local pid
+  for pid in $pid_list; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+  sleep 0.5
+  for pid in $pid_list; do
+    kill -0 "$pid" >/dev/null 2>&1 || continue
+    kill -9 "$pid" >/dev/null 2>&1 || true
+  done
+  ! kill -0 "$root_pid" >/dev/null 2>&1
+}
+
+reap_stale_repairs() {
+  local report_items="$1"
+  local candidates marker_path workspace remote_spec
+  local pid ppid pgid etimes kind session rule reason
+  local live_pgid session_pgid method message
+  candidates="$(mktemp)"
+  ps -eww -o pid=,ppid=,pgid=,etimes=,args= 2>/dev/null | reap_stale_repair_candidates > "$candidates"
+  while IFS=$'\t' read -r pid ppid pgid etimes kind session rule reason; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      continue
+    fi
+    method=""
+    session_pgid=""
+    if [[ -n "$session" ]]; then
+      marker_path="$(session_marker_path "$session")"
+      if [[ -r "$(kimi_pgid_path "$session")" ]]; then
+        read -r session_pgid < "$(kimi_pgid_path "$session")" || session_pgid=""
+        live_pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+        if [[ ! "$session_pgid" =~ ^[0-9]+$ || "$session_pgid" != "$live_pgid" ]]; then
+          session_pgid=""
+        fi
+      fi
+    else
+      marker_path=""
+    fi
+    if [[ -n "$session_pgid" ]] && kill_process_group "$session_pgid"; then
+      method="session_pgid:$session_pgid"
+    elif kill_process_group "$pgid"; then
+      method="pgid:$pgid"
+    elif kill_pid_and_descendants "$pid"; then
+      method="pid_tree:$pid"
+    else
+      log "stale repair reap failed pid=$pid kind=$kind session=${session:-unknown} rule=$rule age=${etimes}s"
+      continue
+    fi
+    workspace=""
+    remote_spec=""
+    if [[ -n "$marker_path" && -f "$marker_path" ]]; then
+      workspace="$(json_field "$marker_path" workspace 2>/dev/null || true)"
+      remote_spec="$(json_field "$marker_path" remote_spec 2>/dev/null || true)"
+    fi
+    message="reaped stale repair pid=$pid kind=$kind session=${session:-unknown} rule=$rule age=${etimes}s method=$method"
+    log "$message"
+    report_item "$report_items" "${session:-}" "reap" "reaped" "$message" "$workspace" "$remote_spec"
+    if [[ -n "$session" ]]; then
+      kimi_dispatch_marker_clear "$session"
+    fi
+  done < "$candidates"
+  rm -f "$candidates"
 }
 
 chain_wait_status() {
@@ -1004,6 +1300,7 @@ scan_once() {
     launch_chain_tick "$session" "$workspace" "$remote_spec" "$report_items" || true
   done
   shopt -u nullglob
+  reap_stale_repairs "$report_items"
   log "scan complete markers=$found"
   emit_report "$report_items" "$found"
   rm -f "$report_items"
