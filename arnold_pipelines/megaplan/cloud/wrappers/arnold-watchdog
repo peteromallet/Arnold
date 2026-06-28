@@ -29,6 +29,7 @@ REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
+REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"
 REPAIR_WITH_CODEX="${CLOUD_WATCHDOG_CODEX_REPAIR:-0}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
@@ -990,6 +991,29 @@ kimi_operator_running() {
   ps -eo pgid=,args= 2>/dev/null \
     | awk -v target="$pgid" '$1 == target { $1=""; sub(/^[[:space:]]+/, ""); print }' \
     | grep -Eq 'arnold-repair-loop|arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec|launch_hermes_agent\.py'
+}
+
+repair_loop_running_anywhere() {
+  if command -v flock >/dev/null 2>&1; then
+    mkdir -p "$(dirname "$REPAIR_LOCK_FILE")"
+    if ! flock -n "$REPAIR_LOCK_FILE" true >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  pgrep -f 'arnold-repair-loop([[:space:]]|$)' >/dev/null 2>&1
+}
+
+repair_loop_busy_state() {
+  local session="$1"
+  if kimi_operator_running "$session"; then
+    echo "same_session"
+    return 0
+  fi
+  if repair_loop_running_anywhere; then
+    echo "other_session"
+    return 0
+  fi
+  echo "none"
 }
 
 # Per-session repair-cycle marker. The watchdog sets it when a stopped session
@@ -2144,14 +2168,21 @@ repair_unhealthy_session() {
   local workspace="$2"
   local remote_spec="$3"
   local reason="$4"
+  local repair_busy
+
+  repair_busy="$(repair_loop_busy_state "$session")"
 
   # Background-dispatch: never block the tick on the repair operator (it can run
   # up to its 60-min timeout). Returns 0 when repair is running or just
   # dispatched (caller must NOT relaunch -- the operator relaunches on success);
   # returns 1 when the direct tmux relaunch fallback is needed (repair missing,
   # or already tried and exited without reviving the session).
-  if kimi_operator_running "$session"; then
+  if [[ "$repair_busy" == "same_session" ]]; then
     log "session unhealthy; repair already running session=$session reason=$reason"
+    return 0
+  fi
+  if [[ "$repair_busy" == "other_session" ]]; then
+    log "session unhealthy; another repair loop already running so waiting turn session=$session reason=$reason"
     return 0
   fi
   if mechanical_relaunch_attempted_previously "$session"; then
@@ -2207,12 +2238,17 @@ launch_chain_tick() {
       report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
       return 1
     fi
-    local phase_health
-    phase_health="$(plan_phase_health_status "$workspace")"
-    if [[ "$phase_health" != "ok" ]]; then
-      if kimi_operator_running "$session"; then
+  local phase_health
+  phase_health="$(plan_phase_health_status "$workspace")"
+  if [[ "$phase_health" != "ok" ]]; then
+      local repair_busy
+      repair_busy="$(repair_loop_busy_state "$session")"
+      if [[ "$repair_busy" == "same_session" ]]; then
         log "session alive but plan unhealthy; repair already running session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_running" "$phase_health" "$workspace" "$remote_spec"
+      elif [[ "$repair_busy" == "other_session" ]]; then
+        log "session alive but plan unhealthy; another repair loop already running so waiting turn session=$session reason=$phase_health"
+        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
       elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         log "session alive but plan unhealthy: background-dispatched repair loop session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_dispatched" "$phase_health" "$workspace" "$remote_spec"
@@ -2306,6 +2342,19 @@ launch_chain_tick() {
     return 1
   fi
 
+  local repair_busy
+  repair_busy="$(repair_loop_busy_state "$session")"
+  if [[ "$repair_busy" == "same_session" ]]; then
+    log "session needs repair attention; repair already running session=$session health=$health"
+    report_item "$report_items" "$session" "repair" "repair_running" "repair already running" "$workspace" "$remote_spec"
+    return 0
+  fi
+  if [[ "$repair_busy" == "other_session" ]]; then
+    log "session needs repair attention; another repair loop already running so waiting turn session=$session health=$health"
+    report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+    return 0
+  fi
+
   # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
   # it never blocks the tick (it can run up to its 60-min timeout and relaunches
   # the run itself on success). The watchdog's direct tmux relaunch runs only as
@@ -2319,11 +2368,7 @@ launch_chain_tick() {
       return 0
     fi
   else
-    if kimi_operator_running "$session"; then
-      log "session stopped; repair already running session=$session"
-      report_item "$report_items" "$session" "repair" "repair_running" "repair already running" "$workspace" "$remote_spec"
-      return 0
-    elif mechanical_relaunch_attempted_previously "$session"; then
+    if mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         log "session stopped after mechanical relaunch: background-dispatched repair loop session=$session"
         report_item "$report_items" "$session" "repair" "repair_dispatched" "repair loop dispatched after mechanical relaunch" "$workspace" "$remote_spec"

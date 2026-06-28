@@ -394,6 +394,17 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
             )), f"bare synchronous Kimi invocation remains: {ln!r}"
 
 
+def test_watchdog_repair_dispatch_has_systemwide_busy_gate() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert 'REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"' in text
+    assert "repair_loop_running_anywhere()" in text
+    assert 'if ! flock -n "$REPAIR_LOCK_FILE" true >/dev/null 2>&1; then' in text
+    assert "repair_loop_busy_state()" in text
+    assert 'repair_busy="$(repair_loop_busy_state "$session")"' in text
+    assert "another repair loop already running; waiting turn" in text
+
+
 def test_watchdog_kimi_operator_running_falls_back_to_pgid_pidfile_and_clear_removes_it(
     tmp_path: Path,
 ) -> None:
@@ -447,6 +458,111 @@ fi
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["running", "cleared"]
+
+
+def test_watchdog_skips_same_session_dispatch_when_repair_loop_is_already_running(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / "demo-spec.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_attention_status_env() { return 0; }
+repair_loop_running_anywhere() { return 0; }
+kimi_operator_running() { [[ "$1" == "demo-session" ]]; }
+mechanical_relaunch_attempted_previously() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_running\trepair already running\t" in report
+    assert "DISPATCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_serializes_repairs_across_sessions_one_dispatch_at_a_time(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace_a = tmp_path / "ws-a"
+    workspace_b = tmp_path / "ws-b"
+    workspace_a.mkdir()
+    workspace_b.mkdir()
+    spec_a = workspace_a / "demo-a.yaml"
+    spec_b = workspace_b / "demo-b.yaml"
+    spec_a.write_text("milestones: []\n", encoding="utf-8")
+    spec_b.write_text("milestones: []\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("repair_unhealthy_session"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+GLOBAL_BUSY=0
+session_health_status() {
+  if [[ "$1" == "demo-a" ]]; then
+    echo retrying_failure
+  else
+    echo stopped
+  fi
+}
+plan_attention_status_env() { return 0; }
+repair_loop_running_anywhere() { [[ "${GLOBAL_BUSY:-0}" == "1" ]]; }
+kimi_operator_running() { return 1; }
+mechanical_relaunch_attempted_previously() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() {
+  GLOBAL_BUSY=1
+  echo "DISPATCH:$1" >&2
+  return 0
+}
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-a {str(workspace_a)!r} {str(spec_a)!r} {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-b {str(workspace_b)!r} {str(spec_b)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "DISPATCH:demo-a" in result.stderr
+    assert "DISPATCH:demo-b" not in result.stderr
+    assert "\trepair\trepair_running\tretrying_failure\t" in report
+    assert "\trepair\trepair_running\tanother repair loop already running; waiting turn\t" in report
+    assert "TMUX" not in result.stderr
 
 
 def test_watchdog_complete_teardown_collects_setsid_descendant_pgids(tmp_path: Path) -> None:
@@ -1712,6 +1828,10 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
 
     assert 'DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"' in text
     assert 'NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"' in text
+    assert 'REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"' in text
+    assert "acquire_repair_lock()" in text
+    assert 'if ! flock -n "$REPAIR_LOCK_FD"; then' in text
+    assert "acquire_repair_lock || exit 75" in text
     assert "repair_data_init()" in text
     assert "repair_data_record_dev()" in text
     assert "repair_data_record_mechanical()" in text

@@ -22,6 +22,7 @@ MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
 ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
 DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
+REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"
 ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
@@ -78,6 +79,19 @@ trap cleanup_children EXIT INT TERM HUP
 
 log() {
   echo "[repair-loop $(date -Iseconds)] $*" | tee -a "$LOG"
+}
+
+acquire_repair_lock() {
+  mkdir -p "$(dirname "$REPAIR_LOCK_FILE")"
+  if ! command -v flock >/dev/null 2>&1; then
+    log "flock unavailable; cannot enforce single active repair loop"
+    return 1
+  fi
+  exec {REPAIR_LOCK_FD}> "$REPAIR_LOCK_FILE"
+  if ! flock -n "$REPAIR_LOCK_FD"; then
+    log "another repair loop is already active; exiting session=$SESSION"
+    return 1
+  fi
 }
 
 safe_name() {
@@ -798,6 +812,7 @@ PY
 }
 
 log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC source=$ARNOLD_SRC branch=$SYNC_BRANCH"
+acquire_repair_lock || exit 75
 
 RUN_KIND="$(json_field "$MARKER_PATH" run_kind 2>/dev/null || true)"
 PLAN_NAME="$(json_field "$MARKER_PATH" plan_name 2>/dev/null || true)"
