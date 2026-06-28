@@ -1,21 +1,36 @@
 {
   "grammar_version": "arnold.workflow.authoring.v1",
-  "source_path": "tests/fixtures/workflow_authoring/valid_function_linear.py",
+  "source_path": "tests/fixtures/workflow_authoring/valid_linear_transition_intrinsic.py",
   "outcome": "valid",
+  "expected_diagnostics": [],
   "expected_provenance": {
     "source_form": "function",
     "workflow": {
-      "id": "linear-function",
-      "function_name": "linear",
-      "parameters": ["brief"],
+      "id": "linear-transition-intrinsic",
       "source_span": {
-        "start_line": 7,
+        "start_line": 8,
         "start_column": 1,
-        "end_line": 10,
-        "end_column": 43
-      }
+        "end_line": 17,
+        "end_column": 6
+      },
+      "function_name": "linear_transition",
+      "parameters": [
+        "brief"
+      ]
     },
     "imports": [
+      {
+        "module": "arnold.workflow.authoring",
+        "qualname": "transition",
+        "local_name": "transition",
+        "kind": "intrinsic",
+        "source_span": {
+          "start_line": 3,
+          "start_column": 1,
+          "end_line": 3,
+          "end_column": 59
+        }
+      },
       {
         "module": "arnold.workflow.authoring",
         "qualname": "workflow",
@@ -25,20 +40,7 @@
           "start_line": 3,
           "start_column": 1,
           "end_line": 3,
-          "end_column": 47
-        }
-      },
-      {
-        "module": "tests.fixtures.workflow_authoring.components",
-        "qualname": "plan",
-        "local_name": "plan",
-        "kind": "step",
-        "component_id": "plan",
-        "source_span": {
-          "start_line": 4,
-          "start_column": 1,
-          "end_line": 4,
-          "end_column": 46
+          "end_column": 59
         }
       },
       {
@@ -46,26 +48,26 @@
         "qualname": "execute",
         "local_name": "execute",
         "kind": "step",
-        "component_id": "execute",
         "source_span": {
           "start_line": 4,
           "start_column": 1,
           "end_line": 4,
-          "end_column": 46
-        }
+          "end_column": 38
+        },
+        "component_id": "execute"
       },
       {
         "module": "tests.fixtures.workflow_authoring.components",
-        "qualname": "review",
-        "local_name": "review",
+        "qualname": "plan",
+        "local_name": "plan",
         "kind": "step",
-        "component_id": "review",
         "source_span": {
           "start_line": 4,
           "start_column": 1,
           "end_line": 4,
-          "end_column": 46
-        }
+          "end_column": 38
+        },
+        "component_id": "plan"
       }
     ],
     "steps": [
@@ -75,16 +77,16 @@
         "generated_dsl_id": "step:plan",
         "generated_manifest_node_id": "plan",
         "source_span": {
-          "start_line": 8,
+          "start_line": 9,
           "start_column": 19,
-          "end_line": 8,
+          "end_line": 9,
           "end_column": 47
         },
         "output_spans": [
           {
-            "start_line": 8,
+            "start_line": 9,
             "start_column": 5,
-            "end_line": 8,
+            "end_line": 9,
             "end_column": 16
           }
         ],
@@ -93,9 +95,9 @@
             "name": "brief",
             "ref": "param:brief",
             "source_span": {
-              "start_line": 8,
+              "start_line": 9,
               "start_column": 35,
-              "end_line": 8,
+              "end_line": 9,
               "end_column": 46
             }
           }
@@ -107,64 +109,42 @@
         "generated_dsl_id": "step:execute",
         "generated_manifest_node_id": "execute",
         "source_span": {
-          "start_line": 9,
-          "start_column": 32,
-          "end_line": 9,
-          "end_column": 71
+          "start_line": 10,
+          "start_column": 5,
+          "end_line": 10,
+          "end_column": 44
         },
-        "output_spans": [
-          {
-            "start_line": 9,
-            "start_column": 5,
-            "end_line": 9,
-            "end_column": 19
-          },
-          {
-            "start_line": 9,
-            "start_column": 21,
-            "end_line": 9,
-            "end_column": 29
-          }
-        ],
         "inputs": [
           {
             "name": "plan",
             "ref": "output:plan_output",
             "source_span": {
-              "start_line": 9,
-              "start_column": 54,
-              "end_line": 9,
-              "end_column": 70
-            }
-          }
-        ]
-      },
-      {
-        "id": "review",
-        "component_ref": "tests.fixtures.workflow_authoring.components:review",
-        "generated_dsl_id": "step:review",
-        "generated_manifest_node_id": "review",
-        "source_span": {
-          "start_line": 10,
-          "start_column": 5,
-          "end_line": 10,
-          "end_column": 43
-        },
-        "inputs": [
-          {
-            "name": "evidence",
-            "ref": "output:evidence",
-            "source_span": {
               "start_line": 10,
-              "start_column": 25,
+              "start_column": 27,
               "end_line": 10,
-              "end_column": 42
+              "end_column": 43
             }
           }
         ]
       }
     ],
-    "intrinsics": []
-  },
-  "expected_diagnostics": []
+    "intrinsics": [
+      {
+        "name": "transition",
+        "arguments": {
+          "id": "operator-resume",
+          "type": "override",
+          "trigger_ref": "operator.resume",
+          "target_ref": "execute",
+          "policy_ref": "review_approval"
+        },
+        "source_span": {
+          "start_line": 11,
+          "start_column": 5,
+          "end_line": 17,
+          "end_column": 6
+        }
+      }
+    ]
+  }
 }
