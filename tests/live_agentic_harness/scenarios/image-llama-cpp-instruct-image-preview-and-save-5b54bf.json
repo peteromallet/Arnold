@@ -1,0 +1,37 @@
+{
+  "id": "image-llama-cpp-instruct-image-preview-and-save-5b54bf",
+  "query": "Adjust the LLaMA instruct parameters: set temperature to 0.8 and max tokens to 512.",
+  "workflow_path": "external_workflows/corpus/5b54bf476f4234aa.json",
+  "network": true,
+  "timeout": 160,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "The LLaMA CPP instruct node uses the new temperature and max_tokens values",
+    "quality": "All connections preserved, no dangling nodes, workflow runs with adjusted parameters",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "image",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "other",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "llama-cpp",
+      "instruct",
+      "image-processing",
+      "preview",
+      "save-image"
+    ],
+    "source_workflow_id": "5b54bf476f4234aa",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-flash",
+    "author_rationale": "Most specific and natural for low-complexity edit \u2014 a clear parameter adjustment a user would make."
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "id": "audio-acestep-audio-generation-with-ksampler-e8c20a",
+  "query": "Change the sampling steps to 30 and switch the scheduler to 'karras'.",
+  "workflow_path": "external_workflows/corpus/e8c20a18bba6455d.json",
+  "network": true,
+  "timeout": 280,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "The generated audio uses 30 steps and the karras scheduler, with all other parameters unchanged.",
+    "quality": "Only the KSampler node's steps and scheduler fields are modified; the rest of the workflow (UNET loader, CLIP, VAE, MP3 save) remains fully connected and functional.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "audio",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "text_to_image",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "audio-generation",
+      "ace-step",
+      "ksampler",
+      "unet-loader",
+      "vae-decoder",
+      "mp3-output",
+      "custom-nodes"
+    ],
+    "source_workflow_id": "e8c20a18bba6455d",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Simple but specific parameter tweak forces the agent to locate and edit the correct KSampler node among multiple components."
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "id": "video-wanvideo-text-to-video-generation-71f825",
+  "query": "How does the WanVideo text-to-video pipeline turn a prompt into a video clip? Walk me through the flow from the T5 and CLIP encoders through sampling to the final output, and explain how the model learns to generate motion across frames.",
+  "workflow_path": "external_workflows/corpus/71f825e4550c95b7.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "explain",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "image_to_video",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "wanvideo",
+      "text-to-video",
+      "video-generation",
+      "t5-encoder",
+      "clip-encoder",
+      "vae",
+      "sampling"
+    ],
+    "source_workflow_id": "71f825e4550c95b7",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Requires explaining dual text encoders and the temporal generation logic specific to WanVideo, not generic text-to-image extension."
+  }
+}

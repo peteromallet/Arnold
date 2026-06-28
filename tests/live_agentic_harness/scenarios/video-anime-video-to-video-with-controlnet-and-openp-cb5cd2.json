@@ -1,0 +1,38 @@
+{
+  "id": "video-anime-video-to-video-with-controlnet-and-openp-cb5cd2",
+  "query": "The generated anime video doesn't follow the poses closely enough. Can you increase the ControlNet conditioning strength?",
+  "workflow_path": "external_workflows/corpus/cb5cd22138e4cd57.json",
+  "network": true,
+  "timeout": 280,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "The output poses adhere more strictly to the OpenPose skeleton, creating a stylized video that closely tracks the input motion.",
+    "quality": "ControlNet strength is increased without changing the model or breaking the image\u2011to\u2011image pipeline; the rest of the workflow remains functional.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 2,
+    "task_type": "controlnet",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "video-to-video",
+      "anime",
+      "controlnet",
+      "openpose",
+      "frame-interpolation",
+      "image-to-image"
+    ],
+    "source_workflow_id": "cb5cd22138e4cd57",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Tests agent\u2019s ability to locate and adjust a single core parameter (control strength) in a low\u2011complexity ControlNet workflow, avoiding vague quality asks."
+  }
+}

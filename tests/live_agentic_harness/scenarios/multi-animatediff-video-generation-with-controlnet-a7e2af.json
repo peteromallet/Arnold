@@ -1,0 +1,32 @@
+{
+  "id": "multi-animatediff-video-generation-with-controlnet-a7e2af",
+  "query": "My current workflow uses a standard UNet-based Stable Diffusion checkpoint with AnimateDiff. What would be the trade-offs if I switched to a DiT-based model (e.g., SD3 or PixArt) for better motion consistency and temporal coherence? Specifically, how would ControlNet integration differ, and what performance or quality changes should I expect?",
+  "workflow_path": "external_workflows/corpus/a7e2af6f0472627b.json",
+  "network": true,
+  "timeout": 360,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "multi",
+    "query_type": "research",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "controlnet",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "animatediff",
+      "controlnet",
+      "video-generation",
+      "image-to-video",
+      "text-to-video"
+    ],
+    "source_workflow_id": "a7e2af6f0472627b",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-flash",
+    "author_rationale": "This query is specific to the workflow's backbone choice, requires deep understanding of AnimateDiff and ControlNet integration with different architectures, and is a pure research question that forces investigation of tradeoffs without edi"
+  }
+}

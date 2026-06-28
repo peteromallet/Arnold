@@ -1,0 +1,35 @@
+{
+  "id": "multi-flux2-image-and-video-generation-with-outpaint-435de2",
+  "query": "The outpainted borders look noticeably brighter than the original image, even after color matching is applied. Why is the color matching node not aligning the luminance, and which specific node or setting is likely causing this mismatch?",
+  "workflow_path": "external_workflows/corpus/435de2f6bb5d3eda.json",
+  "network": true,
+  "timeout": 360,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "multi",
+    "query_type": "diagnose",
+    "abstraction": "high",
+    "complexity": "high",
+    "manifest_complexity": 4,
+    "task_type": "outpainting",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "flux2",
+      "image-generation",
+      "video-generation",
+      "outpainting",
+      "color-matching",
+      "image-comparison",
+      "latent-processing",
+      "batch-processing"
+    ],
+    "source_workflow_id": "435de2f6bb5d3eda",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "A concrete luminance mismatch symptom forces the agent to trace the post\u2011processing chain, inspect color matching parameters, and identify a plausible root cause without reaching for a simple fix."
+  }
+}

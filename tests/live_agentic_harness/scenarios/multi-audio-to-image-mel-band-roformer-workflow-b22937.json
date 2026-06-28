@@ -1,0 +1,32 @@
+{
+  "id": "multi-audio-to-image-mel-band-roformer-workflow-b22937",
+  "query": "Can you explain step-by-step what this audio-to-image workflow does, how the MelBandRoFormer model fits in, and why it both saves an MP3 and outputs a preview image?",
+  "workflow_path": "external_workflows/corpus/b22937d66f82f884.json",
+  "network": true,
+  "timeout": 360,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "multi",
+    "query_type": "explain",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "other",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "audio-processing",
+      "mel-band-roformer",
+      "audio-to-image",
+      "preview-image",
+      "save-audio-mp3"
+    ],
+    "source_workflow_id": "b22937d66f82f884",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "Requires a full pipeline explanation, including the unusual pairing of audio processing and image preview output."
+  }
+}

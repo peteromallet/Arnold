@@ -1,0 +1,36 @@
+{
+  "id": "3d-3d-model-load-edit-and-export-workflow-d66a66",
+  "query": "Change the texture edit prompt to 'aged bronze statue with verdigris patina' and ensure the model exports as GLB with embedded textures.",
+  "workflow_path": "external_workflows/corpus/d66a660d74cbc9ec.json",
+  "network": true,
+  "timeout": 320,
+  "apply": true,
+  "assessment": {
+    "expect_graph_changed": true
+  },
+  "desired": {
+    "outcome": "The modified model has textures reflecting the new prompt and is exported as GLB with embedded textures.",
+    "quality": "All nodes remain connected, no dangling nodes, the original load-edit-export flow is preserved.",
+    "alternatives_ok": true
+  },
+  "_tags": {
+    "modality": "3d",
+    "query_type": "edit",
+    "abstraction": "low",
+    "complexity": "low",
+    "manifest_complexity": 1,
+    "task_type": "other",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "3d",
+      "texture-editing",
+      "glb-export",
+      "model-loading"
+    ],
+    "source_workflow_id": "d66a660d74cbc9ec",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "A concrete, natural edit targeting the core texture node and export setting, requiring precise parameter modification without breaking the workflow."
+  }
+}

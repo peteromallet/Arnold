@@ -1,0 +1,35 @@
+{
+  "id": "video-animatediff-video-with-controlnet-and-depth-89b02a",
+  "query": "What alternatives to Depth-Anything could I use as the depth estimator for better temporal consistency in my AnimateDiff video pipeline, and how would replacing it affect the ControlNet guidance?",
+  "workflow_path": "external_workflows/corpus/89b02a141d7451bb.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "research",
+    "abstraction": "high",
+    "complexity": "high",
+    "manifest_complexity": 5,
+    "task_type": "controlnet",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "animatediff",
+      "controlnet",
+      "depth-anything",
+      "video-generation",
+      "video-to-video",
+      "florence2",
+      "lora",
+      "keyframe-interpolation"
+    ],
+    "source_workflow_id": "89b02a141d7451bb",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-pro",
+    "author_rationale": "The question requires researching state-of-the-art depth models for video and evaluating tradeoffs, a genuine investigation that goes beyond simple lookup."
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "video-seedvr2-video-upscaling-workflow-052e59",
+  "query": "Walk me through what each major stage does: how the video frames are loaded, what the VAE and DiT models contribute, and how the final upscaled video is assembled. I want to understand the full pipeline.",
+  "workflow_path": "external_workflows/corpus/052e59d2d54625ac.json",
+  "network": true,
+  "timeout": 320,
+  "apply": false,
+  "assessment": {
+    "expect_graph_changed": false
+  },
+  "_tags": {
+    "modality": "video",
+    "query_type": "explain",
+    "abstraction": "med",
+    "complexity": "med",
+    "manifest_complexity": 3,
+    "task_type": "upscaling",
+    "requires_custom_nodes": true,
+    "techniques": [
+      "video-upscaling",
+      "seedvr2",
+      "video-processing",
+      "vae",
+      "dit",
+      "torch-compile"
+    ],
+    "source_workflow_id": "052e59d2d54625ac",
+    "source": "external_workflows/corpus",
+    "staged": true,
+    "authored_by": "deepseek-v4-flash",
+    "author_rationale": "Directly tests end-to-end understanding of a medium-complexity video upscaling workflow with multiple model components."
+  }
+}
