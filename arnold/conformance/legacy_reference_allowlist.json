@@ -410,9 +410,15 @@
     },
     {
       "path": "docs/arnold/package-disposition.md",
-      "pattern": "arnold/pipelines/megaplan",
+      "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
+      "reason": "Generated disposition documentation records the forbidden pre-migration dotted package path."
+    },
+    {
+      "path": "docs/arnold/package-disposition.yaml",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Disposition manifest records the forbidden pre-migration dotted package path."
     },
     {
       "path": "docs/arnold/runtime-salvage-deletion-map.md",
