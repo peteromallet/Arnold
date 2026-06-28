@@ -1606,9 +1606,13 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
 
         baseline = _capture_test_baseline_for_plan(plan_dir, project_dir, _config)
         payload.update(baseline)
+    # Scrub model-authored verification loops before injecting handler-owned
+    # coordination tasks. Otherwise the user-action gate matches the generic
+    # verification heuristic and gets rewritten into the baseline placeholder.
+    _ensure_verification_task(payload, state)
+    if state["config"].get("mode") not in {"doc", "joke"}:
         _ensure_user_actions_pre_gate_task(payload, state)
         _ensure_user_actions_post_gate_task(payload, state)
-    _ensure_verification_task(payload, state)  # scrubber runs unconditionally for every mode
     _apply_programmatic_coverage(payload, plan_dir, state)
     _normalize_task_complexity(payload)
     _attach_calibration_route_reports(plan_dir, payload, state)

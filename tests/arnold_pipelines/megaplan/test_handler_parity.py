@@ -384,6 +384,91 @@ class TestFinalizeSemanticChecks:
         assert payload["test_selection"]["fallback_source"] == "finalize_task_commands_run"
         assert payload["baseline_test_command"] == "pytest tests/test_contract.py"
 
+    def test_write_finalize_preserves_user_action_gate_after_verification_rewrite(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from arnold_pipelines.megaplan.handlers import finalize
+
+        project_dir = tmp_path / "repo"
+        plan_dir = project_dir / ".megaplan" / "plans" / "p"
+        plan_dir.mkdir(parents=True)
+        state: dict[str, Any] = {
+            "name": "p",
+            "idea": "i",
+            "current_state": "gated",
+            "iteration": 1,
+            "created_at": "2026-01-01T00:00:00Z",
+            "config": {
+                "mode": "code",
+                "project_dir": str(project_dir),
+                "test_selection": "scoped",
+            },
+            "sessions": {},
+            "plan_versions": [],
+            "history": [],
+            "meta": {},
+            "last_gate": {},
+        }
+        payload = {
+            "tasks": [
+                {
+                    "id": "T1",
+                    "description": "Update code and run the focused regression tests.",
+                    "depends_on": [],
+                    "status": "pending",
+                    "executor_notes": "",
+                    "reviewer_verdict": "",
+                    "kind": "test",
+                    "complexity": 2,
+                    "complexity_justification": "Focused regression coverage.",
+                    "files_changed": ["tests/test_contract.py"],
+                    "commands_run": ["pytest tests/test_contract.py -q"],
+                }
+            ],
+            "sense_checks": [],
+            "watch_items": [],
+            "provides": [],
+            "assumes": [],
+            "pre_existing": [],
+            "user_actions": [
+                {
+                    "id": "ua-01",
+                    "description": "Confirm the contract assumption is still authoritative.",
+                    "phase": "before_execute",
+                    "blocks_task_ids": ["T1"],
+                    "rationale": "Need an explicit resolution before execution proceeds.",
+                    "requires_human_only_reason": "Maintainer decision.",
+                }
+            ],
+        }
+
+        def fake_capture(
+            captured_plan_dir: Path,
+            captured_project_dir: Path,
+            config: dict[str, Any],
+        ) -> dict[str, Any]:
+            assert captured_plan_dir == plan_dir
+            assert captured_project_dir == project_dir
+            return {
+                "baseline_test_failures": [],
+                "baseline_test_command": config.get("test_command"),
+            }
+
+        monkeypatch.setattr(finalize, "_capture_test_baseline_for_plan", fake_capture)
+
+        finalize._write_finalize_artifacts(plan_dir, payload, state)
+
+        gate_task = payload["tasks"][0]
+        assert gate_task["id"] == "T2"
+        assert gate_task["description"].startswith("Read user_actions.md.")
+        assert "megaplan user-action resolve" in gate_task["description"]
+        assert payload["tasks"][1]["id"] == "T1"
+        assert payload["tasks"][1]["description"].startswith(
+            "Introduce no new failures vs the recorded baseline;"
+        )
+        assert payload["tasks"][1]["depends_on"][0] == "T2"
+        assert payload["sense_checks"][-1]["task_id"] == "T2"
+
 
 class TestReviewPayloadDefaults:
     def test_prepare_review_payload_fills_defaults(self) -> None:
