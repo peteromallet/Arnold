@@ -6,6 +6,7 @@ shift || true
 
 MARKER_DIR="${MEGAPLAN_DISCOVER_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 SRC_DIR="${MEGAPLAN_DISCOVER_ARNOLD_SRC:-/workspace/arnold}"
+WORKSPACE_PREFIX="${MEGAPLAN_DISCOVER_WORKSPACE_PREFIX:-/workspace}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,7 +27,7 @@ done
 
 case "$MODE" in
   tmux-unmarked)
-    python3 - "$MARKER_DIR" "$SRC_DIR" <<'PY'
+    python3 - "$MARKER_DIR" "$SRC_DIR" "$WORKSPACE_PREFIX" <<'PY'
 import pathlib
 import re
 import shlex
@@ -35,6 +36,7 @@ import sys
 
 marker_dir = pathlib.Path(sys.argv[1])
 src_dir = sys.argv[2]
+workspace_prefix = pathlib.Path(sys.argv[3])
 
 try:
     panes_proc = subprocess.run(
@@ -86,11 +88,12 @@ def _extract_flag(tokens: list[str], flag: str) -> str | None:
 
 
 def _workspace_for(current_path: str) -> str | None:
-    if not current_path.startswith("/workspace/"):
+    prefix = str(workspace_prefix)
+    if current_path != prefix and not current_path.startswith(prefix.rstrip("/") + "/"):
         return None
     current = pathlib.Path(current_path)
     for candidate in (current, *current.parents):
-        if str(candidate) == "/workspace":
+        if candidate == workspace_prefix:
             break
         if (candidate / ".megaplan").exists():
             return str(candidate)

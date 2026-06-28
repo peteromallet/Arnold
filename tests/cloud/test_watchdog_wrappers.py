@@ -110,7 +110,7 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
     return subprocess.run(
-        ["bash", "-lc", script],
+        ["bash", "-c", script],
         capture_output=True,
         text=True,
         env=env,
@@ -123,9 +123,12 @@ def _run_discover(
     *,
     marker_dir: Path,
     src_dir: Path | None = None,
+    workspace_prefix: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    if workspace_prefix is not None:
+        env["MEGAPLAN_DISCOVER_WORKSPACE_PREFIX"] = str(workspace_prefix)
     return subprocess.run(
         [
             "bash",
@@ -513,7 +516,7 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
-    workspace = Path("/workspace/test-watchdog-vibecomfy-per-workflow-window-chat-20260628")
+    workspace = tmp_path / "workspace" / "test-watchdog-vibecomfy-per-workflow-window-chat-20260628"
     (workspace / ".megaplan" / "plans" / "per-workflow-window-chat-cloud-20260628").mkdir(parents=True, exist_ok=True)
 
     tmux_path = tmp_path / "tmux"
@@ -552,6 +555,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
             f"MARKER_DIR={str(marker_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"DISCOVER_BIN={str(WRAPPER_DIR / 'arnold-cloud-discover')!r}",
+            f"export MEGAPLAN_DISCOVER_WORKSPACE_PREFIX={str(tmp_path / 'workspace')!r}",
             "adopt_unmarked_tmux_sessions",
         ]
     )
@@ -571,8 +575,8 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
 
 def test_watchdog_does_not_adopt_non_arnold_tmux_sessions(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
-    workspace = Path("/workspace/test-watchdog-random-workspace")
-    workspace.mkdir(exist_ok=True)
+    workspace = tmp_path / "workspace" / "test-watchdog-random-workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
 
     tmux_path = tmp_path / "tmux"
     tmux_path.write_text(
@@ -614,7 +618,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
-    workspace = Path("/workspace/test-shared-discover-vibecomfy")
+    workspace = tmp_path / "workspace" / "test-shared-discover-vibecomfy"
     (workspace / ".megaplan" / "plans" / "shared-discover-plan").mkdir(parents=True, exist_ok=True)
 
     tmux_path = tmp_path / "tmux"
@@ -647,7 +651,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
     )
     ps_path.chmod(ps_path.stat().st_mode | stat.S_IXUSR)
 
-    result = _run_discover(tmp_path, marker_dir=marker_dir)
+    result = _run_discover(tmp_path, marker_dir=marker_dir, workspace_prefix=tmp_path / "workspace")
     assert result.returncode == 0, result.stderr
     lines = [line for line in result.stdout.strip().splitlines() if line]
     assert len(lines) == 1
