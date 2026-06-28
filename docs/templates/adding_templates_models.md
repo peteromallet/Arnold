@@ -318,7 +318,7 @@ That means the machine should not require hand setup for a checked-in matrix sco
 - workflow patching: `scripts/runpod_matrix_remote.py`;
 - ready-template conversion: `python -m vibecomfy.cli port convert ... --ready-id ...`;
 - ready-template index: `python -m tools.refresh_template_index`;
-- fixtures: `ready_templates/sources/input/` and `vibecomfy.fixtures`;
+- fixtures: `ready_templates/sources/input/` and `vibecomfy.testing.smoke_fixtures`;
 - override behavior: matrix scope policy or the family-aware override layer.
 
 ## 9. What Is Automatic Today

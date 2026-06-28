@@ -13,8 +13,8 @@ clips, guide videos) used by the runpod corpus matrix. Two paths are exposed:
 
 A small ``__main__`` is provided so matrix bootstrap shell scripts can call::
 
-    python -m vibecomfy.fixtures copy --target input
-    python -m vibecomfy.fixtures regenerate --target input
+    python -m vibecomfy.testing.smoke_fixtures copy --target input
+    python -m vibecomfy.testing.smoke_fixtures regenerate --target input
 
 The module is intentionally light on imports: ``pyav``, ``Pillow`` and ``wave``
 are imported lazily inside ``regenerate_smoke_fixtures`` so that ``copy``-only
@@ -111,7 +111,7 @@ def copy_smoke_fixtures(target_input_dir: Path) -> list[Path]:
 
     if os.environ.get("VIBECOMFY_FIXTURES_REGENERATE") == "1":
         print(
-            "[vibecomfy.fixtures] VIBECOMFY_FIXTURES_REGENERATE=1; using "
+            "[vibecomfy.testing.smoke_fixtures] VIBECOMFY_FIXTURES_REGENERATE=1; using "
             "synthetic fallback path.",
             file=sys.stderr,
         )
@@ -121,7 +121,7 @@ def copy_smoke_fixtures(target_input_dir: Path) -> list[Path]:
     missing = [name for name in SMOKE_FIXTURES if name not in available]
     if missing:
         print(
-            f"[vibecomfy.fixtures] missing committed fixtures {missing!r} under "
+            f"[vibecomfy.testing.smoke_fixtures] missing committed fixtures {missing!r} under "
             f"{FIXTURE_ROOT}; falling back to regenerate path.",
             file=sys.stderr,
         )
@@ -254,7 +254,7 @@ def regenerate_smoke_fixtures(target_input_dir: Path) -> list[Path]:
 
 
 def _main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m vibecomfy.fixtures")
+    parser = argparse.ArgumentParser(prog="python -m vibecomfy.testing.smoke_fixtures")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_copy = sub.add_parser("copy", help="Copy committed smoke fixtures into TARGET (fallback to regenerate).")
@@ -285,7 +285,7 @@ def _main(argv: list[str] | None = None) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Public entrypoint for ``python -m vibecomfy.fixtures``."""
+    """Public entrypoint for ``python -m vibecomfy.testing.smoke_fixtures``."""
     return _main(argv)
 
 

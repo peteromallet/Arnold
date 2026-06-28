@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from vibecomfy import fixtures
+from vibecomfy.testing import smoke_fixtures as fixtures
 
 
 def _has_audio_stream(path: Path) -> bool:
