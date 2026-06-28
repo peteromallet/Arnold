@@ -16,7 +16,6 @@ Identity preservation is **best-effort**, not lossless:
 - ``properties["Node name for S&R"]`` is the litegraph node type, as the editor expects.
 - ``properties["ir_node_id"]`` is **no longer emitted** (demoted in M5). Any stale
   ``ir_node_id`` value from a captured properties blob is scrubbed before emission.
-  Use :func:`vibecomfy.porting.ui_keys.node_lookup_key` to obtain the canonical key.
 
 Node ids in the litegraph envelope are integers (the editor format requires it): digit
 VibeNode ids keep their numeric value (``"98"`` → ``98``); non-digit ids are assigned

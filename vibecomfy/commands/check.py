@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 
-from vibecomfy.checks import run_checks
+from vibecomfy.commands._checks import run_checks
 from vibecomfy.commands._output import emit
 
 
