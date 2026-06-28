@@ -26,7 +26,7 @@ jobs:
           unset MEGAPLAN_M7_SINKS
           MEGAPLAN_MOCK_WORKERS=1 pytest tests/test_chain_epic_briefs_lint.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py -q
       - name: Test
-        run: python -m pytest tests/characterization/test_import_surface.py tests/test_pipeline_run_cli.py tests/test_chain_done_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/cli/test_m5_workflow_cli.py tests/arnold/conformance -q
+        run: python -m pytest tests/characterization/test_import_surface.py tests/test_chain_done_gate.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/cli/test_m5_workflow_cli.py tests/arnold/conformance -q
 
   docker-test:
     needs: test

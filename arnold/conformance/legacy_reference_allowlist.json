@@ -637,6 +637,30 @@
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
     },
     {
+      "path": "arnold_pipelines/megaplan/data/cloud_skill.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Cloud skill migration note documents the old dotted package path so operators can update stale tooling."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Subagent launcher skill documents the legacy Hermes runtime location during the Arnold package migration."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/fan.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Legacy fan launcher fallback imports the old Hermes runtime only when the modern launcher path is unavailable."
+    },
+    {
+      "path": "pyproject.toml",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Packaging artifact glob keeps historical migration assets addressable without restoring the deleted package."
+    },
+    {
       "path": "NEXT_STEPS.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",

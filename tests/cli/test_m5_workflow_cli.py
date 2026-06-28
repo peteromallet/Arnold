@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -58,6 +59,13 @@ def test_workflow_describe_includes_manifest_metadata() -> None:
 
 def test_workflow_module_invocation(tmp_path: Path) -> None:
     artifact_root = tmp_path / "run"
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        str(repo_root)
+        if not env.get("PYTHONPATH")
+        else f"{repo_root}{os.pathsep}{env['PYTHONPATH']}"
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -74,6 +82,7 @@ def test_workflow_module_invocation(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=str(tmp_path),
+        env=env,
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
