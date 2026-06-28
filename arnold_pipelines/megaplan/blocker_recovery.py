@@ -34,6 +34,7 @@ PREREQUISITE = "prerequisite"
 QUALITY = "quality"
 UNRESOLVED = "unresolved"
 MALFORMED = "malformed"
+_BEFORE_EXECUTE_GATE_PREFIX = "Read user_actions.md."
 
 
 @dataclass(frozen=True)
@@ -256,14 +257,22 @@ def _depends_on(task: dict[str, Any]) -> tuple[str, ...]:
     return tuple(item for item in raw if isinstance(item, str))
 
 
+def _is_synthetic_before_execute_gate_task(task: dict[str, Any]) -> bool:
+    description = task.get("description")
+    return isinstance(description, str) and description.startswith(
+        _BEFORE_EXECUTE_GATE_PREFIX
+    )
+
+
 def find_synthetic_before_execute_gate(
     finalize_data: dict[str, Any],
 ) -> tuple[str | None, tuple[str, ...]]:
     """Derive the legacy before_execute gate from task dependency topology.
 
     The finalize handler injected this gate as a root task and made every other
-    task directly depend on it. No worker output or task-description matching is
-    used here.
+    task directly depend on it. To avoid misclassifying unrelated root tasks
+    (for example deferred baseline checkpoints in stale finalize payloads), the
+    root task must also match the handler-owned user-action gate description.
     """
     tasks_by_id = _tasks_by_id(finalize_data)
     if len(tasks_by_id) < 2:
@@ -272,6 +281,8 @@ def find_synthetic_before_execute_gate(
     candidates: list[tuple[str, tuple[str, ...]]] = []
     for task_id, task in tasks_by_id.items():
         if _depends_on(task):
+            continue
+        if not _is_synthetic_before_execute_gate_task(task):
             continue
         protected = tuple(
             sorted(

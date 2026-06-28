@@ -146,6 +146,45 @@ _MODEL_SEAM_PROVIDER_PREFIXES = frozenset(
 )
 
 
+def _repair_missing_user_action_gate(
+    finalize_data: dict[str, Any],
+    plan_dir: Path,
+    state: PlanState,
+) -> bool:
+    raw_actions = finalize_data.get("user_actions", [])
+    tasks = finalize_data.get("tasks", [])
+    if not isinstance(raw_actions, list) or not isinstance(tasks, list) or not tasks:
+        return False
+    if not any(
+        isinstance(action, dict) and action.get("phase") == "before_execute"
+        for action in raw_actions
+    ):
+        return False
+
+    from arnold_pipelines.megaplan.blocker_recovery import (
+        find_synthetic_before_execute_gate,
+    )
+
+    gate_task_id, _protected = find_synthetic_before_execute_gate(finalize_data)
+    if gate_task_id is not None:
+        return False
+
+    from arnold_pipelines.megaplan.handlers.finalize import (
+        _ensure_user_actions_pre_gate_task,
+        _render_user_actions_md,
+    )
+
+    _ensure_user_actions_pre_gate_task(finalize_data, state)
+    if find_synthetic_before_execute_gate(finalize_data)[0] is None:
+        return False
+    write_plan_artifact_json(
+        plan_dir, "finalize.json", finalize_data, contract_context=None
+    )
+    atomic_write_text(plan_dir / "user_actions.md", _render_user_actions_md(finalize_data))
+    atomic_write_text(plan_dir / "final.md", render_final_md(finalize_data, phase="execute"))
+    return True
+
+
 def _pre_existing_task_ids(plan_dir: Path) -> set[str]:
     """Read pre-existing task IDs persisted in ``contract.json``."""
 
@@ -1162,6 +1201,10 @@ def handle_execute_one_batch(
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
+    if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
+        log.info(
+            "backfilled missing before_execute user-action gate for stale finalize payload"
+        )
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
@@ -2246,6 +2289,10 @@ def handle_execute_auto_loop(
 ) -> StepResponse:
     tier_map = normalize_tier_map(tier_map)
     finalize_data = read_json(plan_dir / "finalize.json")
+    if _repair_missing_user_action_gate(finalize_data, plan_dir, state):
+        log.info(
+            "backfilled missing before_execute user-action gate for stale finalize payload"
+        )
     global_config = load_config()
     quality_config = global_config.get("quality_checks", {})
     project_dir = Path(state["config"]["project_dir"])
