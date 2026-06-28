@@ -19,11 +19,14 @@ PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
 REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
 REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
+REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
+REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
 SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
 SYNC_REPO="${CLOUD_WATCHDOG_SYNC_REPO:-${MEGAPLAN_REPO:-}}"
 EXTRA_SKILLS_DIR="${CLOUD_WATCHDOG_EXTRA_SKILLS_DIR:-/workspace/cloud-skills}"
+KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 ONCE="${1:-}"
 
 mkdir -p "$(dirname "$LOG")"
@@ -504,6 +507,10 @@ session_marker_path() {
   printf '%s/%s.json' "$MARKER_DIR" "$1"
 }
 
+repair_progress_snapshot_path() {
+  printf '%s/%s.reap-progress.json' "$MARKER_DIR" "$1"
+}
+
 kimi_dispatch_marker_set() {
   date -u +%Y-%m-%dT%H:%M:%SZ > "$(kimi_dispatch_marker_path "$1")" 2>/dev/null || true
 }
@@ -514,12 +521,17 @@ kimi_dispatch_marker_clear() {
 
 kill_kimi_repair_tree() {
   local session="$1"
-  local pgid_path pgid
+  local pgid_path pgid root_pid
   pgid_path="$(kimi_pgid_path "$session")"
   [[ -r "$pgid_path" ]] || return 1
   read -r pgid < "$pgid_path" || return 1
   [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
-  kill -- "-$pgid" >/dev/null 2>&1
+  root_pid="$(ps -eo pid=,pgid= 2>/dev/null | awk -v target="$pgid" '$2 == target {print $1; exit}')"
+  if [[ "$root_pid" =~ ^[0-9]+$ ]]; then
+    kill_repair_tree_complete "$root_pid" "$pgid"
+  else
+    kill_process_group "$pgid"
+  fi
 }
 
 kimi_dispatch_failed_previously() {
@@ -719,6 +731,281 @@ if __name__ == "__main__":
 PY
 }
 
+reap_stalled_repair_candidates() {
+  python3 - "$MARKER_DIR" "$KIMI_OPERATOR_ROOT" "$REAP_STALL_GRACE_SECS" "$REAP_STALL_IDLE_SECS" "$REAP_AGE_SECS" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import re
+import sys
+
+marker_dir = pathlib.Path(sys.argv[1])
+operator_root = pathlib.Path(sys.argv[2])
+stall_grace_secs = int(sys.argv[3])
+stall_idle_secs = int(sys.argv[4])
+reap_age_secs = int(sys.argv[5])
+
+SESSION_RE = re.compile(r"Session:\s+([^\s]+)")
+KIMI_RE = re.compile(r"(^|[\s/])arnold-kimi-goal-operator\s+([^\s]+)")
+CODEX_RE = re.compile(r"(^|\s)codex exec(\s|$)")
+RUN_AGENT_HINTS = (
+    "workflows on this Hetzner worker should never pause unexpectedly",
+    "cloud watchdog",
+    "Kimi goal operator",
+)
+CODEX_HINTS = (
+    "Codex repair subagent launched by the cloud watchdog",
+    "leave enough evidence for the Kimi supervisor",
+    "workflows on this Hetzner worker should not pause unexpectedly",
+)
+PROTECTED_HINTS = (
+    "arnold-watchdog",
+    "arnold-progress-auditor",
+)
+KIND_PRIORITY = {
+    "arnold-kimi-goal-operator": 0,
+    "arnold.agent.run_agent": 1,
+    "codex exec": 2,
+}
+RECENT_WINDOW_SECS = max(reap_age_secs, stall_grace_secs + stall_idle_secs, 1800)
+now = dt.datetime.now(dt.timezone.utc)
+
+
+def parse_ps_row(raw: str):
+    parts = raw.strip().split(None, 4)
+    if len(parts) < 5:
+        return None
+    try:
+        return {
+            "pid": int(parts[0]),
+            "ppid": int(parts[1]),
+            "pgid": int(parts[2]),
+            "etimes": int(parts[3]),
+            "args": parts[4],
+        }
+    except ValueError:
+        return None
+
+
+def extract_session(kind: str, args: str) -> str:
+    if kind == "arnold-kimi-goal-operator":
+        match = KIMI_RE.search(args)
+        return match.group(2) if match else ""
+    match = SESSION_RE.search(args)
+    return match.group(1) if match else ""
+
+
+def classify_kind(args: str) -> str:
+    if any(hint in args for hint in PROTECTED_HINTS):
+        return ""
+    kimi_match = KIMI_RE.search(args)
+    if kimi_match:
+        return "arnold-kimi-goal-operator"
+    if "arnold.agent.run_agent" in args:
+        session = extract_session("arnold.agent.run_agent", args)
+        if session and any(hint in args for hint in RUN_AGENT_HINTS):
+            return "arnold.agent.run_agent"
+    if CODEX_RE.search(args):
+        session = extract_session("codex exec", args)
+        if session and any(hint in args for hint in CODEX_HINTS):
+            return "codex exec"
+    return ""
+
+
+def safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "-", value)
+
+
+def iso_to_dt(raw: object):
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def file_stats(path: pathlib.Path) -> tuple[float, int]:
+    try:
+        stat = path.stat()
+    except OSError:
+        return (0.0, 0)
+    return (float(stat.st_mtime), int(stat.st_size))
+
+
+def snapshot_path_for(session: str) -> pathlib.Path:
+    return marker_dir / f"{session}.reap-progress.json"
+
+
+def find_recent_operator_dir(session: str):
+    if not session or not operator_root.is_dir():
+        return None
+    safe_session = safe_name(session)
+    candidates = []
+    for path in operator_root.glob(f"*-{safe_session}"):
+        if not path.is_dir():
+            continue
+        operator_log = path / "operator.log"
+        codex_log = path / "codex-repair.log"
+        mtimes = [file_stats(path)[0], file_stats(operator_log)[0], file_stats(codex_log)[0]]
+        newest_mtime = max(mtimes)
+        if newest_mtime <= 0:
+            continue
+        age_secs = max(0, int((now - dt.datetime.fromtimestamp(newest_mtime, tz=dt.timezone.utc)).total_seconds()))
+        if age_secs > RECENT_WINDOW_SECS:
+            continue
+        candidates.append((newest_mtime, path))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (item[0], str(item[1])), reverse=True)
+    return candidates[0][1]
+
+
+def assess_session_progress(session: str) -> dict[str, object]:
+    operator_dir = find_recent_operator_dir(session)
+    if operator_dir is None:
+        return {"mapped": False, "reason": "unmappable"}
+
+    operator_log = operator_dir / "operator.log"
+    codex_log = operator_dir / "codex-repair.log"
+    log_mtime, log_size = file_stats(operator_log)
+    codex_mtime, codex_size = file_stats(codex_log)
+    if max(log_mtime, codex_mtime) <= 0:
+        return {"mapped": False, "reason": "no_logs"}
+
+    snapshot = {
+        "operator_dir": str(operator_dir),
+        "log_mtime": log_mtime,
+        "log_size": log_size,
+        "codex_log_mtime": codex_mtime,
+        "codex_log_size": codex_size,
+    }
+    snapshot_dir = snapshot_path_for(session).parent
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    prev = {}
+    snapshot_path = snapshot_path_for(session)
+    if snapshot_path.exists():
+        try:
+            prev = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        except Exception:
+            prev = {}
+
+    same_observation = (
+        prev.get("operator_dir") == snapshot["operator_dir"]
+        and prev.get("log_mtime") == snapshot["log_mtime"]
+        and prev.get("log_size") == snapshot["log_size"]
+        and prev.get("codex_log_mtime") == snapshot["codex_log_mtime"]
+        and prev.get("codex_log_size") == snapshot["codex_log_size"]
+    )
+    if same_observation:
+        last_advance = (
+            iso_to_dt(prev.get("last_advance_ts"))
+            or iso_to_dt(prev.get("ts"))
+            or dt.datetime.fromtimestamp(max(log_mtime, codex_mtime), tz=dt.timezone.utc)
+        )
+    else:
+        if prev:
+            last_advance = now
+        else:
+            last_advance = dt.datetime.fromtimestamp(max(log_mtime, codex_mtime), tz=dt.timezone.utc)
+    idle_secs = max(0, int((now - last_advance).total_seconds()))
+
+    persisted = dict(snapshot)
+    persisted["last_advance_ts"] = last_advance.isoformat()
+    persisted["ts"] = now.isoformat()
+    try:
+        snapshot_path.write_text(json.dumps(persisted, sort_keys=True) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+    return {
+        "mapped": True,
+        "operator_dir": str(operator_dir),
+        "idle_secs": idle_secs,
+        "stalled": idle_secs >= stall_idle_secs,
+    }
+
+
+rows_by_session = {}
+progress_cache = {}
+for raw in sys.stdin:
+    row = parse_ps_row(raw)
+    if not row:
+        continue
+    kind = classify_kind(str(row["args"]))
+    if not kind:
+        continue
+    session = extract_session(kind, str(row["args"]))
+    if not session:
+        continue
+    row["kind"] = kind
+    row["session"] = session
+    rows_by_session.setdefault(session, []).append(row)
+
+candidates = []
+for session, rows in rows_by_session.items():
+    progress = progress_cache.setdefault(session, assess_session_progress(session))
+    if not progress.get("mapped"):
+        continue
+    eligible = [row for row in rows if int(row["etimes"]) >= stall_grace_secs]
+    if not eligible or not progress.get("stalled"):
+        continue
+    eligible.sort(
+        key=lambda row: (
+            KIND_PRIORITY[str(row["kind"])],
+            -int(row["etimes"]),
+            int(row["pid"]),
+        )
+    )
+    chosen = eligible[0]
+    candidates.append(
+        {
+            "pid": int(chosen["pid"]),
+            "ppid": int(chosen["ppid"]),
+            "pgid": int(chosen["pgid"]),
+            "etimes": int(chosen["etimes"]),
+            "kind": str(chosen["kind"]),
+            "session": session,
+            "rule": "stalled",
+            "reason": f"stall_idle_{int(progress['idle_secs'])}s",
+            "operator_dir": str(progress["operator_dir"]),
+            "idle_secs": int(progress["idle_secs"]),
+        }
+    )
+
+candidates.sort(
+    key=lambda item: (
+        item["session"],
+        KIND_PRIORITY[item["kind"]],
+        -item["etimes"],
+        item["pid"],
+    )
+)
+seen_pgids = set()
+for item in candidates:
+    pgid = item["pgid"]
+    if pgid in seen_pgids:
+        continue
+    seen_pgids.add(pgid)
+    print(
+        "\t".join(
+            [
+                str(item["pid"]),
+                str(item["ppid"]),
+                str(item["pgid"]),
+                str(item["etimes"]),
+                item["kind"],
+                item["session"],
+                item["rule"],
+                item["reason"],
+                item["operator_dir"],
+                str(item["idle_secs"]),
+            ]
+        )
+    )
+PY
+}
+
 kill_process_group() {
   local pgid="$1"
   [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
@@ -729,6 +1016,52 @@ kill_process_group() {
     sleep 0.2
   fi
   ! kill -0 -- "-$pgid" >/dev/null 2>&1
+}
+
+repair_tree_pgids() {
+  local root_pid="$1"
+  local root_pgid="$2"
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$root_pgid" =~ ^[0-9]+$ ]] || return 1
+  python3 - "$root_pid" "$root_pgid" <<'PY'
+import subprocess
+import sys
+
+root_pid = int(sys.argv[1])
+root_pgid = int(sys.argv[2])
+proc = subprocess.run(
+    ["ps", "-eo", "pid=,ppid=,pgid="],
+    capture_output=True,
+    text=True,
+    check=False,
+)
+children = {}
+pgids = {}
+for line in proc.stdout.splitlines():
+    parts = line.strip().split()
+    if len(parts) != 3:
+        continue
+    try:
+        pid = int(parts[0])
+        ppid = int(parts[1])
+        pgid = int(parts[2])
+    except ValueError:
+        continue
+    children.setdefault(ppid, []).append(pid)
+    pgids[pid] = pgid
+
+seen_groups = [root_pgid]
+
+def walk(pid: int) -> None:
+    for child in children.get(pid, []):
+        child_pgid = pgids.get(child)
+        if child_pgid and child_pgid not in seen_groups:
+            seen_groups.append(child_pgid)
+        walk(child)
+
+walk(root_pid)
+print(" ".join(str(group) for group in seen_groups))
+PY
 }
 
 kill_pid_and_descendants() {
@@ -784,15 +1117,55 @@ PY
   ! kill -0 "$root_pid" >/dev/null 2>&1
 }
 
+kill_repair_tree_complete() {
+  local root_pid="$1"
+  local root_pgid="$2"
+  local groups group
+  local tried=1
+  [[ "$root_pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$root_pgid" =~ ^[0-9]+$ ]] || return 1
+  groups="$(repair_tree_pgids "$root_pid" "$root_pgid" 2>/dev/null || true)"
+  if [[ -z "$groups" ]]; then
+    groups="$root_pgid"
+  fi
+  for group in $groups; do
+    if kill_process_group "$group"; then
+      tried=0
+    fi
+  done
+  if kill_pid_and_descendants "$root_pid"; then
+    tried=0
+  fi
+  for group in $groups; do
+    if kill -0 -- "-$group" >/dev/null 2>&1; then
+      return 1
+    fi
+  done
+  ! kill -0 "$root_pid" >/dev/null 2>&1 || return 1
+  return "$tried"
+}
+
 reap_stale_repairs() {
   local report_items="$1"
-  local candidates marker_path workspace remote_spec
-  local pid ppid pgid etimes kind session rule reason
+  local ps_rows candidates marker_path workspace remote_spec
+  local pid ppid pgid etimes kind session rule reason operator_dir stall_idle
   local live_pgid session_pgid method message
+  declare -A seen_sessions=()
+  declare -A seen_pgids=()
+  ps_rows="$(mktemp)"
   candidates="$(mktemp)"
-  ps -eww -o pid=,ppid=,pgid=,etimes=,args= 2>/dev/null | reap_stale_repair_candidates > "$candidates"
-  while IFS=$'\t' read -r pid ppid pgid etimes kind session rule reason; do
+  ps -eww -o pid=,ppid=,pgid=,etimes=,args= 2>/dev/null > "$ps_rows"
+  reap_stale_repair_candidates < "$ps_rows" \
+    | awk -F'\t' 'BEGIN{OFS="\t"} {print $1,$2,$3,$4,$5,$6,$7,$8,"",""}' > "$candidates"
+  reap_stalled_repair_candidates < "$ps_rows" >> "$candidates"
+  while IFS=$'\t' read -r pid ppid pgid etimes kind session rule reason operator_dir stall_idle; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    if [[ -n "$session" && -n "${seen_sessions[$session]:-}" ]]; then
+      continue
+    fi
+    if [[ -n "${seen_pgids[$pgid]:-}" ]]; then
+      continue
+    fi
     if ! kill -0 "$pid" >/dev/null 2>&1; then
       continue
     fi
@@ -810,10 +1183,10 @@ reap_stale_repairs() {
     else
       marker_path=""
     fi
-    if [[ -n "$session_pgid" ]] && kill_process_group "$session_pgid"; then
-      method="session_pgid:$session_pgid"
-    elif kill_process_group "$pgid"; then
-      method="pgid:$pgid"
+    if [[ -n "$session_pgid" ]] && kill_repair_tree_complete "$pid" "$session_pgid"; then
+      method="session_pgid_complete:$session_pgid"
+    elif kill_repair_tree_complete "$pid" "$pgid"; then
+      method="pgid_complete:$pgid"
     elif kill_pid_and_descendants "$pid"; then
       method="pid_tree:$pid"
     else
@@ -826,14 +1199,22 @@ reap_stale_repairs() {
       workspace="$(json_field "$marker_path" workspace 2>/dev/null || true)"
       remote_spec="$(json_field "$marker_path" remote_spec 2>/dev/null || true)"
     fi
-    message="reaped stale repair pid=$pid kind=$kind session=${session:-unknown} rule=$rule age=${etimes}s method=$method"
+    message="reaped stale repair pid=$pid kind=$kind session=${session:-unknown} rule=$rule reason=$reason age=${etimes}s method=$method"
+    if [[ "$rule" == "stalled" ]]; then
+      message="$message idle=${stall_idle:-unknown}s"
+      if [[ -n "$operator_dir" ]]; then
+        message="$message operator_dir=$operator_dir"
+      fi
+    fi
     log "$message"
     report_item "$report_items" "${session:-}" "reap" "reaped" "$message" "$workspace" "$remote_spec"
     if [[ -n "$session" ]]; then
       kimi_dispatch_marker_clear "$session"
+      seen_sessions["$session"]=1
     fi
+    seen_pgids["$pgid"]=1
   done < "$candidates"
-  rm -f "$candidates"
+  rm -f "$ps_rows" "$candidates"
 }
 
 chain_wait_status() {
