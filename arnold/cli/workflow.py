@@ -29,6 +29,7 @@ from arnold.cli.workflow_diagnostics import (
     render_json_envelope,
 )
 from arnold.cli.workflow_explain import build_explain_entries
+from arnold.cli.workflow_source_topology import build_source_topology
 from arnold.execution import ExecutionRegistries, run
 from arnold.execution.backend import SkeletalBackend
 from arnold.execution.observability import ExecutionLogger
@@ -495,12 +496,121 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         )
     else:
         print(f"Workflow {decl.id} (v{decl.version}) in {source_path}")
-        for idx, entry in enumerate(entries, start=1):
+        def render_entry(entry: dict[str, Any], *, prefix: str, depth: int) -> None:
             source = entry.get("source") or {}
             line = source.get("start_line")
             loc = f"line {line}" if line is not None else "unknown location"
-            print(f"{idx}. [{entry['kind']}] {entry['id']} ({loc}) - {entry['summary']}")
+            indent = "  " * depth
+            print(f"{indent}{prefix} [{entry['kind']}] {entry['id']} ({loc}) - {entry['summary']}")
+            for child_index, child in enumerate(entry.get("children", []), start=1):
+                render_entry(child, prefix=f"{prefix}.{child_index}", depth=depth + 1)
+
+        for idx, entry in enumerate(entries, start=1):
+            render_entry(entry, prefix=str(idx), depth=0)
     return 0
+
+
+def _graph_annotations_from_source_topology(
+    source_topology: dict[str, Any],
+    manifest: workflow.WorkflowManifest,
+) -> dict[str, Any]:
+    edge_annotations: dict[str, dict[str, str]] = {}
+    for branch in source_topology.get("branches", []):
+        if not isinstance(branch, dict):
+            continue
+        decision_output = branch.get("decision_output")
+        if not isinstance(decision_output, str) or not decision_output:
+            continue
+        for arm in branch.get("arms", []):
+            if not isinstance(arm, dict):
+                continue
+            condition = arm.get("condition")
+            if isinstance(condition, dict):
+                literal = condition.get("literal")
+                suffix = f".{decision_output}.eq.{literal}"
+                label = str(literal) if literal is not None else None
+            else:
+                suffix = f".{decision_output}.else"
+                label = "else"
+            if not label:
+                continue
+            for edge in manifest.edges:
+                if edge.condition_ref and edge.condition_ref.endswith(suffix):
+                    edge_annotations[edge.id] = {
+                        "label": label,
+                        "condition_ref": edge.condition_ref,
+                    }
+    return {"edges": edge_annotations}
+
+
+def _mermaid_group_id(raw: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in raw)
+
+
+def _mermaid_node_line(node: Any) -> str:
+    label = node.label or node.id
+    return f"    {node.id}[\"{label}\"]"
+
+
+def _render_mermaid_graph(
+    manifest: workflow.WorkflowManifest,
+    source_topology: dict[str, Any],
+) -> str:
+    grouped_node_ids: set[str] = set()
+    lines = ["flowchart TD"]
+
+    for loop in source_topology.get("loops", []):
+        if not isinstance(loop, dict):
+            continue
+        body_node_ids = [
+            node_id for node_id in loop.get("body_node_ids", []) if isinstance(node_id, str)
+        ]
+        if not body_node_ids:
+            continue
+        loop_id = str(loop.get("id") or "loop")
+        lines.append(f"    subgraph {_mermaid_group_id(loop_id)}[\"loop: {loop_id}\"]")
+        for node in manifest.nodes:
+            if node.id in body_node_ids:
+                lines.append("    " + _mermaid_node_line(node))
+                grouped_node_ids.add(node.id)
+        lines.append("    end")
+
+    for branch in source_topology.get("branches", []):
+        if not isinstance(branch, dict):
+            continue
+        branch_id = str(branch.get("id") or "branch")
+        arms = [arm for arm in branch.get("arms", []) if isinstance(arm, dict)]
+        if not arms:
+            continue
+        lines.append(f"    subgraph {_mermaid_group_id(branch_id)}[\"branch: {branch_id}\"]")
+        for arm in arms:
+            node_ids = [
+                node_id for node_id in arm.get("node_ids", []) if isinstance(node_id, str)
+            ]
+            if not node_ids:
+                continue
+            condition = arm.get("condition")
+            arm_label = "else"
+            if isinstance(condition, dict) and condition.get("literal") is not None:
+                arm_label = str(condition["literal"])
+            arm_id = str(arm.get("id") or f"{branch_id}-arm-{arm.get('index', 0)}")
+            lines.append(f"        subgraph {_mermaid_group_id(arm_id)}[\"{arm_label}\"]")
+            for node in manifest.nodes:
+                if node.id in node_ids:
+                    lines.append("        " + _mermaid_node_line(node))
+                    grouped_node_ids.add(node.id)
+            lines.append("        end")
+        lines.append("    end")
+
+    for node in manifest.nodes:
+        if node.id not in grouped_node_ids:
+            lines.append(_mermaid_node_line(node))
+    for edge in manifest.edges:
+        label = edge.label or ""
+        if edge.condition_ref:
+            label = f"{label}:{edge.condition_ref}"
+        lines.append(f"    {edge.source} -->|{label}| {edge.target}")
+    return "\n".join(lines)
 
 
 def _cmd_graph(args: argparse.Namespace) -> int:
@@ -510,6 +620,16 @@ def _cmd_graph(args: argparse.Namespace) -> int:
         return 2
 
     try:
+        check_result = workflow.check_workflow_file(source_path)
+        if not check_result.ok:
+            if args.format == "json":
+                print(render_json_envelope(check_result.diagnostics, source_path=source_path))
+            else:
+                print(
+                    render_human_diagnostics(check_result.diagnostics, source_path=source_path),
+                    file=sys.stderr,
+                )
+            return 1
         manifest = workflow.compile_workflow_file(source_path)
     except (workflow.SourceCompileError, workflow.ManifestValidationError) as exc:
         if args.format == "json":
@@ -526,28 +646,38 @@ def _cmd_graph(args: argparse.Namespace) -> int:
 
     fmt = args.format
     output: str
+    decl = check_result.parsed_source.workflow
+    source_topology = (
+        build_source_topology(decl, manifest)
+        if decl is not None
+        else {"nodes": {}, "branches": [], "loops": []}
+    )
     if fmt == "dot":
-        output = workflow.to_dot(manifest)
+        output = workflow.to_dot(
+            manifest,
+            annotations=_graph_annotations_from_source_topology(source_topology, manifest),
+        )
     elif fmt == "mermaid":
-        lines = ["flowchart TD"]
-        for node in manifest.nodes:
-            label = node.label or node.id
-            lines.append(f"    {node.id}[\"{label}\"]")
-        for edge in manifest.edges:
-            label = edge.label or ""
-            if edge.condition_ref:
-                label = f"{label}:{edge.condition_ref}"
-            lines.append(f"    {edge.source} -->|{label}| {edge.target}")
-        output = "\n".join(lines)
+        output = _render_mermaid_graph(manifest, source_topology)
     elif fmt == "json":
         nodes = []
         for node in manifest.nodes:
+            annotation = source_topology["nodes"].get(node.id, {})
             nodes.append(
                 {
                     "id": node.id,
                     "kind": node.kind,
                     "label": node.label,
                     "source_span": _span_dict(node.source_span),
+                    "nesting_depth": annotation.get("nesting_depth"),
+                    "source_role": annotation.get("source_role") or annotation.get("kind"),
+                    "branch_id": annotation.get("branch_id"),
+                    "branch_arm_id": annotation.get("branch_arm_id"),
+                    "branch_decision_output": annotation.get("branch_decision_output"),
+                    "branch_condition_literal": annotation.get("branch_condition_literal"),
+                    "loop_id": annotation.get("loop_id"),
+                    "loop_policy_ref": annotation.get("loop_policy_ref"),
+                    "loop_reentry_id": annotation.get("loop_reentry_id"),
                 }
             )
         edges = [
@@ -561,7 +691,13 @@ def _cmd_graph(args: argparse.Namespace) -> int:
             for edge in manifest.edges
         ]
         output = json.dumps(
-            {"nodes": nodes, "edges": edges}, sort_keys=True, indent=2
+            {
+                "nodes": nodes,
+                "edges": edges,
+                "source_topology": source_topology,
+            },
+            sort_keys=True,
+            indent=2,
         )
     else:
         print(f"unsupported graph format: {fmt}", file=sys.stderr)
