@@ -8,14 +8,18 @@ requires an amendment in ``docs/arnold/workflow-manifest-amendments.md``.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
 
 from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
+from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
+NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
 
 
@@ -25,11 +29,139 @@ def fixture() -> dict:
         return yaml.safe_load(handle)
 
 
+@pytest.fixture
+def normalized_shape() -> dict[str, Any]:
+    with NORMALIZED_SHAPE_PATH.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
 def _fixture_has_m4_amendment() -> bool:
     if not AMENDMENT_PATH.exists():
         return False
     text = AMENDMENT_PATH.read_text(encoding="utf-8")
     return "## M4 Megaplan Product Migration" in text
+
+
+def _io_contract(items: tuple[Any, ...]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for item in items:
+        entry: dict[str, Any] = {"name": item.name}
+        schema_hash = getattr(item, "schema_hash", None)
+        value_ref = getattr(item, "value_ref", None)
+        if schema_hash is not None:
+            entry["schema_hash"] = schema_hash
+        if value_ref is not None:
+            entry["value_ref"] = value_ref
+        if dict(getattr(item, "metadata", {}) or {}):
+            entry["metadata"] = dict(item.metadata)
+        result.append(entry)
+    return result
+
+
+def _capability_contract(capability: Any) -> dict[str, Any]:
+    capability_id = getattr(capability, "id", None) or getattr(capability, "capability_id")
+    return {
+        "id": capability_id,
+        "route": capability.route,
+        "required": capability.required,
+    }
+
+
+def _policy_contract(policy: Any | None) -> dict[str, Any] | None:
+    if policy is None:
+        return None
+    result: dict[str, Any] = {}
+    if policy.loop is not None:
+        result["loop"] = {
+            "max_iterations": policy.loop.max_iterations,
+            "until_ref": policy.loop.until_ref,
+        }
+    if policy.timing is not None:
+        result["timing"] = {"timeout_seconds": policy.timing.timeout_seconds}
+    if policy.control_transitions:
+        result["control_transitions"] = [
+            {
+                "transition_id": slot.transition_id,
+                "transition_type": slot.transition_type,
+                "trigger_ref": slot.trigger_ref,
+                "target_ref": slot.target_ref,
+                "policy_ref": slot.policy_ref,
+            }
+            for slot in policy.control_transitions
+        ]
+    if policy.suspension_routes:
+        routes: list[dict[str, Any]] = []
+        for route in policy.suspension_routes:
+            entry = {
+                "route_id": route.route_id,
+                "capability_id": route.capability_id,
+            }
+            if route.reentry_id is not None:
+                entry["reentry_id"] = route.reentry_id
+            routes.append(entry)
+        result["suspension_routes"] = routes
+    return result
+
+
+def _subpipeline_contract(subpipeline: Any | None) -> dict[str, Any] | None:
+    if subpipeline is None:
+        return None
+    return {
+        "manifest_hash": subpipeline.manifest_hash,
+        "alias": subpipeline.alias,
+    }
+
+
+def _normalized_pipeline_contract(pipeline: Any) -> dict[str, Any]:
+    return {
+        "fixture_schema": "arnold.megaplan.normalized_pipeline_shape.v1",
+        "source": "arnold_pipelines.megaplan.pipeline:build_pipeline",
+        "hash_neutral": True,
+        "pipeline": {
+            "id": pipeline.id,
+            "version": pipeline.version,
+            "metadata": dict(pipeline.metadata),
+            "policy": _policy_contract(pipeline.policy),
+        },
+        "counts": {
+            "steps": len(pipeline.steps),
+            "routes": len(pipeline.routes),
+            "capabilities": len(pipeline.capabilities),
+        },
+        "ordered_step_ids": [step.id for step in pipeline.steps],
+        "steps": [
+            {
+                "id": step.id,
+                "kind": step.kind,
+                "inputs": _io_contract(step.inputs),
+                "outputs": _io_contract(step.outputs),
+                "capabilities": [_capability_contract(capability) for capability in step.capabilities],
+                "policy": _policy_contract(step.policy),
+                "handler_ref": step.metadata.get("handler_ref"),
+                "terminal": bool(step.metadata.get("terminal", False)),
+                "subpipeline": _subpipeline_contract(step.subpipeline),
+                "metadata": dict(step.metadata),
+            }
+            for step in pipeline.steps
+        ],
+        "capabilities": [_capability_contract(capability) for capability in pipeline.capabilities],
+        "routes": [
+            {
+                "id": route.id,
+                "source": route.source,
+                "target": route.target,
+                "label": route.label,
+                "condition_ref": route.condition_ref,
+                "metadata": dict(route.metadata),
+            }
+            for route in pipeline.routes
+        ],
+    }
+
+
+def _manifest_policy_contract(policy: Any | None) -> dict[str, Any] | None:
+    contract = _policy_contract(policy)
+    return contract or None
 
 
 class TestTopologyFixtureLock:
@@ -104,6 +236,56 @@ class TestTopologyFixtureLock:
             "tiebreaker_decide": ["iterate", "proceed", "escalate"],
             "review": ["default", "rework"],
         }
+
+    @pytest.mark.parametrize(
+        ("surface", "builder"),
+        [
+            ("workflow_planning", workflow_planning.build_pipeline),
+            ("pipeline_facade", build_pipeline),
+        ],
+    )
+    def test_public_surfaces_match_normalized_explicit_contract(
+        self,
+        normalized_shape: dict[str, Any],
+        surface: str,
+        builder: Any,
+    ) -> None:
+        actual = _normalized_pipeline_contract(builder())
+        assert actual == normalized_shape, surface
+
+    def test_compiled_manifest_preserves_explicit_contract_details(
+        self,
+        normalized_shape: dict[str, Any],
+    ) -> None:
+        manifest = build_and_compile_pipeline()
+        nodes_by_id = {node.id: node for node in manifest.nodes}
+        edges_by_id = {edge.id: edge for edge in manifest.edges}
+
+        assert {node.id for node in manifest.nodes} == set(normalized_shape["ordered_step_ids"])
+        assert [
+            _capability_contract(capability)
+            for capability in manifest.capabilities
+        ] == normalized_shape["capabilities"]
+
+        for expected_step in normalized_shape["steps"]:
+            node = nodes_by_id[expected_step["id"]]
+            assert node.kind == expected_step["kind"]
+            assert _manifest_policy_contract(node.policy) == expected_step["policy"]
+            assert _subpipeline_contract(node.subpipeline) == expected_step["subpipeline"]
+            for key in ("handler_ref", "terminal"):
+                if key in expected_step["metadata"]:
+                    assert node.metadata.get(key) == expected_step["metadata"][key]
+
+        for expected_route in normalized_shape["routes"]:
+            edge = edges_by_id[expected_route["id"]]
+            assert {
+                "id": edge.id,
+                "source": edge.source,
+                "target": edge.target,
+                "label": edge.label,
+                "condition_ref": edge.condition_ref,
+                "metadata": edge.metadata,
+            } == expected_route
 
 
 class TestAmendmentEnforcement:

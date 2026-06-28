@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping, Sequence
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 import pytest
@@ -23,13 +25,24 @@ PUBLIC_SOURCE_APIS = (
 FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
 M3_FIXTURE_DIR = Path("tests/fixtures/workflow_authoring/m3")
 M3_VALID_FIXTURES = (
+    "valid_m3_canonical_megaplan_topology",
     "valid_m3_branch_routes",
     "valid_m3_bounded_loop",
     "valid_m3_policy_refs",
     "valid_m3_subflow_ref",
+    "valid_m3_subflow_control_flow",
 )
 M3_INVALID_FIXTURES = (
     "invalid_m3_non_literal_routing",
+    "invalid_m3_repeated_route_comparison",
+    "invalid_m3_missing_fallthrough_route",
+    "invalid_m3_mismatched_route_metadata",
+    "invalid_m3_ambiguous_route_metadata",
+    "invalid_m3_malformed_capability_metadata",
+    "invalid_m3_malformed_retry_policy_config",
+    "invalid_m3_malformed_timing_policy_config",
+    "invalid_m3_unsupported_step_policy_carrier",
+    "invalid_m3_unsupported_workflow_policy_carrier",
     "invalid_m3_unsupported_mutation",
     "invalid_m3_ambiguous_loop",
     "invalid_m3_loop_missing_bounds",
@@ -61,6 +74,38 @@ def test_source_compiler_public_api_call_shapes_accept_source_and_file_inputs() 
     workflow.check_workflow_file(source_path)
     workflow.lower_workflow_file(source_path)
     workflow.compile_workflow_file(source_path)
+
+
+def test_source_compiler_m3_diagnostic_registry_pins_control_flow_policy_codes() -> None:
+    expected = {
+        diagnostics.DiagnosticCode.ROUTE_METADATA_MISMATCH: (
+            "AWF018_ROUTE_METADATA_MISMATCH",
+            diagnostics.DiagnosticFamily.ROUTE_METADATA_MISMATCH,
+        ),
+        diagnostics.DiagnosticCode.MALFORMED_POLICY_CONFIG: (
+            "AWF019_MALFORMED_POLICY_CONFIG",
+            diagnostics.DiagnosticFamily.MALFORMED_POLICY_CONFIG,
+        ),
+        diagnostics.DiagnosticCode.MALFORMED_CAPABILITY_METADATA: (
+            "AWF020_MALFORMED_CAPABILITY_METADATA",
+            diagnostics.DiagnosticFamily.MALFORMED_CAPABILITY_METADATA,
+        ),
+        diagnostics.DiagnosticCode.LOOP_POLICY_BINDING_MISMATCH: (
+            "AWF021_LOOP_POLICY_BINDING_MISMATCH",
+            diagnostics.DiagnosticFamily.LOOP_POLICY_BINDING_MISMATCH,
+        ),
+    }
+
+    assert diagnostics.DIAGNOSTIC_SPECS is diagnostics.DIAGNOSTIC_CODE_SPECS
+    for code, (stable_name, family) in expected.items():
+        spec = diagnostics.diagnostic_spec(code)
+
+        assert spec.code is code
+        assert spec.code.value == stable_name
+        assert spec.family is family
+        assert spec.severity is diagnostics.DiagnosticSeverity.ERROR
+        assert spec.message_template
+        assert spec.remediation
 
 
 def test_source_compiler_resolves_components_through_static_resolver_boundary() -> None:
@@ -410,6 +455,97 @@ def flow(brief):
     ]
 
 
+def test_source_compiler_lowers_workflow_retry_and_timing_policy_keywords() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from tests.fixtures.workflow_authoring.components import fast_retry, plan, review_timeout
+
+@workflow(id="workflow-retry-timing", policies=[fast_retry, review_timeout])
+def flow(brief):
+    plan(id="plan", brief=brief)
+"""
+
+    pipeline = workflow.lower_workflow_source(source, source_path="workflow_retry_timing.py")
+
+    assert pipeline.policy is not None
+    assert pipeline.policy.retry == workflow.RetryPolicy(
+        max_attempts=2,
+        backoff="none",
+        retry_on=("transient",),
+    )
+    assert pipeline.policy.timing == workflow.TimingPolicy(timeout_seconds=60)
+
+    manifest = workflow.compile_workflow_source(source, source_path="workflow_retry_timing.py")
+
+    assert manifest.policy is not None
+    assert manifest.policy.retry == pipeline.policy.retry
+    assert manifest.policy.timing == pipeline.policy.timing
+
+
+def test_source_compiler_rejects_malformed_retry_and_timing_policy_configs() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import bad_retry, bad_timing, plan
+
+@workflow(id="malformed-workflow-policy", policies=[bad_retry, bad_timing])
+def flow(brief):
+    plan(id="plan", brief=brief)
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:plan": _step_component("plan"),
+            "project.workflow_components:bad_retry": authoring.PolicyComponent(
+                id="bad_retry",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="bad_retry",
+                    export_name="bad_retry",
+                ),
+                policy_type="retry",
+                config={"max_attempts": 0, "retry_on": ("transient", 7)},
+            ),
+            "project.workflow_components:bad_timing": authoring.PolicyComponent(
+                id="bad_timing",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="bad_timing",
+                    export_name="bad_timing",
+                ),
+                policy_type="timing",
+                config={"timeout_seconds": "soon", "deadline_ref": 30},
+            ),
+        }
+    )
+
+    result = workflow.check_workflow_source(
+        source,
+        source_path="malformed_workflow_policy.py",
+        resolver=resolver,
+    )
+
+    assert [
+        (diagnostic.code.value, diagnostic.message, diagnostic.details)
+        for diagnostic in result.diagnostics
+    ] == [
+        (
+            "AWF019_MALFORMED_POLICY_CONFIG",
+            "policy 'bad_retry' has malformed retry config",
+            {
+                "policy_type": "retry",
+                "invalid_fields": ("max_attempts", "retry_on"),
+            },
+        ),
+        (
+            "AWF019_MALFORMED_POLICY_CONFIG",
+            "policy 'bad_timing' has malformed timing config",
+            {
+                "policy_type": "timing",
+                "invalid_fields": ("timeout_seconds", "deadline_ref"),
+            },
+        ),
+    ]
+
+
 def test_source_compiler_rejects_unsupported_workflow_policy_families() -> None:
     source = """
 from arnold.workflow.authoring import workflow
@@ -485,6 +621,64 @@ def flow(brief):
             },
         },
     ]
+
+
+def test_source_compiler_merge_workflow_policies_preserves_fields_deterministically() -> None:
+    first = workflow.WorkflowPolicy(
+        budget=workflow.BudgetPolicy(max_seconds=10),
+        retry=workflow.RetryPolicy(max_attempts=1),
+        loop=workflow.LoopPolicy(max_iterations=2),
+        fanout=workflow.FanoutPolicy(width=2),
+        timing=workflow.TimingPolicy(timeout_seconds=30),
+        idempotency=workflow.IdempotencyPolicy(key_ref="first"),
+        effects=(workflow.EffectRef("effect.first"),),
+        reducers=(workflow.ReducerRef("reducer.first"),),
+        compensation=workflow.CompensationPolicy(scope_ref="first"),
+        escalation=workflow.EscalationPolicy(targets=("first",)),
+        control_transitions=(workflow.ControlTransitionSlot("transition-first", "halt"),),
+        topology_overlays=(workflow.TopologyOverlaySlot("overlay-first", "dynamic"),),
+        authority=(workflow.AuthorityRequirement("authority-first", "approve"),),
+        suspension_routes=(workflow.SuspensionRoute("suspend-first"),),
+    )
+    second = workflow.WorkflowPolicy(
+        budget=workflow.BudgetPolicy(max_seconds=20),
+        retry=workflow.RetryPolicy(max_attempts=3, retry_on=("network",)),
+        loop=workflow.LoopPolicy(max_iterations=4),
+        fanout=workflow.FanoutPolicy(width=4),
+        timing=workflow.TimingPolicy(timeout_seconds=60),
+        idempotency=workflow.IdempotencyPolicy(key_ref="second"),
+        effects=(workflow.EffectRef("effect.second"),),
+        reducers=(workflow.ReducerRef("reducer.second"),),
+        compensation=workflow.CompensationPolicy(scope_ref="second"),
+        escalation=workflow.EscalationPolicy(targets=("second",)),
+        control_transitions=(workflow.ControlTransitionSlot("transition-second", "override"),),
+        topology_overlays=(workflow.TopologyOverlaySlot("overlay-second", "dynamic"),),
+        authority=(workflow.AuthorityRequirement("authority-second", "approve"),),
+        suspension_routes=(workflow.SuspensionRoute("suspend-second"),),
+    )
+
+    assert source_compiler._merge_workflow_policies(None, None) is None
+
+    merged = source_compiler._merge_workflow_policies(None, first, None, second)
+
+    assert merged is not None
+    assert merged.budget == second.budget
+    assert merged.retry == second.retry
+    assert merged.loop == second.loop
+    assert merged.fanout == second.fanout
+    assert merged.timing == second.timing
+    assert merged.idempotency == second.idempotency
+    assert merged.compensation == second.compensation
+    assert merged.escalation == second.escalation
+    assert merged.effects == (*first.effects, *second.effects)
+    assert merged.reducers == (*first.reducers, *second.reducers)
+    assert merged.control_transitions == (
+        *first.control_transitions,
+        *second.control_transitions,
+    )
+    assert merged.topology_overlays == (*first.topology_overlays, *second.topology_overlays)
+    assert merged.authority == (*first.authority, *second.authority)
+    assert merged.suspension_routes == (*first.suspension_routes, *second.suspension_routes)
 
 
 def test_source_compiler_rejects_policy_components_as_ordinary_inputs() -> None:
@@ -697,10 +891,10 @@ def test_source_compiler_m3_valid_expectation_fixtures_lower_to_pinned_contract(
 
     expected_routes = expected.get("routes", [])
     if expected_routes:
-        assert [
-            _route_contract(route)
-            for route in pipeline.routes
-        ] == expected_routes
+        _assert_ordered_contracts(
+            [_route_contract(route, include_extended=True) for route in pipeline.routes],
+            expected_routes,
+        )
 
     expected_loop = expected.get("loop_policy")
     if expected_loop is not None:
@@ -711,8 +905,12 @@ def test_source_compiler_m3_valid_expectation_fixtures_lower_to_pinned_contract(
         assert len(loop_nodes) == 1
         assert loop_nodes[0].policy is not None
         assert loop_nodes[0].policy.loop is not None
-        assert loop_nodes[0].policy.loop.max_iterations == expected_loop["max_iterations"]
-        assert loop_nodes[0].policy.loop.until_ref == expected_loop["until_ref"]
+        loop_slot_contract = {
+            key: expected_loop[key]
+            for key in ("max_iterations", "until_ref")
+            if key in expected_loop
+        }
+        _assert_contract(_policy_contract(loop_nodes[0].policy), {"loop": loop_slot_contract})
         assert any(
             route.source == expected["backedge"]["source"]
             and route.target == expected["backedge"]["target"]
@@ -720,24 +918,51 @@ def test_source_compiler_m3_valid_expectation_fixtures_lower_to_pinned_contract(
             for route in pipeline.routes
         )
 
+    expected_loop_policies = (
+        expected.get("loop_policies")
+        or expected.get("loop_policy_carriers")
+        or expected.get("loop_policy_nodes")
+        or {}
+    )
+    if expected_loop_policies:
+        nodes = {step.id: step for step in pipeline.steps}
+        for node_id, loop_contract in _node_contract_items(expected_loop_policies):
+            assert nodes[node_id].policy is not None
+            _assert_contract(_policy_contract(nodes[node_id].policy), {"loop": loop_contract})
+
     expected_node_policies = expected.get("node_policies", {})
     if expected_node_policies:
         nodes = {step.id: step for step in pipeline.steps}
         for node_id, policy_contract in expected_node_policies.items():
             assert nodes[node_id].policy is not None
-            if "retry" in policy_contract:
-                assert nodes[node_id].policy.retry is not None
-                assert (
-                    nodes[node_id].policy.retry.max_attempts
-                    == policy_contract["retry"]["max_attempts"]
-                )
-                assert list(nodes[node_id].policy.retry.retry_on) == policy_contract["retry"]["retry_on"]
-            if "timing" in policy_contract:
-                assert nodes[node_id].policy.timing is not None
-                assert (
-                    nodes[node_id].policy.timing.timeout_seconds
-                    == policy_contract["timing"]["timeout_seconds"]
-                )
+            _assert_contract(_policy_contract(nodes[node_id].policy), policy_contract)
+
+    expected_workflow_policy = expected.get("workflow_policy")
+    if expected_workflow_policy:
+        assert pipeline.policy is not None
+        _assert_contract(_policy_contract(pipeline.policy), expected_workflow_policy)
+
+    expected_step_metadata = expected.get("step_metadata", expected.get("metadata", {}))
+    if expected_step_metadata:
+        nodes = {step.id: step for step in pipeline.steps}
+        for node_id, metadata_contract in expected_step_metadata.items():
+            _assert_contract(dict(nodes[node_id].metadata), metadata_contract)
+
+    expected_capabilities = expected.get("capabilities", {})
+    if expected_capabilities:
+        nodes = {step.id: step for step in pipeline.steps}
+        for node_id, capability_contracts in expected_capabilities.items():
+            _assert_ordered_contracts(
+                [_capability_contract(capability) for capability in nodes[node_id].capabilities],
+                capability_contracts,
+            )
+
+    expected_workflow_capabilities = expected.get("workflow_capabilities", [])
+    if expected_workflow_capabilities:
+        _assert_ordered_contracts(
+            [_capability_contract(capability) for capability in pipeline.capabilities],
+            expected_workflow_capabilities,
+        )
 
     expected_subflows = expected.get("subflows", {})
     if expected_subflows:
@@ -745,8 +970,10 @@ def test_source_compiler_m3_valid_expectation_fixtures_lower_to_pinned_contract(
         for node_id, subflow_contract in expected_subflows.items():
             assert nodes[node_id].kind == "subpipeline"
             assert nodes[node_id].subpipeline is not None
-            assert nodes[node_id].subpipeline.manifest_hash == subflow_contract["manifest_hash"]
-            assert nodes[node_id].subpipeline.alias == subflow_contract["alias"]
+            _assert_contract(
+                _compact_contract(nodes[node_id].subpipeline),
+                subflow_contract,
+            )
 
 
 @pytest.mark.parametrize("fixture_name", M3_INVALID_FIXTURES)
@@ -757,6 +984,11 @@ def test_source_compiler_m3_negative_sidecars_pin_source_diagnostics(
     source_path = M3_FIXTURE_DIR / f"{fixture_name}.py"
 
     result = workflow.check_workflow_file(source_path)
+    if result.ok:
+        try:
+            workflow.lower_workflow_file(source_path)
+        except workflow.SourceCompileError as error:
+            result = error
 
     assert sidecar["outcome"] == "invalid"
     assert _diagnostic_payloads(result) == sidecar["expected_diagnostics"]
@@ -1098,6 +1330,229 @@ def flow(brief):
     ]
 
 
+def test_source_compiler_m3_applies_visible_default_route_metadata_bindings() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import execute, plan
+
+@workflow(id="bound-default-route")
+def flow() -> None:
+    plan(id="plan")
+    execute(id="execute")
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:plan": _step_component(
+                "plan",
+                route_bindings=(
+                    {
+                        "id": "plan:execute",
+                        "label": "default",
+                        "target_ref": "execute",
+                        "condition_ref": "ready",
+                    },
+                ),
+            ),
+            "project.workflow_components:execute": _step_component("execute"),
+        }
+    )
+
+    pipeline = workflow.lower_workflow_source(
+        source,
+        source_path="bound_default_route.py",
+        resolver=resolver,
+    )
+
+    assert [(route.id, route.source, route.target, route.label, route.condition_ref) for route in pipeline.routes] == [
+        ("plan:execute", "plan", "execute", "default", "ready")
+    ]
+
+
+def test_source_compiler_m3_applies_visible_branch_route_metadata_bindings() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import decide, execute, stop
+
+@workflow(id="bound-branch-route")
+def flow() -> None:
+    decision = decide(id="decide")
+    if decision == "approve":
+        execute(id="execute")
+    else:
+        stop(id="stop")
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:decide": _step_component(
+                "decide",
+                route_bindings=(
+                    {
+                        "id": "decide:execute",
+                        "label": "approve",
+                        "target_ref": "execute",
+                        "condition_ref": "approved",
+                    },
+                    {
+                        "id": "decide:halt",
+                        "label": "else",
+                        "target_ref": "stop",
+                        "condition_ref": "fallback",
+                    },
+                ),
+            ),
+            "project.workflow_components:execute": _step_component("execute"),
+            "project.workflow_components:stop": _step_component("stop"),
+        }
+    )
+
+    pipeline = workflow.lower_workflow_source(
+        source,
+        source_path="bound_branch_route.py",
+        resolver=resolver,
+    )
+
+    assert [(route.id, route.label, route.condition_ref) for route in pipeline.routes] == [
+        ("decide:execute", "approve", "approved"),
+        ("decide:halt", "else", "fallback"),
+    ]
+
+
+def test_source_compiler_m3_lowers_capabilities_and_whitelisted_step_metadata() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import execute
+
+@workflow(id="capability-metadata")
+def flow() -> None:
+    execute(id="execute")
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:execute": _step_component(
+                "execute",
+                metadata={
+                    "capability_requirements": (
+                        {"id": "artifact:write"},
+                        {"id": "human:review", "route": "operator", "required": False},
+                    ),
+                    "handler_ref": "project.handlers:execute",
+                    "terminal": True,
+                    "policy_id": "project:implicit-policy",
+                    "unapproved": "ignored",
+                },
+            ),
+        }
+    )
+
+    pipeline = workflow.lower_workflow_source(
+        source,
+        source_path="capability_metadata.py",
+        resolver=resolver,
+    )
+
+    step = pipeline.steps[0]
+    assert [(capability.id, capability.route, capability.required) for capability in step.capabilities] == [
+        ("artifact:write", "default", True),
+        ("human:review", "operator", False),
+    ]
+    assert step.metadata["handler_ref"] == "project.handlers:execute"
+    assert step.metadata["terminal"] is True
+    assert "policy_id" not in step.metadata
+    assert "unapproved" not in step.metadata
+    assert step.policy is None
+
+
+def test_source_compiler_m3_rejects_malformed_capability_metadata() -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import execute
+
+@workflow(id="malformed-capability-metadata")
+def flow() -> None:
+    execute(id="execute")
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:execute": _step_component(
+                "execute",
+                metadata={"capability_requirements": ({"id": "artifact:write", "required": "yes"},)},
+            ),
+        }
+    )
+
+    with pytest.raises(workflow.SourceCompileError) as source_error:
+        workflow.lower_workflow_source(
+            source,
+            source_path="malformed_capability_metadata.py",
+            resolver=resolver,
+        )
+
+    assert _diagnostic_payloads(source_error.value)[0]["code"] == (
+        "AWF020_MALFORMED_CAPABILITY_METADATA"
+    )
+    assert _diagnostic_payloads(source_error.value)[0]["message"] == (
+        "capability requirement metadata must declare string id, optional string route, and optional boolean required"
+    )
+
+
+@pytest.mark.parametrize(
+    ("route_bindings", "expected_message"),
+    [
+        (
+            (
+                {"id": "plan:execute", "label": "default", "target_ref": "execute"},
+                {"id": "plan:execute-again", "label": "default", "target_ref": "execute"},
+            ),
+            "route binding metadata is ambiguous for a visible lowered route",
+        ),
+        (
+            (
+                {"id": "plan:review", "label": "default", "target_ref": "review"},
+            ),
+            "route binding metadata does not match a visible lowered route",
+        ),
+        (
+            (
+                {"id": "plan:execute", "label": "approve", "target_ref": "execute"},
+            ),
+            "route binding metadata does not match a visible lowered route",
+        ),
+    ],
+)
+def test_source_compiler_m3_rejects_ambiguous_or_stale_route_metadata_bindings(
+    route_bindings: tuple[dict[str, str], ...],
+    expected_message: str,
+) -> None:
+    source = """
+from arnold.workflow.authoring import workflow
+from project.workflow_components import execute, plan
+
+@workflow(id="invalid-route-binding")
+def flow() -> None:
+    plan(id="plan")
+    execute(id="execute")
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:plan": _step_component(
+                "plan",
+                route_bindings=route_bindings,
+            ),
+            "project.workflow_components:execute": _step_component("execute"),
+        }
+    )
+
+    with pytest.raises(workflow.SourceCompileError) as source_error:
+        workflow.lower_workflow_source(
+            source,
+            source_path="invalid_route_binding.py",
+            resolver=resolver,
+        )
+
+    assert _diagnostic_payloads(source_error.value)[0]["code"] == "AWF018_ROUTE_METADATA_MISMATCH"
+    assert _diagnostic_payloads(source_error.value)[0]["message"] == expected_message
+
+
 @pytest.mark.parametrize(
     ("condition", "expected_message"),
     [
@@ -1256,6 +1711,276 @@ def test_source_compiler_m3_lowers_bounded_loop_backedge_and_policy_for_cycle_va
     assert nodes["execute"].policy.suspension_routes[0].reentry_id == edges[
         "revise-execute"
     ].condition_ref
+
+
+def test_source_compiler_m3_lowers_explicit_loop_tail_carriers_without_losing_policy_slots() -> None:
+    source = """
+from __future__ import annotations
+
+from arnold.workflow.authoring import loop, workflow
+from project.workflow_components import critique, gate, revise, tiebreaker_decide
+from project.workflow_components import critique_loop, fast_retry, tiebreaker_transition, timeout
+
+@workflow(id="explicit-tail-loop")
+def flow(brief):
+    loop(policy=critique_loop, reentry_id="critique")
+    while True:
+        critique_payload = critique(id="critique", brief=brief)
+        recommendation = gate(id="gate", critique=critique_payload)
+        if recommendation == "iterate":
+            revise_payload = revise(id="revise", gate=recommendation, policy=fast_retry)
+        elif recommendation == "tiebreaker":
+            decision = tiebreaker_decide(
+                id="tiebreaker_decide",
+                gate=recommendation,
+                policies=[timeout, tiebreaker_transition],
+            )
+        else:
+            return None
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:critique": _step_component("critique"),
+            "project.workflow_components:gate": _step_component("gate"),
+            "project.workflow_components:revise": _step_component(
+                "revise",
+                route_bindings=(
+                    {
+                        "id": "revise:critique",
+                        "label": "default",
+                        "target_ref": "critique",
+                        "condition_ref": "revise:loop",
+                    },
+                ),
+            ),
+            "project.workflow_components:tiebreaker_decide": _step_component(
+                "tiebreaker_decide",
+                route_bindings=(
+                    {
+                        "id": "tiebreaker_decide:critique",
+                        "label": "iterate",
+                        "target_ref": "critique",
+                        "condition_ref": "tiebreaker:loop",
+                    },
+                ),
+            ),
+            "project.workflow_components:critique_loop": authoring.PolicyComponent(
+                id="critique_loop",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="critique_loop",
+                    export_name="critique_loop",
+                ),
+                policy_type="loop",
+                config={"max_iterations": 4, "until_ref": "critique_gate_pass"},
+            ),
+            "project.workflow_components:fast_retry": authoring.PolicyComponent(
+                id="fast_retry",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="fast_retry",
+                    export_name="fast_retry",
+                ),
+                policy_type="retry",
+                config={"max_attempts": 2, "retry_on": ("transient",)},
+            ),
+            "project.workflow_components:timeout": authoring.PolicyComponent(
+                id="timeout",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="timeout",
+                    export_name="timeout",
+                ),
+                policy_type="timing",
+                config={"timeout_seconds": 60},
+            ),
+            "project.workflow_components:tiebreaker_transition": authoring.PolicyComponent(
+                id="tiebreaker_transition",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="tiebreaker_transition",
+                    export_name="tiebreaker_transition",
+                ),
+                policy_type="control-transition",
+                config={
+                    "transition_id": "tiebreaker:iterate",
+                    "transition_type": "override",
+                    "trigger_ref": "tiebreaker_decide.decision",
+                    "target_ref": "critique",
+                    "policy_ref": "critique_loop",
+                },
+            ),
+        }
+    )
+
+    pipeline = workflow.lower_workflow_source(
+        source,
+        source_path="explicit_tail_loop.py",
+        resolver=resolver,
+    )
+
+    assert [step.id for step in pipeline.steps] == [
+        "critique",
+        "gate",
+        "revise",
+        "tiebreaker_decide",
+    ]
+    assert [
+        (route.id, route.source, route.target, route.label, route.condition_ref)
+        for route in pipeline.routes
+    ] == [
+        ("critique-gate", "critique", "gate", "default", None),
+        ("gate-revise", "gate", "revise", "iterate", "gate.recommendation.eq.iterate"),
+        (
+            "gate-tiebreaker_decide",
+            "gate",
+            "tiebreaker_decide",
+            "tiebreaker",
+            "gate.recommendation.eq.tiebreaker",
+        ),
+        ("revise:critique", "revise", "critique", "default", "revise:loop"),
+        (
+            "tiebreaker_decide:critique",
+            "tiebreaker_decide",
+            "critique",
+            "iterate",
+            "tiebreaker:loop",
+        ),
+    ]
+    nodes = {step.id: step for step in pipeline.steps}
+    assert nodes["critique"].policy is None
+
+    revise_policy = nodes["revise"].policy
+    assert revise_policy is not None
+    assert revise_policy.retry is not None
+    assert revise_policy.retry.max_attempts == 2
+    assert revise_policy.loop is not None
+    assert revise_policy.loop.max_iterations == 4
+    assert revise_policy.loop.until_ref == "critique_gate_pass"
+    assert revise_policy.suspension_routes[0].route_id == "revise:loop"
+    assert revise_policy.suspension_routes[0].reentry_id == "revise:loop"
+
+    tiebreaker_policy = nodes["tiebreaker_decide"].policy
+    assert tiebreaker_policy is not None
+    assert tiebreaker_policy.timing is not None
+    assert tiebreaker_policy.timing.timeout_seconds == 60
+    assert [transition.transition_id for transition in tiebreaker_policy.control_transitions] == [
+        "tiebreaker:iterate"
+    ]
+    assert tiebreaker_policy.loop is not None
+    assert tiebreaker_policy.loop.max_iterations == 4
+    assert tiebreaker_policy.suspension_routes[0].route_id == "tiebreaker:loop"
+    assert tiebreaker_policy.suspension_routes[0].reentry_id == "tiebreaker:loop"
+
+
+@pytest.mark.parametrize(
+    ("revise_bindings", "tiebreaker_bindings", "expected_message"),
+    [
+        (
+            (
+                {
+                    "id": "revise:critique",
+                    "label": "default",
+                    "target_ref": "critique",
+                    "condition_ref": "revise:loop",
+                },
+            ),
+            (),
+            "loop backedge route binding metadata is missing for an explicit tail carrier",
+        ),
+        (
+            (
+                {
+                    "id": "revise:critique",
+                    "label": "default",
+                    "target_ref": "critique",
+                    "condition_ref": "revise:loop",
+                },
+                {
+                    "id": "revise:critique:duplicate",
+                    "label": "reentry",
+                    "target_ref": "critique",
+                    "condition_ref": "revise:loop",
+                },
+            ),
+            (
+                {
+                    "id": "tiebreaker_decide:critique",
+                    "label": "iterate",
+                    "target_ref": "critique",
+                    "condition_ref": "tiebreaker:loop",
+                },
+            ),
+            "loop backedge route binding metadata is ambiguous for an explicit tail carrier",
+        ),
+    ],
+)
+def test_source_compiler_m3_rejects_invalid_explicit_loop_tail_bindings(
+    revise_bindings: tuple[dict[str, str], ...],
+    tiebreaker_bindings: tuple[dict[str, str], ...],
+    expected_message: str,
+) -> None:
+    source = """
+from __future__ import annotations
+
+from arnold.workflow.authoring import loop, workflow
+from project.workflow_components import critique, gate, revise, tiebreaker_decide
+from project.workflow_components import critique_loop
+
+@workflow(id="invalid-tail-loop")
+def flow(brief):
+    loop(policy=critique_loop, reentry_id="critique")
+    while True:
+        critique_payload = critique(id="critique", brief=brief)
+        recommendation = gate(id="gate", critique=critique_payload)
+        if recommendation == "iterate":
+            revise_payload = revise(id="revise", gate=recommendation)
+        elif recommendation == "tiebreaker":
+            decision = tiebreaker_decide(id="tiebreaker_decide", gate=recommendation)
+        else:
+            return None
+"""
+    resolver = _Resolver(
+        {
+            "project.workflow_components:critique": _step_component("critique"),
+            "project.workflow_components:gate": _step_component("gate"),
+            "project.workflow_components:revise": _step_component(
+                "revise",
+                route_bindings=revise_bindings,
+            ),
+            "project.workflow_components:tiebreaker_decide": _step_component(
+                "tiebreaker_decide",
+                route_bindings=tiebreaker_bindings,
+            ),
+            "project.workflow_components:critique_loop": authoring.PolicyComponent(
+                id="critique_loop",
+                provenance=authoring.ComponentProvenance(
+                    module="project.workflow_components",
+                    qualname="critique_loop",
+                    export_name="critique_loop",
+                ),
+                policy_type="loop",
+                config={"max_iterations": 4},
+            ),
+        }
+    )
+
+    result = source_compiler._lower_workflow_source_result(
+        source,
+        source_path="invalid_tail_loop.py",
+        resolver=resolver,
+    )
+
+    assert result.pipeline is None
+    payloads = _diagnostic_payloads(result)
+    assert len(payloads) == 1
+    assert payloads[0]["code"] == "AWF021_LOOP_POLICY_BINDING_MISMATCH"
+    assert payloads[0]["message"] == expected_message
+    assert payloads[0]["component_ref"] == (
+        "project.workflow_components:tiebreaker_decide"
+        if "missing" in expected_message
+        else "project.workflow_components:revise"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1831,16 +2556,110 @@ def _load_m3_sidecar(fixture_name: str) -> dict[str, object]:
         return json.load(handle)
 
 
-def _route_contract(route: workflow.Route) -> dict[str, object]:
+def _route_contract(route: workflow.Route, *, include_extended: bool = False) -> dict[str, object]:
     payload: dict[str, object] = {
         "source": route.source,
         "target": route.target,
     }
+    if include_extended:
+        payload["id"] = route.id
     if route.label != "default":
         payload["label"] = route.label
     if route.condition_ref is not None:
         payload["condition_ref"] = route.condition_ref
+    if include_extended and route.metadata:
+        payload["metadata"] = dict(route.metadata)
     return payload
+
+
+def _capability_contract(capability: workflow.Capability) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": capability.id,
+        "route": capability.route,
+        "required": capability.required,
+    }
+    if capability.metadata:
+        payload["metadata"] = dict(capability.metadata)
+    return payload
+
+
+def _policy_contract(policy: object) -> dict[str, object]:
+    payload = _compact_contract(policy)
+    assert isinstance(payload, dict)
+    return payload
+
+
+def _compact_contract(value: object) -> object:
+    if is_dataclass(value):
+        return _compact_contract(asdict(value))
+    if isinstance(value, Mapping):
+        return {
+            str(key): _compact_contract(subvalue)
+            for key, subvalue in value.items()
+            if subvalue is not None and subvalue != () and subvalue != []
+        }
+    if isinstance(value, tuple):
+        return [_compact_contract(item) for item in value]
+    if isinstance(value, list):
+        return [_compact_contract(item) for item in value]
+    return value
+
+
+def _assert_ordered_contracts(
+    actual_contracts: Sequence[object],
+    expected_contracts: Sequence[object],
+) -> None:
+    assert len(actual_contracts) == len(expected_contracts)
+    for actual_contract, expected_contract in zip(actual_contracts, expected_contracts):
+        _assert_contract(actual_contract, expected_contract)
+
+
+def _assert_contract(actual: object, expected: object) -> None:
+    if isinstance(expected, Mapping):
+        assert isinstance(actual, Mapping)
+        for key, expected_value in expected.items():
+            assert key in actual
+            _assert_contract(actual[key], expected_value)
+        return
+    if isinstance(expected, list):
+        assert isinstance(actual, Sequence)
+        assert not isinstance(actual, (str, bytes))
+        assert len(actual) == len(expected)
+        for actual_item, expected_item in zip(actual, expected):
+            _assert_contract(actual_item, expected_item)
+        return
+    assert actual == expected
+
+
+def _node_contract_items(
+    node_contracts: Mapping[str, object] | Sequence[Mapping[str, object]],
+) -> list[tuple[str, object]]:
+    if isinstance(node_contracts, Mapping):
+        return list(node_contracts.items())
+    return [
+        (str(contract["node"]), {key: value for key, value in contract.items() if key != "node"})
+        for contract in node_contracts
+    ]
+
+
+def _step_component(
+    name: str,
+    *,
+    route_bindings: tuple[dict[str, str], ...] = (),
+    metadata: dict[str, object] | None = None,
+) -> authoring.StepComponent:
+    component_metadata: dict[str, object] = {"route_bindings": route_bindings}
+    if metadata:
+        component_metadata.update(metadata)
+    return authoring.StepComponent(
+        id=name,
+        provenance=authoring.ComponentProvenance(
+            module="project.workflow_components",
+            qualname=name,
+            export_name=name,
+        ),
+        metadata=component_metadata,
+    )
 
 
 class _Resolver:

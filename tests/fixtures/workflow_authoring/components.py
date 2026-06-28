@@ -33,8 +33,59 @@ review_prompt = PromptComponent(
 
 plan = StepComponent(id="plan", provenance=_provenance("plan"), output_schema=plan_output)
 execute = StepComponent(id="execute", provenance=_provenance("execute"))
+execute_with_artifact_capability = StepComponent(
+    id="execute",
+    provenance=_provenance("execute_with_artifact_capability"),
+    metadata={
+        "capability_requirements": (
+            {"id": "artifact:write", "route": "default", "required": True},
+        ),
+        "handler_ref": "tests.fixtures.workflow_authoring.components:execute",
+    },
+)
+execute_with_malformed_capability = StepComponent(
+    id="execute",
+    provenance=_provenance("execute_with_malformed_capability"),
+    metadata={"capability_requirements": ({"id": "", "required": "yes"},)},
+)
 review = StepComponent(id="review", provenance=_provenance("review"), prompt=review_prompt)
 route = StepComponent(id="route", provenance=_provenance("route"), output_schema=plan_output)
+route_with_duplicate_bindings = StepComponent(
+    id="route",
+    provenance=_provenance("route_with_duplicate_bindings"),
+    output_schema=plan_output,
+    metadata={
+        "route_bindings": (
+            {
+                "id": "route:execute",
+                "target_ref": "execute",
+                "label": "approve",
+                "condition_ref": "route.approve",
+            },
+            {
+                "id": "route:execute:duplicate",
+                "target_ref": "execute",
+                "label": "approve",
+                "condition_ref": "route.approve.again",
+            },
+        )
+    },
+)
+route_with_mismatched_binding = StepComponent(
+    id="route",
+    provenance=_provenance("route_with_mismatched_binding"),
+    output_schema=plan_output,
+    metadata={
+        "route_bindings": (
+            {
+                "id": "route:missing",
+                "target_ref": "missing-target",
+                "label": "approve",
+                "condition_ref": "route.missing",
+            },
+        )
+    },
+)
 revise = StepComponent(id="revise", provenance=_provenance("revise"))
 
 fast_retry = PolicyComponent(
@@ -43,11 +94,23 @@ fast_retry = PolicyComponent(
     policy_type="retry",
     config={"max_attempts": 2, "retry_on": ("transient",)},
 )
+malformed_retry = PolicyComponent(
+    id="malformed_retry",
+    provenance=_provenance("malformed_retry"),
+    policy_type="retry",
+    config={"max_attempts": 0, "retry_on": "transient"},
+)
 review_timeout = PolicyComponent(
     id="review_timeout",
     provenance=_provenance("review_timeout"),
     policy_type="timing",
     config={"timeout_seconds": 60},
+)
+malformed_timing = PolicyComponent(
+    id="malformed_timing",
+    provenance=_provenance("malformed_timing"),
+    policy_type="timing",
+    config={"timeout_seconds": "soon"},
 )
 review_approval = PolicyComponent(
     id="review_approval",
