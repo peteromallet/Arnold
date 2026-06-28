@@ -71,8 +71,7 @@ def test_generated_wrapper_annotations_use_literal_and_omitted_sentinel() -> Non
 
 def test_generated_stubs_and_typed_marker_are_present() -> None:
     root = Path(__file__).resolve().parents[1]
-    core_stub = root / "vibecomfy" / "nodes" / "_generated" / "core.pyi"
-    core_reexport_stub = root / "vibecomfy" / "nodes" / "core.pyi"
+    core_stub = root / "vibecomfy" / "nodes" / "core.pyi"
     pyproject = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
     artifacts = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["artifacts"]
 
@@ -83,11 +82,9 @@ def test_generated_stubs_and_typed_marker_are_present() -> None:
     assert "def KSampler(" in text
     assert "sampler_name: Literal[" in text
     assert "'euler'" in text
-    assert "sampler_name: Literal[" in (root / "vibecomfy" / "nodes" / "_generated" / "core.py").read_text(encoding="utf-8")
+    assert "sampler_name: Literal[" in (root / "vibecomfy" / "nodes" / "core.py").read_text(encoding="utf-8")
     assert "steps: int | _Omitted = ..." in text
     assert "denoise: float | _Omitted = ..." in text
     assert "pass_raw: bool = ..." in text
     assert "**_extras: Any" in text
     assert "| _Omitted = ..." in text
-    assert core_reexport_stub.is_file()
-    assert "from vibecomfy.nodes._generated.core import *" in core_reexport_stub.read_text(encoding="utf-8")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+MODULES: list[str]
+
 from vibecomfy.nodes.core import *
 from vibecomfy.nodes.kjnodes import *
 from vibecomfy.nodes.ltxvideo import *

@@ -1164,7 +1164,7 @@ def _emit_build_function(
                     all_args.append(uid_arg)
                 # v2.6.4 Fix 3: drop _outputs= for schema-known typed wrappers.
                 # The wrapper class already knows its output names from the
-                # generated schema (vibecomfy/nodes/_generated/<pack>.py). Only
+                # generated schema (vibecomfy/nodes/<pack>.py). Only
                 # raw_call (UUID fallback, no schema) needs explicit _outputs.
                 if extras_expr is not None:
                     all_args.append(("**", extras_expr))

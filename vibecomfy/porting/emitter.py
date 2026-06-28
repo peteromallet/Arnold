@@ -203,10 +203,10 @@ _WRAPPER_CLASS_TO_SYMBOL: dict[str, str] | None = None
 
 def _wrapper_modules() -> tuple[str, ...]:
     try:
-        generated = importlib.import_module("vibecomfy.nodes._generated")
+        nodes = importlib.import_module("vibecomfy.nodes")
     except ImportError:
         return _STATIC_WRAPPER_MODULES
-    modules = getattr(generated, "MODULES", None)
+    modules = getattr(nodes, "MODULES", None)
     if isinstance(modules, (list, tuple)):
         return tuple(str(module) for module in modules if isinstance(module, str) and module)
     return _STATIC_WRAPPER_MODULES
@@ -220,7 +220,7 @@ def _wrapper_class_to_module() -> dict[str, str]:
     symbol_mapping: dict[str, str] = {}
     for module_name in _wrapper_modules():
         try:
-            module = importlib.import_module(f"vibecomfy.nodes._generated.{module_name}")
+            module = importlib.import_module(f"vibecomfy.nodes.{module_name}")
         except ImportError:
             continue
         exported = getattr(module, "__all__", ())
@@ -2898,7 +2898,7 @@ def _emit_build_function(
                     all_args.append(uid_arg)
                 # v2.6.4 Fix 3: drop _outputs= for schema-known typed wrappers.
                 # The wrapper class already knows its output names from the
-                # generated schema (vibecomfy/nodes/_generated/<pack>.py). Only
+                # generated schema (vibecomfy/nodes/<pack>.py). Only
                 # raw_call (UUID fallback, no schema) needs explicit _outputs.
                 if extras_expr is not None:
                     all_args.append(("**", extras_expr))

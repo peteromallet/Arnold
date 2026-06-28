@@ -159,10 +159,10 @@ _WRAPPER_CLASS_TO_SYMBOL: dict[str, str] | None = None
 
 def _wrapper_modules() -> tuple[str, ...]:
     try:
-        generated = importlib.import_module("vibecomfy.nodes._generated")
+        nodes = importlib.import_module("vibecomfy.nodes")
     except ImportError:
         return _STATIC_WRAPPER_MODULES
-    modules = getattr(generated, "MODULES", None)
+    modules = getattr(nodes, "MODULES", None)
     if isinstance(modules, (list, tuple)):
         return tuple(str(module) for module in modules if isinstance(module, str) and module)
     return _STATIC_WRAPPER_MODULES
@@ -176,7 +176,7 @@ def _wrapper_class_to_module() -> dict[str, str]:
     symbol_mapping: dict[str, str] = {}
     for module_name in _wrapper_modules():
         try:
-            module = importlib.import_module(f"vibecomfy.nodes._generated.{module_name}")
+            module = importlib.import_module(f"vibecomfy.nodes.{module_name}")
         except ImportError:
             continue
         exported = getattr(module, "__all__", ())

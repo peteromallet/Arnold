@@ -15,7 +15,7 @@ LEGACY_NODE_MODULES: dict[str, Path] = {
     "comfyui_ltxvideo": Path("vibecomfy/nodes/comfyui_ltxvideo.py"),
     "rgthree_comfy": Path("vibecomfy/nodes/rgthree_comfy.py"),
 }
-THIN_WRAPPER_MODULES: dict[str, str] = {
+GENERATED_WRAPPER_MODULES: dict[str, str] = {
     "kjnodes": "vibecomfy.nodes.kjnodes",
     "ltxvideo": "vibecomfy.nodes.ltxvideo",
     "rgthree": "vibecomfy.nodes.rgthree",
@@ -57,7 +57,7 @@ def run_checks(repo_root: Path | None = None) -> CheckReport:
     pack_file_count = len(_cache_pack_files())
     checks = [
         check_non_vendor_stale_legacy_references(root),
-        check_thin_wrapper_import_smoke(),
+        check_generated_wrapper_import_smoke(),
         check_representative_wrapper_symbol_import_smoke(),
         check_model_registry_node_pack_validation(),
         check_schema_object_info_cache_access(),
@@ -90,30 +90,28 @@ def check_non_vendor_stale_legacy_references(repo_root: Path) -> CheckResult:
     )
 
 
-def check_thin_wrapper_import_smoke() -> CheckResult:
+def check_generated_wrapper_import_smoke() -> CheckResult:
     modules: list[dict[str, Any]] = []
     failures: list[str] = []
-    for stem, module_name in THIN_WRAPPER_MODULES.items():
-        generated_name = f"vibecomfy.nodes._generated.{stem}"
+    for _stem, module_name in GENERATED_WRAPPER_MODULES.items():
         try:
             module = import_module(module_name)
-            generated = import_module(generated_name)
-            same_exports = list(getattr(module, "__all__", ())) == list(getattr(generated, "__all__", ()))
-            if not same_exports:
+            exported = list(getattr(module, "__all__", ()))
+            has_class_type_map = isinstance(getattr(module, "__vibecomfy_class_types__", None), dict)
+            if not exported or not has_class_type_map:
                 failures.append(module_name)
             modules.append(
                 {
                     "module": module_name,
-                    "generated_module": generated_name,
-                    "export_count": len(getattr(module, "__all__", ())),
-                    "exports_match_generated": same_exports,
+                    "export_count": len(exported),
+                    "has_class_type_map": has_class_type_map,
                 }
             )
         except Exception as exc:
             failures.append(module_name)
             modules.append({"module": module_name, "error": f"{type(exc).__name__}: {exc}"})
     return CheckResult(
-        name="thin_wrapper_import_smoke",
+        name="generated_wrapper_import_smoke",
         ok=not failures,
         status="pass" if not failures else "fail",
         details={"modules": modules, "failures": failures},
@@ -241,7 +239,7 @@ def _stub_pack_inventory(repo_root: Path) -> list[str]:
         if stub_path.name == "__init__.pyi":
             continue
         text = stub_path.read_text(encoding="utf-8")
-        if "from vibecomfy.nodes._generated." in text:
+        if text.startswith("# GENERATED FILE"):
             inventory.append(stub_path.stem)
     return inventory
 
@@ -294,12 +292,12 @@ def _display_path(repo_root: Path, path: Path) -> str:
 __all__ = [
     "CheckReport",
     "CheckResult",
+    "check_generated_wrapper_import_smoke",
     "check_known_node_packs_usage_scan",
     "check_legacy_file_presence",
     "check_model_registry_node_pack_validation",
     "check_non_vendor_stale_legacy_references",
     "check_representative_wrapper_symbol_import_smoke",
     "check_schema_object_info_cache_access",
-    "check_thin_wrapper_import_smoke",
     "run_checks",
 ]
