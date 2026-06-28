@@ -1073,6 +1073,19 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     )
     baseline_head = execution_baseline.get("head")
     current_head = baseline_head if isinstance(baseline_head, str) and baseline_head.strip() else None
+    if project_dir is not None:
+        try:
+            actual_head = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=project_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            if actual_head:
+                current_head = actual_head
+        except (OSError, subprocess.SubprocessError):
+            pass
     evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
