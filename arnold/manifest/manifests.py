@@ -270,6 +270,7 @@ class WorkflowEdge:
     target: str
     label: str = "default"
     condition_ref: str | None = None
+    source_span: SourceSpan | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
 

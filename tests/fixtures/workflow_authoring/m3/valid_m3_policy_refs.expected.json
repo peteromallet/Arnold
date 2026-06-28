@@ -10,6 +10,39 @@
       "execute",
       "review"
     ],
+    "routes": [
+      {
+        "id": "plan-execute",
+        "source": "plan",
+        "target": "execute",
+        "metadata": {
+          "source_form": "function"
+        }
+      },
+      {
+        "id": "execute-review",
+        "source": "execute",
+        "target": "review",
+        "metadata": {
+          "source_form": "function"
+        }
+      }
+    ],
+    "step_metadata": {
+      "execute": {
+        "component_ref": "tests.fixtures.workflow_authoring.components:execute_with_artifact_capability",
+        "handler_ref": "tests.fixtures.workflow_authoring.components:execute"
+      }
+    },
+    "capabilities": {
+      "execute": [
+        {
+          "id": "artifact:write",
+          "route": "default",
+          "required": true
+        }
+      ]
+    },
     "node_policies": {
       "execute": {
         "retry": {

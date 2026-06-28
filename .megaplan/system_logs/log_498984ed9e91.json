@@ -1,0 +1,40 @@
+{
+  "id": "log_498984ed9e91",
+  "level": "debug",
+  "category": "system",
+  "event_type": "routing_degradation",
+  "message": "routing_degradation emitted",
+  "details": {
+    "event": {
+      "seq": 5907,
+      "schema_version": 1,
+      "ts_utc": "2026-06-27T18:30:17.802743+00:00",
+      "ts_rel_init_s": 6872.413675,
+      "kind": "routing_degradation",
+      "phase": "critique_evaluator",
+      "payload": {
+        "step_label": "critique_evaluator",
+        "degradations": [
+          "selected model kimi:kimi-k2.7-code but provider reported kimi-k2.7-code"
+        ],
+        "routing": {
+          "ts": "2026-06-27T18:30:17.800813+00:00",
+          "phase": "critique_evaluator",
+          "step_label": "critique_evaluator",
+          "agent": "hermes",
+          "selected_spec": "hermes:kimi:kimi-k2.7-code:medium",
+          "resolved_model": "kimi:kimi-k2.7-code",
+          "actual_model": "kimi-k2.7-code",
+          "tier": null,
+          "complexity": null,
+          "tier_routing_active": false
+        }
+      },
+      "transaction_id": "7859c5e924466a01",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1-component-contract-and-20260627-1635",
+  "occurred_at": "2026-06-27T18:30:17.802805Z"
+}

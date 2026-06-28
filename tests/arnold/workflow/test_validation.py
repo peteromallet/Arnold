@@ -31,6 +31,7 @@ from arnold.workflow import (
     WorkflowPolicy,
     check_workflow_file,
     compile_pipeline,
+    SourceSpan,
     validate_manifest,
 )
 
@@ -135,9 +136,17 @@ def test_validation_structures_invalid_node_field_issues_and_preserves_message()
 
 
 def test_validation_structures_reserved_metadata_issues_and_preserves_message() -> None:
+    source_span = SourceSpan("workflow.py", 8, 5, 8, 42)
     manifest = WorkflowManifest(
         id="planning",
-        nodes=(WorkflowNode("plan", "agent", metadata={"nested": {"event_journal": []}}),),
+        nodes=(
+            WorkflowNode(
+                "plan",
+                "agent",
+                source_span=source_span,
+                metadata={"nested": {"event_journal": []}},
+            ),
+        ),
     )
 
     with pytest.raises(ManifestValidationError, match="reserved metadata key") as exc_info:
@@ -150,7 +159,48 @@ def test_validation_structures_reserved_metadata_issues_and_preserves_message() 
         field="nodes[].metadata.nested.event_journal",
         node_id="plan",
     )
+    assert _issues_by_code(exc_info.value, "reserved_metadata_key")[0].source_span == source_span
     assert "reserved metadata key: 'event_journal'" in str(exc_info.value)
+
+
+def test_validation_structures_source_backed_edge_issues() -> None:
+    source_span = SourceSpan("workflow.py", 9, 9, 9, 37)
+    manifest = WorkflowManifest(
+        id="planning",
+        nodes=(WorkflowNode("plan", "agent"),),
+        edges=(
+            WorkflowEdge(
+                "missing-target",
+                "plan",
+                "missing",
+                source_span=source_span,
+            ),
+        ),
+    )
+
+    with pytest.raises(ManifestValidationError, match="dangling") as exc_info:
+        validate_manifest(manifest)
+
+    issue = _issues_by_code(exc_info.value, "dangling_edge_target")[0]
+    assert issue.edge_id == "missing-target"
+    assert issue.node_id is None
+    assert issue.source_span == source_span
+
+
+def test_validation_keeps_global_invariants_spanless() -> None:
+    manifest = WorkflowManifest(
+        id="planning",
+        nodes=(WorkflowNode("plan", "agent", source_span=SourceSpan("workflow.py", 7)),),
+    )
+    tampered = replace(manifest, manifest_hash="sha256:" + "0" * 64)
+
+    with pytest.raises(ManifestValidationError, match="manifest_hash") as exc_info:
+        validate_manifest(tampered)
+
+    issue = _issues_by_code(exc_info.value, "manifest_hash_mismatch")[0]
+    assert issue.node_id is None
+    assert issue.edge_id is None
+    assert issue.source_span is None
 
 
 def test_validation_structures_hash_and_canonical_json_failures() -> None:

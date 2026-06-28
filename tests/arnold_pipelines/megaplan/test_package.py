@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 import arnold_pipelines.megaplan as megaplan
+from arnold_pipelines.megaplan import workflows
 
 
 def test_package_is_importable() -> None:
@@ -33,6 +34,34 @@ def test_public_exports_defined() -> None:
     assert "compile_planning_pipeline" not in megaplan.__all__
     assert "build_legacy_pipeline" not in megaplan.__all__
     assert "WorkflowManifest" not in megaplan.__all__
+
+
+def test_authoring_component_exports_defined() -> None:
+    expected_exports = {
+        "ARTIFACT_CONTRACT_POLICY",
+        "MODEL_ROUTING_POLICY",
+        "ROBUSTNESS_POLICY",
+        "SUSPEND",
+        "SUSPENSION_POLICY",
+        "TIEBREAKER_CHALLENGER_PROMPT",
+        "TIEBREAKER_RESEARCHER_PROMPT",
+    }
+
+    assert expected_exports <= set(workflows.__all__)
+    for name in expected_exports:
+        assert hasattr(workflows, name), f"missing workflow component export: {name}"
+
+
+def test_authoring_component_contract_ids_are_stable() -> None:
+    assert workflows.TIEBREAKER_RESEARCHER_PROMPT.id == "megaplan:prompt:tiebreaker_researcher"
+    assert workflows.TIEBREAKER_CHALLENGER_PROMPT.id == "megaplan:prompt:tiebreaker_challenger"
+    assert workflows.SUSPEND.id == "megaplan:suspend"
+    assert workflows.SUSPEND.metadata["runtime_status"] == "suspended"
+    assert workflows.SUSPEND.metadata["topology_export"] is False
+    assert workflows.SUSPENSION_POLICY.id == "megaplan:suspension"
+    assert workflows.MODEL_ROUTING_POLICY.id == "megaplan:model-routing"
+    assert workflows.ROBUSTNESS_POLICY.id == "megaplan:robustness"
+    assert workflows.ARTIFACT_CONTRACT_POLICY.id == "megaplan:artifact-contract"
 
 
 def test_build_pipeline_is_callable() -> None:

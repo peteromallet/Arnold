@@ -103,7 +103,8 @@
           "end_column": 28
         }
       }
-    ]
+    ],
+    "intrinsics": []
   },
   "expected_diagnostics": []
 }

@@ -124,6 +124,35 @@ arnold workflow graph workflow.py --format mermaid
 - `explain` prints an ordered narrative of the authored control flow with line
   numbers and component references.
 
+## Reading Explain Output
+
+`explain` is a generated diagnostic view of `workflow.py`. It is useful when
+reviewing what the compiler understood from the authored source, but it is not a
+source file, manifest contract, or runtime entrypoint.
+
+Human output lists the workflow identity followed by ordered entries:
+
+```text
+Workflow shipped-jokes (1.0)
+1 [step] draft
+2 [step] tighten
+3 [step] emit
+```
+
+Nested authored control flow is rendered with indentation. Branch entries own
+branch-arm children, and loop entries own the body entries inferred from source.
+The JSON form keeps the same relationship in `children` arrays so tools can walk
+the authored shape without reverse-engineering text output:
+
+```bash
+arnold workflow explain workflow.py --format json
+```
+
+Step entries include authored IDs, component references, source spans, and input
+bindings where available. Branch-arm entries include the condition literal (or
+`else`) and their nested children. Loop entries include generated loop metadata
+such as `max_iterations` and `reentry_id` when the source provided it.
+
 ### JSON diagnostics envelope
 
 ```json
@@ -162,9 +191,9 @@ arnold workflow graph workflow.py --format json
 ```
 
 `dot` produces a Graphviz diagram, `mermaid` produces a `flowchart TD` diagram,
-and `json` emits a stable node/edge/source-span payload. All three are derived
-from the compiled manifest but annotated with authored source spans where
-available.
+and `json` emits a node/edge payload with source annotations. All three are
+generated from the compiled manifest and annotated with authored source topology
+where available.
 
 ## Pattern-Based Explicit-Node Example
 
@@ -207,7 +236,25 @@ def build_pipeline() -> Pipeline:
 See [`pattern-stability-matrix.md`](pattern-stability-matrix.md) for the
 stability of individual constructors.
 
-## Shipped Example
+## Graph Annotations
+
+Graph annotations are read-only diagnostic enrichments. They are built beside the
+compiled manifest so manifest identity and runtime behavior stay unchanged.
+
+- DOT branch edges prefer authored condition literals in labels, while retaining
+  compiler condition references as fallback context.
+- Mermaid output may group branch arms and loop bodies in lightweight subgraphs
+  to make nested source structure visible.
+- JSON output keeps manifest-derived `nodes` and `edges`, then adds a
+  `source_topology` section with authored node annotations, branch arms, loop
+  boundaries, source spans, nesting depth, reentry IDs, and loop exits where
+  known.
+
+Consumers that need durable runtime identity should use the compiled manifest.
+Consumers that need to help an author understand `workflow.py` can use graph or
+explain output as generated views.
+
+## Shipped Pipeline Gallery
 
 A minimal shipped pipeline lives at `examples/workflow_authoring/hello/`. It
 shows a V1-authored `workflow.py`, typed `components.py`, and `SKILL.md`:
@@ -218,12 +265,34 @@ arnold workflow compile examples/workflow_authoring/hello/workflow.py --out /tmp
 arnold workflow explain examples/workflow_authoring/hello/workflow.py
 ```
 
+Additional shipped authoring scaffolds live under
+`examples/workflow_authoring/shipped/`:
+
+- `jokes/`: linear `draft -> tighten -> emit`.
+- `creative/`: linear `prep -> execute_creative -> critique_creative ->
+  revise_creative -> finalize`.
+- `live_supervisor/`: linear `classify -> diagnose -> repair_decision ->
+  recheck_emit`.
+
+Each scaffold is an authoring example made of `workflow.py`, imported
+`StepComponent` definitions in `components.py`, and a sibling `SKILL.md`. They
+show how shipped pipelines can be represented within the V1 source grammar; they
+do not replace product-specific runtime code or add fanout semantics to V1.
+
 ## Negative Examples
 
-V1 intentionally rejects far-out control flow. A `for` loop inside a workflow
-function produces an `AWF002_UNSUPPORTED_SYNTAX` diagnostic with a source
-location and a fix pointer, not a silently broken manifest:
+V1 intentionally rejects unsupported control flow. A `for` loop inside a
+workflow function produces an `AWF002_UNSUPPORTED_SYNTAX` diagnostic with a
+source location and a fix pointer, not a silently broken manifest:
 
 ```bash
 arnold workflow check tests/fixtures/workflow_authoring/invalid_unsupported_control_flow.py
 ```
+
+Fanout-shaped examples remain outside the V1 grammar. Fixtures such as
+`invalid_parallel_fanout.py`, `invalid_dynamic_component_construction.py`, and
+`invalid_nested_subflow.py` document the current boundary with stable AWF
+diagnostics and source spans. Existing `doc`, `select-tournament`, and
+`writing-panel` patterns that require parallel fanout or dynamic composition
+should remain explicit backend/runtime implementations until the authoring
+grammar grows a dedicated construct for them.
