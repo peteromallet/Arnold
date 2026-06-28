@@ -74,6 +74,7 @@ from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
     effective_execute_completed_task_ids,
+    load_evidence_nucleus,
 )
 from arnold_pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
@@ -1062,8 +1063,17 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
     except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
         state_payload = {}
     config = state_payload.get("config") if isinstance(state_payload, dict) else {}
+    meta = state_payload.get("meta") if isinstance(state_payload, dict) else {}
     raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
     project_dir = Path(raw_project_dir) if isinstance(raw_project_dir, str) and raw_project_dir else None
+    execution_baseline = (
+        meta.get("execution_baseline")
+        if isinstance(meta, dict) and isinstance(meta.get("execution_baseline"), dict)
+        else {}
+    )
+    baseline_head = execution_baseline.get("head")
+    current_head = baseline_head if isinstance(baseline_head, str) and baseline_head.strip() else None
+    evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
         key=_execution_batch_sort_key,
@@ -1092,6 +1102,8 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         plan_dir=plan_dir,
         project_dir=project_dir,
         state=state_payload,
+        evidence_nucleus=evidence_nucleus,
+        current_head=current_head,
         decisions=batch_decisions,
     )
     if not completed:
@@ -1142,6 +1154,8 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                 plan_dir=plan_dir,
                 project_dir=project_dir,
                 state=state_payload,
+                evidence_nucleus=evidence_nucleus,
+                current_head=current_head,
                 decisions=finalize_decisions,
             )
             pending = _non_authoritative_task_reasons(

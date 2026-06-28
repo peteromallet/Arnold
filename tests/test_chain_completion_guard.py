@@ -300,6 +300,22 @@ def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authorit
     assert reason == "execution_batch_1.json"
 
 
+def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_head(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "work")
+    work_head = _commit_semantic_change(tmp_path)
+    plan_dir = _write_execute_authority_plan(tmp_path, base_sha=work_head)
+
+    _git(tmp_path, "checkout", "-B", "native-python-working-tree", base)
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "execution_batch_1.json"
+
+
 def test_empty_finalize_tasks_and_no_execution_batch_blocks(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     _commit_semantic_change(tmp_path)
