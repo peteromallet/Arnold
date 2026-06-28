@@ -1837,6 +1837,11 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "repair_data_record_dev()" in text
     assert "repair_data_record_mechanical()" in text
     assert "repair_data_record_kimi()" in text
+    assert "collect_failure_context_json()" in text
+    assert "render_failure_summary()" in text
+    assert '"mechanical_log_tail"' in text
+    assert '"plan_latest_failure"' in text
+    assert '"chain_state_summary"' in text
     assert "for iteration in 1 2 3; do" in text
     assert 'DEV_REQUESTED_MODEL="glm-5.2"' in text
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.4"' in text
@@ -1846,6 +1851,9 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'repair_data_set_outcome "discord_escalated"' in text
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
+    assert "## Why the chain stopped (most recent failure)" in text
+    assert "## Prior iterations (what was tried)" in text
+    assert "Full accumulated repair data: $DATA_FILE" in text
     assert "Repair data file (read this first): $DATA_FILE" in text
     assert "do not relaunch the chain yourself" in text.lower()
 
