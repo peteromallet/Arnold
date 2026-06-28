@@ -211,6 +211,115 @@
     "python_module": "custom_nodes.hotshot_stub",
     "source_kind": "workflow_json_stub"
   },
+  "ADE_AnimateDiffLoaderV1Advanced": {
+    "category": "hotshot/stub",
+    "description": "Stub schema for ADE_AnimateDiffLoaderV1Advanced derived from Hotshot workflow JSON.",
+    "display_name": "ADE_AnimateDiffLoaderV1Advanced",
+    "evidence_identity": "hotshot-workflow-stub",
+    "function": "ADE_AnimateDiffLoaderV1Advanced",
+    "input_order": {
+      "optional": [
+        "motion_model_name",
+        "beta_schedule",
+        "context_length",
+        "context_stride",
+        "context_overlap",
+        "context_schedule",
+        "closed_loop",
+        "noise_type"
+      ],
+      "required": [
+        "latents",
+        "model"
+      ]
+    },
+    "input_order_all": [
+      "latents",
+      "model",
+      "motion_model_name",
+      "beta_schedule",
+      "context_length",
+      "context_stride",
+      "context_overlap",
+      "context_schedule",
+      "closed_loop",
+      "noise_type"
+    ],
+    "inputs": {
+      "optional": {
+        "beta_schedule": [
+          "BOOLEAN",
+          {}
+        ],
+        "closed_loop": [
+          "BOOLEAN",
+          {}
+        ],
+        "context_length": [
+          "INT",
+          {}
+        ],
+        "context_overlap": [
+          "INT",
+          {}
+        ],
+        "context_schedule": [
+          "STRING",
+          {}
+        ],
+        "context_stride": [
+          "INT",
+          {}
+        ],
+        "motion_model_name": [
+          "STRING",
+          {}
+        ],
+        "noise_type": [
+          "STRING",
+          {}
+        ]
+      },
+      "required": {
+        "latents": [
+          "LATENT",
+          {}
+        ],
+        "model": [
+          "MODEL",
+          {}
+        ]
+      }
+    },
+    "name": "ADE_AnimateDiffLoaderV1Advanced",
+    "object_info_widget_order": [
+      "latents",
+      "model",
+      "motion_model_name",
+      "beta_schedule",
+      "context_length",
+      "context_stride",
+      "context_overlap",
+      "context_schedule",
+      "closed_loop",
+      "noise_type"
+    ],
+    "outputs": [
+      {
+        "name": "MODEL",
+        "type": "MODEL"
+      },
+      {
+        "name": "LATENT",
+        "type": "LATENT"
+      }
+    ],
+    "pack": "ComfyUI-Hotshot",
+    "pack_slug": "ComfyUI-Hotshot",
+    "pack_version": "stub",
+    "python_module": "custom_nodes.hotshot_stub",
+    "source_kind": "workflow_json_stub"
+  },
   "ADE_AnimateDiffSamplingSettings": {
     "category": "hotshot/stub",
     "description": "Stub schema for ADE_AnimateDiffSamplingSettings derived from Hotshot workflow JSON.",

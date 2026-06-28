@@ -1,6 +1,7 @@
 {
   "ACN_AdvancedControlNetApply": "ComfyUI-Hotshot@stub.json",
   "ADE_AnimateDiffLoRALoader": "ComfyUI-Hotshot@stub.json",
+  "ADE_AnimateDiffLoaderV1Advanced": "ComfyUI-Hotshot@stub.json",
   "ADE_AnimateDiffLoaderWithContext": "ComfyUI-Hotshot@stub.json",
   "ADE_AnimateDiffSamplingSettings": "ComfyUI-Hotshot@stub.json",
   "ADE_AnimateDiffUniformContextOptions": "ComfyUI-Hotshot@stub.json",
