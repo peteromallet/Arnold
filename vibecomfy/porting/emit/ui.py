@@ -169,6 +169,8 @@ class WidgetShapeEvidence:
     has_dict_rows: bool
     overflow: bool
     provider: str | None
+    explicit_widget_overflow: bool = False
+    raw_widget_length_recovered: bool = False
 
 
 def _canonicalize_coord(value: float) -> float:
@@ -814,7 +816,12 @@ def _full_widget_name_count(
     return len(names) if names else None
 
 
-def _build_widget_values(node: Any, widget_names: list[str | None]) -> list[Any]:
+def _build_widget_values(
+    node: Any,
+    widget_names: list[str | None],
+    *,
+    default_values: Mapping[str, Any] | None = None,
+) -> list[Any]:
     """Reverse the normalizer's positional widget read-back.
 
     The value pool is the node's widget-sourced data: ``node.widgets`` (``widget_<N>``
@@ -829,6 +836,8 @@ def _build_widget_values(node: Any, widget_names: list[str | None]) -> list[Any]
     pool: dict[str, Any] = {}
     pool.update(node.widgets)
     pool.update(node.inputs)
+    defaults = dict(default_values or {})
+    use_schema_defaults = bool(defaults)
 
     widget_idxs: list[int] = []
     for key in pool:
@@ -848,14 +857,19 @@ def _build_widget_values(node: Any, widget_names: list[str | None]) -> list[Any]
         isinstance(name, str) and name in _SEED_INPUT_NAMES
         for name in widget_names
     )
-    length = max(len(widget_names), max_widget, len(raw_widgets))
+    if use_schema_defaults:
+        length = max(len(widget_names), len(raw_widgets))
+    else:
+        length = max(len(widget_names), max_widget, len(raw_widgets))
     values: list[Any] = []
     for idx in range(length):
         name = widget_names[idx] if idx < len(widget_names) else None
         if isinstance(name, str) and name in pool:
             values.append(pool[name])
-        elif f"widget_{idx}" in pool:
+        elif not use_schema_defaults and f"widget_{idx}" in pool:
             values.append(pool[f"widget_{idx}"])
+        elif isinstance(name, str) and name in defaults:
+            values.append(deepcopy(defaults[name]))
         elif idx < len(raw_widgets):
             values.append(raw_widgets[idx])
         elif name is None and isinstance(node.metadata.get("control_after_generate"), str):
@@ -1000,6 +1014,7 @@ def _emit_litegraph_node_dict(
     outputs: list[dict[str, Any]],
     schema: Any | None,
     include_main_positions: bool,
+    widget_default_values: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     widget_names = _widget_names_for_emission(node.class_type, schema)
 
@@ -1052,7 +1067,11 @@ def _emit_litegraph_node_dict(
         "inputs": inputs,
         "outputs": outputs,
         "properties": properties,
-        "widgets_values": _build_widget_values(node, widget_names),
+        "widgets_values": _build_widget_values(
+            node,
+            widget_names,
+            default_values=widget_default_values,
+        ),
     }
     # Emit color / bgcolor only when non-None (litegraph convention: absent = default)
     if furniture["color"] is not None:
@@ -1151,10 +1170,20 @@ def _raw_widget_shape_from_value(values: Any) -> tuple[int, str, bool]:
 def _raw_widget_shape_from_node(node: Any) -> tuple[int | None, str | None, bool]:
     raw_widgets = getattr(node, "raw_widgets", None)
     if raw_widgets is not None:
+        length = getattr(raw_widgets, "length", None)
+        shape = getattr(raw_widgets, "shape", None)
+        has_dict_rows = bool(getattr(raw_widgets, "has_dict_rows", False))
+        if length is None:
+            length, recovered_shape, recovered_has_dict_rows = _raw_widget_shape_from_value(
+                getattr(raw_widgets, "values", None)
+            )
+            if shape is None:
+                shape = recovered_shape
+            has_dict_rows = has_dict_rows or recovered_has_dict_rows
         return (
-            int(getattr(raw_widgets, "length", 0)),
-            str(getattr(raw_widgets, "shape", "unknown")),
-            bool(getattr(raw_widgets, "has_dict_rows", False)),
+            int(length) if length is not None else None,
+            str(shape or "unknown"),
+            has_dict_rows,
         )
 
     raw_ui = getattr(node, "metadata", {}).get("_ui")
@@ -1230,6 +1259,63 @@ def _layout_entry_for_widget_shape(
     return None
 
 
+def _widget_shape_identity_match(
+    node_id: str,
+    node: Any,
+    matched_entries: Mapping[str, Mapping[str, Any]],
+    raw_ui_node: Mapping[str, Any] | None,
+) -> bool:
+    uid = getattr(node, "uid", "")
+    key = uid or node_id
+    return key in matched_entries or raw_ui_node is not None
+
+
+def _has_object_info_widget_schema(
+    class_type: str,
+    schema_provider: Any | None,
+) -> bool:
+    raw_order = _raw_widget_order_from_provider(class_type, schema_provider)
+    if raw_order:
+        return True
+    from vibecomfy.porting.object_info.consume import object_info_widget_order  # noqa: PLC0415
+
+    return bool(object_info_widget_order(class_type))
+
+
+def _has_schema_default_regeneration_basis(
+    node: Any,
+    schema: Any | None,
+    schema_provider: Any | None,
+) -> bool:
+    if _has_object_info_widget_schema(node.class_type, schema_provider):
+        return True
+    committed = widget_names_for_class(node.class_type)
+    if committed is not None:
+        return True
+    schema_inputs = getattr(schema, "inputs", None)
+    if isinstance(schema_inputs, dict) and schema_inputs:
+        return True
+    return bool(_schema_default_widget_values_for_node(node, schema))
+
+
+def _schema_default_widget_values_for_node(
+    node: Any,
+    schema: Any | None,
+) -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    schema_inputs = getattr(schema, "inputs", None)
+    if isinstance(schema_inputs, dict):
+        for name, spec in schema_inputs.items():
+            default = getattr(spec, "default", None)
+            if default is not None:
+                defaults[str(name)] = deepcopy(default)
+    from vibecomfy.porting.object_info.consume import class_defaults  # noqa: PLC0415
+
+    for name, value in class_defaults(node.class_type).items():
+        defaults.setdefault(str(name), deepcopy(value))
+    return defaults
+
+
 def _jsonable_widget_shape_value(value: Any) -> Any:
     raw_value = getattr(value, "value", value)
     if isinstance(raw_value, Mapping):
@@ -1256,6 +1342,8 @@ def _widget_shape_evidence_summary(evidence: WidgetShapeEvidence) -> dict[str, A
         "has_dict_rows": evidence.has_dict_rows,
         "overflow": evidence.overflow,
         "provider": evidence.provider,
+        "explicit_widget_overflow": evidence.explicit_widget_overflow,
+        "raw_widget_length_recovered": evidence.raw_widget_length_recovered,
     }
 
 
@@ -1334,6 +1422,13 @@ def _build_recovery_entry(
         "has_raw_ui_payload": has_raw_ui_payload,
     }
     entry.update(_widget_shape_report_fields(verdict))
+    recovery = getattr(verdict, "recovery", None)
+    if getattr(verdict, "evidence", None) is not None and getattr(
+        verdict.evidence, "raw_widget_length_recovered", False
+    ):
+        recovery = "raw_widgets_values_length"
+    if recovery is not None:
+        entry["widget_shape_recovery"] = recovery
     if p.get("widget_order_guesses"):
         entry["widget_order_guesses"] = p["widget_order_guesses"]
     if p["schema_less"]:
@@ -1599,6 +1694,7 @@ def derive_widget_shape_evidence(
         if widget_idxs:
             programmatic_widget_count = max(widget_idxs) + 1
     overflow = False
+    explicit_widget_overflow = False
     if schema_widget_count is not None and not provenance["schema_less"]:
         if has_dict_rows:
             overflow = largest_observed_count > schema_widget_count
@@ -1620,8 +1716,21 @@ def derive_widget_shape_evidence(
             and not (raw_widget_count is not None and programmatic_widget_count <= raw_widget_count)
         ):
             overflow = True
+            explicit_widget_overflow = True
         else:
             overflow = largest_observed_count > schema_widget_count
+            explicit_widget_overflow = (
+                programmatic_widget_count > schema_widget_count
+                and not (
+                    raw_widget_count is not None
+                    and programmatic_widget_count <= raw_widget_count
+                )
+            )
+
+    raw_widget_length_recovered = False
+    raw_widgets = getattr(node, "raw_widgets", None)
+    if raw_widgets is not None and getattr(raw_widgets, "length", None) is None:
+        raw_widget_length_recovered = raw_widget_count is not None
 
     return WidgetShapeEvidence(
         node_id=str(node.id),
@@ -1636,6 +1745,8 @@ def derive_widget_shape_evidence(
         has_dict_rows=has_dict_rows,
         overflow=overflow,
         provider=provenance.get("provider"),
+        explicit_widget_overflow=explicit_widget_overflow,
+        raw_widget_length_recovered=raw_widget_length_recovered,
     )
 
 
@@ -1657,6 +1768,7 @@ def emit_ui_json(
     definitions: dict[str, Any] | None = None,
     change_report_out: list | None = None,
     guard_original_ui: Mapping[str, Any] | None = None,
+    guard_resolved_ops: Any = None,
     prior_ui_payload: Mapping[str, Any] | None = None,
     force_drop_editor_only: bool = False,
 ) -> dict[str, Any]:
@@ -1911,6 +2023,8 @@ def emit_ui_json(
     _field_delta_by_uid = compute_field_delta(_snapshot, wf) if _snapshot else {}
     widget_shape_verdicts: dict[str, Any] = {}
     widget_shape_raw_payloads: dict[str, Mapping[str, Any] | None] = {}
+    widget_shape_default_values: dict[str, Mapping[str, Any] | None] = {}
+    new_node_keys: set[str] = set(reconcile_result.new)
     for node_id in order_list:
         node = wf.nodes[node_id]
         schema = schema_cache.get(node.class_type)
@@ -1950,8 +2064,26 @@ def emit_ui_json(
 
         raw_ui_node = _raw_ui_node_for_node(node_id, node, raw_ui_node_map)
         widget_shape_raw_payloads[node_id] = raw_ui_node
+        identity_matched = _widget_shape_identity_match(
+            node_id,
+            node,
+            matched_entries,
+            raw_ui_node,
+        )
         field_delta, link_delta = _split_widget_shape_deltas(_field_delta_by_uid, node_id, node)
         layout_entry = _layout_entry_for_widget_shape(node_id, node, matched_entries)
+        allow_schema_defaults = (
+            raw_ui_node is None
+            and not identity_matched
+            and schema is not None
+            and not prov["schema_less"]
+            and prov.get("provider") == "object_info_index"
+            and expected_widget_count is not None
+            and expected_widget_count > 1
+            and (prov.get("confidence") is None or prov["confidence"] > _LOW_CONFIDENCE_THRESHOLD)
+            and not evidence.has_dict_rows
+            and _has_schema_default_regeneration_basis(node, schema, schema_provider)
+        )
         verdict = _decide_widget_shape(
             evidence,
             raw_widget_payloads={node_id: getattr(node, "raw_widgets", None)},
@@ -1959,10 +2091,22 @@ def emit_ui_json(
             layout_entries={node_id: layout_entry} if layout_entry is not None else {},
             field_deltas={node_id: field_delta} if field_delta else {},
             link_deltas={node_id: link_delta} if link_delta else {},
+            identity_matched=identity_matched,
+            allow_schema_default_regenerate=allow_schema_defaults,
+            is_new_node=(node.uid or node_id) in new_node_keys,
         )
         widget_shape_verdicts[node_id] = verdict
+        widget_shape_default_values[node_id] = (
+            _schema_default_widget_values_for_node(node, schema)
+            if getattr(verdict, "use_schema_defaults", False)
+            else None
+        )
 
-    refused_verdicts = [verdict for verdict in widget_shape_verdicts.values() if verdict.refuse]
+    refused_verdicts = [
+        verdict
+        for verdict in widget_shape_verdicts.values()
+        if verdict.refuse
+    ]
     if refused_verdicts:
         if recovery_report is not None:
             for node_id in order_list:
@@ -2136,6 +2280,7 @@ def emit_ui_json(
                 outputs=outputs,
                 schema=schema,
                 include_main_positions=include_main_positions,
+                widget_default_values=widget_shape_default_values[node_id],
             )
         )
 
@@ -2310,7 +2455,7 @@ def emit_ui_json(
 
         _snap = (wf.metadata or {}).get("_ingest_snapshot", {})
         _delta = compute_field_delta(_snap, wf) if _snap else {}
-        _guard_emit(guard_original_ui, envelope, _delta)
+        _guard_emit(guard_original_ui, envelope, _delta, resolved_ops=guard_resolved_ops)
 
     return envelope
 

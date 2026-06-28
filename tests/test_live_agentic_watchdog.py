@@ -142,41 +142,59 @@ def test_read_tests_to_run_no_file_returns_all_known(monkeypatch, tmp_path):
     assert w.read_tests_to_run(tmp_path, []) == ["a", "b", "c"]
 
 
-# ---- changed_vs_baseline ---------------------------------------------------- #
-def test_changed_vs_baseline_detects_only_touched(tmp_path):
-    root = tmp_path / "repo"
-    baselines = tmp_path / "baselines"
-    root.mkdir(); baselines.mkdir()
-    allow = ["dir/a.py", "b.py"]
-    for rel in allow:
-        (root / rel).parent.mkdir(parents=True, exist_ok=True)
-        (root / rel).write_text("orig")
-        (baselines / rel.replace("/", "__")).write_text("orig")
-    (root / "dir/a.py").write_text("changed by codex")
-    assert w.changed_vs_baseline(allow, baselines, root=root) == ["dir/a.py"]
+# ---- _is_editable (editable-surface predicate) ----------------------------- #
+def test_is_editable_pipeline_and_grader_code_yes_scenario_data_no():
+    yes = [
+        "vibecomfy/executor/prompts.py",
+        "vibecomfy/comfy_nodes/agent/provider.py",
+        "vibecomfy/intent/prompts/text_judge.prompt.md",
+        "vibecomfy/porting/cache/object_info/index.json",
+        "tests/live_agentic_harness/guard.py",
+        "tests/live_agentic_harness/intent_judge.py",
+    ]
+    for p in yes:
+        assert w._is_editable(p), f"should be editable: {p}"
+    no = [
+        "tests/live_agentic_harness/scenarios/hotshot-16-frames-agent-edit.json",
+        "tests/test_executor_contracts.py",
+        "tests/test_live_agentic_watchdog.py",
+        "scripts/live_agentic_watchdog.py",
+        "docs/watchdog-babysitting-loop.md",
+        "README.md",
+    ]
+    for p in no:
+        assert not w._is_editable(p), f"should NOT be editable: {p}"
+
+
+def test_is_editable_ignores_run_artifacts_and_noise():
+    for p in [".watchdog-runs/run-x/outcome.json", "out/agentic/x/y.json",
+              ".venv/lib/python3.11/x.py", "__pycache__/x.pyc", "agent-jury/run.sh"]:
+        assert not w._is_editable(p), f"noise should not be editable: {p}"
 
 
 # ---- build_codex_brief ------------------------------------------------------ #
 def test_brief_checklist_is_complete_without_test_edits():
     brief = w.build_codex_brief(
-        1, "run-x", "DIGEST", w.DEFAULT_ALLOWLIST, False, "", None, ["s1"], "f", "sw")
+        1, "run-x", "DIGEST", False, "", None, ["s1"], "f", "sw")
     for needle in ["MAKE YOUR BET", "focus.md", "turn-r1-report.md",
-                   "tests_to_run.json", "bigger_swings.md", "STAY IN BOUNDS"]:
-        assert needle in brief, f"checklist missing: {needle}"
+                   "tests_to_run.json", "bigger_swings.md", "STAY IN BOUNDS",
+                   "WHAT YOU CAN CHANGE", "GRADER-EDITS ARE HIGH-TRUST", "NEVER GAME"]:
+        assert needle in brief, f"brief missing: {needle}"
+    assert "allowlist" not in brief.lower()          # old model fully gone
     # no test-edit step when allow_test_edits is False
     assert "MAY edit the scenario file" not in brief
 
 
 def test_brief_checklist_includes_test_edit_step_when_allowed():
     brief = w.build_codex_brief(
-        1, "run-x", "DIGEST", w.DEFAULT_ALLOWLIST, True, "", None, ["s1"], "f", "sw")
+        1, "run-x", "DIGEST", True, "", None, ["s1"], "f", "sw")
     assert "MAY edit the scenario file" in brief
 
 
 def test_brief_includes_prev_summary_and_report_pointer_after_turn_1():
     focus = "## Turn 1\n- Bet: did the thing\n"
     brief = w.build_codex_brief(
-        2, "run-x", "DIGEST", w.DEFAULT_ALLOWLIST, False, "", {"s1": True}, ["s1"], focus, "sw")
+        2, "run-x", "DIGEST", False, "", {"s1": True}, ["s1"], focus, "sw")
     assert "PREVIOUS CODEX'S SUMMARY" in brief
     assert "did the thing" in brief                      # prev summary surfaced in-prompt
     assert "turn-r1-report.md" in brief                  # in-depth report pointer
@@ -185,5 +203,5 @@ def test_brief_includes_prev_summary_and_report_pointer_after_turn_1():
 
 def test_brief_round_1_has_no_prev_summary():
     brief = w.build_codex_brief(
-        1, "run-x", "DIGEST", w.DEFAULT_ALLOWLIST, False, "", None, ["s1"], "f", "sw")
+        1, "run-x", "DIGEST", False, "", None, ["s1"], "f", "sw")
     assert "PREVIOUS CODEX'S SUMMARY" not in brief

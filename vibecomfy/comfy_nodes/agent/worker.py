@@ -47,6 +47,7 @@ from pathlib import Path
 import re
 import sys
 import time
+from typing import Any
 
 
 def _bootstrap_repo_root() -> None:
@@ -59,6 +60,11 @@ def _bootstrap_repo_root() -> None:
 
 _bootstrap_repo_root()
 
+from vibecomfy.agent.deepseek_usage import (
+    add_deepseek_usage,
+    coerce_deepseek_usage,
+    empty_deepseek_usage,
+)
 from vibecomfy.executor.profiler import profiler_log, profiler_span, short_text, utc_now_iso
 
 LOGGER = logging.getLogger(__name__)
@@ -131,7 +137,7 @@ def _dispatch_turn(
     agent_kwargs: dict,
     user_message: str,
     system_message: str | None,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     """Run one agent turn through the Arnold dispatch seam; return raw text.
 
     * ``hermes`` (DeepSeek): the parent resolved the full DeepSeek kwargs
@@ -159,6 +165,109 @@ def _dispatch_turn(
         from arnold.agent import ArnoldDispatcher
         from arnold.agent.adapters.deepseek import DeepSeekAdapter
         from arnold.agent.run_agent import AIAgent
+        import arnold.agent.run_agent as run_agent_module
+
+        usage_tracker: dict[str, Any] = {
+            "usage": empty_deepseek_usage(),
+            "cache_breakout_calls": 0,
+        }
+        last_result: dict[str, Any] = {}
+
+        def _usage_int(raw: Any, *names: str) -> int | None:
+            candidates: list[Any] = [raw]
+            if hasattr(raw, "model_extra"):
+                candidates.append(getattr(raw, "model_extra"))
+            for candidate in candidates:
+                if candidate is None:
+                    continue
+                for name in names:
+                    if isinstance(candidate, dict):
+                        value = candidate.get(name)
+                    else:
+                        value = getattr(candidate, name, None)
+                    if value is None:
+                        continue
+                    try:
+                        return max(0, int(value))
+                    except (TypeError, ValueError):
+                        continue
+            return None
+
+        def _prompt_tokens_details(raw: Any) -> Any:
+            details = getattr(raw, "prompt_tokens_details", None)
+            if details is not None:
+                return details
+            if isinstance(raw, dict):
+                return raw.get("prompt_tokens_details")
+            model_extra = getattr(raw, "model_extra", None)
+            if isinstance(model_extra, dict):
+                return model_extra.get("prompt_tokens_details")
+            return None
+
+        def _record_usage(raw_usage: Any, canonical_usage: Any) -> None:
+            prompt_tokens = _usage_int(raw_usage, "prompt_tokens")
+            completion_tokens = _usage_int(raw_usage, "completion_tokens")
+            total_tokens = _usage_int(raw_usage, "total_tokens")
+            if prompt_tokens is None:
+                prompt_tokens = max(0, int(getattr(canonical_usage, "prompt_tokens", 0) or 0))
+            if completion_tokens is None:
+                completion_tokens = max(0, int(getattr(canonical_usage, "output_tokens", 0) or 0))
+            if total_tokens is None:
+                total_tokens = prompt_tokens + completion_tokens
+
+            cache_hit_tokens = _usage_int(raw_usage, "prompt_cache_hit_tokens")
+            cache_miss_tokens = _usage_int(raw_usage, "prompt_cache_miss_tokens")
+            cache_breakout_available = (
+                cache_hit_tokens is not None or cache_miss_tokens is not None
+            )
+            if not cache_breakout_available:
+                details = _prompt_tokens_details(raw_usage)
+                cached_tokens = _usage_int(details, "cached_tokens")
+                if cached_tokens is not None:
+                    cache_hit_tokens = cached_tokens
+                    cache_miss_tokens = max(0, prompt_tokens - cached_tokens)
+                    cache_breakout_available = True
+            if cache_breakout_available:
+                usage_tracker["cache_breakout_calls"] += 1
+
+            usage_tracker["usage"] = add_deepseek_usage(
+                usage_tracker["usage"],
+                {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                    "prompt_cache_hit_tokens": cache_hit_tokens or 0,
+                    "prompt_cache_miss_tokens": cache_miss_tokens or 0,
+                    "n_calls": 1,
+                },
+            )
+
+        original_normalize_usage = run_agent_module.normalize_usage
+
+        def _tracking_normalize_usage(
+            response_usage: Any,
+            *,
+            provider: str | None = None,
+            api_mode: str | None = None,
+        ):
+            canonical_usage = original_normalize_usage(
+                response_usage,
+                provider=provider,
+                api_mode=api_mode,
+            )
+            try:
+                _record_usage(response_usage, canonical_usage)
+            except Exception:
+                pass
+            return canonical_usage
+
+        class _TrackingAIAgent(AIAgent):
+            def run_conversation(self, *args, **kwargs):
+                result = super().run_conversation(*args, **kwargs)
+                if isinstance(result, dict):
+                    last_result.clear()
+                    last_result.update(result)
+                return result
 
         def _factory(**adapter_kwargs):
             # Start from the adapter's resolved kwargs (toolsets/session_db_path
@@ -172,19 +281,43 @@ def _dispatch_turn(
             for key, value in agent_kwargs.items():
                 if value is not None:
                     merged[key] = value
-            return AIAgent(**merged)
+            return _TrackingAIAgent(**merged)
 
         dispatcher = ArnoldDispatcher()
         dispatcher.register(agent_id, DeepSeekAdapter(agent_factory=_factory))
-        result = dispatcher.dispatch(request)
-        return result.raw_output or ""
+        run_agent_module.normalize_usage = _tracking_normalize_usage
+        try:
+            result = dispatcher.dispatch(request)
+        finally:
+            run_agent_module.normalize_usage = original_normalize_usage
+
+        tracked_usage = coerce_deepseek_usage(usage_tracker["usage"])
+        if tracked_usage["n_calls"] <= 0 and last_result:
+            tracked_usage = coerce_deepseek_usage(
+                {
+                    "prompt_tokens": last_result.get("prompt_tokens"),
+                    "completion_tokens": last_result.get("completion_tokens"),
+                    "total_tokens": last_result.get("total_tokens"),
+                    "prompt_cache_hit_tokens": last_result.get("cache_read_tokens"),
+                    "prompt_cache_miss_tokens": last_result.get("input_tokens"),
+                    "n_calls": last_result.get("api_calls"),
+                }
+            )
+            usage_tracker["cache_breakout_calls"] = tracked_usage["n_calls"]
+        return result.raw_output or "", {
+            "deepseek_usage": tracked_usage,
+            "deepseek_cache_breakout_complete": (
+                tracked_usage["n_calls"] > 0
+                and usage_tracker["cache_breakout_calls"] >= tracked_usage["n_calls"]
+            ),
+        }
 
     # codex / claude / anything else: route through the shared default
     # dispatcher. Raises LookupError if the adapter is not registered.
     from arnold.agent import dispatch as _default_dispatch
 
     result = _default_dispatch(request)
-    return result.raw_output or ""
+    return result.raw_output or "", {}
 
 
 def main() -> int:
@@ -220,7 +353,7 @@ def main() -> int:
             agent_id=agent_id,
             response_contract=response_contract,
         ) as span:
-            text = _dispatch_turn(
+            text, worker_metadata = _dispatch_turn(
                 agent_id=agent_id,
                 agent_kwargs=request["agent_kwargs"],
                 user_message=request["user_message"],
@@ -257,6 +390,8 @@ def main() -> int:
                     out = {"python": python, "message": message}
             else:
                 raise ValueError(f"Unsupported response_contract {response_contract!r}.")
+            if isinstance(worker_metadata, dict):
+                out.update(worker_metadata)
     except Exception as exc:  # noqa: BLE001 - report all failures to parent
         out = {"error": str(exc), "error_type": type(exc).__name__}
         # A LookupError means no adapter is registered for the requested agent id

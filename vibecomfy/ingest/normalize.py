@@ -32,6 +32,10 @@ EXEC_SOURCE_MAX_TOTAL_BYTES = 768 * 1024
 def detect_workflow_shape(raw: dict[str, Any]) -> str:
     if "prompt" in raw and isinstance(raw["prompt"], dict):
         return detect_workflow_shape(raw["prompt"])
+    if isinstance(raw.get("compiled_api"), dict) and (
+        "vibecomfy_format_version" in raw or isinstance(raw.get("nodes"), dict)
+    ):
+        return "vibe"
     if isinstance(raw.get("nodes"), list):
         return "ui"
     if raw == {}:
@@ -61,6 +65,10 @@ def normalize_to_api(
     if shape == "api":
         api = raw.get("prompt", raw)
         _enforce_exec_source_limits(api, surface="api")
+        return api
+    if shape == "vibe":
+        api = raw["compiled_api"]
+        _enforce_exec_source_limits(api, surface="vibe.compiled_api")
         return api
     if shape != "ui":
         raise ValueError(f"Unsupported workflow shape: {shape}")

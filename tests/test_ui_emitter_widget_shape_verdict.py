@@ -50,6 +50,54 @@ def _provider() -> _Provider:
     )
 
 
+def _provider_with_defaults() -> _Provider:
+    return _Provider(
+        {
+            "KSampler": NodeSchema(
+                class_type="KSampler",
+                pack=None,
+                inputs={
+                    "seed": InputSpec("INT", default=42),
+                    "steps": InputSpec("INT", default=20),
+                    "cfg": InputSpec("FLOAT", default=7.0),
+                },
+                outputs=[OutputSpec("IMAGE", "IMAGE")],
+                source_provider="object_info_index",
+                confidence=1.0,
+            )
+        }
+    )
+
+
+def _provider_object_info_generated() -> _Provider:
+    return _Provider(
+        {
+            "PrimitiveInt": NodeSchema(
+                class_type="PrimitiveInt",
+                pack=None,
+                inputs={"value": InputSpec("INT")},
+                outputs=[],
+                source_provider="object_info_index",
+                confidence=1.0,
+            ),
+            "Florence2Run": NodeSchema(
+                class_type="Florence2Run",
+                pack=None,
+                inputs={
+                    "text_input": InputSpec("STRING", default=""),
+                    "task": InputSpec("STRING", default="detailed_caption"),
+                    "fill_mask": InputSpec("BOOLEAN", default=True),
+                    "keep_alive": InputSpec("BOOLEAN", default=False),
+                    "max_new_tokens": InputSpec("INT", default=1024),
+                },
+                outputs=[OutputSpec("STRING", "STRING")],
+                source_provider="object_info_index",
+                confidence=1.0,
+            ),
+        }
+    )
+
+
 def _wf() -> VibeWorkflow:
     return VibeWorkflow("wf", WorkflowSource("wf", None, "test"))
 
@@ -209,13 +257,24 @@ def test_overflow_refuses_before_returning_envelope_and_reports_verdict() -> Non
     wf = _wf()
     wf.nodes["1"] = VibeNode(
         "1",
-        "KSampler",
+        "ProgrammaticOverflow",
         widgets={f"widget_{idx}": idx for idx in range(20)},
     )
 
     report: list[dict[str, Any]] = []
     with pytest.raises(RefusedEmit) as exc_info:
-        emit_ui_json(wf, schema_provider=_provider(), recovery_report=report)
+        emit_ui_json(
+            wf,
+            schema_provider=_Provider(
+                {
+                    "ProgrammaticOverflow": _schema(
+                        "ProgrammaticOverflow",
+                        {"seed": InputSpec("INT")},
+                    )
+                }
+            ),
+            recovery_report=report,
+        )
 
     assert "1" in exc_info.value.diff
     assert exc_info.value.diff["1"]["axis"] == "widget_shape"
@@ -271,6 +330,118 @@ def test_dynamic_node_without_prior_raw_ui_payload_refuses() -> None:
     assert "missing_layout_entry" in reasons
 
 
+def test_identity_matched_overflow_carries_forward_raw_ui() -> None:
+    raw_ui = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "KSampler",
+                "pos": [10, 20],
+                "size": [300, 120],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [],
+                "properties": {"vibecomfy_uid": "uid-ksampler"},
+                "widgets_values": list(range(12)),
+            }
+        ],
+        "links": [],
+    }
+    wf = _wf()
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "KSampler",
+        uid="uid-ksampler",
+        widgets={"widget_0": 4},
+        metadata={"_ui": raw_ui["nodes"][0]},
+    )
+
+    report: list[dict[str, Any]] = []
+    ui = emit_ui_json(wf, schema_provider=_provider(), recovery_report=report)
+
+    assert ui["nodes"][0]["id"] == 1
+    entry = next(item for item in report if item.get("node_id") == "1")
+    assert entry["widget_shape_verdict"] == "pin_opaque"
+    assert entry["widget_shape_recovery"] == "carry_forward_raw_ui"
+
+
+def test_schema_known_generated_node_uses_schema_defaults_and_marks_recovery() -> None:
+    wf = _wf()
+    wf.nodes["1"] = VibeNode("1", "KSampler")
+
+    report: list[dict[str, Any]] = []
+    ui = emit_ui_json(wf, schema_provider=_provider_with_defaults(), recovery_report=report)
+
+    assert ui["nodes"][0]["widgets_values"] == [42, "fixed", 20, 7.0, None, None, 1.0]
+    entry = next(item for item in report if item.get("node_id") == "1")
+    assert entry["widget_shape_verdict"] == "safe_to_regenerate"
+    assert entry["widget_shape_recovery"] == "schema_default_regenerate"
+
+
+def test_schema_known_generated_explicit_overflow_uses_schema_defaults_and_marks_recovery() -> None:
+    wf = _wf()
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "KSampler",
+        widgets={f"widget_{idx}": idx for idx in range(10)},
+    )
+
+    report: list[dict[str, Any]] = []
+    ui = emit_ui_json(
+        wf,
+        schema_provider=_provider_with_defaults(),
+        recovery_report=report,
+    )
+
+    assert ui["nodes"][0]["widgets_values"] == [42, "fixed", 20, 7.0, None, None, 1.0]
+    entry = next(item for item in report if item.get("node_id") == "1")
+    assert entry["widget_shape_verdict"] == "safe_to_regenerate"
+    assert entry["widget_shape_recovery"] == "schema_default_regenerate"
+
+
+def test_single_slot_object_info_generated_overflow_still_refuses() -> None:
+    wf = _wf()
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "PrimitiveInt",
+        widgets={"widget_0": 7, "widget_1": 9},
+    )
+
+    report: list[dict[str, Any]] = []
+    with pytest.raises(RefusedEmit):
+        emit_ui_json(
+            wf,
+            schema_provider=_provider_object_info_generated(),
+            recovery_report=report,
+        )
+
+    entry = next(item for item in report if item.get("node_id") == "1")
+    assert entry["widget_shape_verdict"] == "refuse"
+
+
+def test_object_info_generated_without_raw_widget_order_uses_schema_defaults() -> None:
+    wf = _wf()
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "Florence2Run",
+        widgets={f"widget_{idx}": idx for idx in range(10)},
+    )
+
+    report: list[dict[str, Any]] = []
+    ui = emit_ui_json(
+        wf,
+        schema_provider=_provider_object_info_generated(),
+        recovery_report=report,
+    )
+
+    assert ui["nodes"][0]["type"] == "Florence2Run"
+    entry = next(item for item in report if item.get("node_id") == "1")
+    assert entry["widget_shape_verdict"] == "safe_to_regenerate"
+    assert entry["widget_shape_recovery"] == "schema_default_regenerate"
+
+
 def test_metadata_ui_dynamic_node_pins_without_external_prior_payload() -> None:
     raw_ui = _raw_dynamic_ui()
     wf = _wf()
@@ -291,6 +462,32 @@ def test_metadata_ui_dynamic_node_pins_without_external_prior_payload() -> None:
     entry = next(item for item in report if item.get("node_id") == "7")
     assert entry["widget_shape_verdict"] == "pin_opaque"
     assert entry["has_raw_ui_payload"] is True
+
+
+def test_raw_widget_values_length_recovery_marker_is_reported() -> None:
+    raw_ui = _raw_dynamic_ui()
+    wf = _wf()
+    wf.nodes["7"] = VibeNode(
+        "7",
+        "DynamicRows",
+        uid="uid-dynamic",
+        raw_widgets=RawWidgetPayload(
+            values=[{"lora": "a"}, {"lora": "b"}],
+            shape="list",
+            source="ui.widgets_values",
+            has_dict_rows=True,
+            length=None,  # type: ignore[arg-type]
+        ),
+        metadata={"_ui": raw_ui["nodes"][0]},
+    )
+
+    report: list[dict[str, Any]] = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        emit_ui_json(wf, recovery_report=report)
+
+    entry = next(item for item in report if item.get("node_id") == "7")
+    assert entry["widget_shape_recovery"] == "raw_widgets_values_length"
 
 
 def test_prior_store_only_dynamic_node_refuses_without_full_raw_payload() -> None:

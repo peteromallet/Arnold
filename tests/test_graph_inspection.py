@@ -136,6 +136,37 @@ def graph_with_outputs() -> dict:
     }
 
 
+@pytest.fixture
+def vibe_graph_dict_nodes() -> dict:
+    return {
+        "nodes": {
+            "27": {
+                "id": "27",
+                "class_type": "SaveVideo",
+                "inputs": {
+                    "codec": "auto",
+                    "filename_prefix": "video/ComfyUI",
+                    "format": "auto",
+                },
+                "widgets": {},
+            },
+            "34": {
+                "id": "34",
+                "class_type": "MoonvalleyImg2VideoNode",
+                "inputs": {},
+                "widgets": {
+                    "widget_0": "prompt",
+                    "widget_3": 7,
+                    "widget_6": 100,
+                },
+            },
+        },
+        "edges": [
+            {"from_node": "34", "from_output": "0", "to_node": "27", "to_input": "video"},
+        ],
+    }
+
+
 # ── derivation fixtures ──────────────────────────────────────────────────────
 
 
@@ -281,6 +312,20 @@ class TestInspectGraphBasic:
     def test_node_without_title_has_none_title(self, single_node_graph: dict) -> None:
         evidence = inspect_graph(single_node_graph)
         assert evidence.nodes[0].title is None
+
+    def test_vibe_graph_dict_nodes_extracts_widgets_and_edges(
+        self,
+        vibe_graph_dict_nodes: dict,
+    ) -> None:
+        evidence = inspect_graph(vibe_graph_dict_nodes)
+
+        assert evidence.node_count == 2
+        moonvalley = next(node for node in evidence.nodes if node.class_type == "MoonvalleyImg2VideoNode")
+        save_video = next(node for node in evidence.nodes if node.class_type == "SaveVideo")
+        assert any(widget.name == "widget_3" and widget.value == 7 for widget in moonvalley.widgets)
+        assert any(widget.name == "codec" and widget.value == "auto" for widget in save_video.widgets)
+        assert evidence.edges[0].origin_node == "34"
+        assert evidence.edges[0].target_node == "27"
 
 
 # ── link normalisation ───────────────────────────────────────────────────────
@@ -490,6 +535,12 @@ class TestGraphInspectionText:
         text = graph_inspection_text(single_node_graph)
         assert isinstance(text, str)
         assert "KSampler" in text
+
+    def test_uses_named_widgets_for_vibe_graphs(self, vibe_graph_dict_nodes: dict) -> None:
+        text = graph_inspection_text(vibe_graph_dict_nodes)
+        assert isinstance(text, str)
+        assert "codec=auto" in text
+        assert "widget_3=7" in text
 
 
 # ── WidgetEvidence contract ──────────────────────────────────────────────────

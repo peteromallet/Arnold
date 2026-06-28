@@ -171,3 +171,22 @@ def test_raw_scalar_widget_overflow_is_not_hidden_by_compacted_candidate_count()
     assert evidence.schema_widget_count == 2
     assert evidence.has_dict_rows is False
     assert evidence.overflow is True
+
+
+def test_raw_widget_length_falls_back_to_values_when_length_is_missing() -> None:
+    node = VibeNode(
+        "13",
+        "DynamicRows",
+        raw_widgets=RawWidgetPayload(
+            values=["a", "b", "c"],
+            shape="list",
+            source="ui.widgets_values",
+            has_dict_rows=False,
+            length=None,  # type: ignore[arg-type]
+        ),
+    )
+
+    evidence = _evidence(node, _Provider({}))
+
+    assert evidence.raw_widget_count == 3
+    assert evidence.raw_widget_length_recovered is True

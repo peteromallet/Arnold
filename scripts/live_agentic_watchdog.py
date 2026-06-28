@@ -16,11 +16,11 @@ Loop model (per turn):
   3. Codex gets a focused "bet" brief carrying: the north-star research/
      execute/reply philosophy, the failure digest, prior-turn results, the
      cumulative diff of pipeline edits so far, and the current focus doc.
-  4. Codex (a) improves the pipeline (allowlisted prompt + inter-stage-data
-     files), (b) updates ``focus.md`` (next turn's bet + reflection), and
-     (c) updates ``tests_to_run.json`` (next turn's tests — must carry forward
+  4. Codex (a) improves the pipeline (any file under ``vibecomfy/`` + the
+     grading/harness code), (b) updates ``focus.md`` (next turn's bet + reflection),
+     and (c) updates ``tests_to_run.json`` (next turn's tests — must carry forward
      this turn's so we catch regressions).
-  5. Safety gate (allowlist-only edits + package imports) → git commit → log.
+  5. Safety gate (editable-surface-only edits + package imports) → git commit → log.
 
 Codex is steered to make the pipeline *fundamentally* better (no overfitting,
 no hardcoded answers, no one-off green-flips), to think at a high level of
@@ -37,16 +37,27 @@ Usage::
 
 Outputs land under ``.watchdog-runs/<run_id>/``: ``outcome.json``, ``auto.log``,
 ``focus.md``, ``tests_to_run.json``, per-round ``codex-rR-prompt.md`` /
-``codex-rR.out`` / ``summary-rR.json``, plus ``baselines/`` and
-``backups/rR-pre/`` snapshots. Each round commits the allowlisted files on the
-current branch (``watchdog rR: …``) so a bad round is ``git revert``-able; the
+``codex-rR.out`` / ``summary-rR.json``. Each round commits Codex's edits to the
+editable surface (``vibecomfy/`` + the grading/harness code) on the current branch (``watchdog rR: …``) so a bad round is ``git revert``-able; the
 rest of the working tree is never staged.
 """
 
 from __future__ import annotations
 
+# When run as a script, self-correct to the repo venv BEFORE importing arnold.
+# The venv has the fully-installed `arnold` (incl. arnold.pipelines.megaplan); a
+# bare `python3` on this machine resolves `arnold` to a shadowing local Arnold
+# checkout that lacks that submodule and crashes on import. Gated on __main__ so
+# importing the module (e.g. for pytest) is unaffected — tests run in the venv.
+if __name__ == "__main__":
+    import os as _os
+    import sys as _sys
+    from pathlib import Path as _Path
+    _vpy = _Path(__file__).resolve().parents[1] / ".venv" / "bin" / "python"
+    if _vpy.exists() and _os.path.realpath(_sys.executable) != _os.path.realpath(str(_vpy)):
+        _os.execv(str(_vpy), [str(_vpy), *_sys.argv])
+
 import argparse
-import difflib
 import json
 import shutil
 import subprocess
@@ -72,29 +83,47 @@ DEFAULT_SCENARIOS_DIR = "tests/live_agentic_harness/scenarios"
 # Same path, named for its role as the editable-scenarios tree (--allow-test-edits).
 SCENARIOS_GLOB = DEFAULT_SCENARIOS_DIR
 
-# Files Codex may edit to improve the PIPELINE (prompts + inter-stage data).
-# Single source of truth: (path, one-line role). DEFAULT_ALLOWLIST and
-# ALLOWLIST_BLURB are derived views so callers use whichever shape they need.
-ALLOWLIST_TARGETS: list[tuple[str, str]] = [
-    ("vibecomfy/comfy_nodes/agent/provider.py",
-     "build_batch_messages — the batch-REPL canvas-edit system prompt "
-     "(add/change/del node grammar; search/research/clarify/done calls) AND "
-     "the user-message assembly, i.e. the inter-stage data injected each turn "
-     "(conversation, request, python render, node-variable index, signature "
-     "catalog, research brief/summary, precedent-adaptation plan, revision "
-     "evidence, graph report). Highest-leverage target."),
-    ("vibecomfy/executor/prompts.py",
-     "_CLASSIFY_SYSTEM + build_classify_messages (route/intent decision) and "
-     "_REPLY_SYSTEM + build_reply_messages (route-aware reply)."),
-    ("vibecomfy/intent/prompts/text_judge.prompt.md",
-     "The C1–C4 binary criteria that grade every expect_graph_changed "
-     "scenario — tuning this changes what counts as a pass."),
-    ("vibecomfy/agent/artifacts.py",
-     "_implementation_payload_from_report — the research→implement handoff "
-     "data (execution_protocol_notes / research_context_packet)."),
-]
-DEFAULT_ALLOWLIST: list[str] = [path for path, _ in ALLOWLIST_TARGETS]
-ALLOWLIST_BLURB: dict[str, str] = dict(ALLOWLIST_TARGETS)
+# --- Editable surface (replaces the old fixed allowlist) --------------------
+# Codex may edit the whole PIPELINE (anything under vibecomfy/) AND the live-agentic
+# grading/harness CODE, but NOT the test data (scenarios) or anything outside the
+# pipeline. Anti-gaming is preserved by fencing the grades: scenario data, other
+# unit tests, the watchdog driver, docs and config stay off-limits, so Codex can't
+# rig pass/fail. Editing the grading code IS allowed but is high-trust (see brief).
+EDITABLE_PREFIXES: tuple[str, ...] = ("vibecomfy/", "tests/live_agentic_harness/")
+SCENARIOS_PREFIX = "tests/live_agentic_harness/scenarios/"
+# Paths that are never "a change Codex made" — run artifacts, venv, build noise.
+NOISE_PREFIXES: tuple[str, ...] = (
+    ".watchdog-runs/", "out/", ".venv/", ".git/", "__pycache__/", "agent-jury/",
+    ".claude/", ".codex/", "node_modules/",
+)
+
+
+def _is_noise(path: str) -> bool:
+    return any(path == p.rstrip("/") or path.startswith(p) for p in NOISE_PREFIXES)
+
+
+def _is_editable(path: str) -> bool:
+    """True iff Codex is allowed to have changed *path*: the pipeline
+    (``vibecomfy/``) or the live-agentic grading/harness code
+    (``tests/live_agentic_harness/`` minus its ``scenarios/`` data)."""
+    if _is_noise(path):
+        return False
+    if path.startswith("vibecomfy/"):
+        return True
+    if path.startswith("tests/live_agentic_harness/") and not path.startswith(SCENARIOS_PREFIX):
+        return True
+    return False
+
+
+# Static prose describing the editable surface (shown verbatim in the Codex brief).
+EDITABLE_BLURB = (
+    "The entire `vibecomfy/` pipeline — prompts, inter-stage data, runtime, "
+    "executor, the node-schema/registry (incl. the object_info schema cache), "
+    "agent + intent code — AND the live-agentic grading/harness code under "
+    "`tests/live_agentic_harness/` (guard/assessor/intent_judge/runner/adapter). "
+    "You may NOT edit test scenario data (`.../scenarios/`), other unit tests, "
+    "`scripts/live_agentic_watchdog.py`, `docs/`, or config."
+)
 
 SMOKE_SCENARIOS: list[str] = [
     "image-sdxl-txt2img-cat-in-spacesuit",
@@ -433,24 +462,66 @@ fallback) and return both usable knowledge AND concrete node-combination
 references; execute should apply that; reply should explain what actually
 happened. Use your judgment to move the pipeline toward that, however is smartest.
 
-## BOUNDARIES (these are real; everything else is your call)
-- Don't overfit: no hardcoded expected answers, no special-casing a test's exact
-  strings, no branch-on-scenario-id. Changes should generalize.
-- You may edit ONLY the allowlisted files (the prompts + the data passed between
-  stages). Anything else fails the safety gate and your turn is reverted.
-- Not every test will pass — some are impossible, some are bad. That's fine;
-  judge each failure (pipeline weakness vs. impossible/bad test vs. harness gap)
-  and act on your judgment. {test_edits_line}
-- No noise, no ceremony, no churn for its own sake.
+## WHAT YOU CAN CHANGE (the whole pipeline — trust your judgment)
+You may edit ANY file under `vibecomfy/` — prompts, the data passed between
+stages, the runtime, the executor, the node-schema/registry (incl. the
+`object_info` schema cache — the root of the "missing node schema" failures),
+agent and intent code — AND the live-agentic grading/harness code under
+`tests/live_agentic_harness/` (guard/assessor/intent_judge/runner/adapter).
+Rethink the process. Reshape how data flows between stages. Add or fix data
+sources. Restructure where it genuinely helps. Go to where the REAL problem is,
+not just the prompts. You're trusted to make these calls.
+
+## WHAT YOU MUST NOT TOUCH (the fence that keeps the grades honest)
+- Test SCENARIO DATA (`tests/.../scenarios/`) and other unit tests
+  (`tests/test_*.py`) — never. {test_edits_line}
+- `scripts/live_agentic_watchdog.py` (this loop's driver), `docs/`, and config.
+Anything outside `vibecomfy/` + `tests/live_agentic_harness/` code fails the
+safety gate and your turn is reverted.
+
+## THE PRINCIPLES (how to decide well)
+- GENERALIZE: no hardcoded expected answers, no special-casing a test's exact
+  strings, no branch-on-scenario-id. Fix the CLASS of problem, not one test.
+- NEVER GAME: never weaken a check or loosen an assertion to raise the pass
+  count. Making a grader MORE accurate (e.g. crediting a genuinely correct
+  refusal) is good; making it less rigorous is gaming.
+- GRADER-EDITS ARE HIGH-TRUST: you MAY edit the grading/harness code, but ONLY
+  to fix a test that is genuinely WRONG (fails for the wrong reason, crashes, or
+  asserts incorrect behavior). Every such edit must make the test MORE accurate
+  and be justified in your report. If you'd be editing a grader to make more
+  tests pass, STOP — that's gaming; fix the pipeline instead.
+- RIGHT LEVEL: if you're re-tightening what a prior turn loosened (or
+  vice-versa) on the same mechanism, the real fix is probably structural or
+  missing data, not another prompt tweak — escalate it to `bigger_swings.md`.
+- Some tests are impossible or bad; that's fine — judge each failure (pipeline
+  weakness vs. impossible/bad test vs. harness gap) and act on your judgment.
+- REASONABLE SCOPE: proper root-cause solutions, not one-off green-flips and not
+  huge speculative refactors. Prefer the smallest change that genuinely fixes the
+  cause; if it needs to be large, write it up as a big-swing instead.
+- Keep the package importing (the safety gate runs `import vibecomfy...`).
+
+## READING REFUSALS — good refusal vs bad refusal
+When the pipeline DECLINES to build or finish a workflow, judge the refusal:
+- GOOD refusal = correct behavior. Do NOT try to "fix" it, and it should NOT
+  count as a failure: the request is genuinely impossible, makes no sense as a
+  workflow, or there is legitimately no findable information on how to do it.
+- BAD refusal = a real pipeline weakness. Fix it: the request makes sense for the
+  workflow but the pipeline bailed for a weak reason — "no nodepack installed",
+  "no model available", "I wasn't sure", a missing node it could have substituted.
+  It should ATTEMPT the task (fetch/install the nodepack, use an available model,
+  pick a reasonable substitute, make a best-effort build) instead of giving up.
+Label every decline good or bad in your diagnosis. Target the BAD refusals.
+Protect the GOOD ones — don't push the pipeline to attempt the impossible. The
+intent judge (`intent/prompts/text_judge.prompt.md`) is where a good refusal gets
+credited rather than counted as a failure; refine it if it's punishing good ones.
 
 ## SCOPE — two kinds of work (don't mix them up)
-- DO NOW: focused optimizations to the allowlisted prompt / data-feeding files.
-  Small, surgical, generalizes. This is what you implement and commit this turn.
-- BIG SWINGS (write, DON'T do): if you see a LARGER change that's worth it but
-  beyond a focused optimization — adding new data sources, restructuring the
-  pipeline, adding/changing stages, a significant refactor — do NOT implement it
-  this turn. Append it to `bigger_swings.md` (see handoff) with your reasoning.
-  A human or a later, bigger effort picks those up.
+- DO NOW: a focused, root-cause fix to the pipeline (any file you're allowed to
+  edit). Small, surgical, generalizes. This is what you implement and commit.
+- BIG SWINGS (write, DON'T do): if the right fix is a LARGER change — adding new
+  data sources, restructuring the pipeline, adding/changing stages, a significant
+  refactor — do NOT implement it this turn. Append it to `bigger_swings.md`
+  (see handoff) with your reasoning. A human or a later, bigger effort picks those up.
 
 ## THIS TURN IS A BET
 Make a focused bet on one optimization (or a small related set). Read the
@@ -486,7 +557,6 @@ def build_codex_brief(
     round_num: int,
     run_id: str,
     digest: str,
-    allowlist: list[str],
     allow_test_edits: bool,
     prior_diff: str,
     prev_results: dict[str, bool] | None,
@@ -514,9 +584,8 @@ def build_codex_brief(
         parts.append(f"In-depth report from last turn: `.watchdog-runs/{run_id}/turn-r{round_num - 1}-report.md`")
         parts.append("")
 
-    parts.append("## ALLOWLIST (the only files you may edit to change the pipeline)")
-    for rel in allowlist:
-        parts.append(f"- `{rel}` — {ALLOWLIST_BLURB.get(rel, '(inspect it)')}")
+    parts.append("## WHAT YOU CAN EDIT (recap)")
+    parts.append(EDITABLE_BLURB)
     parts.append("")
 
     parts.append(f"## PRIOR PIPELINE CHANGES (rounds 1..{round_num - 1}; do NOT regress working progress)")
@@ -546,8 +615,12 @@ def build_codex_brief(
     parts.append("")
     # Complete, explicit checklist of everything to do this turn (dynamic numbering).
     checklist = [
-        "MAKE YOUR BET — implement focused optimizations to the allowlisted pipeline "
-        "files (prompts / data feeding). Generalize; don't overfit; don't green-flip one run.",
+        "MAKE YOUR BET — implement a focused, root-cause fix to the pipeline (any "
+        "editable file: prompts / data-feeding / runtime / executor / schema / grader code). "
+        "Generalize; don't overfit; don't green-flip one run.",
+        "JUDGE REFUSALS — in your report, label every decline GOOD (correctly declined an "
+        "impossible / no-info request) or BAD (bailed on a doable request over a missing "
+        "nodepack / model / low confidence). Fix BAD refusals; protect GOOD ones.",
     ]
     if allow_test_edits:
         checklist.append("IF you found a genuinely bad/impossible test, you MAY edit the scenario "
@@ -559,8 +632,9 @@ def build_codex_brief(
     checklist.append("UPDATE `tests_to_run.json` for next turn — carry forward THIS turn's tests "
                      "(regression check) and add your next bet's targets.")
     checklist.append("APPEND any new big-swing idea to `bigger_swings.md` (do NOT implement it).")
-    checklist.append("STAY IN BOUNDS — edit allowlisted files only, keep the package importing, "
-                     "don't regress prior progress.")
+    checklist.append("STAY IN BOUNDS — edit only the pipeline + grading/harness code (never "
+                     "scenario data, the driver, or docs); keep the package importing; never game "
+                     "the tests; don't regress prior progress.")
     parts.append("## YOUR CHECKLIST THIS TURN (do every item)")
     parts.extend(f"{i}. {item}" for i, item in enumerate(checklist, 1))
     return "\n".join(parts)
@@ -612,34 +686,36 @@ def invoke_codex(brief: str, model: str, effort: str, timeout: int,
 
 
 # --------------------------------------------------------------------------- #
-# Safety: snapshots, allowlist enforcement, import check, git
+# Safety: round-start baseline, editable-surface gate, import check, git
 # --------------------------------------------------------------------------- #
-def snapshot(allowlist: list[str], dest: Path) -> None:
-    dest.mkdir(parents=True, exist_ok=True)
-    for rel in allowlist:
-        src = REPO / rel
-        if src.exists():
-            (dest / rel.replace("/", "__")).write_bytes(src.read_bytes())
+def _git_untracked() -> set[str]:
+    proc = _run(["git", "-C", str(REPO), "ls-files", "--others", "--exclude-standard"])
+    return {ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()}
 
 
-def restore(allowlist: list[str], src: Path) -> None:
-    for rel in allowlist:
-        sn = src / rel.replace("/", "__")
-        if sn.exists():
-            (REPO / rel).write_bytes(sn.read_bytes())
+def capture_round_baseline() -> tuple[str, set[str]]:
+    """Snapshot repo state at round start as ``(tree_sha, start_untracked)``.
+
+    ``tree_sha`` is a tree-ish capturing the current working tree (committed +
+    uncommitted tracked changes) via ``git stash create`` (falling back to HEAD
+    when clean). Comparing back to it later catches everything Codex changed this
+    round — *including self-committed edits*, which a porcelain-only check would
+    miss. ``start_untracked`` lets us spot brand-new files Codex creates. Used by
+    the safety gate, the commit, and the clean revert.
+    """
+    stash = _run(["git", "-C", str(REPO), "stash", "create"]).stdout.strip()
+    tree_sha = stash or _run(["git", "-C", str(REPO), "rev-parse", "HEAD"]).stdout.strip()
+    return tree_sha, _git_untracked()
 
 
-def _git_porcelain() -> set[str]:
-    proc = _run(["git", "-C", str(REPO), "status", "--porcelain"])
-    files: set[str] = set()
-    for line in (proc.stdout or "").splitlines():
-        if not line.strip():
-            continue
-        path = line[3:].strip()
-        if "->" in path:
-            path = path.split("->", 1)[1].strip()
-        files.add(path.strip('"'))
-    return files
+def changes_since(round_baseline: tuple[str, set[str]]) -> set[str]:
+    """Paths changed since round start — tracked (diff vs the round-start tree)
+    plus new untracked files Codex created — minus run/venv/build noise."""
+    tree_sha, start_untracked = round_baseline
+    diff = _run(["git", "-C", str(REPO), "diff", "--name-only", tree_sha])
+    changed = {ln.strip() for ln in (diff.stdout or "").splitlines() if ln.strip()}
+    changed |= (_git_untracked() - start_untracked)
+    return {p for p in changed if p and not _is_noise(p)}
 
 
 def import_ok() -> bool:
@@ -649,91 +725,75 @@ def import_ok() -> bool:
     return proc.returncode == 0
 
 
-def safety_gate(
-    allowlist: list[str],
-    run_base_rel: str,
-    baseline_dirty: set[str],
-    allow_test_edits: bool,
-) -> tuple[bool, list[str]]:
-    """Pass iff the only NEW repo changes are allowed and the package imports.
-
-    Everything under ``run_base_rel`` (.watchdog-runs/) is watchdog-owned and
-    ignored. ``baseline_dirty`` excludes the user's pre-existing changes.
-    """
-    violations: list[str] = []
-    allow = set(allowlist)
-    if allow_test_edits:
-        allow_prefix = SCENARIOS_GLOB + "/"
-    new_changed = _git_porcelain() - baseline_dirty
+def safety_gate(round_baseline: tuple[str, set[str]],
+                allow_test_edits: bool) -> tuple[bool, list[str]]:
+    """Pass iff every change this round is on the editable surface and the package imports."""
     rogue: list[str] = []
-    for p in new_changed:
-        if p.startswith(run_base_rel + "/") or p == run_base_rel:
-            continue  # watchdog run artifacts (incl. focus.md, tests_to_run.json)
-        if p in allow:
+    for p in sorted(changes_since(round_baseline)):
+        if _is_editable(p):
             continue
-        if allow_test_edits and p.startswith(allow_prefix) and p.endswith(".json"):
-            continue  # edited a test scenario (explicitly allowed)
+        if allow_test_edits and p.startswith(SCENARIOS_PREFIX) and p.endswith(".json"):
+            continue  # an explicitly-allowed scenario edit
         rogue.append(p)
+    violations: list[str] = []
     if rogue:
-        violations.append(f"non-allowlisted files changed by codex: {sorted(rogue)}")
+        violations.append(f"files outside the editable surface changed by codex: {rogue}")
     if not import_ok():
         violations.append("import check failed (package would not import)")
     return (not violations), violations
 
 
-def changed_vs_baseline(allowlist: list[str], baselines: Path, root: Path = REPO) -> list[str]:
-    """Allowlist files whose content differs from the round-0 baseline (codex-touched)."""
-    out: list[str] = []
-    for rel in allowlist:
-        base = baselines / rel.replace("/", "__")
-        cur = root / rel
-        if base.exists() and cur.exists() and base.read_bytes() != cur.read_bytes():
-            out.append(rel)
-    return out
+def revert_round(round_baseline: tuple[str, set[str]]) -> None:
+    """Undo everything Codex changed this round: restore tracked files to the
+    round-start tree, and delete any new files Codex created."""
+    tree_sha, _start_untracked = round_baseline
+    diff = _run(["git", "-C", str(REPO), "diff", "--name-only", tree_sha])
+    tracked = [ln.strip() for ln in (diff.stdout or "").splitlines()
+               if ln.strip() and not _is_noise(ln.strip())]
+    if tracked:
+        _run(["git", "-C", str(REPO), "checkout", tree_sha, "--", *tracked])
+    for p in sorted(_git_untracked() - _start_untracked):
+        if _is_noise(p):
+            continue
+        tgt = REPO / p
+        if tgt.is_file():
+            tgt.unlink()
 
 
-def git_commit(allowlist: list[str], baselines: Path, allow_test_edits: bool,
+def git_commit(round_baseline: tuple[str, set[str]], allow_test_edits: bool,
                message: str) -> str | None:
-    """Commit only codex-touched allowlist files (vs baseline) + scenario edits if allowed."""
-    paths = changed_vs_baseline(allowlist, baselines)
+    """Commit Codex's editable changes this round (pipeline + grading/harness code;
+    plus scenario edits only if --allow-test-edits). Returns the short SHA or None."""
+    changed = changes_since(round_baseline)
+    paths = {p for p in changed if _is_editable(p)}
     if allow_test_edits:
-        paths.append(SCENARIOS_GLOB)  # git add the dir; only changed files stage
+        paths |= {p for p in changed if p.startswith(SCENARIOS_PREFIX) and p.endswith(".json")}
     if not paths:
         return None
-    _run(["git", "-C", str(REPO), "add", "--", *paths])
-    check = _run(["git", "-C", str(REPO), "diff", "--cached", "--quiet"])
-    if check.returncode == 0:
+    _run(["git", "-C", str(REPO), "add", "--", *sorted(paths)])
+    if _run(["git", "-C", str(REPO), "diff", "--cached", "--quiet"]).returncode == 0:
         return None
-    proc = _run(["git", "-C", str(REPO), "commit", "-m", message])
-    if proc.returncode != 0:
+    if _run(["git", "-C", str(REPO), "commit", "-m", message]).returncode != 0:
         return None
     return _run(["git", "-C", str(REPO), "rev-parse", "HEAD"]).stdout.strip()[:12] or None
 
 
-def prior_diff_from_baselines(allowlist: list[str], baselines: Path) -> str:
-    chunks: list[str] = []
-    for rel in allowlist:
-        base = baselines / rel.replace("/", "__")
-        cur = REPO / rel
-        if not base.exists() or not cur.exists():
-            continue
-        a = base.read_text(encoding="utf-8", errors="replace").splitlines()
-        b = cur.read_text(encoding="utf-8", errors="replace").splitlines()
-        if a == b:
-            continue
-        diff = difflib.unified_diff(a, b, fromfile=f"{rel} (round 0)", tofile=rel,
-                                    lineterm="", n=2)
-        chunks.append(_trim("\n".join(diff), 4000))
-    return "\n\n".join(chunks)
+def prior_diff(run_start_commit: str) -> str:
+    """Cumulative diff of editable pipeline/harness files since the run started."""
+    if not run_start_commit:
+        return "(no run-start baseline)"
+    proc = _run(["git", "-C", str(REPO), "diff", "--unified=2", run_start_commit, "--",
+                 "vibecomfy/", "tests/live_agentic_harness/"])
+    out = (proc.stdout or "").strip()
+    return _trim(out, 8000) if out else "(none yet — this is round 1)"
 
 
 # --------------------------------------------------------------------------- #
 # One round
 # --------------------------------------------------------------------------- #
 def repair_with_retry(
-    brief: str, allowlist: list[str], pre_backup: Path, baseline_dirty: set[str],
-    args: argparse.Namespace, run_base_rel: str, run_dir: Path, logger: Any,
-    round_num: int,
+    brief: str, round_baseline: tuple[str, set[str]], args: argparse.Namespace,
+    run_dir: Path, logger: Any, round_num: int,
 ) -> dict[str, Any]:
     loop = RetryLoop(max_attempts=args.codex_max_attempts)
     codex_out = run_dir / f"codex-r{round_num}.out"
@@ -749,12 +809,11 @@ def repair_with_retry(
             if done:
                 record["reverted"] = True
                 record["revert_reason"] = f"codex error: {res.get('error', 'unknown')}"
-                restore(allowlist, pre_backup)
+                revert_round(round_baseline)
                 break
             mutable_brief = brief + f"\n\n## RETRY {record['attempts']}: previous codex turn errored ({res.get('error', '')}). Try again."
             continue
-        ok, violations = safety_gate(allowlist, run_base_rel, baseline_dirty,
-                                      args.allow_test_edits)
+        ok, violations = safety_gate(round_baseline, args.allow_test_edits)
         verdict = RetryOutcome.RESOLVED if ok else RetryOutcome.UNRESOLVED
         _, done = loop.attempt(verdict)
         if ok:
@@ -762,7 +821,7 @@ def repair_with_retry(
         if done:
             record["reverted"] = True
             record["revert_reason"] = "; ".join(violations) or "safety gate failed after retries"
-            restore(allowlist, pre_backup)
+            revert_round(round_baseline)
             log_event(logger, "round_reverted", round=round_num, reason=record["revert_reason"])
             break
         mutable_brief = brief + (
@@ -775,8 +834,8 @@ def repair_with_retry(
 
 
 def run_round(
-    round_num: int, args: argparse.Namespace, run_dir: Path, baselines: Path,
-    outcome: dict[str, Any], logger: Any, allowlist: list[str], run_base_rel: str,
+    round_num: int, args: argparse.Namespace, run_dir: Path,
+    outcome: dict[str, Any], logger: Any, run_start_commit: str, run_base_rel: str,
 ) -> dict[str, Any]:
     # Tag is unique per run+turn so out/agentic/<tag>/ evidence never collides
     # across runs (a new run won't overwrite a previous run's artifacts).
@@ -787,10 +846,8 @@ def run_round(
     prev_round = outcome["rounds"][-1] if outcome.get("rounds") else None
     prev_results = prev_round.get("results") if prev_round else None
 
-    # 1. pre-snapshot + baseline-dirty capture
-    pre_backup = run_dir / "backups" / f"r{round_num}-pre"
-    snapshot(allowlist, pre_backup)
-    baseline_dirty = _git_porcelain()
+    # 1. capture the round-start baseline (tree + untracked) for the safety gate / commit / revert
+    round_baseline = capture_round_baseline()
 
     # 2. which tests to run this turn (+ run them, or load a saved summary)
     summary_path = run_dir / f"summary-r{round_num}.json"
@@ -817,11 +874,11 @@ def run_round(
 
     # 3-4. digest + brief
     digest = build_digest(summary, prev_results)
-    prior_diff = prior_diff_from_baselines(allowlist, baselines)
+    prior_pipeline_diff = prior_diff(run_start_commit)
     focus_md = (run_dir / "focus.md").read_text(encoding="utf-8") if (run_dir / "focus.md").exists() else ""
     bigger_swings_md = (run_dir / "bigger_swings.md").read_text(encoding="utf-8") if (run_dir / "bigger_swings.md").exists() else ""
-    brief = build_codex_brief(round_num, outcome["run_id"], digest, allowlist,
-                              args.allow_test_edits, prior_diff, prev_results,
+    brief = build_codex_brief(round_num, outcome["run_id"], digest,
+                              args.allow_test_edits, prior_pipeline_diff, prev_results,
                               this_turn_tests, focus_md, bigger_swings_md)
     brief_path = run_dir / f"codex-r{round_num}-prompt.md"
     brief_path.write_text(brief, encoding="utf-8")
@@ -831,8 +888,8 @@ def run_round(
         codex_record: dict[str, Any] = {"invoked": False, "dry_run": True}
         log_event(logger, "codex_skipped_dry", round=round_num)
     else:
-        codex_record = repair_with_retry(brief, allowlist, pre_backup, baseline_dirty,
-                                         args, run_base_rel, run_dir, logger, round_num)
+        codex_record = repair_with_retry(brief, round_baseline,
+                                         args, run_dir, logger, round_num)
 
     # Capture loop-steering updates Codex made (focus.md / tests_to_run.json / report).
     next_tests = read_tests_to_run(run_dir, this_turn_tests)
@@ -849,10 +906,10 @@ def run_round(
               tests_changed=(next_tests != this_turn_tests),
               report_written=report_written, swings_appended=swings_appended)
 
-    # 7. post-commit (allowlisted pipeline files + scenario edits if allowed)
+    # 7. post-commit (editable pipeline + grading/harness files; scenario edits only if allowed)
     sha = None
     if not args.dry_codex and not codex_record.get("reverted"):
-        sha = git_commit(allowlist, baselines, args.allow_test_edits,
+        sha = git_commit(round_baseline, args.allow_test_edits,
                          f"watchdog r{round_num}: codex edits (pass={pass_count}/{len(cur_results)})")
         if sha:
             log_event(logger, "committed", round=round_num, sha=sha)
@@ -921,8 +978,6 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--codex-timeout", type=int, default=1800, help="per-codex-turn seconds")
     p.add_argument("--codex-max-attempts", type=int, default=2,
                    help="codex attempts per turn on safety-gate failure")
-    p.add_argument("--allowlist", default=None,
-                   help="file with one allowlisted path per line (default: built-in targets)")
     p.add_argument("--allow-test-edits", action="store_true",
                    help="let codex edit test scenario files (to fix genuinely bad tests; "
                         "every edit is logged + recorded in outcome.json)")
@@ -938,16 +993,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def load_allowlist(path: str | None) -> list[str]:
-    if not path:
-        return list(DEFAULT_ALLOWLIST)
-    lines = Path(path).read_text(encoding="utf-8").splitlines()
-    return [ln.strip() for ln in lines if ln.strip() and not ln.strip().startswith("#")]
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    allowlist = load_allowlist(args.allowlist)
 
     # --from-summary reuses one saved summary (turn 1 only); clamp to 1 turn.
     if args.from_summary and args.iterations > 1:
@@ -968,19 +1015,18 @@ def main(argv: list[str] | None = None) -> int:
         run_dir = run_base / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
         outcome = {"run_id": run_id, "started_ts": _now_iso(),
-                   "iterations_target": args.iterations, "allowlist": allowlist,
+                   "iterations_target": args.iterations,
                    "allow_test_edits": args.allow_test_edits, "rounds": [], "_start_round": 1}
         outcome["iterations_target"] = args.iterations
 
     logger = setup_logging(log_path=run_dir / "auto.log")
     log_event(logger, "watchdog_start", run_id=run_id, iterations=args.iterations,
               smoke=args.smoke, dry_codex=args.dry_codex,
-              allow_test_edits=args.allow_test_edits, allowlist=allowlist)
+              allow_test_edits=args.allow_test_edits)
 
-    # Round-0 baselines (so prior_diff shows watchdog-only pipeline edits).
-    baselines = run_dir / "baselines"
-    if not baselines.exists():
-        snapshot(allowlist, baselines)
+    # Capture the run-start commit once: prior_diff shows the cumulative pipeline
+    # edits across all rounds (vs this baseline). Robust to Codex self-commits.
+    run_start_commit = capture_round_baseline()[0]
 
     # Seed run-control files Codex edits each turn.
     if not (run_dir / "focus.md").exists():
@@ -998,7 +1044,7 @@ def main(argv: list[str] | None = None) -> int:
     green_streak = 0
     try:
         for r in range(start_round, args.iterations + 1):
-            rec = run_round(r, args, run_dir, baselines, outcome, logger, allowlist, args.run_base)
+            rec = run_round(r, args, run_dir, outcome, logger, run_start_commit, args.run_base)
             if rec["scan"].get("overall_success"):
                 green_streak += 1
                 if args.stop_on_green and green_streak >= args.stop_on_green:

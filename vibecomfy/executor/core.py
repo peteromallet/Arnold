@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Mapping
 
 from vibecomfy.comfy_nodes.agent.contracts import (
     FailureKind,
@@ -29,6 +29,12 @@ from vibecomfy.comfy_nodes.agent.provider import (
     MissingRequiredField,
     ProviderError,
 )
+from vibecomfy.comfy_nodes.agent.runtime import (
+    begin_deepseek_usage_capture,
+    end_deepseek_usage_capture,
+    snapshot_deepseek_usage_capture,
+)
+from vibecomfy.agent.deepseek_usage import estimate_deepseek_cost_usd
 from vibecomfy.executor.profiler import (
     new_profile_id,
     profiler_log,
@@ -108,7 +114,7 @@ _ROUTE_BEHAVIORS = MappingProxyType({
     "research": RouteBehavior(
         route="research",
         needs_research=True,
-        needs_implement=True,
+        needs_implement=False,
         plan_summary="Research workflows, nodes, or techniques, then answer without editing.",
         clears_result_graph=True,
         reply_uses_graph_inspection=False,
@@ -183,7 +189,7 @@ def _should_prefetch_research(plan: ClassifyDecision) -> bool:
     Revise route: never prefetches research.
     """
     route = _canonical_route_for_plan(plan)
-    if route == "adapt":
+    if route in {"research", "adapt"}:
         return _route_behavior(plan).needs_research
     return False
 
@@ -200,22 +206,43 @@ def _graph_summary(graph: dict[str, Any] | None) -> str | None:
     """Build a compact (≤ 200 char) graph summary for the classify prompt."""
     if not graph:
         return None
+    if isinstance(graph.get("nodes"), list) and not graph["nodes"]:
+        return "Empty graph (0 nodes)."
+    nodes = list(_iter_graph_nodes(graph))
+    if not nodes:
+        return None
+    n = len(nodes)
+    # Collect a few class_type hints.
+    types: list[str] = []
+    for _node_id, node in nodes[:8]:
+        ct = node.get("class_type") or node.get("type")
+        if isinstance(ct, str) and ct.strip():
+            types.append(ct.strip())
+    type_list = ", ".join(types[:5]) if types else "unknown"
+    suffix = f", and {n - 5} more" if n > 5 else ""
+    return f"{n} node(s): {type_list}{suffix}"
+
+
+def _iter_graph_nodes(graph: dict[str, Any] | None) -> list[tuple[str, dict[str, Any]]]:
+    """Return graph nodes from UI-style lists or API-style id mappings."""
+    if not isinstance(graph, dict):
+        return []
     nodes = graph.get("nodes")
     if isinstance(nodes, list):
-        n = len(nodes)
-        if n == 0:
-            return "Empty graph (0 nodes)."
-        # Collect a few class_type hints.
-        types: list[str] = []
-        for node in nodes[:8]:
-            if isinstance(node, dict):
-                ct = node.get("class_type") or node.get("type")
-                if isinstance(ct, str) and ct.strip():
-                    types.append(ct.strip())
-        type_list = ", ".join(types[:5]) if types else "unknown"
-        suffix = f", and {n - 5} more" if n > 5 else ""
-        return f"{n} node(s): {type_list}{suffix}"
-    return None
+        result: list[tuple[str, dict[str, Any]]] = []
+        for index, node in enumerate(nodes):
+            if not isinstance(node, dict):
+                continue
+            nid = node.get("id")
+            result.append((str(nid) if nid is not None else str(index), node))
+        return result
+    result = []
+    for node_id, node in graph.items():
+        if isinstance(node, dict) and (
+            "class_type" in node or "type" in node or "inputs" in node
+        ):
+            result.append((str(node_id), node))
+    return result
 
 
 def _build_graph_reference_map(graph: dict[str, Any] | None) -> dict[str, str]:
@@ -224,19 +251,8 @@ def _build_graph_reference_map(graph: dict[str, Any] | None) -> dict[str, str]:
     Returns an empty dict when *graph* is None or has no nodes.
     Labels use ``title`` when available, falling back to ``class_type``/``type``.
     """
-    if not isinstance(graph, dict):
-        return {}
-    nodes = graph.get("nodes")
-    if not isinstance(nodes, list):
-        return {}
     ref_map: dict[str, str] = {}
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        nid = node.get("id")
-        if nid is None:
-            continue
-        nid_str = str(nid)
+    for nid_str, node in _iter_graph_nodes(graph):
         # Prefer title, then class_type/type.
         title = node.get("title")
         if isinstance(title, str) and title.strip():
@@ -656,13 +672,18 @@ def _run_classify(
             "has_graph": request.graph is not None,
             "graph_summary": _graph_summary(request.graph),
         }
-        # Only pre-build messages when session_context has substantive data
-        # (recent messages, prior clarification, latest candidate, or blocked route).
-        if isinstance(session_context, dict) and (
-            session_context.get("recent_messages")
-            or session_context.get("prior_clarification")
-            or session_context.get("latest_candidate")
-            or session_context.get("prior_route")
+        # Pre-build messages whenever we have context beyond the bare query.
+        # First-turn graph edits need the node reference map just as much as
+        # follow-ups do; otherwise the classifier sees "a graph is attached"
+        # without the custom class names required for revise/adapt routing.
+        if graph_reference_map or (
+            isinstance(session_context, dict)
+            and (
+                session_context.get("recent_messages")
+                or session_context.get("prior_clarification")
+                or session_context.get("latest_candidate")
+                or session_context.get("prior_route")
+            )
         ):
             classify_kwargs["messages"] = build_classify_messages(
                 request.query,
@@ -810,6 +831,9 @@ def _run_implement(
         "model": spec.model,
         "executor_classification": classification,
     }
+    graph_inspection = _graph_inspection(request.graph)
+    if isinstance(graph_inspection, str) and graph_inspection.strip():
+        payload["graph_inspection"] = graph_inspection
     if research_result is not None:
         if executor_route == "adapt":
             # Adapt route: nest scoped research under execution_protocol_notes,
@@ -893,10 +917,33 @@ def _run_implement(
     if result.get("ok") is False or "failure_kind" in result:
         fk = result.get("failure_kind", result.get("kind", "ValidationError"))
         fm = result.get("message", result.get("user_facing_message", "Implementation failed."))
+        failure_context = result.get("agent_failure_context")
+        failure_payload: dict[str, Any] = {
+            "failure_kind": fk,
+            "stage": result.get("stage", "implement"),
+            "message": fm,
+        }
+        if isinstance(failure_context, Mapping):
+            for key in ("issues", "diagnostics", "validation_errors"):
+                value = failure_context.get(key)
+                if value is not None:
+                    failure_payload[key] = value
+            failure_payload["agent_failure_context"] = failure_context
+        for key in ("diagnostics", "validation_errors"):
+            value = result.get(key)
+            if value is not None:
+                failure_payload[key] = value
         failure = failure_envelope(
             FailureKind(fk) if isinstance(fk, str) and fk in {k.value for k in FailureKind} else FailureKind.VALIDATION_ERROR,
             "implement",
-            agent_failure_context={"explanation": fm, "raw_result": result},
+            agent_failure_context={
+                "explanation": fm,
+                **{
+                    key: value
+                    for key, value in failure_payload.items()
+                    if key not in {"message", "stage", "failure_kind"}
+                },
+            },
         )
         raise _ExecutorPhaseError(
             stage="implement",
@@ -1243,18 +1290,43 @@ def run_executor(
     }
 
     profiler_log(LOGGER, "executor.request", **request_fields)
+    usage_token = begin_deepseek_usage_capture()
+
+    def _build_report(
+        *,
+        plan: ClassifyDecision | None = None,
+        research: ResearchResult | None = None,
+        implementation: ImplementationResult | None = None,
+    ) -> Report:
+        usage, cache_breakout_complete = snapshot_deepseek_usage_capture()
+        est_cost_usd, cost_basis = estimate_deepseek_cost_usd(
+            usage,
+            cache_breakout_complete=cache_breakout_complete,
+        )
+        return Report(
+            plan=plan or ClassifyDecision.respond_only(),
+            research=research,
+            implementation=implementation,
+            deepseek_usage=usage,
+            deepseek_est_cost_usd=est_cost_usd,
+            deepseek_cost_basis=cost_basis,
+        )
+
+    def _finish(result: ExecutorResult) -> ExecutorResult:
+        end_deepseek_usage_capture(usage_token)
+        return result
 
     # ── Resolve profile specs ────────────────────────────────────────────
     try:
         classify_spec = _resolve_spec(request.profile, "classify")
     except Exception as exc:
         failure = classify_failure("profile", exc)
-        return ExecutorResult.failure(
+        return _finish(ExecutorResult.failure(
             kind=failure.kind.value,
             stage="profile",
             message=failure.user_facing_message,
-            report=Report(),
-        )
+            report=_build_report(),
+        ))
     profiler_log(
         LOGGER,
         "executor.profile_resolved",
@@ -1339,13 +1411,13 @@ def run_executor(
                 ),
             )
     except _ExecutorPhaseError as exc:
-        report = Report(plan=ClassifyDecision.respond_only())
-        return ExecutorResult.failure(
+        report = _build_report(plan=ClassifyDecision.respond_only())
+        return _finish(ExecutorResult.failure(
             kind=exc.failure_kind,
                 stage=exc.stage,
                 message=str(exc),
                 report=report,
-            )
+            ))
 
     # ── Classify-only dry-run exit ─────────────────────────────────────────
     if classify_only:
@@ -1380,7 +1452,7 @@ def run_executor(
             reply_preview="",
             reason="classify_only",
         )
-        report = Report(plan=plan)
+        report = _build_report(plan=plan)
         route = _canonical_route_for_plan(plan)
         task = plan.effective_task
         parts = [f"[dry-run] classified route: {route}"]
@@ -1388,11 +1460,11 @@ def run_executor(
             parts.append(f"task: {task}")
         if plan.plan_summary:
             parts.append(f"summary: {plan.plan_summary}")
-        return ExecutorResult.success(
+        return _finish(ExecutorResult.success(
             report=report,
             graph=None,
             reply="\n".join(parts),
-        )
+        ))
 
     # ── Phase 2: research (standalone replies only) ──────────────────────
     if _should_prefetch_research(plan):
@@ -1464,13 +1536,13 @@ def run_executor(
         except Exception as exc:
             # Profile missing implement spec → failure.
             failure = classify_failure("profile", exc)
-            report = Report(plan=plan, research=research_result)
-            return ExecutorResult.failure(
+            report = _build_report(plan=plan, research=research_result)
+            return _finish(ExecutorResult.failure(
                 kind=failure.kind.value,
                 stage="profile",
                 message=failure.user_facing_message,
                 report=report,
-            )
+            ))
 
         try:
             _emit_executor_phase_event(
@@ -1499,17 +1571,38 @@ def run_executor(
                     message_preview=short_text(implementation_result.message),
                 )
         except _ExecutorPhaseError as exc:
-            report = Report(
+            failure_payload: dict[str, Any] = {
+                "failure_kind": exc.failure_kind,
+                "stage": exc.stage,
+                "message": str(exc),
+            }
+            diagnostics_payload: dict[str, Any] | None = None
+            envelope = exc.failure_envelope
+            if envelope is not None:
+                context_payload = getattr(envelope, "agent_failure_context", None)
+                if isinstance(context_payload, Mapping):
+                    failure_payload["agent_failure_context"] = context_payload
+                    diagnostics_payload = {
+                        key: value
+                        for key, value in context_payload.items()
+                        if key in {"issues", "diagnostics", "validation_errors"}
+                    }
+                    failure_payload.update(diagnostics_payload)
+            report = _build_report(
                 plan=plan,
                 research=research_result,
-                implementation=ImplementationResult(message=str(exc)),
+                implementation=ImplementationResult(
+                    message=str(exc),
+                    diagnostics=diagnostics_payload,
+                    failure=failure_payload,
+                ),
             )
-            return ExecutorResult.failure(
+            return _finish(ExecutorResult.failure(
                 kind=exc.failure_kind,
                 stage=exc.stage,
                 message=str(exc),
                 report=report,
-            )
+            ))
 
         route_behavior = _route_behavior(plan)
         if (
@@ -1519,7 +1612,7 @@ def run_executor(
             effective_graph = implementation_result.graph
             result_graph = implementation_result.graph
         elif _implementation_result_is_terminal_no_candidate(implementation_result):
-            report = Report(
+            report = _build_report(
                 plan=plan,
                 research=research_result,
                 implementation=implementation_result,
@@ -1535,11 +1628,11 @@ def run_executor(
                 reply_preview=short_text(reply_text),
                 reason="terminal_no_candidate",
             )
-            return ExecutorResult.success(
+            return _finish(ExecutorResult.success(
                 report=report,
                 graph=None,
                 reply=reply_text,
-            )
+            ))
     else:
         _emit_executor_phase_event(
             request,
@@ -1562,17 +1655,17 @@ def run_executor(
         reply_spec = _resolve_spec(request.profile, "reply")
     except Exception as exc:
         failure = classify_failure("profile", exc)
-        report = Report(
+        report = _build_report(
             plan=plan,
             research=research_result,
             implementation=implementation_result,
         )
-        return ExecutorResult.failure(
+        return _finish(ExecutorResult.failure(
             kind=failure.kind.value,
             stage="profile",
             message=failure.user_facing_message,
             report=report,
-        )
+        ))
     try:
         _emit_executor_phase_event(
             request,
@@ -1601,24 +1694,24 @@ def run_executor(
             )
             span.update(reply_preview=short_text(reply_text))
     except _ExecutorPhaseError as exc:
-        report = Report(
+        report = _build_report(
             plan=plan,
             research=research_result,
             implementation=implementation_result,
         )
-        return ExecutorResult.failure(
+        return _finish(ExecutorResult.failure(
             kind=exc.failure_kind,
             stage=exc.stage,
             message=str(exc),
             report=report,
-        )
+        ))
 
     # ── Guard: inspect must never return an edited graph ─────────────────
     if route_behavior.clears_result_graph:
         result_graph = None
 
     # ── Assemble success result ──────────────────────────────────────────
-    report = Report(
+    report = _build_report(
         plan=plan,
         research=research_result,
         implementation=implementation_result,
@@ -1632,11 +1725,11 @@ def run_executor(
         result_has_graph=result_graph is not None,
         reply_preview=short_text(reply_text),
     )
-    return ExecutorResult.success(
+    return _finish(ExecutorResult.success(
         report=report,
         graph=result_graph,
         reply=reply_text,
-    )
+    ))
 
 
 def _implementation_result_is_terminal_no_candidate(result: ImplementationResult) -> bool:

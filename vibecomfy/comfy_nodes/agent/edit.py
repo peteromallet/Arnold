@@ -52,6 +52,8 @@ from .contracts import (
     turn_envelope,
 )
 from vibecomfy.porting.edit.types import FieldChange
+from vibecomfy.schema.validate import validation_errors_payload
+from vibecomfy.workflow import ValidationIssue
 from .gates import (
     apply_stage_gate_updates,
     derive_gates,
@@ -152,6 +154,7 @@ class AgentEditState:
     delta_ops: tuple[Any, ...] = ()
     delta_diagnostics: list[dict[str, Any]] = field(default_factory=list)
     delta_audit: dict[str, Any] | None = None
+    emit_guard_resolved_ops: tuple[Any, ...] | None = None
     guard_result: dict[str, Any] | None = None
     # Batch REPL state (gated behind VIBECOMFY_AGENT_EDIT_BATCH_REPL=1)
     batch_session: EditSession | None = None
@@ -168,6 +171,7 @@ class AgentEditState:
     research_context_packet: dict[str, Any] | None = None
     # SD2: compact graph facts from topology/readiness collectors for adapt context.
     graph_facts: dict[str, Any] | None = None
+    graph_inspection: str = ""
     batch_turns: list[dict[str, Any]] = field(default_factory=list)
     batch_field_changes: tuple[FieldChange, ...] = ()
     batch_noop_field_changes: tuple[FieldChange, ...] = ()
@@ -423,6 +427,8 @@ def _noop_field_changes(
 def _batch_candidate_graph_changed(state: AgentEditState) -> bool:
     if not isinstance(state.ui_payload, Mapping):
         return False
+    if _real_field_changes(tuple(state.batch_field_changes or ())):
+        return True
     return structural_graph_hash(state.ui_payload) != structural_graph_hash(state.graph)
 
 
@@ -1400,6 +1406,142 @@ def _premature_workflow_schema_clarify_feedback(
         "reason to add the workflow-sourced provisional nodes. Next turn must land the smallest "
         "evidence-backed workflow-pattern edit using those constructors, or run a strictly necessary "
         "additional schema/registry lookup for a named class that is still actually missing."
+    )
+
+
+_PARAMETER_TWEAK_ACTION_TERMS = (
+    "increase",
+    "decrease",
+    "adjust",
+    "tweak",
+    "change",
+    "set",
+    "raise",
+    "lower",
+    "reduce",
+    "boost",
+)
+_PARAMETER_TWEAK_TARGET_TERMS = (
+    "detail",
+    "frame",
+    "fps",
+    "rate",
+    "step",
+    "strength",
+    "cfg",
+    "seed",
+    "scale",
+    "denoise",
+    "resolution",
+    "width",
+    "height",
+    "duration",
+    "quality",
+    "prompt",
+    "format",
+    "codec",
+)
+
+
+def _task_looks_like_parameter_tweak(state: Any) -> bool:
+    text = (
+        f"{getattr(state, 'task', '')} "
+        f"{getattr(state, 'request_payload', {}).get('query', '')} "
+        f"{_executor_classification_text(state)}"
+    ).casefold()
+    return any(term in text for term in _PARAMETER_TWEAK_ACTION_TERMS) and any(
+        term in text for term in _PARAMETER_TWEAK_TARGET_TERMS
+    )
+
+
+def _existing_parameter_tweak_targets(state: Any, *, max_targets: int = 4) -> list[str]:
+    graph = getattr(state, "graph", None)
+    if not isinstance(graph, Mapping):
+        return []
+    nodes = graph.get("nodes")
+    if not isinstance(nodes, Mapping):
+        return []
+
+    query_text = (
+        f"{getattr(state, 'task', '')} {getattr(state, 'request_payload', {}).get('query', '')}"
+    ).casefold()
+    ranked_targets: list[tuple[int, str]] = []
+    for node_id, node in nodes.items():
+        if not isinstance(node, Mapping):
+            continue
+        class_type = str(node.get("class_type") or node.get("type") or "").strip()
+        if not class_type:
+            continue
+        inputs = node.get("inputs")
+        input_fields = [
+            str(name)
+            for name, value in (inputs.items() if isinstance(inputs, Mapping) else ())
+            if not isinstance(value, (Mapping, list, tuple))
+        ]
+        widget_fields: list[str] = []
+        widgets = node.get("widgets")
+        if isinstance(widgets, Mapping):
+            widget_fields = [str(name) for name in sorted(widgets, key=str)]
+        raw_widgets = node.get("raw_widgets")
+        raw_widget_count = None
+        if isinstance(raw_widgets, Mapping):
+            values = raw_widgets.get("values")
+            if isinstance(values, list):
+                raw_widget_count = len(values)
+        if not input_fields and not widget_fields and not raw_widget_count:
+            continue
+        fields = input_fields + widget_fields
+        if raw_widget_count and not widget_fields:
+            fields.extend(f"widget_{index}" for index in range(min(raw_widget_count, 4)))
+        if not fields:
+            continue
+        preview = ", ".join(fields[:4])
+        if len(fields) > 4:
+            preview += ", ..."
+        class_text = class_type.casefold()
+        field_text = " ".join(fields).casefold()
+        score = 0
+        if any(term in class_text for term in _PARAMETER_TWEAK_TARGET_TERMS):
+            score += 5
+        if any(term in field_text for term in _PARAMETER_TWEAK_TARGET_TERMS):
+            score += 4
+        if any(token and token in class_text for token in query_text.split() if len(token) >= 5):
+            score += 4
+        if any(token and token in field_text for token in query_text.split() if len(token) >= 5):
+            score += 3
+        if widget_fields or raw_widget_count:
+            score += 3
+        if class_type in {"MarkdownNote", "Preview3D", "SaveVideo", "LoadImage"}:
+            score -= 6
+        ranked_targets.append((score, f"{class_type} [{node_id}] ({preview})"))
+
+    ranked_targets.sort(key=lambda item: (-item[0], item[1]))
+    return [target for _score, target in ranked_targets[:max_targets]]
+
+
+def _direct_existing_parameter_tweak_feedback(
+    state: Any,
+    clarify_message: str | None = None,
+) -> str:
+    if not _task_looks_like_parameter_tweak(state):
+        return ""
+    if clarify_message is not None:
+        message_text = str(clarify_message or "").casefold()
+        if not any(
+            term in message_text
+            for term in ("precedent", "schema", "custom node", "not found", "missing", "cannot")
+        ):
+            return ""
+    targets = _existing_parameter_tweak_targets(state)
+    if not targets:
+        return ""
+    target_text = "; ".join(targets)
+    return (
+        "Direct existing-node tweak fallback applies here: the current graph already contains editable "
+        f"target nodes ({target_text}). Stop searching for workflow precedent. Land the smallest local "
+        "parameter change on the existing node instead. Prefer a visible named field when present; when "
+        "the node is already in the graph and only stable widget slots are visible, a minimal existing "
+        "`widget_N` tweak is allowed as a last-resort local parameter edit. Do not add or replace nodes."
     )
 
 
@@ -3947,6 +4089,7 @@ def _stage_revision_evidence(
         # Adapt route: collect compact GraphFacts for workflow-dependent
         # adapt execution without invoking full RevisionEvidence collateral.
         if canonical_route == "adapt":
+            _hydrate_current_graph_unknown_node_schemas(state)
             schema_available = _schema_provider_available(state.schema_provider)
             ready_metadata = _extract_ready_metadata(state.request_payload, state.graph)
             readiness_diagnostics = _extract_readiness_diagnostics(state.request_payload, state.graph)
@@ -4303,7 +4446,8 @@ def _stage_agent_batch_repl(
             + "\n".join(source_lines)
         )
     prefetch_graph_report = (
-        _build_graph_report(state.graph) if prefetch_explain else ""
+        state.graph_inspection
+        or (_build_graph_report(state.graph) if prefetch_explain else "")
     )
     # Build compact adaptation plan prompt for adapt route.
     precedent_adaptation_prompt = ""
@@ -4318,7 +4462,12 @@ def _stage_agent_batch_repl(
             )
         # SD3: scoped adapt prefetch from execution_protocol_notes and
         # research_context_packet — discardable, evidence-only context.
-        if state.execution_protocol_notes or state.research_context_packet or state.graph_facts:
+        if (
+            state.execution_protocol_notes
+            or state.research_context_packet
+            or state.graph_facts
+            or state.graph_inspection
+        ):
             parts: list[str] = []
             discard_note: str | None = None
             if state.execution_protocol_notes:
@@ -4349,6 +4498,13 @@ def _stage_agent_batch_repl(
                     "Use this to understand the workflow structure, terminal outputs, "
                     "and any known blockers. NOT a revision verdict.\n"
                     f"{facts_str}"
+                )
+            if state.graph_inspection:
+                parts.append(
+                    "## Graph Inspection (current graph evidence)\n"
+                    "Deterministic node/widget evidence from the attached current graph. "
+                    "Use this to identify existing editable nodes before asking for more precedent.\n"
+                    f"{state.graph_inspection}"
                 )
             if discard_note:
                 parts.append(f"**Discardability**: {discard_note}")
@@ -4532,6 +4688,10 @@ def _stage_agent_batch_repl(
                     clarify_message,
                 )
                 or _premature_missing_custom_node_clarify_feedback(
+                    state,
+                    clarify_message,
+                )
+                or _direct_existing_parameter_tweak_feedback(
                     state,
                     clarify_message,
                 )
@@ -4858,6 +5018,10 @@ def _stage_agent_batch_repl(
         landed_count = effective_landed
         total_landed += effective_landed
         last_landed_count = effective_landed
+        turn_is_read_only = effective_landed == 0 and all(
+            str(item.op_kind or "") in {"query", "done", "clarify"}
+            for item in batch_result.statements
+        )
 
         turn_has_errors = (
             (not batch_result.ok)
@@ -4875,6 +5039,13 @@ def _stage_agent_batch_repl(
             lint_dropped_count=lint_dropped_count,
             lint_diagnostics=lint_diag_dicts,
         )
+        direct_tweak_feedback = (
+            _direct_existing_parameter_tweak_feedback(state)
+            if turn_is_read_only
+            else ""
+        )
+        if direct_tweak_feedback:
+            report_text = f"{report_text}\n{direct_tweak_feedback}"
         report_json = _format_batch_report_json(
             batch_result,
             consecutive_errors=consecutive_errors,
@@ -5021,10 +5192,6 @@ def _stage_agent_batch_repl(
         unresolved_failed_edit = (
             last_failed_edit_turn >= 0
             and last_successful_edit_turn_after_failure < last_failed_edit_turn
-        )
-        turn_is_read_only = effective_landed == 0 and all(
-            str(item.op_kind or "") in {"query", "done", "clarify"}
-            for item in batch_result.statements
         )
         # Don't honor a premature done(): feed guidance back and let the model
         # self-correct. Two distinct cases, each separately bounded so a genuine
@@ -5227,6 +5394,18 @@ def _stage_agent_batch_repl(
             and _read_only_discovery_turn_count(state) >= 6
             and not _batch_candidate_graph_changed(state)
         ):
+            direct_tweak_feedback = _direct_existing_parameter_tweak_feedback(state)
+            if direct_tweak_feedback and turn_number + 1 < max_batches:
+                last_report = direct_tweak_feedback
+                last_landed_count = 0
+                _emit_agent_edit_turn_event(
+                    state,
+                    _context,
+                    turn_record,
+                    client_id=client_id,
+                    status="in_progress",
+                )
+                continue
             state.batch_exit_mode = _BATCH_EXIT_PURE_CLARIFY
             state.batch_final_summary = (
                 f"Stopped after {state.batch_turn_count} discovery-only batch turn(s)."
@@ -5364,6 +5543,24 @@ def _stage_validate(state: AgentEditState, _context: TurnContext) -> StageResult
 
     start = time.monotonic()
     result = validate_stage_result(state.edited_workflow, schema_provider=state.schema_provider)
+    if result.blocking:
+        validation_issues: list[ValidationIssue] = []
+        for issue in result.issues:
+            if not isinstance(issue, Mapping):
+                continue
+            detail = issue.get("detail")
+            validation_issues.append(
+                ValidationIssue(
+                    code=str(issue.get("code", "validation_error")),
+                    message=str(issue.get("message", "Validation error.")),
+                    severity=str(issue.get("severity", "error")),
+                    detail=dict(detail) if isinstance(detail, Mapping) else {},
+                )
+            )
+        if validation_issues:
+            value = dict(result.value or {})
+            value["validation_errors"] = validation_errors_payload(validation_issues)
+            result = dataclasses.replace(result, value=value)
     return dataclasses.replace(result, duration_ms=_duration_ms(start))
 
 
@@ -5382,6 +5579,8 @@ def _stage_emit(state: AgentEditState, _context: TurnContext) -> StageResult:
         recovery_report=recovery_report,
         change_report_out=change_report_out,
         guard_original_ui=state.guard_original_ui or state.graph,
+        guard_resolved_ops=state.emit_guard_resolved_ops,
+        prior_ui_payload=state.guard_original_ui or state.graph,
     )
     state.candidate_ui_path.write_text(
         json.dumps(ui_payload, indent=2, sort_keys=True),
@@ -5595,6 +5794,7 @@ def _stage_apply_delta(state: AgentEditState, _context: TurnContext) -> StageRes
         state.delta_ops,
         schema_provider=state.schema_provider,
     )
+    state.emit_guard_resolved_ops = result.resolved_ops
     issues = tuple(_port_issue_to_dict(issue) for issue in result.diagnostics)
     if not result.ok or result.candidate is None:
         return StageResult(
@@ -5768,7 +5968,7 @@ def _recovery_report_from_ui_payload(
             ),
         )
 
-    def _node_input_signature(node: Mapping[str, Any]) -> tuple[Any, ...]:
+    def _node_input_shape_signature(node: Mapping[str, Any]) -> tuple[Any, ...]:
         inputs = node.get("inputs")
         if not isinstance(inputs, list):
             return ()
@@ -5776,7 +5976,7 @@ def _recovery_report_from_ui_payload(
         for item in inputs:
             if not isinstance(item, Mapping):
                 continue
-            signature.append((item.get("name"), item.get("type"), item.get("link")))
+            signature.append((item.get("name"), item.get("type")))
         return tuple(signature)
 
     def _node_output_slots(node: Mapping[str, Any]) -> dict[tuple[Any, Any, Any], set[Any]]:
@@ -5792,16 +5992,52 @@ def _recovery_report_from_ui_payload(
             slots[key] = set(links if isinstance(links, list) else [])
         return slots
 
+    def _ui_links_by_id(ui_payload: Mapping[str, Any] | None) -> dict[Any, Any]:
+        links = ui_payload.get("links") if isinstance(ui_payload, Mapping) else None
+        if not isinstance(links, list):
+            return {}
+        result: dict[Any, Any] = {}
+        for link in links:
+            if isinstance(link, list) and link:
+                result[link[0]] = link
+            elif isinstance(link, Mapping) and "id" in link:
+                result[link.get("id")] = link
+        return result
+
+    def _link_destination(link: Any) -> tuple[str, Any] | None:
+        if isinstance(link, list) and len(link) >= 5:
+            return (str(link[3]), link[4])
+        if isinstance(link, Mapping):
+            target_id = link.get("target_id", link.get("to_node"))
+            target_slot = link.get("target_slot", link.get("to_slot"))
+            if target_id is not None:
+                return (str(target_id), target_slot)
+        return None
+
+    def _output_destinations(
+        output_links: set[Any],
+        links_by_id: Mapping[Any, Any],
+    ) -> dict[tuple[str, Any], Any]:
+        destinations: dict[tuple[str, Any], Any] = {}
+        for link_id in output_links:
+            destination = _link_destination(links_by_id.get(link_id))
+            if destination is not None:
+                destinations[destination] = link_id
+        return destinations
+
     def _preexisting_schema_less_queue_safe(
         *,
         original_node: Mapping[str, Any] | None,
         candidate_node: Mapping[str, Any],
+        original_links_by_id: Mapping[Any, Any],
+        candidate_links_by_id: Mapping[Any, Any],
+        candidate_node_ids: set[str],
     ) -> tuple[bool, str]:
         if original_node is None:
             return (False, "new_schema_less_node")
         if _connection_signature(original_node) == _connection_signature(candidate_node):
             return (True, "connection_shape_unchanged")
-        if _node_input_signature(original_node) != _node_input_signature(candidate_node):
+        if _node_input_shape_signature(original_node) != _node_input_shape_signature(candidate_node):
             return (False, "schema_less_inputs_changed")
         original_slots = _node_output_slots(original_node)
         candidate_slots = _node_output_slots(candidate_node)
@@ -5809,9 +6045,19 @@ def _recovery_report_from_ui_payload(
             return (False, "schema_less_output_slots_changed")
         for key, original_links in original_slots.items():
             candidate_links = candidate_slots.get(key, set())
-            if not original_links.issubset(candidate_links):
-                return (False, "schema_less_existing_output_links_removed")
-        return (True, "preexisting_output_fanout_only")
+            original_destinations = _output_destinations(
+                original_links,
+                original_links_by_id,
+            )
+            candidate_destinations = _output_destinations(
+                candidate_links,
+                candidate_links_by_id,
+            )
+            for destination in set(original_destinations) - set(candidate_destinations):
+                destination_node_id, _ = destination
+                if destination_node_id in candidate_node_ids:
+                    return (False, "schema_less_existing_output_links_removed")
+        return (True, "preexisting_output_destinations_safe")
 
     def _local_node_schema_evidence(class_type: str) -> dict[str, Any] | None:
         try:
@@ -5838,6 +6084,9 @@ def _recovery_report_from_ui_payload(
     original_node_classes: dict[str, str] = {}
     original_node_connections: dict[str, tuple[Any, ...]] = {}
     original_nodes_by_id: dict[str, Mapping[str, Any]] = {}
+    original_links_by_id = _ui_links_by_id(original_ui_payload)
+    candidate_links_by_id = _ui_links_by_id(ui_payload)
+    candidate_node_ids: set[str] = set()
     original_nodes = (
         original_ui_payload.get("nodes")
         if isinstance(original_ui_payload, Mapping)
@@ -5855,6 +6104,11 @@ def _recovery_report_from_ui_payload(
                 original_node_connections[original_node_id] = _connection_signature(
                     original_node
                 )
+    for candidate_node in nodes:
+        if isinstance(candidate_node, Mapping):
+            candidate_node_id = str(candidate_node.get("id", ""))
+            if candidate_node_id:
+                candidate_node_ids.add(candidate_node_id)
 
     for node in nodes:
         if not isinstance(node, Mapping):
@@ -5889,6 +6143,9 @@ def _recovery_report_from_ui_payload(
                 if preexisting_ui_node
                 else None,
                 candidate_node=node,
+                original_links_by_id=original_links_by_id,
+                candidate_links_by_id=candidate_links_by_id,
+                candidate_node_ids=candidate_node_ids,
             )
             recovery.append(
                 {
@@ -5901,6 +6158,30 @@ def _recovery_report_from_ui_payload(
                     "ui_connection_shape_unchanged": ui_connection_shape_unchanged,
                     "schema_less_queue_safe": schema_less_safe,
                     "schema_less_safety": schema_less_reason,
+                    "schema_less_queue_schema": {
+                        "inputs": [
+                            {"name": item.get("name"), "type": item.get("type")}
+                            for item in (
+                                node.get("inputs")
+                                if isinstance(node.get("inputs"), list)
+                                else []
+                            )
+                            if isinstance(item, Mapping)
+                        ],
+                        "outputs": [
+                            {
+                                "name": item.get("name"),
+                                "type": item.get("type"),
+                                "slot_index": item.get("slot_index"),
+                            }
+                            for item in (
+                                node.get("outputs")
+                                if isinstance(node.get("outputs"), list)
+                                else []
+                            )
+                            if isinstance(item, Mapping)
+                        ],
+                    },
                     "widget_shape_verdict": "not_applicable",
                     "diagnostic": "schema-less: no schema provider evidence for node",
                 }
@@ -6656,7 +6937,7 @@ def _run_stage(
             or (name in {"agent_batch", "agent_batch_repl"} and _is_provider_exception(exc))
             else name
         )
-        failure = classify_failure(failure_stage, exc, context)
+        failure = _classify_stage_failure(failure_stage, exc, context)
         result = StageResult(
             stage=name,
             ok=False,
@@ -6708,6 +6989,22 @@ def _run_stage(
             agent_failure_context={
                 "explanation": f"Stage {public_stage} blocked the agent edit.",
                 "issues": [dict(issue) for issue in result.issues if isinstance(issue, dict)],
+                **(
+                    {
+                        "validation_errors": result.value["validation_errors"],
+                    }
+                    if isinstance(result.value, dict)
+                    and result.value.get("validation_errors") is not None
+                    else {}
+                ),
+                **(
+                    {
+                        "diagnostics": result.value["diagnostics"],
+                    }
+                    if isinstance(result.value, dict)
+                    and result.value.get("diagnostics") is not None
+                    else {}
+                ),
             },
         )
         if failure.kind is FailureKind.STALE_STATE_MISMATCH and public_stage in {"ingest", "ingest_v2"}:
@@ -6730,6 +7027,24 @@ def _is_provider_exception(exc: Exception) -> bool:
         "ProviderError",
     }
     return any(type_.__name__ in provider_exception_names for type_ in type(exc).__mro__)
+
+
+def _classify_stage_failure(
+    stage: str,
+    exc_or_issue: Any,
+    context: TurnContext | Mapping[str, Any] | None = None,
+) -> FailureEnvelope:
+    failure = classify_failure(stage, exc_or_issue, context)
+    if stage in {"ingest", "ingest_v2"} and failure.kind is FailureKind.UNSUPPORTED_NON_DAG:
+        lower_message = str(exc_or_issue).lower()
+        if "non-dag" not in lower_message and "control flow" not in lower_message:
+            return failure_envelope(
+                FailureKind.VALIDATION_ERROR,
+                stage,
+                context,
+                agent_failure_context=failure.agent_failure_context,
+            )
+    return failure
 
 
 def _run_batch_repl_product_path(
@@ -7094,6 +7409,9 @@ def handle_agent_edit(
     context_packet = payload.get("research_context_packet")
     if isinstance(context_packet, dict):
         state.research_context_packet = context_packet
+    graph_inspection = payload.get("graph_inspection")
+    if isinstance(graph_inspection, str) and graph_inspection.strip():
+        state.graph_inspection = graph_inspection.strip()
     if isinstance(payload.get("max_batches"), int) and payload["max_batches"] > 0:
         state.batch_max_turns = int(payload["max_batches"])
     if (

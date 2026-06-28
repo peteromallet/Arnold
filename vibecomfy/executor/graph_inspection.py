@@ -155,6 +155,58 @@ def _extract_widgets(node: dict) -> tuple[WidgetEvidence, ...]:
     return tuple(result)
 
 
+def _sort_widget_name(name: str) -> tuple[int, Any]:
+    if name.startswith("widget_"):
+        suffix = name.split("_", 1)[1]
+        if suffix.isdigit():
+            return (0, int(suffix))
+    return (1, name)
+
+
+def _extract_vibe_widgets(node: dict) -> tuple[WidgetEvidence, ...]:
+    """Extract widget evidence from a Vibe graph node dict."""
+    named_values: list[WidgetEvidence] = []
+
+    inputs = node.get("inputs")
+    if isinstance(inputs, dict):
+        for index, name in enumerate(sorted(inputs)):
+            value = inputs[name]
+            if isinstance(value, (dict, list, tuple)):
+                continue
+            named_values.append(WidgetEvidence(index=index, name=str(name), value=value))
+
+    widgets = node.get("widgets")
+    if isinstance(widgets, dict):
+        base_index = len(named_values)
+        for offset, name in enumerate(sorted((str(key) for key in widgets), key=_sort_widget_name)):
+            named_values.append(
+                WidgetEvidence(index=base_index + offset, name=name, value=widgets[name])
+            )
+
+    if named_values:
+        return tuple(named_values)
+
+    raw_widgets = node.get("raw_widgets")
+    if isinstance(raw_widgets, dict):
+        values = raw_widgets.get("values")
+        if isinstance(values, list):
+            return tuple(
+                WidgetEvidence(index=index, name=f"widget_{index}", value=value)
+                for index, value in enumerate(values)
+            )
+
+    raw_ui = node.get("metadata", {}).get("_ui") if isinstance(node.get("metadata"), dict) else None
+    if isinstance(raw_ui, dict):
+        values = raw_ui.get("widgets_values")
+        if isinstance(values, list):
+            return tuple(
+                WidgetEvidence(index=index, name=f"widget_{index}", value=value)
+                for index, value in enumerate(values)
+            )
+
+    return ()
+
+
 def _extract_slot_names_list(slot_list: list | None) -> tuple[str, ...]:
     """Return a tuple of slot-name strings from a list of dicts or strings."""
     if not slot_list:
@@ -212,6 +264,76 @@ def _collect_output_slots(node: dict) -> tuple[SlotEvidence, ...]:
     return tuple(
         SlotEvidence(name=name, slot_type="output")
         for name in slot_names
+    )
+
+
+def _normalise_vibe_edges(edges_raw: list | None) -> tuple[EdgeEvidence, ...]:
+    if not isinstance(edges_raw, list):
+        return ()
+    edges: list[EdgeEvidence] = []
+    for index, edge in enumerate(edges_raw):
+        if isinstance(edge, dict):
+            origin = edge.get("from_node")
+            target = edge.get("to_node")
+            if origin is None or target is None:
+                continue
+            from_output = edge.get("from_output")
+            try:
+                origin_slot = int(from_output) if from_output is not None else 0
+            except (TypeError, ValueError):
+                origin_slot = 0
+            edges.append(
+                EdgeEvidence(
+                    link_id=index,
+                    origin_node=origin,
+                    origin_slot=origin_slot,
+                    target_node=target,
+                    target_slot=0,
+                    link_type=None,
+                )
+            )
+    return tuple(edges)
+
+
+def _extract_vibe_node(
+    node_id: int | str,
+    node: dict,
+    incoming_inputs: dict[int | str, dict[str, int]],
+    outgoing_outputs: dict[int | str, set[str]],
+) -> NodeEvidence:
+    class_type: str = node.get("class_type") or node.get("type") or "Unknown"
+    raw_title: str | None = None
+    metadata = node.get("metadata")
+    if isinstance(metadata, dict):
+        raw_ui = metadata.get("_ui")
+        if isinstance(raw_ui, dict):
+            raw_title = raw_ui.get("title")
+
+    input_slots: list[SlotEvidence] = []
+    inputs = node.get("inputs")
+    if isinstance(inputs, dict):
+        for name in sorted(inputs):
+            input_slots.append(
+                SlotEvidence(
+                    name=str(name),
+                    slot_type="input",
+                    link_id=incoming_inputs.get(node_id, {}).get(str(name)),
+                )
+            )
+
+    output_names = outgoing_outputs.get(node_id, set())
+    output_slots = tuple(
+        SlotEvidence(name=name, slot_type="output")
+        for name in sorted(output_names)
+    )
+
+    return NodeEvidence(
+        node_id=node_id,
+        class_type=class_type,
+        title=raw_title if (isinstance(raw_title, str) and raw_title.strip()) else None,
+        widgets=_extract_vibe_widgets(node),
+        input_slots=tuple(input_slots),
+        output_slots=output_slots,
     )
 
 
@@ -879,7 +1001,8 @@ def _build_text_summary(evidence: GraphEvidence) -> str:
             widget_parts = []
             for w in node.widgets[:5]:
                 if w.value is not None and str(w.value).strip():
-                    widget_parts.append(f"w{w.index}={str(w.value)[:80]}")
+                    label = w.name if w.name else f"w{w.index}"
+                    widget_parts.append(f"{label}={str(w.value)[:80]}")
             if widget_parts:
                 parts.append("values=(" + ", ".join(widget_parts) + ")")
 
@@ -928,6 +1051,37 @@ def inspect_graph(graph: dict[str, Any] | None) -> GraphEvidence:
         return GraphEvidence(node_count=0)
 
     nodes_raw = graph.get("nodes")
+    if isinstance(nodes_raw, dict) and nodes_raw:
+        edges = _normalise_vibe_edges(graph.get("edges"))
+        incoming_inputs: dict[int | str, dict[str, int]] = {}
+        outgoing_outputs: dict[int | str, set[str]] = {}
+        if isinstance(graph.get("edges"), list):
+            for index, raw_edge in enumerate(graph["edges"]):
+                if not isinstance(raw_edge, dict):
+                    continue
+                target = raw_edge.get("to_node")
+                input_name = raw_edge.get("to_input")
+                if target is not None and input_name is not None:
+                    incoming_inputs.setdefault(target, {})[str(input_name)] = index
+                origin = raw_edge.get("from_node")
+                output_name = raw_edge.get("from_output")
+                if origin is not None and output_name is not None:
+                    outgoing_outputs.setdefault(origin, set()).add(str(output_name))
+        for edge in edges:
+            outgoing_outputs.setdefault(edge.origin_node, set()).add(str(edge.origin_slot))
+        nodes = [
+            _extract_vibe_node(node_id, node_dict, incoming_inputs, outgoing_outputs)
+            for node_id, node_dict in nodes_raw.items()
+            if isinstance(node_dict, dict)
+        ]
+        evidence = GraphEvidence(
+            node_count=len(nodes),
+            nodes=tuple(nodes),
+            edges=edges,
+        )
+        object.__setattr__(evidence, "summary", _build_text_summary(evidence))
+        return evidence
+
     if not isinstance(nodes_raw, list) or not nodes_raw:
         return GraphEvidence(node_count=0)
 

@@ -133,17 +133,27 @@ def update_queue_gate(
     stage_results: Mapping[str, StageResult] | None = None,
     queue_blockers: tuple[dict[str, Any], ...] | None = None,
 ) -> tuple[dict[str, Any], ...]:
+    results = context.stage_results if stage_results is None else stage_results
     blockers = queue_blockers
     if blockers is None:
-        blockers = _queue_blocker_issues(stage_results or context.stage_results)
-    ok = context.gate_results["ir_validate_ok"].ok and not blockers
+        blockers = _queue_blocker_issues(results)
+    validate_ok = results["validate"].ok if "validate" in results else True
+    queue_stage_ok = results["queue_validate"].ok if "queue_validate" in results else not blockers
+    ok = validate_ok and queue_stage_ok and not blockers
     context.set_gate(
         "queue_validate_ok",
         ok,
         evidence=_evidence(
             "queue_validate",
             reason="no_queue_blockers" if ok else "queue_blocked",
-            extra={"blocker_count": len(blockers), "blockers": list(blockers)},
+            extra={
+                "blocker_count": len(blockers),
+                "blockers": list(blockers),
+                "validate_stage_present": "validate" in results,
+                "validate_ok": validate_ok,
+                "queue_validate_stage_present": "queue_validate" in results,
+                "queue_validate_stage_ok": queue_stage_ok,
+            },
         ),
     )
     return blockers

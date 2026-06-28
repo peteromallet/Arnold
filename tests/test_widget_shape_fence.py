@@ -27,6 +27,8 @@ def _evidence(**overrides: Any) -> WidgetShapeEvidence:
         "has_dict_rows": False,
         "overflow": False,
         "provider": "test_provider",
+        "explicit_widget_overflow": False,
+        "raw_widget_length_recovered": False,
     }
     values.update(overrides)
     return WidgetShapeEvidence(**values)
@@ -144,6 +146,69 @@ def test_dynamic_node_without_raw_payload_refuses() -> None:
     assert WidgetShapeReason.SCHEMA_LESS in verdict.reasons
     assert WidgetShapeReason.MISSING_RAW_UI_PAYLOAD in verdict.reasons
     assert WidgetShapeReason.MISSING_RAW_WIDGET_PAYLOAD in verdict.reasons
+
+
+def test_identity_matched_node_carries_forward_raw_ui_without_other_payloads() -> None:
+    evidence = _evidence(
+        overflow=True,
+        raw_widget_count=3,
+        candidate_widget_count=2,
+        schema_widget_count=2,
+    )
+
+    verdict = decide_widget_shape(
+        evidence,
+        raw_payloads={"7": _raw_node()},
+        identity_matched=True,
+    )
+
+    assert verdict.decision is WidgetShapeDecision.PIN_OPAQUE
+    assert verdict.recovery == "carry_forward_raw_ui"
+    assert verdict.raw_ui_node == _raw_node()
+
+
+def test_schema_known_generated_node_uses_schema_default_regeneration() -> None:
+    verdict = decide_widget_shape(
+        _evidence(raw_widget_count=None),
+        raw_payloads={},
+        raw_widget_payloads={},
+        allow_schema_default_regenerate=True,
+    )
+
+    assert verdict.decision is WidgetShapeDecision.SAFE_TO_REGENERATE
+    assert verdict.recovery == "schema_default_regenerate"
+    assert verdict.use_schema_defaults is True
+
+
+def test_schema_known_generated_explicit_overflow_uses_schema_default_regeneration() -> None:
+    verdict = decide_widget_shape(
+        _evidence(
+            raw_widget_count=None,
+            candidate_widget_count=4,
+            schema_widget_count=2,
+            overflow=True,
+            explicit_widget_overflow=True,
+        ),
+        raw_payloads={},
+        raw_widget_payloads={},
+        allow_schema_default_regenerate=True,
+    )
+
+    assert verdict.decision is WidgetShapeDecision.SAFE_TO_REGENERATE
+    assert verdict.recovery == "schema_default_regenerate"
+    assert verdict.use_schema_defaults is True
+
+
+def test_new_node_with_null_raw_type_or_widgets_still_refuses() -> None:
+    verdict = decide_widget_shape(
+        _evidence(),
+        raw_payloads={"7": {"id": 7, "type": None, "widgets_values": None}},
+        allow_schema_default_regenerate=True,
+        is_new_node=True,
+    )
+
+    assert verdict.decision is WidgetShapeDecision.REFUSE
+    assert WidgetShapeReason.MISSING_RAW_UI_PAYLOAD in verdict.reasons
 
 
 def test_dynamic_node_with_widget_delta_refuses_instead_of_pinning() -> None:

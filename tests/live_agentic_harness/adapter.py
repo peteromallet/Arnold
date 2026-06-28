@@ -144,4 +144,7 @@ def run_headless_scenario(
         "output_dir": str(output_dir),
         "readiness": result.readiness,
         "error": result.error,
+        "deepseek_usage": result.response.get("deepseek_usage", {}),
+        "deepseek_est_cost_usd": result.response.get("deepseek_est_cost_usd"),
+        "deepseek_cost_basis": result.response.get("deepseek_cost_basis"),
     }

@@ -16,6 +16,38 @@ def format_issue(issue: Any) -> str:
     return f"[{issue.code}] {location}: {issue.message}".strip()
 
 
+def validation_errors_payload(issues: list[ValidationIssue]) -> list[dict[str, Any]]:
+    """Group concrete validation errors by node for agent feedback payloads."""
+    grouped: dict[tuple[str | None, str | None], dict[str, Any]] = {}
+    for issue in issues:
+        if issue.severity != "error":
+            continue
+        detail = issue.detail or {}
+        node_id = detail.get("node_id") or detail.get("to_node") or detail.get("from_node")
+        class_type = detail.get("class_type") or detail.get("to_class_type") or detail.get("from_class_type")
+        key = (
+            str(node_id) if node_id is not None else None,
+            str(class_type) if class_type is not None else None,
+        )
+        entry = grouped.setdefault(
+            key,
+            {
+                "node_id": key[0],
+                "class_type": key[1],
+                "errors": [],
+            },
+        )
+        entry["errors"].append(
+            {
+                "code": issue.code,
+                "message": issue.message,
+                "input": detail.get("input") or detail.get("to_input"),
+                "detail": dict(detail),
+            }
+        )
+    return list(grouped.values())
+
+
 #: Known-lying custom-node schemas that may suppress only ``unknown_input`` and
 #: ``value_*`` validation issues. Every entry must be cross-referenced from
 #: ``docs/node_pack_reconciliation.md`` with its contract/root-cause note.

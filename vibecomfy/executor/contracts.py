@@ -15,6 +15,8 @@ from types import MappingProxyType
 from typing import Any, Mapping
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from vibecomfy.agent.deepseek_usage import coerce_deepseek_usage
+
 LOGGER = logging.getLogger(__name__)
 
 _WARNING_DETAIL_MAX_MESSAGE = 160
@@ -1293,6 +1295,8 @@ class ImplementationResult:
     delta: tuple[dict[str, Any], ...] = ()
     message: str = ""
     durable_response: dict[str, Any] | None = None
+    diagnostics: dict[str, Any] | None = None
+    failure: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "delta", tuple(self.delta))
@@ -1303,6 +1307,24 @@ class ImplementationResult:
                 MappingProxyType({
                     str(k): _freeze_jsonish(v)
                     for k, v in self.durable_response.items()
+                }),
+            )
+        if self.diagnostics is not None:
+            object.__setattr__(
+                self,
+                "diagnostics",
+                MappingProxyType({
+                    str(k): _freeze_jsonish(v)
+                    for k, v in self.diagnostics.items()
+                }),
+            )
+        if self.failure is not None:
+            object.__setattr__(
+                self,
+                "failure",
+                MappingProxyType({
+                    str(k): _freeze_jsonish(v)
+                    for k, v in self.failure.items()
                 }),
             )
 
@@ -1330,6 +1352,13 @@ class ImplementationResult:
             payload["graph"] = self.graph
         if self.delta:
             payload["delta"] = _thaw_jsonish(self.delta)
+        if self.diagnostics is not None:
+            payload["diagnostics"] = _thaw_jsonish(self.diagnostics)
+        if self.failure is not None:
+            payload["failure"] = _thaw_jsonish(self.failure)
+            diagnostics = self.failure.get("diagnostics")
+            if diagnostics is not None:
+                payload["diagnostics"] = _thaw_jsonish(diagnostics)
         # Durable metadata is internal; only exposed through the
         # candidate payload in AgentTurnResult, not here.
         return payload
@@ -1350,6 +1379,19 @@ class Report:
     plan: ClassifyDecision = field(default_factory=ClassifyDecision)
     research: ResearchResult | None = None
     implementation: ImplementationResult | None = None
+    deepseek_usage: dict[str, Any] = field(default_factory=dict)
+    deepseek_est_cost_usd: float | None = None
+    deepseek_cost_basis: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "deepseek_usage",
+            MappingProxyType({
+                str(k): _freeze_jsonish(v)
+                for k, v in coerce_deepseek_usage(self.deepseek_usage).items()
+            }),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         plan_payload = self.plan.to_dict()
@@ -1363,6 +1405,12 @@ class Report:
             inner["research"] = self.research.to_dict()
         if self.implementation is not None:
             inner["implementation"] = self.implementation.to_dict()
+        usage_payload = coerce_deepseek_usage(self.deepseek_usage)
+        inner["deepseek_usage"] = usage_payload
+        if self.deepseek_est_cost_usd is not None:
+            inner["deepseek_est_cost_usd"] = float(self.deepseek_est_cost_usd)
+        if isinstance(self.deepseek_cost_basis, str) and self.deepseek_cost_basis:
+            inner["deepseek_cost_basis"] = self.deepseek_cost_basis
         return {"executor": inner}
 
 
@@ -1610,6 +1658,12 @@ class ExecutorResult:
             "ok": self.ok,
             "report": self.report.to_dict(),
         }
+        usage_payload = coerce_deepseek_usage(self.report.deepseek_usage)
+        payload["deepseek_usage"] = usage_payload
+        if self.report.deepseek_est_cost_usd is not None:
+            payload["deepseek_est_cost_usd"] = float(self.report.deepseek_est_cost_usd)
+        if isinstance(self.report.deepseek_cost_basis, str) and self.report.deepseek_cost_basis:
+            payload["deepseek_cost_basis"] = self.report.deepseek_cost_basis
         # Propagate durable envelope fields from the implementation
         # response (SD1, SD2) so downstream consumers see session_id,
         # turn_id, hashes, outcome, apply_eligibility, change_details,

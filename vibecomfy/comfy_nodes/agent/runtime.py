@@ -31,6 +31,7 @@ real ``AIAgent`` backend; this file is intentionally thin.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import subprocess
@@ -40,6 +41,11 @@ import logging
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from vibecomfy.agent.deepseek_usage import (
+    add_deepseek_usage,
+    coerce_deepseek_usage,
+    empty_deepseek_usage,
+)
 from vibecomfy.executor.profiler import (
     new_profile_id,
     profiler_log,
@@ -51,6 +57,10 @@ from vibecomfy.executor.profiler import (
 _TURN_TIMEOUT_SECONDS = float(os.getenv("VIBECOMFY_AGENT_TURN_TIMEOUT", "180"))
 _WORKER_PATH = str(Path(__file__).with_name("worker.py"))
 LOGGER = logging.getLogger(__name__)
+_DEEPSEEK_USAGE_CAPTURE: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "vibecomfy_deepseek_usage_capture",
+    default=None,
+)
 
 _OPENROUTER_MODEL = os.getenv("VIBECOMFY_OPENROUTER_MODEL", "openrouter:deepseek/deepseek-v4-pro")
 _OPENROUTER_BASE_URL = os.getenv("VIBECOMFY_OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
@@ -67,6 +77,41 @@ _ARNOLD_MODEL = os.getenv("VIBECOMFY_ARNOLD_MODEL", "anthropic/claude-opus-4.6")
 _ARNOLD_BASE_URL = os.getenv("VIBECOMFY_ARNOLD_BASE_URL") or None
 
 _HERMES_ENV_PATH = Path("~/.hermes/.env").expanduser()
+
+
+def begin_deepseek_usage_capture() -> contextvars.Token:
+    return _DEEPSEEK_USAGE_CAPTURE.set(
+        {
+            "usage": empty_deepseek_usage(),
+            "cache_breakout_complete": True,
+        }
+    )
+
+
+def snapshot_deepseek_usage_capture() -> tuple[dict[str, int], bool]:
+    state = _DEEPSEEK_USAGE_CAPTURE.get()
+    if not isinstance(state, dict):
+        return empty_deepseek_usage(), False
+    usage = coerce_deepseek_usage(state.get("usage"))
+    if usage["n_calls"] <= 0:
+        return usage, False
+    return usage, bool(state.get("cache_breakout_complete"))
+
+
+def end_deepseek_usage_capture(token: contextvars.Token) -> None:
+    _DEEPSEEK_USAGE_CAPTURE.reset(token)
+
+
+def _record_captured_deepseek_usage(result: Any) -> None:
+    state = _DEEPSEEK_USAGE_CAPTURE.get()
+    if not isinstance(state, dict) or not isinstance(result, dict):
+        return
+    usage = coerce_deepseek_usage(result.get("deepseek_usage"))
+    if usage["n_calls"] <= 0:
+        return
+    state["usage"] = add_deepseek_usage(state.get("usage"), usage)
+    if not result.get("deepseek_cache_breakout_complete", False):
+        state["cache_breakout_complete"] = False
 
 
 def _read_env_file_entries(path: Path = _HERMES_ENV_PATH) -> list[tuple[str, str]]:
@@ -444,6 +489,7 @@ def _run_worker(
                         result.setdefault("worker_stdout_tail", proc.stdout[-4000:])
                     if proc.stderr:
                         result.setdefault("worker_stderr_tail", proc.stderr[-4000:])
+                _record_captured_deepseek_usage(result)
                 return result
         except (FileNotFoundError, json.JSONDecodeError) as exc:
             tail = (proc.stderr or proc.stdout or "")[-800:]

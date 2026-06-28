@@ -225,6 +225,8 @@ def guard_emit(
     original_ui: Mapping[str, Any],
     candidate_ui: Mapping[str, Any],
     snapshot_delta: Mapping[str, Mapping[str, tuple]] | None,
+    *,
+    resolved_ops: Iterable[Any] | None = None,
 ) -> None:
     """Refusal-spine on APPLIED re-emit.
 
@@ -250,6 +252,10 @@ def guard_emit(
         :func:`vibecomfy.porting.layout.delta.compute_field_delta`.  Names the
         fields the user is intentionally changing.  ``None`` is treated as the
         empty dict.
+    resolved_ops:
+        Optional resolved edit-op attribution from the deterministic edit path.
+        When supplied, nodes touched by those ops may legitimately change their
+        emitted API ``class_type``/``inputs`` axes.
 
     Raises
     ------
@@ -259,6 +265,7 @@ def guard_emit(
         When ComfyUI ``convert_ui_to_api`` is unavailable.
     """
     delta: Mapping[str, Mapping[str, tuple]] = snapshot_delta or {}
+    attributed_uids = _attributed_uids_from_resolved_ops(resolved_ops)
 
     orig_uid_to_id = _uid_to_litegraph_id(original_ui)
     cand_uid_to_id = _uid_to_litegraph_id(candidate_ui)
@@ -291,8 +298,9 @@ def guard_emit(
         cand_inputs = dict(cand_node.get("inputs") or {})
 
         allowed = set(delta.get(uid, {}).keys())
-        class_axis_allowed = "class_type" in allowed
-        inputs_axis_allowed = bool(allowed & _INPUT_AXIS_FIELDS)
+        target_attributed = uid in delta or uid in attributed_uids
+        class_axis_allowed = target_attributed or "class_type" in allowed
+        inputs_axis_allowed = target_attributed or bool(allowed & _INPUT_AXIS_FIELDS)
 
         node_diff: dict[str, Any] = {}
         if orig_class != cand_class and not class_axis_allowed:
@@ -313,6 +321,50 @@ def guard_emit(
             f"{len(diff)} uid-matched node(s) changed outside snapshot_delta",
             diff,
         )
+
+
+def _attributed_uids_from_resolved_ops(resolved_ops: Iterable[Any] | None) -> set[str]:
+    if resolved_ops is None:
+        return set()
+
+    uids: set[str] = set()
+
+    def add_uid(value: Any) -> None:
+        if isinstance(value, str) and value:
+            uids.add(value)
+
+    def add_target(obj: Any) -> None:
+        target = _read_attr(obj, "target")
+        add_uid(_read_attr(target, "uid"))
+
+    def add_ref(obj: Any) -> None:
+        ref = _read_attr(obj, "ref")
+        add_uid(_read_attr(ref, "uid"))
+
+    for item in resolved_ops:
+        op = item
+        resolved = None
+        if isinstance(item, tuple) and len(item) == 2:
+            op, resolved = item
+        add_target(op)
+        add_ref(op)
+        source = _read_attr(op, "source")
+        add_uid(_read_attr(source, "uid"))
+        if resolved is None:
+            continue
+        if isinstance(resolved, tuple):
+            for endpoint in resolved:
+                add_ref(endpoint)
+            continue
+        add_target(resolved)
+        add_ref(resolved)
+        add_uid(_read_attr(resolved, "uid"))
+        node_ref = _read_attr(resolved, "node_ref")
+        add_target(node_ref)
+        for source_uid in _read_attr(resolved, "source_uids", ()) or ():
+            add_uid(source_uid)
+
+    return uids
 
 
 __all__ = [

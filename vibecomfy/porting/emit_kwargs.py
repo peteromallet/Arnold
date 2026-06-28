@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import keyword
 import re
+import warnings
 from typing import TYPE_CHECKING, Any, Mapping
 
-from vibecomfy.errors import ArityDisagreementError
 from vibecomfy.porting.object_info import (
     class_has_list_output,
     class_output_count,
@@ -460,6 +460,22 @@ def _node_output_names(node: Any) -> list[str]:
     return result
 
 
+def _warn_metadata_ui_output_arity_disagreement(
+    node: Any,
+    metadata_names: list[str],
+    ui_names: list[str],
+) -> None:
+    warnings.warn(
+        (
+            f"output arity disagreement for {node.class_type}: metadata declares "
+            f"{len(metadata_names)} outputs but UI declares {len(ui_names)}. "
+            "continuing with the UI output names because live/UI object_info "
+            "takes precedence over stale embedded metadata."
+        ),
+        stacklevel=3,
+    )
+
+
 def _schema_output_names_for_unpack(node: Any) -> list[str]:
     # Lazy import to avoid circular dependency
     from vibecomfy.porting.emit.emitter import (  # noqa: PLC0415
@@ -475,18 +491,7 @@ def _schema_output_names_for_unpack(node: Any) -> list[str]:
     except Exception:
         cache_names = []
     if ui_names and metadata_names and len(ui_names) != len(metadata_names):
-        raise ArityDisagreementError(
-            (
-                f"output arity disagreement for {node.class_type}: metadata declares "
-                f"{len(metadata_names)} outputs but UI declares {len(ui_names)}. "
-                "Refresh the object_info schema snapshot."
-            ),
-            class_type=str(node.class_type),
-            snapshot_pack=None,
-            snapshot_version=None,
-            snapshot_output_count=len(metadata_names),
-            ui_output_count=len(ui_names),
-        )
+        _warn_metadata_ui_output_arity_disagreement(node, metadata_names, ui_names)
     ui_output_count = len(ui_names) if ui_names else None
     _node_local_arity_check(node, ui_output_count)
     if ui_names:
@@ -503,18 +508,7 @@ def _declared_output_names_for_call_metadata(node: Any) -> list[str]:
     ui_names = _declared_ui_output_names(node)
     metadata_names = _node_output_names(node)
     if ui_names and metadata_names and len(ui_names) != len(metadata_names):
-        raise ArityDisagreementError(
-            (
-                f"output arity disagreement for {node.class_type}: metadata declares "
-                f"{len(metadata_names)} outputs but UI declares {len(ui_names)}. "
-                "Refresh the object_info schema snapshot."
-            ),
-            class_type=str(node.class_type),
-            snapshot_pack=None,
-            snapshot_version=None,
-            snapshot_output_count=len(metadata_names),
-            ui_output_count=len(ui_names),
-        )
+        _warn_metadata_ui_output_arity_disagreement(node, metadata_names, ui_names)
     ui_output_count = len(ui_names) if ui_names else None
     _node_local_arity_check(node, ui_output_count)
     if ui_names:

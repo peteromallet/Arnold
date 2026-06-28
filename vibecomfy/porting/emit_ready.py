@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ast
 import json
+import warnings
 from dataclasses import replace
 from dataclasses import dataclass
 from pathlib import Path
@@ -1611,19 +1612,27 @@ def _node_local_arity_check(node: Any, ui_output_count: int | None) -> int:
         if ui_output_count is None:
             return cached_count
         if cached_count < ui_output_count:
-            from vibecomfy.errors import ArityDisagreementError as _AD  # noqa: PLC0415
-            raise _AD(
+            warnings.warn(
                 (
                     f"output arity disagreement for {class_type}: cached snapshot "
                     f"declares {cached_count} outputs but UI declares {ui_output_count}. "
-                    "Refresh the object_info schema snapshot."
+                    "continuing with the UI output count because live/UI object_info "
+                    "takes precedence over stale embedded metadata."
                 ),
-                class_type=class_type,
-                snapshot_pack=entry.get("pack"),
-                snapshot_version=entry.get("pack_version"),
-                snapshot_output_count=cached_count,
-                ui_output_count=ui_output_count,
+                stacklevel=2,
             )
+            return ui_output_count
+        if cached_count > ui_output_count:
+            warnings.warn(
+                (
+                    f"output arity disagreement for {class_type}: cached snapshot "
+                    f"declares {cached_count} outputs but UI declares {ui_output_count}; "
+                    "continuing with the UI output count because live/UI object_info "
+                    "takes precedence over stale embedded metadata."
+                ),
+                stacklevel=2,
+            )
+            return ui_output_count
         return cached_count
     return check_output_arity_consensus(class_type, ui_output_count)
 

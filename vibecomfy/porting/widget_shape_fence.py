@@ -51,6 +51,8 @@ class WidgetShapeVerdict:
     layout_entry: Mapping[str, Any] | None = None
     field_delta: Mapping[str, Any] = field(default_factory=dict)
     link_delta: Mapping[str, Any] = field(default_factory=dict)
+    recovery: str | None = None
+    use_schema_defaults: bool = False
 
 
 def decide_widget_shape(
@@ -61,6 +63,9 @@ def decide_widget_shape(
     layout_entries: Mapping[str, Mapping[str, Any]] | None = None,
     field_deltas: Mapping[str, Mapping[str, Any]] | None = None,
     link_deltas: Mapping[str, Mapping[str, Any]] | None = None,
+    identity_matched: bool = False,
+    allow_schema_default_regenerate: bool = False,
+    is_new_node: bool = False,
 ) -> WidgetShapeVerdict:
     """Classify one node's widget-shape handling.
 
@@ -75,9 +80,61 @@ def decide_widget_shape(
     layout_entry = _lookup(layout_entries, node_id)
     field_delta = dict(_lookup(field_deltas, node_id) or {})
     link_delta = dict(_lookup(link_deltas, node_id) or {})
+    has_widget_delta = _has_widget_delta(field_delta)
+    has_link_delta = bool(link_delta)
 
     static_reasons = _static_refusal_reasons(evidence)
-    if not static_reasons:
+    if (
+        identity_matched
+        and raw_ui_node is not None
+        and not has_widget_delta
+        and not has_link_delta
+    ):
+        carry_reasons = static_reasons or (WidgetShapeReason.SCHEMA_BACKED_STATIC,)
+        return _verdict(
+            evidence,
+            WidgetShapeDecision.PIN_OPAQUE,
+            carry_reasons,
+            raw_ui_node=raw_ui_node,
+            layout_entry=layout_entry,
+            field_delta=field_delta,
+            link_delta=link_delta,
+            recovery="carry_forward_raw_ui",
+        )
+
+    malformed_new_raw_ui = (
+        is_new_node
+        and raw_ui_node is not None
+        and not _has_full_raw_ui_payload(raw_ui_node)
+    )
+    if malformed_new_raw_ui:
+        refuse_reasons = list(static_reasons)
+        refuse_reasons.append(WidgetShapeReason.MISSING_RAW_UI_PAYLOAD)
+        if not _has_raw_widget_payload(raw_widget_payload, evidence):
+            refuse_reasons.append(WidgetShapeReason.MISSING_RAW_WIDGET_PAYLOAD)
+        if layout_entry is None:
+            refuse_reasons.append(WidgetShapeReason.MISSING_LAYOUT_ENTRY)
+        if has_widget_delta:
+            refuse_reasons.append(WidgetShapeReason.WIDGET_DELTA)
+        if has_link_delta:
+            refuse_reasons.append(WidgetShapeReason.LINK_DELTA)
+        return _verdict(
+            evidence,
+            WidgetShapeDecision.REFUSE,
+            tuple(refuse_reasons),
+            raw_ui_node=raw_ui_node,
+            layout_entry=layout_entry,
+            field_delta=field_delta,
+            link_delta=link_delta,
+        )
+
+    benign_schema_default_overflow = (
+        allow_schema_default_regenerate
+        and not has_widget_delta
+        and not has_link_delta
+        and _schema_default_safe_static_reasons(static_reasons)
+    )
+    if benign_schema_default_overflow:
         return _verdict(
             evidence,
             WidgetShapeDecision.SAFE_TO_REGENERATE,
@@ -86,6 +143,46 @@ def decide_widget_shape(
             layout_entry=layout_entry,
             field_delta=field_delta,
             link_delta=link_delta,
+            recovery="schema_default_regenerate",
+            use_schema_defaults=True,
+        )
+
+    if evidence.explicit_widget_overflow:
+        refuse_reasons = list(static_reasons)
+        if not static_reasons and evidence.explicit_widget_overflow:
+            refuse_reasons.append(WidgetShapeReason.OVERFLOW)
+        if not _has_full_raw_ui_payload(raw_ui_node):
+            refuse_reasons.append(WidgetShapeReason.MISSING_RAW_UI_PAYLOAD)
+        if not _has_raw_widget_payload(raw_widget_payload, evidence):
+            refuse_reasons.append(WidgetShapeReason.MISSING_RAW_WIDGET_PAYLOAD)
+        if layout_entry is None:
+            refuse_reasons.append(WidgetShapeReason.MISSING_LAYOUT_ENTRY)
+        if has_widget_delta:
+            refuse_reasons.append(WidgetShapeReason.WIDGET_DELTA)
+        if has_link_delta:
+            refuse_reasons.append(WidgetShapeReason.LINK_DELTA)
+        return _verdict(
+            evidence,
+            WidgetShapeDecision.REFUSE,
+            tuple(refuse_reasons),
+            raw_ui_node=raw_ui_node,
+            layout_entry=layout_entry,
+            field_delta=field_delta,
+            link_delta=link_delta,
+        )
+
+    if not static_reasons:
+        recovery = "schema_default_regenerate" if allow_schema_default_regenerate else None
+        return _verdict(
+            evidence,
+            WidgetShapeDecision.SAFE_TO_REGENERATE,
+            (WidgetShapeReason.SCHEMA_BACKED_STATIC,),
+            raw_ui_node=raw_ui_node,
+            layout_entry=layout_entry,
+            field_delta=field_delta,
+            link_delta=link_delta,
+            recovery=recovery,
+            use_schema_defaults=allow_schema_default_regenerate,
         )
 
     pin_blockers = list(static_reasons)
@@ -95,9 +192,9 @@ def decide_widget_shape(
         pin_blockers.append(WidgetShapeReason.MISSING_RAW_WIDGET_PAYLOAD)
     if layout_entry is None:
         pin_blockers.append(WidgetShapeReason.MISSING_LAYOUT_ENTRY)
-    if _has_widget_delta(field_delta):
+    if has_widget_delta:
         pin_blockers.append(WidgetShapeReason.WIDGET_DELTA)
-    if link_delta:
+    if has_link_delta:
         pin_blockers.append(WidgetShapeReason.LINK_DELTA)
 
     if len(pin_blockers) == len(static_reasons):
@@ -151,12 +248,18 @@ def _static_refusal_reasons(evidence: WidgetShapeEvidence) -> tuple[WidgetShapeR
     return tuple(reasons)
 
 
+def _schema_default_safe_static_reasons(
+    reasons: tuple[WidgetShapeReason, ...],
+) -> bool:
+    return not reasons or set(reasons) == {WidgetShapeReason.OVERFLOW}
+
+
 def _has_full_raw_ui_payload(raw_ui_node: Mapping[str, Any] | None) -> bool:
     return bool(
         raw_ui_node
         and "id" in raw_ui_node
-        and "type" in raw_ui_node
-        and "widgets_values" in raw_ui_node
+        and raw_ui_node.get("type") is not None
+        and raw_ui_node.get("widgets_values") is not None
     )
 
 
@@ -187,6 +290,8 @@ def _verdict(
     layout_entry: Mapping[str, Any] | None,
     field_delta: Mapping[str, Any],
     link_delta: Mapping[str, Any],
+    recovery: str | None = None,
+    use_schema_defaults: bool = False,
 ) -> WidgetShapeVerdict:
     return WidgetShapeVerdict(
         node_id=str(evidence.node_id),
@@ -201,6 +306,8 @@ def _verdict(
         layout_entry=layout_entry,
         field_delta=field_delta,
         link_delta=link_delta,
+        recovery=recovery,
+        use_schema_defaults=use_schema_defaults,
     )
 
 

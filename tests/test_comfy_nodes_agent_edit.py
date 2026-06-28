@@ -25,6 +25,7 @@ from vibecomfy.comfy_nodes.agent.edit import (
     _humanized_edit_message,
     _landed_edit_lead,
     _operation_detail_payload,
+    _recovery_report_from_ui_payload,
     _repair_field_changes_from_original_ui,
     _run_batch_repl_product_path,
     _safe_session_id,
@@ -93,6 +94,82 @@ def test_format_available_node_names_bounds_large_catalog() -> None:
     assert "Node025" not in formatted
     assert "195 more node type names omitted" in formatted
     assert "use search(...)" in formatted
+
+
+def test_schema_less_preexisting_node_rewire_preserves_queue_safety() -> None:
+    original = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "AudioLoader",
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [1]}],
+            },
+            {
+                "id": 2,
+                "type": "AudioSeparation",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 1}],
+                "outputs": [{"name": "vocals", "type": "AUDIO", "slot_index": 0, "links": [2]}],
+            },
+            {
+                "id": 3,
+                "type": "SaveAudio",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 2}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [1, 1, 0, 2, 0, "AUDIO"],
+            [2, 2, 0, 3, 0, "AUDIO"],
+        ],
+    }
+    candidate = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "AudioLoader",
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [3]}],
+            },
+            {
+                "id": 4,
+                "type": "NoiseReduce",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 3}],
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [4]}],
+            },
+            {
+                "id": 2,
+                "type": "AudioSeparation",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 4}],
+                "outputs": [{"name": "vocals", "type": "AUDIO", "slot_index": 0, "links": [2]}],
+            },
+            {
+                "id": 3,
+                "type": "SaveAudio",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 2}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [2, 2, 0, 3, 0, "AUDIO"],
+            [3, 1, 0, 4, 0, "AUDIO"],
+            [4, 4, 0, 2, 0, "AUDIO"],
+        ],
+    }
+
+    recovery = _recovery_report_from_ui_payload(
+        candidate,
+        _batch_repl_provider(),
+        original_ui_payload=original,
+    )
+
+    entry = next(item for item in recovery if item["node_id"] == "2")
+    assert entry["schema_less"] is True
+    assert entry["preexisting_ui_node"] is True
+    assert entry["ui_connection_shape_unchanged"] is False
+    assert entry["schema_less_queue_safe"] is True
+    assert entry["schema_less_safety"] == "preexisting_output_destinations_safe"
+    assert entry["schema_less_queue_schema"]["inputs"] == [
+        {"name": "audio", "type": "AUDIO"}
+    ]
 
 
 class _Provider:

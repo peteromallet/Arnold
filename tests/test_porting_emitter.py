@@ -1409,9 +1409,9 @@ def test_subgraph_ui_outputs_recover_tuple_arity(
     assert "_outputs=('latent', 'mask', 'preview')" in text
 
 
-def test_subgraph_ui_metadata_arity_disagreement_fails_closed() -> None:
-    with pytest.raises(ArityDisagreementError):
-        emit_ready_template_python(
+def test_subgraph_ui_metadata_arity_disagreement_prefers_ui_names() -> None:
+    with pytest.warns(UserWarning, match="metadata declares 2 outputs but UI declares 3"):
+        text = emit_ready_template_python(
             _workflow_with_ui_and_metadata_outputs(
                 "SubgraphNode",
                 ["latent", "mask", "preview"],
@@ -1421,6 +1421,8 @@ def test_subgraph_ui_metadata_arity_disagreement_fails_closed() -> None:
             ready_requirements={},
             template_id="image/subgraph",
         )
+
+    assert "raw_call('SubgraphNode', '1', _outputs=('latent', 'mask', 'preview'))" in text
 
 
 def test_cache_greater_than_ui_warns_without_inflating_tuple_arity(
@@ -1468,7 +1470,7 @@ def test_agent_edit_aliases_check_ui_before_cached_schema_names(
     assert "stale_extra" not in text
 
 
-def test_agent_edit_aliases_fail_closed_when_cache_has_too_few_outputs(
+def test_agent_edit_aliases_warn_when_cache_has_too_few_outputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1479,8 +1481,10 @@ def test_agent_edit_aliases_fail_closed_when_cache_has_too_few_outputs(
         ["FIRST VALUE", "SECOND VALUE"],
     )
 
-    with pytest.raises(ArityDisagreementError):
-        emit_agent_edit_python(wf)
+    with pytest.warns(UserWarning, match="AgentAliasNode"):
+        text = emit_agent_edit_python(wf)
+
+    assert "slots first_value='FIRST VALUE', second_value='SECOND VALUE'" in text
 
 
 def test_ready_template_emits_unpacking_for_typed_multi_output_node() -> None:
@@ -1528,18 +1532,18 @@ def test_ready_template_replaces_dead_unpacked_outputs_with_underscore() -> None
 def test_ready_template_unpack_checks_ui_arity_before_cache_shortcut(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from vibecomfy.errors import ArityDisagreementError
-
     cache_root = _write_object_info_cache(tmp_path, "WanImageToVideo", ["POSITIVE", "NEGATIVE"])
     _patch_object_info_cache(monkeypatch, cache_root)
 
-    with pytest.raises(ArityDisagreementError):
-        emit_ready_template_python(
+    with pytest.warns(UserWarning, match="WanImageToVideo"):
+        text = emit_ready_template_python(
             _wan_workflow_with_ui_outputs(["POSITIVE", "NEGATIVE", "LATENT"]),
             ready_metadata={"ready_template": "video/test", "capability": "video"},
             ready_requirements={},
             template_id="video/test",
         )
+
+    assert "positive, negative, latent = WanImageToVideo(" in text
 
 
 def test_ready_template_unpack_prefers_ui_names_when_cache_has_extra_outputs(

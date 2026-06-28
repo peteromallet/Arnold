@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vibecomfy.errors import ArityDisagreementError, ObjectInfoIdentityAmbiguityError
+from vibecomfy.errors import ObjectInfoIdentityAmbiguityError
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -618,7 +618,7 @@ def snapshot_version() -> str:
 
 
 def check_output_arity_consensus(class_type: str, ui_output_count: int | None) -> int:
-    """Return the cached output count after checking cache vs UI arity evidence.
+    """Return the effective output count after checking cache vs UI arity evidence.
 
     Unknown classes preserve historical defaults: the cached count is returned
     without raising or warning because there is no reliable snapshot evidence to
@@ -628,28 +628,27 @@ def check_output_arity_consensus(class_type: str, ui_output_count: int | None) -
     if ui_output_count is None or not class_is_known(class_type):
         return cached_count
     if cached_count < ui_output_count:
-        entry = get_class(class_type) or {}
-        raise ArityDisagreementError(
+        warnings.warn(
             (
                 f"output arity disagreement for {class_type}: cached snapshot "
                 f"declares {cached_count} outputs but UI declares {ui_output_count}. "
-                "Refresh the object_info schema snapshot."
+                "continuing with the UI output count because live/UI object_info "
+                "takes precedence over stale embedded metadata."
             ),
-            class_type=class_type,
-            snapshot_pack=entry.get("pack"),
-            snapshot_version=entry.get("pack_version"),
-            snapshot_output_count=cached_count,
-            ui_output_count=ui_output_count,
+            stacklevel=2,
         )
+        return ui_output_count
     if cached_count > ui_output_count:
         warnings.warn(
             (
                 f"output arity disagreement for {class_type}: cached snapshot "
                 f"declares {cached_count} outputs but UI declares {ui_output_count}; "
-                "continuing because the extra cached outputs may be unused."
+                "continuing with the UI output count because live/UI object_info "
+                "takes precedence over stale embedded metadata."
             ),
             stacklevel=2,
         )
+        return ui_output_count
     return cached_count
 
 

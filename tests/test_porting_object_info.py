@@ -642,26 +642,22 @@ def test_typed_arity_helpers_preserve_unknown_class_defaults(
     assert require_class_output_count("TotallyFakeClass", ui_output_count=3) == 0
 
 
-def test_typed_arity_helpers_raise_when_cache_has_fewer_outputs_than_ui(
+def test_typed_arity_helpers_warn_when_cache_has_fewer_outputs_than_ui(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cache_root = _build_temp_cache(tmp_path)
     _patch_consume_paths(monkeypatch, cache_root)
 
-    from vibecomfy.errors import ArityDisagreementError
     from vibecomfy.porting.object_info.consume import require_class_output_count
 
-    with pytest.raises(ArityDisagreementError) as exc:
-        require_class_output_count("LTX2_NAG", ui_output_count=2)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        count = require_class_output_count("LTX2_NAG", ui_output_count=2)
 
-    err = exc.value
-    assert err.class_type == "LTX2_NAG"
-    assert err.snapshot_pack == "ComfyUI-KJNodes"
-    assert err.snapshot_version == "test"
-    assert err.snapshot_output_count == 1
-    assert err.ui_output_count == 2
-    assert "LTX2_NAG" in str(err)
-    assert "Refresh" in err.message
+    assert count == 2
+    assert len(caught) == 1
+    assert "LTX2_NAG" in str(caught[0].message)
+    assert "UI output count" in str(caught[0].message)
 
 
 def test_typed_arity_helpers_warn_when_cache_has_more_outputs_than_ui(
@@ -676,7 +672,7 @@ def test_typed_arity_helpers_warn_when_cache_has_more_outputs_than_ui(
         warnings.simplefilter("always")
         count = check_output_arity_consensus("SomeUnknownClass", ui_output_count=0)
 
-    assert count == 1
+    assert count == 0
     assert len(caught) == 1
     assert "SomeUnknownClass" in str(caught[0].message)
 
