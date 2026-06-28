@@ -1,0 +1,474 @@
+from __future__ import annotations
+
+import re
+from typing import Any, Mapping
+
+from .ledger import EditLedger, ScopeState
+from .ops import LinkSourceRef, LinkTargetRef, NodeTarget, RemoveLinkOp, SetNodeFieldOp, UpsertLinkOp
+from vibecomfy.porting.edit.apply_links import _build_rewires, _build_rewires_for_setnode_gets, _collect_links_for_origin, _collect_links_for_target, _link_id, _link_ids, _resolve_getnode_source, _resolve_passthrough_source, _schema_output_type
+from vibecomfy.porting.edit.apply_slots import _find_named_slot_index, _widget_index_for_field, _widget_index_from_input_stubs, _widget_name_for_input
+from vibecomfy.porting.edit.apply_types import ResolvedFieldRef, ResolvedLinkEndpoint, ResolvedNodeRef, ResolvedOp, ResolvedRemoveLinkRef, ResolvedRemoveNodePlan, _ctx, _endpoint_port_issues, _issue
+from vibecomfy.porting.edit.apply_values import _validate_literal_value
+from vibecomfy.porting.report import PortIssue
+from vibecomfy.porting.resolution import EditLedgerBackend, _find_named_slot
+from vibecomfy.schema import schema_for, socket_types_compatible
+
+
+def _resolve_scope(ledger: EditLedger, scope_path: str) -> tuple[ScopeState | None, list[PortIssue]]:
+    scope = ledger.scopes.get(scope_path)
+    if scope is None:
+        return None, [
+            _issue(
+                "unknown_scope_path",
+                f"Unknown scope_path {scope_path!r}.",
+                detail={"scope_path": scope_path},
+            )
+        ]
+    return scope, []
+
+
+def _resolve_node(
+    ledger: EditLedger,
+    target: NodeTarget,
+) -> tuple[ResolvedNodeRef | None, list[PortIssue]]:
+    scope, issues = _resolve_scope(ledger, target.scope_path)
+    if issues:
+        return None, issues
+    assert scope is not None
+    # Resolve uid with LG-id aliasing (D1 convergence).
+    backend = EditLedgerBackend(ledger)
+    uid_result = _ctx.resolve_uid(backend, target.scope_path, target.uid)
+    if uid_result.value is None:
+        return None, [
+            _issue(
+                "unknown_node_target",
+                f"Unknown node target {target.uid!r} in scope {target.scope_path!r}.",
+                detail={"scope_path": target.scope_path, "uid": target.uid},
+            )
+        ]
+    resolved_uid = uid_result.value
+    resolved_target = (
+        NodeTarget(scope_path=target.scope_path, uid=resolved_uid)
+        if resolved_uid != target.uid else target
+    )
+    node = backend.node_for(target.scope_path, resolved_uid)
+    if node is None:
+        return None, [
+            _issue(
+                "unknown_node_target",
+                f"Unknown node target {resolved_uid!r} in scope {target.scope_path!r}.",
+                detail={"scope_path": target.scope_path, "uid": resolved_uid},
+            )
+        ]
+    class_type = str(node.get("type") or node.get("class_type") or "")
+    return (
+        ResolvedNodeRef(
+            target=resolved_target,
+            node=node,
+            class_type=class_type,
+            node_id=node.get("id"),
+        ),
+        [],
+    )
+
+
+def _resolve_node_only(
+    ledger: EditLedger,
+    target: NodeTarget,
+) -> tuple[ResolvedOp | None, list[PortIssue]]:
+    resolved, issues = _resolve_node(ledger, target)
+    return resolved, issues
+
+
+def _resolve_remove_node(
+    ledger: EditLedger,
+    target: NodeTarget,
+) -> tuple[ResolvedOp | None, list[PortIssue]]:
+    node_ref, issues = _resolve_node(ledger, target)
+    if issues:
+        return None, issues
+    assert node_ref is not None
+    node_id = node_ref.node_id if isinstance(node_ref.node_id, int) else None
+    if node_id is None:
+        return ResolvedRemoveNodePlan(node_ref=node_ref, link_ids_to_remove=()), []
+
+    scope = ledger.scopes[target.scope_path]
+    inbound_links = _collect_links_for_target(scope.graph, node_id)
+    outbound_links = _collect_links_for_origin(scope.graph, node_id)
+    connected_link_ids = tuple(
+        sorted(
+            {
+                link_id
+                for link in [*inbound_links, *outbound_links]
+                if (link_id := _link_id(link)) is not None
+            }
+        )
+    )
+
+    if node_ref.class_type == "Reroute":
+        source, helper_issues = _resolve_passthrough_source(scope.graph, node_id, target.scope_path)
+        if helper_issues:
+            return None, helper_issues
+        if source is None:
+            return ResolvedRemoveNodePlan(node_ref=node_ref, link_ids_to_remove=connected_link_ids), []
+        rewires = _build_rewires(
+            target.scope_path,
+            outbound_links,
+            old_origin_id=node_id,
+            new_origin_id=source[0],
+            new_origin_slot=source[1],
+        )
+        return ResolvedRemoveNodePlan(
+            node_ref=node_ref,
+            link_ids_to_remove=_link_ids(inbound_links),
+            link_rewires=rewires,
+        ), []
+
+    if node_ref.class_type == "GetNode":
+        source, helper_issues = _resolve_getnode_source(scope.graph, node_ref.node, target.scope_path)
+        if helper_issues:
+            return None, helper_issues
+        if source is None:
+            return ResolvedRemoveNodePlan(node_ref=node_ref, link_ids_to_remove=connected_link_ids), []
+        rewires = _build_rewires(
+            target.scope_path,
+            outbound_links,
+            old_origin_id=node_id,
+            new_origin_id=source[0],
+            new_origin_slot=source[1],
+        )
+        return ResolvedRemoveNodePlan(node_ref=node_ref, link_ids_to_remove=(), link_rewires=rewires), []
+
+    if node_ref.class_type == "SetNode":
+        source, helper_issues = _resolve_passthrough_source(scope.graph, node_id, target.scope_path)
+        if helper_issues:
+            return None, helper_issues
+        if source is None:
+            return ResolvedRemoveNodePlan(node_ref=node_ref, link_ids_to_remove=connected_link_ids), []
+        rewires = _build_rewires_for_setnode_gets(scope.graph, node_ref.node, target.scope_path, source)
+        return ResolvedRemoveNodePlan(
+            node_ref=node_ref,
+            link_ids_to_remove=_link_ids(inbound_links),
+            link_rewires=rewires,
+        ), []
+
+    return ResolvedRemoveNodePlan(node_ref=node_ref, link_ids_to_remove=connected_link_ids), []
+
+
+def _resolve_set_node_field(
+    ledger: EditLedger,
+    op: SetNodeFieldOp,
+    *,
+    schema_provider: Any,
+) -> tuple[ResolvedOp | None, list[PortIssue]]:
+    resolved_node, issues = _resolve_node(ledger, NodeTarget(op.target.scope_path, op.target.uid))
+    if issues:
+        return None, issues
+    assert resolved_node is not None
+    if op.target.field_path == "mode":
+        return None, [
+            _issue(
+                "set_mode_requires_set_mode_op",
+                "Node mode must be edited with set_mode, not set_node_field.",
+                detail={"scope_path": op.target.scope_path, "uid": op.target.uid},
+            )
+        ]
+
+    node = resolved_node.node
+    class_type = resolved_node.class_type
+    input_name = None
+    widget_index = None
+    automatic_link_removal = None
+
+    schema = schema_for(schema_provider, class_type)
+    schema_inputs = getattr(schema, "inputs", {}) or {}
+    schema_input = schema_inputs.get(op.target.field_path)
+
+    raw_input = _find_named_slot(node.get("inputs"), op.target.field_path)
+    raw_input_index = _find_named_slot_index(node.get("inputs"), op.target.field_path)
+    widgets_values = node.get("widgets_values")
+    widget_key = op.target.field_path if isinstance(widgets_values, Mapping) and op.target.field_path in widgets_values else None
+    if raw_input is not None:
+        input_name = op.target.field_path
+        if isinstance(raw_input.get("link"), int):
+            automatic_link_removal = raw_input["link"]
+
+    widget_index = _widget_index_for_field(class_type, op.target.field_path)
+    widget_stub_name = _widget_name_for_input(raw_input)
+    used_schema_less_widget_recovery = False
+    if widget_index is None and widget_stub_name == op.target.field_path:
+        widget_index = _widget_index_from_input_stubs(node.get("inputs"), op.target.field_path)
+        used_schema_less_widget_recovery = widget_index is not None
+    if widget_index is None and isinstance(widgets_values, list):
+        match = re.fullmatch(r"widget_(\d+)", op.target.field_path)
+        if match is not None:
+            positional_index = int(match.group(1))
+            if 0 <= positional_index < len(widgets_values):
+                widget_index = positional_index
+
+    if input_name is None and widget_index is None and widget_key is None and schema_input is None:
+        return None, [
+            _issue(
+                "unknown_node_field",
+                f"{class_type} does not expose field {op.target.field_path!r}.",
+                detail={
+                    "scope_path": op.target.scope_path,
+                    "uid": op.target.uid,
+                    "field_path": op.target.field_path,
+                    "class_type": class_type,
+                },
+            )
+        ]
+    if widget_index is None and widget_key is None:
+        return None, [
+            _issue(
+                "non_widget_field_not_editable",
+                f"{class_type}.{op.target.field_path} is not editable through set_node_field because it has no widget-backed literal surface.",
+                detail={
+                    "scope_path": op.target.scope_path,
+                    "uid": op.target.uid,
+                    "field_path": op.target.field_path,
+                    "class_type": class_type,
+                },
+            )
+        ]
+
+    value_issues = _validate_literal_value(
+        value=op.value,
+        spec=schema_input,
+        class_type=class_type,
+        input_name=op.target.field_path,
+        context="set_node_field",
+    )
+    if value_issues:
+        return None, value_issues
+
+    issues = []
+    if used_schema_less_widget_recovery:
+        issues.append(
+            _issue(
+                "schema_less_linked_widget_recovery",
+                "Recovered widget position from linked input stubs because schema/object_info widget order was unavailable.",
+                severity="info",
+                detail={
+                    "scope_path": op.target.scope_path,
+                    "uid": op.target.uid,
+                    "field_path": op.target.field_path,
+                    "class_type": class_type,
+                    "widget_index": widget_index,
+                },
+            )
+        )
+    if automatic_link_removal is not None:
+        issues.append(
+            _issue(
+                "automatic_link_removal",
+                "set_node_field will remove the overriding input link before applying the widget value.",
+                severity="info",
+                detail={
+                    "scope_path": op.target.scope_path,
+                    "uid": op.target.uid,
+                    "field_path": op.target.field_path,
+                    "link_id": automatic_link_removal,
+                },
+            )
+        )
+    return (
+        ResolvedFieldRef(
+            target=op.target,
+            node=node,
+            class_type=class_type,
+            node_id=node.get("id"),
+            input_name=input_name,
+            input_slot_index=raw_input_index,
+            widget_index=widget_index,
+            widget_key=widget_key,
+            schema_input=schema_input,
+            automatic_link_removal=automatic_link_removal,
+        ),
+        issues,
+    )
+
+
+def _resolve_upsert_link(
+    ledger: EditLedger,
+    op: UpsertLinkOp,
+    *,
+    schema_provider: Any,
+) -> tuple[ResolvedOp | None, list[PortIssue]]:
+    if op.source.scope_path != op.target.scope_path:
+        return None, [
+            _issue(
+                "cross_scope_link_unsupported",
+                "Link endpoints must resolve within the same scope.",
+                detail={
+                    "from_scope_path": op.source.scope_path,
+                    "to_scope_path": op.target.scope_path,
+                },
+            )
+        ]
+    source, source_issues = _resolve_source_endpoint(ledger, op.source, schema_provider=schema_provider)
+    if source_issues:
+        return None, source_issues
+    target, target_issues = _resolve_target_endpoint(ledger, op.target, schema_provider=schema_provider)
+    if target_issues:
+        return None, target_issues
+    assert source is not None and target is not None
+    if not isinstance(source.node_id, int) or not isinstance(target.node_id, int):
+        return None, [
+            _issue(
+                "non_numeric_link_endpoint",
+                "Link endpoints must have numeric LiteGraph node ids.",
+                detail={
+                    "from_scope_path": op.source.scope_path,
+                    "from_uid": op.source.uid,
+                    "from_node_id": source.node_id,
+                    "to_scope_path": op.target.scope_path,
+                    "to_uid": op.target.uid,
+                    "to_node_id": target.node_id,
+                },
+            )
+        ]
+    if source.socket_type and target.socket_type and not socket_types_compatible(source.socket_type, target.socket_type):
+        return None, [
+            _issue(
+                "incompatible_socket_types",
+                f"Cannot connect {source.class_type}.{source.slot_name} ({source.socket_type}) to "
+                f"{target.class_type}.{target.slot_name} ({target.socket_type}).",
+                detail={
+                    "from_scope_path": op.source.scope_path,
+                    "from_uid": op.source.uid,
+                    "from_slot": source.slot_name,
+                    "from_type": source.socket_type,
+                    "to_scope_path": op.target.scope_path,
+                    "to_uid": op.target.uid,
+                    "to_input": target.slot_name,
+                    "to_type": target.socket_type,
+                },
+            )
+        ]
+    return (source, target), []
+
+
+def _resolve_remove_link(
+    ledger: EditLedger,
+    op: RemoveLinkOp,
+) -> tuple[ResolvedOp | None, list[PortIssue]]:
+    if op.link_id is not None:
+        matches = [
+            ResolvedRemoveLinkRef(scope_path=scope_path, link_id=link_id, link=link)
+            for (scope_path, link_id), link in ledger.link_index.items()
+            if link_id == op.link_id
+        ]
+        if not matches:
+            return None, [
+                _issue(
+                    "unknown_link_id",
+                    f"Unknown link id {op.link_id}.",
+                    detail={"link_id": op.link_id},
+                )
+            ]
+        if len(matches) > 1:
+            return None, [
+                _issue(
+                    "ambiguous_link_id",
+                    f"Link id {op.link_id} exists in multiple scopes.",
+                    detail={"link_id": op.link_id, "scope_paths": [item.scope_path for item in matches]},
+                )
+            ]
+        return matches[0], []
+
+    assert op.target is not None
+    node_ref, issues = _resolve_node(ledger, NodeTarget(op.target.scope_path, op.target.uid))
+    if issues:
+        return None, issues
+    assert node_ref is not None
+    raw_input = _find_named_slot(node_ref.node.get("inputs"), op.target.input_field)
+    if raw_input is None:
+        return None, [
+            _issue(
+                "unknown_link_target_input",
+                f"{node_ref.class_type} does not expose input {op.target.input_field!r}.",
+                detail={
+                    "scope_path": op.target.scope_path,
+                    "uid": op.target.uid,
+                    "input": op.target.input_field,
+                },
+            )
+        ]
+    link_id = raw_input.get("link")
+    if not isinstance(link_id, int):
+        return None, [
+            _issue(
+                "missing_link_to_remove",
+                f"{node_ref.class_type}.{op.target.input_field} has no incoming link to remove.",
+                detail={
+                    "scope_path": op.target.scope_path,
+                    "uid": op.target.uid,
+                    "input": op.target.input_field,
+                },
+            )
+        ]
+    link = ledger.resolve_link(op.target.scope_path, link_id)
+    if link is None:
+        return None, [
+            _issue(
+                "dangling_link_reference",
+                f"Input {op.target.input_field!r} references missing link id {link_id}.",
+                detail={"scope_path": op.target.scope_path, "link_id": link_id},
+            )
+        ]
+    return ResolvedRemoveLinkRef(scope_path=op.target.scope_path, link_id=link_id, link=link), []
+
+
+def _resolve_source_endpoint(
+    ledger: EditLedger,
+    ref: LinkSourceRef,
+    *,
+    schema_provider: Any,
+) -> tuple[ResolvedLinkEndpoint | None, list[PortIssue]]:
+    backend = EditLedgerBackend(ledger)
+    result = _ctx.resolve_source_endpoint(backend, ref, schema_provider=schema_provider)
+    if result.value is None:
+        return None, _endpoint_port_issues(result)
+    ep = result.value
+    socket_type = ep.socket_type
+    if socket_type is None:
+        socket_type = _schema_output_type(schema_provider, ep.class_type, ep.slot_index, ep.slot_name)
+    return (
+        ResolvedLinkEndpoint(
+            ref=ref,
+            node=ep.node,
+            class_type=ep.class_type,
+            node_id=ep.node_id,
+            slot_index=ep.slot_index,
+            slot_name=ep.slot_name,
+            socket_type=socket_type,
+        ),
+        [],
+    )
+
+
+def _resolve_target_endpoint(
+    ledger: EditLedger,
+    ref: LinkTargetRef,
+    *,
+    schema_provider: Any,
+) -> tuple[ResolvedLinkEndpoint | None, list[PortIssue]]:
+    backend = EditLedgerBackend(ledger)
+    result = _ctx.resolve_target_endpoint(backend, ref, schema_provider=schema_provider)
+    if result.value is None:
+        return None, _endpoint_port_issues(result)
+    ep = result.value
+    return (
+        ResolvedLinkEndpoint(
+            ref=ref,
+            node=ep.node,
+            class_type=ep.class_type,
+            node_id=ep.node_id,
+            slot_index=ep.slot_index,
+            slot_name=ep.slot_name,
+            socket_type=ep.socket_type,
+        ),
+        [],
+    )
