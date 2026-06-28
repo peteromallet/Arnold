@@ -665,7 +665,7 @@ def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path
     assert "chain start" not in result.stdout
 
 
-def test_watchdog_completed_plan_marker_is_cleared_without_repair(tmp_path: Path) -> None:
+def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
@@ -714,10 +714,201 @@ tmux() { echo TMUX >&2; return 1; }
     )
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    assert not marker_path.exists()
-    assert not progress_path.exists()
-    assert "completed" in report_path.read_text(encoding="utf-8")
+    assert marker_path.exists()
+    assert progress_path.exists()
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tcomplete\tplan complete\t" in report
     assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_done_plan_without_marker_plan_name_uses_newest_plan_dir(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    older_plan = workspace / ".megaplan" / "plans" / "older-plan"
+    newer_plan = workspace / ".megaplan" / "plans" / "newer-plan"
+    _write_plan(older_plan, {"iteration": 1, "current_state": "planning", "active_step": None})
+    _write_plan(newer_plan, {"iteration": 1, "current_state": "done", "active_step": None})
+    old_ts = time.time() - 60
+    new_ts = time.time()
+    os.utime(older_plan / "state.json", (old_ts, old_ts))
+    os.utime(newer_plan / "state.json", (new_ts, new_ts))
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tcomplete\tplan complete\t" in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_nonterminal_plan_state_still_uses_stopped_repair_path(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"iteration": 1, "current_state": "planning", "active_step": {"phase": "plan", "attempt": 1}},
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched\t" in report
+    assert "\tobserve\tcomplete\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"iteration": 1, "current_state": "done", "active_step": None},
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched\t" in report
+    assert "\tobserve\tcomplete\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_unreadable_plan_state_falls_through_to_existing_stopped_path(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    (plan_dir / "state.json").write_text("{not-json\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched\t" in report
+    assert "\tobserve\tcomplete\t" not in report
+    assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
 
