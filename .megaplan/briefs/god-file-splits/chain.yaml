@@ -35,7 +35,7 @@ base_branch: worktree-phase2-reorg
 merge_policy: auto
 
 anchors:
-  north_star: .megaplan/briefs/god-file-splits/NORTHSTAR.md
+  north_star: NORTHSTAR.md
 
 on_failure:
   abort: stop_chain
