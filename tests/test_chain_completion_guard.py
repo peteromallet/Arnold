@@ -132,6 +132,71 @@ def _write_plan(
     return plan_dir
 
 
+def _write_execute_authority_plan(root: Path, *, base_sha: str) -> Path:
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(root)},
+        "meta": {"execution_baseline": {"head": base_sha}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "t6_add_focused_api_regressions",
+                        "status": "done",
+                        "kind": "code",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                    },
+                    {
+                        "id": "v3_api_tests",
+                        "status": "pending",
+                        "kind": "test",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                        "head_sha": base_sha,
+                    },
+                    {
+                        "id": "v4_optional_diagnostics_contract",
+                        "status": "skipped",
+                        "kind": "test",
+                        "executor_notes": "Skipped by contract: no diagnostic registry or keyword contract changed.",
+                        "head_sha": base_sha,
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "t6_add_focused_api_regressions",
+                        "status": "done",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                        "head_sha": base_sha,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return plan_dir
+
+
 def _record() -> dict[str, object]:
     return {"label": "m1", "plan": "plan-m1", "status": "done"}
 
@@ -220,6 +285,19 @@ def test_run_chain_pr_merge_resume_blocks_non_terminal_plan(tmp_path: Path) -> N
     assert saved.current_plan_name == "plan-m1"
     assert saved.last_state == "authority_divergence"
     assert "current_state='gated'" in result["reason"]
+
+
+def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authority(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    plan_dir = _write_execute_authority_plan(tmp_path, base_sha=base)
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "execution_batch_1.json"
 
 
 def test_empty_finalize_tasks_and_no_execution_batch_blocks(tmp_path: Path) -> None:

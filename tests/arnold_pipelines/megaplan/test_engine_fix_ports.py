@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.orchestration.plan_structure import (
 )
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     _evidence_from_task_record,
+    effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.execution_evidence import (
     validate_execution_evidence,
@@ -27,6 +28,80 @@ from arnold_pipelines.megaplan.orchestration.plan_contracts import (
     normalize_contract_payload,
     pre_existing_task_ids_from_contract,
 )
+
+_PYTEST_API_CMD = "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+
+
+def _init_git_repo(root: Path) -> tuple[str, str]:
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=root, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=root, check=True)
+    (root / "src").mkdir()
+    (root / "src" / "app.py").write_text("print('base')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/app.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=root, check=True, capture_output=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    (root / "src" / "app.py").write_text("print('head')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "src/app.py"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-m", "head"], cwd=root, check=True, capture_output=True)
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    return base, head
+
+
+def _make_execute_authority_plan(tmp_path: Path) -> tuple[Path, list[dict[str, object]], dict[str, object]]:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    base_sha, _head_sha = _init_git_repo(project_dir)
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    state = {
+        "config": {"project_dir": str(project_dir)},
+        "meta": {"execution_baseline": {"head": base_sha}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    tasks: list[dict[str, object]] = [
+        {
+            "id": "t6_add_focused_api_regressions",
+            "status": "done",
+            "kind": "code",
+            "commands_run": [_PYTEST_API_CMD],
+        },
+        {
+            "id": "v3_api_tests",
+            "status": "pending",
+            "kind": "test",
+            "commands_run": [_PYTEST_API_CMD],
+            "head_sha": base_sha,
+        },
+        {
+            "id": "v4_optional_diagnostics_contract",
+            "status": "skipped",
+            "kind": "test",
+            "executor_notes": "Skipped by contract: no diagnostic registry or keyword contract changed.",
+            "head_sha": base_sha,
+        },
+    ]
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"tasks": tasks}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "t6_add_focused_api_regressions",
+                        "status": "done",
+                        "commands_run": [_PYTEST_API_CMD],
+                        "head_sha": base_sha,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return plan_dir, tasks, state
 
 
 def test_stale_recorded_test_failure_blocker_drops_when_nodeid_now_passes(
@@ -169,6 +244,36 @@ def test_deferred_baseline_checkpoint_is_not_missing_execute_authority(
         ),
         encoding="utf-8",
     )
+
+    ok, missing = _execute_completion_authority(plan_dir)
+
+    assert ok is True
+    assert missing == []
+
+
+def test_effective_execute_completed_task_ids_accepts_execution_window_and_explained_skips(
+    tmp_path: Path,
+) -> None:
+    plan_dir, tasks, state = _make_execute_authority_plan(tmp_path)
+
+    completed = effective_execute_completed_task_ids(
+        tasks,
+        plan_dir=plan_dir,
+        project_dir=Path(state["config"]["project_dir"]),
+        state=state,
+    )
+
+    assert completed >= {
+        "t6_add_focused_api_regressions",
+        "v3_api_tests",
+        "v4_optional_diagnostics_contract",
+    }
+
+
+def test_execute_completion_authority_uses_execution_window_and_explained_skips(
+    tmp_path: Path,
+) -> None:
+    plan_dir, _tasks, _state = _make_execute_authority_plan(tmp_path)
 
     ok, missing = _execute_completion_authority(plan_dir)
 
