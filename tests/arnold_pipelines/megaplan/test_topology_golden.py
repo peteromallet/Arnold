@@ -15,12 +15,16 @@ from typing import Any
 import pytest
 import yaml
 
+from arnold.workflow.compiler import compile_pipeline
 from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
 from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
+MANIFEST_GOLDEN_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_manifest_golden.json"
 NORMALIZED_SHAPE_PATH = Path(__file__).parent / "fixtures" / "normalized_pipeline_shape.json"
 AMENDMENT_PATH = Path(__file__).parents[3] / "docs" / "arnold" / "workflow-manifest-amendments.md"
+LOCKED_MANIFEST_HASH = "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba"
+LOCKED_TOPOLOGY_HASH = "sha256:2705e157e12fc074301afa8f5aec4e48d9820814ebaaa77535d152a8cc381fd4"
 
 
 @pytest.fixture
@@ -40,6 +44,11 @@ def _fixture_has_m4_amendment() -> bool:
         return False
     text = AMENDMENT_PATH.read_text(encoding="utf-8")
     return "## M4 Megaplan Product Migration" in text
+
+
+def _canonical_manifest_json_bytes(manifest: Any) -> bytes:
+    payload = json.loads(manifest.to_json())
+    return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
 def _io_contract(items: tuple[Any, ...]) -> list[dict[str, Any]]:
@@ -165,9 +174,23 @@ def _manifest_policy_contract(policy: Any | None) -> dict[str, Any] | None:
 
 
 class TestTopologyFixtureLock:
+    def test_compiled_manifest_matches_locked_manifest_golden_bytes(self) -> None:
+        manifest = build_and_compile_pipeline()
+        assert manifest.manifest_hash == LOCKED_MANIFEST_HASH
+        assert manifest.topology_hash == LOCKED_TOPOLOGY_HASH
+        assert _canonical_manifest_json_bytes(manifest) == MANIFEST_GOLDEN_PATH.read_bytes()
+
+    def test_workflow_surface_manifest_matches_locked_manifest_golden_bytes(self) -> None:
+        manifest = compile_pipeline(workflow_planning.build_pipeline())
+        assert manifest.manifest_hash == LOCKED_MANIFEST_HASH
+        assert manifest.topology_hash == LOCKED_TOPOLOGY_HASH
+        assert _canonical_manifest_json_bytes(manifest) == MANIFEST_GOLDEN_PATH.read_bytes()
+
     def test_compiled_manifest_matches_locked_topology(self, fixture: dict) -> None:
         manifest = build_and_compile_pipeline()
         assert manifest.id == fixture["manifest_id"]
+        assert fixture["manifest_hash"] == LOCKED_MANIFEST_HASH
+        assert fixture["topology_hash"] == LOCKED_TOPOLOGY_HASH
         assert manifest.manifest_hash == fixture["manifest_hash"]
         assert manifest.topology_hash == fixture["topology_hash"]
 
@@ -204,6 +227,31 @@ class TestTopologyFixtureLock:
         }
         expected = {(item["label"], item["target"]) for item in fixture["tiebreaker_targets"]}
         assert edges == expected
+
+    def test_loop_suspension_routes_survive_lowering_and_compilation(self) -> None:
+        pipeline = build_pipeline()
+        pipeline_loop_routes = {
+            route.id: (route.source, route.target, route.label, route.condition_ref)
+            for route in pipeline.routes
+            if route.id in {"revise:critique", "tiebreaker_decide:critique"}
+        }
+        assert pipeline_loop_routes == {
+            "revise:critique": ("revise", "critique", "default", "revise:loop"),
+            "tiebreaker_decide:critique": (
+                "tiebreaker_decide",
+                "critique",
+                "iterate",
+                "tiebreaker:loop",
+            ),
+        }
+
+        manifest = build_and_compile_pipeline()
+        manifest_loop_edges = {
+            edge.id: (edge.source, edge.target, edge.label, edge.condition_ref)
+            for edge in manifest.edges
+            if edge.id in {"revise:critique", "tiebreaker_decide:critique"}
+        }
+        assert manifest_loop_edges == pipeline_loop_routes
 
     def test_compiled_review_edges_match_fixture(self, fixture: dict) -> None:
         manifest = build_and_compile_pipeline()

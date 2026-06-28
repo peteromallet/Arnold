@@ -17,6 +17,7 @@ from arnold.workflow.authoring import ComponentProvenance, PolicyComponent, Prom
 PROMPT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt"
 PROMPT_COMPONENT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt_components"
 HANDLER_MODULE = "arnold_pipelines.megaplan.handlers"
+M4_LOOP_MAX_ITERATIONS = 4
 
 CAPABILITY_REQUIREMENTS = MappingProxyType(
     {
@@ -150,6 +151,8 @@ REVISE_PROMPT = _prompt("revise")
 FINALIZE_PROMPT = _prompt("finalize")
 EXECUTE_PROMPT = _prompt("execute")
 REVIEW_PROMPT = _prompt("review")
+TIEBREAKER_RESEARCHER_PROMPT = _prompt("tiebreaker_researcher")
+TIEBREAKER_CHALLENGER_PROMPT = _prompt("tiebreaker_challenger")
 
 DEFAULT_POLICY = _policy(
     export_name="DEFAULT_POLICY",
@@ -224,7 +227,7 @@ REVISE_LOOP_POLICY = _policy(
     policy_type="loop",
     config={
         "timeout_seconds_ref": "build_pipeline.timeout_seconds",
-        "max_iterations_ref": "build_pipeline.max_critique_iterations",
+        "max_iterations": M4_LOOP_MAX_ITERATIONS,
         "until_ref": "critique_gate_pass",
         "suspension_routes": (
             {
@@ -242,7 +245,7 @@ TIEBREAKER_POLICY = _policy(
     policy_type="loop",
     config={
         "timeout_seconds_ref": "build_pipeline.timeout_seconds",
-        "max_iterations_ref": "build_pipeline.max_critique_iterations",
+        "max_iterations": M4_LOOP_MAX_ITERATIONS,
         "until_ref": "tiebreaker_resolved",
         "suspension_routes": (
             {
@@ -311,6 +314,54 @@ OVERRIDE_POLICY = _policy(
     policy_type="timing",
     config={"timeout_seconds_ref": "build_pipeline.timeout_seconds"},
     metadata={"canonical_carriers": ("override",)},
+)
+MODEL_ROUTING_POLICY = _policy(
+    export_name="MODEL_ROUTING_POLICY",
+    policy_id="megaplan:model-routing",
+    policy_type="routing",
+    config={
+        "default_routing_ref": "arnold_pipelines.megaplan.profiles:DEFAULT_AGENT_ROUTING",
+        "profile_loader_ref": "arnold_pipelines.megaplan.profiles:load_profile_metadata",
+        "phase_model_override_ref": "state.config.phase_model",
+    },
+    metadata={"authoring_surface": True},
+)
+ROBUSTNESS_POLICY = _policy(
+    export_name="ROBUSTNESS_POLICY",
+    policy_id="megaplan:robustness",
+    policy_type="robustness",
+    config={
+        "levels_ref": "arnold_pipelines.megaplan.profiles:ROBUSTNESS_LEVELS",
+        "accepted_ref": "arnold_pipelines.megaplan.profiles:ROBUSTNESS_ACCEPTED",
+        "normalizer_ref": "arnold_pipelines.megaplan.profiles:normalize_robustness",
+    },
+    metadata={"authoring_surface": True},
+)
+ARTIFACT_CONTRACT_POLICY = _policy(
+    export_name="ARTIFACT_CONTRACT_POLICY",
+    policy_id="megaplan:artifact-contract",
+    policy_type="artifact_contract",
+    config={
+        "step_contracts_ref": "arnold_pipelines.megaplan.step_contracts:STEP_CONTRACTS",
+        "content_types_ref": "arnold_pipelines.megaplan.content_types:CONTENT_TYPE_REGISTRY",
+    },
+    metadata={"authoring_surface": True},
+)
+SUSPENSION_POLICY = _policy(
+    export_name="SUSPENSION_POLICY",
+    policy_id="megaplan:suspension",
+    policy_type="suspension",
+    config={
+        "runtime_status": "suspended",
+        "resume_contract_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "routes": (
+            {"route_id": "gate:human", "capability_id": "human:gate"},
+            {"route_id": "review:human", "capability_id": "human:review"},
+            {"route_id": "revise:loop", "capability_id": "megaplan:planning"},
+            {"route_id": "tiebreaker:loop", "capability_id": "megaplan:planning"},
+        ),
+    },
+    metadata={"authoring_surface": True},
 )
 
 PREP = _step(
@@ -503,6 +554,18 @@ OVERRIDE = _step(
         {"id": "override:revise", "label": "replan", "condition_ref": "replan", "target_ref": "revise"},
     ),
 )
+SUSPEND = _step(
+    export_name="SUSPEND",
+    step_id="suspend",
+    kind="megaplan:suspend",
+    outputs=({"name": "suspension"},),
+    policy=SUSPENSION_POLICY,
+    terminal=True,
+    metadata={
+        "runtime_status": "suspended",
+        "topology_export": False,
+    },
+)
 
 SOURCE_PREP = _step(
     export_name="SOURCE_PREP",
@@ -624,6 +687,8 @@ PROMPT_COMPONENTS = (
     CRITIQUE_PROMPT,
     GATE_PROMPT,
     REVISE_PROMPT,
+    TIEBREAKER_RESEARCHER_PROMPT,
+    TIEBREAKER_CHALLENGER_PROMPT,
     FINALIZE_PROMPT,
     EXECUTE_PROMPT,
     REVIEW_PROMPT,
@@ -651,6 +716,9 @@ __all__ = [
     "GATE_PROMPT",
     "GATE_POLICY",
     "HALT",
+    "ARTIFACT_CONTRACT_POLICY",
+    "M4_LOOP_MAX_ITERATIONS",
+    "MODEL_ROUTING_POLICY",
     "OVERRIDE",
     "OVERRIDE_POLICY",
     "PLAN",
@@ -665,9 +733,14 @@ __all__ = [
     "REVISE",
     "REVISE_LOOP_POLICY",
     "REVISE_PROMPT",
+    "ROBUSTNESS_POLICY",
     "RUNTIME_BRANCH_VOCABULARY",
     "STEP_COMPONENTS_BY_ID",
+    "SUSPEND",
+    "SUSPENSION_POLICY",
+    "TIEBREAKER_CHALLENGER_PROMPT",
     "TIEBREAKER_DECIDE",
     "TIEBREAKER_POLICY",
+    "TIEBREAKER_RESEARCHER_PROMPT",
     "TIEBREAKER_RUN",
 ]

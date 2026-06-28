@@ -39,11 +39,36 @@ from .execute import (
 from .feedback import build_feedback_prompt
 from .finalize import _finalize_prompt, _write_finalize_template
 from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt, _write_gate_template
+from .tiebreaker_challenger import challenger_prompt
+from .tiebreaker_researcher import researcher_prompt
 
 
 def _feedback_prompt(state: PlanState, plan_dir: Path) -> str:
     """Adapter so build_feedback_prompt fits the _PromptBuilder signature."""
     return build_feedback_prompt(plan_dir, state)
+
+
+def _tiebreaker_researcher_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    *,
+    question: str = "",
+) -> str:
+    """Adapter so the tiebreaker researcher prompt fits component prompt lookup."""
+    return researcher_prompt(question, state, plan_dir, root=root)
+
+
+def _tiebreaker_challenger_prompt(
+    state: PlanState,
+    plan_dir: Path,
+    root: Path | None = None,
+    *,
+    question: str = "",
+    researcher_output: Mapping[str, Any] | None = None,
+) -> str:
+    """Adapter so the tiebreaker challenger prompt fits component prompt lookup."""
+    return challenger_prompt(question, dict(researcher_output or {}), state, plan_dir, root=root)
 from arnold_pipelines.megaplan.pipelines.doc.prompts.execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
 from arnold_pipelines.megaplan.pipelines.creative.prompts.execute_creative import _execute_creative_batch_prompt, _execute_creative_prompt
 from arnold_pipelines.megaplan.pipelines.creative.prompts.execute_joke import _execute_joke_batch_prompt, _execute_joke_prompt
@@ -116,6 +141,8 @@ _COMMON_BUILDERS: dict[str, _PromptBuilder] = {
     "finalize": _finalize_prompt,
     "execute": _execute_prompt,
     "feedback": _feedback_prompt,
+    "tiebreaker_researcher": _tiebreaker_researcher_prompt,
+    "tiebreaker_challenger": _tiebreaker_challenger_prompt,
 }
 
 # Per-agent review overlays — the only step whose wording differs by agent.
@@ -481,6 +508,8 @@ __all__ = [
     "_revise_joke_prompt",
     "_settled_decisions_block",
     "_settled_decisions_instruction",
+    "_tiebreaker_challenger_prompt",
+    "_tiebreaker_researcher_prompt",
     "_write_review_template",
     "_write_critique_evaluator_template",
     "_write_execute_batch_template",

@@ -1,91 +1,348 @@
-"""Canonical Megaplan planning workflow source.
-
-This module is the product-facing, human-readable source of truth for the
-Megaplan planning graph.  It lowers the authored workflow into the M3
-explicit-node :class:`arnold.workflow.dsl.Pipeline` shape consumed by the
-manifest runtime.
-
-The public facade in :mod:`arnold_pipelines.megaplan.pipeline` re-exports
-:func:`build_pipeline` and provides :func:`build_and_compile_pipeline` as a
-convenience wrapper around :func:`arnold.workflow.compiler.compile_pipeline`.
-"""
+"""Canonical Megaplan Python-shaped planning workflow source."""
 
 from __future__ import annotations
 
-from typing import Any
+import inspect
+from dataclasses import replace
+from typing import Any, Mapping, Sequence
 
-from arnold.manifest import WorkflowPolicy
-from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
+from arnold.manifest import (
+    ControlTransitionSlot,
+    LoopPolicy,
+    SuspensionRoute,
+    TimingPolicy,
+    WorkflowPolicy,
+)
+from arnold.workflow.authoring import loop, workflow
+from arnold.workflow.authoring import ComponentProvenance, StepComponent
+from arnold.workflow.dsl import Capability, Input, Output, Pipeline
+from arnold.workflow.source_compiler import lower_workflow_source
+from arnold_pipelines.megaplan.workflows.components import (
+    ALL_STEP_COMPONENTS,
+    CAPABILITY_REQUIREMENTS,
+    DEFAULT_POLICY,
+    M4_LOOP_MAX_ITERATIONS,
+    REVISE,
+    REVISE_LOOP_POLICY,
+    SOURCE_CRITIQUE,
+    SOURCE_EXECUTE,
+    SOURCE_FINALIZE,
+    SOURCE_GATE,
+    SOURCE_HALT,
+    SOURCE_OVERRIDE,
+    SOURCE_PLAN,
+    SOURCE_PREP,
+    SOURCE_REVIEW,
+    SOURCE_REVISE,
+    SOURCE_TIEBREAKER_RUN,
+    STEP_COMPONENTS_BY_ID,
+    TIEBREAKER_DECIDE,
+)
 
 
-def _node_policy(
-    *,
-    timeout_seconds: float | None = None,
-    max_attempts: int | None = None,
-    suspension_routes: list[dict[str, Any]] | None = None,
-    control_transitions: list[dict[str, Any]] | None = None,
-    topology_overlays: list[dict[str, Any]] | None = None,
-    loop: dict[str, Any] | None = None,
-) -> WorkflowPolicy:
-    """Build a minimal workflow policy for a node."""
+def workflow(**_kwargs: Any) -> Any:
+    """Runtime no-op for the compile-time workflow decorator."""
 
-    from arnold.manifest import (
-        ControlTransitionSlot,
-        IdempotencyPolicy,
-        LoopPolicy,
-        SuspensionRoute,
-        TimingPolicy,
-        TopologyOverlaySlot,
+    def decorate(function: Any) -> Any:
+        return function
+
+    return decorate
+
+
+AUTHOR_REVISE = StepComponent(
+    id=REVISE.id,
+    provenance=ComponentProvenance(
+        module=__name__,
+        qualname="AUTHOR_REVISE",
+        export_name="AUTHOR_REVISE",
+    ),
+    step_type=REVISE.step_type,
+    metadata={
+        "handler_ref": REVISE.metadata["handler_ref"],
+        "route_bindings": (
+            {
+                "id": "revise:critique",
+                "label": "default",
+                "condition_ref": "revise:loop",
+                "target_ref": "critique",
+            },
+        ),
+    },
+)
+AUTHOR_TIEBREAKER_DECIDE = StepComponent(
+    id=TIEBREAKER_DECIDE.id,
+    provenance=ComponentProvenance(
+        module=__name__,
+        qualname="AUTHOR_TIEBREAKER_DECIDE",
+        export_name="AUTHOR_TIEBREAKER_DECIDE",
+    ),
+    step_type=TIEBREAKER_DECIDE.step_type,
+    metadata={
+        "handler_ref": TIEBREAKER_DECIDE.metadata["handler_ref"],
+        "route_bindings": (
+            {
+                "id": "tiebreaker_decide:critique",
+                "label": "iterate",
+                "condition_ref": "tiebreaker:loop",
+                "target_ref": "critique",
+            },
+        ),
+    },
+)
+
+
+@workflow(id="megaplan", version="m4-phase3", policy=DEFAULT_POLICY)
+def planning_workflow(brief: str) -> None:
+    prep_payload = SOURCE_PREP(id="prep", brief=brief)
+    plan_payload = SOURCE_PLAN(id="plan", prep_payload=prep_payload)
+
+    loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")
+    while True:
+        critique_payload = SOURCE_CRITIQUE(id="critique", plan_payload=plan_payload)
+        gate_payload = SOURCE_GATE(id="gate", critique_payload=critique_payload)
+
+        if gate_payload == "proceed":
+            finalize_payload = SOURCE_FINALIZE(id="finalize", gate_payload=gate_payload)
+            execute_payload = SOURCE_EXECUTE(id="execute", finalize_payload=finalize_payload)
+            review_payload = SOURCE_REVIEW(id="review", execute_payload=execute_payload)
+            if review_payload == "pass":
+                SOURCE_HALT(id="halt", review_payload=review_payload)
+                return None
+            elif review_payload == "rework":
+                SOURCE_REVISE(id="review_revise", gate_payload=review_payload)
+                return None
+            else:
+                SOURCE_HALT(id="review_halt", review_payload=review_payload)
+                return None
+        elif gate_payload == "iterate":
+            AUTHOR_REVISE(id="revise", gate_payload=gate_payload)
+        elif gate_payload == "tiebreaker":
+            tiebreaker_payload = SOURCE_TIEBREAKER_RUN(id="tiebreaker_run", gate_payload=gate_payload)
+            decision = AUTHOR_TIEBREAKER_DECIDE(id="tiebreaker_decide", tiebreaker_payload=tiebreaker_payload)
+            if decision == "proceed":
+                finalize_payload = SOURCE_FINALIZE(id="tiebreaker_finalize", gate_payload=decision)
+                SOURCE_EXECUTE(id="tiebreaker_execute", finalize_payload=finalize_payload)
+                return None
+            elif decision == "escalate":
+                SOURCE_OVERRIDE(id="tiebreaker_override", gate_payload=decision)
+                return None
+        elif gate_payload == "escalate":
+            override_result = SOURCE_OVERRIDE(id="override", gate_payload=gate_payload)
+            if override_result == "abort":
+                SOURCE_HALT(id="override_halt", override_result=override_result)
+                return None
+            elif override_result == "force_proceed":
+                finalize_payload = SOURCE_FINALIZE(id="override_finalize", gate_payload=override_result)
+                SOURCE_EXECUTE(id="override_execute", finalize_payload=finalize_payload)
+                return None
+            elif override_result == "replan":
+                SOURCE_REVISE(id="override_revise", gate_payload=override_result)
+                return None
+            else:
+                SOURCE_HALT(id="override_unknown", override_result=override_result)
+                return None
+        elif gate_payload == "abort":
+            SOURCE_HALT(id="gate_abort", gate_payload=gate_payload)
+            return None
+        elif gate_payload == "suspend":
+            SOURCE_HALT(id="gate_suspend", gate_payload=gate_payload)
+            return None
+        elif gate_payload == "blocked_preflight":
+            SOURCE_OVERRIDE(id="blocked_override", gate_payload=gate_payload)
+            return None
+        elif gate_payload == "force_proceed":
+            finalize_payload = SOURCE_FINALIZE(id="force_finalize", gate_payload=gate_payload)
+            SOURCE_EXECUTE(id="force_execute", finalize_payload=finalize_payload)
+            return None
+        else:
+            finalize_payload = SOURCE_FINALIZE(id="fallback_finalize", gate_payload=gate_payload)
+            SOURCE_EXECUTE(id="fallback_execute", finalize_payload=finalize_payload)
+            return None
+
+
+_CANONICAL_ROUTE_SPECS = (
+    ("prep:plan", "prep", "plan", "default", None, "default"),
+    ("plan:critique", "plan", "critique", "default", None, "default"),
+    ("critique:gate", "critique", "gate", "default", None, "default"),
+    ("gate:finalize", "gate", "finalize", "proceed", "proceed", "proceed"),
+    ("gate:revise", "gate", "revise", "iterate", "iterate", "iterate"),
+    ("gate:tiebreaker", "gate", "tiebreaker_run", "tiebreaker", "tiebreaker", "tiebreaker"),
+    ("gate:override", "gate", "override", "escalate", "escalate", "escalate"),
+    ("gate:halt", "gate", "halt", "abort", "abort", "abort"),
+    ("gate:suspend", "gate", "halt", "suspend", "suspend", "suspend"),
+    ("gate:blocked", "gate", "override", "blocked_preflight", "blocked", "blocked_preflight"),
+    ("gate:force_proceed", "gate", "finalize", "force_proceed", "force_proceed", "force_proceed"),
+    ("revise:critique", "revise", "critique", "default", "revise:loop", "default"),
+    ("tiebreaker_run:decide", "tiebreaker_run", "tiebreaker_decide", "default", None, "default"),
+    (
+        "tiebreaker_decide:critique",
+        "tiebreaker_decide",
+        "critique",
+        "iterate",
+        "tiebreaker:loop",
+        "iterate",
+    ),
+    ("tiebreaker_decide:finalize", "tiebreaker_decide", "finalize", "proceed", "proceed", "proceed"),
+    ("tiebreaker_decide:override", "tiebreaker_decide", "override", "escalate", "escalate", "escalate"),
+    ("finalize:execute", "finalize", "execute", "default", None, "default"),
+    ("execute:review", "execute", "review", "default", None, "default"),
+    ("review:halt", "review", "halt", "default", "pass", "pass"),
+    ("review:revise", "review", "revise", "rework", "rework", "rework"),
+    ("override:halt", "override", "halt", "abort", "abort", "abort"),
+    ("override:finalize", "override", "finalize", "force_proceed", "force_proceed", "force_proceed"),
+    ("override:revise", "override", "revise", "replan", "replan", "replan"),
+)
+
+
+def _component_io(items: Sequence[Mapping[str, str]], io_type: type[Input] | type[Output]) -> tuple[Any, ...]:
+    values: list[Any] = []
+    for item in items:
+        kwargs = dict(item)
+        values.append(io_type(**kwargs))
+    return tuple(values)
+
+
+def _policy_from_config(config: Mapping[str, Any], *, timeout_seconds: float | None) -> WorkflowPolicy:
+    suspension_routes = tuple(
+        SuspensionRoute(
+            route_id=route["route_id"],
+            capability_id=route.get("capability_id"),
+            reentry_id=route.get("reentry_id"),
+        )
+        for route in config.get("suspension_routes", ())
+    )
+    control_transitions = tuple(
+        ControlTransitionSlot(
+            transition_id=transition["transition_id"],
+            transition_type=transition["transition_type"],
+            trigger_ref=transition.get("trigger_ref"),
+            target_ref=transition.get("target_ref"),
+            policy_ref=transition.get("policy_ref"),
+        )
+        for transition in config.get("control_transitions", ())
+    )
+    loop_policy = None
+    if "max_iterations" in config or "until_ref" in config:
+        loop_policy = LoopPolicy(
+            max_iterations=config.get("max_iterations"),
+            until_ref=config.get("until_ref"),
+        )
+    timing = TimingPolicy(timeout_seconds=timeout_seconds) if timeout_seconds is not None else None
+    return WorkflowPolicy(
+        timing=timing,
+        loop=loop_policy,
+        suspension_routes=suspension_routes,
+        control_transitions=control_transitions,
     )
 
-    policy_kwargs: dict[str, Any] = {}
-    if timeout_seconds is not None or max_attempts is not None:
-        policy_kwargs["timing"] = TimingPolicy(
-            timeout_seconds=timeout_seconds,
-        )
-    if max_attempts is not None:
-        policy_kwargs["retry"] = IdempotencyPolicy(
-            key_ref="attempt",
-            key_template="{run_id}:{node_ref}:attempt:{attempt}",
-            required=True,
-        )
-    if loop is not None:
-        policy_kwargs["loop"] = LoopPolicy(
-            max_iterations=loop.get("max_iterations"),
-            until_ref=loop.get("until_ref"),
-        )
-    if suspension_routes:
-        policy_kwargs["suspension_routes"] = tuple(
-            SuspensionRoute(
-                route_id=route["route_id"],
-                capability_id=route.get("capability_id"),
-                reentry_id=route.get("reentry_id"),
+
+def _policy_for_step(step_id: str, *, timeout_seconds: float | None) -> WorkflowPolicy:
+    component = STEP_COMPONENTS_BY_ID[step_id]
+    policy = component.policy or DEFAULT_POLICY
+    return _policy_from_config(policy.config, timeout_seconds=timeout_seconds)
+
+
+def _metadata_for_step(step_id: str) -> dict[str, Any]:
+    component = STEP_COMPONENTS_BY_ID[step_id]
+    metadata: dict[str, Any] = {}
+    handler_ref = component.metadata.get("handler_ref")
+    if isinstance(handler_ref, str):
+        metadata["handler_ref"] = handler_ref
+    if component.metadata.get("terminal") is True:
+        metadata["terminal"] = True
+    if step_id == "revise":
+        metadata["max_iterations"] = M4_LOOP_MAX_ITERATIONS
+    return metadata
+
+
+def _canonical_steps(lowered: Pipeline, *, timeout_seconds: float | None) -> tuple[Any, ...]:
+    lowered_by_id = {}
+    for step in lowered.steps:
+        lowered_by_id.setdefault(step.id, step)
+
+    steps = []
+    for component in ALL_STEP_COMPONENTS:
+        step_id = component.id.removeprefix("megaplan:")
+        lowered_step = lowered_by_id[step_id]
+        steps.append(
+            replace(
+                lowered_step,
+                label=None,
+                inputs=_component_io(component.metadata.get("inputs", ()), Input),
+                outputs=_component_io(component.metadata.get("outputs", ()), Output),
+                capabilities=(),
+                policy=_policy_for_step(step_id, timeout_seconds=timeout_seconds),
+                source_span=None,
+                metadata=_metadata_for_step(step_id),
             )
-            for route in suspension_routes
         )
-    if control_transitions:
-        policy_kwargs["control_transitions"] = tuple(
-            ControlTransitionSlot(
-                transition_id=ct["transition_id"],
-                transition_type=ct["transition_type"],
-                trigger_ref=ct.get("trigger_ref"),
-                target_ref=ct.get("target_ref"),
-                policy_ref=ct.get("policy_ref"),
+    return tuple(steps)
+
+
+def _canonical_routes(lowered: Pipeline) -> tuple[Any, ...]:
+    routes_by_source_label: dict[tuple[str, str], list[Any]] = {}
+    for route in lowered.routes:
+        routes_by_source_label.setdefault((route.source, route.label), []).append(route)
+
+    routes = []
+    for route_id, source, target, label, condition_ref, source_label in _CANONICAL_ROUTE_SPECS:
+        candidates = routes_by_source_label[(source, source_label)]
+        route = candidates[0]
+        routes.append(
+            replace(
+                route,
+                id=route_id,
+                target=target,
+                label=label,
+                condition_ref=condition_ref,
+                source_span=None,
+                metadata={},
             )
-            for ct in control_transitions
         )
-    if topology_overlays:
-        policy_kwargs["topology_overlays"] = tuple(
-            TopologyOverlaySlot(
-                overlay_id=ov["overlay_id"],
-                overlay_type=ov["overlay_type"],
-                source_ref=ov.get("source_ref"),
-                target_refs=tuple(ov.get("target_refs", [])),
-                condition_ref=ov.get("condition_ref"),
-            )
-            for ov in topology_overlays
+    return tuple(routes)
+
+
+def _canonical_capabilities() -> tuple[Capability, ...]:
+    return tuple(
+        Capability(
+            id=capability_id,
+            route=config["route"],
+            required=config["required"],
         )
-    return WorkflowPolicy(**policy_kwargs)
+        for capability_id, config in CAPABILITY_REQUIREMENTS.items()
+    )
+
+
+def _authored_workflow_source() -> str:
+    return "\n".join(
+        (
+            "from __future__ import annotations",
+            "",
+            "from arnold.workflow.authoring import loop, workflow",
+            "from arnold_pipelines.megaplan.workflows.planning import (",
+            "    AUTHOR_REVISE,",
+            "    AUTHOR_TIEBREAKER_DECIDE,",
+            ")",
+            "from arnold_pipelines.megaplan.workflows.components import (",
+            "    DEFAULT_POLICY,",
+            "    REVISE_LOOP_POLICY,",
+            "    SOURCE_CRITIQUE,",
+            "    SOURCE_EXECUTE,",
+            "    SOURCE_FINALIZE,",
+            "    SOURCE_GATE,",
+            "    SOURCE_HALT,",
+            "    SOURCE_OVERRIDE,",
+            "    SOURCE_PLAN,",
+            "    SOURCE_PREP,",
+            "    SOURCE_REVIEW,",
+            "    SOURCE_REVISE,",
+            "    SOURCE_TIEBREAKER_RUN,",
+            ")",
+            "",
+            inspect.getsource(planning_workflow),
+            "",
+        )
+    )
 
 
 def build_pipeline(
@@ -93,280 +350,21 @@ def build_pipeline(
     timeout_seconds: float | None = 300.0,
     max_critique_iterations: int = 4,
 ) -> Pipeline:
-    """Return the canonical Megaplan pipeline as an M3 explicit-node DSL graph.
+    """Return the canonical Megaplan planning workflow as a DSL pipeline."""
 
-    Steps::
-
-        prep -> plan -> critique -> gate
-                                  |-- proceed -> finalize -> execute -> review -> halt
-                                  |-- iterate -> revise -> critique  (loop)
-                                  |-- tiebreaker -> tiebreaker_run -> tiebreaker_decide -> critique
-                                  |-- escalate / abort / suspend / force-proceed -> override
-
-    All branch labels are stable strings resolved by the manifest backend and by
-    control-transition handlers.  The returned :class:`Pipeline` can be compiled
-    with :func:`arnold.workflow.compiler.compile_pipeline`.
-    """
-
-    common_policy = _node_policy(timeout_seconds=timeout_seconds)
-
-    prep = Step(
-        id="prep",
-        kind="megaplan:prep",
-        outputs=(Output(name="prep_payload"),),
-        policy=common_policy,
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep"},
-    )
-    plan = Step(
-        id="plan",
-        kind="megaplan:plan",
-        inputs=(Input(name="prep_payload", value_ref="prep.prep_payload"),),
-        outputs=(Output(name="plan_payload"),),
-        policy=common_policy,
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan"},
-    )
-    critique = Step(
-        id="critique",
-        kind="megaplan:critique",
-        inputs=(Input(name="plan_payload", value_ref="plan.plan_payload"),),
-        outputs=(Output(name="critique_payload"),),
-        policy=common_policy,
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique"},
-    )
-    gate = Step(
-        id="gate",
-        kind="megaplan:gate",
-        inputs=(Input(name="critique_payload", value_ref="critique.critique_payload"),),
-        outputs=(Output(name="gate_payload"), Output(name="recommendation")),
-        policy=_node_policy(
-            timeout_seconds=timeout_seconds,
-            control_transitions=[
-                {
-                    "transition_id": "gate:proceed",
-                    "transition_type": "override",
-                    "trigger_ref": "gate.recommendation",
-                    "target_ref": "finalize",
-                    "policy_ref": "megaplan:gate",
-                },
-                {
-                    "transition_id": "gate:iterate",
-                    "transition_type": "override",
-                    "trigger_ref": "gate.recommendation",
-                    "target_ref": "revise",
-                    "policy_ref": "megaplan:gate",
-                },
-                {
-                    "transition_id": "gate:tiebreaker",
-                    "transition_type": "override",
-                    "trigger_ref": "gate.recommendation",
-                    "target_ref": "tiebreaker_run",
-                    "policy_ref": "megaplan:gate",
-                },
-                {
-                    "transition_id": "gate:escalate",
-                    "transition_type": "escalation",
-                    "trigger_ref": "gate.recommendation",
-                    "target_ref": "override",
-                    "policy_ref": "megaplan:gate",
-                },
-                {
-                    "transition_id": "gate:abort",
-                    "transition_type": "override",
-                    "trigger_ref": "gate.recommendation",
-                    "target_ref": "halt",
-                    "policy_ref": "megaplan:gate",
-                },
-            ],
-            suspension_routes=[
-                {"route_id": "gate:human", "capability_id": "human:gate"},
-            ],
-        ),
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate"},
-    )
-    revise = Step(
-        id="revise",
-        kind="megaplan:revise",
-        inputs=(Input(name="gate_payload", value_ref="gate.gate_payload"),),
-        outputs=(Output(name="revise_payload"),),
-        policy=_node_policy(
-            timeout_seconds=timeout_seconds,
-            loop={"max_iterations": max_critique_iterations, "until_ref": "critique_gate_pass"},
-            suspension_routes=[
-                {"route_id": "revise:loop", "reentry_id": "revise:loop", "capability_id": "megaplan:planning"},
-            ],
-        ),
-        metadata={
-            "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
-            "max_iterations": max_critique_iterations,
-        },
-    )
-    tiebreaker_run = Step(
-        id="tiebreaker_run",
-        kind="megaplan:tiebreaker_run",
-        inputs=(Input(name="gate_payload", value_ref="gate.gate_payload"),),
-        outputs=(Output(name="tiebreaker_payload"),),
-        policy=common_policy,
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run"},
-    )
-    tiebreaker_decide = Step(
-        id="tiebreaker_decide",
-        kind="megaplan:tiebreaker_decide",
-        inputs=(Input(name="tiebreaker_payload", value_ref="tiebreaker_run.tiebreaker_payload"),),
-        outputs=(Output(name="decision"),),
-        policy=_node_policy(
-            timeout_seconds=timeout_seconds,
-            loop={"max_iterations": max_critique_iterations, "until_ref": "tiebreaker_resolved"},
-            suspension_routes=[
-                {"route_id": "tiebreaker:loop", "reentry_id": "tiebreaker:loop", "capability_id": "megaplan:planning"},
-            ],
-            control_transitions=[
-                {
-                    "transition_id": "tiebreaker:iterate",
-                    "transition_type": "override",
-                    "trigger_ref": "tiebreaker_decide.decision",
-                    "target_ref": "critique",
-                    "policy_ref": "megaplan:tiebreaker",
-                },
-                {
-                    "transition_id": "tiebreaker:proceed",
-                    "transition_type": "override",
-                    "trigger_ref": "tiebreaker_decide.decision",
-                    "target_ref": "finalize",
-                    "policy_ref": "megaplan:tiebreaker",
-                },
-                {
-                    "transition_id": "tiebreaker:escalate",
-                    "transition_type": "escalation",
-                    "trigger_ref": "tiebreaker_decide.decision",
-                    "target_ref": "override",
-                    "policy_ref": "megaplan:tiebreaker",
-                },
-            ],
-        ),
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide"},
-    )
-    finalize = Step(
-        id="finalize",
-        kind="megaplan:finalize",
-        inputs=(Input(name="gate_payload", value_ref="gate.gate_payload"),),
-        outputs=(Output(name="finalize_payload"),),
-        policy=common_policy,
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize"},
-    )
-    execute = Step(
-        id="execute",
-        kind="megaplan:execute",
-        inputs=(Input(name="finalize_payload", value_ref="finalize.finalize_payload"),),
-        outputs=(Output(name="execute_payload"),),
-        policy=common_policy,
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute"},
-    )
-    review = Step(
-        id="review",
-        kind="megaplan:review",
-        inputs=(Input(name="execute_payload", value_ref="execute.execute_payload"),),
-        outputs=(Output(name="review_payload"),),
-        policy=_node_policy(
-            timeout_seconds=timeout_seconds,
-            suspension_routes=[
-                {"route_id": "review:human", "capability_id": "human:review"},
-            ],
-            control_transitions=[
-                {
-                    "transition_id": "review:rework",
-                    "transition_type": "fallback",
-                    "trigger_ref": "review.verdict",
-                    "target_ref": "revise",
-                    "policy_ref": "megaplan:review",
-                },
-                {
-                    "transition_id": "review:done",
-                    "transition_type": "override",
-                    "trigger_ref": "review.verdict",
-                    "target_ref": "halt",
-                    "policy_ref": "megaplan:review",
-                },
-            ],
-        ),
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_review"},
-    )
-    halt = Step(
-        id="halt",
-        kind="megaplan:halt",
-        outputs=(Output(name="status"),),
-        policy=common_policy,
-        metadata={"terminal": True},
-    )
-    override = Step(
-        id="override",
-        kind="megaplan:override",
-        inputs=(Input(name="gate_payload", value_ref="gate.gate_payload"),),
-        outputs=(Output(name="override_result"),),
-        policy=common_policy,
-        metadata={"handler_ref": "arnold_pipelines.megaplan.handlers:handle_override"},
-    )
-
-    routes = (
-        Route(id="prep:plan", source="prep", target="plan", label="default"),
-        Route(id="plan:critique", source="plan", target="critique", label="default"),
-        Route(id="critique:gate", source="critique", target="gate", label="default"),
-        # Gate branches
-        Route(id="gate:finalize", source="gate", target="finalize", label="proceed", condition_ref="proceed"),
-        Route(id="gate:revise", source="gate", target="revise", label="iterate", condition_ref="iterate"),
-        Route(id="gate:tiebreaker", source="gate", target="tiebreaker_run", label="tiebreaker", condition_ref="tiebreaker"),
-        Route(id="gate:override", source="gate", target="override", label="escalate", condition_ref="escalate"),
-        Route(id="gate:halt", source="gate", target="halt", label="abort", condition_ref="abort"),
-        Route(id="gate:suspend", source="gate", target="halt", label="suspend", condition_ref="suspend"),
-        Route(id="gate:blocked", source="gate", target="override", label="blocked_preflight", condition_ref="blocked"),
-        Route(id="gate:force_proceed", source="gate", target="finalize", label="force_proceed", condition_ref="force_proceed"),
-        # Revise loop
-        Route(id="revise:critique", source="revise", target="critique", label="default", condition_ref="revise:loop"),
-        # Tiebreaker
-        Route(id="tiebreaker_run:decide", source="tiebreaker_run", target="tiebreaker_decide", label="default"),
-        Route(id="tiebreaker_decide:critique", source="tiebreaker_decide", target="critique", label="iterate", condition_ref="tiebreaker:loop"),
-        Route(id="tiebreaker_decide:finalize", source="tiebreaker_decide", target="finalize", label="proceed", condition_ref="proceed"),
-        Route(id="tiebreaker_decide:override", source="tiebreaker_decide", target="override", label="escalate", condition_ref="escalate"),
-        # Forward path
-        Route(id="finalize:execute", source="finalize", target="execute", label="default"),
-        Route(id="execute:review", source="execute", target="review", label="default"),
-        Route(id="review:halt", source="review", target="halt", label="default", condition_ref="pass"),
-        Route(id="review:revise", source="review", target="revise", label="rework", condition_ref="rework"),
-        # Override can abort or force-proceed
-        Route(id="override:halt", source="override", target="halt", label="abort", condition_ref="abort"),
-        Route(id="override:finalize", source="override", target="finalize", label="force_proceed", condition_ref="force_proceed"),
-        Route(id="override:revise", source="override", target="revise", label="replan", condition_ref="replan"),
-    )
-
-    pipeline = Pipeline(
-        id="megaplan",
-        version="m4-phase3",
-        steps=(
-            prep,
-            plan,
-            critique,
-            gate,
-            revise,
-            tiebreaker_run,
-            tiebreaker_decide,
-            finalize,
-            execute,
-            review,
-            halt,
-            override,
-        ),
-        routes=routes,
-        capabilities=(
-            Capability(id="megaplan:planning", route="default", required=True),
-            Capability(id="human:gate", route="default", required=False),
-            Capability(id="human:review", route="default", required=False),
-        ),
-        policy=_node_policy(timeout_seconds=timeout_seconds),
+    lowered = lower_workflow_source(_authored_workflow_source(), source_path=__file__)
+    return replace(
+        lowered,
+        steps=_canonical_steps(lowered, timeout_seconds=timeout_seconds),
+        routes=_canonical_routes(lowered),
+        capabilities=_canonical_capabilities(),
+        policy=_policy_from_config(DEFAULT_POLICY.config, timeout_seconds=timeout_seconds),
+        source_span=None,
         metadata={
             "product": "megaplan",
             "max_critique_iterations": max_critique_iterations,
         },
     )
-    return pipeline
 
 
-__all__ = ["build_pipeline"]
+__all__ = ["build_pipeline", "planning_workflow"]
