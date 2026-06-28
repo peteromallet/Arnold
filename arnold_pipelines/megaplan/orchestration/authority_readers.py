@@ -203,6 +203,7 @@ def corroborated_completed_task_ids(
     nucleus, load_diagnostics = _resolve_evidence_nucleus(
         plan_dir=Path(plan_dir) if plan_dir is not None else None,
         evidence_nucleus=evidence_nucleus,
+        default_head=current_head,
     )
     completed: set[str] = set()
     for task in task_records:
@@ -420,7 +421,11 @@ def _is_execute_command_checkpoint(task: Mapping[str, Any]) -> bool:
     )
 
 
-def load_evidence_nucleus(plan_dir: Path | str) -> tuple[EvidenceRef, ...]:
+def load_evidence_nucleus(
+    plan_dir: Path | str,
+    *,
+    default_head: str | None = None,
+) -> tuple[EvidenceRef, ...]:
     """Load the small task evidence nucleus from existing plan artifacts."""
 
     root = Path(plan_dir)
@@ -429,7 +434,13 @@ def load_evidence_nucleus(plan_dir: Path | str) -> tuple[EvidenceRef, ...]:
     if verdict is not None:
         refs.extend(verdict.evidence)
     for artifact_path in _iter_existing_artifacts(root):
-        refs.extend(_evidence_from_execution_artifact(root, artifact_path))
+        refs.extend(
+            _evidence_from_execution_artifact(
+                root,
+                artifact_path,
+                default_head=default_head,
+            )
+        )
     return tuple(refs)
 
 
@@ -437,6 +448,7 @@ def _resolve_evidence_nucleus(
     *,
     plan_dir: Path | None,
     evidence_nucleus: Any,
+    default_head: str | None = None,
 ) -> tuple[tuple[EvidenceRef, ...], dict[str, Any]]:
     refs: list[EvidenceRef] = []
     diagnostics: dict[str, Any] = {"evidence_sources": []}
@@ -445,7 +457,7 @@ def _resolve_evidence_nucleus(
         diagnostics["evidence_sources"].append("provided")
     if plan_dir is not None:
         try:
-            loaded = load_evidence_nucleus(plan_dir)
+            loaded = load_evidence_nucleus(plan_dir, default_head=default_head)
             refs.extend(loaded)
             diagnostics["evidence_sources"].append("plan_artifacts")
             diagnostics["loaded_evidence_count"] = len(loaded)
@@ -469,7 +481,12 @@ def _iter_existing_artifacts(plan_dir: Path) -> tuple[Path, ...]:
     return tuple(paths)
 
 
-def _evidence_from_execution_artifact(plan_dir: Path, artifact_path: Path) -> tuple[EvidenceRef, ...]:
+def _evidence_from_execution_artifact(
+    plan_dir: Path,
+    artifact_path: Path,
+    *,
+    default_head: str | None = None,
+) -> tuple[EvidenceRef, ...]:
     try:
         payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -481,7 +498,14 @@ def _evidence_from_execution_artifact(plan_dir: Path, artifact_path: Path) -> tu
     refs.extend(_normalize_refs(payload.get("evidence")))
     for record in _task_records(payload):
         refs.extend(_normalize_refs(record.get("evidence")))
-        refs.extend(_evidence_from_task_record(record, artifact_path, root=plan_dir))
+        refs.extend(
+            _evidence_from_task_record(
+                record,
+                artifact_path,
+                root=plan_dir,
+                default_head=default_head,
+            )
+        )
     return tuple(refs)
 
 
@@ -516,9 +540,12 @@ def _evidence_from_task_record(
     artifact_path: Path,
     *,
     root: Path,
+    default_head: str | None = None,
 ) -> tuple[EvidenceRef, ...]:
     task_id = _task_id(record)
     fallback_head = _optional_str(record.get("head_sha") or record.get("head"))
+    if fallback_head is None:
+        fallback_head = _optional_str(default_head)
     if fallback_head is None and root is not None:
         fallback_head = _best_effort_git_head_for_path(root)
     refs: list[EvidenceRef] = []
