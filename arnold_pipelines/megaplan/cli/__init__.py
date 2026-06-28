@@ -2299,6 +2299,35 @@ def _auto_sync_installed_skills() -> None:
         pass
 
 
+def _consume_execute_compat_flags(
+    args: argparse.Namespace,
+    remaining: list[str],
+) -> list[str]:
+    """Back-compat for wrapper-supplied execute flags left in ``remaining``.
+
+    Some cloud/watchdog launches always forward the execute envelope flags. If a
+    stale or partial parser path leaves those tokens unconsumed, treat them as
+    recognized execute options instead of hard-failing at argparse level.
+    """
+
+    if getattr(args, "command", None) != "execute" or not remaining:
+        return remaining
+
+    consumed: list[str] = []
+    recognized = {
+        "--confirm-destructive": "confirm_destructive",
+        "--user-approved": "user_approved",
+        "--retry-blocked-tasks": "retry_blocked_tasks",
+    }
+    for token in remaining:
+        attr = recognized.get(token)
+        if attr is None:
+            consumed.append(token)
+            continue
+        setattr(args, attr, True)
+    return consumed
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -2458,6 +2487,7 @@ def main(argv: list[str] | None = None) -> int:
             if not args.note:
                 args.note = " ".join(remaining)
             remaining = []
+        remaining = _consume_execute_compat_flags(args, remaining)
         if remaining:
             parser.error(f"unrecognized arguments: {' '.join(remaining)}")
         if (
