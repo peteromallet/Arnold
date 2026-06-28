@@ -63,11 +63,19 @@ def _load_reap_module(tmp_path: Path):
 def _extract_repair_stall_program() -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index("reap_stalled_repair_candidates() {")
-    marker = (
+    marker = None
+    for candidate in (
+        "python3 - \"$MARKER_DIR\" \"$REPAIR_OPERATOR_ROOT\" "
+        "\"$REAP_STALL_GRACE_SECS\" \"$REAP_STALL_IDLE_SECS\" "
+        "\"$REAP_AGE_SECS\" <<'PY'",
         "python3 - \"$MARKER_DIR\" \"$KIMI_OPERATOR_ROOT\" "
         "\"$REAP_STALL_GRACE_SECS\" \"$REAP_STALL_IDLE_SECS\" "
-        "\"$REAP_AGE_SECS\" <<'PY'"
-    )
+        "\"$REAP_AGE_SECS\" <<'PY'",
+    ):
+        if candidate in text[start:]:
+            marker = candidate
+            break
+    assert marker is not None
     py_start = text.index(marker, start)
     py_start = text.index("\n", py_start) + 1
     py_end = text.index("\nPY\n", py_start)
@@ -234,7 +242,7 @@ def test_watchdog_reap_decision_helper_reaps_only_stale_cloud_repairs(tmp_path: 
             "etimes": 600,
             "args": (
                 "codex exec --sandbox danger-full-access "
-                "'You are the Codex repair subagent launched by the cloud watchdog. "
+                "'You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud session. "
                 "Context: Session: fresh-session Workspace: /tmp/ws'"
             ),
         },
@@ -357,18 +365,19 @@ def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
 def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> None:
     text = _wrapper("arnold-watchdog")
 
-    # The Kimi goal operator is launched in the background (setsid ... &) so a
-    # 60-min repair on one session cannot block the tick from scanning/reporting
-    # the other sessions.
+    # The bounded repair loop is launched in the background (setsid ... &) so a
+    # repair on one session cannot block the tick from scanning/reporting the
+    # other sessions.
     assert "dispatch_kimi_repair()" in text
-    assert 'setsid bash -c \'echo "$$" > "$0"; exec /usr/local/bin/arnold-kimi-goal-operator "$@"\'' in text
+    assert 'setsid bash -c \'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"\'' in text
+    assert 'PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"' in text
     assert "kimi_dispatch_marker_set" in text
     assert "mechanical_relaunch_attempted_previously" in text
     assert "kimi_dispatch_failed_previously" in text
-    # The direct-relaunch fallback consumes the marker (Kimi tried + exited w/o recovery).
-    assert "session stopped; Kimi tried and exited without recovery -> direct relaunch" in text
+    # The direct-relaunch fallback consumes the marker (repair loop tried and exited w/o recovery).
+    assert "session stopped; repair loop tried and exited without recovery -> direct relaunch" in text
     assert "session stopped; mechanical relaunch first" in text
-    assert "session stopped after mechanical relaunch: background-dispatched Kimi goal operator" in text
+    assert "session stopped after mechanical relaunch: background-dispatched repair loop" in text
     # The marker is cleared once the session is observed alive + healthy.
     assert "kimi_dispatch_marker_clear" in text
     assert 'rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")"' in text
@@ -1120,7 +1129,7 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched after mechanical relaunch\t" in report
+    assert "\trepair\trepair_dispatched\trepair loop dispatched after mechanical relaunch\t" in report
     assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
@@ -1391,7 +1400,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert result.returncode == 0, result.stderr
     assert "scan complete markers=1" in log_path.read_text(encoding="utf-8")
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched after mechanical relaunch\t" in report
+    assert "\trepair\trepair_dispatched\trepair loop dispatched after mechanical relaunch\t" in report
     assert "needs_human" not in report
     assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
@@ -1696,6 +1705,99 @@ def test_watchdog_repair_principles_are_general_and_loaded_into_kimi_prompt() ->
     assert "DeepSeek phases must run through the direct DeepSeek API credentials" in principles
     assert "read the launcher skill instructions" in principles
     assert "brief Codex through `$subagent-launcher`" in principles
+
+
+def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert 'DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"' in text
+    assert 'NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"' in text
+    assert "repair_data_init()" in text
+    assert "repair_data_record_dev()" in text
+    assert "repair_data_record_mechanical()" in text
+    assert "repair_data_record_kimi()" in text
+    assert "for iteration in 1 2 3; do" in text
+    assert 'DEV_REQUESTED_MODEL="glm-5.2"' in text
+    assert 'DEV_REQUESTED_MODEL="codex:gpt-5.4"' in text
+    assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
+    assert 'GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"' in text
+    assert 'repair_data_set_outcome "running"' in text
+    assert 'repair_data_set_outcome "discord_escalated"' in text
+    assert "write_needs_human_marker" in text
+    assert "send_discord_escalation" in text
+    assert "Repair data file (read this first): $DATA_FILE" in text
+    assert "do not relaunch the chain yourself" in text.lower()
+
+
+def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
+    text = _wrapper("arnold-repair-loop")
+
+    assert 'DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"' in text
+    assert 'KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"' in text
+    assert 'KIMI_MAX_TURNS="${CLOUD_WATCHDOG_KIMI_MAX_TURNS:-40}"' in text
+    assert "verify_started_and_holding()" in text
+    assert "mechanical_launch_step()" in text
+    assert "run_kimi_launch_turn()" in text
+    assert 'timeout "$DEV_TIMEOUT"' in text
+    assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
+    assert 'tmux new-session -d -s "$session"' in text
+    assert 'repair_data_record_kimi "$iteration" "running"' in text
+
+
+def test_watchdog_repair_loop_needs_human_sidecar_short_circuits_relaunch(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    report_path = tmp_path / "report.tsv"
+    (repair_data_dir / "demo-session.needs-human.json").write_text(
+        json.dumps(
+            {
+                "summary": "i1 dev=zhipu:glm-5.2 sha=abc mechanical=failed:stopped kimi=failed:bad-creds",
+                "repair_data_path": str(repair_data_dir / "demo-session.repair-data.json"),
+                "discord_status": "delivered",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("repair_needs_human_summary"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_attention_status_env() { return 0; }
+kimi_operator_running() { return 1; }
+mechanical_relaunch_attempted_previously() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} /tmp/spec.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tneeds_human\t" in report
+    assert "repair_data=" in report
+    assert "discord=delivered" in report
+    assert "DISPATCH" not in result.stderr
+    assert "TMUX" not in result.stderr
 
 
 # ---------------------------------------------------------------------------

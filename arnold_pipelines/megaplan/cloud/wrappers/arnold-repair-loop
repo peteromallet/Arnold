@@ -1,0 +1,883 @@
+#!/usr/bin/env bash
+set -uo pipefail
+set -m
+
+if [[ $# -lt 3 ]]; then
+  echo "usage: arnold-repair-loop <session> <workspace> <remote-spec>" >&2
+  exit 64
+fi
+
+SESSION="$1"
+WORKSPACE="$2"
+REMOTE_SPEC="$3"
+
+if [[ -f /workspace/.cloud-hot-env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  . /workspace/.cloud-hot-env
+  set +a
+fi
+
+MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
+MARKER_PATH="$MARKER_DIR/$SESSION.json"
+ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
+DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
+ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
+SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
+PRINCIPLES_PATH="${KIMI_GOAL_PRINCIPLES_PATH:-/usr/local/share/arnold-watchdog/principles.md}"
+HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
+KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
+KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
+DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
+KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"
+MECHANICAL_VERIFY_INITIAL_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_INITIAL_SECS:-12}"
+MECHANICAL_VERIFY_HOLD_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_HOLD_SECS:-18}"
+KIMI_VERIFY_INITIAL_SECS="${CLOUD_WATCHDOG_KIMI_VERIFY_INITIAL_SECS:-12}"
+KIMI_VERIFY_HOLD_SECS="${CLOUD_WATCHDOG_KIMI_VERIFY_HOLD_SECS:-18}"
+KIMI_MAX_TURNS="${CLOUD_WATCHDOG_KIMI_MAX_TURNS:-40}"
+CODEX_REASONING_EFFORT="${CLOUD_WATCHDOG_CODEX_REASONING_EFFORT:-low}"
+DISCORD_DM_BIN="${DISCORD_DM_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
+
+TS="$(date -u +%Y%m%dT%H%M%SZ)"
+SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
+RUN_DIR="$ROOT/${TS}-${SAFE_SESSION}"
+LOG="$RUN_DIR/operator.log"
+DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"
+NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
+
+mkdir -p "$RUN_DIR" "$DATA_DIR"
+
+CHILD_PIDS=()
+CLEANUP_CHILDREN_RAN=0
+cleanup_children() {
+  local pid pgid
+  if [[ "$CLEANUP_CHILDREN_RAN" == "1" ]]; then
+    return
+  fi
+  CLEANUP_CHILDREN_RAN=1
+  for pid in "${CHILD_PIDS[@]:-}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+      if [[ -n "$pgid" ]] && kill -- -"$pgid" 2>/dev/null; then
+        :
+      else
+        kill "$pid" 2>/dev/null || true
+      fi
+    fi
+  done
+  sleep 0.5
+  for pid in "${CHILD_PIDS[@]:-}"; do
+    pgid="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -n "$pgid" ]]; then
+      kill -9 -- -"$pgid" 2>/dev/null || true
+    fi
+    kill -9 "$pid" 2>/dev/null || true
+  done
+}
+trap cleanup_children EXIT INT TERM HUP
+
+log() {
+  echo "[repair-loop $(date -Iseconds)] $*" | tee -a "$LOG"
+}
+
+safe_name() {
+  printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
+}
+
+json_field() {
+  local path="$1"
+  local field="$2"
+  python3 - "$path" "$field" <<'PY'
+import json
+import sys
+
+path, field = sys.argv[1:]
+try:
+    payload = json.load(open(path, encoding="utf-8"))
+except Exception:
+    raise SystemExit(1)
+value = payload.get(field)
+if value is None:
+    raise SystemExit(1)
+if isinstance(value, str):
+    print(value)
+else:
+    print(json.dumps(value, sort_keys=True))
+PY
+}
+
+chain_wait_status() {
+  local workspace="$1"
+  python3 - "$workspace" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plans_dir = workspace / ".megaplan" / "plans"
+chain_paths = sorted(
+    {
+        *plans_dir.glob(".chains/*.json"),
+        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *(workspace / ".megaplan").glob("**/chain_state.json"),
+    },
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+
+for path in chain_paths:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if payload.get("last_state") != "awaiting_pr_merge":
+        continue
+    pr_number = payload.get("pr_number")
+    if not pr_number:
+        print("awaiting_pr_merge")
+        raise SystemExit(0)
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(int(pr_number)), "--json", "state"],
+            cwd=workspace,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode == 0:
+            state = json.loads(proc.stdout or "{}").get("state", "")
+            if isinstance(state, str) and state.lower() == "merged":
+                print("none")
+                raise SystemExit(0)
+    except Exception:
+        pass
+    print("awaiting_pr_merge")
+    raise SystemExit(0)
+
+print("none")
+PY
+}
+
+session_health_status() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local wait_status
+  if ! tmux has-session -t "$session" 2>/dev/null; then
+    if [[ "$run_kind" == "chain" ]]; then
+      wait_status="$(chain_wait_status "$workspace")"
+      if [[ "$wait_status" != "none" ]]; then
+        echo "$wait_status"
+        return 0
+      fi
+    fi
+    echo "stopped"
+    return 0
+  fi
+
+  local pane log_path
+  pane="$(tmux capture-pane -pt "$session" -S -120 2>/dev/null || true)"
+  if printf '%s\n' "$pane" | grep -Eq 'cmd exited rc=[1-9]|error retry [0-9]+/[0-9]+'; then
+    echo "retrying_failure"
+    return 0
+  fi
+
+  if [[ "$run_kind" == "chain" ]]; then
+    if [[ "$session" == "megaplan-chain" ]]; then
+      log_path="$workspace/.megaplan/cloud-chain.log"
+    else
+      log_path="$workspace/.megaplan/cloud-chain-${session}.log"
+    fi
+    if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "invalid_spec"|invalid_spec|"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
+      echo "chain_log_failure"
+      return 0
+    fi
+    if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+      echo "alive"
+      return 0
+    fi
+    wait_status="$(chain_wait_status "$workspace")"
+    if [[ "$wait_status" != "none" ]]; then
+      echo "$wait_status"
+      return 0
+    fi
+  elif [[ -n "$plan_name" ]]; then
+    if ps -eww -o args= \
+      | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan (init|auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)" \
+      | grep -Eq -- "(--plan[=[:space:]]$plan_name|--name[=[:space:]]$plan_name.*--auto-start|--auto-start.*--name[=[:space:]]$plan_name)"; then
+      echo "alive"
+      return 0
+    fi
+    if ps -eww -o args= \
+      | grep -E "[a]rnold (auto|resume)|[m]egaplan (auto|resume)" \
+      | grep -Fq -- "--plan $plan_name"; then
+      echo "alive"
+      return 0
+    fi
+  fi
+
+  echo "stopped"
+}
+
+default_plan_relaunch_command() {
+  local plan_name="$1"
+  local workspace="$2"
+  local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
+    "$ARNOLD_SRC" "$ARNOLD_SRC" "$plan_name" "$workspace" "$log_path"
+}
+
+resolve_relaunch_command() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local relaunch_command="${6:-}"
+  if [[ -n "$relaunch_command" ]]; then
+    printf '%s' "$relaunch_command"
+    return 0
+  fi
+  if [[ "$run_kind" == "plan" ]]; then
+    [[ -n "$plan_name" ]] || return 1
+    default_plan_relaunch_command "$plan_name" "$workspace"
+    return 0
+  fi
+  local log_relative
+  if [[ "$session" == "megaplan-chain" ]]; then
+    log_relative=".megaplan/cloud-chain.log"
+  else
+    log_relative=".megaplan/cloud-chain-${session}.log"
+  fi
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    "$ARNOLD_SRC" "$ARNOLD_SRC" "$remote_spec" "$workspace" "$workspace/$log_relative"
+}
+
+repair_data_init() {
+  local run_kind="$1"
+  local plan_name="$2"
+  local relaunch_command="$3"
+  local initial_health="$4"
+  local marker_json source_git workspace_git chain_log watchdog_log tmux_info chain_state
+  marker_json="$(cat "$MARKER_PATH" 2>/dev/null || true)"
+  source_git="$(cd "$ARNOLD_SRC" 2>/dev/null && { git branch --show-current; git status --short; git log -1 --oneline; } 2>&1 || true)"
+  workspace_git="$(cd "$WORKSPACE" 2>/dev/null && { git branch --show-current; git status --short; git log -1 --oneline; } 2>&1 || true)"
+  chain_log="$(tail -120 "$WORKSPACE/.megaplan/cloud-chain.log" 2>/dev/null || tail -120 "$WORKSPACE/.megaplan/cloud-chain-${SESSION}.log" 2>/dev/null || true)"
+  watchdog_log="$(tail -120 /workspace/watchdog.log 2>/dev/null || true)"
+  tmux_info="$(tmux capture-pane -pt "$SESSION" -S -80 2>/dev/null || true)"
+  chain_state="$(find "$WORKSPACE/.megaplan" -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | tail -10)"
+  python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" <<'PY'
+import json
+import sys
+
+(
+    path,
+    session,
+    workspace,
+    spec,
+    run_kind,
+    plan_name,
+    arnold_src,
+    sync_branch,
+    run_dir,
+    relaunch_command,
+    initial_health,
+    marker_json,
+    source_git,
+    workspace_git,
+    chain_log,
+    watchdog_log,
+    tmux_info,
+    chain_state,
+) = sys.argv[1:]
+
+payload = {
+    "session": session,
+    "workspace": workspace,
+    "spec": spec,
+    "run_kind": run_kind,
+    "plan_name": plan_name,
+    "arnold_src": arnold_src,
+    "sync_branch": sync_branch,
+    "run_dir": run_dir,
+    "initial_facts": {
+        "relaunch_command": relaunch_command,
+        "initial_health": initial_health,
+        "marker_json": marker_json,
+        "source_git": source_git,
+        "workspace_git": workspace_git,
+        "chain_log_tail": chain_log,
+        "watchdog_log_tail": watchdog_log,
+        "tmux_pane_tail": tmux_info,
+        "chain_state_files": chain_state,
+    },
+    "iterations": [],
+    "outcome": "repairing",
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+}
+
+repair_data_record_dev() {
+  local iteration="$1"
+  local requested_model="$2"
+  local dispatch_model="$3"
+  local fallback_reason="$4"
+  local report_path="$5"
+  local turn_rc="$6"
+  local before_sha="$7"
+  local after_sha="$8"
+  python3 - "$DATA_FILE" "$iteration" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
+import json
+import pathlib
+import sys
+
+path, iteration_raw, requested_model, dispatch_model, fallback_reason, report_path, turn_rc, before_sha, after_sha = sys.argv[1:]
+iteration = int(iteration_raw)
+payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+report = {}
+report_file = pathlib.Path(report_path)
+if report_file.exists():
+    try:
+        report = json.loads(report_file.read_text(encoding="utf-8"))
+    except Exception:
+        report = {}
+
+iterations = payload.setdefault("iterations", [])
+while len(iterations) < iteration:
+    iterations.append({"i": len(iterations) + 1})
+entry = iterations[iteration - 1]
+entry["i"] = iteration
+entry["dev_model_requested"] = requested_model
+entry["dev_model"] = dispatch_model
+if fallback_reason:
+    entry["dev_model_fallback"] = fallback_reason
+entry["dev_turn_rc"] = int(turn_rc)
+entry["dev_fix_sha"] = (
+    report.get("pushed_commit")
+    or report.get("commit")
+    or (after_sha if after_sha and after_sha != before_sha else "")
+)
+entry["dev_hypothesis"] = (
+    report.get("hypothesis")
+    or report.get("root_cause")
+    or report.get("classification")
+    or ""
+)
+entry["dev_summary"] = (
+    report.get("what_tried")
+    or report.get("fix_summary")
+    or report.get("source_changes")
+    or ""
+)
+entry["dev_validation"] = report.get("validation") or []
+entry["dev_report"] = report
+
+pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+repair_data_record_mechanical() {
+  local iteration="$1"
+  local status="$2"
+  local detail="$3"
+  python3 - "$DATA_FILE" "$iteration" "$status" "$detail" <<'PY'
+import json
+import pathlib
+import sys
+
+path, iteration_raw, status, detail = sys.argv[1:]
+iteration = int(iteration_raw)
+payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+iterations = payload.setdefault("iterations", [])
+while len(iterations) < iteration:
+    iterations.append({"i": len(iterations) + 1})
+entry = iterations[iteration - 1]
+entry["i"] = iteration
+entry["mechanical_launch"] = status
+entry["mechanical_detail"] = detail
+pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+repair_data_record_kimi() {
+  local iteration="$1"
+  local status="$2"
+  local report_path="$3"
+  local turn_rc="$4"
+  python3 - "$DATA_FILE" "$iteration" "$status" "$report_path" "$turn_rc" <<'PY'
+import json
+import pathlib
+import sys
+
+path, iteration_raw, status, report_path, turn_rc = sys.argv[1:]
+iteration = int(iteration_raw)
+payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+report = {}
+report_file = pathlib.Path(report_path)
+if report_file.exists():
+    try:
+        report = json.loads(report_file.read_text(encoding="utf-8"))
+    except Exception:
+        report = {}
+
+iterations = payload.setdefault("iterations", [])
+while len(iterations) < iteration:
+    iterations.append({"i": len(iterations) + 1})
+entry = iterations[iteration - 1]
+entry["i"] = iteration
+entry["kimi_model"] = "kimi-k2.7-code"
+entry["kimi_turn_rc"] = int(turn_rc)
+entry["kimi_launch"] = status
+entry["kimi_diagnosis"] = (
+    report.get("diagnosis")
+    or report.get("root_cause")
+    or report.get("launch_result")
+    or ""
+)
+entry["why"] = (
+    report.get("why")
+    or report.get("remaining_blockers")
+    or report.get("classification")
+    or ""
+)
+entry["kimi_report"] = report
+
+pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+repair_data_set_outcome() {
+  local outcome="$1"
+  python3 - "$DATA_FILE" "$outcome" <<'PY'
+import json
+import pathlib
+import sys
+
+path, outcome = sys.argv[1:]
+payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+payload["outcome"] = outcome
+pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+clear_repair_markers() {
+  rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || true
+}
+
+verify_started_and_holding() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="$4"
+  local plan_name="$5"
+  local initial_secs="$6"
+  local hold_secs="$7"
+  local health first_health second_health
+
+  sleep "$initial_secs"
+  first_health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+  if [[ "$first_health" != "alive" ]]; then
+    echo "$first_health"
+    return 1
+  fi
+  sleep "$hold_secs"
+  second_health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
+  if [[ "$second_health" == "alive" ]]; then
+    echo "alive"
+    return 0
+  fi
+  echo "$second_health"
+  return 1
+}
+
+kill_tmux_session_if_present() {
+  local session="$1"
+  if tmux has-session -t "$session" 2>/dev/null; then
+    tmux kill-session -t "$session" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      tmux has-session -t "$session" 2>/dev/null || break
+      sleep 0.2
+    done
+  fi
+}
+
+mechanical_launch_step() {
+  local iteration="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local run_kind="$5"
+  local plan_name="$6"
+  local relaunch_command="$7"
+  local quoted_command launch_script safe detail health
+
+  quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
+    echo "failed:missing_relaunch_command"
+    return 1
+  }
+  kill_tmux_session_if_present "$session"
+  safe="$(safe_name "$session")"
+  launch_script="$(mktemp)"
+  cat > "$launch_script" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd $(printf '%q' "$workspace")
+exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
+EOF
+  chmod +x "$launch_script"
+  if ! tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'"; then
+    rm -f "$launch_script"
+    echo "failed:tmux_launch_failed"
+    return 1
+  fi
+  rm -f "$launch_script"
+  health="$(verify_started_and_holding "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MECHANICAL_VERIFY_INITIAL_SECS" "$MECHANICAL_VERIFY_HOLD_SECS")" || {
+    detail="$health"
+    kill_tmux_session_if_present "$session"
+    echo "failed:$detail"
+    return 1
+  }
+  echo "running"
+}
+
+write_dev_prompt() {
+  local prompt_path="$1"
+  local requested_model="$2"
+  local dispatch_model="$3"
+  local report_path="$4"
+  cat > "$prompt_path" <<EOF
+You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud session.
+
+Session: $SESSION
+Workspace: $WORKSPACE
+Chain spec: $REMOTE_SPEC
+Editable Arnold source: $ARNOLD_SRC
+Editable source branch: $SYNC_BRANCH
+Repair data file (read this first): $DATA_FILE
+JSON report path (write this before exiting): $report_path
+Requested model label for this iteration: $requested_model
+Actual dispatch model: $dispatch_model
+
+Task:
+1. Read the accumulated repair data JSON and gather only the freshest facts needed on the current stop.
+2. Apply the narrowest safe root-cause fix in $ARNOLD_SRC on branch $SYNC_BRANCH.
+3. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
+4. If source changes pass validation, commit and push them.
+5. Do not relaunch the chain yourself. The wrapper will do the mechanical launch next.
+6. Keep the turn short. Pick the most likely fix from the accumulated evidence instead of broad exploration.
+7. Write a concise JSON report to $report_path with keys:
+   classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers.
+
+Constraints:
+- Work only in $ARNOLD_SRC for source fixes.
+- Do not ask for user input.
+- End the turn as soon as you have either a narrow fix or a concrete blocker.
+EOF
+}
+
+write_kimi_prompt() {
+  local prompt_path="$1"
+  local relaunch_command="$2"
+  local report_path="$3"
+  cat > "$prompt_path" <<EOF
+You are the focused Kimi launch/diagnosis turn in the watchdog repair loop.
+
+Session: $SESSION
+Workspace: $WORKSPACE
+Chain spec: $REMOTE_SPEC
+Editable Arnold source: $ARNOLD_SRC
+Repair data file (read this first): $DATA_FILE
+JSON report path (write this before exiting): $report_path
+Relaunch command: $relaunch_command
+
+Task:
+1. Read the accumulated repair data JSON.
+2. Try to start the chain safely. Prefer the exact relaunch command above if the session is not already up.
+3. If the chain comes up and appears live, stop and write a success report.
+4. If it does not come up, diagnose exactly why from the current logs/state and write that diagnosis.
+5. Keep the turn short; launch plus concrete diagnosis only.
+
+Write a concise JSON report to $report_path with keys:
+classification, launch_result, diagnosis, why, remaining_blockers.
+
+Do not ask for user input.
+EOF
+}
+
+run_dev_fix_turn() {
+  local iteration="$1"
+  local requested_model="$2"
+  local dispatch_model="$3"
+  local dispatch_kind="$4"
+  local fallback_reason="$5"
+  local prompt_path report_path before_sha after_sha rc
+  prompt_path="$RUN_DIR/iter${iteration}-dev-fix-prompt.md"
+  report_path="$RUN_DIR/iter${iteration}-dev-fix-report.json"
+  write_dev_prompt "$prompt_path" "$requested_model" "$dispatch_model" "$report_path"
+  before_sha="$(cd "$ARNOLD_SRC" && git rev-parse HEAD 2>/dev/null || true)"
+  log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model"
+  if [[ "$dispatch_kind" == "hermes" ]]; then
+    (
+      cd "$ARNOLD_SRC" &&
+      timeout "$DEV_TIMEOUT" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" python "$HERMES_LAUNCHER" \
+        --model="$dispatch_model" \
+        --toolsets="file,web,terminal" \
+        --query_file="$prompt_path" \
+        --project_dir="$ARNOLD_SRC"
+    ) >> "$LOG" 2>&1 &
+  else
+    (
+      cd "$ARNOLD_SRC" &&
+      timeout "$DEV_TIMEOUT" codex exec \
+        --sandbox danger-full-access \
+        -c model="$dispatch_model" \
+        -c model_reasoning_effort="$CODEX_REASONING_EFFORT" \
+        "$(cat "$prompt_path")" </dev/null
+    ) >> "$LOG" 2>&1 &
+  fi
+  local child_pid=$!
+  CHILD_PIDS+=("$child_pid")
+  if wait "$child_pid"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  after_sha="$(cd "$ARNOLD_SRC" && git rev-parse HEAD 2>/dev/null || true)"
+  repair_data_record_dev "$iteration" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
+}
+
+run_kimi_launch_turn() {
+  local iteration="$1"
+  local run_kind="$2"
+  local plan_name="$3"
+  local relaunch_command="$4"
+  local prompt_path report_path rc health
+  prompt_path="$RUN_DIR/iter${iteration}-kimi-prompt.md"
+  report_path="$RUN_DIR/iter${iteration}-kimi-report.json"
+  write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
+  log "iteration=$iteration kimi-launch model=$KIMI_MODEL"
+  (
+    cd "$ARNOLD_SRC" &&
+    PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
+    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \
+      --query="$(cat "$prompt_path")" \
+      --model="$KIMI_MODEL" \
+      --api_key="${KIMI_API_KEY:-}" \
+      --base_url="$KIMI_BASE_URL" \
+      --max_turns="$KIMI_MAX_TURNS" \
+      --enabled_toolsets='"terminal,file,code_execution,todo"' \
+      --save_sample=True
+  ) >> "$LOG" 2>&1 &
+  local child_pid=$!
+  CHILD_PIDS+=("$child_pid")
+  if wait "$child_pid"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  health="$(verify_started_and_holding "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$KIMI_VERIFY_INITIAL_SECS" "$KIMI_VERIFY_HOLD_SECS")" || {
+    repair_data_record_kimi "$iteration" "failed:$health" "$report_path" "$rc"
+    kill_tmux_session_if_present "$SESSION"
+    return 1
+  }
+  repair_data_record_kimi "$iteration" "running" "$report_path" "$rc"
+  return 0
+}
+
+glm_dispatch_model() {
+  python3 - <<'PY'
+from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
+try:
+    resolve_model("zhipu:glm-5.2")
+except Exception:
+    raise SystemExit(1)
+print("zhipu:glm-5.2")
+PY
+}
+
+write_needs_human_marker() {
+  local discord_status="$1"
+  python3 - "$DATA_FILE" "$NEEDS_HUMAN_FILE" "$discord_status" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import sys
+
+data_path, out_path, discord_status = sys.argv[1:]
+payload = json.loads(pathlib.Path(data_path).read_text(encoding="utf-8"))
+iterations = payload.get("iterations") or []
+summary_parts = []
+for item in iterations:
+    summary_parts.append(
+        f"i{item.get('i')} dev={item.get('dev_model', '')} sha={item.get('dev_fix_sha', '') or 'none'} "
+        f"mechanical={item.get('mechanical_launch', '') or 'n/a'} "
+        f"kimi={item.get('kimi_launch', '') or 'n/a'} why={item.get('why', '') or item.get('kimi_diagnosis', '') or 'n/a'}"
+    )
+marker = {
+    "session": payload.get("session"),
+    "workspace": payload.get("workspace"),
+    "spec": payload.get("spec"),
+    "summary": " | ".join(summary_parts),
+    "repair_data_path": data_path,
+    "discord_status": discord_status,
+    "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+}
+pathlib.Path(out_path).write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+send_discord_escalation() {
+  local result_path result_status
+  result_path="$RUN_DIR/discord-result.json"
+  result_status="helper_unavailable"
+  if [[ ! -x "$DISCORD_DM_BIN" ]]; then
+    printf '%s' "$result_status"
+    return 0
+  fi
+  python3 - "$DATA_FILE" > "$RUN_DIR/discord-payload.json" <<'PY'
+import json
+import pathlib
+import sys
+
+data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+iterations = data.get("iterations") or []
+fields = [
+    {"label": "Session", "value": data.get("session"), "style": "code"},
+    {"label": "Workspace", "value": data.get("workspace"), "style": "code"},
+    {"label": "Spec", "value": data.get("spec"), "style": "code"},
+]
+for item in iterations:
+    fields.append(
+        {
+            "label": f"Iteration {item.get('i')}",
+            "value": [
+                f"dev={item.get('dev_model', '') or 'n/a'}",
+                f"sha={item.get('dev_fix_sha', '') or 'none'}",
+                f"mechanical={item.get('mechanical_launch', '') or 'n/a'}",
+                f"kimi={item.get('kimi_launch', '') or 'n/a'}",
+                item.get('why', '') or item.get('kimi_diagnosis', '') or "no diagnosis",
+            ],
+            "style": "code_list",
+            "joiner": " ; ",
+        }
+    )
+payload = {
+    "title": "Watchdog repair loop exhausted; needs human",
+    "summary": "The bounded 3-iteration repair loop could not get the chain running.",
+    "fields": fields,
+    "next_action": f"Read {sys.argv[1]} and intervene manually.",
+}
+print(json.dumps(payload))
+PY
+  if "$DISCORD_DM_BIN" < "$RUN_DIR/discord-payload.json" > "$result_path" 2>>"$LOG"; then
+    result_status="$(python3 - "$result_path" <<'PY'
+import json
+import sys
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("invalid_result")
+    raise SystemExit(0)
+if payload.get("ok"):
+    print("delivered")
+else:
+    print(payload.get("reason") or "send_failed")
+PY
+)"
+  else
+    result_status="send_failed"
+  fi
+  printf '%s' "$result_status"
+}
+
+log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC source=$ARNOLD_SRC branch=$SYNC_BRANCH"
+
+RUN_KIND="$(json_field "$MARKER_PATH" run_kind 2>/dev/null || true)"
+PLAN_NAME="$(json_field "$MARKER_PATH" plan_name 2>/dev/null || true)"
+RELAUNCH_COMMAND="$(json_field "$MARKER_PATH" relaunch_command 2>/dev/null || true)"
+if [[ -z "$RUN_KIND" ]]; then
+  if [[ -n "$PLAN_NAME" ]]; then
+    RUN_KIND="plan"
+  else
+    RUN_KIND="chain"
+  fi
+fi
+
+INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
+repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
+
+GLM_MODEL=""
+GLM_FALLBACK=""
+if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
+  :
+else
+  GLM_MODEL="gpt-5.4"
+  GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
+fi
+
+for iteration in 1 2 3; do
+  case "$iteration" in
+    1)
+      DEV_REQUESTED_MODEL="glm-5.2"
+      if [[ "$GLM_MODEL" == "gpt-5.4" ]]; then
+        DEV_DISPATCH_MODEL="gpt-5.4"
+        DEV_DISPATCH_KIND="codex"
+      else
+        DEV_DISPATCH_MODEL="$GLM_MODEL"
+        DEV_DISPATCH_KIND="hermes"
+      fi
+      DEV_FALLBACK_REASON="$GLM_FALLBACK"
+      ;;
+    2)
+      DEV_REQUESTED_MODEL="codex:gpt-5.4"
+      DEV_DISPATCH_MODEL="gpt-5.4"
+      DEV_DISPATCH_KIND="codex"
+      DEV_FALLBACK_REASON=""
+      ;;
+    3)
+      DEV_REQUESTED_MODEL="codex:gpt-5.5"
+      DEV_DISPATCH_MODEL="gpt-5.5"
+      DEV_DISPATCH_KIND="codex"
+      DEV_FALLBACK_REASON=""
+      ;;
+  esac
+
+  run_dev_fix_turn "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
+
+  mechanical_status="$(mechanical_launch_step "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+    repair_data_record_mechanical "$iteration" "$mechanical_status" "$mechanical_status"
+  }
+  if [[ "${mechanical_status:-}" == "running" ]]; then
+    repair_data_record_mechanical "$iteration" "running" "mechanical launch came up and held"
+    repair_data_set_outcome "running"
+    clear_repair_markers
+    log "repair loop succeeded mechanically iteration=$iteration"
+    exit 0
+  fi
+
+  if [[ -z "${KIMI_API_KEY:-}" ]]; then
+    repair_data_record_kimi "$iteration" "failed:KIMI_API_KEY missing" "$RUN_DIR/iter${iteration}-kimi-report.json" 78
+    continue
+  fi
+
+  resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
+  if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
+    repair_data_set_outcome "running"
+    clear_repair_markers
+    log "repair loop succeeded via Kimi iteration=$iteration"
+    exit 0
+  fi
+done
+
+repair_data_set_outcome "discord_escalated"
+discord_status="$(send_discord_escalation)"
+write_needs_human_marker "$discord_status"
+log "repair loop exhausted; needs human session=$SESSION discord=$discord_status data=$DATA_FILE"
+exit 1
