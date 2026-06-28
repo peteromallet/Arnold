@@ -1470,10 +1470,10 @@ def _chain_completion_guard(
 
     plan_state = _read_plan_state_payload_from_dir(plan_dir)
     current_state = plan_state.get("current_state")
-    if _completion_record_is_merged_pr(record):
-        if not implementation_milestone:
-            return True, "merged PR milestone accepted without implementation checks"
-    elif current_state != STATE_DONE:
+    is_merged_pr = _completion_record_is_merged_pr(record)
+    if is_merged_pr and not implementation_milestone:
+        return True, "merged PR milestone accepted without implementation checks"
+    if not is_merged_pr and current_state != STATE_DONE:
         return (
             False,
             f"plan {plan_name} current_state={current_state!r} is not terminal-success "
@@ -1493,6 +1493,27 @@ def _chain_completion_guard(
         ),
     )
 
+    if is_merged_pr:
+        diff_ok, diff_reason = _semantic_diff_nonempty_from_base(root, milestone_base_sha)
+        if not diff_ok and not waiver_ok:
+            return False, f"{diff_reason}; {waiver_reason}"
+        published_diff_ok, published_diff_reason = (
+            _published_pr_semantic_diff_nonempty_from_base(
+                root,
+                milestone_base_sha,
+                record,
+                chain_state=chain_state,
+            )
+        )
+        if not published_diff_ok and not waiver_ok:
+            return False, f"{published_diff_reason}; {waiver_reason}"
+        if waiver_ok:
+            return True, f"typed no-op waiver accepted: {waiver_reason}"
+        reason_parts = [diff_reason]
+        if published_diff_reason is not None:
+            reason_parts.append(published_diff_reason)
+        return True, f"completion guard passed: {'; '.join(reason_parts)}"
+
     authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not authoritative and not waiver_ok:
         return (
@@ -1509,7 +1530,7 @@ def _chain_completion_guard(
         return False, f"{diff_reason}; {waiver_reason}"
 
     published_diff_reason: str | None = None
-    if _completion_record_is_merged_pr(record):
+    if is_merged_pr:
         published_diff_ok, published_diff_reason = (
             _published_pr_semantic_diff_nonempty_from_base(
                 root,
