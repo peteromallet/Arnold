@@ -652,7 +652,63 @@ plan_failure = latest_context.get("plan_latest_failure") or {}
 chain_state = latest_context.get("chain_state_summary") or {}
 metadata = plan_failure.get("metadata") or {}
 classification = latest_context.get("failure_classification") or "unknown_failure_mode"
-signals = latest_context.get("raw_failure_signals") or []
+signals = list(latest_context.get("raw_failure_signals") or [])
+if not signals:
+    fallback_signals = []
+    for key in (
+        "stderr",
+        "stdout",
+        "output",
+        "raw_output",
+        "error",
+        "message",
+        "detail",
+        "details",
+        "reason",
+        "command",
+        "cmd",
+        "args",
+        "argv",
+        "exit_code",
+        "returncode",
+        "return_code",
+        "rc",
+    ):
+        value = metadata.get(key)
+        if value not in (None, "", [], {}):
+            text = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+            rendered = f"latest_failure.metadata.{key}: {text}"
+            if rendered not in fallback_signals:
+                fallback_signals.append(rendered)
+    for label, candidate in (
+        ("latest_failure.kind", plan_failure.get("kind")),
+        ("latest_failure.message", plan_failure.get("message")),
+        ("chain_state.error", chain_state.get("error")),
+        ("chain_state.missing_base_ref", chain_state.get("missing_base_ref")),
+        ("mechanical_detail", latest_context.get("mechanical_detail")),
+        ("prior_why", latest_context.get("why")),
+    ):
+        text = str(candidate or "").strip()
+        rendered = f"{label}: {text}" if text else ""
+        if rendered and rendered not in fallback_signals:
+            fallback_signals.append(rendered)
+    signals = fallback_signals
+
+if classification == "unknown_failure_mode":
+    combined_signals = "\n".join(str(item) for item in signals).lower()
+    if "unrecognized arguments" in combined_signals or "usage:" in combined_signals:
+        classification = "cli_or_argument_error"
+    elif "couldn't find remote ref" in combined_signals or "missing_base_ref" in combined_signals:
+        classification = "git_or_branch_resolution_error"
+    elif "authentication" in combined_signals or "missing credentials" in combined_signals or "api key" in combined_signals:
+        classification = "authentication_or_credentials_error"
+    elif "credit balance" in combined_signals or "quota" in combined_signals:
+        classification = "billing_or_quota_error"
+    elif "timeout" in combined_signals or "stall" in combined_signals:
+        classification = "timeout_or_hang"
+    elif "blocked" in combined_signals:
+        classification = "blocked_state_or_recovery_error"
+
 signal_text = "\n\n".join(str(item).strip() for item in signals[:4] if str(item).strip()) or "(none captured)"
 log_tail = latest_context.get("chain_log_tail") or latest_context.get("mechanical_log_tail") or "(none captured)"
 events_tail = latest_context.get("plan_events_tail") or "(none captured)"
