@@ -14,18 +14,18 @@ Run `python scripts/render_package_disposition_md.py --write` to regenerate.
 ## Overview
 
 **Schema version:** 1
-**Disposition rows:** 275
+**Disposition rows:** 277
 **Exclusions:** 0
 **Parity gates:** 0
 **Runtime settings gates:** 0
 
 ### Disposition counts
 
-- arnold-core: 102
+- arnold-core: 103
 - arnold-service-interface: 1
 - arnold-adapter: 3
 - arnold-shared-leaf: 25
-- megaplan-plugin: 108
+- megaplan-plugin: 109
 - product-app: 0
 - legacy-hold: 18
 - delete-merge: 0
@@ -33,7 +33,7 @@ Run `python scripts/render_package_disposition_md.py --write` to regenerate.
 
 ### Granularity counts
 
-- directory: 29
+- directory: 31
 - file: 158
 - symbol: 70
 - split: 18
@@ -44,7 +44,24 @@ _(none — all tracked files must have disposition rows)_
 
 ## Disposition Rows by Classification
 
-### arnold-core (60 rows)
+### arnold-core (61 rows)
+
+#### arnold/pipeline
+**Disposition:** `arnold-core` | **Granularity:** `directory` | **Target:** arnold/pipeline
+
+**Reason:** Current neutral pipeline/runtime surface after the native and package-layout migrations.
+
+**Blockers:**
+- _(none)_
+
+
+**Import policy:**
+- Forbidden: `arnold_pipelines.megaplan`
+
+**Tests / gates:**
+- python scripts/validate_package_disposition.py --summary
+
+---
 
 #### megaplan/_pipeline/discovery/trust.py
 **Disposition:** `arnold-core` | **Granularity:** `file` | **Target:** arnold/pipeline/discovery/trust.py
@@ -1528,7 +1545,30 @@ _(none — all tracked files must have disposition rows)_
 
 ---
 
-### megaplan-plugin (93 rows)
+### megaplan-plugin (94 rows)
+
+#### arnold_pipelines/megaplan
+**Disposition:** `megaplan-plugin` | **Granularity:** `directory` | **Target:** arnold_pipelines/megaplan
+
+**Reason:** Current Megaplan product/plugin package after the Arnold package-layout migration.
+
+**Blockers:**
+- _(none)_
+
+
+**Import policy:**
+- Allowed: `arnold.pipeline`
+- Forbidden: `arnold.pipelines.megaplan`
+
+**Vocabulary owned:**
+| Kind | Owner | Terms |
+| --- | --- | --- |
+| package | megaplan | ['arnold_pipelines.megaplan'] |
+
+**Tests / gates:**
+- python scripts/validate_package_disposition.py --summary
+
+---
 
 #### megaplan/cli/status_view.py
 **Disposition:** `megaplan-plugin` | **Granularity:** `file` | **Target:** megaplan/pipelines/megaplan/status_view.py
@@ -4386,6 +4426,8 @@ _(none — all tracked files must have disposition rows)_
 
 ### Forbidden Imports
 
+- `arnold.pipelines.megaplan` — forbidden from: `arnold_pipelines/megaplan`
+- `arnold_pipelines.megaplan` — forbidden from: `arnold/pipeline`
 - `megaplan` — forbidden from: `arnold/pipeline/__init__.py`, `arnold/pipeline/state.py`
 - `megaplan._core` — forbidden from: `arnold/pipeline/resources.py`, `arnold/pipeline/types.py`, `megaplan/_pipeline/types.py`, `megaplan/observability/__init__.py`, `megaplan/observability/composition_obs.py` (+3 more)
 - `megaplan._core.activation` — forbidden from: `arnold/pipeline/executor.py`
@@ -4416,6 +4458,7 @@ _(none — all tracked files must have disposition rows)_
 
 ### Allowed Import Overrides
 
+- `arnold.pipeline` — allowed in: `arnold_pipelines/megaplan`
 - `megaplan._core.canonical` — allowed in: `megaplan/store/capsule.py`, `megaplan/store/warrant.py`
 - `megaplan._core.config_resolver` — allowed in: `megaplan/store/warrant.py`
 - `megaplan._core.io` — allowed in: `megaplan/store/_file`, `megaplan/store/blob.py`, `megaplan/store/file.py`, `megaplan/store/multi.py`, `megaplan/store/plan_repository.py`
@@ -4464,7 +4507,7 @@ _(none — all tracked files must have disposition rows)_
 ### Vocabulary Ownership
 
 - **arnold:** `AUTO_EXEC`, `ArnoldBlobAdapter`, `ArnoldStoreAdapter`, `ArtifactRequest`, `AutomationActor`, `BLESSED`, `Backend`, `BetterResult`, `BindResult`, `BlobMissingError`, `BlobRef`, `BlobStat`, `BlobStore`, `BotTurn`, `BudgetExceeded`, `CLAUDE_PRICING`, `Capsule`, `CapsuleContract`, `CapsuleDefinition`, `CapsuleEvidence`, `CapsuleLineage`, `CapsuleRecordRef`, `CapsuleWriteResult`, `ChecklistItem`, `CloudRun`, `CodeArtifact`, `CommandResult`, `CompositionObservability`, `ContentTypeRegistry`, `ContractLedger`, `ControlBinding`, `ControlMessage`, `ControlProjection`, `ControlTarget`, `ControlTransition`, `ControlTransitionRequest`, `ControlTransitionResult`, `DEFAULT_PRICING`, `Effect`, `Epic`, `EpicEvent`, `EpicLock`, `EpicSnapshot`, `EpicSummary`, `EvaluandRecord`, `EventEnvelope`, `EventKind`, `EventSink`, `ExceedReason`, `ExecutionLease`, `ExternalRequest`, `FIREWORKS_PRICING`, `Feedback`, `Governor`, `Image`, `InMemoryCompositionObs`, `InProcessDriver`, `LocalDirBlobStore`, `MODEL_PARAM_KEYS`, `Message`, `MigrationRun`, `ModelIORef`, `ModelIdentity`, `NONCOMPENSABLE`, `NdjsonBackend`, `NormalizedDict`, `NormalizedList`, `PRICING`, `Plan`, `PlanArtifact`, `PlanConfig`, `PlanMeta`, `PlanState`, `Port`, `PortBindError`, `PortRef`, `ProcessDriver`, `QUARANTINED`, `ReJudgeOutcome`, `RecordedIOScorer`, `RecordedIOUnavailable`, `RecordedModelIO`, `Reduce`, `ReduceResult`, `RepairGradient`, `ReplayClass`, `ResidentConversation`, `RoutingKey`, `RunStateView`, `SANDBOX_CWD`, `STATE_WRITTEN`, `SUBSTRATES`, `SandboxViolation`, `SecondOpinion`, `SelectionResult`, `Sprint`, `SprintItem`, `StateDelta`, `StorageModel`, `Store`, `StoreBackend`, `StoredEvent`, `SubprocessIsolatedDriver`, `Substrate`, `SupabaseStorageBlobStore`, `SystemLog`, `TOPOLOGIES`, `Ticket`, `ToolCall`, `Topology`, `Transaction`, `Warrant`, `WarrantAccount`, `WarrantAuthority`, `WarrantBuildResult`, `WarrantError`, `WarrantRationaleAnchor`, `WarrantSignature`, `WarrantSourceCompleteness`, `WarrantSourceProjection`, `WatcherState`, `WorkerResult`, `__noncompensable__`, `_supervise_subprocess`, `activation_transitioned`, `argv`, `arnold_api_version`, `artifact_invalidated`, `artifact_written`, `at_most_once`, `auto`, `budget_delta`, `build_warrant`, `cache_get`, `cache_set`, `calibration_experiment`, `cancellation`, `capabilities`, `capability_claim`, `capacity_grant`, `capsule_record_blob_id`, `check`, `compensation`, `compute_identity`, `cost`, `cost_from_usage`, `cost_recorded`, `current_governor`, `current_substrate`, `dag`, `deadline`, `decision`, `default`, `default_profile`, `describe`, `description`, `deterministic_idempotency_key`, `doctor`, `drift_detected`, `driver`, `effect_taint`, `entrypoint`, `estimate_tokens_from_cost`, `evaluand_recorded`, `extends`, `fanout`, `fencing_token`, `flag_raised`, `flag_resolved`, `fold_events`, `health_check_failed`, `idempotency_key`, `idempotent_keyed`, `identity_cache_key`, `idle_cap`, `in_process`, `init`, `install_sandbox`, `kill_group`, `lease_id`, `lineage`, `linear`, `list`, `llm_call_end`, `llm_call_error`, `llm_call_start`, `llm_token_heartbeat`, `lock_acquired`, `lock_released`, `name`, `new`, `note_added`, `override_applied`, `params_hash`, `phase_end`, `phase_retry`, `phase_start`, `piece_identity`, `pipelines`, `pivot`, `plan_aborted`, `plan_finished`, `profiles`, `prompt_hash`, `provenance`, `pure`, `put_capsule_record`, `replay_class`, `reset_substrate`, `retry`, `retry_budget`, `run`, `run_command`, `run_scheduler`, `run_step`, `schedule_batches`, `set_governor`, `set_work_dir_override`, `shadow-WAL`, `spawn`, `spawn_async`, `state_cache_drift`, `state_transition`, `state_written`, `step_boundary`, `subprocess_exited`, `subprocess_isolated`, `subprocess_signaled`, `subprocess_spawned`, `supported_modes`, `taint`, `tier_drop`, `tier_escalated`, `utc_now`, `validate_plan_artifact_name`, `validate_terminal_command`, `validate_v4a_patch`, `validate_write_path`, `verify_warrant`, `wall_cap`, `warrant_signed_envelope`
-- **megaplan:** `.events.init_ts`, `.events.seq`, `.megaplan`, `.megaplan-event-store`, `.megaplan-worktrees`, `.plan.lock`, `ACCEPTED_WITH_DEBT`, `ADVANCE_WITH_DEBT`, `ArnoldStoreAdapter`, `AutomationActorKind`, `BakeoffBinding`, `BakeoffProfileRecord`, `BakeoffState`, `BatchResult`, `CRITIQUE_CHECKS`, `CapabilityClaim`, `ChainRunner`, `ChainSpec`, `Claude`, `CliError`, `CloudRun`, `CloudRunOperation`, `CloudRunStatus`, `CloudSpec`, `ControlIntent`, `ControlMessage`, `DBStore`, `DISK_SOURCE`, `DRIFT_KINDS`, `DRIFT_TOKENS`, `DoubleExecuteError`, `EditorialOperation`, `EditorialResult`, `EpicSnapshot`, `EvaluandRef`, `ExitKind`, `FALLBACK`, `FIXED`, `FailureCategory`, `FileStore`, `FlagRecord`, `FlagRegistry`, `GATE_CONTROL_INTENTS`, `HARD_BLOCK`, `Hermes`, `IterationResult`, `JudgeVerdict`, `Ladder`, `LoopSpec`, `LoopState`, `MEGAPLAN_ACTOR_ID`, `MEGAPLAN_AUTO_HEARTBEAT_SECONDS`, `MEGAPLAN_ENVELOPE_IN`, `MEMORY_SOURCE`, `MarkdownArtifact`, `MegaplanSpec`, `MigrationPhase`, `MigrationRun`, `MiniMax`, `ModelIdentity`, `MultiStore`, `NormalizedOutcome`, `OMIT`, `Observation`, `OpenRouter`, `OrphanDetectedError`, `PREP_RESEARCH_AREA_SCHEMA`, `PREP_RESEARCH_FINDING_SCHEMA`, `PREREQUISITE`, `PackRunner`, `PhaseResult`, `PlanArtifact`, `PlanArtifactKind`, `PlanArtifactRole`, `PlanConfig`, `PlanCurrentState`, `PlanMeta`, `PlanRepository`, `PlanState`, `ProgressContext`, `ProgressEvent`, `ProgressEventKind`, `QUALITY`, `RERUN_REQUIRED`, `RESOLVED`, `ROBUSTNESS_LEVELS`, `RailwaySpec`, `Receipt`, `RepoSpec`, `ReviewResult`, `RouteSuggestion`, `RunDriver`, `RunEnvelope`, `RunNode`, `RunOutcome`, `RunResultMetadata`, `SCHEMAS`, `STANCE_SCHEMA`, `STATE_ABORTED`, `STATE_AWAITING_HUMAN`, `STATE_AWAITING_PR_MERGE`, `STATE_BLOCKED`, `STATE_CANCELLED`, `STATE_CRITIQUED`, `STATE_DONE`, `STATE_EXECUTED`, `STATE_FAILED`, `STATE_FINALIZED`, `STATE_GATED`, `STATE_INITIALIZED`, `STATE_PAUSED`, `STATE_PLANNED`, `STATE_PREPPED`, `STATE_REVIEWED`, `STATE_TIEBREAKER_PENDING`, `STATE_TIEBREAKER_READY`, `STOP_SIGNAL_SCHEMA`, `SUPABASE_DB_URL`, `SUPPORTED_CONTROL_INTENTS`, `ScheduledJob`, `ScheduledJobStatus`, `Shannon`, `StepResponse`, `StoredEvent`, `SupervisorState`, `TERMINAL_STATES`, `TOKEN_USAGE_SCHEMA`, `Ticket`, `TicketEpicLink`, `TmuxSession`, `UNRESOLVED`, `USER_ACTION_RESOLUTION_KINDS`, `WorkerKind`, `_BOOTSTRAP_ACTOR_ID`, `_FileStoreTransaction`, `_envelope_ctx`, `_journal_intent`, `_phase_arg_overrides`, `_phase_namespace`, `_run_and_merge_batch`, `abort`, `aborted`, `adaptive_critique`, `add-note`, `add_note`, `aggregate_weighted_tier`, `apply_transition`, `artifact_dir`, `artifact_title`, `assert_fold_equiv`, `audit_engine`, `automation_actors`, `awaiting_human`, `awaiting_human_verify`, `awaiting_user.json`, `bakeoff`, `bakeoff_root`, `blobs`, `blocked`, `brief_path`, `briefs_dir`, `build_base_resolution_event`, `build_critique_prompt`, `build_execute_prompt`, `build_finalize_prompt`, `build_monitor_hint`, `build_planning_prompt`, `build_review_prompt`, `cancelled`, `capabilities`, `capsule_definition_identity_projection`, `checklist_items`, `ci_hook`, `claim_next_pending`, `classify_failure`, `classify_quality_resolution_behavior`, `classify_resolution_behavior`, `clear_user_action_resolutions`, `cli_entry`, `cloud_cli`, `collect_epic_export`, `comparison`, `confirm_self_review`, `context_snapshot`, `contract.json`, `control_binding`, `copying_blobs`, `copying_meta`, `create_automation_actor`, `create_brief`, `create_ticket`, `creative_form_id`, `critic_model`, `critique`, `critiqued`, `cutting_over`, `detect_orphans`, `directors_notes`, `done`, `drift_detection`, `edit_section`, `effective_resolutions`, `epic_path`, `epics`, `epics_dir`, `escalate`, `evaluate_blocked_tasks`, `evaluate_quality_blocked_tasks`, `evaluate_state_transition`, `events.ndjson`, `execute`, `executed`, `execution`, `execution_batch_*.json`, `failed`, `feedback`, `filter_keyword_artifacts`, `finalize`, `finalize.json`, `finalized`, `force-proceed`, `force_proceed`, `gate`, `gate.json`, `gate_signals`, `gate_signals_v*.json`, `gated`, `get_execution_schema_key`, `half_life_weight`, `handle_cost`, `handle_critique`, `handle_doctor`, `handle_execute`, `handle_execute_auto_loop`, `handle_execute_one_batch`, `handle_finalize`, `handle_gate`, `handle_init`, `handle_introspect`, `handle_override`, `handle_plan`, `handle_review`, `handle_revise`, `handle_tiebreaker`, `handle_trace`, `hinge_gate`, `home_backend`, `images`, `initialized`, `is_legal_coercion`, `iter_markdown_artifacts`, `iterate`, `iteration_pressure`, `journal_then_execute`, `latest_events_by_key`, `latest_quality_resolutions`, `legacy-local-plan`, `legacy_phase_command`, `legacy_supervise_subprocess`, `list_briefs`, `list_epics`, `list_tickets`, `load_spec`, `loop_engine`, `loop_plan`, `loop_prompts`, `main`, `make_flag_id`, `make_snippet`, `manifest.json`, `mark_processed`, `markdown_body`, `materialize_deploy_dir`, `max_tasks_per_batch`, `mechanical_checks`, `megaplan cost`, `megaplan doctor`, `megaplan introspect`, `megaplan trace`, `megaplan-epic-export-v1`, `migrate-local-plans`, `migration_runs`, `mock_worker_output`, `next_flag_number`, `normalize_flag_record`, `orchestrator`, `pane_pids`, `parse_markdown_artifact`, `paused`, `pending_human`, `phase-6-idea.txt`, `phase_result.json`, `plan`, `plan_artifacts`, `planned`, `planning`, `planning_topology`, `plans`, `prep`, `prep_models`, `prepped`, `proceed`, `process_control_message`, `project_tier_models`, `prompt_hash_canonical`, `prompt_snapshot`, `provocations`, `read_user_action_resolutions`, `rebuild_state_from_wal`, `receipt_id`, `receipt_report`, `record_tiebreaker_audit`, `recover-blocked`, `recovery_policy`, `replan`, `resolve_agent_mode`, `resolve_binding`, `resolve_severity`, `resolve_user_action`, `resume-clarify`, `retry_blocked_tasks`, `review`, `review.json`, `revise`, `rows`, `run_chain_cli`, `run_codex_prep_step`, `run_dual_green`, `run_id`, `run_metadata_from_batch_outcome`, `run_outcome_from_batch_outcome`, `run_parallel_review`, `run_phase`, `run_pre_checks`, `run_step_with_worker`, `scoped_legacy_audit`, `search_briefs`, `search_tickets`, `second_opinions`, `select_active_checks`, `sense_check_acknowledgments`, `sense_checks`, `set-model`, `set-profile`, `set-robustness`, `set-vendor`, `slugify`, `sprint_items`, `sprints`, `state.json`, `step_receipt_`, `store_method`, `strict_schema`, `success_criteria`, `supervise`, `task_updates`, `telemetry.ndjson`, `ticket_file_path`, `tickets`, `tickets_dir`, `tiebreaker`, `tiebreaker_challenger`, `tiebreaker_pending`, `tiebreaker_ready`, `tiebreaker_researcher`, `tier_models`, `tombstoning`, `transition_epic_state`, `unified_dispatch_on`, `update_body`, `update_flags_after_critique`, `update_flags_after_revise`, `upstream_artifact_hashes`, `user_action_resolutions_file`, `validate_quality_resolution_event`, `validate_robustness`, `validate_user_action_event`, `vendor_locked`, `verifying`, `worktree`, `write_markdown_artifact`, `write_user_action_resolution`
+- **megaplan:** `.events.init_ts`, `.events.seq`, `.megaplan`, `.megaplan-event-store`, `.megaplan-worktrees`, `.plan.lock`, `ACCEPTED_WITH_DEBT`, `ADVANCE_WITH_DEBT`, `ArnoldStoreAdapter`, `AutomationActorKind`, `BakeoffBinding`, `BakeoffProfileRecord`, `BakeoffState`, `BatchResult`, `CRITIQUE_CHECKS`, `CapabilityClaim`, `ChainRunner`, `ChainSpec`, `Claude`, `CliError`, `CloudRun`, `CloudRunOperation`, `CloudRunStatus`, `CloudSpec`, `ControlIntent`, `ControlMessage`, `DBStore`, `DISK_SOURCE`, `DRIFT_KINDS`, `DRIFT_TOKENS`, `DoubleExecuteError`, `EditorialOperation`, `EditorialResult`, `EpicSnapshot`, `EvaluandRef`, `ExitKind`, `FALLBACK`, `FIXED`, `FailureCategory`, `FileStore`, `FlagRecord`, `FlagRegistry`, `GATE_CONTROL_INTENTS`, `HARD_BLOCK`, `Hermes`, `IterationResult`, `JudgeVerdict`, `Ladder`, `LoopSpec`, `LoopState`, `MEGAPLAN_ACTOR_ID`, `MEGAPLAN_AUTO_HEARTBEAT_SECONDS`, `MEGAPLAN_ENVELOPE_IN`, `MEMORY_SOURCE`, `MarkdownArtifact`, `MegaplanSpec`, `MigrationPhase`, `MigrationRun`, `MiniMax`, `ModelIdentity`, `MultiStore`, `NormalizedOutcome`, `OMIT`, `Observation`, `OpenRouter`, `OrphanDetectedError`, `PREP_RESEARCH_AREA_SCHEMA`, `PREP_RESEARCH_FINDING_SCHEMA`, `PREREQUISITE`, `PackRunner`, `PhaseResult`, `PlanArtifact`, `PlanArtifactKind`, `PlanArtifactRole`, `PlanConfig`, `PlanCurrentState`, `PlanMeta`, `PlanRepository`, `PlanState`, `ProgressContext`, `ProgressEvent`, `ProgressEventKind`, `QUALITY`, `RERUN_REQUIRED`, `RESOLVED`, `ROBUSTNESS_LEVELS`, `RailwaySpec`, `Receipt`, `RepoSpec`, `ReviewResult`, `RouteSuggestion`, `RunDriver`, `RunEnvelope`, `RunNode`, `RunOutcome`, `RunResultMetadata`, `SCHEMAS`, `STANCE_SCHEMA`, `STATE_ABORTED`, `STATE_AWAITING_HUMAN`, `STATE_AWAITING_PR_MERGE`, `STATE_BLOCKED`, `STATE_CANCELLED`, `STATE_CRITIQUED`, `STATE_DONE`, `STATE_EXECUTED`, `STATE_FAILED`, `STATE_FINALIZED`, `STATE_GATED`, `STATE_INITIALIZED`, `STATE_PAUSED`, `STATE_PLANNED`, `STATE_PREPPED`, `STATE_REVIEWED`, `STATE_TIEBREAKER_PENDING`, `STATE_TIEBREAKER_READY`, `STOP_SIGNAL_SCHEMA`, `SUPABASE_DB_URL`, `SUPPORTED_CONTROL_INTENTS`, `ScheduledJob`, `ScheduledJobStatus`, `Shannon`, `StepResponse`, `StoredEvent`, `SupervisorState`, `TERMINAL_STATES`, `TOKEN_USAGE_SCHEMA`, `Ticket`, `TicketEpicLink`, `TmuxSession`, `UNRESOLVED`, `USER_ACTION_RESOLUTION_KINDS`, `WorkerKind`, `_BOOTSTRAP_ACTOR_ID`, `_FileStoreTransaction`, `_envelope_ctx`, `_journal_intent`, `_phase_arg_overrides`, `_phase_namespace`, `_run_and_merge_batch`, `abort`, `aborted`, `adaptive_critique`, `add-note`, `add_note`, `aggregate_weighted_tier`, `apply_transition`, `arnold_pipelines.megaplan`, `artifact_dir`, `artifact_title`, `assert_fold_equiv`, `audit_engine`, `automation_actors`, `awaiting_human`, `awaiting_human_verify`, `awaiting_user.json`, `bakeoff`, `bakeoff_root`, `blobs`, `blocked`, `brief_path`, `briefs_dir`, `build_base_resolution_event`, `build_critique_prompt`, `build_execute_prompt`, `build_finalize_prompt`, `build_monitor_hint`, `build_planning_prompt`, `build_review_prompt`, `cancelled`, `capabilities`, `capsule_definition_identity_projection`, `checklist_items`, `ci_hook`, `claim_next_pending`, `classify_failure`, `classify_quality_resolution_behavior`, `classify_resolution_behavior`, `clear_user_action_resolutions`, `cli_entry`, `cloud_cli`, `collect_epic_export`, `comparison`, `confirm_self_review`, `context_snapshot`, `contract.json`, `control_binding`, `copying_blobs`, `copying_meta`, `create_automation_actor`, `create_brief`, `create_ticket`, `creative_form_id`, `critic_model`, `critique`, `critiqued`, `cutting_over`, `detect_orphans`, `directors_notes`, `done`, `drift_detection`, `edit_section`, `effective_resolutions`, `epic_path`, `epics`, `epics_dir`, `escalate`, `evaluate_blocked_tasks`, `evaluate_quality_blocked_tasks`, `evaluate_state_transition`, `events.ndjson`, `execute`, `executed`, `execution`, `execution_batch_*.json`, `failed`, `feedback`, `filter_keyword_artifacts`, `finalize`, `finalize.json`, `finalized`, `force-proceed`, `force_proceed`, `gate`, `gate.json`, `gate_signals`, `gate_signals_v*.json`, `gated`, `get_execution_schema_key`, `half_life_weight`, `handle_cost`, `handle_critique`, `handle_doctor`, `handle_execute`, `handle_execute_auto_loop`, `handle_execute_one_batch`, `handle_finalize`, `handle_gate`, `handle_init`, `handle_introspect`, `handle_override`, `handle_plan`, `handle_review`, `handle_revise`, `handle_tiebreaker`, `handle_trace`, `hinge_gate`, `home_backend`, `images`, `initialized`, `is_legal_coercion`, `iter_markdown_artifacts`, `iterate`, `iteration_pressure`, `journal_then_execute`, `latest_events_by_key`, `latest_quality_resolutions`, `legacy-local-plan`, `legacy_phase_command`, `legacy_supervise_subprocess`, `list_briefs`, `list_epics`, `list_tickets`, `load_spec`, `loop_engine`, `loop_plan`, `loop_prompts`, `main`, `make_flag_id`, `make_snippet`, `manifest.json`, `mark_processed`, `markdown_body`, `materialize_deploy_dir`, `max_tasks_per_batch`, `mechanical_checks`, `megaplan cost`, `megaplan doctor`, `megaplan introspect`, `megaplan trace`, `megaplan-epic-export-v1`, `migrate-local-plans`, `migration_runs`, `mock_worker_output`, `next_flag_number`, `normalize_flag_record`, `orchestrator`, `pane_pids`, `parse_markdown_artifact`, `paused`, `pending_human`, `phase-6-idea.txt`, `phase_result.json`, `plan`, `plan_artifacts`, `planned`, `planning`, `planning_topology`, `plans`, `prep`, `prep_models`, `prepped`, `proceed`, `process_control_message`, `project_tier_models`, `prompt_hash_canonical`, `prompt_snapshot`, `provocations`, `read_user_action_resolutions`, `rebuild_state_from_wal`, `receipt_id`, `receipt_report`, `record_tiebreaker_audit`, `recover-blocked`, `recovery_policy`, `replan`, `resolve_agent_mode`, `resolve_binding`, `resolve_severity`, `resolve_user_action`, `resume-clarify`, `retry_blocked_tasks`, `review`, `review.json`, `revise`, `rows`, `run_chain_cli`, `run_codex_prep_step`, `run_dual_green`, `run_id`, `run_metadata_from_batch_outcome`, `run_outcome_from_batch_outcome`, `run_parallel_review`, `run_phase`, `run_pre_checks`, `run_step_with_worker`, `scoped_legacy_audit`, `search_briefs`, `search_tickets`, `second_opinions`, `select_active_checks`, `sense_check_acknowledgments`, `sense_checks`, `set-model`, `set-profile`, `set-robustness`, `set-vendor`, `slugify`, `sprint_items`, `sprints`, `state.json`, `step_receipt_`, `store_method`, `strict_schema`, `success_criteria`, `supervise`, `task_updates`, `telemetry.ndjson`, `ticket_file_path`, `tickets`, `tickets_dir`, `tiebreaker`, `tiebreaker_challenger`, `tiebreaker_pending`, `tiebreaker_ready`, `tiebreaker_researcher`, `tier_models`, `tombstoning`, `transition_epic_state`, `unified_dispatch_on`, `update_body`, `update_flags_after_critique`, `update_flags_after_revise`, `upstream_artifact_hashes`, `user_action_resolutions_file`, `validate_quality_resolution_event`, `validate_robustness`, `validate_user_action_event`, `vendor_locked`, `verifying`, `worktree`, `write_markdown_artifact`, `write_user_action_resolution`
 
 ### String Policy Ownership
 
@@ -4483,6 +4526,6 @@ _(none defined)_
 
 - **Resolve 18 split-required row(s):** each split parent needs child symbols finalized before extraction can begin.
 - **Investigate 18 legacy-hold row(s):** these files have unclear ownership and need deeper inspection.
-- **Extract capability seams** (M2a) before relocating plugins (M2b) to `arnold/pipelines/megaplan/`.
+- **Extract capability seams** (M2a) before relocating plugins (M2b) to `arnold_pipelines/megaplan/`.
 - **Define parity gates:** no behavior-preservation gates have been declared.
 - **Define runtime settings gates:** no configurable-seam gates have been declared.

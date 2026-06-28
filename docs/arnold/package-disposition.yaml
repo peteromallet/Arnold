@@ -46,6 +46,43 @@ deferral_ledger: []
 #   - split rows cover the parent exactly once and require child rows
 #   - symbol rows document extraction detail; never add file coverage
 rows:
+- source: arnold/pipeline
+  target: arnold/pipeline
+  granularity: directory
+  disposition: arnold-core
+  reason: Current neutral pipeline/runtime surface after the native and package-layout migrations.
+  blockers: []
+  allowed_imports: []
+  forbidden_imports:
+  - arnold_pipelines.megaplan
+  vocabulary_owned: []
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates:
+  - python scripts/validate_package_disposition.py --summary
+  configurable_seams: []
+- source: arnold_pipelines/megaplan
+  target: arnold_pipelines/megaplan
+  granularity: directory
+  disposition: megaplan-plugin
+  reason: Current Megaplan product/plugin package after the Arnold package-layout migration.
+  blockers: []
+  allowed_imports:
+  - arnold.pipeline
+  forbidden_imports:
+  - arnold.pipelines.megaplan
+  vocabulary_owned:
+  - kind: package
+    owner: megaplan
+    terms:
+    - arnold_pipelines.megaplan
+  string_policy: []
+  extraction_prerequisite: []
+  first_extraction_unit: null
+  tests_gates:
+  - python scripts/validate_package_disposition.py --summary
+  configurable_seams: []
 - source: megaplan/_pipeline
   target: arnold/pipeline (neutral executor/runtime surface) + megaplan/pipelines/megaplan (planning stages, handlers, policy)
   granularity: split

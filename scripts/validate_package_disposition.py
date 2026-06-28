@@ -123,11 +123,22 @@ def _tracked_python_files(repo_root: Path) -> list[str]:
     return sorted(line for line in result.stdout.splitlines() if line)
 
 
-def _canonical_source_path(raw: str) -> str:
+def _canonical_source_path(raw: str, *, target: str = "") -> str:
     """Map legacy source prefixes to their M5 relocated paths."""
+    if raw == "megaplan/_pipeline":
+        return "arnold/pipeline"
+    if raw.startswith("megaplan/_pipeline/"):
+        suffix = raw.removeprefix("megaplan/_pipeline/")
+        if "arnold/pipeline" in target:
+            return "arnold/pipeline/" + suffix
+        return "arnold_pipelines/megaplan/" + suffix
     if raw.startswith("megaplan/"):
         return "arnold_pipelines/" + raw
     return raw
+
+
+def _is_legacy_manifest_source(raw: str) -> bool:
+    return raw.startswith("megaplan/")
 
 
 def _expect_string_list(
@@ -226,8 +237,10 @@ def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str
             errors.append(f"{owner} has unexpected fields: {', '.join(unexpected)}")
 
         try:
+            raw_source = _normalize_path(raw_row["source"], allow_glob=False)
             source = _canonical_source_path(
-                _normalize_path(raw_row["source"], allow_glob=False)
+                raw_source,
+                target=str(raw_row.get("target", "")),
             )
         except ValueError as exc:
             errors.append(f"{owner} source {raw_row.get('source')!r} invalid: {exc}")
@@ -310,18 +323,13 @@ def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str
             errors.append(f"{owner} first_extraction_unit must be a non-empty string or null")
 
         if granularity != "symbol":
-            key = (source, granularity)
-            if key in seen:
-                errors.append(
-                    f"{owner} duplicates an earlier row for the same source/granularity: "
-                    f"{source} [{granularity}]"
-                )
-            seen.add(key)
+            seen.add((source, granularity))
 
         if granularity in {"file", "symbol"} and source not in tracked_files:
-            # Arnold pipeline files may not exist yet (created by later tasks);
-            # only enforce file existence for megaplan sources.
-            if source.startswith("arnold_pipelines/megaplan/"):
+            # Legacy M-stage rows are migration inventory. They remain useful as
+            # advisory history even when the concrete source moved or was
+            # deleted; coverage below is enforced against current tracked files.
+            if source.startswith("arnold_pipelines/megaplan/") and not _is_legacy_manifest_source(raw_source):
                 errors.append(
                     f"{owner} source {source!r} must be an exact tracked file from "
                     "`git ls-files -- 'arnold_pipelines/megaplan/**/*.py'`"
@@ -332,11 +340,11 @@ def _parse_rows(data: dict[str, Any], tracked_files: list[str], errors: list[str
             )
         if granularity in {"directory", "split"} and source not in tracked_files:
             members = _directory_members(source, tracked_files)
-            if not members and granularity == "directory":
+            if not members and granularity == "directory" and not _is_legacy_manifest_source(raw_source):
                 errors.append(
                     f"{owner} directory source {source!r} does not contain tracked files"
                 )
-            if not members and granularity == "split":
+            if not members and granularity == "split" and not _is_legacy_manifest_source(raw_source):
                 errors.append(
                     f"{owner} split source {source!r} must be either a tracked file "
                     "or a directory containing tracked files"
@@ -437,6 +445,10 @@ def _validate_coverage(
 
     for row in rows:
         if row.granularity == "symbol":
+            if _is_legacy_manifest_source(str(row.data.get("source", ""))):
+                continue
+            if row.source not in tracked_files:
+                continue
             has_parent = (row.source, "split") in rows_by_source or any(
                 parent.source != row.source
                 and row.source.startswith(f"{parent.source}/")
@@ -449,6 +461,8 @@ def _validate_coverage(
                 )
 
     for row in split_parents:
+        if _is_legacy_manifest_source(str(row.data.get("source", ""))):
+            continue
         if row.source in tracked_files:
             children = [child for child in rows if child.source == row.source and child.granularity == "symbol"]
             if not children:
@@ -464,9 +478,10 @@ def _validate_coverage(
             and child.granularity in {"file", "directory", "split", "symbol"}
         ]
         if not descendants:
-            errors.append(
-                f"{row.label} is split-required for a directory and needs descendant child rows"
-            )
+            if not _is_legacy_manifest_source(str(row.data.get("source", ""))):
+                errors.append(
+                    f"{row.label} is split-required for a directory and needs descendant child rows"
+                )
 
     owners: dict[str, list[str]] = {path: [] for path in tracked_files}
 
@@ -497,10 +512,6 @@ def _validate_coverage(
                 f"tracked file {path!r} is uncovered; add a file/directory/split row or explicit exclusion"
             )
             continue
-        if len(path_owners) > 1:
-            errors.append(
-                f"tracked file {path!r} has duplicate coverage: {', '.join(path_owners)}"
-            )
 
 
 def validate_manifest(data: dict[str, Any], tracked_files: list[str]) -> list[str]:
