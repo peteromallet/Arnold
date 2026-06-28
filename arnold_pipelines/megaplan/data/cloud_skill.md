@@ -143,7 +143,21 @@ For an operator loop to progress a chain autonomously, the chain spec must set `
 
 An operator loop should **not** silently decide product or architecture questions, resolve merge conflicts, accept destructive cleanup, or ignore failing tests. Those are implementation decisions, not supervision. Surface them to the user or write a clear ticket unless the plan already contains an explicit settled decision that covers the case.
 
-Today this operator loop is usually a small project-local shell script under `.megaplan/` plus tmux. Treat that as an operational shim, not the ideal abstraction. The durable Megaplan feature should be first-class cloud supervision: built-in early check, hourly tick, provider fallback policy, single-PR chain mode, and push-after-milestone support.
+### Built-in cloud supervision (the operator loop is now automated)
+
+The "small project-local shell script" operator loop described above has been
+replaced by two first-class, always-on supervisors on the cloud worker. The
+operator (or a meta-loop) now watches *them*, not the chain directly.
+
+**1h cloud watchdog** — `/usr/local/bin/arnold-watchdog` (resident loop, with `megaplan-watchdog-ensure.timer` as a 5-min keep-alive). Each tick it syncs the editable install, scans session markers, and per session:
+- detects **stopped / flapping / `retrying_failure`** sessions and repairs: invokes the **Kimi goal operator → Codex** smart-repair, then falls back to a **direct relaunch** if the operator does not complete cleanly;
+- honors **`awaiting_pr_merge`** (does not flap-restart a plan legitimately waiting on a PR merge);
+- runs **progress-stall detection** — emits a `progress_stall` issue in `/workspace/watchdog-report.json` when a plan is alive but not effectively progressing (high iteration/attempt counts, no plan-content growth, stale events).
+Report at `/workspace/watchdog-report.json`, archived under `/workspace/watchdog-reports/`.
+
+**6h progress auditor** — `/usr/local/bin/arnold-progress-auditor` (`megaplan-progress-audit.timer`). Each 6h tick it reviews the last 6h of each active plan and, for suspicious ones, dispatches **Codex as the orchestrator** (which may deploy DeepSeek research subagents) to **subjectively judge** each: a genuine non-critical deadlock/inefficiency it is confident it can fix → root-cause + fix in `/workspace/arnold` + **push to `editible-install`** (the watchdog relaunches on the next tick); otherwise → document. Report at `/workspace/audit-reports/`, appended to `/workspace/audit-report.log`. Per-finding verdicts: `FIXED <sha>` or `PASSIVE`.
+
+Steady-state recovery path: the watchdog keeps the chain alive and repairs hard stops; the auditor catches inefficiency/deadlocks the watchdog's liveness check cannot see and fixes them at the source. The operator's job reduces to the **meta-loop** — hourly, confirm the watchdog is alive + reporting, the plan is progressing, no `blocked_recovery_not_resolved` count is climbing, and the auditor is producing useful `FIXED`/`PASSIVE` verdicts. See `docs/hetzner-watchdog-meta-loop.md` for the check command + red-signal responses.
 
 ## Gotchas (learned the hard way)
 
