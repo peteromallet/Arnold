@@ -1363,12 +1363,12 @@ def _commit_and_push_phase(
                 )
             _compat()._run_command(
                 root,
-                ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
+                ["git", "push", "--no-verify", "--force-with-lease", "origin", f"HEAD:{branch}"],
                 writer=writer,
                 error_code="git_push_failed",
             )
             return
-    _compat()._run_command(root, ["git", "push", "--no-verify", "origin", branch], writer=writer, error_code="git_push_failed")
+    _compat()._run_command(root, ["git", "push", "--no-verify", "origin", f"HEAD:{branch}"], writer=writer, error_code="git_push_failed")
 
 
 def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
