@@ -94,10 +94,30 @@ def _refresh_base_branch(
                 writer(f"[chain] {' '.join(pull_cmd)} output:\n{detail}\n")
             writer(
                 "[chain] warning: fast-forward refresh failed; "
-                f"continuing with refreshed origin/{base_branch}. "
-                "This is expected when the local base has milestone commits "
-                "or origin moved independently.\n"
+                f"falling back to hard reset to refreshed origin/{base_branch} "
+                "so the working tree (chain spec + idea files) matches the latest "
+                "base. Safe before milestone work starts; discards uncommitted "
+                "local edits (committed briefs are preserved).\n"
             )
+            # Force the working tree to the refreshed origin/<base> so the chain
+            # spec / idea files are read from the latest base commit (a stale
+            # working tree is the cause of missing_idea_file / missing_anchor_file
+            # when briefs were just pushed). pull --ff-only can fail when the
+            # working tree is dirty (e.g. the orchestrator staged spec uploads)
+            # or the local base diverged; reset --hard recovers both.
+            reset_cmd = ["git", "reset", "--hard", f"origin/{base_branch}"]
+            reset_proc = _compat().subprocess.run(
+                reset_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+            )
+            writer(f"[chain] {' '.join(reset_cmd)} -> rc={reset_proc.returncode}\n")
+            if reset_proc.returncode != 0:
+                rdetail = (reset_proc.stderr or reset_proc.stdout or "").strip()
+                if rdetail:
+                    writer(f"[chain] {' '.join(reset_cmd)} output:\n{rdetail}\n")
+                writer(
+                    "[chain] warning: hard reset also failed; continuing with the "
+                    f"stale local {base_branch} working tree.\n"
+                )
     except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
         writer(f"[chain] {' '.join(pull_cmd)} failed: {exc}\n")
         writer(

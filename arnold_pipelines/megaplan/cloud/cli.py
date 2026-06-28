@@ -476,12 +476,48 @@ def _remote_chain_upload_path(remote_path: str, *, source_workspace: str, target
     return str(PurePosixPath(target_workspace) / path)
 
 
+def _git_repo_root(path: Path) -> Path | None:
+    """Best-effort git toplevel for the repo containing ``path``."""
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(path.parent if path.is_file() else path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    top = proc.stdout.strip()
+    return Path(top).resolve() if top else None
+
+
 def _remote_chain_workspace_path(local_path: Path, *, local_root: Path, target_workspace: str) -> str:
     path = local_path.expanduser().resolve()
     root = local_root.expanduser().resolve()
+    relative: PurePosixPath | None = None
     try:
-        relative = path.relative_to(root)
+        relative = PurePosixPath(path.relative_to(root))
     except ValueError:
+        relative = None
+    # local_root isn't always the spec's repo root (it can be a cloud cache dir
+    # or a project dir that doesn't contain the spec). Fall back to the spec's
+    # OWN git repo root so the spec lands at its repo-relative path on the box —
+    # this keeps the chain spec, its north_star anchor, and idea files at the
+    # same relative paths, so chain.yaml-dir-relative anchor resolution works
+    # identically locally and remotely. Bare path.name is the last resort.
+    if relative is None:
+        git_root = _git_repo_root(path)
+        if git_root is not None:
+            try:
+                relative = PurePosixPath(path.relative_to(git_root))
+            except ValueError:
+                relative = None
+    if relative is None:
         return str(PurePosixPath(target_workspace) / path.name)
     return str(PurePosixPath(target_workspace).joinpath(*relative.parts))
 
