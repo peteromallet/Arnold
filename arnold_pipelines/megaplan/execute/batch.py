@@ -83,6 +83,7 @@ from arnold_pipelines.megaplan.orchestration.plan_contracts import (
     pre_existing_task_ids_from_contract,
 )
 from arnold_pipelines.megaplan.calibration import query_route_if_enabled
+from arnold_pipelines.megaplan.blocker_recovery import build_prerequisite_scopes
 from arnold_pipelines.megaplan.prompts import (
     _execute_batch_prompt,
     _write_execute_batch_template,
@@ -90,6 +91,13 @@ from arnold_pipelines.megaplan.prompts import (
 from arnold_pipelines.megaplan.receipts import build_receipt
 from arnold_pipelines.megaplan.receipts.extractors import execute_metrics
 from arnold_pipelines.megaplan.receipts.writer import write_receipt
+from arnold_pipelines.megaplan.resolution_contract import (
+    HARD_BLOCK,
+    classify_resolution_behavior,
+    resolution_applies_to_task,
+    resolution_state,
+)
+from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.types import (
     CliError,
     MOCK_ENV_VAR,
@@ -1264,6 +1272,24 @@ def handle_execute_one_batch(
         )
 
     tasks = finalize_data.get("tasks", [])
+    resolved_prereq_reset_ids = _reset_resolved_prerequisite_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        state=state,
+    )
+    if resolved_prereq_reset_ids:
+        write_plan_artifact_json(
+            plan_dir,
+            "finalize.json",
+            finalize_data,
+            contract_context=None,
+        )
+        log.info(
+            "resolved-prereq-retry(batch): reset %d stale prerequisite-blocked task(s) to pending: %s",
+            len(resolved_prereq_reset_ids),
+            ", ".join(resolved_prereq_reset_ids),
+        )
+        tasks = finalize_data.get("tasks", [])
     # In per-batch execute mode, finalize.json is only rewritten after the
     # final batch — between batches the per-task status overlay lives in
     # execution_batch_<n>.json. Apply that overlay so prerequisite checks
@@ -1790,12 +1816,98 @@ def _reset_blocked_tasks_to_pending(
             continue
         if task.get("status") != "blocked":
             continue
-        task["status"] = "pending"
-        task["executor_notes"] = ""
-        task["files_changed"] = []
-        task["commands_run"] = []
-        task["evidence_files"] = []
-        task["reviewer_verdict"] = ""
+        _clear_task_attempt_fields(task)
+        reset_ids.append(task_id)
+    return sorted(reset_ids)
+
+
+def _clear_task_attempt_fields(task: dict[str, Any]) -> None:
+    task["status"] = "pending"
+    task["executor_notes"] = ""
+    task["files_changed"] = []
+    task["commands_run"] = []
+    task["evidence_files"] = []
+    task["reviewer_verdict"] = ""
+    task.pop("recorded_invocation_id", None)
+
+
+def _task_blocking_action_ids(
+    task: dict[str, Any],
+    scopes: dict[str, Any],
+) -> tuple[str, ...]:
+    explicit = task.get("blocked_by_user_action_ids")
+    if isinstance(explicit, list):
+        action_ids = [
+            action_id
+            for action_id in explicit
+            if isinstance(action_id, str) and action_id in scopes
+        ]
+        if action_ids:
+            return tuple(action_ids)
+    notes = task.get("executor_notes")
+    if isinstance(notes, str) and notes.strip():
+        noted_action_ids = [action_id for action_id in scopes if action_id in notes]
+        if noted_action_ids:
+            return tuple(noted_action_ids)
+    task_id = task.get("id")
+    if not isinstance(task_id, str):
+        return ()
+    return tuple(
+        scope.action_id
+        for scope in scopes.values()
+        if task_id in scope.effective_task_ids
+    )
+
+
+def _reset_resolved_prerequisite_blocked_tasks(
+    finalize_data: dict[str, Any],
+    *,
+    plan_dir: Path,
+    state: PlanState,
+) -> list[str]:
+    """Clear stale prerequisite blocks once their user actions are resolved."""
+    scopes = build_prerequisite_scopes(finalize_data)
+    if not scopes:
+        return []
+
+    effective = effective_user_action_resolutions(plan_dir, state)
+    if not effective:
+        return []
+
+    reset_ids: list[str] = []
+    for task in finalize_data.get("tasks", []):
+        if not isinstance(task, dict) or task.get("status") != "blocked":
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str):
+            continue
+        matching_scopes = [
+            scopes[action_id]
+            for action_id in _task_blocking_action_ids(task, scopes)
+            if action_id in scopes
+        ]
+        if not matching_scopes:
+            continue
+        can_retry = True
+        for scope in matching_scopes:
+            resolution_event = effective.get(scope.action_id)
+            if resolution_event is None:
+                can_retry = False
+                break
+            if not resolution_applies_to_task(
+                resolution_event,
+                task_id,
+                source="memory",
+            ):
+                can_retry = False
+                break
+            resolution = resolution_state(resolution_event, source="memory")
+            if classify_resolution_behavior(resolution) == HARD_BLOCK:
+                can_retry = False
+                break
+        if not can_retry:
+            continue
+        _clear_task_attempt_fields(task)
         reset_ids.append(task_id)
     return sorted(reset_ids)
 
@@ -2378,6 +2490,25 @@ def handle_execute_auto_loop(
                 "retry-blocked-tasks: left baseline-unavailable checkpoint(s) blocked: %s",
                 ", ".join(sorted(baseline_unavailable_ids)),
             )
+
+    resolved_prereq_reset_ids = _reset_resolved_prerequisite_blocked_tasks(
+        finalize_data,
+        plan_dir=plan_dir,
+        state=state,
+    )
+    if resolved_prereq_reset_ids:
+        write_plan_artifact_json(
+            plan_dir,
+            "finalize.json",
+            finalize_data,
+            contract_context=None,
+        )
+        log.info(
+            "resolved-prereq-retry: reset %d stale prerequisite-blocked task(s) to pending: %s",
+            len(resolved_prereq_reset_ids),
+            ", ".join(resolved_prereq_reset_ids),
+        )
+        tasks = finalize_data.get("tasks", [])
 
     deferred_checkpoint_ids, deferred_acks = _defer_baseline_unavailable_checkpoints(
         finalize_data

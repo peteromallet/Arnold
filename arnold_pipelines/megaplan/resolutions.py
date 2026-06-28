@@ -31,6 +31,7 @@ from arnold_pipelines.megaplan.resolution_contract import (  # noqa: E402
     FALLBACK_STATES,
     HARD_BLOCK_STATES,
     SUPPORTED_USER_ACTION_RESOLUTION_STATES,
+    latest_events_by_key,
     resolution_applies_to_task as _shared_resolution_applies_to_task,
     resolution_recommended_action as _shared_resolution_recommended_action,
 )
@@ -97,6 +98,68 @@ def load_user_action_resolutions(plan_dir: Path) -> dict[str, dict[str, Any]]:
             )
 
     return data
+
+
+def disk_resolution_to_memory_event(
+    action_id: str,
+    resolution: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize one disk-backed resolution into the in-memory event shape."""
+    event: dict[str, Any] = {
+        "action_id": action_id,
+        "resolution": resolution.get("state"),
+    }
+    for source_key, target_key in (
+        ("created_at", "created_at"),
+        ("created_at", "timestamp"),
+        ("created_by", "created_by"),
+        ("fallback_mode", "fallback_mode"),
+        ("instructions", "instructions"),
+        ("reason", "reason"),
+        ("phase", "phase"),
+        ("debt_note", "debt_note"),
+    ):
+        value = resolution.get(source_key)
+        if value is not None:
+            event[target_key] = value
+    evidence = resolution.get("evidence")
+    if isinstance(evidence, list):
+        event["evidence"] = [item for item in evidence if isinstance(item, str)]
+    task_ids = resolution.get("applies_to_task_ids")
+    if isinstance(task_ids, list):
+        normalized_task_ids = [item for item in task_ids if isinstance(item, str) and item]
+        if normalized_task_ids:
+            event["applies_to_tasks"] = normalized_task_ids
+    return event
+
+
+def load_user_action_resolution_events(plan_dir: Path) -> list[dict[str, Any]]:
+    """Load disk-backed user-action resolutions as in-memory-style events."""
+    resolutions = load_user_action_resolutions(plan_dir)
+    return [
+        disk_resolution_to_memory_event(action_id, resolution)
+        for action_id, resolution in resolutions.items()
+    ]
+
+
+def effective_user_action_resolutions(
+    plan_dir: Path | None,
+    state: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Return the latest effective user-action resolutions across state and disk."""
+    events: list[dict[str, Any]] = []
+    meta = state.get("meta") if isinstance(state, dict) else None
+    state_events = meta.get("user_action_resolutions") if isinstance(meta, dict) else None
+    if isinstance(state_events, list):
+        events.extend(event for event in state_events if isinstance(event, dict))
+    if plan_dir is not None:
+        events.extend(load_user_action_resolution_events(plan_dir))
+    return latest_events_by_key(
+        events,
+        key_field="action_id",
+        state_field="resolution",
+        valid_states=SUPPORTED_USER_ACTION_RESOLUTION_STATES,
+    )
 
 
 def save_user_action_resolutions(

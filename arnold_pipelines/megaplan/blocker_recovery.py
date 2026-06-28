@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.quality_resolutions import (
     latest_quality_resolutions,
     validate_quality_resolution_event,
 )
+from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.resolution_contract import (
     FALLBACK,
     HARD_BLOCK,
@@ -25,9 +26,6 @@ from arnold_pipelines.megaplan.resolution_contract import (
     classify_resolution_behavior,
     resolution_applies_to_task,
     resolution_state,
-)
-from arnold_pipelines.megaplan.user_actions import (
-    effective_resolutions,
 )
 
 PREREQUISITE = "prerequisite"
@@ -472,11 +470,11 @@ def evaluate_prerequisite_blockers(
     finalize_data: dict[str, Any],
     state: dict[str, Any],
     blocked_tasks: Iterable[BlockedTask | dict[str, Any]],
+    *,
+    plan_dir: Path | None = None,
 ) -> BlockerRecoveryEvaluation:
     scopes = build_prerequisite_scopes(finalize_data)
-    effective = effective_resolutions(
-        _state_meta_list(state, "user_action_resolutions")
-    )
+    effective = effective_user_action_resolutions(plan_dir, state)
     details: list[BlockerDetail] = []
 
     for raw_blocked in blocked_tasks:
@@ -622,10 +620,16 @@ def evaluate_blocker_recovery(
     finalize_data: dict[str, Any],
     state: dict[str, Any],
     *,
+    plan_dir: Path | None = None,
     blocked_tasks: Iterable[BlockedTask | dict[str, Any]] = (),
     deviations: Iterable[Deviation | dict[str, Any] | str] = (),
 ) -> BlockerRecoveryEvaluation:
-    prereq = evaluate_prerequisite_blockers(finalize_data, state, blocked_tasks)
+    prereq = evaluate_prerequisite_blockers(
+        finalize_data,
+        state,
+        blocked_tasks,
+        plan_dir=plan_dir,
+    )
     quality = evaluate_quality_blockers(state, deviations)
     return BlockerRecoveryEvaluation(prereq.blockers + quality.blockers)
 
