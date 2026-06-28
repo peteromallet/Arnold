@@ -14,6 +14,7 @@ Subcommands operate on a single builder target:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import shutil
@@ -47,6 +48,45 @@ from arnold_pipelines.discovery import load_builder
 
 def _load_builder(target: str) -> Callable[[], Pipeline]:
     return load_builder(target)
+
+
+def _source_path_from_advertised_value(value: Any, *, module_file: str | None) -> Path | None:
+    if value is None:
+        return None
+    try:
+        path = Path(value)
+    except TypeError:
+        return None
+    if not path.is_absolute() and module_file:
+        cwd_path = Path.cwd() / path
+        if cwd_path.exists():
+            return cwd_path
+        path = Path(module_file).resolve().parent / path
+    return path
+
+
+def _advertised_authoring_source_path(target: str) -> Path | None:
+    builder = _load_builder(target)
+    module = sys.modules.get(getattr(builder, "__module__", ""))
+    if module is None and ":" in target:
+        module_name, _ = target.rsplit(":", 1)
+        module = importlib.import_module(module_name)
+    module_file = getattr(module, "__file__", None) if module is not None else None
+    for owner in (builder, module):
+        if owner is None:
+            continue
+        for attr in (
+            "AUTHORING_SOURCE_PATH",
+            "authoring_source_path",
+            "__authoring_source_path__",
+        ):
+            path = _source_path_from_advertised_value(
+                getattr(owner, attr, None),
+                module_file=module_file,
+            )
+            if path is not None:
+                return path
+    return None
 
 
 def _compile_from_target(target: str) -> workflow.WorkflowManifest:
@@ -100,8 +140,16 @@ def _print_result(result: ExecutionResult) -> None:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
-    if getattr(args, "source_path", None):
-        source_path = Path(args.source_path)
+    try:
+        source_path = _source_path_from_args_or_module(args)
+    except Exception as exc:
+        if args.format == "json":
+            print(render_json_envelope(exc, source_kind="module"))
+        else:
+            print(f"check failed: {exc}", file=sys.stderr)
+        return 1
+
+    if source_path is not None:
         result = workflow.check_workflow_file(source_path)
         if args.format == "json":
             if result.ok:
@@ -278,6 +326,16 @@ def _source_path_or_none(args: argparse.Namespace) -> Path | None:
     return Path(raw) if raw else None
 
 
+def _source_path_from_args_or_module(args: argparse.Namespace) -> Path | None:
+    source_path = _source_path_or_none(args)
+    if source_path is not None:
+        return source_path
+    module = getattr(args, "module", None)
+    if module:
+        return _advertised_authoring_source_path(module)
+    return None
+
+
 def _cmd_compile(args: argparse.Namespace) -> int:
     source_path = _source_path_or_none(args)
     try:
@@ -318,8 +376,8 @@ def _cmd_compile(args: argparse.Namespace) -> int:
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
-    source_path = _source_path_or_none(args)
     try:
+        source_path = _source_path_from_args_or_module(args)
         if source_path is not None:
             check_result = workflow.check_workflow_file(source_path)
             manifest = workflow.compile_workflow_file(source_path)
@@ -385,10 +443,14 @@ def _span_dict(span: Any) -> dict[str, Any] | None:
 
 
 def _cmd_explain(args: argparse.Namespace) -> int:
-    source_path = _source_path_or_none(args)
+    try:
+        source_path = _source_path_from_args_or_module(args)
+    except Exception as exc:
+        print(f"explain failed: {exc}", file=sys.stderr)
+        return 1
     if source_path is None:
         print(
-            "explain requires <workflow.py>",
+            "explain requires <workflow.py> or --module with AUTHORING_SOURCE_PATH",
             file=sys.stderr,
         )
         return 2

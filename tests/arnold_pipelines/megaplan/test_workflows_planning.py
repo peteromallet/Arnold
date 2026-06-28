@@ -23,12 +23,16 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 class TestAuthoredWorkflow:
     def test_authored_source_has_zero_compiler_diagnostics(self) -> None:
         result = check_workflow_source(
-            planning._authored_workflow_source(),
-            source_path=planning.__file__,
+            planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"),
+            source_path=planning.AUTHORING_SOURCE_PATH,
         )
 
         assert result.ok is True
         assert result.diagnostics == ()
+
+    def test_authoring_source_path_points_to_committed_workflow(self) -> None:
+        assert planning.AUTHORING_SOURCE_PATH.name == "workflow.py"
+        assert planning.AUTHORING_SOURCE_PATH.is_file()
 
     def test_build_pipeline_returns_m3_pipeline(self) -> None:
         pipeline = planning.build_pipeline()

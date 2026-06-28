@@ -138,6 +138,7 @@ def _compile_route(route: Route) -> WorkflowEdge:
         target=route.target,
         label=route.label,
         condition_ref=route.condition_ref,
+        source_span=route.source_span,
         metadata=_freeze_metadata(route.metadata),
     )
 

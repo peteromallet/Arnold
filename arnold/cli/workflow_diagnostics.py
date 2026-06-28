@@ -167,15 +167,25 @@ def _normalize_manifest_validation_diagnostic(
     *,
     source_path: str | Path | None,
 ) -> dict[str, Any]:
+    span = diagnostic.source_span
+    file_path = span.path if span is not None else _string_or_none(source_path)
     payload: dict[str, Any] = {
-        "file": _string_or_none(source_path),
-        "line": None,
-        "col": None,
+        "file": file_path,
+        "line": span.start_line if span is not None else None,
+        "col": span.start_column if span is not None else None,
         "severity": diagnostic.severity,
         "code": f"AWF_MANIFEST_VALIDATION_ERROR:{diagnostic.code}",
         "message": diagnostic.message,
-        "suggestion": None,
+        "suggestion": _manifest_validation_suggestion(diagnostic),
     }
+    if span is not None:
+        payload["source_span"] = {
+            "path": span.path,
+            "start_line": span.start_line,
+            "start_column": span.start_column,
+            "end_line": span.end_line,
+            "end_column": span.end_column,
+        }
     if diagnostic.node_id is not None:
         payload["node_id"] = diagnostic.node_id
     if diagnostic.edge_id is not None:
@@ -185,6 +195,25 @@ def _normalize_manifest_validation_diagnostic(
     if diagnostic.details:
         payload["details"] = dict(diagnostic.details)
     return payload
+
+
+def _manifest_validation_suggestion(diagnostic: ManifestValidationIssue) -> str:
+    if diagnostic.source_span is not None:
+        if diagnostic.node_id is not None:
+            return (
+                f"edit the authored workflow source for node {diagnostic.node_id!r}"
+                f" so manifest field {diagnostic.field or '<unknown>'} satisfies validation"
+            )
+        if diagnostic.edge_id is not None:
+            return (
+                f"edit the authored workflow source for edge {diagnostic.edge_id!r}"
+                f" so manifest field {diagnostic.field or '<unknown>'} satisfies validation"
+            )
+        return "edit the authored workflow source at this span so the generated manifest satisfies validation"
+    return (
+        f"fix manifest-level invariant {diagnostic.field or diagnostic.code!r}"
+        " and regenerate the manifest from valid source"
+    )
 
 
 def _normalize_fallback_diagnostic(

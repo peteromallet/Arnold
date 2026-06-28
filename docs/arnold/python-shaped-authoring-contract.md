@@ -230,6 +230,13 @@ imply that the current grammar accepts the corresponding source forms.
 Diagnostics must be emitted from static parsing and resolver checks. They must
 not require importing or executing workflow source.
 
+Static prompt and resource dependency failures that can be proven from typed
+component metadata are AWF authoring diagnostics. They report the authored call
+site and name the missing prompt or resource dependency. Prompt template
+rendering errors, model/resource lookup failures, and other failures that
+depend on runtime state remain runtime diagnostics rather than AWF source
+diagnostics.
+
 ## Acceptance Boundary
 
 The first compiler slice accepts a linear workflow with valid component imports
