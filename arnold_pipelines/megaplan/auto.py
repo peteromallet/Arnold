@@ -229,6 +229,14 @@ NON_RETRYABLE_INFRASTRUCTURE_ERROR_CODES = frozenset(
     }
 )
 
+NON_RETRYABLE_RECOVER_BLOCKED_ERROR_CODES = frozenset(
+    {
+        "blocked_recovery_not_resolved",
+        "external_error_resume_required",
+        "rerun_phase_required",
+    }
+)
+
 
 def _extract_cli_error_payload(stdout: str, stderr: str) -> dict[str, Any] | None:
     """Return the structured CliError payload emitted by phase subprocesses.
@@ -348,6 +356,17 @@ def _non_retryable_infrastructure_error_payload(
     if payload is None:
         return None
     if payload.get("error") not in NON_RETRYABLE_INFRASTRUCTURE_ERROR_CODES:
+        return None
+    return payload
+
+
+def _non_retryable_recover_blocked_error_payload(
+    stdout: str, stderr: str
+) -> dict[str, Any] | None:
+    payload = _extract_cli_error_payload(stdout, stderr)
+    if payload is None:
+        return None
+    if payload.get("error") not in NON_RETRYABLE_RECOVER_BLOCKED_ERROR_CODES:
         return None
     return payload
 
@@ -3754,6 +3773,42 @@ def drive(
             # Non-phase commands (e.g. 'override add-note') that failed —
             # preserve existing exit-code-based handling.
             log(f"command '{next_step}' exited {code}: {err.strip() or out.strip()[-400:]}")
+            recover_blocked_payload = (
+                _non_retryable_recover_blocked_error_payload(out, err)
+                if next_step == "recover-blocked"
+                else None
+            )
+            if recover_blocked_payload is not None:
+                error_code = str(recover_blocked_payload.get("error") or "recover_blocked_failed")
+                message = str(
+                    recover_blocked_payload.get("message")
+                    or f"command '{next_step}' exited {code}"
+                )
+                _record_failure(
+                    plan_dir=plan_dir,
+                    kind=error_code,
+                    message=message,
+                    current_state=STATE_BLOCKED,
+                    phase=last_phase,
+                    resume_cursor=_failure_resume_cursor_for_step(next_step, plan_dir=plan_dir),
+                    last_artifact=_latest_artifact_name(plan_dir),
+                    suggested_action="Resolve the blocker or use the suggested recovery command before resuming automation.",
+                    metadata={
+                        "exit_code": code,
+                        "stderr": err.strip(),
+                        "stdout": out.strip()[-400:],
+                        "iteration": iteration,
+                        "cli_error": recover_blocked_payload,
+                    },
+                )
+                return _outcome(
+                    "blocked",
+                    final_state=STATE_BLOCKED,
+                    iterations=iteration,
+                    reason=message,
+                    last_phase=last_phase,
+                    blocking_reasons=[error_code],
+                )
             _record_failure(
                 plan_dir=plan_dir,
                 kind="phase_failed",
