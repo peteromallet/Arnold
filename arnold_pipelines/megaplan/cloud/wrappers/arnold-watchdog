@@ -141,7 +141,7 @@ if os.path.exists(items_path):
                 items.append(json.loads(line))
 issues = [
     item for item in items
-    if item.get("status") not in {"alive", "completed", "restarted", "synced", "skipped"}
+    if item.get("status") not in {"alive", "complete", "completed", "restarted", "synced", "skipped"}
 ]
 restarted = [item for item in items if item.get("status") == "restarted"]
 reaped = [item for item in items if item.get("status") == "reaped"]
@@ -618,11 +618,23 @@ import sys
 
 workspace = pathlib.Path(sys.argv[1])
 plan_name = sys.argv[2]
-if not plan_name:
+plans_dir = workspace / ".megaplan" / "plans"
+state_paths = []
+if plan_name:
+    state_paths.append(plans_dir / plan_name / "state.json")
+else:
+    state_paths.extend(
+        sorted(
+            plans_dir.glob("*/state.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    )
+if not state_paths:
     print("none")
     raise SystemExit(0)
 
-state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+state_path = state_paths[0]
 try:
     state = json.loads(state_path.read_text(encoding="utf-8"))
 except Exception:
@@ -630,8 +642,8 @@ except Exception:
     raise SystemExit(0)
 
 current_state = state.get("current_state")
-if current_state in {"done", "cancelled", "aborted"}:
-    print(str(current_state))
+if current_state == "done":
+    print(f"{state_path.parent.name}\t{current_state}")
 else:
     print("none")
 PY
@@ -1705,9 +1717,10 @@ launch_chain_tick() {
     local terminal_status
     terminal_status="$(plan_terminal_status "$workspace" "$plan_name")"
     if [[ "$terminal_status" != "none" ]]; then
-      clear_session_tracking_artifacts "$session" "$plan_name"
-      log "plan already completed; clearing marker session=$session state=$terminal_status plan=$plan_name"
-      report_item "$report_items" "$session" "observe" "completed" "plan already $terminal_status; marker cleared" "$workspace" "$remote_spec"
+      local terminal_plan_name terminal_state
+      IFS=$'\t' read -r terminal_plan_name terminal_state <<< "$terminal_status"
+      log "plan complete; skipping repair/relaunch session=$session state=$terminal_state plan=$terminal_plan_name"
+      report_item "$report_items" "$session" "observe" "complete" "plan complete" "$workspace" "$remote_spec"
       return 0
     fi
   fi
