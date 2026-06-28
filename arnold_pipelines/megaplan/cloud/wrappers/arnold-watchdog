@@ -277,8 +277,10 @@ notify_needs_human() {
   local run_kind="${5:-chain}"
   local health="${6:-stopped}"
   local summary="$7"
-  local payload_tmp delivered
+  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin
   payload_tmp="$(mktemp)"
+  dm_result_tmp="$(mktemp)"
+  discord_dm_bin="${DISCORD_DM_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
   python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
     "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
     "${PLAN_STATUS_FAILURE_KIND:-}" "${PLAN_STATUS_FAILURE_MESSAGE:-}" "${PLAN_STATUS_FAILURE_PHASE:-}" \
@@ -329,16 +331,75 @@ payload = {
         "pushed_commit_shas": [item for item in pushed_commits.split(", ") if item],
     },
 }
+failure_parts = [part for part in (failure_kind, failure_message, failure_phase) if part]
+fields = [
+    {"label": "Session", "value": session, "style": "code"},
+    {"label": "Workspace", "value": workspace, "style": "code"},
+]
+if remote_spec:
+    fields.append({"label": "Spec", "value": remote_spec, "style": "code"})
+fields.extend(
+    [
+        {"label": "Run kind", "value": run_kind},
+        {"label": "Health", "value": health},
+        {"label": "Plan", "value": plan_name or "<unknown>", "style": "code"},
+        {"label": "Summary", "value": summary},
+        {"label": "Failure", "value": " - ".join(failure_parts) if failure_parts else summary},
+    ]
+)
+tiers = payload["plan"]["tiers_tried"]
+if tiers:
+    fields.append({"label": "Tiers tried", "value": tiers, "style": "code_list", "joiner": " -> "})
+commits = payload["plan"]["pushed_commit_shas"]
+if commits:
+    fields.append({"label": "Pushed commits", "value": commits, "style": "code_list", "joiner": ", "})
+payload.update(
+    {
+        "title": f"Megaplan needs human review - {session}",
+        "fields": fields,
+        "next_action": "Needs human review. Inspect the workspace, review the failure, and decide whether to resume, repair, or clean up.",
+    }
+)
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
     handle.write("\n")
 PY
 
   delivered=0
-  if [[ -n "$REPORT_WEBHOOK" ]]; then
+  webhook_delivered=0
+  if [[ -x "$discord_dm_bin" ]]; then
+    if "$discord_dm_bin" < "$payload_tmp" > "$dm_result_tmp" 2>>"$LOG"; then
+      read -r dm_status dm_reason < <(python3 - "$dm_result_tmp" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+except Exception:
+    print("invalid unknown")
+    raise SystemExit(0)
+print("ok" if payload.get("ok") else "failed", payload.get("reason") or "")
+PY
+)
+      if [[ "$dm_status" == "ok" ]]; then
+        delivered=1
+        log "needs-human discord dm delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      elif [[ "$dm_reason" == "missing_config" ]]; then
+        log "needs-human discord dm skipped; DISCORD_BOT_TOKEN or DISCORD_DM_USER_ID unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      else
+        log "needs-human discord dm delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      fi
+    else
+      log "needs-human discord dm helper failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+    fi
+  else
+    log "needs-human discord dm helper unavailable session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+  fi
+
+  if [[ "$delivered" != "1" && -n "$REPORT_WEBHOOK" && "${dm_reason:-}" != "missing_config" ]]; then
     if command -v curl >/dev/null 2>&1; then
       if curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$payload_tmp" "$REPORT_WEBHOOK" >> "$LOG" 2>&1; then
-        delivered=1
+        webhook_delivered=1
         log "needs-human webhook delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
       else
         log "needs-human webhook delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
@@ -347,14 +408,19 @@ PY
       log "needs-human webhook skipped; curl unavailable session=$session"
     fi
   else
-    log "needs-human webhook unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+    if [[ "$delivered" != "1" ]]; then
+      log "needs-human webhook unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+    fi
   fi
 
   report_item "$report_items" "$session" "observe" "needs_human" "$summary" "$workspace" "$remote_spec"
   if [[ "$delivered" == "1" ]]; then
+    report_item "$report_items" "$session" "notify" "discord_dm_sent" "needs-human Discord DM delivered" "$workspace" "$remote_spec"
+  fi
+  if [[ "$webhook_delivered" == "1" ]]; then
     report_item "$report_items" "$session" "notify" "webhook_sent" "needs-human webhook delivered" "$workspace" "$remote_spec"
   fi
-  rm -f "$payload_tmp"
+  rm -f "$payload_tmp" "$dm_result_tmp"
 }
 
 adopt_unmarked_tmux_sessions() {

@@ -1156,6 +1156,15 @@ tmux() { echo TMUX >&2; return 1; }
 
 
 def test_watchdog_needs_human_webhook_posts_once_when_configured(tmp_path: Path) -> None:
+    dm_helper = tmp_path / "arnold-discord-dm"
+    dm_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "printf '%s\\n' '{\"ok\": false, \"reason\": \"send_failed\"}'\n",
+        encoding="utf-8",
+    )
+    dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
+
     curl_path = tmp_path / "curl"
     curl_path.write_text(
         "#!/usr/bin/env bash\n"
@@ -1179,6 +1188,7 @@ def test_watchdog_needs_human_webhook_posts_once_when_configured(tmp_path: Path)
         [
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
             f"LOG={str(log_path)!r}",
+            f"DISCORD_DM_BIN={str(dm_helper)!r}",
             "REPORT_WEBHOOK='https://example.test/watchdog'",
             """
 report_item() {
@@ -1208,6 +1218,104 @@ PLAN_STATUS_PUSHED_COMMITS='abc123def456'
     assert payload["plan"]["pushed_commit_shas"] == ["abc123def456"]
     report = report_path.read_text(encoding="utf-8")
     assert "\tnotify\twebhook_sent\tneeds-human webhook delivered\t" in report
+
+
+def test_watchdog_needs_human_discord_dm_is_primary_delivery(tmp_path: Path) -> None:
+    dm_helper = tmp_path / "arnold-discord-dm"
+    dm_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        f"cat > {str(tmp_path / 'dm-payload.json')!r}\n"
+        "printf '%s\\n' '{\"ok\": true, \"message_count\": 1}'\n",
+        encoding="utf-8",
+    )
+    dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
+
+    curl_path = tmp_path / "curl"
+    curl_path.write_text("#!/usr/bin/env bash\nexit 99\n", encoding="utf-8")
+    curl_path.chmod(curl_path.stat().st_mode | stat.S_IXUSR)
+
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            f"LOG={str(log_path)!r}",
+            f"DISCORD_DM_BIN={str(dm_helper)!r}",
+            "REPORT_WEBHOOK='https://example.test/watchdog'",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+PLAN_STATUS_PLAN_NAME='demo-plan'
+PLAN_STATUS_CURRENT_STATE='manual_review'
+PLAN_STATUS_RETRY_STRATEGY='manual_review'
+PLAN_STATUS_FAILURE_KIND='iteration_cap'
+PLAN_STATUS_FAILURE_MESSAGE='exceeded max_iterations=200'
+PLAN_STATUS_FAILURE_PHASE='recover-blocked'
+PLAN_STATUS_FAILURE_RECORDED_AT='2026-06-28T11:29:34Z'
+PLAN_STATUS_TIERS_TRIED='deepseek:flash, codex:gpt-5.4, codex:gpt-5.5'
+PLAN_STATUS_PUSHED_COMMITS='abc123def456, fedcba654321'
+""".strip(),
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/briefs/demo.md chain stopped 'manual_review halt'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    payload = json.loads((tmp_path / "dm-payload.json").read_text(encoding="utf-8"))
+    assert payload["title"] == "Megaplan needs human review - demo-session"
+    assert payload["plan"]["tiers_tried"] == ["deepseek:flash", "codex:gpt-5.4", "codex:gpt-5.5"]
+    assert payload["plan"]["pushed_commit_shas"] == ["abc123def456", "fedcba654321"]
+    assert any(field["label"] == "Tiers tried" and field["joiner"] == " -> " for field in payload["fields"])
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tnotify\tdiscord_dm_sent\tneeds-human Discord DM delivered\t" in report
+    assert "needs-human webhook delivered" not in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_needs_human_missing_discord_config_skips_webhook_fallback(tmp_path: Path) -> None:
+    dm_helper = tmp_path / "arnold-discord-dm"
+    dm_helper.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat >/dev/null\n"
+        "printf '%s\\n' '{\"ok\": false, \"reason\": \"missing_config\", \"missing\": [\"DISCORD_BOT_TOKEN\", \"DISCORD_DM_USER_ID\"]}'\n",
+        encoding="utf-8",
+    )
+    dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
+
+    curl_path = tmp_path / "curl"
+    curl_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"echo called >> {str(tmp_path / 'curl-calls.txt')!r}\n",
+        encoding="utf-8",
+    )
+    curl_path.chmod(curl_path.stat().st_mode | stat.S_IXUSR)
+
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            f"LOG={str(log_path)!r}",
+            f"DISCORD_DM_BIN={str(dm_helper)!r}",
+            "REPORT_WEBHOOK='https://example.test/watchdog'",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+PLAN_STATUS_PLAN_NAME='demo-plan'
+""".strip(),
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/briefs/demo.md chain stopped 'manual_review halt'",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / "curl-calls.txt").exists()
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tneeds_human\tmanual_review halt\t" in report
+    assert "discord dm skipped; DISCORD_BOT_TOKEN or DISCORD_DM_USER_ID unset" in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_resolves_relative_chain_specs_against_workspace(tmp_path: Path) -> None:

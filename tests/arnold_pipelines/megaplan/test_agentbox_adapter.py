@@ -10,7 +10,7 @@ import pytest
 from arnold.runtime.durable_ops import OperationState, ResourceType
 
 from agentbox.config import AgentBoxConfig
-from agentbox.operations import load_agentbox_operation, open_operation_store, update_agentbox_operation
+from agentbox.operations import create_agentbox_operation, load_agentbox_operation, open_operation_store, update_agentbox_operation
 from agentbox.repos import register_repo
 from agentbox.run_dirs import read_metadata, run_dir_paths
 from agentbox.tmux import SessionStatus
@@ -19,6 +19,7 @@ from arnold_pipelines.megaplan.agentbox_adapter import (
     MEGAPLAN_CHAIN_OPERATION_TYPE,
     MegaplanChainHandler,
     MegaplanChainLaunchError,
+    _record_completion_dm,
 )
 from arnold_pipelines.megaplan.chain.spec import ChainState, save_chain_state
 
@@ -841,6 +842,82 @@ def test_megaplan_chain_summarize_and_cleanup_descriptor_are_compact_and_non_des
         "process_session",
     }
     assert Path(descriptor["paths"]["stdout"]).exists()
+
+
+def test_record_completion_dm_emits_event_and_sends_discord_dm(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-1",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-1", state=OperationState.RUNNING)
+    update_agentbox_operation(
+        config,
+        "chain-1",
+        state=OperationState.SUCCEEDED,
+        metadata={
+            "repo_names": ["app"],
+            "validation": {"status": "passed"},
+            "pr_info": {"app": {"number": 42, "url": "https://github.com/example/repo/pull/42"}},
+            "ci_status": {"app": "passed"},
+        },
+    )
+
+    payloads: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        lambda payload: payloads.append(dict(payload)) or {"ok": True, "message_count": 1},
+    )
+
+    run = load_agentbox_operation(config, "chain-1")
+    _record_completion_dm(config, "chain-1", run)
+
+    updated = load_agentbox_operation(config, "chain-1")
+    events = _events(run_dir_paths(config, "chain-1").events_path)
+
+    assert "Operation chain-1 completed with state succeeded." in updated.metadata["completion_dm"]
+    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_ready"
+    assert payloads[0]["title"] == "Megaplan chain complete - chain-1"
+    assert payloads[0]["links"] == [{"label": "PR", "url": "https://github.com/example/repo/pull/42"}]
+    assert any(field["label"] == "CI" and field["value"] == "passed" for field in payloads[0]["fields"])
+
+
+def test_record_completion_dm_never_raises_when_discord_send_crashes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config_with_repo(tmp_path, "app")
+    create_agentbox_operation(
+        config,
+        "chain-1",
+        command="echo hi",
+        operation_type=MEGAPLAN_CHAIN_OPERATION_TYPE,
+        repo_names=["app"],
+    )
+    update_agentbox_operation(config, "chain-1", state=OperationState.RUNNING)
+    update_agentbox_operation(
+        config,
+        "chain-1",
+        state=OperationState.SUCCEEDED,
+        metadata={"repo_names": ["app"]},
+    )
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.agentbox_adapter.send_discord_dm",
+        lambda payload: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    run = load_agentbox_operation(config, "chain-1")
+    _record_completion_dm(config, "chain-1", run)
+
+    events = _events(run_dir_paths(config, "chain-1").events_path)
+    assert events[-1]["event_type"] == "megaplan_chain.completion_dm_ready"
 
 
 def _config_with_repo(tmp_path: Path, repo_name: str) -> AgentBoxConfig:
