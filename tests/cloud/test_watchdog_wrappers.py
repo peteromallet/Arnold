@@ -48,7 +48,7 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
     assert 'f"recorded={recorded_at or' in text
     assert 'session alive but plan unhealthy' in text
     assert 'report_item "$report_items" "$session" "repair" "repair_running"' in text
-    assert 'report_item "$report_items" "$session" "repair" "repair_completed"' in text
+    assert 'report_item "$report_items" "$session" "repair" "repair_dispatched"' in text
 
 
 def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
@@ -58,27 +58,30 @@ def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
     assert 'grep -F "[a]rnold-kimi-goal-operator $session "' not in text
 
 
-def test_watchdog_guards_all_kimi_repair_paths_before_inline_operator_invocation() -> None:
+def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> None:
     text = _wrapper("arnold-watchdog")
 
-    repair_start = text.index("repair_unhealthy_session() {")
-    launch_start = text.index("launch_chain_tick() {")
-    repair_block = text[repair_start:launch_start]
-    stopped_block = text[text.index('if [[ "$repair_attempted" == "0" ]]; then', launch_start):]
+    # The Kimi goal operator is launched in the background (setsid ... &) so a
+    # 60-min repair on one session cannot block the tick from scanning/reporting
+    # the other sessions.
+    assert "dispatch_kimi_repair()" in text
+    assert "setsid /usr/local/bin/arnold-kimi-goal-operator" in text
+    assert "kimi_dispatch_marker_set" in text
+    assert "kimi_dispatch_failed_previously" in text
+    # The direct-relaunch fallback consumes the marker (Kimi tried + exited w/o recovery).
+    assert "session stopped; Kimi tried and exited without recovery -> direct relaunch" in text
+    # The marker is cleared once the session is observed alive + healthy.
+    assert "kimi_dispatch_marker_clear" in text
 
-    repair_guard = 'if kimi_operator_running "$session"; then'
-    repair_log = 'log "session unhealthy; Kimi repair already running session=$session reason=$reason"'
-    repair_invoke = 'log "session unhealthy: invoking Kimi goal operator before relaunch session=$session reason=$reason"'
-    stopped_log = 'log "session stopped; Kimi repair already running session=$session"'
-    stopped_invoke = 'log "session stopped: invoking Kimi goal operator before relaunch session=$session"'
-
-    assert repair_guard in repair_block
-    assert repair_log in repair_block
-    assert repair_block.index(repair_guard) < repair_block.index(repair_invoke)
-
-    assert repair_guard in stopped_block
-    assert stopped_log in stopped_block
-    assert stopped_block.index(repair_guard) < stopped_block.index(stopped_invoke)
+    # No bare synchronous foreground Kimi invocation remains: every operator
+    # call site either guards (kimi_operator_running), dispatches in the
+    # background (dispatch_kimi_repair / setsid), or is a marker/log line.
+    for ln in text.splitlines():
+        if 'arnold-kimi-goal-operator "$session" "$workspace" "$remote_spec"' in ln:
+            assert any(tok in ln for tok in (
+                "setsid", "dispatch_kimi_repair", "kimi_operator_running",
+                "kimi_dispatch", "log ",
+            )), f"bare synchronous Kimi invocation remains: {ln!r}"
 
 
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
@@ -383,7 +386,7 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
 
     # In-container: iterates active markers, 5h window, deepseek dispatch.
     assert 'MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"' in text
-    assert 'AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-5}"' in text
+    assert 'AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"' in text
     assert 'DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"' in text
     assert 'SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"' in text
     assert "launch_hermes_agent.py" in text
