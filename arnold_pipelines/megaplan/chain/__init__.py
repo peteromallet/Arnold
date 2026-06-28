@@ -2305,6 +2305,43 @@ def run_chain(
         log(f"milestone {milestone.label} starting")
         use_pr = push_enabled and bool(milestone.branch)
 
+        if state.current_milestone_index == idx and state.pr_number is not None and use_pr:
+            pr_state = _pr_state(root, state.pr_number, writer=writer)
+            if pr_state == "merged":
+                state.pr_state = "merged"
+                chain_spec.save_chain_state(spec_path, state)
+                log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
+                appended, reason = _append_completed_with_guard(
+                    root,
+                    state,
+                    {
+                        "label": milestone.label,
+                        "plan": state.current_plan_name,
+                        "status": "done",
+                        "pr_number": state.pr_number,
+                        "pr_state": "merged",
+                    },
+                    implementation_milestone=True,
+                    writer=writer,
+                )
+                if not appended:
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                    )
+                idx += 1
+                state.current_milestone_index = idx
+                state.current_plan_name = None
+                state.last_state = "done"
+                state.pr_number = None
+                state.pr_state = None
+                chain_spec.save_chain_state(spec_path, state)
+                continue
+
         if (
             state.last_state == STATE_AWAITING_PR_MERGE
             and state.current_milestone_index == idx
