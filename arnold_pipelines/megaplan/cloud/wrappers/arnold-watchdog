@@ -8,6 +8,20 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
+SELF_PATH="${BASH_SOURCE[0]:-$0}"
+if command -v readlink >/dev/null 2>&1; then
+  SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
+fi
+WATCHDOG_ARGS=("$@")
+WATCHDOG_STARTED_AT="$(date +%s)"
+LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"
+LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"
+if [[ "$LOCK_HELD" != "1" ]] && command -v flock >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$LOCK_FILE")"
+  export CLOUD_WATCHDOG_LOCK_HELD=1
+  exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
+fi
+
 LOG="${CLOUD_WATCHDOG_LOG:-/workspace/watchdog.log}"
 REPORT_PATH="${CLOUD_WATCHDOG_REPORT_PATH:-/workspace/watchdog-report.json}"
 REPORT_ARCHIVE_DIR="${CLOUD_WATCHDOG_REPORT_ARCHIVE_DIR:-/workspace/watchdog-reports}"
@@ -34,6 +48,16 @@ mkdir -p "$(dirname "$LOG")"
 
 log() {
   echo "[watchdog $(date -Iseconds)] $*" | tee -a "$LOG"
+}
+
+maybe_reexec_updated_watchdog() {
+  local wrapper_mtime
+  wrapper_mtime="$(stat -c %Y "$SELF_PATH" 2>/dev/null || echo 0)"
+  [[ "$wrapper_mtime" =~ ^[0-9]+$ ]] || return 0
+  if (( wrapper_mtime > WATCHDOG_STARTED_AT )); then
+    log "watchdog wrapper updated on disk; re-execing current script"
+    exec bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"
+  fi
 }
 
 json_field() {
@@ -2190,9 +2214,11 @@ EOF
 
 scan_once() {
   log "scan start marker_dir=$MARKER_DIR"
+  maybe_reexec_updated_watchdog
   local report_items
   report_items="$(mktemp)"
   sync_editable_source_branch "$report_items" || true
+  maybe_reexec_updated_watchdog
   while IFS=$'\t' read -r adopted_session adopted_workspace adopted_remote_spec adopted_kind adopted_plan_name; do
     [[ -n "$adopted_session" ]] || continue
     log "adopted marker-less tmux session=$adopted_session kind=${adopted_kind:-chain}"

@@ -1411,6 +1411,23 @@ def test_watchdog_scan_ignores_progress_snapshot_markers() -> None:
     assert "*.progress.json|*.reap-progress.json" in text
 
 
+def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> None:
+    text = _wrapper("arnold-watchdog")
+    scan_once = _extract_wrapper_function("scan_once")
+
+    assert 'LOCK_FILE="${CLOUD_WATCHDOG_LOCK_FILE:-/workspace/.megaplan/watchdog.lock}"' in text
+    assert 'LOCK_HELD="${CLOUD_WATCHDOG_LOCK_HELD:-0}"' in text
+    assert 'exec flock -n "$LOCK_FILE" bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"' in text
+    assert "maybe_reexec_updated_watchdog()" in text
+    assert 'log "watchdog wrapper updated on disk; re-execing current script"' in text
+    assert 'exec bash "$SELF_PATH" "${WATCHDOG_ARGS[@]}"' in text
+    assert 'log "scan start marker_dir=$MARKER_DIR"' in scan_once
+    assert 'sync_editable_source_branch "$report_items" || true' in scan_once
+    assert scan_once.count("maybe_reexec_updated_watchdog") == 2
+    assert scan_once.index('log "scan start marker_dir=$MARKER_DIR"') < scan_once.index("maybe_reexec_updated_watchdog")
+    assert scan_once.index('sync_editable_source_branch "$report_items" || true') < scan_once.rindex("maybe_reexec_updated_watchdog")
+
+
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:
     text = _wrapper("arnold-chain")
 
