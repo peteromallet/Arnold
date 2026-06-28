@@ -28,7 +28,7 @@ from typing import Any, Callable, Mapping
 
 from .hermes_fanout import GenericScatterResult, scatter_gather_processes
 from arnold_pipelines.megaplan.agent_runtime import AgentRequest, AgentSpec, ResultProvenance
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
 from arnold_pipelines.megaplan.types import AgentMode, PlanState, resolved_default_model_for_agent
 

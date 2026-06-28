@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import os
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -22,6 +23,13 @@ from arnold.conformance.deleted_surfaces import (
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _clean_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
 # ---------------------------------------------------------------------------
 # Shared helpers: build wheel + sdist, install wheel into clean venv
 # ---------------------------------------------------------------------------
@@ -37,6 +45,7 @@ def _build_wheel(tmp_path: Path) -> Path:
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
+        env=_clean_env(),
     )
     wheels = list(build_dir.glob("*.whl"))
     assert wheels, "no wheel produced"
@@ -53,6 +62,7 @@ def _build_sdist(tmp_path: Path) -> Path:
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
+        env=_clean_env(),
     )
     sdists = list(sdist_dir.glob("*.tar.gz"))
     assert sdists, "no sdist produced"
@@ -74,6 +84,7 @@ def _install_artifact_into_venv(
         check=True,
         capture_output=True,
         text=True,
+        env=_clean_env(),
     )
     return python
 
@@ -99,6 +110,7 @@ def _run_probe(python: Path, probe: str, *, cwd: Path | None = None) -> tuple[in
         capture_output=True,
         text=True,
         cwd=cwd or str(REPO_ROOT),
+        env=_clean_env(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
@@ -401,6 +413,7 @@ def test_sdist_install_imports_compile_and_cli_workflow(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
             cwd=tmp_path,
+            env=_clean_env(),
         )
         assert result.returncode == 0, (
             f"arnold workflow {subcommand} failed after sdist install: {result.stderr}"
@@ -515,6 +528,7 @@ def test_installed_console_help_lacks_deleted_commands_and_paths(
             capture_output=True,
             text=True,
             cwd=tmp_path,
+            env=_clean_env(),
         )
         assert result.returncode == 0, (
             f"{label} failed: stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -703,6 +717,7 @@ def test_python_m_deleted_targets_fail(tmp_path: Path) -> None:
             [str(python), "-m", mod_name],
             capture_output=True,
             text=True,
+            env=_clean_env(),
         )
         assert result.returncode != 0, (
             f"python -m {mod_name} unexpectedly succeeded"

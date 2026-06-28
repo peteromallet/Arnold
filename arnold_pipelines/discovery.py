@@ -217,8 +217,8 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "public": True,
         "registry_id": "megaplan.epic_blitz",
         "docs_path": "arnold_pipelines/megaplan/pipelines/epic-blitz/SKILL.md",
-        "disposition": "migrate",
-        "migrated": True,
+        "disposition": "archive",
+        "migrated": False,
         "builder_contract": "native",
     },
     "arnold_pipelines/megaplan/pipelines/epic-blitz": {

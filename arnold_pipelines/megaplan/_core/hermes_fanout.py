@@ -224,7 +224,7 @@ def scatter_gather(
     Internally delegates to :func:`arnold.runtime.batch.scatter_gather_threaded`
     after resolving Megaplan config at the boundary.
     """
-    from arnold.runtime.batch import (
+    from arnold_pipelines.megaplan.runtime.batch import (
         BatchRuntimeSettings,
         BatchUnit,
         BatchUnitResult,
@@ -415,7 +415,7 @@ def scatter_gather_processes(
     Internally delegates to ``arnold.runtime.batch.scatter_gather_processes``
     after resolving Megaplan config at the boundary.
     """
-    from arnold.runtime.batch import (
+    from arnold_pipelines.megaplan.runtime.batch import (
         BatchRuntimeSettings,
         BatchUnit,
         BatchUnitResult,

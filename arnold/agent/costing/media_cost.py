@@ -224,7 +224,7 @@ def normalize_usage_extraction(
     -----
     Callers that do **not** use a ``_usage_extractor`` are unaffected —
     ``media_usage`` can still arrive via the adapter envelope
-    (:class:`~arnold.pipeline.step_invocation.StepInvocationResult`).
+    (:class:`~arnold.execution.step_invocation.StepInvocationResult`).
     This normalizer is only relevant when a ``_usage_extractor`` **is**
     configured.
     """

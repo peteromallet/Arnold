@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from arnold.pipeline.step_invocation import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 
 MODEL_RESOURCE_CAPABILITIES: frozenset[str] = frozenset(
     {"model:text", "model:vision", "decoder:image"}

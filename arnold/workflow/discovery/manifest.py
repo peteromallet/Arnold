@@ -68,7 +68,7 @@ class Manifest:
         compatibility_classification: str = "native",
     ):
         """Return a manifest-aware validator context for a built pipeline."""
-        from arnold.pipeline.validator import ManifestValidationContext
+        from arnold.workflow.validator import ManifestValidationContext
 
         return ManifestValidationContext(
             manifest_driver=self.driver,

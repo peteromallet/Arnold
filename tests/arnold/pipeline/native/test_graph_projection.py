@@ -4,7 +4,7 @@ Covers:
 - Sequential phase projection into valid Pipeline
 - Decision branching projection with correct edge labels
 - While loop projection with loop_condition set on guard stage
-- Pipeline validates through arnold.pipeline.validator.validate()
+- Pipeline validates through arnold.workflow.validator.validate()
 - Binding map derivation via derive_binding_map()
 """
 
@@ -21,7 +21,7 @@ from arnold.pipeline.native import (
     project_graph,
 )
 from arnold.pipeline.types import ParallelStage, Pipeline, Stage
-from arnold.pipeline.validator import validate
+from arnold.workflow.validator import validate
 
 
 # ── helpers ───────────────────────────────────────────────────────────

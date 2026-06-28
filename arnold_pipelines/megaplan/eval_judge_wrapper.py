@@ -11,7 +11,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold.pipeline.discovery.judge_manifest import EVALUAND_RECORD_CONTENT_TYPE
+from arnold.workflow.discovery.judge_manifest import EVALUAND_RECORD_CONTENT_TYPE
 from arnold.pipeline.types import PipelineVerdict, Port, PortRef
 from arnold_pipelines.megaplan.observability import EvaluandRecord, write_evaluand_event
 from arnold_pipelines.megaplan.step_types import StepContext, StepResult

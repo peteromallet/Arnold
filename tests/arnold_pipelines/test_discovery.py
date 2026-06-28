@@ -37,7 +37,6 @@ def test_discover_migrated_pipelines_have_builders() -> None:
         "writing-panel-strict",
         "evidence_pack_verifier",
         "my-pipeline",
-        "epic-blitz",
     }
     assert ids == expected, f"missing or extra: {ids ^ expected}"
     for info in results:
@@ -67,19 +66,14 @@ def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
         "jokes": "arnold_pipelines/megaplan/pipelines/jokes",
         "live-supervisor": "arnold_pipelines/megaplan/pipelines/live_supervisor",
         "writing-panel-strict": "arnold_pipelines/megaplan/pipelines/writing_panel_strict",
-        "epic-blitz": "arnold_pipelines/megaplan/pipelines/epic_blitz.py",
         "select-tournament": "arnold_pipelines/megaplan/pipelines/select_tournament",
     }
     for pipeline_id, package_path in expected.items():
         info = by_id[pipeline_id]
         assert info.package_path == package_path
-        if package_path.endswith(".py"):
-            assert info.docs_path == "arnold_pipelines/megaplan/pipelines/epic-blitz/SKILL.md"
-        else:
-            assert info.docs_path == f"{package_path}/SKILL.md"
-        if pipeline_id != "epic-blitz":
-            assert not info.package_path.endswith(".py")
-            assert "-" not in info.package_path
+        assert info.docs_path == f"{package_path}/SKILL.md"
+        assert not info.package_path.endswith(".py")
+        assert "-" not in info.package_path
         assert info.builder is not None
         built = info.builder()
         if hasattr(built, "id"):
@@ -130,7 +124,6 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         "jokes": "arnold_pipelines.megaplan.pipelines.jokes:build_pipeline",
         "live-supervisor": "arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline",
         "writing-panel-strict": "arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline",
-        "epic-blitz": "arnold_pipelines.megaplan.pipelines.epic_blitz:build_pipeline",
         "select-tournament": "arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline",
         "my-pipeline": "arnold_pipelines._template:build_pipeline",
     }

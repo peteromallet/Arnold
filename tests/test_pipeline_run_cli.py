@@ -900,7 +900,7 @@ def test_run_uses_profile_validate_operation_when_advertised(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from arnold.runtime.operations import OperationKind, OperationResult
+    from arnold.execution.operations import OperationKind, OperationResult
     from arnold.pipelines.megaplan._pipeline import executor as executor_module
     from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
     from arnold.pipelines.megaplan._pipeline import registry as registry_module
@@ -963,7 +963,7 @@ def test_run_preserves_generic_preflight_fallback_when_profile_validate_not_adve
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from arnold.runtime.operations import OperationKind
+    from arnold.execution.operations import OperationKind
     from arnold.pipelines.megaplan._pipeline import executor as executor_module
     from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
     from arnold.pipelines.megaplan._pipeline import registry as registry_module
@@ -1018,7 +1018,7 @@ def test_run_loads_non_megaplan_profiles_via_arnold_loader_without_megaplan_fall
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import arnold.pipeline.profiles as arnold_profiles_module
+    import arnold_pipelines.megaplan.profiles as arnold_profiles_module
     from arnold.pipelines.megaplan._pipeline import executor as executor_module
     from arnold.pipelines.megaplan._pipeline import preflight as preflight_module
     from arnold.pipelines.megaplan._pipeline import registry as registry_module

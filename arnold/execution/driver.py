@@ -165,8 +165,8 @@ class PipelineStepwiseDriver:
         initial_context: Any = None,
     ) -> None:
         from arnold.pipeline.executor import DEFAULT_PARALLEL_SAFE
-        from arnold.pipeline.hooks import NullExecutorHooks
-        from arnold.runtime.operations import NullOperationRegistry
+        from arnold.execution.hooks import NullExecutorHooks
+        from arnold.execution.operations import NullOperationRegistry
 
         self.pipeline = pipeline
         self.registry = registry if registry is not None else NullOperationRegistry()

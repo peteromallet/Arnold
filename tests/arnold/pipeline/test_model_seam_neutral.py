@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from arnold.pipeline import StepInvocation, StepInvocationAdapterRegistry
+from arnold.execution.step_invocation import StepInvocation, StepInvocationAdapterRegistry
 from arnold.pipeline.model_seam import (
     AuditStatus,
     BudgetStatus,

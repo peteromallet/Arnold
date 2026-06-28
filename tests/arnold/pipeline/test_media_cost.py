@@ -1,4 +1,4 @@
-"""Tests for ``arnold.pipeline.media_cost`` — media usage, pricing, and cost computation.
+"""Tests for ``arnold.agent.costing.media_cost`` — media usage, pricing, and cost computation.
 
 Covers:
 - image, video_second, audio_second, song semantic units
@@ -19,7 +19,7 @@ from decimal import Decimal
 import pytest
 
 from arnold.pipeline.cost_types import CostResult, CostSource, CostStatus
-from arnold.pipeline.media_cost import (
+from arnold.agent.costing.media_cost import (
     DEFAULT_MEDIA_PRICING,
     MediaPricingEntry,
     MediaUsage,
@@ -677,7 +677,7 @@ class TestNoMegaplanImports:
     def test_media_cost_has_no_megaplan_imports(self) -> None:
         import ast
         import inspect
-        import arnold.pipeline.media_cost as mc_module
+        import arnold.agent.costing.media_cost as mc_module
 
         source = inspect.getsource(mc_module)
         tree = ast.parse(source)

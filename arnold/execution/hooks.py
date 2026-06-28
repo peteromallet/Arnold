@@ -13,7 +13,7 @@ Media cost accounting (AR3)
 
 :func:`account_media_cost_from_result` is an **opt-in** helper that reads
 ``StepResult.hook_metadata['media_usage']``, computes priced and unknown
-cost lines via :func:`~arnold.pipeline.media_cost.compute_media_cost`, and
+cost lines via :func:`~arnold.agent.costing.media_cost.compute_media_cost`, and
 returns them.  It is a pure function — it never modifies state and never
 raises on malformed metadata.  Hook implementations that want media
 accounting call it from their ``on_step_end`` override and accumulate the
@@ -34,7 +34,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, Sequence, runtime_checkable
 
-from arnold.pipeline.media_cost import (
+from arnold.agent.costing.media_cost import (
     MediaPricingEntry,
     compute_media_cost,
     media_usage_from_hook_metadata,
@@ -388,13 +388,13 @@ def account_media_cost_from_result(
     result:
         The ``StepResult`` produced by a step invocation.
     provider:
-        Provider name passed to :func:`~arnold.pipeline.media_cost.compute_media_cost`
+        Provider name passed to :func:`~arnold.agent.costing.media_cost.compute_media_cost`
         (e.g. ``"openai"``).
     model:
         Model name passed to ``compute_media_cost`` (e.g. ``"dall-e-3"``).
     pricing_rows:
         Pricing table to search.  When ``None`` (the default),
-        :data:`~arnold.pipeline.media_cost.DEFAULT_MEDIA_PRICING` is used.
+        :data:`~arnold.agent.costing.media_cost.DEFAULT_MEDIA_PRICING` is used.
 
     Returns
     -------
@@ -452,7 +452,7 @@ def account_media_cost_from_result(
         return ()
 
     if pricing_rows is None:
-        from arnold.pipeline.media_cost import DEFAULT_MEDIA_PRICING
+        from arnold.agent.costing.media_cost import DEFAULT_MEDIA_PRICING
 
         pricing_rows = DEFAULT_MEDIA_PRICING
 

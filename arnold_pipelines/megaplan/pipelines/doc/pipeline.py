@@ -38,7 +38,7 @@ from arnold.pipeline.native import (
     phase,
     pipeline,
 )
-from arnold.pipeline import Edge, Pipeline, Stage
+from arnold.pipeline.types import Edge, Pipeline, Stage
 from arnold.pipeline.pattern_dynamic import run_fanout
 from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 from arnold_pipelines.megaplan.pipelines.doc.steps import (

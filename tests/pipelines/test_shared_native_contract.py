@@ -19,7 +19,7 @@ class NativeTarget:
     pipeline_name: str
 
 
-# These are the nine active M3 packages that must already be native-backed.
+# These active M3/M7 packages must already be native-backed.
 ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
     NativeTarget("arnold_pipelines.megaplan.pipelines.creative", "creative"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.doc", "doc"),
@@ -29,13 +29,10 @@ ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
         "arnold_pipelines.megaplan.pipelines.writing_panel_strict",
         "writing-panel-strict",
     ),
-    NativeTarget("arnold_pipelines.megaplan.pipelines.epic_blitz", "epic-blitz"),
     NativeTarget(
         "arnold_pipelines.megaplan.pipelines.select_tournament",
         "select-tournament",
     ),
-    NativeTarget("arnold.pipelines.folder_audit", "folder-audit"),
-    NativeTarget("arnold.pipelines.deliberation", "deliberation"),
 )
 
 DEFERRED_NATIVE_TARGETS: tuple[NativeTarget, ...] = ()
@@ -139,10 +136,7 @@ def test_contract_target_sets_are_staged_explicitly() -> None:
         "jokes",
         "live-supervisor",
         "writing-panel-strict",
-        "epic-blitz",
         "select-tournament",
-        "folder-audit",
-        "deliberation",
     }
     assert deferred_names == set()
     assert active_names.isdisjoint(deferred_names)

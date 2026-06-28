@@ -48,7 +48,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 # Absolute path to the megaplan-vendored Shannon fork. The runtime invokes
 # ``bun <VENDORED_SHANNON_PATH>`` instead of relying on an ``@dexh/shannon``
 # binary on PATH. ``_launch_command`` may wrap the argv in ``su -c <shell-join>``

@@ -62,18 +62,12 @@ def test_loadable_native_entries_validate_through_native_pipeline_contract() -> 
     assert "| Builder target | arnold_pipelines.megaplan.pipelines.creative:build_pipeline|" in rendered
 
 
-def test_examples_are_split_aware_for_different_canonical_and_docs_paths() -> None:
+def test_deleted_epic_blitz_is_not_rendered_as_public_example() -> None:
     generator = _load_generator()
-    info = _by_id()["epic-blitz"]
 
-    assert info.canonical_builder_path == "arnold_pipelines.megaplan.pipelines.epic_blitz:build_pipeline"
-    assert info.docs_path == "arnold_pipelines/megaplan/pipelines/epic-blitz/SKILL.md"
-
-    rendered_path, rendered = generator._render_example(info)
-    assert rendered_path == _example_path(generator, "epic-blitz")
-    assert "| Builder source | arnold_pipelines/megaplan/pipelines/epic_blitz.py|" in rendered
-    assert "| Skill | arnold_pipelines/megaplan/pipelines/epic-blitz/SKILL.md|" in rendered
-    assert "| Load state | loadable-native|" in rendered
+    assert "epic-blitz" not in _by_id()
+    examples = generator.render_examples()
+    assert _example_path(generator, "epic-blitz") not in examples
 
 
 def test_required_public_examples_render_for_workflow_and_native_sources() -> None:
@@ -86,7 +80,6 @@ def test_required_public_examples_render_for_workflow_and_native_sources() -> No
         "creative",
         "doc",
         "live-supervisor",
-        "epic-blitz",
         "select-tournament",
         "writing-panel-strict",
     }

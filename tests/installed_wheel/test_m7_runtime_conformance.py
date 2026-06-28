@@ -17,6 +17,7 @@ import tarfile
 import tempfile
 import textwrap
 import venv
+import os
 from pathlib import Path
 from zipfile import ZipFile
 
@@ -25,9 +26,23 @@ import pytest
 from arnold.conformance.deleted_surfaces import (
     DELETED_ARTIFACT_PATH_PREFIXES,
     DELETED_IMPORT_MODULES,
+    DELETED_SOURCE_PATHS,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+REQUIRED_RUNTIME_ARTIFACTS = (
+    "arnold_pipelines/megaplan/workflows/__init__.py",
+    "arnold_pipelines/megaplan/workflows/workflow.py",
+    "arnold_pipelines/megaplan/workflows/planning.py",
+    "arnold_pipelines/megaplan/workflows/components.py",
+    "arnold_pipelines/megaplan/prompts/planning.py",
+    "arnold_pipelines/megaplan/prompts/execute.py",
+    "arnold_pipelines/megaplan/prompts/review.py",
+    "arnold_pipelines/megaplan/pipeline_ids.json",
+    "arnold_pipelines/megaplan/SKILL.md",
+    "arnold_pipelines/megaplan/data/instructions.md",
+)
 
 
 def _clean_venv_env(venv_dir: Path) -> dict[str, str]:
@@ -35,6 +50,13 @@ def _clean_venv_env(venv_dir: Path) -> dict[str, str]:
         "PATH": str(venv_dir / "bin"),
         "PYTHONNOUSERSITE": "1",
     }
+
+
+def _clean_build_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
 
 
 def _run_installed_arnold_cli(
@@ -73,6 +95,7 @@ def _build_sdist(repo_root: Path, sdist_dir: Path, tmp: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+        env=_clean_build_env(),
     )
     subprocess.run(
         [
@@ -89,7 +112,129 @@ def _build_sdist(repo_root: Path, sdist_dir: Path, tmp: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+        env=_clean_build_env(),
     )
+
+
+def _archive_has(names: list[str], path: str) -> bool:
+    return any(name == path or name.endswith(f"/{path}") for name in names)
+
+
+def _archive_relative_name(name: str) -> str:
+    if name.startswith(("arnold/", "arnold_pipelines/", "agentbox/")):
+        return name
+    _dist_root, sep, relative = name.partition("/")
+    return relative if sep else name
+
+
+def _deleted_artifact_patterns() -> tuple[str, ...]:
+    deleted_module_paths = tuple(
+        f"{module.replace('.', '/')}/" for module in DELETED_IMPORT_MODULES
+    )
+    return tuple(
+        dict.fromkeys(
+            (
+                *DELETED_ARTIFACT_PATH_PREFIXES,
+                *DELETED_SOURCE_PATHS,
+                *deleted_module_paths,
+            )
+        )
+    )
+
+
+def _assert_archive_contents(names: list[str], *, archive_kind: str) -> None:
+    for required in REQUIRED_RUNTIME_ARTIFACTS:
+        assert _archive_has(names, required), (
+            f"{archive_kind} missing required runtime artifact: {required}"
+        )
+
+    assert any(
+        "arnold_pipelines/megaplan/prompts/" in name and name.endswith(".py")
+        for name in names
+    ), f"{archive_kind} missing prompt resources"
+
+    for deleted in _deleted_artifact_patterns():
+        assert not any(
+            (relative := _archive_relative_name(name)) == deleted.rstrip("/")
+            or relative.startswith(deleted.rstrip("/") + "/")
+            for name in names
+        ), (
+            f"{archive_kind} still contains deleted path: {deleted}"
+        )
+
+
+def _install_into_venv(tmp: Path, name: str, target: Path) -> tuple[Path, dict[str, str]]:
+    venv_dir = tmp / name
+    venv.create(venv_dir, with_pip=True)
+    pip = venv_dir / "bin" / "pip"
+    python = venv_dir / "bin" / "python"
+
+    subprocess.run(
+        [str(pip), "install", str(target)],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=tmp,
+        env=_clean_build_env(),
+    )
+    return python, _clean_venv_env(venv_dir)
+
+
+def _assert_installed_surface(
+    python: Path,
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    install_kind: str,
+) -> None:
+    positive_probe = (
+        "from importlib.resources import files\n"
+        "import arnold.workflow\n"
+        "import arnold_pipelines.megaplan as mp\n"
+        "manifest = mp.build_and_compile_pipeline()\n"
+        "assert manifest.id == 'megaplan'\n"
+        "assert manifest.manifest_hash.startswith('sha256:')\n"
+        "assert (files('arnold_pipelines.megaplan.workflows') / 'planning.py').is_file()\n"
+        "assert (files('arnold_pipelines.megaplan.workflows') / 'components.py').is_file()\n"
+        "assert (files('arnold_pipelines.megaplan') / 'pipeline_ids.json').is_file()\n"
+        "assert (files('arnold_pipelines.megaplan') / 'SKILL.md').is_file()\n"
+        "print('ok')\n"
+    )
+    result = subprocess.run(
+        [str(python), "-c", positive_probe],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"{install_kind} install did not expose required runtime artifacts: {result.stderr}"
+    )
+    assert result.stdout.strip() == "ok"
+
+    negative_probe = (
+        "import importlib\n"
+        f"deleted_modules = {DELETED_IMPORT_MODULES!r}\n"
+        "for name in deleted_modules:\n"
+        "    try:\n"
+        "        importlib.import_module(name)\n"
+        "    except ModuleNotFoundError:\n"
+        "        pass\n"
+        "    else:\n"
+        "        raise SystemExit(f'deleted module {name!r} is still importable')\n"
+        "print('ok')\n"
+    )
+    result = subprocess.run(
+        [str(python), "-c", negative_probe],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, (
+        f"{install_kind} install exposed deleted runtime surfaces: {result.stderr}"
+    )
+    assert result.stdout.strip() == "ok"
 
 
 @pytest.mark.wheel_smoke
@@ -106,6 +251,7 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             check=True,
             capture_output=True,
             text=True,
+            env=_clean_build_env(),
         )
         _build_sdist(REPO_ROOT, sdist_dir, tmp)
 
@@ -119,43 +265,11 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
 
         with ZipFile(wheel) as whl:
             names = whl.namelist()
-
-            # Positive: required runtime artifacts are packaged.
-            assert any(
-                name.endswith("arnold_pipelines/megaplan/workflows/workflow.py") for name in names
-            ), "missing shipped Python-shaped workflow source"
-            assert any(
-                name.endswith("arnold_pipelines/megaplan/workflows/planning.py") for name in names
-            ), "missing shipped workflow planning bridge"
-            assert any(
-                name.endswith("arnold_pipelines/megaplan/workflows/components.py") for name in names
-            ), "missing shipped workflow components"
-            assert any(
-                name.endswith("arnold_pipelines/megaplan/workflows/__init__.py") for name in names
-            ), "missing shipped workflows package"
-            assert any(
-                "arnold_pipelines/megaplan/prompts/" in name and name.endswith(".py")
-                for name in names
-            ), "missing prompt resources"
-            assert any(
-                name.endswith("pipeline_ids.json") for name in names
-            ), "missing component metadata"
-            assert any(
-                name.endswith("arnold_pipelines/megaplan/SKILL.md") for name in names
-            ), "missing megaplan skill doc"
-
-            # Negative: deleted legacy surfaces stay out of the wheel.
-            for deleted in DELETED_ARTIFACT_PATH_PREFIXES:
-                assert not any(deleted in name for name in names), (
-                    f"wheel still contains deleted path: {deleted}"
-                )
+            _assert_archive_contents(names, archive_kind="wheel")
 
         with tarfile.open(sdist, "r:gz") as tar:
             sdist_names = tar.getnames()
-            for deleted in DELETED_ARTIFACT_PATH_PREFIXES:
-                assert not any(deleted in name for name in sdist_names), (
-                    f"sdist still contains deleted path: {deleted}"
-                )
+            _assert_archive_contents(sdist_names, archive_kind="sdist")
 
         # Install into a clean venv and exercise Python-shaped authoring end-to-end.
         venv_dir = tmp / "venv"
@@ -164,7 +278,12 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
         arnold = venv_dir / "bin" / "arnold"
         python = venv_dir / "bin" / "python"
 
-        subprocess.run([str(pip), "install", str(wheel)], check=True, capture_output=True)
+        subprocess.run(
+            [str(pip), "install", str(wheel)],
+            check=True,
+            capture_output=True,
+            env=_clean_build_env(),
+        )
 
         # Create a tiny Python-shaped workflow package outside the repo.
         work_dir = tmp / "authoring"
@@ -325,3 +444,31 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             )
             assert isinstance(result.exc_info[1] if False else result.stderr, str)
             assert "ModuleNotFoundError" in result.stderr or "No module named" in result.stderr
+
+
+@pytest.mark.wheel_smoke
+def test_sdist_and_editable_installs_expose_runtime_artifacts_without_deleted_surfaces() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        sdist_dir = tmp / "sdist"
+        sdist_dir.mkdir()
+        _build_sdist(REPO_ROOT, sdist_dir, tmp)
+
+        sdists = list(sdist_dir.glob("*.tar.gz"))
+        assert sdists, "no sdist produced"
+
+        sdist_python, sdist_env = _install_into_venv(tmp, "sdist-venv", sdists[0])
+        _assert_installed_surface(
+            sdist_python,
+            cwd=tmp,
+            env=sdist_env,
+            install_kind="sdist",
+        )
+
+        editable_python, editable_env = _install_into_venv(tmp, "editable-venv", REPO_ROOT)
+        _assert_installed_surface(
+            editable_python,
+            cwd=tmp,
+            env=editable_env,
+            install_kind="editable",
+        )

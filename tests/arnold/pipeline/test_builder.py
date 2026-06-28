@@ -1,10 +1,10 @@
-"""Tests for arnold.pipeline.builder — neutral graph builder."""
+"""Tests for arnold.workflow.builder — neutral graph builder."""
 
 from __future__ import annotations
 
 import pytest
 
-from arnold.pipeline.builder import PipelineBuilder
+from arnold.workflow.builder import PipelineBuilder
 from arnold.pipeline.declaration_lowering import lower_stage_declarations
 from arnold.pipeline.types import (
     Edge,
@@ -19,7 +19,7 @@ from arnold.pipeline.types import (
     StepResult,
     WriteRef,
 )
-from arnold.pipeline.step_invocation import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 
 
 class _TrivialStep:
@@ -323,10 +323,10 @@ class TestNeutralBuilder:
         import ast
         import sys
 
-        # Check that arnold.pipeline.builder has no megaplan imports
+        # Check that arnold.workflow.builder has no megaplan imports
         if "megaplan" in sys.modules:
             # megaplan may already be loaded by other tests; check the module source
-            import arnold.pipeline.builder as builder_mod
+            import arnold.workflow.builder as builder_mod
             src = ast.parse(open(builder_mod.__file__).read())
             for node in ast.walk(src):
                 if isinstance(node, (ast.Import, ast.ImportFrom)):
