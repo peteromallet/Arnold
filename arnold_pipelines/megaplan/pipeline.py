@@ -6,7 +6,7 @@ This thin module re-exports :func:`build_pipeline` from
 authored workflow to a :class:`arnold.manifest.WorkflowManifest`.
 
 The readable, product-local source of truth for the graph lives in
-``arnold_pipelines/megaplan/workflows/planning.py``.
+``arnold_pipelines/megaplan/workflows/workflow.py``.
 """
 
 from __future__ import annotations

@@ -74,6 +74,7 @@ exclude = [
     "arnold/pipelines/**",
     "docs/archive/**",
     "tests/archive/**",
+    "tests/arnold/pipelines/megaplan/**",
     ".megaplan/**",
 ]
 
@@ -81,8 +82,12 @@ exclude = [
 packages = ["arnold", "arnold_pipelines", "agentbox"]
 artifacts = [
     "py.typed",
-    "**/pipeline_ids.json",
-    "**/SKILL.md",
+    "arnold/pipelines/deliberation/SKILL.md",
+    "arnold/pipelines/evidence_pack/SKILL.md",
+    "arnold/pipelines/evidence_pack/pipeline_ids.json",
+    "arnold/pipelines/folder_audit/SKILL.md",
+    "arnold_pipelines/**/pipeline_ids.json",
+    "arnold_pipelines/**/SKILL.md",
     "agentbox/systemd/*.service",
 ]
 exclude = [

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import inspect
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from arnold.manifest import (
@@ -13,40 +13,20 @@ from arnold.manifest import (
     TimingPolicy,
     WorkflowPolicy,
 )
-from arnold.workflow.authoring import loop, workflow
 from arnold.workflow.authoring import ComponentProvenance, StepComponent
 from arnold.workflow.dsl import Capability, Input, Output, Pipeline
-from arnold.workflow.source_compiler import lower_workflow_source
+from arnold.workflow.source_compiler import lower_workflow_file
 from arnold_pipelines.megaplan.workflows.components import (
     ALL_STEP_COMPONENTS,
     CAPABILITY_REQUIREMENTS,
     DEFAULT_POLICY,
     M4_LOOP_MAX_ITERATIONS,
     REVISE,
-    REVISE_LOOP_POLICY,
-    SOURCE_CRITIQUE,
-    SOURCE_EXECUTE,
-    SOURCE_FINALIZE,
-    SOURCE_GATE,
-    SOURCE_HALT,
-    SOURCE_OVERRIDE,
-    SOURCE_PLAN,
-    SOURCE_PREP,
-    SOURCE_REVIEW,
-    SOURCE_REVISE,
-    SOURCE_TIEBREAKER_RUN,
     STEP_COMPONENTS_BY_ID,
     TIEBREAKER_DECIDE,
 )
 
-
-def workflow(**_kwargs: Any) -> Any:
-    """Runtime no-op for the compile-time workflow decorator."""
-
-    def decorate(function: Any) -> Any:
-        return function
-
-    return decorate
+AUTHORING_SOURCE_PATH = Path(__file__).with_name("workflow.py")
 
 
 AUTHOR_REVISE = StepComponent(
@@ -89,75 +69,6 @@ AUTHOR_TIEBREAKER_DECIDE = StepComponent(
         ),
     },
 )
-
-
-@workflow(id="megaplan", version="m4-phase3", policy=DEFAULT_POLICY)
-def planning_workflow(brief: str) -> None:
-    prep_payload = SOURCE_PREP(id="prep", brief=brief)
-    plan_payload = SOURCE_PLAN(id="plan", prep_payload=prep_payload)
-
-    loop(policy=REVISE_LOOP_POLICY, reentry_id="critique")
-    while True:
-        critique_payload = SOURCE_CRITIQUE(id="critique", plan_payload=plan_payload)
-        gate_payload = SOURCE_GATE(id="gate", critique_payload=critique_payload)
-
-        if gate_payload == "proceed":
-            finalize_payload = SOURCE_FINALIZE(id="finalize", gate_payload=gate_payload)
-            execute_payload = SOURCE_EXECUTE(id="execute", finalize_payload=finalize_payload)
-            review_payload = SOURCE_REVIEW(id="review", execute_payload=execute_payload)
-            if review_payload == "pass":
-                SOURCE_HALT(id="halt", review_payload=review_payload)
-                return None
-            elif review_payload == "rework":
-                SOURCE_REVISE(id="review_revise", gate_payload=review_payload)
-                return None
-            else:
-                SOURCE_HALT(id="review_halt", review_payload=review_payload)
-                return None
-        elif gate_payload == "iterate":
-            AUTHOR_REVISE(id="revise", gate_payload=gate_payload)
-        elif gate_payload == "tiebreaker":
-            tiebreaker_payload = SOURCE_TIEBREAKER_RUN(id="tiebreaker_run", gate_payload=gate_payload)
-            decision = AUTHOR_TIEBREAKER_DECIDE(id="tiebreaker_decide", tiebreaker_payload=tiebreaker_payload)
-            if decision == "proceed":
-                finalize_payload = SOURCE_FINALIZE(id="tiebreaker_finalize", gate_payload=decision)
-                SOURCE_EXECUTE(id="tiebreaker_execute", finalize_payload=finalize_payload)
-                return None
-            elif decision == "escalate":
-                SOURCE_OVERRIDE(id="tiebreaker_override", gate_payload=decision)
-                return None
-        elif gate_payload == "escalate":
-            override_result = SOURCE_OVERRIDE(id="override", gate_payload=gate_payload)
-            if override_result == "abort":
-                SOURCE_HALT(id="override_halt", override_result=override_result)
-                return None
-            elif override_result == "force_proceed":
-                finalize_payload = SOURCE_FINALIZE(id="override_finalize", gate_payload=override_result)
-                SOURCE_EXECUTE(id="override_execute", finalize_payload=finalize_payload)
-                return None
-            elif override_result == "replan":
-                SOURCE_REVISE(id="override_revise", gate_payload=override_result)
-                return None
-            else:
-                SOURCE_HALT(id="override_unknown", override_result=override_result)
-                return None
-        elif gate_payload == "abort":
-            SOURCE_HALT(id="gate_abort", gate_payload=gate_payload)
-            return None
-        elif gate_payload == "suspend":
-            SOURCE_HALT(id="gate_suspend", gate_payload=gate_payload)
-            return None
-        elif gate_payload == "blocked_preflight":
-            SOURCE_OVERRIDE(id="blocked_override", gate_payload=gate_payload)
-            return None
-        elif gate_payload == "force_proceed":
-            finalize_payload = SOURCE_FINALIZE(id="force_finalize", gate_payload=gate_payload)
-            SOURCE_EXECUTE(id="force_execute", finalize_payload=finalize_payload)
-            return None
-        else:
-            finalize_payload = SOURCE_FINALIZE(id="fallback_finalize", gate_payload=gate_payload)
-            SOURCE_EXECUTE(id="fallback_execute", finalize_payload=finalize_payload)
-            return None
 
 
 _CANONICAL_ROUTE_SPECS = (
@@ -313,38 +224,6 @@ def _canonical_capabilities() -> tuple[Capability, ...]:
     )
 
 
-def _authored_workflow_source() -> str:
-    return "\n".join(
-        (
-            "from __future__ import annotations",
-            "",
-            "from arnold.workflow.authoring import loop, workflow",
-            "from arnold_pipelines.megaplan.workflows.planning import (",
-            "    AUTHOR_REVISE,",
-            "    AUTHOR_TIEBREAKER_DECIDE,",
-            ")",
-            "from arnold_pipelines.megaplan.workflows.components import (",
-            "    DEFAULT_POLICY,",
-            "    REVISE_LOOP_POLICY,",
-            "    SOURCE_CRITIQUE,",
-            "    SOURCE_EXECUTE,",
-            "    SOURCE_FINALIZE,",
-            "    SOURCE_GATE,",
-            "    SOURCE_HALT,",
-            "    SOURCE_OVERRIDE,",
-            "    SOURCE_PLAN,",
-            "    SOURCE_PREP,",
-            "    SOURCE_REVIEW,",
-            "    SOURCE_REVISE,",
-            "    SOURCE_TIEBREAKER_RUN,",
-            ")",
-            "",
-            inspect.getsource(planning_workflow),
-            "",
-        )
-    )
-
-
 def build_pipeline(
     *,
     timeout_seconds: float | None = 300.0,
@@ -352,7 +231,7 @@ def build_pipeline(
 ) -> Pipeline:
     """Return the canonical Megaplan planning workflow as a DSL pipeline."""
 
-    lowered = lower_workflow_source(_authored_workflow_source(), source_path=__file__)
+    lowered = lower_workflow_file(AUTHORING_SOURCE_PATH)
     return replace(
         lowered,
         steps=_canonical_steps(lowered, timeout_seconds=timeout_seconds),
@@ -367,4 +246,4 @@ def build_pipeline(
     )
 
 
-__all__ = ["build_pipeline", "planning_workflow"]
+__all__ = ["AUTHORING_SOURCE_PATH", "build_pipeline"]

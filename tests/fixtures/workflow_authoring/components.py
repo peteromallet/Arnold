@@ -49,6 +49,16 @@ execute_with_malformed_capability = StepComponent(
     metadata={"capability_requirements": ({"id": "", "required": "yes"},)},
 )
 review = StepComponent(id="review", provenance=_provenance("review"), prompt=review_prompt)
+static_prompt_missing = StepComponent(
+    id="static_prompt_missing",
+    provenance=_provenance("static_prompt_missing"),
+    metadata={"prompt_key": "review"},
+)
+static_resource_missing = StepComponent(
+    id="static_resource_missing",
+    provenance=_provenance("static_resource_missing"),
+    metadata={"resource_dependencies": ("model",), "resources": {"cache": "local-cache"}},
+)
 route = StepComponent(id="route", provenance=_provenance("route"), output_schema=plan_output)
 route_with_duplicate_bindings = StepComponent(
     id="route",

@@ -750,11 +750,16 @@ def _parse_workflow_declaration(
                         )
                     )
     if not declarations:
+        fallback_span = (
+            source_span_for_node(source_path, module.body[0])
+            if module.body
+            else SourceSpan(path=source_path, start_line=1, end_line=1, end_column=1)
+        )
         diagnostics.append(
             _diagnostic(
                 DiagnosticCode.MISSING_WORKFLOW_DECLARATION,
                 "module does not declare a workflow(...) source form",
-                source_span=SourceSpan(path=source_path, start_line=1),
+                source_span=fallback_span,
             )
         )
         return None
@@ -2088,6 +2093,8 @@ def _parse_step_call(
     )
     if inputs is None:
         return None
+    if not _validate_static_step_dependencies(node, binding, source_path, diagnostics):
+        return None
     return StepCall(
         id=step_id,
         local_name=node.func.id,
@@ -2099,6 +2106,68 @@ def _parse_step_call(
         outputs=tuple(output_bindings),
         policies=policies,
     )
+
+
+def _validate_static_step_dependencies(
+    node: ast.Call,
+    binding: ImportBinding,
+    source_path: str,
+    diagnostics: list[AuthoringDiagnostic],
+) -> bool:
+    component = binding.component
+    assert isinstance(component, StepComponent)
+    valid = True
+    metadata = component.metadata
+
+    prompt_key = metadata.get("prompt_key")
+    if isinstance(prompt_key, str) and prompt_key.strip() and component.prompt is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.MISSING_PROMPT_DEPENDENCY,
+                f"step component declares prompt_key {prompt_key!r} but has no static PromptComponent",
+                source_span=source_span_for_node(source_path, node),
+                component_ref=binding.component_ref,
+                details={"prompt_key": prompt_key},
+            )
+        )
+        valid = False
+
+    required_resources = _static_resource_dependencies(metadata)
+    available_resources = _static_resource_keys(metadata)
+    missing_resources = tuple(
+        resource for resource in required_resources if resource not in available_resources
+    )
+    if missing_resources:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.MISSING_RESOURCE_DEPENDENCY,
+                "step component declares static resources that are not present in metadata",
+                source_span=source_span_for_node(source_path, node),
+                component_ref=binding.component_ref,
+                details={
+                    "missing_resources": missing_resources,
+                    "available_resources": tuple(sorted(available_resources)),
+                },
+            )
+        )
+        valid = False
+    return valid
+
+
+def _static_resource_dependencies(metadata: Mapping[str, Any]) -> tuple[str, ...]:
+    raw = metadata.get("resource_dependencies", ())
+    if isinstance(raw, str):
+        return (raw,) if raw else ()
+    if not isinstance(raw, Sequence) or isinstance(raw, (bytes, bytearray, Mapping)):
+        return ()
+    return tuple(item for item in raw if isinstance(item, str) and item)
+
+
+def _static_resource_keys(metadata: Mapping[str, Any]) -> frozenset[str]:
+    raw = metadata.get("resources", {})
+    if isinstance(raw, Mapping):
+        return frozenset(key for key in raw if isinstance(key, str) and key)
+    return frozenset()
 
 
 def _parse_step_policy_keywords(

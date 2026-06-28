@@ -32,6 +32,68 @@ _DELETED_PATHS = (
 )
 
 
+def _clean_venv_env(venv_dir: Path) -> dict[str, str]:
+    return {
+        "PATH": str(venv_dir / "bin"),
+        "PYTHONNOUSERSITE": "1",
+    }
+
+
+def _run_installed_arnold_cli(
+    python: Path,
+    args: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    assert "PYTHONPATH" not in env
+    return subprocess.run(
+        [
+            str(python),
+            "-c",
+            (
+                "from arnold.cli import main; "
+                "import sys; "
+                "raise SystemExit(main(sys.argv[1:]))"
+            ),
+            *args,
+        ],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def _build_sdist(repo_root: Path, sdist_dir: Path, tmp: Path) -> None:
+    frontend_venv = tmp / "build-frontend"
+    venv.create(frontend_venv, with_pip=True)
+    frontend_pip = frontend_venv / "bin" / "pip"
+    frontend_python = frontend_venv / "bin" / "python"
+    subprocess.run(
+        [str(frontend_pip), "install", "hatchling"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        [
+            str(frontend_python),
+            "-c",
+            (
+                "import importlib, sys; "
+                "backend = importlib.import_module('hatchling.build'); "
+                "print(backend.build_sdist(sys.argv[1], {}))"
+            ),
+            str(sdist_dir),
+        ],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
 @pytest.mark.wheel_smoke
 def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -47,12 +109,7 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             capture_output=True,
             text=True,
         )
-        subprocess.run(
-            [sys.executable, "-m", "build", "--sdist", "-o", str(sdist_dir), str(REPO_ROOT)],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        _build_sdist(REPO_ROOT, sdist_dir, tmp)
 
         wheels = list(build_dir.glob("*.whl"))
         assert wheels, "no wheel produced"
@@ -67,8 +124,11 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
 
             # Positive: required runtime artifacts are packaged.
             assert any(
-                name.endswith("arnold_pipelines/megaplan/workflows/planning.py") for name in names
+                name.endswith("arnold_pipelines/megaplan/workflows/workflow.py") for name in names
             ), "missing shipped Python-shaped workflow source"
+            assert any(
+                name.endswith("arnold_pipelines/megaplan/workflows/planning.py") for name in names
+            ), "missing shipped workflow planning bridge"
             assert any(
                 name.endswith("arnold_pipelines/megaplan/workflows/components.py") for name in names
             ), "missing shipped workflow components"
@@ -143,7 +203,7 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
                 from __future__ import annotations
 
                 from arnold.workflow.authoring import workflow
-                from m7_authoring.components import plan, execute, review
+                from .components import plan, execute, review
 
 
                 @workflow(id="m7-installed-wheel", version="1.0")
@@ -155,14 +215,38 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             )
         )
 
-        env = {"PATH": str(venv_dir / "bin"), "PYTHONPATH": str(work_dir)}
+        bad_workflow_path = pkg_dir / "invalid_workflow.py"
+        bad_workflow_path.write_text(
+            textwrap.dedent(
+                '''\
+                from __future__ import annotations
 
-        # CLI check/compile/explain all work against an authored source file.
-        for subcommand in ("check", "compile", "explain"):
-            result = subprocess.run(
-                [str(arnold), "workflow", subcommand, str(workflow_path)],
-                capture_output=True,
-                text=True,
+                from arnold.workflow.authoring import workflow
+                from .components import missing
+
+
+                @workflow(id="m7-installed-wheel-invalid", version="1.0")
+                def flow(brief):
+                    missing(id="missing", brief=brief)
+                '''
+            )
+        )
+
+        env = _clean_venv_env(venv_dir)
+
+        # CLI source commands work from the local project root without PYTHONPATH.
+        source_arg = str(workflow_path.relative_to(work_dir))
+        for subcommand, extra_args in (
+            ("check", []),
+            ("compile", []),
+            ("inspect", ["--format", "json"]),
+            ("explain", ["--format", "json"]),
+            ("graph", ["--format", "json"]),
+        ):
+            result = _run_installed_arnold_cli(
+                python,
+                ["workflow", subcommand, source_arg, *extra_args],
+                cwd=work_dir,
                 env=env,
             )
             assert result.returncode == 0, (
@@ -174,8 +258,27 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
                 assert "sha256:" in result.stdout, (
                     f"arnold workflow {subcommand} did not emit a manifest hash"
                 )
-            else:
+            elif subcommand in {"inspect", "explain"}:
                 assert "m7-installed-wheel" in result.stdout
+            else:
+                assert '"nodes"' in result.stdout
+
+        failure = _run_installed_arnold_cli(
+            python,
+            [
+                "workflow",
+                "check",
+                str(bad_workflow_path.relative_to(work_dir)),
+                "--format",
+                "json",
+            ],
+            cwd=work_dir,
+            env=env,
+        )
+        assert failure.returncode == 1
+        assert '"ok": false' in failure.stdout
+        assert '"code": "AWF005_UNKNOWN_COMPONENT"' in failure.stdout
+        assert str(bad_workflow_path.relative_to(work_dir)) in failure.stdout
 
         # Programmatic compile also works from the installed package.
         prog = subprocess.run(
@@ -187,6 +290,7 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             ],
             capture_output=True,
             text=True,
+            cwd=work_dir,
             env=env,
         )
         assert prog.returncode == 0, prog.stderr
@@ -203,6 +307,8 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
             ],
             capture_output=True,
             text=True,
+            cwd=tmp,
+            env=env,
         )
         assert result.returncode == 0, result.stderr
         assert "sha256:" in result.stdout
@@ -218,6 +324,8 @@ def test_installed_wheel_python_shaped_authoring_runtime_conformance() -> None:
                 [str(python), "-c", f"import {deleted_module}"],
                 capture_output=True,
                 text=True,
+                cwd=tmp,
+                env=env,
             )
             assert result.returncode != 0, (
                 f"deleted module {deleted_module} was importable in installed wheel"
