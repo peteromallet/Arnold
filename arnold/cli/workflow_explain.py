@@ -85,6 +85,30 @@ def explain_subflow(call: ParsedSubflowCall) -> dict[str, Any]:
 
 
 def explain_branch(block: ParsedBranchBlock) -> dict[str, Any]:
+    arm_entries: list[dict[str, Any]] = []
+    for arm_index, arm in enumerate(block.arms):
+        condition = (
+            {
+                "decision_output": arm.condition.decision_output,
+                "literal": arm.condition.literal,
+            }
+            if arm.condition is not None
+            else None
+        )
+        arm_entries.append(
+            {
+                "kind": "branch_arm",
+                "id": f"branch-on-{block.decision_output}-arm-{arm_index}",
+                "summary": (
+                    f"branch arm {arm_index} for {block.decision_output} "
+                    f"{'else' if condition is None else '== ' + condition['literal']}"
+                ),
+                "condition": condition,
+                "terminal": arm.terminal,
+                "source": _span_dict(arm.source_span),
+                "children": [],
+            }
+        )
     return {
         "kind": "branch",
         "id": f"branch-on-{block.decision_output}",
@@ -103,6 +127,7 @@ def explain_branch(block: ParsedBranchBlock) -> dict[str, Any]:
             }
             for arm in block.arms
         ],
+        "children": arm_entries,
         "source": _span_dict(block.source_span),
     }
 
@@ -120,6 +145,7 @@ def explain_loop(block: ParsedLoopBlock) -> dict[str, Any]:
         "max_iterations": policy.max_iterations,
         "reentry_id": policy.reentry_id,
         "until_ref": policy.until_ref,
+        "children": [],
         "source": _span_dict(block.source_span),
     }
 
@@ -141,19 +167,28 @@ def build_explain_entries(
     """Return source-first explain entries for a parsed workflow and its manifest."""
 
     nodes_by_id = {node.id: node for node in manifest.nodes}
-    block = decl.source_block
-    entries: list[dict[str, Any]] = []
-    for statement in block.statements:
-        if isinstance(statement, ParsedStepCall):
-            entries.append(explain_step(statement, nodes_by_id.get(statement.id)))
-        elif isinstance(statement, ParsedSubflowCall):
-            entries.append(explain_subflow(statement))
-        elif isinstance(statement, ParsedBranchBlock):
-            entries.append(explain_branch(statement))
-        elif isinstance(statement, ParsedLoopBlock):
-            entries.append(explain_loop(statement))
-        elif isinstance(statement, ParsedIntrinsicCall):
-            entries.append(explain_intrinsic(statement))
+
+    def walk_block(block: ParsedSourceBlock) -> list[dict[str, Any]]:
+        entries: list[dict[str, Any]] = []
+        for statement in block.statements:
+            if isinstance(statement, ParsedStepCall):
+                entries.append(explain_step(statement, nodes_by_id.get(statement.id)))
+            elif isinstance(statement, ParsedSubflowCall):
+                entries.append(explain_subflow(statement))
+            elif isinstance(statement, ParsedBranchBlock):
+                entry = explain_branch(statement)
+                for arm, arm_entry in zip(statement.arms, entry["children"], strict=True):
+                    arm_entry["children"] = walk_block(arm.body)
+                entries.append(entry)
+            elif isinstance(statement, ParsedLoopBlock):
+                entry = explain_loop(statement)
+                entry["children"] = walk_block(statement.body)
+                entries.append(entry)
+            elif isinstance(statement, ParsedIntrinsicCall):
+                entries.append(explain_intrinsic(statement))
+        return entries
+
+    entries = walk_block(decl.source_block)
 
     # Workflow-level policies and suspension points are separate top-level entries.
     if decl.policies:
