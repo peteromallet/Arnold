@@ -332,6 +332,57 @@ def test_repair_loop_summary_inlines_error_narrative_and_attempt_history(tmp_pat
     assert "plan events: /tmp/demo/events.ndjson" in summary
 
 
+def test_repair_loop_summary_falls_back_to_latest_failure_metadata(tmp_path: Path) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "initial_facts": {},
+                "iterations": [
+                    {
+                        "i": 1,
+                        "dev_model": "gpt-5.4",
+                        "mechanical_launch": "failed:retrying_failure",
+                        "chain_log_tail": "[chain] resuming existing plan demo-plan",
+                        "plan_latest_failure": {
+                            "current_state": "finalized",
+                            "phase": "execute",
+                            "iteration": 21,
+                            "kind": "phase_failed",
+                            "message": "phase 'execute' internal_error",
+                            "metadata": {
+                                "exit_code": 2,
+                                "stderr": (
+                                    "usage: __main__.py [-h]\n"
+                                    "__main__.py: error: unrecognized arguments: --confirm-destructive --user-approved"
+                                ),
+                            },
+                        },
+                        "chain_state_summary": {
+                            "last_state": "awaiting_human",
+                            "current_plan_name": "demo-plan",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    summary = result.stdout
+    assert "failure classification: cli_or_argument_error" in summary
+    assert "latest_failure.metadata.stderr:" in summary
+    assert "unrecognized arguments: --confirm-destructive --user-approved" in summary
+    assert "latest_failure.metadata.exit_code: 2" in summary
+
+
 def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     text = _wrapper("arnold-watchdog")
 
