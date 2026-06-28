@@ -1156,7 +1156,7 @@ def test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch
         },
         events_body="{}\n",
     )
-    chain_dir = spec_path.parent / ".megaplan" / "plans" / ".chains"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True, exist_ok=True)
     import hashlib
 
@@ -1221,7 +1221,7 @@ def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_
     spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
-    chain_dir = spec_path.parent / ".megaplan" / "plans" / ".chains"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True, exist_ok=True)
     import hashlib
 
@@ -1277,9 +1277,123 @@ tmux() { echo TMUX >&2; return 1; }
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
     assert "\tobserve\tneeds_human\tmanual_review halt;" in report
+    assert "state=missing_base_ref" in report
+    assert "failure=missing_base_ref" in report
     assert "missing_base_ref" in report
     assert "stack/base" in report
     assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_normal_chain_state_does_not_force_missing_base_ref_manual_review(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": None,
+                "last_state": "blocked",
+                "metadata": {"note": "not missing base ref"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            f"eval \"$(plan_attention_status_env {str(workspace)!r} {str(spec_path)!r} chain '')\"",
+            "printf '%s\\t%s\\t%s\\n' \"$PLAN_STATUS_MANUAL_REVIEW\" \"$PLAN_STATUS_FAILURE_KIND\" \"$PLAN_STATUS_CURRENT_STATE\"",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "0"
+
+
+def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "workspace": str(workspace),
+                "remote_spec": ".megaplan/briefs/demo-chain.yaml",
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text("{not-json\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("json_field"),
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function("launch_chain_tick"),
+            _extract_wrapper_function("scan_once"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+maybe_reexec_updated_watchdog() { :; }
+sync_editable_source_branch() { return 0; }
+adopt_unmarked_tmux_sessions() { return 0; }
+reap_stale_repairs() { return 0; }
+emit_report() { cp "$1" REPORT_PATH_PLACEHOLDER; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+mechanical_relaunch_attempted_previously() { return 0; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".replace("REPORT_PATH_PLACEHOLDER", str(report_path)).strip(),
+            "scan_once",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "scan complete markers=1" in log_path.read_text(encoding="utf-8")
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched after mechanical relaunch\t" in report
+    assert "needs_human" not in report
+    assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
 

@@ -138,30 +138,74 @@ def add_unique(values: list[str], value: str | None) -> None:
         values.append(value)
 
 
-resolved_plan_name = plan_name if isinstance(plan_name, str) and plan_name else ""
-chain_state = {}
-if run_kind == "chain" and remote_spec_raw:
-    spec_path = Path(remote_spec_raw)
+def load_chain_state() -> tuple[dict[str, object], str]:
+    if run_kind != "chain" or not remote_spec_raw:
+        return {}, ""
     try:
-        spec_resolved = spec_path.resolve()
-    except Exception:
-        spec_resolved = spec_path
-    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
-    candidates = (
-        spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
-        spec_resolved.with_name("chain_state.json"),
-    )
-    for candidate in candidates:
+        spec_path = Path(remote_spec_raw)
         try:
-            raw = json.loads(candidate.read_text(encoding="utf-8"))
+            spec_resolved = spec_path.resolve()
         except Exception:
-            continue
-        if isinstance(raw, dict):
-            chain_state = raw
+            spec_resolved = spec_path
+        digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+        candidates = (
+            workspace / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+            spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+            spec_resolved.with_name("chain_state.json"),
+        )
+        for candidate in candidates:
+            try:
+                raw = json.loads(candidate.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(raw, dict):
+                continue
             current_plan = raw.get("current_plan_name")
+            resolved = ""
             if isinstance(current_plan, str) and current_plan and "/" not in current_plan:
-                resolved_plan_name = current_plan
-            break
+                resolved = current_plan
+            return raw, resolved
+    except Exception:
+        pass
+    return {}, ""
+
+
+def missing_base_ref_attention(chain_state: object) -> tuple[bool, str, str, str]:
+    try:
+        if not isinstance(chain_state, dict):
+            return False, "", "", ""
+        metadata = chain_state.get("metadata")
+        missing_base_ref = metadata.get("missing_base_ref") if isinstance(metadata, dict) else None
+        has_missing_base_ref = chain_state.get("last_state") == "missing_base_ref"
+        if isinstance(metadata, dict) and "missing_base_ref" in metadata:
+            has_missing_base_ref = True
+        if not has_missing_base_ref:
+            return False, "", "", ""
+        failure_message = ""
+        failure_recorded_at = ""
+        failure_phase = "chain"
+        if isinstance(missing_base_ref, dict):
+            base_branch = missing_base_ref.get("base_branch")
+            message = missing_base_ref.get("message")
+            recorded_at = missing_base_ref.get("recorded_at")
+            phase = missing_base_ref.get("phase")
+            if isinstance(message, str) and message:
+                failure_message = message
+            elif isinstance(base_branch, str) and base_branch:
+                failure_message = f"base branch missing on origin: {base_branch}"
+            if isinstance(recorded_at, str) and recorded_at:
+                failure_recorded_at = recorded_at
+            if isinstance(phase, str) and phase:
+                failure_phase = phase
+        return True, failure_message, failure_recorded_at, failure_phase
+    except Exception:
+        return False, "", "", ""
+
+
+resolved_plan_name = plan_name if isinstance(plan_name, str) and plan_name else ""
+chain_state, chain_plan_name = load_chain_state()
+if chain_plan_name:
+    resolved_plan_name = chain_plan_name
 
 plans_dir = workspace / ".megaplan" / "plans"
 state_path = None
@@ -226,6 +270,20 @@ if isinstance(latest_failure, dict):
                 failure_phase = value
             else:
                 failure_recorded_at = value
+
+if not current_state and not retry_strategy:
+    missing_base_ref, missing_base_ref_message, missing_base_ref_recorded_at, missing_base_ref_phase = (
+        missing_base_ref_attention(chain_state)
+    )
+    if missing_base_ref:
+        current_state = "missing_base_ref"
+        retry_strategy = "manual_review"
+        failure_kind = "missing_base_ref"
+        failure_phase = missing_base_ref_phase
+        if missing_base_ref_message:
+            failure_message = missing_base_ref_message
+        if missing_base_ref_recorded_at:
+            failure_recorded_at = missing_base_ref_recorded_at
 
 tiers_tried: list[str] = []
 history = state.get("history")
@@ -2138,8 +2196,21 @@ launch_chain_tick() {
   fi
 
   local plan_status_env
-  plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name")"
-  eval "$plan_status_env"
+  PLAN_STATUS_FOUND=0
+  PLAN_STATUS_PLAN_NAME=
+  PLAN_STATUS_CURRENT_STATE=
+  PLAN_STATUS_RETRY_STRATEGY=
+  PLAN_STATUS_FAILURE_KIND=
+  PLAN_STATUS_FAILURE_MESSAGE=
+  PLAN_STATUS_FAILURE_PHASE=
+  PLAN_STATUS_FAILURE_RECORDED_AT=
+  PLAN_STATUS_TIERS_TRIED=
+  PLAN_STATUS_PUSHED_COMMITS=
+  PLAN_STATUS_MANUAL_REVIEW=0
+  plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
+  if [[ -n "$plan_status_env" ]]; then
+    eval "$plan_status_env"
+  fi
   if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
     local human_summary
     human_summary="manual_review halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; retry=${PLAN_STATUS_RETRY_STRATEGY:-unknown}; failure=${PLAN_STATUS_FAILURE_KIND:-unknown}"
