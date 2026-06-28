@@ -2328,9 +2328,37 @@ def _consume_execute_compat_flags(
     return consumed
 
 
+def _normalize_execute_compat_argv(argv: list[str]) -> list[str]:
+    """Normalize wrapper-supplied execute flags into execute's subcommand scope.
+
+    Some automation paths emit the execute envelope flags before the
+    ``execute`` token instead of after it. That is semantically equivalent, but
+    argparse only binds them reliably when they appear inside the execute
+    subparser's argv segment. Move recognized flags to immediately after the
+    first ``execute`` token before any parsing happens.
+    """
+
+    if "execute" not in argv:
+        return argv
+
+    recognized = {
+        "--confirm-destructive",
+        "--user-approved",
+        "--retry-blocked-tasks",
+    }
+    execute_index = argv.index("execute")
+    before_execute = argv[:execute_index]
+    moved_flags = [token for token in before_execute if token in recognized]
+    if not moved_flags:
+        return argv
+    kept_prefix = [token for token in before_execute if token not in recognized]
+    return kept_prefix + ["execute", *moved_flags, *argv[execute_index + 1 :]]
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
+    argv = _normalize_execute_compat_argv(list(argv))
     if argv and argv[0] == "cloud":
         from arnold_pipelines.megaplan.cloud.cli import _register_cloud_subcommands, run_cloud_cli
 
