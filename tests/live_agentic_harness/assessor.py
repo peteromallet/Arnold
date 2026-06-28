@@ -66,10 +66,74 @@ def _walk(obj: Any) -> Any:
         yield obj
 
 
+def _has_successful_candidate(response: Mapping[str, Any]) -> bool:
+    """Return true when the response produced an applied candidate graph."""
+    if response.get("ok") is not True:
+        return False
+    if response.get("graph_unchanged") is not False:
+        return False
+    return isinstance(response.get("candidate_graph"), Mapping) or isinstance(
+        response.get("candidate"), Mapping
+    )
+
+
+def _batch_turn_failed(turn: Mapping[str, Any]) -> bool:
+    """Return true for exploratory batch turns that did not contribute edits."""
+    if turn.get("batch_ok") is False:
+        return True
+    if (turn.get("landed_op_count") or 0) == 0 and (turn.get("raw_landed_op_count") or 0) == 0:
+        for diagnostic in turn.get("diagnostics") or []:
+            if isinstance(diagnostic, Mapping) and diagnostic.get("severity") in _ERROR_SEVERITIES:
+                return True
+    return False
+
+
+def _walk_hard_diagnostic_scope(obj: Any, *, skip_failed_batch_turns: bool) -> Any:
+    """Yield nodes for hard-diagnostic checks, excluding failed scratch turns.
+
+    Agent-edit may keep a full transcript of exploratory batch attempts in
+    ``change_details.batch_turns`` even when the executor ultimately returns a
+    successful candidate from an earlier safe edit. Those failed attempts are
+    useful audit trail, but they are not active defects in the applied graph.
+    """
+    if isinstance(obj, dict):
+        yield obj
+        for key, value in obj.items():
+            if (
+                skip_failed_batch_turns
+                and key == "batch_turns"
+                and isinstance(value, list)
+            ):
+                for item in value:
+                    if isinstance(item, Mapping) and _batch_turn_failed(item):
+                        continue
+                    yield from _walk_hard_diagnostic_scope(
+                        item,
+                        skip_failed_batch_turns=skip_failed_batch_turns,
+                    )
+                continue
+            yield from _walk_hard_diagnostic_scope(
+                value,
+                skip_failed_batch_turns=skip_failed_batch_turns,
+            )
+    elif isinstance(obj, list):
+        for item in obj:
+            yield from _walk_hard_diagnostic_scope(
+                item,
+                skip_failed_batch_turns=skip_failed_batch_turns,
+            )
+    else:
+        yield obj
+
+
 def _collect_hard_diagnostics(response: Mapping[str, Any]) -> list[str]:
     """Return messages from any object with severity error/fatal."""
     issues: list[str] = []
-    for node in _walk(response):
+    skip_failed_batch_turns = _has_successful_candidate(response)
+    for node in _walk_hard_diagnostic_scope(
+        response,
+        skip_failed_batch_turns=skip_failed_batch_turns,
+    ):
         if not isinstance(node, dict):
             continue
         if node.get("severity") not in _ERROR_SEVERITIES:
