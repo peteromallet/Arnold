@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -20,6 +21,13 @@ from agentbox.operations import list_agentbox_operations, load_agentbox_operatio
 
 AGENTBOX_OPERATOR_PROMPT_VERSION = "agentbox-operator-v1"
 MEGAPLAN_CHAIN_OPERATION_TYPE = "megaplan_chain"
+SUBAGENT_SYSTEM_PROMPT = (
+    "You are a one-shot subagent dispatched by the AgentBox Operator to investigate "
+    "a focused question or check on something. Use the available tools (such as "
+    "search_messages, status, logs, resolve) to gather facts, then return a concise "
+    "final answer for the operator to use. You cannot satisfy confirmation challenges, "
+    "so avoid tools that require confirmation. Do not attempt to spawn further subagents."
+)
 AGENTBOX_OPERATOR_TOOL_NAMES = (
     "ticket_new",
     "chain_launch",
@@ -29,6 +37,8 @@ AGENTBOX_OPERATOR_TOOL_NAMES = (
     "resolve",
     "cleanup_survey",
     "cleanup_apply",
+    "search_messages",
+    "subagent",
 )
 
 
@@ -77,6 +87,17 @@ class CleanupApplyInput(BaseModel):
     action: Literal["land", "delete", "park", "reset"]
     confirmation_request_id: str | None = None
     confirmation_phrase: str | None = None
+
+
+class SearchMessagesInput(BaseModel):
+    query: str = ""
+    limit: int = Field(default=10, gt=0, le=50)
+
+
+class SubagentInput(BaseModel):
+    prompt: str
+    model: str | None = None
+    max_tool_calls: int | None = Field(default=None, gt=0, le=8)
 
 
 @dataclass
@@ -157,6 +178,8 @@ class AgentBoxOperatorProfile:
             ToolRegistration("resolve", "Resolve an AgentBox operation reference.", "read", ResolveInput, ToolResult, self._resolve),
             ToolRegistration("cleanup_survey", "Survey AgentBox resources and classify cleanup recommendations.", "read", CleanupSurveyInput, ToolResult, self._cleanup_survey),
             ToolRegistration("cleanup_apply", "Apply a cleanup action to a surveyed finding.", "reconcile_apply", CleanupApplyInput, ToolResult, self._cleanup_apply),
+            ToolRegistration("search_messages", "Search earlier messages in this conversation.", "read", SearchMessagesInput, ToolResult, self._search_messages),
+            ToolRegistration("subagent", "Dispatch a one-shot subagent on a configurable model to investigate and report back inline.", "read", SubagentInput, ToolResult, self._subagent),
         )
         for registration in registrations:
             self.tool_registry.register(registration)
@@ -486,6 +509,146 @@ class AgentBoxOperatorProfile:
             ),
         )
 
+    def _search_messages(self, payload: SearchMessagesInput) -> Any:
+        ToolResult = _resident_symbol("tool_schemas", "ToolResult")
+        subject = _runtime_subject()
+        if subject is None:
+            return ToolResult(
+                ok=False,
+                message="search_messages requires an authorized runtime subject.",
+                data={"profile": "agentbox_operator", "error": "runtime_subject_required"},
+            )
+        if denied := self._authorization_denied(subject, "read"):
+            return denied
+        runtime_context = _runtime_context()
+        conversation_id = getattr(runtime_context, "conversation_id", None)
+        if self.store is None or not conversation_id:
+            return ToolResult(
+                ok=False,
+                message="search_messages requires a store and an active conversation.",
+                data={"profile": "agentbox_operator", "error": "conversation_required"},
+            )
+        rows = self.store.search_messages(query=payload.query, epic_id=None, limit=payload.limit)
+        rows = [row for row in rows if row.conversation_id == conversation_id][:payload.limit]
+        return ToolResult(
+            ok=True,
+            message=f"{len(rows)} messages",
+            data=_tool_payload(
+                action="search_messages",
+                next_state="messages_searched",
+                count=len(rows),
+                limit=payload.limit,
+                messages=[_message_hit_payload(row) for row in rows],
+            ),
+        )
+
+    def _build_subagent_registry(self) -> Any:
+        """Subagent tool catalog: the full registry minus the subagent tool (no recursion)."""
+        ToolRegistry = _resident_symbol("tool_registry", "ToolRegistry")
+        registry = ToolRegistry()
+        for registration in self.tool_registry.list():
+            if registration.name == "subagent":
+                continue
+            registry.register(registration)
+        return registry
+
+    def _resolve_subagent_model(self, payload: SubagentInput) -> tuple[str, Any | None]:
+        ToolResult = _resident_symbol("tool_schemas", "ToolResult")
+        chosen = (payload.model or "").strip() or self.config.subagent_model_name
+        if (
+            payload.model
+            and chosen != self.config.subagent_model_name
+            and chosen not in self.config.subagent_models
+        ):
+            error = ToolResult(
+                ok=False,
+                message="requested subagent model is not in the allowlist",
+                data=_tool_payload(
+                    action="subagent",
+                    next_state="model_not_allowed",
+                    allowed=list(self.config.subagent_models),
+                    default=self.config.subagent_model_name,
+                    requested=chosen,
+                ),
+            )
+            return chosen, error
+        return chosen, None
+
+    def _build_subagent_runner(self, chosen: str, sub_config: Any, max_calls: int) -> tuple[Any, str]:
+        """Resolve the subagent model client and build the one-shot runner. Override in tests."""
+        OpenAICompatibleAgentRunner = _resident_symbol("agent_loop", "OpenAICompatibleAgentRunner")
+        _client_for_model = _resident_symbol("agent_loop", "_client_for_model")
+        client, normalized = _client_for_model(chosen)
+        runner = OpenAICompatibleAgentRunner(
+            sub_config,
+            client_override=client,
+            model_override=normalized,
+            max_tool_calls=max_calls,
+        )
+        return runner, normalized
+
+    async def _subagent(self, payload: SubagentInput) -> Any:
+        ToolResult = _resident_symbol("tool_schemas", "ToolResult")
+        subject = _runtime_subject()
+        if subject is None:
+            return ToolResult(
+                ok=False,
+                message="subagent requires an authorized runtime subject.",
+                data={"profile": "agentbox_operator", "error": "runtime_subject_required"},
+            )
+        if denied := self._authorization_denied(subject, "read"):
+            return denied
+        chosen, model_error = self._resolve_subagent_model(payload)
+        if model_error is not None:
+            return model_error
+        max_calls = payload.max_tool_calls or self.config.subagent_max_tool_calls
+        sub_registry = self._build_subagent_registry()
+        sub_config = self.config.model_copy(
+            update={"model_name": chosen, "max_tool_calls_per_turn": max_calls}
+        )
+        try:
+            runner, normalized = self._build_subagent_runner(chosen, sub_config, max_calls)
+        except Exception as exc:
+            return ToolResult(
+                ok=False,
+                message=f"subagent setup failed: {exc}",
+                data={"profile": "agentbox_operator", "model": chosen, "error": exc.__class__.__name__},
+            )
+        runtime_context = _runtime_context()
+        AgentRequest = _resident_symbol("agent_loop", "AgentRequest")
+        request = AgentRequest(
+            conversation_id=getattr(runtime_context, "conversation_id", None) or "",
+            messages=({"role": "user", "content": payload.prompt},),
+            system_prompt=SUBAGENT_SYSTEM_PROMPT,
+            subject=subject,
+        )
+        timeout = self.config.model_timeout_s * (max_calls + 1)
+        try:
+            response = await asyncio.wait_for(runner.run(request, sub_registry), timeout=timeout)
+        except asyncio.TimeoutError:
+            return ToolResult(
+                ok=False,
+                message=f"subagent timed out after {timeout:g}s",
+                data={"profile": "agentbox_operator", "model": normalized},
+            )
+        except Exception as exc:
+            return ToolResult(
+                ok=False,
+                message=str(exc),
+                data={"profile": "agentbox_operator", "model": normalized, "error": exc.__class__.__name__},
+            )
+        return ToolResult(
+            ok=True,
+            message="subagent complete",
+            data=_tool_payload(
+                action="subagent",
+                next_state="subagent_complete",
+                final_text=response.final_text,
+                model=normalized,
+                inner_tool_calls=[record.model_dump(mode="json") for record in response.tool_calls],
+            ),
+        )
+
     def _guardian_notification_metadata(self) -> dict[str, Any]:
         runtime_context = _runtime_context()
         conversation_id = getattr(runtime_context, "conversation_id", None)
@@ -640,6 +803,17 @@ def _tool_payload(
         payload["ticket_id"] = ticket_id
     payload.update(fields)
     return payload
+
+
+def _message_hit_payload(row: Any) -> dict[str, Any]:
+    direction = getattr(row, "direction", None)
+    return {
+        "id": row.id,
+        "direction": str(getattr(direction, "value", direction)),
+        "content": row.content,
+        "sent_at": row.sent_at.isoformat().replace("+00:00", "Z") if row.sent_at else None,
+        "snippet": getattr(row, "snippet", None),
+    }
 
 
 def _resolve_next_state(resolved: dict[str, Any]) -> str:
@@ -979,6 +1153,8 @@ __all__ = [
     "HelpInput",
     "LogsInput",
     "ResolveInput",
+    "SearchMessagesInput",
     "StatusInput",
+    "SubagentInput",
     "TicketNewInput",
 ]

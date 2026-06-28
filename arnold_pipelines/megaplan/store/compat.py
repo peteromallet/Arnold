@@ -304,6 +304,20 @@ class ArnoldStoreAdapter:
     def search_messages(self, **filters: Any) -> list[JSONDict]:
         return self._call("search_messages", **filters)
 
+    def list_conversation_messages(
+        self,
+        conversation_id: str,
+        *,
+        limit: int = 20,
+        exclude_ids: Sequence[str] = (),
+    ) -> list[JSONDict]:
+        return self._call(
+            "list_conversation_messages",
+            conversation_id,
+            limit=limit,
+            exclude_ids=exclude_ids,
+        )
+
     def update_epic(self, epic_id: str, **changes: Any) -> JSONDict:
         return self._call("update_epic", epic_id, **changes)
 

@@ -24,7 +24,12 @@ from arnold_pipelines.megaplan.resident.cli import (
     _resident_discord,
     _resident_profile,
 )
-from arnold_pipelines.megaplan.resident.agent_loop import AgentRequest, FakeAgentRunner, FakeAgentStep
+from arnold_pipelines.megaplan.resident.agent_loop import (
+    AgentRequest,
+    AgentResponse,
+    FakeAgentRunner,
+    FakeAgentStep,
+)
 from arnold_pipelines.megaplan.resident.auth import AuthorizationSubject, ConfirmationManager, ResidentAuthorizer
 from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.runtime import InboundEvent, OutboundMessage, ResidentRuntime
@@ -1313,6 +1318,341 @@ def test_agentbox_operator_runtime_exercises_all_six_v0_tools(
     assert outbound.sent[0].content == "all tools exercised"
 
 
+def test_resident_runtime_injects_conversation_history_before_current_burst(
+    tmp_path: Path,
+) -> None:
+    store = FileStore(tmp_path / "store")
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:g1:channel:c1",
+            guild_id="g1",
+            channel_id="c1",
+        )
+    )
+    store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="earlier user message",
+    )
+    store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="outbound",
+        content="earlier bot reply",
+    )
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        allowed_user_ids=("user-1",),
+        history_window=10,
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    authorizer = ResidentAuthorizer(config)
+    runner = _RecordingFakeRunner([FakeAgentStep.final("ok")])
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+        ),
+        runner=runner,
+        outbound=_FakeOutboundSink(),
+    )
+
+    asyncio.run(
+        _receive_and_flush(
+            runtime,
+            InboundEvent(
+                idempotency_key="discord:message:h1",
+                conversation_key="discord:guild:g1:channel:c1",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+                content="current burst message",
+                raw={"discord_message_id": "h1"},
+            ),
+        )
+    )
+
+    messages = runner.captured_request.messages
+    assert [(message["role"], message["content"]) for message in messages] == [
+        ("user", "earlier user message"),
+        ("assistant", "earlier bot reply"),
+        ("user", "current burst message"),
+    ]
+    # The already-persisted current burst is excluded from history (no double-count).
+    assert sum(1 for m in messages if m["content"] == "current burst message") == 1
+
+
+def test_resident_runtime_skips_history_when_window_is_zero(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    conversation = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:g1:channel:c1",
+            guild_id="g1",
+            channel_id="c1",
+        )
+    )
+    store.create_message(
+        epic_id=None,
+        conversation_id=conversation.id,
+        direction="inbound",
+        content="ignored history",
+    )
+    config = ResidentConfig(
+        profile="agentbox_operator",
+        allowed_user_ids=("user-1",),
+        history_window=0,
+        burst_idle_delay_s=0,
+        burst_max_delay_s=1,
+    )
+    authorizer = ResidentAuthorizer(config)
+    runner = _RecordingFakeRunner([FakeAgentStep.final("ok")])
+    runtime = ResidentRuntime(
+        config=config,
+        authorizer=authorizer,
+        store=store,
+        profile=AgentBoxOperatorProfile(
+            store=store,
+            authorizer=authorizer,
+            agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+        ),
+        runner=runner,
+        outbound=_FakeOutboundSink(),
+    )
+
+    asyncio.run(
+        _receive_and_flush(
+            runtime,
+            InboundEvent(
+                idempotency_key="discord:message:h0",
+                conversation_key="discord:guild:g1:channel:c1",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+                content="current burst message",
+                raw={"discord_message_id": "h0"},
+            ),
+        )
+    )
+
+    assert [m["content"] for m in runner.captured_request.messages] == ["current burst message"]
+
+
+def test_agentbox_search_messages_scopes_to_current_conversation(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    c1 = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:g1:channel:c1", guild_id="g1", channel_id="c1"
+        )
+    )
+    c2 = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:g1:channel:c2", guild_id="g1", channel_id="c2"
+        )
+    )
+    store.create_message(
+        epic_id=None, conversation_id=c1.id, direction="inbound", content="deploy the alpha service"
+    )
+    store.create_message(
+        epic_id=None, conversation_id=c2.id, direction="inbound", content="deploy the beta service"
+    )
+    profile = AgentBoxOperatorProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(ResidentConfig(allowed_user_ids=("user-1",))),
+        agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+    )
+    runner = FakeAgentRunner(
+        [FakeAgentStep.call("search_messages", {"query": "deploy"}), FakeAgentStep.final("done")]
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id=c1.id,
+                messages=({"role": "user", "content": "search deploy"},),
+                system_prompt="test",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+            ),
+            profile.tools(),
+        )
+    )
+
+    result = response.tool_calls[0].result
+    assert result["ok"] is True
+    assert result["data"]["action"] == "search_messages"
+    assert [m["content"] for m in result["data"]["messages"]] == ["deploy the alpha service"]
+
+
+def test_agentbox_subagent_returns_inline_result_on_configured_model(
+    tmp_path: Path,
+) -> None:
+    config = ResidentConfig(
+        allowed_user_ids=("user-1",),
+        subagent_model_name="deepseek:deepseek-chat",
+        subagent_models=("kimi:kimi-k2",),
+    )
+    store = FileStore(tmp_path / "store")
+    profile = AgentBoxOperatorProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(config),
+        config=config,
+        agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+    )
+    fake_sub = _FakeSubRunner(AgentResponse(final_text="found 3 stale chains", tool_calls=()))
+    profile._build_subagent_runner = lambda chosen, sub_config, max_calls: (fake_sub, "deepseek-chat")
+
+    runner = FakeAgentRunner(
+        [FakeAgentStep.call("subagent", {"prompt": "find stale chains"}), FakeAgentStep.final("summarized")]
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id="conversation-1",
+                messages=({"role": "user", "content": "investigate"},),
+                system_prompt="test",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+            ),
+            profile.tools(),
+        )
+    )
+
+    result = response.tool_calls[0].result
+    assert result["ok"] is True
+    assert result["data"]["action"] == "subagent"
+    assert result["data"]["final_text"] == "found 3 stale chains"
+    assert result["data"]["model"] == "deepseek-chat"
+    # The subagent ran on the default model and got a registry WITHOUT subagent (no recursion).
+    assert fake_sub.received_request.messages == ({"role": "user", "content": "find stale chains"},)
+    assert "subagent" not in {t.name for t in fake_sub.received_tools.list()}
+
+
+def test_agentbox_subagent_allows_allowlisted_model_override(tmp_path: Path) -> None:
+    config = ResidentConfig(
+        allowed_user_ids=("user-1",),
+        subagent_model_name="deepseek:deepseek-chat",
+        subagent_models=("kimi:kimi-k2",),
+    )
+    store = FileStore(tmp_path / "store")
+    profile = AgentBoxOperatorProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(config),
+        config=config,
+        agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+    )
+    fake_sub = _FakeSubRunner(AgentResponse(final_text="kimi answers", tool_calls=()))
+    captured: dict[str, object] = {}
+
+    def build(chosen, sub_config, max_calls):
+        captured["chosen"] = chosen
+        captured["max_calls"] = max_calls
+        return fake_sub, "kimi-k2"
+
+    profile._build_subagent_runner = build
+
+    runner = FakeAgentRunner(
+        [FakeAgentStep.call("subagent", {"prompt": "x", "model": "kimi:kimi-k2"}), FakeAgentStep.final("done")]
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id="conversation-1",
+                messages=({"role": "user", "content": "go"},),
+                system_prompt="test",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+            ),
+            profile.tools(),
+        )
+    )
+
+    result = response.tool_calls[0].result
+    assert result["ok"] is True
+    assert captured["chosen"] == "kimi:kimi-k2"
+    assert result["data"]["model"] == "kimi-k2"
+
+
+def test_agentbox_subagent_rejects_model_outside_allowlist(tmp_path: Path) -> None:
+    config = ResidentConfig(
+        allowed_user_ids=("user-1",),
+        subagent_model_name="deepseek:deepseek-chat",
+        subagent_models=("kimi:kimi-k2",),
+    )
+    store = FileStore(tmp_path / "store")
+    profile = AgentBoxOperatorProfile(
+        store=store,
+        authorizer=ResidentAuthorizer(config),
+        config=config,
+        agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox"),
+    )
+
+    runner = FakeAgentRunner(
+        [FakeAgentStep.call("subagent", {"prompt": "x", "model": "claude:opus"}), FakeAgentStep.final("done")]
+    )
+
+    response = asyncio.run(
+        runner.run(
+            AgentRequest(
+                conversation_id="conversation-1",
+                messages=({"role": "user", "content": "go"},),
+                system_prompt="test",
+                subject=AuthorizationSubject(user_id="user-1", guild_id="g1", channel_id="c1"),
+            ),
+            profile.tools(),
+        )
+    )
+
+    result = response.tool_calls[0].result
+    assert result["ok"] is False
+    assert result["data"]["requested"] == "claude:opus"
+    assert result["data"]["default"] == "deepseek:deepseek-chat"
+    assert result["data"]["allowed"] == ["kimi:kimi-k2"]
+
+
+def test_agentbox_subagent_registry_excludes_subagent_tool(tmp_path: Path) -> None:
+    profile = AgentBoxOperatorProfile(
+        agentbox_config_factory=lambda: AgentBoxConfig(workspace_root=tmp_path / "agentbox")
+    )
+    names = {tool.name for tool in profile._build_subagent_registry().list()}
+    assert "subagent" not in names
+    assert "search_messages" in names
+    assert len(names) == len(AGENTBOX_OPERATOR_TOOL_NAMES) - 1
+
+
+def test_file_store_list_conversation_messages_orders_and_excludes(tmp_path: Path) -> None:
+    store = FileStore(tmp_path / "store")
+    c1 = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:g1:channel:c1", guild_id="g1", channel_id="c1"
+        )
+    )
+    c2 = store.upsert_resident_conversation(
+        ResidentConversationInput(
+            conversation_key="discord:guild:g1:channel:c2", guild_id="g1", channel_id="c2"
+        )
+    )
+    ids = []
+    for index in range(4):
+        message = store.create_message(
+            epic_id=None, conversation_id=c1.id, direction="inbound", content=f"msg-{index}"
+        )
+        ids.append(message.id)
+    store.create_message(
+        epic_id=None, conversation_id=c2.id, direction="inbound", content="other-convo msg-0"
+    )
+
+    rows = store.list_conversation_messages(c1.id, limit=10)
+    assert [r.content for r in rows] == ["msg-0", "msg-1", "msg-2", "msg-3"]
+    assert all(r.conversation_id == c1.id for r in rows)
+
+    excluded = store.list_conversation_messages(c1.id, limit=10, exclude_ids=[ids[0]])
+    assert [r.content for r in excluded] == ["msg-1", "msg-2", "msg-3"]
+
+    last_two = store.list_conversation_messages(c1.id, limit=2)
+    assert [r.content for r in last_two] == ["msg-2", "msg-3"]
+
+
 class _FakeChainLaunchHandler:
     def __init__(
         self,
@@ -1406,6 +1746,32 @@ class _FakeOutboundSink:
 class _ExplodingAgentRunner:
     async def run(self, request: AgentRequest, tools: object) -> object:
         raise AssertionError("resident runner should not execute for denied inbound events")
+
+
+class _RecordingFakeRunner(FakeAgentRunner):
+    """FakeAgentRunner that captures the AgentRequest it was handed."""
+
+    def __init__(self, steps: list[FakeAgentStep]) -> None:
+        super().__init__(steps)
+        self.captured_request: AgentRequest | None = None
+
+    async def run(self, request: AgentRequest, tools: object) -> AgentResponse:
+        self.captured_request = request
+        return await super().run(request, tools)
+
+
+class _FakeSubRunner:
+    """Stand-in for a resolved subagent runner; returns a scripted response."""
+
+    def __init__(self, response: AgentResponse) -> None:
+        self.response = response
+        self.received_request: AgentRequest | None = None
+        self.received_tools: object | None = None
+
+    async def run(self, request: AgentRequest, tools: object) -> AgentResponse:
+        self.received_request = request
+        self.received_tools = tools
+        return self.response
 
 
 async def _receive_and_flush(runtime: ResidentRuntime, event: InboundEvent) -> None:

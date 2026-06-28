@@ -189,23 +189,27 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
         *,
         max_tool_calls: int | None = None,
         tool_timeout_s: float | None = None,
+        client_override: Any | None = None,
+        model_override: str | None = None,
     ) -> None:
         self.config = config
         self.max_tool_calls = max_tool_calls or config.max_tool_calls_per_turn
         self.tool_timeout_s = tool_timeout_s or config.model_timeout_s
+        self._client_override = client_override
+        self._model_override = model_override
         if self.max_tool_calls <= 0:
             raise ValueError("max_tool_calls must be positive")
         if self.tool_timeout_s <= 0:
             raise ValueError("tool_timeout_s must be positive")
 
     async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
-        client = _openai_client(self.config)
+        client = self._client_override or _openai_client(self.config)
         messages = self._messages(request)
         openai_tools = [_openai_tool_schema(tool) for tool in tools.list()]
         audit_records: list[ToolCallAuditRecord] = []
 
         for step_index in range(1, self.max_tool_calls + 2):
-            model_name = _request_model_name(request, self.config.model_name)
+            model_name = self._model_override or _request_model_name(request, self.config.model_name)
             # _pre_dispatch_budget_check sentinel: budget guard for dispatch
             try:
                 render_step_message(StepInvocation(kind="model", metadata={
@@ -384,6 +388,30 @@ def _base_url(config: ResidentConfig) -> str | None:
     if config.model_provider == "openrouter":
         return "https://openrouter.ai/api/v1"
     return None
+
+
+def _client_for_model(model_name: str) -> tuple[Any, str]:
+    """Build an OpenAI-compatible client for an arbitrary provider-prefixed model.
+
+    Uses the shared key pool resolver so a subagent can run on a different
+    provider than the resident without env-var coupling. Returns the client and
+    the normalized model id to send in requests.
+    """
+    from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
+
+    try:
+        normalized_model, agent_kwargs = resolve_model(model_name)
+    except Exception as exc:  # pragma: no cover - surfaced to the tool caller
+        raise AgentLoopError(f"could not resolve subagent model {model_name!r}: {exc}") from exc
+    try:
+        from openai import AsyncOpenAI
+    except ImportError as exc:
+        raise AgentLoopError("The openai package is required for live resident model turns") from exc
+    client_kwargs: dict[str, Any] = {"api_key": agent_kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")}
+    base_url = agent_kwargs.get("base_url")
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    return AsyncOpenAI(**client_kwargs), normalized_model
 
 
 def _openai_tool_schema(registration: Any) -> dict[str, Any]:

@@ -45,12 +45,17 @@ class ResidentConfig(BaseModel):
     require_cloud_start_confirmation: bool = True
     cloud_yaml_path: Path = Path("cloud.yaml")
     resident_export_root: Path = Path(".megaplan/resident_exports")
+    history_window: int = Field(default=10, ge=0)
+    subagent_model_name: str = "deepseek:deepseek-v4-pro"
+    subagent_models: tuple[str, ...] = Field(default_factory=tuple)
+    subagent_max_tool_calls: int = Field(default=4, gt=0)
 
     @field_validator(
         "allowed_guild_ids",
         "allowed_channel_ids",
         "allowed_user_ids",
         "admin_user_ids",
+        "subagent_models",
         mode="before",
     )
     @classmethod
@@ -95,6 +100,10 @@ class ResidentConfig(BaseModel):
             ),
             cloud_yaml_path=Path(env.get("MEGAPLAN_RESIDENT_CLOUD_YAML", "cloud.yaml")),
             resident_export_root=Path(env.get("MEGAPLAN_RESIDENT_EXPORT_ROOT", ".megaplan/resident_exports")),
+            history_window=_env_int(env, "MEGAPLAN_RESIDENT_HISTORY_WINDOW", 10),
+            subagent_model_name=env.get("MEGAPLAN_RESIDENT_SUBAGENT_MODEL", "deepseek:deepseek-v4-pro"),
+            subagent_models=_split_csv(env.get("MEGAPLAN_RESIDENT_SUBAGENT_MODELS")),
+            subagent_max_tool_calls=_env_int(env, "MEGAPLAN_RESIDENT_SUBAGENT_MAX_TOOL_CALLS", 4),
         )
 
     @property
