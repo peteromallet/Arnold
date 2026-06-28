@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import importlib.util
 import json
 import os
 import stat
@@ -25,6 +26,26 @@ def _extract_wrapper_function(name: str) -> str:
     start = text.index(f"{name}() {{")
     end = text.index("\n}\n", start) + 3
     return text[start:end]
+
+
+def _extract_reap_program() -> str:
+    text = _wrapper("arnold-watchdog")
+    start = text.index("reap_stale_repair_candidates() {")
+    marker = "python3 - \"$REAP_AGE_SECS\" \"$REAP_ORPHAN_AGE_SECS\" <<'PY'"
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def _load_reap_module(tmp_path: Path):
+    mod_path = tmp_path / "_reap_prog.py"
+    mod_path.write_text(_extract_reap_program(), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location("_reap_prog", mod_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
@@ -56,6 +77,115 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
     assert 'session alive but plan unhealthy' in text
     assert 'report_item "$report_items" "$session" "repair" "repair_running"' in text
     assert 'report_item "$report_items" "$session" "repair" "repair_dispatched"' in text
+
+
+def test_watchdog_reaper_is_wired_into_scan_and_report_summary() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert 'REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"' in text
+    assert 'REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"' in text
+    assert "reap_stale_repairs()" in text
+    assert 'reap_stale_repairs "$report_items"' in text
+    assert '"reaped_repairs": len(reaped)' in text
+    assert 'report_item "$report_items" "${session:-}" "reap" "reaped"' in text
+
+
+def test_watchdog_reap_decision_helper_reaps_only_stale_cloud_repairs(tmp_path: Path) -> None:
+    module = _load_reap_module(tmp_path)
+
+    over_age = module.decide_reap(
+        {
+            "pid": 4100,
+            "ppid": 4000,
+            "pgid": 4100,
+            "etimes": 7201,
+            "args": "/usr/local/bin/arnold-kimi-goal-operator demo-session /tmp/ws /tmp/spec.json",
+        },
+        7200,
+        3900,
+    )
+    assert over_age["reap"] is True
+    assert over_age["rule"] == "age_backstop"
+    assert over_age["session"] == "demo-session"
+
+    orphaned = module.decide_reap(
+        {
+            "pid": 5100,
+            "ppid": 1,
+            "pgid": 5000,
+            "etimes": 3901,
+            "args": (
+                "python3 -m arnold.agent.run_agent "
+                "--query='The user's invariant is: workflows on this Hetzner worker should never pause unexpectedly. "
+                "Current Incident: Session: orphan-session Workspace: /tmp/ws'"
+            ),
+        },
+        7200,
+        3900,
+    )
+    assert orphaned["reap"] is True
+    assert orphaned["rule"] == "orphan_fast_path"
+    assert orphaned["session"] == "orphan-session"
+
+    under_age = module.decide_reap(
+        {
+            "pid": 6100,
+            "ppid": 6000,
+            "pgid": 6000,
+            "etimes": 600,
+            "args": (
+                "codex exec --sandbox danger-full-access "
+                "'You are the Codex repair subagent launched by the cloud watchdog. "
+                "Context: Session: fresh-session Workspace: /tmp/ws'"
+            ),
+        },
+        7200,
+        3900,
+    )
+    assert under_age["reap"] is False
+    assert under_age["reason"] == "under_age"
+
+    watchdog = module.decide_reap(
+        {
+            "pid": 7100,
+            "ppid": 1,
+            "pgid": 7100,
+            "etimes": 9000,
+            "args": "bash /usr/local/bin/arnold-watchdog --once",
+        },
+        7200,
+        3900,
+    )
+    assert watchdog["reap"] is False
+    assert watchdog["reason"] == "non_target"
+
+    auditor = module.decide_reap(
+        {
+            "pid": 7200,
+            "ppid": 1,
+            "pgid": 7200,
+            "etimes": 9000,
+            "args": "bash /usr/local/bin/arnold-progress-auditor --once",
+        },
+        7200,
+        3900,
+    )
+    assert auditor["reap"] is False
+    assert auditor["reason"] == "non_target"
+
+    non_arnold = module.decide_reap(
+        {
+            "pid": 7300,
+            "ppid": 1,
+            "pgid": 7300,
+            "etimes": 99999,
+            "args": "python3 -m http.server 8080",
+        },
+        7200,
+        3900,
+    )
+    assert non_arnold["reap"] is False
+    assert non_arnold["reason"] == "non_target"
 
 
 def test_watchdog_kimi_operator_dedupe_does_not_match_its_own_grep() -> None:
