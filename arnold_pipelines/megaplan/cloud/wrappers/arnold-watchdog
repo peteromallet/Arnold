@@ -87,6 +87,276 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
+plan_attention_status_env() {
+  local workspace="$1"
+  local remote_spec_path="$2"
+  local run_kind="${3:-chain}"
+  local plan_name="${4:-}"
+  python3 - "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" <<'PY'
+import hashlib
+import json
+import shlex
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1])
+remote_spec_raw = sys.argv[2]
+run_kind = sys.argv[3]
+plan_name = sys.argv[4]
+
+
+def emit(name: str, value: str) -> None:
+    print(f"{name}={shlex.quote(value)}")
+
+
+def add_unique(values: list[str], value: str | None) -> None:
+    if isinstance(value, str) and value and value not in values:
+        values.append(value)
+
+
+resolved_plan_name = plan_name if isinstance(plan_name, str) and plan_name else ""
+chain_state = {}
+if run_kind == "chain" and remote_spec_raw:
+    spec_path = Path(remote_spec_raw)
+    try:
+        spec_resolved = spec_path.resolve()
+    except Exception:
+        spec_resolved = spec_path
+    digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+    candidates = (
+        spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+        spec_resolved.with_name("chain_state.json"),
+    )
+    for candidate in candidates:
+        try:
+            raw = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(raw, dict):
+            chain_state = raw
+            current_plan = raw.get("current_plan_name")
+            if isinstance(current_plan, str) and current_plan and "/" not in current_plan:
+                resolved_plan_name = current_plan
+            break
+
+plans_dir = workspace / ".megaplan" / "plans"
+state_path = None
+if resolved_plan_name:
+    candidate = plans_dir / resolved_plan_name / "state.json"
+    try:
+        candidate.relative_to(plans_dir)
+        state_path = candidate
+    except Exception:
+        state_path = None
+elif run_kind == "plan":
+    state_paths = sorted(
+        plans_dir.glob("*/state.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if state_paths:
+        state_path = state_paths[0]
+        resolved_plan_name = state_path.parent.name
+
+state = {}
+if state_path is not None:
+    try:
+        raw_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except Exception:
+        raw_state = {}
+    if isinstance(raw_state, dict):
+        state = raw_state
+        if not resolved_plan_name:
+            name = raw_state.get("name")
+            if isinstance(name, str) and name:
+                resolved_plan_name = name
+
+current_state = state.get("current_state")
+if not isinstance(current_state, str):
+    current_state = ""
+resume_cursor = state.get("resume_cursor")
+retry_strategy = ""
+if isinstance(resume_cursor, dict):
+    value = resume_cursor.get("retry_strategy")
+    if isinstance(value, str):
+        retry_strategy = value
+latest_failure = state.get("latest_failure")
+failure_kind = ""
+failure_message = ""
+failure_phase = ""
+failure_recorded_at = ""
+if isinstance(latest_failure, dict):
+    for key, target in (
+        ("kind", "failure_kind"),
+        ("message", "failure_message"),
+        ("phase", "failure_phase"),
+        ("recorded_at", "failure_recorded_at"),
+    ):
+        value = latest_failure.get(key)
+        if isinstance(value, str):
+            if target == "failure_kind":
+                failure_kind = value
+            elif target == "failure_message":
+                failure_message = value
+            elif target == "failure_phase":
+                failure_phase = value
+            else:
+                failure_recorded_at = value
+
+tiers_tried: list[str] = []
+history = state.get("history")
+if isinstance(history, list):
+    for entry in history:
+        if not isinstance(entry, dict) or entry.get("step") != "execute":
+            continue
+        batches = entry.get("batch_to_tier")
+        if not isinstance(batches, list):
+            continue
+        for batch in batches:
+            if not isinstance(batch, dict):
+                continue
+            actual_agent = batch.get("actual_agent")
+            actual_model = batch.get("actual_model")
+            if isinstance(actual_agent, str) and isinstance(actual_model, str) and actual_agent and actual_model:
+                add_unique(tiers_tried, f"{actual_agent}:{actual_model}")
+                continue
+            tier_model_spec = batch.get("tier_model_spec")
+            if isinstance(tier_model_spec, str) and tier_model_spec:
+                add_unique(tiers_tried, tier_model_spec)
+                continue
+            resolved_agent = batch.get("resolved_agent")
+            resolved_model = batch.get("resolved_model")
+            if isinstance(resolved_agent, str) and isinstance(resolved_model, str) and resolved_agent and resolved_model:
+                add_unique(tiers_tried, f"{resolved_agent}:{resolved_model}")
+if not tiers_tried:
+    execute_tiers = (((state.get("config") or {}).get("tier_models") or {}).get("execute"))
+    if isinstance(execute_tiers, dict):
+        def sort_key(item: tuple[str, object]) -> tuple[int, str]:
+            key = item[0]
+            try:
+                return (0, int(key))
+            except Exception:
+                return (1, str(key))
+
+        for _, spec in sorted(execute_tiers.items(), key=sort_key):
+            if isinstance(spec, str) and spec:
+                add_unique(tiers_tried, spec)
+
+pushed_commits: list[str] = []
+for raw in (
+    chain_state.get("last_pushed_commit"),
+    chain_state.get("branch_head"),
+    chain_state.get("pr_head"),
+    state.get("last_pushed_commit"),
+    state.get("branch_head"),
+    state.get("pr_head"),
+):
+    add_unique(pushed_commits, raw if isinstance(raw, str) else None)
+
+manual_review = current_state == "manual_review" or retry_strategy == "manual_review"
+
+emit("PLAN_STATUS_FOUND", "1" if state else "0")
+emit("PLAN_STATUS_PLAN_NAME", resolved_plan_name)
+emit("PLAN_STATUS_CURRENT_STATE", current_state)
+emit("PLAN_STATUS_RETRY_STRATEGY", retry_strategy)
+emit("PLAN_STATUS_FAILURE_KIND", failure_kind)
+emit("PLAN_STATUS_FAILURE_MESSAGE", failure_message)
+emit("PLAN_STATUS_FAILURE_PHASE", failure_phase)
+emit("PLAN_STATUS_FAILURE_RECORDED_AT", failure_recorded_at)
+emit("PLAN_STATUS_TIERS_TRIED", ", ".join(tiers_tried))
+emit("PLAN_STATUS_PUSHED_COMMITS", ", ".join(pushed_commits))
+emit("PLAN_STATUS_MANUAL_REVIEW", "1" if manual_review else "0")
+PY
+}
+
+notify_needs_human() {
+  local report_items="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local run_kind="${5:-chain}"
+  local health="${6:-stopped}"
+  local summary="$7"
+  local payload_tmp delivered
+  payload_tmp="$(mktemp)"
+  python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
+    "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
+    "${PLAN_STATUS_FAILURE_KIND:-}" "${PLAN_STATUS_FAILURE_MESSAGE:-}" "${PLAN_STATUS_FAILURE_PHASE:-}" \
+    "${PLAN_STATUS_FAILURE_RECORDED_AT:-}" "${PLAN_STATUS_TIERS_TRIED:-}" "${PLAN_STATUS_PUSHED_COMMITS:-}" <<'PY'
+import datetime as dt
+import json
+import sys
+
+(
+    path,
+    session,
+    workspace,
+    remote_spec,
+    run_kind,
+    health,
+    summary,
+    plan_name,
+    current_state,
+    retry_strategy,
+    failure_kind,
+    failure_message,
+    failure_phase,
+    failure_recorded_at,
+    tiers_tried,
+    pushed_commits,
+) = sys.argv[1:]
+
+payload = {
+    "event": "cloud_watchdog_needs_human",
+    "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+    "session": session,
+    "workspace": workspace,
+    "remote_spec": remote_spec,
+    "run_kind": run_kind,
+    "health": health,
+    "summary": summary,
+    "plan": {
+        "name": plan_name,
+        "current_state": current_state,
+        "retry_strategy": retry_strategy,
+        "latest_failure": {
+            "kind": failure_kind,
+            "message": failure_message,
+            "phase": failure_phase,
+            "recorded_at": failure_recorded_at,
+        },
+        "tiers_tried": [item for item in tiers_tried.split(", ") if item],
+        "pushed_commit_shas": [item for item in pushed_commits.split(", ") if item],
+    },
+}
+with open(path, "w", encoding="utf-8") as handle:
+    json.dump(payload, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+
+  delivered=0
+  if [[ -n "$REPORT_WEBHOOK" ]]; then
+    if command -v curl >/dev/null 2>&1; then
+      if curl -fsS -X POST -H 'Content-Type: application/json' --data-binary "@$payload_tmp" "$REPORT_WEBHOOK" >> "$LOG" 2>&1; then
+        delivered=1
+        log "needs-human webhook delivered session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      else
+        log "needs-human webhook delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+      fi
+    else
+      log "needs-human webhook skipped; curl unavailable session=$session"
+    fi
+  else
+    log "needs-human webhook unset session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
+  fi
+
+  report_item "$report_items" "$session" "observe" "needs_human" "$summary" "$workspace" "$remote_spec"
+  if [[ "$delivered" == "1" ]]; then
+    report_item "$report_items" "$session" "notify" "webhook_sent" "needs-human webhook delivered" "$workspace" "$remote_spec"
+  fi
+  rm -f "$payload_tmp"
+}
+
 adopt_unmarked_tmux_sessions() {
   local discover_bin="${DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
   [[ -f "$discover_bin" ]] || return 0
@@ -145,6 +415,11 @@ issues = [
 ]
 restarted = [item for item in items if item.get("status") == "restarted"]
 reaped = [item for item in items if item.get("status") == "reaped"]
+needs_human = [item for item in items if item.get("status") == "needs_human"]
+webhook_notifications = [
+    item for item in items
+    if item.get("action") == "notify" and item.get("status") == "webhook_sent"
+]
 now = dt.datetime.now(dt.timezone.utc)
 timestamp = now.isoformat()
 archive_name = now.strftime("%Y%m%dT%H%M%SZ") + ".json"
@@ -157,6 +432,8 @@ payload = {
     "alive_sessions": sum(1 for item in items if item.get("status") == "alive"),
     "restarted_sessions": len(restarted),
     "reaped_repairs": len(reaped),
+    "needs_human_sessions": len(needs_human),
+    "webhook_notifications_sent": len(webhook_notifications),
     "issue_count": len(issues),
     "codex_repair_enabled": repair == "1",
     "push_repairs_enabled": push == "1",
@@ -533,11 +810,12 @@ kimi_operator_running() {
     | grep -Eq 'arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec'
 }
 
-# Per-session marker proving we background-dispatched the Kimi goal operator.
-# The stopped-session fallback consumes it: if the marker exists but Kimi is no
-# longer running, the operator exited without reviving the run -> the watchdog's
-# direct tmux relaunch takes over. Cleared whenever the session is observed
-# healthy or the fallback fires.
+# Per-session repair-cycle marker. The watchdog sets it when a stopped session
+# gets a mechanical relaunch; if the session re-stops before becoming healthy,
+# the next tick escalates to Kimi. Once Kimi is actually dispatched, its PGID
+# sidecar distinguishes "Kimi currently/ran" from the mechanical-first stage.
+# Cleared whenever the session is observed healthy or the direct relaunch
+# fallback consumes the cycle after Kimi exits without recovery.
 kimi_dispatch_marker_path() {
   printf '%s/%s.kimi-dispatch' "$MARKER_DIR" "$1"
 }
@@ -666,7 +944,16 @@ kill_kimi_repair_tree() {
 
 kimi_dispatch_failed_previously() {
   local session="$1"
-  [[ -f "$(kimi_dispatch_marker_path "$session")" ]] && ! kimi_operator_running "$session"
+  [[ -f "$(kimi_dispatch_marker_path "$session")" ]] \
+    && [[ -f "$(kimi_pgid_path "$session")" ]] \
+    && ! kimi_operator_running "$session"
+}
+
+mechanical_relaunch_attempted_previously() {
+  local session="$1"
+  [[ -f "$(kimi_dispatch_marker_path "$session")" ]] \
+    && [[ ! -f "$(kimi_pgid_path "$session")" ]] \
+    && ! kimi_operator_running "$session"
 }
 
 # Background-dispatch the Kimi goal operator so it never blocks the tick. The
@@ -1634,6 +1921,15 @@ repair_unhealthy_session() {
     log "session unhealthy; Kimi repair already running session=$session reason=$reason"
     return 0
   fi
+  if mechanical_relaunch_attempted_previously "$session"; then
+    if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+      log "session unhealthy after mechanical relaunch: background-dispatched Kimi goal operator session=$session reason=$reason"
+      tmux kill-session -t "$session" 2>/dev/null || true
+      return 0
+    fi
+    log "session unhealthy after mechanical relaunch; Kimi goal operator missing -> direct relaunch session=$session reason=$reason"
+    return 1
+  fi
   if kimi_dispatch_failed_previously "$session"; then
     log "session unhealthy; Kimi tried and exited without recovery -> direct relaunch session=$session reason=$reason"
     kimi_dispatch_marker_clear "$session"
@@ -1713,6 +2009,26 @@ launch_chain_tick() {
     return 0
   fi
 
+  local plan_status_env
+  plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name")"
+  eval "$plan_status_env"
+  if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
+    local human_summary
+    human_summary="manual_review halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; retry=${PLAN_STATUS_RETRY_STRATEGY:-unknown}; failure=${PLAN_STATUS_FAILURE_KIND:-unknown}"
+    if [[ -n "${PLAN_STATUS_FAILURE_MESSAGE:-}" ]]; then
+      human_summary="$human_summary; detail=${PLAN_STATUS_FAILURE_MESSAGE}"
+    fi
+    if [[ -n "${PLAN_STATUS_TIERS_TRIED:-}" ]]; then
+      human_summary="$human_summary; tiers=${PLAN_STATUS_TIERS_TRIED}"
+    fi
+    if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
+      human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
+    fi
+    log "session requires human review session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+    notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
+    return 0
+  fi
+
   if [[ "$run_kind" == "plan" ]]; then
     local terminal_status
     terminal_status="$(plan_terminal_status "$workspace" "$plan_name")"
@@ -1741,15 +2057,19 @@ launch_chain_tick() {
       log "session stopped; Kimi repair already running session=$session"
       report_item "$report_items" "$session" "repair" "repair_running" "Kimi repair already running" "$workspace" "$remote_spec"
       return 0
+    elif mechanical_relaunch_attempted_previously "$session"; then
+      if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        log "session stopped after mechanical relaunch: background-dispatched Kimi goal operator session=$session"
+        report_item "$report_items" "$session" "repair" "repair_dispatched" "Kimi goal operator dispatched after mechanical relaunch" "$workspace" "$remote_spec"
+        return 0
+      fi
+      log "session stopped after mechanical relaunch; Kimi goal operator missing -> direct relaunch session=$session"
     elif kimi_dispatch_failed_previously "$session"; then
       log "session stopped; Kimi tried and exited without recovery -> direct relaunch session=$session"
       kimi_dispatch_marker_clear "$session"
-    elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-      log "session stopped: background-dispatched Kimi goal operator session=$session"
-      report_item "$report_items" "$session" "repair" "repair_dispatched" "Kimi goal operator dispatched" "$workspace" "$remote_spec"
-      return 0
     else
-      log "session stopped; Kimi goal operator missing -> direct relaunch session=$session"
+      log "session stopped; mechanical relaunch first session=$session"
+      kimi_dispatch_marker_set "$session"
     fi
   fi
 
