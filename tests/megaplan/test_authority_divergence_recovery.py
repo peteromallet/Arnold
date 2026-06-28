@@ -13,6 +13,11 @@ from arnold_pipelines.megaplan.cli.parser import build_parser
 from arnold_pipelines.megaplan.cli.status_view import handle_status
 from arnold_pipelines.megaplan.handlers import override as override_handler
 from arnold_pipelines.megaplan.handlers.init import handle_init
+from arnold_pipelines.megaplan.orchestration.phase_result import (
+    ExitKind,
+    PhaseResult,
+    atomic_write_phase_result,
+)
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
 from arnold_pipelines.megaplan.types import CliError
 from tests.conftest import load_state
@@ -100,3 +105,38 @@ def test_recover_blocked_rejects_authority_divergence(
         f"megaplan execute --plan {local_plan_fixture.plan_name} "
         "--confirm-destructive --user-approved"
     )
+
+
+def test_status_projects_execute_for_stale_recover_blocked_iteration_cap(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    state = load_state(local_plan_fixture.plan_dir)
+    state["current_state"] = STATE_BLOCKED
+    state["resume_cursor"] = {
+        "phase": "recover-blocked",
+        "retry_strategy": "manual_review",
+    }
+    state["latest_failure"] = {
+        "kind": "iteration_cap",
+        "message": "exceeded max_iterations=200",
+        "phase": "recover-blocked",
+        "state": STATE_BLOCKED,
+    }
+    write_plan_state(local_plan_fixture.plan_dir, mode="replace", state=state)
+    atomic_write_phase_result(
+        local_plan_fixture.plan_dir,
+        PhaseResult(
+            phase="execute",
+            invocation_id="fixture-invocation",
+            exit_kind=ExitKind.blocked_by_quality.value,
+        ),
+    )
+
+    response = handle_status(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name, pending_human=False),
+    )
+
+    assert response["state"] == STATE_BLOCKED
+    assert response["next_step"] == "execute"
+    assert response["valid_next"] == ["execute"]
