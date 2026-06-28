@@ -1147,6 +1147,38 @@ def _chain_start_command(
     )
 
 
+def _write_session_marker_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
+    marker_json = json.dumps(marker_payload, sort_keys=True)
+    return f"printf %s {shlex.quote(marker_json)} > {shlex.quote(marker_path)}"
+
+
+def _plan_auto_command(
+    plan_name: str,
+    *,
+    workspace: str,
+    engine_dir: str | None = None,
+    log_relative: str,
+) -> str:
+    log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
+    prefix = (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
+    if engine_dir:
+        engine_path = shlex.quote(engine_dir)
+        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        command = (
+            f"python3 -P -m arnold_pipelines.megaplan auto "
+            f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
+        )
+    else:
+        command = (
+            f"cd {shlex.quote(workspace)} && "
+            f"arnold auto --plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
+        )
+    return f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {command} >> {log_target} 2>&1"
+
+
 def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
@@ -1234,16 +1266,12 @@ def _tmux_chain_launch_command(
     )
     marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     digest = identity_digest or ""
-    marker_json = json.dumps(
-        marker_payload
-        or {
-            "session": name,
-            "workspace": workspace,
-            "remote_spec": remote_spec_path,
-            "identity_digest": digest,
-        },
-        sort_keys=True,
-    )
+    marker_payload = marker_payload or {
+        "session": name,
+        "workspace": workspace,
+        "remote_spec": remote_spec_path,
+        "identity_digest": digest,
+    }
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
         f"{shlex.quote(str(PurePosixPath(marker).parent))}"
@@ -1256,7 +1284,7 @@ def _tmux_chain_launch_command(
         "exit 17; "
         "fi; "
         "else "
-        f"printf %s {shlex.quote(marker_json)} > {shlex.quote(marker)}; "
+        f"{_write_session_marker_command(marker, marker_payload)}; "
         f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
         f"echo {shlex.quote(f'started {name} session')}; "
         "fi"
@@ -1685,22 +1713,101 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     return 0
 
 
+def _derive_bootstrap_session_name(spec: CloudSpec) -> str:
+    repo_slug = _repo_dir_name(spec.repo.url)
+    workspace_slug = _slugify_chain_identity(PurePosixPath(spec.repo.workspace).name)
+    workspace_slug = re.sub(r"-20[0-9]{6}$", "", workspace_slug)
+    if repo_slug and workspace_slug.startswith(repo_slug):
+        return repo_slug
+    return repo_slug or workspace_slug or "megaplan-plan"
+
+
+def _derive_bootstrap_plan_name(args: argparse.Namespace, *, idea_text: str) -> str:
+    explicit = getattr(args, "plan_name", None)
+    if explicit:
+        return explicit
+    from arnold_pipelines.megaplan._core.io import slugify
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+    return f"{slugify(idea_text)}-{timestamp}"
+
+
+def _bootstrap_log_relative(plan_name: str) -> str:
+    return f".megaplan/cloud-logs/{plan_name}.log"
+
+
+def _bootstrap_marker_payload(
+    *,
+    session_name: str,
+    workspace: str,
+    remote_spec: str,
+    plan_name: str,
+    relaunch_command: str,
+) -> dict[str, Any]:
+    return {
+        "session": session_name,
+        "workspace": workspace,
+        "remote_spec": remote_spec,
+        "run_kind": "plan",
+        "plan_name": plan_name,
+        "relaunch_command": relaunch_command,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _bootstrap_launch_command(
+    *,
+    workspace: str,
+    remote_idea_path: str,
+    plan_name: str,
+    robustness: str,
+    session_name: str,
+    engine_dir: str,
+) -> str:
+    marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session_name}.json")
+    log_relative = _bootstrap_log_relative(plan_name)
+    relaunch_command = _plan_auto_command(
+        plan_name,
+        workspace=workspace,
+        engine_dir=engine_dir,
+        log_relative=log_relative,
+    )
+    marker_payload = _bootstrap_marker_payload(
+        session_name=session_name,
+        workspace=workspace,
+        remote_spec=remote_idea_path,
+        plan_name=plan_name,
+        relaunch_command=relaunch_command,
+    )
+    command = (
+        f"mkdir -p {shlex.quote(str(PurePosixPath(marker_path).parent))} "
+        f"{shlex.quote(str(PurePosixPath(workspace) / '.megaplan' / 'cloud-logs'))} && "
+        f"{_write_session_marker_command(marker_path, marker_payload)} && "
+        f"cd {shlex.quote(workspace)} && "
+        f"arnold init --project-dir {shlex.quote(workspace)} "
+        f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
+        f"--robustness {shlex.quote(robustness)} --name {shlex.quote(plan_name)}"
+    )
+    return command
+
+
 def _run_bootstrap_wrapper(args: argparse.Namespace, spec: CloudSpec, provider) -> int:
     local_idea_path = Path(args.idea_file).expanduser().resolve()
     if not local_idea_path.exists():
         raise CliError("missing_idea_file", f"idea file not found: {local_idea_path}")
+    idea_text = local_idea_path.read_text(encoding="utf-8")
+    plan_name = _derive_bootstrap_plan_name(args, idea_text=idea_text)
     remote_idea_path = str(PurePosixPath(spec.repo.workspace) / "idea.txt")
     _ensure_repo_checkout(spec, provider)
     provider.upload_file(local_idea_path, remote_idea_path)
-
-    command = (
-        f"cd {shlex.quote(spec.repo.workspace)} && "
-        f"arnold init --project-dir {shlex.quote(spec.repo.workspace)} "
-        f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
-        f"--robustness {shlex.quote(args.robustness)}"
+    command = _bootstrap_launch_command(
+        workspace=spec.repo.workspace,
+        remote_idea_path=remote_idea_path,
+        plan_name=plan_name,
+        robustness=args.robustness,
+        session_name=_derive_bootstrap_session_name(spec),
+        engine_dir=spec.megaplan.src_path,
     )
-    if args.plan_name:
-        command += f" --name {shlex.quote(args.plan_name)}"
     result = provider.ssh_exec(command)
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
     return 0
