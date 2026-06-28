@@ -124,7 +124,11 @@ LINK_ONLY_TYPES: frozenset[str] = frozenset(
 )
 
 WIDGET_SEMANTIC_NAMES: dict[str, dict[str, str]] = {
+    "Boolean": {"widget_0": "value"},
+    "Float": {"widget_0": "value"},
+    "Integer": {"widget_0": "value"},
     "PrimitiveInt": {"widget_0": "value", "widget_1": "control_after_generate"},
+    "String": {"widget_0": "value"},
     "PrimitiveString": {"widget_0": "value"},
     "PrimitiveStringMultiline": {"widget_0": "value"},
     "PrimitiveFloat": {"widget_0": "value", "widget_1": "control_after_generate"},
@@ -225,6 +229,10 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "ModelSamplingAuraFlow": ["shift"],
     "ModelSamplingFlux": ["max_shift", "base_shift", "width", "height"],
     "ModelSamplingSD3": ["shift"],
+    "Boolean": ["value"],
+    "Float": ["value"],
+    "Integer": ["value"],
+    "String": ["value"],
     "PrimitiveBoolean": ["value"],
     "PrimitiveFloat": ["value"],
     "PrimitiveInt": ["value"],

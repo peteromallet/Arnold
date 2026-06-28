@@ -135,6 +135,24 @@ def schema_for(provider: object | None, class_type: str) -> object | None:
 
 
 def _builtin_schema(class_type: str) -> NodeSchema | None:
+    primitive_aliases: dict[str, tuple[str, str]] = {
+        "Integer": ("INT", "INT"),
+        "Float": ("FLOAT", "FLOAT"),
+        "String": ("STRING", "STRING"),
+        "Boolean": ("BOOLEAN", "BOOLEAN"),
+    }
+    primitive_alias = primitive_aliases.get(class_type)
+    if primitive_alias is not None:
+        input_type, output_type = primitive_alias
+        return NodeSchema(
+            class_type=class_type,
+            pack="comfy_core",
+            inputs={"value": InputSpec(input_type, required=False)},
+            outputs=[OutputSpec(output_type, output_type)],
+            source_provider="vibecomfy_builtin",
+            source_package="comfy_core",
+            confidence=1.0,
+        )
     if class_type == "vibecomfy.exec":
         from vibecomfy.comfy_nodes.exec_node import EXEC_SLOT_COUNT
 
@@ -540,6 +558,9 @@ class AuthoringSchemaProvider:
         return self.get_schema(class_type)
 
     def get_schema(self, class_type: str) -> NodeSchema | None:
+        builtin = _builtin_schema(class_type)
+        if builtin is not None:
+            return builtin
         for provider in self._providers:
             try:
                 schema = provider.get_schema(class_type)
@@ -622,6 +643,9 @@ class ConversionSchemaProvider:
         self._enable_runtime = enable_runtime
 
     def get_schema(self, class_type: str) -> NodeSchema | None:
+        builtin = _builtin_schema(class_type)
+        if builtin is not None:
+            return builtin
         # 1. Committed node_index.json
         schema = self._local.get_schema(class_type)
         if schema is not None:
