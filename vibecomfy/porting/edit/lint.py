@@ -50,6 +50,7 @@ Rules enforced:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Mapping, Sequence
 
 from .ledger import EditLedger
@@ -74,6 +75,39 @@ from vibecomfy.porting.resolution import (
     ResolutionIssue,
     build_lg_id_maps,
 )
+
+
+_IMAGE_CONCAT_MULTI_INPUT_RE = re.compile(r"^image_(\d+)$")
+
+
+def _is_dynamic_add_node_input(
+    *,
+    class_type: str,
+    input_name: str,
+    fields: Mapping[str, Any],
+    schema_inputs: Mapping[str, Any],
+) -> bool:
+    if class_type != "ImageConcatMulti":
+        return False
+    match = _IMAGE_CONCAT_MULTI_INPUT_RE.match(input_name)
+    if match is None:
+        return False
+    try:
+        index = int(match.group(1))
+    except ValueError:
+        return False
+    if index < 1:
+        return False
+
+    raw_count = fields.get("inputcount")
+    if raw_count is None:
+        inputcount_spec = schema_inputs.get("inputcount")
+        raw_count = getattr(inputcount_spec, "default", None)
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        return False
+    return index <= count
 
 
 # ── data model ──────────────────────────────────────────────────────────────
@@ -821,7 +855,12 @@ def _lint_add_node(
             except Exception:
                 schema_inputs = {}
             for input_name in op.inputs:
-                if input_name not in schema_inputs:
+                if input_name not in schema_inputs and not _is_dynamic_add_node_input(
+                    class_type=op.class_type.strip(),
+                    input_name=input_name,
+                    fields=op.fields,
+                    schema_inputs=schema_inputs,
+                ):
                     return None, _make_issue(
                         "invalid_add_node_input",
                         f"'{input_name}' is not a valid input for "

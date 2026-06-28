@@ -54,6 +54,7 @@ _ctx = ResolutionContext()
 # "unknown_target" is the generic ResolutionContext uid-not-found code; the apply
 # surface has always exposed it as "unknown_node_target" to callers.
 _RESOLUTION_CODE_REMAP: dict[str, str] = {"unknown_target": "unknown_node_target"}
+_IMAGE_CONCAT_MULTI_INPUT_RE = re.compile(r"^image_(\d+)$")
 
 
 def _endpoint_port_issues(result: Any) -> list[PortIssue]:
@@ -1394,7 +1395,12 @@ def _resolve_add_node(
                     },
                 )
             ]
-        spec = schema_inputs.get(input_name)
+        spec = schema_inputs.get(input_name) or _dynamic_add_node_input_spec(
+            class_type=op.class_type,
+            input_name=input_name,
+            fields=op.fields,
+            schema_inputs=schema_inputs,
+        )
         if spec is None:
             return None, [
                 _issue(
@@ -2953,6 +2959,40 @@ def _validate_literal_value(
             )
         )
     return issues
+
+
+def _dynamic_add_node_input_spec(
+    *,
+    class_type: str,
+    input_name: str,
+    fields: Mapping[str, Any],
+    schema_inputs: Mapping[str, Any],
+) -> InputSpec | None:
+    """Return a narrow schema spec for runtime-expanded add_node inputs."""
+
+    if class_type != "ImageConcatMulti":
+        return None
+    match = _IMAGE_CONCAT_MULTI_INPUT_RE.match(input_name)
+    if match is None:
+        return None
+    try:
+        index = int(match.group(1))
+    except ValueError:
+        return None
+    if index < 1:
+        return None
+
+    raw_count = fields.get("inputcount")
+    if raw_count is None:
+        existing_count_spec = schema_inputs.get("inputcount")
+        raw_count = getattr(existing_count_spec, "default", None)
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        return None
+    if index > count:
+        return None
+    return InputSpec(type="IMAGE", required=True)
 
 
 def _primitive_expected_type(value: Any) -> str | None:

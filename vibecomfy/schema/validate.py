@@ -46,9 +46,6 @@ SCHEMA_VALIDATION_SKIP_CLASSES: dict[str, str] = {
     "VideoDepthAnythingProcess": "stub schema - see docs/node_pack_reconciliation.md",
     "LoadVideoDepthAnythingModel": "stub schema - see docs/node_pack_reconciliation.md",
     "VideoDepthAnythingOutput": "stub schema - see docs/node_pack_reconciliation.md",
-    # ComfyUI-KJNodes — ImageConcatMulti has dynamic image_N inputs (inputcount drives them)
-    # The schema only shows image_1/image_2; image_3+ are created at runtime by the node
-    "ImageConcatMulti": "dynamic inputs (image_N count driven by inputcount widget) - see docs/node_pack_reconciliation.md",
     # ComfyUI-WanVideoWrapper — WanVideoModelLoader schema snapshot predates vace_model input
     # vace_model was added in a newer WanVideoWrapper version; snapshot needs refresh
     "WanVideoModelLoader": "snapshot predates vace_model input - see docs/node_pack_reconciliation.md",
@@ -372,6 +369,7 @@ def _incoming_inputs(workflow: VibeWorkflow) -> dict[str, set[str]]:
 
 _LTX_IMAGE_SLOT_RE = re.compile(r"^num_images\.(?:image|index|strength)_(\d+)$")
 _FIXED_SLOT_INPUT_RE = re.compile(r"^in_(\d+)$")
+_IMAGE_CONCAT_MULTI_INPUT_RE = re.compile(r"^image_(\d+)$")
 
 
 def _preserve_linked_undeclared_input(name: str, value: Any) -> bool:
@@ -389,6 +387,8 @@ def _is_dynamic_payload_input(class_type: str, input_name: str, inputs: dict[str
 
     if class_type == "LTXVImgToVideoInplaceKJ":
         return _LTX_IMAGE_SLOT_RE.match(input_name) is not None
+    if class_type == "ImageConcatMulti":
+        return _image_concat_multi_input_index(input_name) is not None
     if class_type == "SimpleCalculator" and _has_numbered_prefix(input_name, "input_"):
         return True
     if class_type == "LTXVAddGuide" and _has_numbered_prefix(input_name, "guide_"):
@@ -404,6 +404,8 @@ def _validate_dynamic_payload_inputs(
     class_type: str,
     inputs: dict[str, Any],
 ) -> list[ValidationIssue]:
+    if class_type == "ImageConcatMulti":
+        return _validate_image_concat_multi_inputs(node_id=node_id, class_type=class_type, inputs=inputs)
     if class_type != "LTXVImgToVideoInplaceKJ":
         if class_type in {"SimpleCalculator", "SimpleCalculatorKJ"}:
             return _validate_simple_calculator_variables(node_id=node_id, class_type=class_type, inputs=inputs)
@@ -436,6 +438,64 @@ def _validate_dynamic_payload_inputs(
                         detail={"node_id": node_id, "class_type": class_type, "input": name},
                     )
                 )
+    return issues
+
+
+def _image_concat_multi_input_index(name: str) -> int | None:
+    match = _IMAGE_CONCAT_MULTI_INPUT_RE.match(name)
+    if match is None:
+        return None
+    try:
+        index = int(match.group(1))
+    except ValueError:
+        return None
+    return index if index >= 1 else None
+
+
+def _validate_image_concat_multi_inputs(
+    *,
+    node_id: str,
+    class_type: str,
+    inputs: dict[str, Any],
+) -> list[ValidationIssue]:
+    raw_count = inputs.get("inputcount")
+    if raw_count is None or _is_api_link(raw_count):
+        return []
+    try:
+        count = int(raw_count)
+    except (TypeError, ValueError):
+        return [
+            ValidationIssue(
+                "invalid_dynamic_input_count",
+                f"Node {node_id} ({class_type}) input inputcount must be an integer count.",
+                severity="error",
+                detail={"node_id": node_id, "class_type": class_type, "input": "inputcount", "value": _truncate(raw_count)},
+            )
+        ]
+
+    issues: list[ValidationIssue] = []
+    for index in range(1, count + 1):
+        name = f"image_{index}"
+        if name not in inputs:
+            issues.append(
+                ValidationIssue(
+                    "missing_dynamic_input",
+                    f"Node {node_id} ({class_type}) is missing dynamic input {name}.",
+                    severity="error",
+                    detail={"node_id": node_id, "class_type": class_type, "input": name},
+                )
+            )
+    for name in inputs:
+        index = _image_concat_multi_input_index(name)
+        if index is not None and index > count:
+            issues.append(
+                ValidationIssue(
+                    "dynamic_input_exceeds_count",
+                    f"Node {node_id} ({class_type}) input {name} exceeds inputcount={count}.",
+                    severity="error",
+                    detail={"node_id": node_id, "class_type": class_type, "input": name, "inputcount": count},
+                )
+            )
     return issues
 
 
