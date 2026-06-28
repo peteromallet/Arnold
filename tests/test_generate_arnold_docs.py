@@ -90,9 +90,25 @@ def test_required_public_examples_render_for_workflow_and_native_sources() -> No
         "writing-panel-strict",
         "folder-audit",
         "deliberation",
+        "my-pipeline",
     }
     missing = [pipeline_id for pipeline_id in required_ids if _example_path(generator, pipeline_id) not in examples]
     assert not missing
+
+
+def test_workflow_template_example_renders_dry_run_report() -> None:
+    generator = _load_generator()
+    info = _by_id()["my-pipeline"]
+
+    assert info.builder_contract == "workflow"
+    assert info.load_state == "workflow"
+
+    rendered_path, rendered = generator._render_example(info)
+    assert rendered_path == _example_path(generator, "my-pipeline")
+    assert "## Dry-run report" in rendered
+    assert "| Contract | workflow|" in rendered
+    assert "`arnold workflow check --module arnold_pipelines._template:build_pipeline`" in rendered
+    assert "native_program" not in rendered
 
 
 def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> None:
@@ -105,3 +121,15 @@ def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> N
     assert "| megaplan.creative | creative | native:creative | arnold_pipelines/megaplan/pipelines/creative | keep|" in first
     assert "| arnold.deliberation | deliberation | native:deliberation | arnold/pipelines/deliberation | keep|" in first
     assert "| evidence_pack.verifier | evidence_pack_verifier | sha256:" in first
+
+
+def test_composed_rules_require_workflow_first_authoring() -> None:
+    generator = _load_generator()
+    composed = generator.render_composed_rules()
+
+    assert composed
+    for path, text in composed.items():
+        assert "workflow-first" in text
+        assert "arnold.workflow.Pipeline" in text
+        assert "native-first" not in text
+        assert "NativeProgram" not in text

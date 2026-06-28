@@ -47,6 +47,25 @@ M2 authoring compiles explicit node data into these fields. Authors construct a
 pipeline object with stable step IDs and route data; `WorkflowManifest` remains
 compiler output, not hand-authored package source.
 
+```python
+from arnold.workflow import Pipeline, Step, Route, compile_pipeline
+
+pipeline = Pipeline(
+    id="example",
+    version="1.0",
+    steps=(
+        Step(id="plan", kind="agent"),
+        Step(id="execute", kind="agent"),
+    ),
+    routes=(
+        Route(id="plan-execute", source="plan", target="execute"),
+    ),
+)
+manifest = compile_pipeline(pipeline)
+assert manifest.schema_version == "arnold.workflow.manifest.v1"
+assert manifest.manifest_hash
+```
+
 ## Node Fields
 
 - `id`: stable node coordinate. It must be explicit in M2-authored pipelines and

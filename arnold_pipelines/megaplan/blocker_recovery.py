@@ -18,6 +18,7 @@ from arnold_pipelines.megaplan.quality_resolutions import (
     latest_quality_resolutions,
     validate_quality_resolution_event,
 )
+from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
 from arnold_pipelines.megaplan.resolution_contract import (
     FALLBACK,
     HARD_BLOCK,
@@ -26,14 +27,12 @@ from arnold_pipelines.megaplan.resolution_contract import (
     resolution_applies_to_task,
     resolution_state,
 )
-from arnold_pipelines.megaplan.user_actions import (
-    effective_resolutions,
-)
 
 PREREQUISITE = "prerequisite"
 QUALITY = "quality"
 UNRESOLVED = "unresolved"
 MALFORMED = "malformed"
+_BEFORE_EXECUTE_GATE_PREFIX = "Read user_actions.md."
 
 
 @dataclass(frozen=True)
@@ -256,14 +255,22 @@ def _depends_on(task: dict[str, Any]) -> tuple[str, ...]:
     return tuple(item for item in raw if isinstance(item, str))
 
 
+def _is_synthetic_before_execute_gate_task(task: dict[str, Any]) -> bool:
+    description = task.get("description")
+    return isinstance(description, str) and description.startswith(
+        _BEFORE_EXECUTE_GATE_PREFIX
+    )
+
+
 def find_synthetic_before_execute_gate(
     finalize_data: dict[str, Any],
 ) -> tuple[str | None, tuple[str, ...]]:
     """Derive the legacy before_execute gate from task dependency topology.
 
     The finalize handler injected this gate as a root task and made every other
-    task directly depend on it. No worker output or task-description matching is
-    used here.
+    task directly depend on it. To avoid misclassifying unrelated root tasks
+    (for example deferred baseline checkpoints in stale finalize payloads), the
+    root task must also match the handler-owned user-action gate description.
     """
     tasks_by_id = _tasks_by_id(finalize_data)
     if len(tasks_by_id) < 2:
@@ -272,6 +279,8 @@ def find_synthetic_before_execute_gate(
     candidates: list[tuple[str, tuple[str, ...]]] = []
     for task_id, task in tasks_by_id.items():
         if _depends_on(task):
+            continue
+        if not _is_synthetic_before_execute_gate_task(task):
             continue
         protected = tuple(
             sorted(
@@ -461,11 +470,11 @@ def evaluate_prerequisite_blockers(
     finalize_data: dict[str, Any],
     state: dict[str, Any],
     blocked_tasks: Iterable[BlockedTask | dict[str, Any]],
+    *,
+    plan_dir: Path | None = None,
 ) -> BlockerRecoveryEvaluation:
     scopes = build_prerequisite_scopes(finalize_data)
-    effective = effective_resolutions(
-        _state_meta_list(state, "user_action_resolutions")
-    )
+    effective = effective_user_action_resolutions(plan_dir, state)
     details: list[BlockerDetail] = []
 
     for raw_blocked in blocked_tasks:
@@ -611,10 +620,16 @@ def evaluate_blocker_recovery(
     finalize_data: dict[str, Any],
     state: dict[str, Any],
     *,
+    plan_dir: Path | None = None,
     blocked_tasks: Iterable[BlockedTask | dict[str, Any]] = (),
     deviations: Iterable[Deviation | dict[str, Any] | str] = (),
 ) -> BlockerRecoveryEvaluation:
-    prereq = evaluate_prerequisite_blockers(finalize_data, state, blocked_tasks)
+    prereq = evaluate_prerequisite_blockers(
+        finalize_data,
+        state,
+        blocked_tasks,
+        plan_dir=plan_dir,
+    )
     quality = evaluate_quality_blockers(state, deviations)
     return BlockerRecoveryEvaluation(prereq.blockers + quality.blockers)
 

@@ -115,10 +115,30 @@ def _refresh_base_branch(
                 writer(f"[chain] {' '.join(pull_cmd)} output:\n{detail}\n")
             writer(
                 "[chain] warning: fast-forward refresh failed; "
-                f"continuing with refreshed origin/{base_branch}. "
-                "This is expected when the local base has milestone commits "
-                "or origin moved independently.\n"
+                f"falling back to hard reset to refreshed origin/{base_branch} "
+                "so the working tree (chain spec + idea files) matches the latest "
+                "base. Safe before milestone work starts; discards uncommitted "
+                "local edits (committed briefs are preserved).\n"
             )
+            # Force the working tree to the refreshed origin/<base> so the chain
+            # spec / idea files are read from the latest base commit (a stale
+            # working tree is the cause of missing_idea_file / missing_anchor_file
+            # when briefs were just pushed). pull --ff-only can fail when the
+            # working tree is dirty (e.g. the orchestrator staged spec uploads)
+            # or the local base diverged; reset --hard recovers both.
+            reset_cmd = ["git", "reset", "--hard", f"origin/{base_branch}"]
+            reset_proc = _compat().subprocess.run(
+                reset_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+            )
+            writer(f"[chain] {' '.join(reset_cmd)} -> rc={reset_proc.returncode}\n")
+            if reset_proc.returncode != 0:
+                rdetail = (reset_proc.stderr or reset_proc.stdout or "").strip()
+                if rdetail:
+                    writer(f"[chain] {' '.join(reset_cmd)} output:\n{rdetail}\n")
+                writer(
+                    "[chain] warning: hard reset also failed; continuing with the "
+                    f"stale local {base_branch} working tree.\n"
+                )
     except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
         writer(f"[chain] {' '.join(pull_cmd)} failed: {exc}\n")
         writer(
@@ -347,12 +367,94 @@ def _checkout_milestone_branch(
     if _compat()._remote_branch_exists(root, branch, writer=writer):
         _clean_worktree_for_chain(root, writer)
         _compat()._run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
+        if from_origin:
+            _compat()._run_command(
+                root,
+                ["git", "fetch", "origin", base_branch],
+                writer=writer,
+                error_code="git_branch_failed",
+            )
         _compat()._run_command(
             root,
             ["git", "checkout", "-B", branch, f"origin/{branch}"],
             writer=writer,
             error_code="git_branch_failed",
         )
+        if from_origin:
+            fork_point = f"origin/{base_branch}"
+            ancestor = _compat().subprocess.run(
+                ["git", "merge-base", "--is-ancestor", fork_point, "HEAD"],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+            writer(
+                f"[chain] git merge-base --is-ancestor {fork_point} HEAD -> "
+                f"rc={ancestor.returncode}\n"
+            )
+            if ancestor.returncode == 0:
+                writer(f"[chain] {branch} already contains {fork_point}\n")
+            elif ancestor.returncode == 1:
+                rebase = _compat().subprocess.run(
+                    ["git", "rebase", fork_point],
+                    cwd=str(root),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=120,
+                )
+                writer(f"[chain] git rebase {fork_point} -> rc={rebase.returncode}\n")
+                if rebase.returncode != 0:
+                    detail = (rebase.stderr or rebase.stdout or "").strip()
+                    if detail:
+                        writer(f"[chain] git rebase {fork_point} output:\n{detail}\n")
+                    abort = _compat().subprocess.run(
+                        ["git", "rebase", "--abort"],
+                        cwd=str(root),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=120,
+                    )
+                    writer(f"[chain] git rebase --abort -> rc={abort.returncode}\n")
+                    raise CliError(
+                        "git_branch_reconcile_failed",
+                        (
+                            f"Could not rebase existing milestone branch {branch} "
+                            f"onto {fork_point}. Resolve the branch conflict before "
+                            "relaunching the chain."
+                        ),
+                        extra={
+                            "branch": branch,
+                            "fork_point": fork_point,
+                            "stdout": rebase.stdout,
+                            "stderr": rebase.stderr,
+                        },
+                    )
+                _compat()._run_command(
+                    root,
+                    ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
+                    writer=writer,
+                    error_code="git_push_failed",
+                )
+            else:
+                detail = (ancestor.stderr or ancestor.stdout or "").strip()
+                raise CliError(
+                    "git_branch_reconcile_failed",
+                    (
+                        f"Could not compare existing milestone branch {branch} "
+                        f"with {fork_point}: {detail}"
+                    ),
+                    extra={
+                        "branch": branch,
+                        "fork_point": fork_point,
+                        "returncode": ancestor.returncode,
+                        "stdout": ancestor.stdout,
+                        "stderr": ancestor.stderr,
+                    },
+                )
         return
     _clean_worktree_for_chain(root, writer)
     fork_point = base_branch
@@ -1281,12 +1383,12 @@ def _commit_and_push_phase(
                 )
             _compat()._run_command(
                 root,
-                ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
+                ["git", "push", "--no-verify", "--force-with-lease", "origin", f"HEAD:{branch}"],
                 writer=writer,
                 error_code="git_push_failed",
             )
             return
-    _compat()._run_command(root, ["git", "push", "--no-verify", "origin", branch], writer=writer, error_code="git_push_failed")
+    _compat()._run_command(root, ["git", "push", "--no-verify", "origin", f"HEAD:{branch}"], writer=writer, error_code="git_push_failed")
 
 
 def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:

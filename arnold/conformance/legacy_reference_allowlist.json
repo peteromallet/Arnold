@@ -379,12 +379,6 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
-      "path": "docs/arnold/manifest-identity-report.json",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
       "path": "docs/arnold/megaplan-plugin-clean-gap.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
@@ -409,58 +403,22 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
-      "path": "docs/arnold/package-authoring-contract.md",
+      "path": "docs/arnold/m3-merge-result-closeout-20260626.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
+      "reason": "Merge-result closeout checklist verifying the legacy root is absent from HEAD."
     },
     {
       "path": "docs/arnold/package-disposition.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-completion-plan-v2.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-completion-plan-v3.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-completion-plan-v4.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-final-import-inventory.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
+      "reason": "Generated disposition documentation records the forbidden pre-migration dotted package path."
     },
     {
-      "path": "docs/arnold/pipelines/migration-final-import-inventory.md",
-      "pattern": "arnold/pipelines/megaplan",
+      "path": "docs/arnold/package-disposition.yaml",
+      "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-plan-sense-check.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/native-default-handoff.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
+      "reason": "Disposition manifest records the forbidden pre-migration dotted package path."
     },
     {
       "path": "docs/arnold/runtime-salvage-deletion-map.md",
@@ -683,6 +641,30 @@
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/data/cloud_skill.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Cloud skill migration note documents the old dotted package path so operators can update stale tooling."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Subagent launcher skill documents the legacy Hermes runtime location during the Arnold package migration."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/fan.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Legacy fan launcher fallback imports the old Hermes runtime only when the modern launcher path is unavailable."
+    },
+    {
+      "path": "pyproject.toml",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Packaging artifact glob keeps historical migration assets addressable without restoring the deleted package."
     },
     {
       "path": "NEXT_STEPS.md",

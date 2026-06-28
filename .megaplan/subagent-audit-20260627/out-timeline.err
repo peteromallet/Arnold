@@ -1,0 +1,36 @@
+[launch_hermes_agent] model=deepseek:deepseek-v4-pro → resolved=deepseek-v4-pro toolsets=['file', 'terminal'] max_tokens=65536 context_budget_tokens=(auto)
+[launch_hermes_agent] WARNING: 'terminal' toolset is enabled but the megaplan sandbox is NOT installed in this entrypoint. Shell commands will run with the invoking user's privileges.
+[launch_hermes_agent] streaming forced (provider + max_tokens > 4096)
+  [tool] ( ˘▽˘)っ ⚡ running 8 tools concurrently
+  [done] ⚡ 8/8 tools completed in 14.0s total (2.0s)
+  ┊ 📖 read      ...act-and-20260627-1635/state.json  1.6s
+  ┊ 📖 read      ...ract-and-20260627-1635/gate.json  1.9s
+  ┊ 📖 read      ...d-20260627-1635/gate_output.json  1.8s
+  ┊ 📖 read      ...7-1635/step_receipt_gate_v2.json  1.6s
+  ┊ 📖 read      ...act-and-20260627-1635/plan_v1.md  1.8s
+  ┊ 📖 read      ...act-and-20260627-1635/plan_v2.md  1.8s
+  ┊ 📖 read      ...-20260627-1635/plan_v2.meta.json  1.6s
+  ┊ 📖 read      ...-and-20260627-1635/events.ndjson  1.7s
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.9s total (2.0s)
+  ┊ 📖 read      ...on-shaped-workflow-authoring.log  1.6s
+  ┊ 🔎 grep      OPENROUTER_API_KEY|internal_erro...  1.2s
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.6s total (2.0s)
+  ┊ 🔎 grep      iter 9[5-9]  0.8s
+  ┊ 📖 read      ...on-shaped-workflow-authoring.log  1.8s
+  [tool] ( ˘▽˘)っ 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...on-shaped-workflow-authoring.log  1.8s (2.0s)
+  [tool] (★ω★) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...on-shaped-workflow-authoring.log  1.6s (2.0s)
+  [tool] (✿◠‿◠) 📖 /workspace/python-shaped-wo...
+  [done] ┊ 📖 read      ...on-shaped-workflow-authoring.log  1.8s (2.0s)
+  [tool] (★ω★) 🔎 m1-component-contract.*stat...
+  [done] ┊ 🔎 grep      m1-component-contract.*state=done  0.8s (1.0s)
+  [tool] (★ω★) 🔎 m1-component-contract.*gate...
+  [done] ┊ 🔎 grep      m1-component-contract.*gate.*suc...  1.0s (1.5s)
+  [tool] ヾ(＾∇＾) 🔎 m1-component-contract.*stat...
+  [done] ┊ 🔎 grep      m1-component-contract.*state=(ga...  1.2s (1.5s)
+  [tool] (◕ᴗ◕✿) 🔎 m1-component-contract.*state=
+  [done] ┊ 🔎 grep      m1-component-contract.*state=  0.8s (1.0s)
+[launch_hermes_agent] done in 81.3s

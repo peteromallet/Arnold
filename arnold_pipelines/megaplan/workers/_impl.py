@@ -86,6 +86,7 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
 from arnold_pipelines.megaplan.workers._mock_payloads import _EXECUTE_STEPS, _build_mock_payload
 
 _CROSS_CALL_PERSISTENT_STEPS = _EXECUTE_STEPS
+_CODEX_WORKER_CHANNEL = "codex_cli"
 _MUTATING_WORKER_STEPS = {"execute", "revise", "loop_execute"}
 
 # Shared mapping from step name to schema filename, used by both
@@ -699,10 +700,12 @@ def run_command(
     progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
-    # Codex CLI interprets a trailing "-" as "read the prompt from stdin".  When
-    # stdin is a pipe/file this reliably wedges (the CLI blocks reading forever).
-    # Write the prompt to a temp file and pass "@/path/to/file" instead, sealing
-    # stdin with DEVNULL.  This applies to any command whose last argument is "-".
+    # Codex CLI (v0.137+) interprets a trailing "-" as "read the prompt from
+    # stdin".  Older versions wedged on piped stdin, so the code previously wrote
+    # the prompt to a temp file and passed "@/path/to/file".  Modern Codex treats
+    # "@file" as a reference/attachment rather than the prompt itself, causing the
+    # worker to hang waiting for instructions.  We now write the prompt to a temp
+    # file and feed that file as stdin while keeping the trailing "-".
     stdin_path: Path | None = None
     if stdin_text is not None and command and command[-1] == "-":
         stdin_handle = tempfile.NamedTemporaryFile(
@@ -712,19 +715,19 @@ def run_command(
         stdin_handle.flush()
         stdin_handle.close()
         stdin_path = Path(stdin_handle.name)
-        command = list(command)
-        command[-1] = f"@{stdin_path}"
-        stdin_text = None
+        # Keep the trailing "-" so codex reads the prompt from stdin.
 
     try:
         started = time.monotonic()
         timeout = timeout or get_effective("execution", "worker_timeout_seconds")
         if activity_callback is None and activity_guard is None:
+            stdin_file: Any | None = None
             try:
+                if stdin_path is not None:
+                    stdin_file = open(stdin_path, "rb")
                 process = subprocess.run(
                     command,
-                    input=stdin_text,
-                    stdin=subprocess.DEVNULL if stdin_text is None else None,
+                    stdin=stdin_file if stdin_file is not None else subprocess.DEVNULL,
                     text=True,
                     cwd=str(cwd),
                     capture_output=True,
@@ -753,6 +756,8 @@ def run_command(
                     f"Command not found: {command[0]}",
                 ) from exc
             finally:
+                if stdin_file is not None:
+                    stdin_file.close()
                 if stdin_path is not None:
                     stdin_path.unlink(missing_ok=True)
             return CommandResult(
@@ -765,14 +770,13 @@ def run_command(
             )
 
         stdin_path = None
-        stdin_file: Any | None = None
+        stdin_file = None
         try:
             if stdin_text is not None:
                 # Large prompts written to a PIPE can deadlock: the producer
                 # blocks when the pipe buffer fills before the consumer has
                 # started draining stdin. Writing the prompt to a temp file and
-                # letting the child read directly from that file avoids the
-                # pipe-buffer race entirely.
+                # letting the child read that file via stdin avoids the race.
                 stdin_handle = tempfile.NamedTemporaryFile(
                     "w+", encoding="utf-8", delete=False, dir=str(_project_local_tmp_dir(cwd))
                 )
@@ -2911,11 +2915,19 @@ def _run_codex_step_uncapped(
             "exec",
             "--skip-git-repo-check",
             "--ephemeral",
-            "-c",
-            "sandbox_mode='read-only'",
             "-o",
             str(output_path),
         ]
+        if _trusted_container():
+            # Trusted containers are the outer sandbox. On hosts without
+            # unprivileged user namespaces, Codex's read-only bubblewrap
+            # sandbox fails before the worker can inspect local files.
+            command.append("--dangerously-bypass-approvals-and-sandbox")
+        else:
+            command.extend([
+                "-c",
+                "sandbox_mode='read-only'",
+            ])
         command.extend(_codex_model_flag(model))
         if effort is not None:
             command.extend(["-c", f"model_reasoning_effort={effort}"])
@@ -3170,6 +3182,7 @@ def _run_codex_step_uncapped(
                     session_id=timeout_session_id,
                     trace_output=str(error.extra.get("raw_output", "")) if json_trace else None,
                     rendered_prompt=prompt,
+                    worker_channel=_CODEX_WORKER_CHANNEL,
                 )
             timeout_session_id = session.get("id") if persistent else None
             if timeout_session_id is None:
@@ -3309,6 +3322,7 @@ def _run_codex_step_uncapped(
             session_id=extract_session_id(raw),
             trace_output=raw if json_trace else None,
             rendered_prompt=prompt,
+            worker_channel=_CODEX_WORKER_CHANNEL,
         )
     try:
         capture_outcome = capture_step_output(
@@ -3466,6 +3480,7 @@ def _run_codex_step_uncapped(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=prompt_tokens + completion_tokens,
+        worker_channel=_CODEX_WORKER_CHANNEL,
     )
 
 
@@ -3560,11 +3575,16 @@ def run_codex_prep_step(
         "exec",
         "--skip-git-repo-check",
         "--ephemeral",
-        "-c",
-        "sandbox_mode='read-only'",
         "-o",
         str(output_path),
     ]
+    if _trusted_container():
+        command.append("--dangerously-bypass-approvals-and-sandbox")
+    else:
+        command.extend([
+            "-c",
+            "sandbox_mode='read-only'",
+        ])
     command.extend(_codex_model_flag(model))
     if effort is not None:
         command.extend(["-c", f"model_reasoning_effort={effort}"])
@@ -3628,6 +3648,7 @@ def run_codex_prep_step(
         session_id=extract_session_id(raw),
         rendered_prompt=prompt,
         model_actual=model,
+        worker_channel=_CODEX_WORKER_CHANNEL,
     )
 
 

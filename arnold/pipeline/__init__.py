@@ -149,8 +149,10 @@ from arnold.pipeline.pattern_types import JoinFn, PromoteFn
 from arnold.pipeline.pipeline_id_registry import (
     PipelineIdRegistry,
     PipelineIdRegistryError,
+    RegistryRuntimeIdentity,
     load_pipeline_id_registry,
     load_pipeline_id_registries,
+    resolve_registry_runtime_identity,
 )
 from arnold.pipeline.profiles import (
     AgentSpecShape,
@@ -343,6 +345,7 @@ __all__ = [
     "PricingEntry",
     "PromoteFn",
     "Provenance",
+    "RegistryRuntimeIdentity",
     "ReduceResult",
     "ReadRef",
     "ResumeCursorRef",
@@ -442,6 +445,7 @@ __all__ = [
     "reduce_contract_results",
     "register_schema",
     "resolve_default_profile",
+    "resolve_registry_runtime_identity",
     "resolve_billing_route",
     "RESUME_CURSOR_FILENAME",
     "RESUME_REVERIFY_DECLARATION_KEY",

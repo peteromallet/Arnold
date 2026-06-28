@@ -1,0 +1,59 @@
+{
+  "id": "log_6cb4ec9bcd05",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5409,
+      "schema_version": 1,
+      "ts_utc": "2026-06-28T00:14:58.870175+00:00",
+      "ts_rel_init_s": 11876.08336,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "v1_phase1_fixture_tests",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "v1_phase1_fixture_tests",
+          "declared_outputs": {
+            "commands_run": [
+              "pytest -q tests/arnold/workflow/test_python_authoring_fixtures.py -q"
+            ]
+          },
+          "linked_evidence_count": 4,
+          "evidence_count": 93,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 93,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-28T00:14:58.863266+00:00"
+      },
+      "transaction_id": "be7055f763ae0c00",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-compiler-core-and-linear-20260627-2056",
+  "occurred_at": "2026-06-28T00:14:58.870244Z"
+}

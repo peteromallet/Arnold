@@ -10,8 +10,6 @@ import ast
 import sys
 from pathlib import Path
 
-import pytest
-
 # Static parity adapters explicitly allowed to import the legacy package.
 M4_PARITY_ADAPTER_PATHS = {
     "arnold_pipelines/megaplan/workers/_impl.py",

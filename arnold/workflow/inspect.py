@@ -11,7 +11,6 @@ manifest and any unresolved inputs that would need to be supplied at runtime.
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any, Mapping
 
 from arnold.manifest.manifests import WorkflowManifest
@@ -29,8 +28,11 @@ def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:
       - ``control_routes``: edge-derived control routes.
       - ``suspension_points``: suspension routes with reentry IDs.
       - ``unresolved_inputs``: inputs that have no declared ``value_ref``.
-      - ``source_spans``: per-node and manifest-level source spans.
       - ``hash_inputs``: topology and manifest hash inputs used for identity.
+      - ``topology_summary``: node/edge counts and entry/exit sets.
+
+    Source spans, formatting helpers, and internal expansion details are
+    diagnostic-only; use ``manifest.to_dict()`` or ``to_yaml`` for those.
     """
 
     nodes_by_id = {node.id: node for node in manifest.nodes}
@@ -43,9 +45,6 @@ def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:
     }
     dependencies: dict[str, tuple[str, ...]] = {}
     unresolved_inputs: dict[str, tuple[str, ...]] = {}
-    source_spans: dict[str, Any] = {}
-    if manifest.source_span is not None:
-        source_spans["__manifest__"] = asdict(manifest.source_span)
     for node in manifest.nodes:
         bindings = node.metadata.get("input_bindings", {})
         deps: list[str] = []
@@ -59,8 +58,6 @@ def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:
         dependencies[node.id] = tuple(deps)
         if unresolved:
             unresolved_inputs[node.id] = tuple(unresolved)
-        if node.source_span is not None:
-            source_spans[node.id] = asdict(node.source_span)
 
     capabilities: dict[str, Any] = {
         "manifest": tuple(
@@ -119,6 +116,15 @@ def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:
         "manifest_hash": manifest.manifest_hash,
     }
 
+    sources = {edge.source for edge in manifest.edges}
+    targets = {edge.target for edge in manifest.edges}
+    topology_summary = {
+        "node_count": len(manifest.nodes),
+        "edge_count": len(manifest.edges),
+        "entry_nodes": tuple(sorted(node.id for node in manifest.nodes if node.id not in targets)),
+        "exit_nodes": tuple(sorted(node.id for node in manifest.nodes if node.id not in sources)),
+    }
+
     return {
         "node_ids": tuple(nodes_by_id.keys()),
         "refs": refs,
@@ -127,13 +133,19 @@ def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:
         "control_routes": control_routes,
         "suspension_points": tuple(suspension_points),
         "unresolved_inputs": unresolved_inputs,
-        "source_spans": source_spans,
         "hash_inputs": hash_inputs,
+        "topology_summary": topology_summary,
     }
 
 
-def to_dot(manifest: WorkflowManifest) -> str:
+def to_dot(manifest: WorkflowManifest, annotations: Mapping[str, Any] | None = None) -> str:
     """Return a diagnostic DOT graph rendering of the manifest topology."""
+
+    edge_annotations = {}
+    if annotations is not None:
+        raw_edges = annotations.get("edges", {}) if isinstance(annotations, Mapping) else {}
+        if isinstance(raw_edges, Mapping):
+            edge_annotations = raw_edges
 
     lines = ["digraph workflow {"]
     for node in manifest.nodes:
@@ -143,6 +155,16 @@ def to_dot(manifest: WorkflowManifest) -> str:
         label = edge.label
         if edge.condition_ref:
             label = f"{label}:{edge.condition_ref}"
+        edge_annotation = edge_annotations.get(edge.id) or (
+            edge_annotations.get(edge.condition_ref) if edge.condition_ref else None
+        )
+        if isinstance(edge_annotation, Mapping):
+            annotated_label = edge_annotation.get("label")
+            debug_ref = edge_annotation.get("condition_ref")
+            if isinstance(annotated_label, str) and annotated_label:
+                label = annotated_label
+                if isinstance(debug_ref, str) and debug_ref:
+                    label = f"{label} ({debug_ref})"
         lines.append(f'  "{edge.source}" -> "{edge.target}" [label="{label}"];')
     lines.append("}")
     return "\n".join(lines)

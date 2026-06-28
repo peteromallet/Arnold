@@ -48,6 +48,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -73,7 +74,8 @@ from arnold_pipelines.megaplan._core import atomic_write_json, resolve_plan_dir
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
-    corroborated_completed_task_ids,
+    effective_execute_completed_task_ids,
+    load_evidence_nucleus,
 )
 from arnold_pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
@@ -290,6 +292,7 @@ def _plan_state(root: Path, plan: str, *, timeout: float) -> str:
         proc = subprocess.run(
             [
                 sys.executable,
+                "-P",
                 "-m",
                 "arnold_pipelines.megaplan",
                 "status",
@@ -380,6 +383,7 @@ def _init_plan(
     )
     args = [
         sys.executable,
+        "-P",
         "-m",
         "arnold_pipelines.megaplan",
         "init",
@@ -1055,6 +1059,26 @@ def _run_full_suite_backstop_gate(
 
 
 def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
+    try:
+        state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        state_payload = {}
+    config = state_payload.get("config") if isinstance(state_payload, dict) else {}
+    meta = state_payload.get("meta") if isinstance(state_payload, dict) else {}
+    raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
+    project_dir = Path(raw_project_dir) if isinstance(raw_project_dir, str) and raw_project_dir else None
+    execution_baseline = (
+        meta.get("execution_baseline")
+        if isinstance(meta, dict) and isinstance(meta.get("execution_baseline"), dict)
+        else {}
+    )
+    baseline_head = execution_baseline.get("head")
+    current_head = _resolve_authority_current_head(
+        plan_dir,
+        project_dir=project_dir,
+        baseline_head=baseline_head if isinstance(baseline_head, str) and baseline_head.strip() else None,
+    )
+    evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
         key=_execution_batch_sort_key,
@@ -1078,9 +1102,13 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return False, f"{latest.name} has no task records"
 
     batch_decisions: dict[str, AuthorityDecision] = {}
-    completed = corroborated_completed_task_ids(
+    completed = effective_execute_completed_task_ids(
         task_records,
         plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state_payload,
+        evidence_nucleus=evidence_nucleus,
+        current_head=current_head,
         decisions=batch_decisions,
     )
     if not completed:
@@ -1126,9 +1154,13 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                 if str(task.get("id") or "") not in baseline_unavailable
             ]
             finalize_decisions: dict[str, AuthorityDecision] = {}
-            finalize_completed = corroborated_completed_task_ids(
+            finalize_completed = effective_execute_completed_task_ids(
                 authoritative_finalize_records,
                 plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state_payload,
+                evidence_nucleus=evidence_nucleus,
+                current_head=current_head,
                 decisions=finalize_decisions,
             )
             pending = _non_authoritative_task_reasons(
@@ -1147,6 +1179,88 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                     f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
                 )
     return True, latest.name
+
+
+def _resolve_authority_current_head(
+    plan_dir: Path,
+    *,
+    project_dir: Path | None,
+    baseline_head: str | None,
+) -> str | None:
+    actual_head = _best_effort_git_head(project_dir) if project_dir is not None else None
+    recorded_head = _latest_recorded_execution_head(plan_dir)
+    if actual_head and recorded_head:
+        if actual_head == recorded_head:
+            return actual_head
+        if project_dir is not None:
+            if _git_is_ancestor(project_dir, recorded_head, actual_head):
+                return actual_head
+            if _git_is_ancestor(project_dir, actual_head, recorded_head):
+                return recorded_head
+    return actual_head or recorded_head or baseline_head
+
+
+def _best_effort_git_head(project_dir: Path) -> str | None:
+    try:
+        actual_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return actual_head or None
+
+
+def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
+    for path in sorted(
+        plan_dir.glob("execution_batch_*.json"),
+        key=_execution_batch_sort_key,
+        reverse=True,
+    ):
+        head = _latest_head_in_artifact(path)
+        if head:
+            return head
+    return _latest_head_in_artifact(plan_dir / "finalize.json")
+
+
+def _latest_head_in_artifact(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    latest_head: str | None = None
+    for key in ("task_updates", "tasks"):
+        raw_records = payload.get(key)
+        if not isinstance(raw_records, list):
+            continue
+        for record in raw_records:
+            if not isinstance(record, dict):
+                continue
+            observed = record.get("head_sha") or record.get("head")
+            if isinstance(observed, str) and observed.strip():
+                latest_head = observed.strip()
+    return latest_head
+
+
+def _git_is_ancestor(project_dir: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=project_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _plan_terminal_completion_is_authoritative(
@@ -1219,20 +1333,25 @@ def _read_typed_noop_completion_waiver(
     return False, "no typed no-op completion waiver found"
 
 
-def _finalize_output_has_empty_tasks(plan_dir: Path) -> tuple[bool, str]:
-    finalize_output = plan_dir / "finalize_output.json"
-    if not finalize_output.exists():
-        return False, "finalize_output.json not present"
-    try:
-        payload = json.loads(finalize_output.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        return True, f"finalize_output.json could not be read: {error}"
-    if not isinstance(payload, dict):
-        return True, "finalize_output.json payload is not an object"
-    tasks = payload.get("tasks")
-    if isinstance(tasks, list) and not tasks:
-        return True, "finalize_output.json tasks is empty"
-    return False, "finalize_output.json tasks is non-empty or absent"
+def _finalize_payload_has_empty_tasks(plan_dir: Path) -> tuple[bool, str]:
+    candidates = (
+        ("finalize.json", plan_dir / "finalize.json"),
+        ("finalize_output.json", plan_dir / "finalize_output.json"),
+    )
+    for label, path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return True, f"{label} could not be read: {error}"
+        if not isinstance(payload, dict):
+            return True, f"{label} payload is not an object"
+        tasks = payload.get("tasks")
+        if isinstance(tasks, list) and not tasks:
+            return True, f"{label} tasks is empty"
+        return False, f"{label} tasks is non-empty or absent"
+    return False, "no finalize artifact present"
 
 
 def _milestone_base_sha_from_plan_state(state: dict[str, Any]) -> str | None:
@@ -1403,7 +1522,7 @@ def _published_pr_semantic_diff_nonempty_from_base(
     record: dict[str, Any],
     *,
     chain_state: ChainState | None = None,
-) -> tuple[bool, str]:
+) -> tuple[bool | None, str]:
     target, source = _published_pr_target_from_record(record, chain_state)
     if target is None:
         pr_number = record.get("pr_number")
@@ -1412,7 +1531,7 @@ def _published_pr_semantic_diff_nonempty_from_base(
         elif isinstance(pr_number, str) and pr_number.strip().isdigit():
             target, source = _published_pr_target_from_gh(root, int(pr_number.strip()))
     if target is None:
-        return False, f"published PR target unavailable: {source}"
+        return None, f"published PR target unavailable: {source}"
     return _semantic_diff_nonempty_between_refs(
         root,
         base_sha,
@@ -1438,7 +1557,10 @@ def _chain_completion_guard(
 
     plan_state = _read_plan_state_payload_from_dir(plan_dir)
     current_state = plan_state.get("current_state")
-    if current_state != STATE_DONE:
+    is_merged_pr = _completion_record_is_merged_pr(record)
+    if is_merged_pr and not implementation_milestone:
+        return True, "merged PR milestone accepted without implementation checks"
+    if implementation_milestone and current_state != STATE_DONE:
         return (
             False,
             f"plan {plan_name} current_state={current_state!r} is not terminal-success "
@@ -1458,6 +1580,44 @@ def _chain_completion_guard(
         ),
     )
 
+    if is_merged_pr:
+        published_diff_ok, published_diff_reason = (
+            _published_pr_semantic_diff_nonempty_from_base(
+                root,
+                milestone_base_sha,
+                record,
+                chain_state=chain_state,
+            )
+        )
+        local_diff_ok = False
+        local_diff_reason = ""
+        if published_diff_ok is not True:
+            local_diff_ok, local_diff_reason = _semantic_diff_nonempty_from_base(
+                root, milestone_base_sha
+            )
+        if published_diff_ok is True:
+            if waiver_ok:
+                return True, f"typed no-op waiver accepted: {waiver_reason}"
+            reason_parts: list[str] = []
+            if local_diff_reason:
+                if local_diff_ok:
+                    reason_parts.append(local_diff_reason)
+                else:
+                    reason_parts.append(f"local HEAD advisory: {local_diff_reason}")
+            reason_parts.append(published_diff_reason)
+            return True, f"completion guard passed: {'; '.join(reason_parts)}"
+        if published_diff_ok is None:
+            if not local_diff_ok and not waiver_ok:
+                return False, f"{local_diff_reason}; {published_diff_reason}; {waiver_reason}"
+            if waiver_ok:
+                return True, f"typed no-op waiver accepted: {waiver_reason}"
+            return True, f"completion guard passed: {local_diff_reason}; {published_diff_reason}"
+        if not waiver_ok:
+            return False, f"{published_diff_reason}; {waiver_reason}"
+        if waiver_ok:
+            return True, f"typed no-op waiver accepted: {waiver_reason}"
+        return True, f"completion guard passed: {published_diff_reason}"
+
     authoritative, reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not authoritative and not waiver_ok:
         return (
@@ -1465,7 +1625,7 @@ def _chain_completion_guard(
             f"execution evidence blocked completion: {reason}; {waiver_reason}",
         )
 
-    empty_finalize_tasks, finalize_reason = _finalize_output_has_empty_tasks(plan_dir)
+    empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(plan_dir)
     if empty_finalize_tasks and not waiver_ok:
         return False, f"{finalize_reason}; {waiver_reason}"
 
@@ -1474,7 +1634,7 @@ def _chain_completion_guard(
         return False, f"{diff_reason}; {waiver_reason}"
 
     published_diff_reason: str | None = None
-    if _completion_record_is_merged_pr(record):
+    if is_merged_pr:
         published_diff_ok, published_diff_reason = (
             _published_pr_semantic_diff_nonempty_from_base(
                 root,
@@ -1538,6 +1698,16 @@ def _finalize_records_missing_authority_fields(
             continue
         kind = task.get("kind")
         notes = task.get("executor_notes")
+        reviewer_verdict = task.get("reviewer_verdict")
+        if (
+            task.get("status") == "skipped"
+            and isinstance(notes, str)
+            and notes.strip()
+            and not is_rubber_stamp(notes, strict=True)
+        ):
+            continue
+        if reviewer_verdict == "deferred_baseline_unavailable":
+            continue
         if (
             kind in {"audit", "research"}
             and isinstance(notes, str)
@@ -2263,6 +2433,43 @@ def run_chain(
         log(f"milestone {milestone.label} starting")
         use_pr = push_enabled and bool(milestone.branch)
 
+        if state.current_milestone_index == idx and state.pr_number is not None and use_pr:
+            pr_state = _pr_state(root, state.pr_number, writer=writer)
+            if pr_state == "merged":
+                state.pr_state = "merged"
+                chain_spec.save_chain_state(spec_path, state)
+                log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
+                appended, reason = _append_completed_with_guard(
+                    root,
+                    state,
+                    {
+                        "label": milestone.label,
+                        "plan": state.current_plan_name,
+                        "status": "done",
+                        "pr_number": state.pr_number,
+                        "pr_state": "merged",
+                    },
+                    implementation_milestone=True,
+                    writer=writer,
+                )
+                if not appended:
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                    )
+                idx += 1
+                state.current_milestone_index = idx
+                state.current_plan_name = None
+                state.last_state = "done"
+                state.pr_number = None
+                state.pr_state = None
+                chain_spec.save_chain_state(spec_path, state)
+                continue
+
         if (
             state.last_state == STATE_AWAITING_PR_MERGE
             and state.current_milestone_index == idx
@@ -2326,7 +2533,7 @@ def run_chain(
         ):
             plan_name = state.current_plan_name
             log(f"resuming existing plan {plan_name} for {milestone.label}")
-            if use_pr and state.pr_number is None:
+            if use_pr and milestone.branch:
                 _checkout_milestone_branch(
                     root,
                     milestone.branch or "",
@@ -2337,14 +2544,16 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
-                state.pr_number = _ensure_milestone_pr(
-                    root,
-                    milestone,
-                    base_branch=spec.base_branch,
-                    writer=writer,
-                )
-                state.pr_state = "open"
-                chain_spec.save_chain_state(spec_path, state)
+                if state.pr_number is None:
+                    state = chain_spec.load_chain_state(spec_path)
+                    state.pr_number = _ensure_milestone_pr(
+                        root,
+                        milestone,
+                        base_branch=spec.base_branch,
+                        writer=writer,
+                    )
+                    state.pr_state = "open" if state.pr_number is not None else None
+                    chain_spec.save_chain_state(spec_path, state)
         else:
             _refresh_base_branch(
                 root,
@@ -2370,6 +2579,7 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=None
                 )
+                state = chain_spec.load_chain_state(spec_path)
             eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
             eff_robustness = (
                 state.robustness_bumps.get(milestone.label)
@@ -2424,6 +2634,7 @@ def run_chain(
                 _capture_sync_state(
                     root, spec_path, branch=milestone.branch, pr_number=state.pr_number
                 )
+                state = chain_spec.load_chain_state(spec_path)
                 state.pr_number = _ensure_milestone_pr(
                     root,
                     milestone,
@@ -2603,6 +2814,7 @@ def run_chain(
             _capture_sync_state(
                 root, spec_path, branch=milestone.branch, pr_number=state.pr_number
             )
+            state = chain_spec.load_chain_state(spec_path)
             current_pr_state = _pr_state(root, state.pr_number, writer=writer)
             if current_pr_state == "merged":
                 state.pr_state = "merged"
@@ -3151,9 +3363,18 @@ def run_chain_cli(
     if action == "status":
         try:
             spec = chain_spec.load_spec(spec_path)
+            anchor_requirement = chain_spec.validate_anchor_requirement(
+                spec,
+                spec_path,
+                require_anchor_override=getattr(args, "require_anchor", None),
+                missing_anchor_ack_override=getattr(args, "missing_anchor_ack", None),
+            )
+            chain_spec.validate_paths(spec, root, spec_path=spec_path)
             chain_state = chain_spec.load_chain_state(spec_path)
         except CliError as exc:
             return _emit_error(exc)
+        if anchor_requirement.warning:
+            writer(f"[chain] WARNING: {anchor_requirement.warning}\n")
         runtime_overrides = chain_spec.load_runtime_policy(spec_path)
         effective_policy = chain_spec.effective_chain_policy(spec, runtime_overrides)
         summary = format_chain_status(spec, chain_state)
@@ -3167,6 +3388,11 @@ def run_chain_cli(
             "chain_state": chain_state.to_dict(),
             "summary": summary,
             "policy": effective_policy,
+            "anchor_requirement": {
+                "require_anchor": anchor_requirement.require_anchor,
+                "missing_anchor_ack": anchor_requirement.missing_anchor_ack,
+                "warning": anchor_requirement.warning,
+            },
         }
         sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0

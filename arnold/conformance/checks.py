@@ -892,6 +892,8 @@ def _scan_legacy_references(
 
 def _is_excluded_from_legacy_reference_scan(relative_path: str) -> bool:
     parts = relative_path.split("/")
+    if len(parts) == 1 and fnmatch.fnmatch(relative_path, "sample_*.json"):
+        return True
     if (
         parts[0] in {
             ".git",

@@ -673,32 +673,34 @@ def apply_available_model_floor(
 ) -> dict[str, str]:
     result = dict(profile)
     local_degradations: list[dict[str, Any]] = []
-    if "finalize" in result:
-        original = result["finalize"]
+    for phase, original in list(result.items()):
         floored, reason = _best_available_floor_spec(original)
-        result["finalize"] = floored
-        _record_routing_degradation(
-            local_degradations,
-            phase="finalize",
-            tier=None,
-            from_spec=original,
-            to_spec=floored,
-            reason=reason,
-        )
+        if floored != original:
+            result[phase] = floored
+            _record_routing_degradation(
+                local_degradations,
+                phase=phase,
+                tier=None,
+                from_spec=original,
+                to_spec=floored,
+                reason=reason,
+            )
     if tier_models is not None:
-        execute_tiers = tier_models.get("execute")
-        if isinstance(execute_tiers, dict):
-            for tier_int, spec in list(execute_tiers.items()):
-                floored, reason = _best_available_floor_spec(spec)
-                execute_tiers[tier_int] = floored
-                _record_routing_degradation(
-                    local_degradations,
-                    phase="execute",
-                    tier=tier_int,
-                    from_spec=spec,
-                    to_spec=floored,
-                    reason=reason,
-                )
+        for phase in ("execute", "critique"):
+            tiers = tier_models.get(phase)
+            if isinstance(tiers, dict):
+                for tier_int, spec in list(tiers.items()):
+                    floored, reason = _best_available_floor_spec(spec)
+                    if floored != spec:
+                        tiers[tier_int] = floored
+                        _record_routing_degradation(
+                            local_degradations,
+                            phase=phase,
+                            tier=tier_int,
+                            from_spec=spec,
+                            to_spec=floored,
+                            reason=reason,
+                        )
     if degradations is not None:
         degradations.extend(local_degradations)
     _warn_routing_degradations(local_degradations)
@@ -794,7 +796,12 @@ def apply_profile_expansion(
 
     preexpanded_tier_models = bool(getattr(args, "tier_models", None))
     cli_phase_models = list(getattr(args, "phase_model", None) or [])
-    raw_cli_steps = {pm.split("=", 1)[0] for pm in cli_phase_models if "=" in pm}
+    cli_phase_specs = {
+        pm.split("=", 1)[0]: pm.split("=", 1)[1]
+        for pm in cli_phase_models
+        if isinstance(pm, str) and "=" in pm
+    }
+    raw_cli_steps = set(cli_phase_specs)
     if preexpanded_tier_models:
         live_steps = getattr(args, "_live_phase_model_steps", set())
         cli_steps = set(live_steps) if isinstance(live_steps, set) else set()
@@ -847,6 +854,11 @@ def apply_profile_expansion(
             )
         except CliError:
             inherited_prep_models = {}
+        explicit_prep_spec = cli_phase_specs.get("prep")
+        if explicit_prep_spec:
+            inherited_prep_models = {
+                stage: explicit_prep_spec for stage in PREP_MODEL_STAGES
+            }
 
         cli_vendor = getattr(args, "vendor", None)
         cli_critic = getattr(args, "critic", None)

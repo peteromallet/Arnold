@@ -931,10 +931,12 @@ def _override_force_proceed(
         if not (
             _last_gate_is_agent_availability_preflight_block(state)
             or _last_gate_is_operational_unverifiable_block(state)
+            or _blocked_plan_has_operational_unverifiable_evidence(plan_dir, state)
+            or getattr(args, "user_approved", False)
         ):
             raise CliError(
                 "invalid_transition",
-                "force-proceed from blocked is only supported for recoverable gate blocks",
+                "force-proceed from blocked is only supported for recoverable gate blocks (pass --user-approved to override)",
                 valid_next=infer_next_steps(state),
             )
     elif state["current_state"] != STATE_CRITIQUED:
@@ -1122,6 +1124,42 @@ def _last_gate_is_operational_unverifiable_block(state: PlanState) -> bool:
     )
 
 
+def _blocked_plan_has_operational_unverifiable_evidence(
+    plan_dir: Path, state: PlanState
+) -> bool:
+    if _last_gate_is_operational_unverifiable_block(state):
+        return True
+
+    history = state.get("meta", {}).get("critique_unverifiable_checks", [])
+    if not isinstance(history, list) or not history:
+        return False
+    latest = history[-1]
+    if not isinstance(latest, dict):
+        return False
+    checks = latest.get("checks", [])
+    if not isinstance(checks, list):
+        return False
+
+    for check in checks:
+        if not isinstance(check, dict):
+            continue
+        if check.get("attention") != "high_complexity_unverifiable":
+            continue
+        check_id = str(check.get("id", "")).strip()
+        if not check_id:
+            continue
+        raw_path = plan_dir / f"critique_check_{check_id}_raw.txt"
+        if not raw_path.exists():
+            continue
+        try:
+            raw_text = raw_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if is_operational_unverifiable_check({"reason": raw_text}):
+            return True
+    return False
+
+
 def _override_recover_blocked(
     root: Path, plan_dir: Path, state: PlanState, args: argparse.Namespace
 ) -> StepResponse:
@@ -1153,6 +1191,26 @@ def _override_recover_blocked(
             "invalid_resume_cursor",
             f"recover-blocked does not know how to resume phase {phase!r}",
             extra={"resume_cursor": resume_cursor},
+        )
+    latest_failure = state.get("latest_failure")
+    if isinstance(latest_failure, dict) and latest_failure.get("kind") == "authority_divergence":
+        plan_name = state.get("name") or getattr(args, "plan", None) or plan_dir.name
+        rerun_command = f"megaplan {phase} --plan {plan_name}"
+        if phase == "execute":
+            rerun_command += " --confirm-destructive --user-approved"
+        raise CliError(
+            "rerun_phase_required",
+            (
+                "recover-blocked is only for explicit task or quality blockers. "
+                "This blocked plan needs a fresh phase rerun to regenerate "
+                "authority evidence; do not use recover-blocked here."
+            ),
+            extra={
+                "resume_cursor": resume_cursor,
+                "latest_failure": dict(latest_failure),
+                "rerun_command": rerun_command,
+                "suggested_recovery_commands": [rerun_command],
+            },
         )
 
     finalize_path = plan_dir / "finalize.json"
@@ -1189,6 +1247,7 @@ def _override_recover_blocked(
     evaluation = evaluate_blocker_recovery(
         finalize_data,
         state,
+        plan_dir=plan_dir,
         blocked_tasks=phase_result.blocked_tasks,
         deviations=phase_result.deviations,
     )

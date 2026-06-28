@@ -14,20 +14,38 @@ GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
 EXPECTED_CASES = {
     "valid_direct_linear": "valid",
     "valid_function_linear": "valid",
+    "valid_linear_halt_intrinsic": "valid",
+    "valid_linear_single_step": "valid",
+    "valid_linear_suspend_intrinsic": "valid",
+    "valid_linear_transition_intrinsic": "valid",
+    "valid_linear_tuple_unused_outputs": "valid",
     "invalid_alias_provenance_loss": "invalid",
     "invalid_duplicate_local_assignment": "invalid",
     "invalid_dynamic_import": "invalid",
     "invalid_function_header": "invalid",
     "invalid_forbidden_root_import": "invalid",
+    "invalid_intrinsic_missing_required_keyword": "invalid",
     "invalid_intrinsic_shadowing": "invalid",
+    "invalid_intrinsic_unknown_keyword": "invalid",
+    "invalid_intrinsic_wrong_keyword_set": "invalid",
     "invalid_malformed_call": "invalid",
+    "invalid_dynamic_component_construction": "invalid",
+    "invalid_nested_subflow": "invalid",
+    "invalid_parallel_fanout": "invalid",
+    "invalid_missing_workflow": "invalid",
+    "invalid_multiple_workflows": "invalid",
     "invalid_reserved_step_keyword": "invalid",
     "invalid_star_import": "invalid",
+    "invalid_static_prompt_resource_dependencies": "invalid",
     "invalid_unknown_component": "invalid",
     "invalid_unknown_reference": "invalid",
     "invalid_unsupported_syntax": "invalid",
     "invalid_unsupported_control_flow": "invalid",
     "invalid_wrong_component_kind": "invalid",
+    "invalid_runtime_truthiness": "invalid",
+    "invalid_runtime_iteration": "invalid",
+    "invalid_runtime_arithmetic": "invalid",
+    "invalid_runtime_attribute": "invalid",
 }
 SUPPORT_MODULES = {"components"}
 SOURCE_SPAN_FIELDS = {"start_line", "start_column", "end_line", "end_column"}
@@ -104,6 +122,10 @@ def test_python_authoring_valid_fixture_provenance_matches_sidecars() -> None:
                 _step_provenance_payload(step)
                 for step in parsed.workflow.steps
             ],
+            "intrinsics": [
+                _intrinsic_provenance_payload(intrinsic)
+                for intrinsic in parsed.workflow.intrinsics
+            ],
         } == expected
 
 
@@ -176,6 +198,14 @@ def _step_provenance_payload(step: workflow.StepCall) -> dict[str, Any]:
     return payload
 
 
+def _intrinsic_provenance_payload(intrinsic: workflow.IntrinsicCall) -> dict[str, Any]:
+    return {
+        "name": intrinsic.name,
+        "arguments": dict(intrinsic.arguments),
+        "source_span": _span_payload(intrinsic.source_span),
+    }
+
+
 def _span_payload(span: Any) -> dict[str, int]:
     return {
         "start_line": span.start_line,
@@ -200,7 +230,9 @@ def _assert_valid_provenance_sidecar(sidecar: dict[str, Any], source_path: Path)
         _assert_span_matches_source(source_path, item["source_span"])
 
     steps = provenance["steps"]
-    assert [step["id"] for step in steps] == ["plan", "execute", "review"]
+    step_ids = [step["id"] for step in steps]
+    assert step_ids
+    assert len(step_ids) == len(set(step_ids))
     for step in steps:
         assert step["component_ref"].endswith(f":{step['id']}")
         assert step["generated_dsl_id"] == f"step:{step['id']}"
@@ -211,6 +243,16 @@ def _assert_valid_provenance_sidecar(sidecar: dict[str, Any], source_path: Path)
         for binding in step.get("inputs", []):
             assert set(binding) >= {"name", "ref", "source_span"}
             _assert_span_matches_source(source_path, binding["source_span"])
+
+    intrinsics = provenance["intrinsics"]
+    assert isinstance(intrinsics, list)
+    for intrinsic in intrinsics:
+        assert set(intrinsic) == {"name", "arguments", "source_span"}
+        assert isinstance(intrinsic["name"], str)
+        assert intrinsic["name"]
+        assert isinstance(intrinsic["arguments"], dict)
+        assert all(isinstance(key, str) for key in intrinsic["arguments"])
+        _assert_span_matches_source(source_path, intrinsic["source_span"])
 
 
 def _assert_span_matches_source(source_path: Path, span: dict[str, int]) -> None:

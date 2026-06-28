@@ -137,10 +137,37 @@ arnold config set execution.robustness "${ROBUSTNESS}" >/dev/null 2>&1 || true
 
 echo "Runner mode: $$MODE"
 
+# Record the boot-time chain runner so the resident watchdog can supervise it.
+# `cloud chain` launches create their own per-session markers; `mode: chain`
+# starts the runner through the generic `agent` tmux session, so it needs this
+# marker to be discoverable by the hourly scan.
+if [[ "$$MODE" == "chain" && -n "$$CHAIN_SPEC" ]]; then
+  mkdir -p /workspace/.megaplan/cloud-sessions
+  python3 - <<PY
+import json
+import pathlib
+
+path = pathlib.Path("/workspace/.megaplan/cloud-sessions/agent.json")
+path.write_text(json.dumps({
+    "session": "agent",
+    "workspace": "$$WORKSPACE_PATH",
+    "remote_spec": "$$CHAIN_SPEC",
+    "source": "entrypoint-mode-chain",
+}, sort_keys=True) + "\n", encoding="utf-8")
+PY
+fi
+
 # Launch heartbeat in its own tmux session.
 if ! tmux has-session -t heartbeat 2>/dev/null; then
   tmux new-session -d -s heartbeat -c /workspace "bash -lc '/usr/local/bin/arnold-heartbeat'"
   echo "heartbeat watchdog running in tmux session 'heartbeat'"
+fi
+
+# Launch cloud chain watchdog in its own tmux session. It scans cloud-session
+# markers hourly and wakes stopped chain runners without disturbing live ones.
+if ! tmux has-session -t watchdog 2>/dev/null; then
+  tmux new-session -d -s watchdog -c /workspace "bash -lc '/usr/local/bin/arnold-watchdog'"
+  echo "cloud watchdog running in tmux session 'watchdog'"
 fi
 
 # Tiny health server so Railway keeps container alive

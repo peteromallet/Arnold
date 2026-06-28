@@ -48,3 +48,39 @@ def test_scanner_flags_type_checking_product_imports(tmp_path: Path) -> None:
     violations = scan_neutral_product_imports((path,))
 
     assert violations[str(path)] == ("arnold.pipelines.megaplan",)
+
+
+def test_fixture_loader_does_not_import_real_execution_runners() -> None:
+    import ast
+
+    # Only the canonical fixture loaders are required to stay runner-free.
+    loader_sources = (
+        Path("tests/arnold/workflow/test_canonical_megaplan_conformance.py"),
+        Path("tests/arnold/workflow/test_golden_fixtures.py"),
+    )
+    runtime_runners = (
+        "arnold.execution",
+        "arnold.pipeline",
+        "arnold.runner",
+        "arnold.kernel",
+        "arnold.agent",
+    )
+    violations: dict[str, tuple[str, ...]] = {}
+
+    for source in loader_sources:
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        hits: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    for prefix in runtime_runners:
+                        if alias.name == prefix or alias.name.startswith(prefix + "."):
+                            hits.add(prefix)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                for prefix in runtime_runners:
+                    if node.module == prefix or node.module.startswith(prefix + "."):
+                        hits.add(prefix)
+        if hits:
+            violations[str(source)] = tuple(sorted(hits))
+
+    assert violations == {}, f"workflow fixture loaders import runtime runners: {violations}"

@@ -11,6 +11,8 @@ from arnold.workflow import (
     Pipeline,
     RefDiagnosticError,
     Step,
+    as_hook_ref,
+    as_import_ref,
     compile_pipeline,
 )
 from tests.arnold.patterns import _fixtures
@@ -93,3 +95,38 @@ def test_hook_ref_rejects_callable_instances() -> None:
 def test_import_ref_rejects_non_importable_string() -> None:
     with pytest.raises(RefDiagnosticError):
         ImportRef.from_callable("not_a_module:func", node_id="plan", field="hook")
+
+
+def test_as_import_ref_resolves_module_level_callables_and_strings() -> None:
+    from_callable = as_import_ref(_fixtures.agent_prompt)
+    from_string = as_import_ref("tests.arnold.patterns._fixtures:agent_prompt")
+
+    assert from_callable.spec == from_string.spec
+    assert from_callable.resolve() is _fixtures.agent_prompt
+
+
+def test_as_hook_ref_rejects_anonymous_partials_with_context() -> None:
+    from functools import partial
+
+    def target(a: int, b: int) -> int:
+        return a + b
+
+    with pytest.raises(RefDiagnosticError, match="node 'plan' field 'reducer_ref'") as exc_info:
+        as_hook_ref(partial(target, 1), node_id="plan", field="reducer_ref")
+
+    assert "callable instances" in str(exc_info.value)
+
+
+def test_pattern_constructors_route_hook_refs_through_workflow_adapters() -> None:
+    from arnold.patterns import agent, branch
+
+    plan_step = agent("plan", task="draft", prompt_ref=_fixtures.agent_prompt)
+    decide_block = branch(
+        "decide",
+        condition_ref=_fixtures.decide_condition,
+        then_id="plan",
+        else_id="fallback",
+    )
+
+    assert plan_step.metadata["prompt_ref"] == "tests.arnold.patterns._fixtures:agent_prompt"
+    assert decide_block.routes[0].condition_ref == "tests.arnold.patterns._fixtures:decide_condition"

@@ -30,6 +30,10 @@ from arnold_pipelines.megaplan.workers._impl import (
     session_key_for,
 )
 from arnold_pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
+from arnold_pipelines.megaplan.orchestration.plan_structure import (
+    PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
+    validate_plan_structure,
+)
 from arnold.pipeline import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
     ModelBudgetError,
@@ -92,6 +96,32 @@ def _worker_db_path(plan_dir: Path, identifier: str) -> Path:
     """Derive a per-worker SessionDB path from a plan directory and stable identifier."""
     sanitized = _sanitize_db_name(identifier)
     return plan_dir / '.hermes_state' / f'state_{sanitized}.db'
+
+
+def _recover_plan_payload_from_raw_markdown(
+    payload: dict,
+    raw_output: str,
+) -> dict | None:
+    """Recover a plan payload when the provider returned valid markdown only."""
+
+    plan_text = raw_output.strip()
+    if not plan_text:
+        return None
+    issues = validate_plan_structure(plan_text)
+    if PLAN_STRUCTURE_REQUIRED_STEP_ISSUE in issues:
+        return None
+    recovered = {
+        "plan": plan_text + "\n",
+        "questions": payload.get("questions") if isinstance(payload.get("questions"), list) else [],
+        "success_criteria": payload.get("success_criteria")
+        if isinstance(payload.get("success_criteria"), list)
+        else [],
+        "assumptions": payload.get("assumptions") if isinstance(payload.get("assumptions"), list) else [],
+    }
+    for optional_key in ("changed_surfaces", "test_blast_radius"):
+        if optional_key in payload:
+            recovered[optional_key] = payload[optional_key]
+    return recovered
 
 
 def _normalize_worker_options(worker_options: dict[str, object] | None) -> dict[str, object]:
@@ -2395,7 +2425,12 @@ def run_hermes_step(
             except (CliError, ModelStructuralAuditError) as error:
                 # For execute, try reconstructed payload if validation fails
                 reconstructed: dict | None = None
-                if step == "execute":
+                if step == "plan":
+                    reconstructed = _recover_plan_payload_from_raw_markdown(
+                        current_payload,
+                        current_raw_output,
+                    )
+                elif step == "execute":
                     reconstructed = _reconstruct_execute_payload(messages, project_dir, plan_dir, mode=plan_mode)
                 elif step == "gate":
                     reconstructed = _reconstruct_gate_payload(plan_dir, current_payload)

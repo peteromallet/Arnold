@@ -6,7 +6,7 @@ This thin module re-exports :func:`build_pipeline` from
 authored workflow to a :class:`arnold.manifest.WorkflowManifest`.
 
 The readable, product-local source of truth for the graph lives in
-``arnold_pipelines/megaplan/workflows/planning.py``.
+``arnold_pipelines/megaplan/workflows/workflow.py``.
 """
 
 from __future__ import annotations
@@ -14,13 +14,12 @@ from __future__ import annotations
 from typing import Any
 
 from arnold.workflow.compiler import compile_pipeline
-from arnold.workflow.dsl import Pipeline
 
 from arnold_pipelines.megaplan.workflows.planning import build_pipeline
 
 
 def build_and_compile_pipeline(**kwargs: Any) -> Any:
-    """Build the M3 pipeline and compile it to a ``WorkflowManifest``."""
+    """Build the M4 pipeline and compile it to a ``WorkflowManifest``."""
     return compile_pipeline(build_pipeline(**kwargs))
 
 

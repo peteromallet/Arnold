@@ -1,4 +1,11 @@
-"""Shared native contract for the migrated first-class pipeline packages."""
+"""Native-backed compatibility contract for legacy first-class pipeline packages.
+
+This module covers the packages that remain native-backed during the M2
+migration. The active package-authoring contract is workflow-first: new
+packages must return ``arnold.workflow.Pipeline`` from ``build_pipeline()``.
+See ``tests/arnold_pipelines/test_template_e2e.py`` for the canonical scaffold
+contract.
+"""
 
 from __future__ import annotations
 
@@ -19,7 +26,10 @@ class NativeTarget:
     pipeline_name: str
 
 
-# These are the nine active M3 packages that must already be native-backed.
+# These are the active first-class packages that remain native-backed.
+# Megaplan packages live under ``arnold_pipelines.megaplan.pipelines.*``;
+# core Arnold packages live under ``arnold.pipelines.*``.  Archived or
+# graph-marked packages (e.g. epic_blitz) are intentionally excluded.
 ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
     NativeTarget("arnold_pipelines.megaplan.pipelines.creative", "creative"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.doc", "doc"),
@@ -29,13 +39,17 @@ ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
         "arnold_pipelines.megaplan.pipelines.writing_panel_strict",
         "writing-panel-strict",
     ),
-    NativeTarget("arnold_pipelines.megaplan.pipelines.epic_blitz", "epic-blitz"),
     NativeTarget(
         "arnold_pipelines.megaplan.pipelines.select_tournament",
         "select-tournament",
     ),
     NativeTarget("arnold.pipelines.folder_audit", "folder-audit"),
     NativeTarget("arnold.pipelines.deliberation", "deliberation"),
+)
+
+_FIRST_CLASS_NATIVE_PREFIXES = (
+    "arnold.pipelines.",
+    "arnold_pipelines.megaplan.pipelines.",
 )
 
 DEFERRED_NATIVE_TARGETS: tuple[NativeTarget, ...] = ()
@@ -73,13 +87,15 @@ def _graph_builder_like_names(names: set[str]) -> set[str]:
 
 
 @pytest.mark.parametrize("target", ACTIVE_NATIVE_TARGETS, ids=_target_id)
-def test_active_targets_import_from_canonical_arnold_pipeline_paths(
+def test_active_targets_import_from_first_class_pipeline_paths(
     target: NativeTarget,
 ) -> None:
     module = _import_target(target)
 
     assert module.__name__ == target.module_path
-    assert module.__name__.startswith("arnold.pipelines.")
+    assert any(
+        module.__name__.startswith(prefix) for prefix in _FIRST_CLASS_NATIVE_PREFIXES
+    )
 
 
 @pytest.mark.parametrize("target", ACTIVE_NATIVE_TARGETS, ids=_target_id)
@@ -139,10 +155,19 @@ def test_contract_target_sets_are_staged_explicitly() -> None:
         "jokes",
         "live-supervisor",
         "writing-panel-strict",
-        "epic-blitz",
         "select-tournament",
         "folder-audit",
         "deliberation",
     }
     assert deferred_names == set()
     assert active_names.isdisjoint(deferred_names)
+
+
+def test_workflow_first_template_contrasts_with_native_targets() -> None:
+    """The canonical scaffold is workflow-first, not native-backed."""
+    from arnold_pipelines._template import build_pipeline as template_build
+
+    pipeline = template_build()
+    assert type(pipeline).__module__ == "arnold.workflow.dsl"
+    assert type(pipeline).__name__ == "Pipeline"
+    assert not hasattr(pipeline, "native_program")

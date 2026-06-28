@@ -21,6 +21,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_ABORTED,
     STATE_AWAITING_HUMAN,
     STATE_AWAITING_HUMAN_VERIFY,
+    STATE_BLOCKED,
     STATE_CRITIQUED,
     STATE_DONE,
     STATE_EXECUTED,
@@ -67,6 +68,9 @@ WORKFLOW: dict[str, list[Transition]] = {
     STATE_GATED: [
         Transition("finalize", STATE_FINALIZED),
         Transition("override replan", STATE_PLANNED),
+    ],
+    STATE_BLOCKED: [
+        Transition("override force-proceed", STATE_FINALIZED, "always"),
     ],
     STATE_FINALIZED: [
         Transition("execute", STATE_EXECUTED),

@@ -12,12 +12,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from arnold.pipeline import (
+from arnold.pipeline import (  # noqa: E402
     load_pipeline_id_registries,
     load_pipeline_id_registry,
 )
-from arnold.workflow import compile_pipeline
-from arnold_pipelines.discovery import discover_migrated_pipelines
+from arnold.workflow import compile_pipeline  # noqa: E402
+from arnold_pipelines.discovery import discover_migrated_pipelines, ShippedPipelineInfo  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Discovery
@@ -204,13 +204,29 @@ def _survivor_registry_ids() -> frozenset[str]:
     )
 
 
+def _compile_workflow_manifest(info: ShippedPipelineInfo) -> Any | None:
+    """Compile *info* if it exposes a workflow DSL builder; otherwise skip."""
+    if info.builder is None:
+        return None
+    built = info.builder()
+    # Import at call time so module reloads in long-lived test processes do
+    # not leave a stale class reference cached at script load time.
+    from arnold.workflow.dsl import Pipeline as WorkflowPipeline
+
+    if not isinstance(built, WorkflowPipeline):
+        return None
+    return compile_pipeline(built)
+
+
 def _expected_manifest_hashes() -> dict[str, str]:
-    """Compute expected manifest hashes from compiled surviving builders."""
+    """Compute expected manifest hashes from compiled workflow builders."""
     expected: dict[str, str] = {}
     for info in discover_migrated_pipelines():
-        if info.registry_id is None or info.builder is None:
+        if info.registry_id is None:
             continue
-        manifest = compile_pipeline(info.builder())
+        manifest = _compile_workflow_manifest(info)
+        if manifest is None:
+            continue
         expected[info.registry_id] = manifest.manifest_hash or ""
     return expected
 
@@ -376,9 +392,9 @@ def build_manifest_identity_report(
     registry_entries = _registry_entries_by_stable_id(registry_paths, root)
     identities: list[dict[str, Any]] = []
     for info in discover_migrated_pipelines():
-        if info.registry_id is None or info.builder is None:
+        if info.registry_id is None:
             continue
-        manifest = compile_pipeline(info.builder())
+        manifest = _compile_workflow_manifest(info)
         registry_entry = registry_entries.get(info.registry_id)
         registry_manifest_hash = None
         registry_path = None
@@ -392,7 +408,9 @@ def build_manifest_identity_report(
                 "pipeline_id": info.id,
                 "package_path": info.package_path,
                 "package_exists": (root / info.package_path).exists(),
-                "compiled_manifest_hash": manifest.manifest_hash or "",
+                "compiled_manifest_hash": (
+                    manifest.manifest_hash or "" if manifest is not None else ""
+                ),
                 "registry_path": registry_path,
                 "registry_manifest_hash": registry_manifest_hash,
                 "registry_entry": registry_entry,

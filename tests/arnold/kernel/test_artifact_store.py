@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from pathlib import Path
 
 import pytest
@@ -251,3 +252,29 @@ def test_binding_round_trips_through_meta_sidecar(tmp_path: Path) -> None:
     assert newest == binding
     assert newest.root.kind is ArtifactRootKind.PLAN_ARTIFACT_ROOT
     assert isinstance(newest.root, ArtifactRoot)
+
+
+def test_store_rejects_unsafe_artifact_ids_before_filesystem_join(tmp_path: Path) -> None:
+    registry = ContentTypeRegistry()
+    registry.register(_content_type())
+    store = FileBackedArtifactStore(tmp_path, content_type_registry=registry)
+
+    for artifact_id in ("", "../escape", "/absolute", "nested/path"):
+        with pytest.raises(ValueError, match="logical root id"):
+            store.write_artifact(
+                artifact_id=artifact_id,
+                content=b"data",
+                content_type_id="text.plain",
+                provenance=_provenance(),
+                extension="txt",
+            )
+
+        with pytest.raises(ValueError, match="logical root id"):
+            store.resolve_newest(artifact_id, "txt")
+
+
+def test_neutral_artifact_store_has_no_megaplan_layout_convention() -> None:
+    source = inspect.getsource(FileBackedArtifactStore)
+
+    assert ".megaplan" not in source
+    assert "megaplan" not in source.lower()

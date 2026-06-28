@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
-
-import pytest
 
 from arnold.cli import workflow as workflow_cli
 
@@ -60,6 +59,13 @@ def test_workflow_describe_includes_manifest_metadata() -> None:
 
 def test_workflow_module_invocation(tmp_path: Path) -> None:
     artifact_root = tmp_path / "run"
+    repo_root = Path(__file__).resolve().parents[2]
+    env = os.environ.copy()
+    env["PYTHONPATH"] = (
+        str(repo_root)
+        if not env.get("PYTHONPATH")
+        else f"{repo_root}{os.pathsep}{env['PYTHONPATH']}"
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -76,11 +82,28 @@ def test_workflow_module_invocation(tmp_path: Path) -> None:
         capture_output=True,
         text=True,
         cwd=str(tmp_path),
+        env=env,
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
     assert payload["state"] == "completed"
     assert payload["manifest_id"] == "demo"
+
+
+def test_workflow_resume_fake_backend_completes(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "resume"
+    rc = workflow_cli.main(
+        [
+            "resume",
+            "--module",
+            DEMO_TARGET,
+            "--backend",
+            "fake",
+            "--artifact-root",
+            str(artifact_root),
+        ]
+    )
+    assert rc == 0
 
 
 def test_workflow_run_local_backend_writes_journal(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
@@ -88,6 +89,14 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         help=(
             "Pass --no-git-refresh to the remote `python -m arnold_pipelines.megaplan chain start`, "
             "skipping the automatic base-branch refresh."
+        ),
+    )
+    chain_parser.add_argument(
+        "--no-editable-install-sync",
+        action="store_true",
+        help=(
+            "Skip the pre-launch push that merges the current local HEAD into "
+            "the cloud editable install branch."
         ),
     )
     _add_repo_override_args(chain_parser)
@@ -455,6 +464,64 @@ def _rewrite_remote_workspace_path(remote_path: str, *, source_workspace: str, t
     return remote_path
 
 
+def _remote_chain_upload_path(remote_path: str, *, source_workspace: str, target_workspace: str) -> str:
+    rewritten = _rewrite_remote_workspace_path(
+        remote_path,
+        source_workspace=source_workspace,
+        target_workspace=target_workspace,
+    )
+    path = PurePosixPath(rewritten)
+    if path.is_absolute():
+        return str(path)
+    return str(PurePosixPath(target_workspace) / path)
+
+
+def _git_repo_root(path: Path) -> Path | None:
+    """Best-effort git toplevel for the repo containing ``path``."""
+    import subprocess
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(path.parent if path.is_file() else path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    top = proc.stdout.strip()
+    return Path(top).resolve() if top else None
+
+
+def _remote_chain_workspace_path(local_path: Path, *, local_root: Path, target_workspace: str) -> str:
+    path = local_path.expanduser().resolve()
+    root = local_root.expanduser().resolve()
+    relative: PurePosixPath | None = None
+    try:
+        relative = PurePosixPath(path.relative_to(root))
+    except ValueError:
+        relative = None
+    # local_root isn't always the spec's repo root (it can be a cloud cache dir
+    # or a project dir that doesn't contain the spec). Fall back to the spec's
+    # OWN git repo root so the spec lands at its repo-relative path on the box —
+    # this keeps the chain spec, its north_star anchor, and idea files at the
+    # same relative paths, so chain.yaml-dir-relative anchor resolution works
+    # identically locally and remotely. Bare path.name is the last resort.
+    if relative is None:
+        git_root = _git_repo_root(path)
+        if git_root is not None:
+            try:
+                relative = PurePosixPath(path.relative_to(git_root))
+            except ValueError:
+                relative = None
+    if relative is None:
+        return str(PurePosixPath(target_workspace) / path.name)
+    return str(PurePosixPath(target_workspace).joinpath(*relative.parts))
+
+
 def _normalized_chain_upload_spec(
     local_spec_path: Path,
     *,
@@ -538,6 +605,161 @@ def _remote_repo_head(provider, workspace: str) -> dict[str, str | None]:
     }
 
 
+def _git_run(
+    root: Path,
+    args: list[str],
+    *,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=180,
+    )
+    if check and proc.returncode != 0:
+        raise CliError(
+            "editable_install_sync_failed",
+            f"git {' '.join(args)} failed: {(proc.stderr or proc.stdout or '').strip()}",
+            extra={
+                "command": ["git", *args],
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+        )
+    return proc
+
+
+def _sync_launch_head_to_editable_install_branch(
+    root: Path,
+    *,
+    branch: str = "editible-install",
+    remote: str = "origin",
+) -> dict[str, Any]:
+    """Merge the local launch HEAD into the cloud editable-install branch.
+
+    The cloud worker refreshes `/workspace/arnold` from `editible-install`.
+    Before launching any new cloud chain, publish the code currently being used
+    to launch the run into that branch as well.  Use a temporary worktree so the
+    caller's active branch and working tree are not disturbed.
+    """
+    root = root.expanduser().resolve()
+    inside = _git_run(root, ["rev-parse", "--is-inside-work-tree"])
+    if inside.stdout.strip() != "true":
+        raise CliError(
+            "editable_install_sync_failed",
+            f"cloud chain must be launched from a git worktree to sync {branch}",
+        )
+    dirty = _git_run(root, ["status", "--porcelain"]).stdout.strip()
+    if dirty:
+        raise CliError(
+            "editable_install_sync_dirty",
+            (
+                f"Cannot sync cloud editable install branch {branch!r}: "
+                "the launch checkout has uncommitted changes. Commit or stash them, "
+                "or pass --no-editable-install-sync."
+            ),
+            extra={"dirty": dirty.splitlines()},
+        )
+
+    launch_head = _git_run(root, ["rev-parse", "HEAD"]).stdout.strip()
+    launch_branch = _git_run(root, ["branch", "--show-current"], check=False).stdout.strip() or None
+    _git_run(root, ["fetch", remote, branch], check=False)
+    remote_ref = f"{remote}/{branch}"
+    remote_exists = _git_run(root, ["rev-parse", "--verify", remote_ref], check=False).returncode == 0
+    if remote_exists:
+        remote_head = _git_run(root, ["rev-parse", remote_ref]).stdout.strip()
+        contains_launch = _git_run(
+            root,
+            ["merge-base", "--is-ancestor", launch_head, remote_ref],
+            check=False,
+        ).returncode == 0
+        if contains_launch:
+            return {
+                "status": "already_contains",
+                "branch": branch,
+                "remote": remote,
+                "launch_head": launch_head,
+                "launch_branch": launch_branch,
+                "editable_head": remote_head,
+            }
+    else:
+        remote_head = None
+
+    with TemporaryDirectory(prefix="editable-install-sync-") as tmp:
+        worktree = Path(tmp) / "worktree"
+        if remote_exists:
+            _git_run(root, ["worktree", "add", "--detach", str(worktree), remote_ref])
+            _git_run(worktree, ["checkout", "-B", branch])
+            before = remote_head
+            merge = _git_run(
+                worktree,
+                [
+                    "merge",
+                    "--no-ff",
+                    "--no-edit",
+                    launch_head,
+                    "-m",
+                    f"Sync {launch_branch or launch_head[:12]} into cloud editable install",
+                ],
+                check=False,
+            )
+            if merge.returncode != 0:
+                raise CliError(
+                    "editable_install_sync_conflict",
+                    (
+                        f"Could not merge launch HEAD {launch_head[:12]} into {branch}. "
+                        "Resolve the editable-install branch manually or pass "
+                        "--no-editable-install-sync."
+                    ),
+                    extra={
+                        "branch": branch,
+                        "launch_head": launch_head,
+                        "stdout": merge.stdout,
+                        "stderr": merge.stderr,
+                    },
+                )
+            merged = merge.returncode == 0 and "Already up to date" not in (merge.stdout + merge.stderr)
+        else:
+            _git_run(root, ["worktree", "add", "--detach", str(worktree), launch_head])
+            _git_run(worktree, ["checkout", "-B", branch])
+            before = None
+            merged = False
+
+        after = _git_run(worktree, ["rev-parse", "HEAD"]).stdout.strip()
+        push = _git_run(
+            worktree,
+            ["push", "--no-verify", remote, f"HEAD:{branch}"],
+            check=False,
+        )
+        if push.returncode != 0:
+            raise CliError(
+                "editable_install_sync_failed",
+                f"Could not push {branch}: {(push.stderr or push.stdout or '').strip()}",
+                extra={
+                    "branch": branch,
+                    "launch_head": launch_head,
+                    "stdout": push.stdout,
+                    "stderr": push.stderr,
+                },
+            )
+
+    _git_run(root, ["worktree", "prune"], check=False)
+    return {
+        "status": "pushed",
+        "branch": branch,
+        "remote": remote,
+        "launch_head": launch_head,
+        "launch_branch": launch_branch,
+        "editable_head_before": before,
+        "editable_head": after,
+        "merge_commit_created": merged,
+    }
+
+
 def _tmux_launch_status(result, *, session_name: str = "megaplan-chain") -> str:
     output = f"{getattr(result, 'stdout', '')}\n{getattr(result, 'stderr', '')}"
     if "already running" in output:
@@ -576,6 +798,7 @@ def _cloud_chain_launch_provenance(
     uploaded_idea_count: int,
     repo_head: dict[str, str | None],
     tmux_result,
+    editable_install_sync: dict[str, Any] | None = None,
     verification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     current_milestone = chain_spec.milestones[0].label if chain_spec.milestones else None
@@ -604,6 +827,7 @@ def _cloud_chain_launch_provenance(
         "megaplan": {
             "ref": spec.megaplan.ref,
             "install_source": "cloud_image_runtime",
+            "editable_install_sync": editable_install_sync or {"status": "skipped"},
         },
         "uploaded_idea_count": uploaded_idea_count,
         "tmux": {
@@ -627,9 +851,11 @@ def _cloud_chain_launch_provenance(
 
 CHAIN_SESSION_NAME = "megaplan-chain"
 _CHAIN_LOG_RELATIVE = ".megaplan/cloud-chain.log"
+_CLOUD_HOT_ENV_PATH = "/workspace/.cloud-hot-env"
 _CHAIN_SESSION_MARKER_DIR = "/workspace/.megaplan/cloud-sessions"
 _CHAIN_VERIFY_ATTEMPTS = 6
 _CHAIN_VERIFY_SLEEP_SECONDS = 5
+_EDITABLE_INSTALL_BRANCH = "editible-install"
 
 
 @dataclass(frozen=True)
@@ -668,6 +894,7 @@ def _chain_identity_for(local_spec_path: Path, chain_spec: Any) -> tuple[str, st
 
 def _derive_chain_launch_context(
     *,
+    root: Path,
     spec: CloudSpec,
     local_spec_path: Path,
     chain_spec: Any,
@@ -685,7 +912,11 @@ def _derive_chain_launch_context(
         if spec.repo.workspace_explicit
         else f"/workspace/{slug}-{digest[:8]}/{_repo_dir_name(spec.repo.url)}"
     )
-    remote_spec_path = str(PurePosixPath(workspace) / "chain.yaml")
+    remote_spec_path = _remote_chain_workspace_path(
+        local_spec_path,
+        local_root=root,
+        target_workspace=workspace,
+    )
     state_path = str(chain_module._state_path_for(Path(remote_spec_path)))
     log_relative = f".megaplan/cloud-chain-{session_name}.log"
     log_path = str(PurePosixPath(workspace) / log_relative)
@@ -915,6 +1146,8 @@ def _emit_deploy_report(
 def _chain_start_command(
     remote_spec_path: str,
     *,
+    project_dir: str | None = None,
+    engine_dir: str | None = None,
     one_shot: bool = False,
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
@@ -926,20 +1159,66 @@ def _chain_start_command(
     consistent across all entry points.
     """
     flags = f"--spec {shlex.quote(remote_spec_path)}"
+    if project_dir:
+        flags += f" --project-dir {shlex.quote(project_dir)}"
     if one_shot:
         flags += " --one"
     if no_git_refresh:
         flags += " --no-git-refresh"
-    return (
-        f"MEGAPLAN_TRUSTED_CONTAINER=1 python -m arnold_pipelines.megaplan chain start {flags} "
-        f">> {shlex.quote(log_relative)} 2>&1"
+    log_target = (
+        shlex.quote(str(PurePosixPath(project_dir) / log_relative))
+        if project_dir
+        else shlex.quote(log_relative)
     )
+    prefix = (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
+    if engine_dir:
+        engine_path = shlex.quote(engine_dir)
+        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+    return (
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start {flags} "
+        f">> {log_target} 2>&1"
+    )
+
+
+def _write_session_marker_command(marker_path: str, marker_payload: dict[str, Any]) -> str:
+    marker_json = json.dumps(marker_payload, sort_keys=True)
+    return f"printf %s {shlex.quote(marker_json)} > {shlex.quote(marker_path)}"
+
+
+def _plan_auto_command(
+    plan_name: str,
+    *,
+    workspace: str,
+    engine_dir: str | None = None,
+    log_relative: str,
+) -> str:
+    log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
+    prefix = (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
+    if engine_dir:
+        engine_path = shlex.quote(engine_dir)
+        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+        command = (
+            f"python3 -P -m arnold_pipelines.megaplan auto "
+            f"--plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
+        )
+    else:
+        command = (
+            f"cd {shlex.quote(workspace)} && "
+            f"arnold auto --plan {shlex.quote(plan_name)} --project-dir {shlex.quote(workspace)}"
+        )
+    return f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {command} >> {log_target} 2>&1"
 
 
 def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
-    ref = spec.megaplan.ref if spec is not None else "main"
+    ref = _EDITABLE_INSTALL_BRANCH
     lines = [
         "set +e",
         "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
@@ -957,7 +1236,10 @@ def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
         '  git clone --branch "$REF" "$CLONE_URL" "$SRC"',
         "fi",
         'if [ -d "$SRC/.git" ]; then',
-        '  git -C "$SRC" pull --ff-only',
+        '  git -C "$SRC" fetch origin "$REF"',
+        '  BRANCH="$(git -C "$SRC" branch --show-current)"',
+        '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
+        '  git -C "$SRC" pull --ff-only origin "$REF"',
         '  pip install -e "$SRC"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
@@ -973,14 +1255,16 @@ def _refresh_then_chain_start_command(
     remote_spec_path: str,
     *,
     spec: CloudSpec | None = None,
+    project_dir: str | None = None,
     one_shot: bool = False,
     no_git_refresh: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
     refresh = _megaplan_refresh_command(spec)
+    engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 || true; "
-        f"{_chain_start_command(remote_spec_path, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
+        f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
     )
 
 
@@ -1011,22 +1295,19 @@ def _tmux_chain_launch_command(
     chain_cmd = _refresh_then_chain_start_command(
         remote_spec_path,
         spec=spec,
+        project_dir=workspace,
         one_shot=one_shot,
         no_git_refresh=no_git_refresh,
         log_relative=log_relative,
     )
     marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
     digest = identity_digest or ""
-    marker_json = json.dumps(
-        marker_payload
-        or {
-            "session": name,
-            "workspace": workspace,
-            "remote_spec": remote_spec_path,
-            "identity_digest": digest,
-        },
-        sort_keys=True,
-    )
+    marker_payload = marker_payload or {
+        "session": name,
+        "workspace": workspace,
+        "remote_spec": remote_spec_path,
+        "identity_digest": digest,
+    }
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
         f"{shlex.quote(str(PurePosixPath(marker).parent))}"
@@ -1039,7 +1320,7 @@ def _tmux_chain_launch_command(
         "exit 17; "
         "fi; "
         "else "
-        f"printf %s {shlex.quote(marker_json)} > {shlex.quote(marker)}; "
+        f"{_write_session_marker_command(marker, marker_payload)}; "
         f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
         f"echo {shlex.quote(f'started {name} session')}; "
         "fi"
@@ -1251,14 +1532,31 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
 
     local_spec_path = Path(args.spec).expanduser().resolve()
     chain_spec = chain_module.load_spec(local_spec_path)
+    chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
+    chain_module.chain_spec.validate_paths(chain_spec, root, spec_path=local_spec_path)
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch
+    editable_install_sync: dict[str, Any] | None
+    if bool(getattr(args, "no_editable_install_sync", False)):
+        editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
+    else:
+        editable_install_sync = _sync_launch_head_to_editable_install_branch(
+            root,
+            branch=_EDITABLE_INSTALL_BRANCH,
+        )
+        sys.stderr.write(
+            "cloud chain editable-install sync: "
+            f"status={editable_install_sync.get('status')} "
+            f"branch={editable_install_sync.get('branch')} "
+            f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
+        )
     driver_overrides: dict[str, Any] = {}
     if spec.driver is not None and spec.driver.max_stall_iterations is not None:
         chain_spec.stall_threshold = spec.driver.max_stall_iterations
         driver_overrides["max_stall_iterations"] = spec.driver.max_stall_iterations
     launch_ctx = _derive_chain_launch_context(
+        root=root,
         spec=spec,
         local_spec_path=local_spec_path,
         chain_spec=chain_spec,
@@ -1301,7 +1599,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         uploads.append(
             (
                 local_source,
-                _rewrite_remote_workspace_path(
+                _remote_chain_upload_path(
                     milestone.idea,
                     source_workspace=spec.repo.workspace,
                     target_workspace=launch_ctx.workspace,
@@ -1374,6 +1672,12 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         "remote_spec": launch_ctx.remote_spec_path,
         "identity_digest": launch_ctx.digest,
         "chain_slug": launch_ctx.slug,
+        "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
+        "editable_source_head": (
+            editable_install_sync.get("editable_head")
+            or editable_install_sync.get("launch_head")
+        ),
+        "editable_install_sync": editable_install_sync,
         "started_at": datetime.now(timezone.utc).isoformat(),
     }
     result = provider.ssh_exec(
@@ -1404,6 +1708,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         uploaded_idea_count=len(uploads),
         repo_head=repo_head,
         tmux_result=result,
+        editable_install_sync=editable_install_sync,
         verification=verification,
     )
     sys.stderr.write(
@@ -1425,6 +1730,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "started_at": datetime.now(timezone.utc).isoformat(),
                 "base_branch": chain_spec.base_branch,
                 "provenance": provenance,
+                "editable_install_sync": editable_install_sync,
                 "workspace": launch_ctx.workspace,
                 "chain_session": launch_session,
                 "chain_log": launch_ctx.log_path,
@@ -1443,22 +1749,101 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     return 0
 
 
+def _derive_bootstrap_session_name(spec: CloudSpec) -> str:
+    repo_slug = _repo_dir_name(spec.repo.url)
+    workspace_slug = _slugify_chain_identity(PurePosixPath(spec.repo.workspace).name)
+    workspace_slug = re.sub(r"-20[0-9]{6}$", "", workspace_slug)
+    if repo_slug and workspace_slug.startswith(repo_slug):
+        return repo_slug
+    return repo_slug or workspace_slug or "megaplan-plan"
+
+
+def _derive_bootstrap_plan_name(args: argparse.Namespace, *, idea_text: str) -> str:
+    explicit = getattr(args, "plan_name", None)
+    if explicit:
+        return explicit
+    from arnold_pipelines.megaplan._core.io import slugify
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M")
+    return f"{slugify(idea_text)}-{timestamp}"
+
+
+def _bootstrap_log_relative(plan_name: str) -> str:
+    return f".megaplan/cloud-logs/{plan_name}.log"
+
+
+def _bootstrap_marker_payload(
+    *,
+    session_name: str,
+    workspace: str,
+    remote_spec: str,
+    plan_name: str,
+    relaunch_command: str,
+) -> dict[str, Any]:
+    return {
+        "session": session_name,
+        "workspace": workspace,
+        "remote_spec": remote_spec,
+        "run_kind": "plan",
+        "plan_name": plan_name,
+        "relaunch_command": relaunch_command,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _bootstrap_launch_command(
+    *,
+    workspace: str,
+    remote_idea_path: str,
+    plan_name: str,
+    robustness: str,
+    session_name: str,
+    engine_dir: str,
+) -> str:
+    marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session_name}.json")
+    log_relative = _bootstrap_log_relative(plan_name)
+    relaunch_command = _plan_auto_command(
+        plan_name,
+        workspace=workspace,
+        engine_dir=engine_dir,
+        log_relative=log_relative,
+    )
+    marker_payload = _bootstrap_marker_payload(
+        session_name=session_name,
+        workspace=workspace,
+        remote_spec=remote_idea_path,
+        plan_name=plan_name,
+        relaunch_command=relaunch_command,
+    )
+    command = (
+        f"mkdir -p {shlex.quote(str(PurePosixPath(marker_path).parent))} "
+        f"{shlex.quote(str(PurePosixPath(workspace) / '.megaplan' / 'cloud-logs'))} && "
+        f"{_write_session_marker_command(marker_path, marker_payload)} && "
+        f"cd {shlex.quote(workspace)} && "
+        f"arnold init --project-dir {shlex.quote(workspace)} "
+        f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
+        f"--robustness {shlex.quote(robustness)} --name {shlex.quote(plan_name)}"
+    )
+    return command
+
+
 def _run_bootstrap_wrapper(args: argparse.Namespace, spec: CloudSpec, provider) -> int:
     local_idea_path = Path(args.idea_file).expanduser().resolve()
     if not local_idea_path.exists():
         raise CliError("missing_idea_file", f"idea file not found: {local_idea_path}")
+    idea_text = local_idea_path.read_text(encoding="utf-8")
+    plan_name = _derive_bootstrap_plan_name(args, idea_text=idea_text)
     remote_idea_path = str(PurePosixPath(spec.repo.workspace) / "idea.txt")
     _ensure_repo_checkout(spec, provider)
     provider.upload_file(local_idea_path, remote_idea_path)
-
-    command = (
-        f"cd {shlex.quote(spec.repo.workspace)} && "
-        f"arnold init --project-dir {shlex.quote(spec.repo.workspace)} "
-        f"--idea-file {shlex.quote(remote_idea_path)} --auto-start "
-        f"--robustness {shlex.quote(args.robustness)}"
+    command = _bootstrap_launch_command(
+        workspace=spec.repo.workspace,
+        remote_idea_path=remote_idea_path,
+        plan_name=plan_name,
+        robustness=args.robustness,
+        session_name=_derive_bootstrap_session_name(spec),
+        engine_dir=spec.megaplan.src_path,
     )
-    if args.plan_name:
-        command += f" --name {shlex.quote(args.plan_name)}"
     result = provider.ssh_exec(command)
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
     return 0

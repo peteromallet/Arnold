@@ -669,9 +669,15 @@ _DEFAULT_MAX_REFERENCE_BYTES = 4 * 1024 * 1024
 
 def _assemble_model_text(metadata: Mapping[str, Any]) -> str:
     sections: list[str] = []
+    # Avoid double-counting the prompt text when ``prompt_components`` is just a
+    # structured wrapper around the same ``prompt``/``schema``/``template`` fields.
+    has_prompt = "prompt" in metadata
     for field_name in _TEXT_BUDGET_FIELDS:
-        if field_name in metadata:
-            _append_budget_section(sections, field_name, metadata[field_name])
+        if field_name not in metadata:
+            continue
+        if field_name == "prompt_components" and has_prompt:
+            continue
+        _append_budget_section(sections, field_name, metadata[field_name])
     for field_name in _REFERENCE_FIELDS:
         if field_name in metadata:
             _append_reference_descriptors(sections, field_name, metadata[field_name])

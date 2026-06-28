@@ -1,11 +1,11 @@
 ---
 name: megaplan-cloud
-description: Run megaplan plans and chains inside a provider-managed container (today, Railway) with a persistent workspace volume. Use when the run needs to outlast a local terminal session, span multiple repos, or share a long-lived dev box across concurrent chains. Covers `cloud.yaml` fields, `extra_repos[]` + `chain_session` multi-tenancy, the operator loop, and the gotchas that wedge fresh runs.
+description: Run megaplan plans and chains inside a provider-managed container with a persistent workspace volume — either Railway, or a Hetzner agentbox via the ssh provider (the working on-prem path). Use when the run needs to outlast a local terminal session, span multiple repos, or share a long-lived dev box across concurrent chains. Covers `cloud.yaml` fields, `extra_repos[]` + `chain_session` multi-tenancy, the operator loop, the direct-`chain-start` recipe for the ssh box, and the gotchas that wedge fresh runs.
 ---
 
 # Megaplan Cloud
 
-`megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Today only the `railway` provider is shipped end-to-end; `ssh` and `local` are scaffolded for future use.
+`megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Two providers are shipped end-to-end: **`railway`** and **`ssh`** (a remote box — typically a Hetzner agentbox — you SSH into, running the megaplan worker in a docker container). `local` is scaffolded. The ssh provider is the working on-prem path; see **SSH provider — Hetzner agentbox** below.
 
 Reach for cloud mode when at least one of these is true:
 
@@ -15,6 +15,64 @@ Reach for cloud mode when at least one of these is true:
 - A chain needs to keep running while the laptop is asleep or on the move.
 
 Skip cloud mode when the plan finishes in a sitting, the work fits in one repo, and a local `megaplan run` would do the same job.
+
+## SSH provider — Hetzner agentbox (the working on-prem path)
+
+`provider: ssh` targets a remote box (host/user/port/identity_file in `cloud.yaml` under `ssh:`) that runs the megaplan worker in a docker container. The working on-prem setup is a Hetzner VM with a long-lived `megaplan-cloud-agent` container + a persistent `/workspace` volume; an `arnold-watchdog` (tmux session `watchdog`) keeps chains alive and a meta-loop supervises it (see `docs/hetzner-watchdog-meta-loop.md`).
+
+A minimal ssh `cloud.yaml`:
+
+```yaml
+provider: ssh
+repo:
+  url: https://github.com/org/repo.git
+  branch: <base-branch>
+  workspace: /workspace/<unique-per-chain>     # unique — the box runs concurrent chains
+mode: chain
+chain_session: <unique-per-chain>              # unique tmux session on the box
+chain:
+  spec: /workspace/<unique-per-chain>/<path-to-chain.yaml>
+megaplan:
+  ref: main
+  codex_auth: chatgpt                          # any codex phases bill to ChatGPT subscription
+ssh:
+  host: <box-ip>
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
+secrets: []   # leave empty if pre-set on the box; listing would overwrite box values with local env
+```
+
+### Recommended launch: direct `chain start` on the box (bypass the local orchestrator)
+
+The local `megaplan cloud chain` orchestrator works but has several sharp edges (see Gotchas below). The most reliable launch is to SSH in and run `chain start` directly in a tmux session on the box:
+
+```bash
+ssh root@<box-ip> 'docker exec megaplan-cloud-agent bash -lc "
+  cd /workspace/<unique-per-chain>
+  # ensure the clone is at the latest base branch (the orchestrator refresh fetches but doesn't ff)
+  git fetch origin <base-branch> && git reset --hard origin/<base-branch>
+  # chain.yaml anchor must be BARE (chain.yaml-dir-relative for direct chain start)
+  tmux kill-session -t <chain-session> 2>/dev/null
+  tmux new-session -d -s <chain-session> \"python -m arnold_pipelines.megaplan chain start \
+    --spec <chain.yaml-path-in-clone> --project-dir . --fresh --no-git-refresh \
+    2>&1 | tee .megaplan/cloud-chain-direct.log\""
+'
+```
+
+Observe: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tmux ls'` and `tail -f /workspace/<unique-per-chain>/.megaplan/cloud-chain-direct.log`. Milestone plan state lives under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
+
+### Gotchas specific to the ssh/Hetzner path (learned the hard way)
+
+1. **Chain spec requires a `north_star` anchor** — `megaplan init`/`chain` rejects the spec without `anchors: north_star: <path>`. Not documented in `megaplan-prep`; add it.
+2. **Anchor-path resolution is inconsistent between the orchestrator and `chain start`.** The `megaplan cloud chain` orchestrator places the spec at the repo root and resolves the anchor **repo-root-relative**; `chain start` resolves it **chain.yaml-dir-relative**. Idea (`m*.md`) paths are repo-root-relative in both. So: for direct `chain start` with the spec at `.megaplan/briefs/<epic>/chain.yaml`, use a BARE `north_star: NORTHSTAR.md` (sits next to chain.yaml). For the orchestrator, use the full repo-root-relative path. There is no single anchor path that satisfies both — a real bug to fix in `arnold_pipelines.megaplan.cloud`.
+3. **`--idea-dir` does NOT deliver gitignored `.megaplan/briefs/` to the box clone.** The box clones the repo; if briefs are gitignored (the default `.megaplan/*` policy), the clone lacks them and `chain start` fails `missing_idea_file`. Either commit the briefs to the branch (force-add) before launching, or stop gitignoring briefs. `--idea-dir` uploads idea files but not to the path the runner checks.
+4. **The base-branch refresh fetches but does NOT fast-forward the box clone's local branch.** If the clone's `<base-branch>` is already checked out, `git checkout <base-branch>` is a no-op and the clone stays at the old commit. Force it: `git fetch origin <base-branch> && git reset --hard origin/<base-branch>` before launching (or after any push to the base branch).
+5. **The editable arnold `.pth` can get disabled mid-run** (renamed `*.pth.disabled`) by a cloud-chain editable-install-sync side-effect, breaking `import arnold`/`import arnold_pipelines` locally + any local tooling that uses it. Re-enable: `mv <site-packages>/_editable_impl_arnold.pth.disabled <site-packages>/_editable_impl_arnold.pth`. (Also: keep the local venv on an editable install of `~/Documents/Arnold` — a stale non-editable copy shadows the live code and lags the path migration.)
+6. **arnold path migration: `arnold.pipelines.megaplan` → `arnold_pipelines.megaplan`.** Live arnold moved megaplan to the top-level `arnold_pipelines` package and dropped `arnold.pipelines.megaplan`. Older tooling (e.g. the hermes subagent launcher, watchdog scripts) may still use the old dotted path and depend on a stale site-packages copy as a bridge. When you editable-install live arnold, update those tools to `arnold_pipelines.megaplan` too, or they break.
+7. **Use a unique `workspace` + `chain_session` per chain.** The box runs multiple chains concurrently; sharing a workspace or tmux session name collides.
 
 ## Subcommands
 
@@ -136,11 +194,22 @@ An operator loop may automatically handle infrastructure recovery:
 - rerun `megaplan auto` for states with an unambiguous valid next step;
 - recover provider quota/failure by switching to an already-approved fallback model/provider for the same phase;
 - continue a chain after a completed milestone;
+- advance a chain past a merged milestone PR (re-run `megaplan chain start` so it observes the merge and proceeds to the next milestone);
 - commit and push after each completed milestone when the user asked for push-after-sprint behavior.
+
+For an operator loop to progress a chain autonomously, the chain spec must set `merge_policy: auto`. With `review` or `manual`, the chain opens each milestone PR and halts at `awaiting_pr_merge` until a human merges it — the loop cannot merge PRs for you, so an unattended chain looks "stuck" when it is actually waiting on a manual merge. Set `merge_policy: auto` in `chain.yaml` for any cloud epic that should run without a human in the loop.
 
 An operator loop should **not** silently decide product or architecture questions, resolve merge conflicts, accept destructive cleanup, or ignore failing tests. Those are implementation decisions, not supervision. Surface them to the user or write a clear ticket unless the plan already contains an explicit settled decision that covers the case.
 
-Today this operator loop is usually a small project-local shell script under `.megaplan/` plus tmux. Treat that as an operational shim, not the ideal abstraction. The durable Megaplan feature should be first-class cloud supervision: built-in early check, hourly tick, provider fallback policy, single-PR chain mode, and push-after-milestone support.
+### Built-in cloud supervision (automated operator loop)
+
+Two always-on supervisors run the recovery loop; the operator watches *them*, not the chain.
+
+**1h watchdog** (`/usr/local/bin/arnold-watchdog`, `megaplan-watchdog-ensure.timer` keep-alive): syncs the editable install; per session detects **stopped/flap/`retrying_failure`** → **Kimi→Codex repair**, falling back to **direct relaunch**; honors **`awaiting_pr_merge`**; flags **`progress_stall`** (alive but not progressing). Report: `/workspace/watchdog-report.json` (archived `/workspace/watchdog-reports/`).
+
+**6h progress auditor** (`/usr/local/bin/arnold-progress-auditor`, `megaplan-progress-audit.timer`): reviews the last 6h per plan; for suspicious ones dispatches **Codex** (may deploy DeepSeek) to **judge** — confident fixable deadlock/inefficiency → **fix + push to `editible-install`** (watchdog relaunches); else → document. Verdicts `FIXED <sha>` / `PASSIVE`. Report: `/workspace/audit-reports/`.
+
+Recovery path: watchdog fixes hard stops; auditor fixes inefficiency/deadlocks the liveness check can't see. Operator job = **meta-loop** (hourly): watchdog alive + reporting, plan progressing, `blocked_recovery_not_resolved` not climbing, auditor verdicts landing. See `docs/hetzner-watchdog-meta-loop.md`.
 
 ## Gotchas (learned the hard way)
 

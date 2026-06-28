@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from arnold.kernel.journal import NDJsonEventJournal
-from arnold.kernel.replay import LegacyAliasRecord, ReplayCursor, resolve_cursor
+from arnold.kernel.replay import CursorResolution, LegacyAliasRecord, ReplayCursor, resolve_cursor
 from arnold.manifest import ManifestCursor, manifest_coordinate
 
 
@@ -63,14 +63,29 @@ def resolve_legacy_resume_cursor(
     quarantined and ``None`` is returned.
     """
 
+    resolution = resolve_legacy_resume_cursor_resolution(
+        requested,
+        target_manifest_hash,
+        run_id=run_id,
+    )
+    return resolution.cursor, resolution.resolution.reason
+
+
+def resolve_legacy_resume_cursor_resolution(
+    requested: ReplayCursor,
+    target_manifest_hash: str,
+    *,
+    run_id: str | None = None,
+) -> CursorResolution:
+    """Resolve a Megaplan resume cursor and preserve quarantine metadata."""
+
     aliases = build_megaplan_legacy_aliases(target_manifest_hash)
-    resolution = resolve_cursor(
+    return resolve_cursor(
         requested,
         native_manifest_hash=target_manifest_hash,
         legacy_aliases=aliases,
         run_id=run_id,
     )
-    return resolution.cursor, resolution.resolution.reason
 
 
 # ---------------------------------------------------------------------------
@@ -175,4 +190,5 @@ __all__ = [
     "derive_resume_cursor_from_journal",
     "extract_legacy_resume_cursor",
     "resolve_legacy_resume_cursor",
+    "resolve_legacy_resume_cursor_resolution",
 ]

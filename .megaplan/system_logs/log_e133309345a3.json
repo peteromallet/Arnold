@@ -1,0 +1,97 @@
+{
+  "id": "log_e133309345a3",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5406,
+      "schema_version": 1,
+      "ts_utc": "2026-06-28T00:14:56.476718+00:00",
+      "ts_rel_init_s": 11873.689903,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "t0_confirm_contracts",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_commands_run",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_evidence_files",
+          "head_mismatch:task_evidence_files",
+          "head_mismatch:task_evidence_files",
+          "head_mismatch:task_evidence_files",
+          "head_mismatch:task_evidence_files"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_commands_run",
+          "stale_evidence:head_mismatch:task_evidence_files"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "t0_confirm_contracts",
+          "declared_outputs": {
+            "commands_run": [
+              "sed -n '1,260p' tests/arnold/workflow/test_python_authoring_fixtures.py",
+              "sed -n '1,300p' arnold/workflow/source_compiler.py",
+              "sed -n '1,260p' tests/arnold/workflow/test_static_scans.py",
+              "sed -n '1,220p' tests/fixtures/workflow_authoring/valid_direct_linear.py",
+              "sed -n '1,220p' tests/fixtures/workflow_authoring/valid_function_linear.py",
+              "sed -n '1,240p' tests/fixtures/workflow_authoring/valid_direct_linear.expected.json",
+              "sed -n '1,260p' tests/fixtures/workflow_authoring/valid_function_linear.expected.json",
+              "rg -n \"ParsedIntrinsicCall|RESERVED_AUTHORING_INTRINSICS|intrinsic|arguments\" arnold/workflow/source_compiler.py",
+              "rg -n \"expected_provenance|intrinsics|ParsedIntrinsicCall|INVALID_INTRINSIC|AWF002|source_form|valid_direct_linear|valid_function_linear\" tests arnold/workflow",
+              "find tests/fixtures/workflow_authoring -maxdepth 1 \\( -name '*.py' -o -name '*.expected.json' \\) -printf '%f\\n' | sort"
+            ],
+            "evidence_files": [
+              "tests/arnold/workflow/test_python_authoring_fixtures.py",
+              "arnold/workflow/source_compiler.py",
+              "tests/arnold/workflow/test_static_scans.py",
+              "tests/fixtures/workflow_authoring/valid_direct_linear.py",
+              "tests/fixtures/workflow_authoring/valid_function_linear.py"
+            ]
+          },
+          "linked_evidence_count": 25,
+          "evidence_count": 93,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 93,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-28T00:14:56.469144+00:00"
+      },
+      "transaction_id": "ef360ec34e99701d",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-compiler-core-and-linear-20260627-2056",
+  "occurred_at": "2026-06-28T00:14:56.476787Z"
+}

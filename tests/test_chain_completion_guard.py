@@ -132,6 +132,71 @@ def _write_plan(
     return plan_dir
 
 
+def _write_execute_authority_plan(root: Path, *, base_sha: str) -> Path:
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(root)},
+        "meta": {"execution_baseline": {"head": base_sha}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "t6_add_focused_api_regressions",
+                        "status": "done",
+                        "kind": "code",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                    },
+                    {
+                        "id": "v3_api_tests",
+                        "status": "pending",
+                        "kind": "test",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                        "head_sha": base_sha,
+                    },
+                    {
+                        "id": "v4_optional_diagnostics_contract",
+                        "status": "skipped",
+                        "kind": "test",
+                        "executor_notes": "Skipped by contract: no diagnostic registry or keyword contract changed.",
+                        "head_sha": base_sha,
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "t6_add_focused_api_regressions",
+                        "status": "done",
+                        "commands_run": [
+                            "pytest -q tests/arnold/workflow/test_source_compiler_api.py -q"
+                        ],
+                        "head_sha": base_sha,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return plan_dir
+
+
 def _record() -> dict[str, object]:
     return {"label": "m1", "plan": "plan-m1", "status": "done"}
 
@@ -139,9 +204,13 @@ def _record() -> dict[str, object]:
 def _write_chain_spec(root: Path) -> Path:
     idea = root / "idea.md"
     idea.write_text("ship milestone\n", encoding="utf-8")
+    north_star = root / "NORTHSTAR.md"
+    north_star.write_text("north star\n", encoding="utf-8")
     spec_path = root / "chain.yaml"
     spec_path.write_text(
         "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
         "milestones:\n"
         "  - label: m1\n"
         f"    idea: {idea}\n"
@@ -218,6 +287,105 @@ def test_run_chain_pr_merge_resume_blocks_non_terminal_plan(tmp_path: Path) -> N
     assert "current_state='gated'" in result["reason"]
 
 
+def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authority(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    plan_dir = _write_execute_authority_plan(tmp_path, base_sha=base)
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "execution_batch_1.json"
+
+
+def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_head(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "work")
+    work_head = _commit_semantic_change(tmp_path)
+    plan_dir = _write_execute_authority_plan(tmp_path, base_sha=work_head)
+
+    _git(tmp_path, "checkout", "-B", "native-python-working-tree", base)
+
+    ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is True
+    assert reason == "execution_batch_1.json"
+
+
+def test_latest_execution_batch_all_tasks_done_prefers_latest_recorded_head_over_stale_baseline(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "work")
+    recorded_head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": recorded_head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "pending",
+                        "kind": "test",
+                        "commands_run": ["pytest -q tests/test_app.py"],
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": recorded_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    real_run = subprocess.run
+
+    def _fake_run(cmd: list[str], *args: object, **kwargs: object):
+        if cmd[:3] == ["git", "rev-parse", "HEAD"]:
+            raise subprocess.SubprocessError("simulated rev-parse failure")
+        return real_run(cmd, *args, **kwargs)
+
+    with patch("arnold_pipelines.megaplan.chain.subprocess.run", side_effect=_fake_run):
+        ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is False
+    assert "T2='unsatisfied':missing_linked_evidence" in reason
+    assert "T1" not in reason
+
+
 def test_empty_finalize_tasks_and_no_execution_batch_blocks(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     _commit_semantic_change(tmp_path)
@@ -236,6 +404,46 @@ def test_empty_finalize_tasks_and_no_execution_batch_blocks(tmp_path: Path) -> N
 
     assert ok is False
     assert "no execution_batch_*.json" in reason
+
+
+def test_authoritative_finalize_json_overrides_empty_scratch_template(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    plan_dir = _write_plan(
+        tmp_path,
+        base_sha=base,
+        finalize_tasks=[{"id": "T1"}],
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize_output.json").write_text(
+        json.dumps({"tasks": []}) + "\n",
+        encoding="utf-8",
+    )
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        _record(),
+        implementation_milestone=True,
+    )
+
+    assert ok is True
+    assert "finalize.json tasks is non-empty" in reason
 
 
 def test_empty_semantic_diff_from_milestone_base_blocks(tmp_path: Path) -> None:
@@ -372,6 +580,34 @@ def test_merged_pr_completion_allows_published_semantic_diff(tmp_path: Path) -> 
         tmp_path,
         base,
         branch="published-semantic",
+        return_to=local_branch,
+    )
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        {
+            **_record(),
+            "pr_number": 62,
+            "pr_state": "merged",
+            "pr_merge_sha": published_sha,
+        },
+        implementation_milestone=True,
+    )
+
+    assert ok is True
+    assert "published PR target" in reason
+
+
+def test_merged_pr_completion_allows_published_semantic_diff_with_stale_local_head(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    local_branch = _git(tmp_path, "branch", "--show-current")
+    published_sha = _commit_published_semantic_change(
+        tmp_path,
+        base,
+        branch="published-semantic-stale-local",
         return_to=local_branch,
     )
     _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])

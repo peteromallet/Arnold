@@ -25,6 +25,7 @@ working unchanged.
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -316,23 +317,33 @@ def _audit_capture_payload(
     payload: Mapping[str, Any],
     contract: ContractResult,
 ) -> None:
+    step = _optional_str(
+        invocation.metadata.get("compatibility_validation_step")
+        or invocation.metadata.get("validation_step")
+    )
     schema = invocation.metadata.get("capture_schema") or invocation.metadata.get("output_schema")
     if not isinstance(schema, Mapping):
         schema = invocation.metadata.get("schema")
     if not isinstance(schema, Mapping):
         schema = _capture_schema_for_invocation(invocation)
+    normalized_payload: Mapping[str, Any] = payload
     if isinstance(schema, Mapping):
-        payload = _normalize_native_capture_payload(invocation, dict(payload))
-        result = validate_payload_against_schema(payload, schema)
+        normalized_payload = _normalize_native_capture_payload(invocation, dict(payload))
+        result = validate_payload_against_schema(normalized_payload, schema)
     else:
         result = validate_contract_result(contract, _capture_outcome_schema())
-    if result.ok:
-        return
-    details = "; ".join(
-        f"{diagnostic.code} at {diagnostic.payload_pointer or '/'}: {diagnostic.message}"
-        for diagnostic in result.diagnostics
-    )
-    raise ModelStructuralAuditError(details)
+    if not result.ok:
+        details = "; ".join(
+            f"{diagnostic.code} at {diagnostic.payload_pointer or '/'}: {diagnostic.message}"
+            for diagnostic in result.diagnostics
+        )
+        raise ModelStructuralAuditError(details)
+    if step == "plan":
+        plan_text = normalized_payload.get("plan")
+        if isinstance(plan_text, str):
+            issues = validate_plan_structure(plan_text)
+            if PLAN_STRUCTURE_REQUIRED_STEP_ISSUE in issues:
+                raise ModelStructuralAuditError(PLAN_STRUCTURE_REQUIRED_STEP_ISSUE)
 
 
 def _capture_schema_for_invocation(invocation: StepInvocation) -> Mapping[str, Any] | None:
@@ -362,6 +373,8 @@ def _normalize_native_capture_payload(
         invocation.metadata.get("compatibility_validation_step")
         or invocation.metadata.get("validation_step")
     )
+    if step == "plan":
+        return _normalize_plan_capture_payload(payload)
     if step == "review":
         return _normalize_review_capture_payload(payload)
     if step == "execute":
@@ -798,12 +811,17 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
         parts.append(overview)
     steps = payload.get("steps")
     if isinstance(steps, list):
+        step_number = 1
         for step in steps:
             if isinstance(step, Mapping):
                 step_title = _optional_str(step.get("title") or step.get("name"))
                 step_desc = _optional_str(step.get("description") or step.get("details"))
                 if step_title:
-                    parts.append(f"### {step_title}")
+                    if re.match(r"(?i)^step\s+\d+:", step_title):
+                        parts.append(f"### {step_title}")
+                    else:
+                        parts.append(f"### Step {step_number}: {step_title}")
+                    step_number += 1
                 if step_desc:
                     parts.append(step_desc)
                 substeps = step.get("substeps") or step.get("instructions")

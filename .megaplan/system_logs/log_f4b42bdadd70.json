@@ -1,0 +1,99 @@
+{
+  "id": "log_f4b42bdadd70",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5412,
+      "schema_version": 1,
+      "ts_utc": "2026-06-28T00:15:01.031070+00:00",
+      "ts_rel_init_s": 11878.244255,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "t5_generate_sidecars_and_register_cases",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "t5_generate_sidecars_and_register_cases",
+          "declared_outputs": {
+            "files_changed": [
+              "tests/fixtures/workflow_authoring/valid_linear_halt_intrinsic.expected.json",
+              "tests/fixtures/workflow_authoring/valid_linear_suspend_intrinsic.expected.json",
+              "tests/fixtures/workflow_authoring/valid_linear_transition_intrinsic.expected.json",
+              "tests/fixtures/workflow_authoring/valid_linear_single_step.expected.json",
+              "tests/fixtures/workflow_authoring/valid_linear_tuple_unused_outputs.expected.json",
+              "tests/fixtures/workflow_authoring/invalid_intrinsic_missing_required_keyword.expected.json",
+              "tests/fixtures/workflow_authoring/invalid_intrinsic_unknown_keyword.expected.json",
+              "tests/fixtures/workflow_authoring/invalid_intrinsic_wrong_keyword_set.expected.json",
+              "tests/arnold/workflow/test_python_authoring_fixtures.py"
+            ],
+            "commands_run": [
+              "python - <<'PY' ... generated expected sidecars from workflow.check_workflow_file outputs ... PY",
+              "python - <<'PY' ... reviewed valid sidecar intrinsic fields and invalid diagnostic source segments ... PY",
+              "pytest -q tests/arnold/workflow/test_python_authoring_fixtures.py -q"
+            ]
+          },
+          "linked_evidence_count": 30,
+          "evidence_count": 93,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 93,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-28T00:15:01.021102+00:00"
+      },
+      "transaction_id": "fc8efbd0e25b7177",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-compiler-core-and-linear-20260627-2056",
+  "occurred_at": "2026-06-28T00:15:01.031141Z"
+}

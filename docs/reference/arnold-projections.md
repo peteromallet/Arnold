@@ -55,6 +55,7 @@ This page is generated from the ``arnold.workflow`` manifest contract, the shipp
 | label | str | 'default'|
 | metadata | Mapping[str, Any] | default_factory=dict|
 | source | str | required|
+| source_span | SourceSpan \| None | None|
 | target | str | required|
 
 ## Shipped Pipeline Registry

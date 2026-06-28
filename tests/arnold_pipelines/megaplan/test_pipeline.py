@@ -1,4 +1,4 @@
-"""Tests for the M3 explicit-node Megaplan pipeline."""
+"""Tests for the M4 Megaplan planning pipeline facade."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline
 
 
-class TestM3Pipeline:
-    def test_build_pipeline_returns_m3_pipeline(self) -> None:
+class TestM4Pipeline:
+    def test_build_pipeline_returns_m4_pipeline(self) -> None:
         from arnold_pipelines.megaplan.pipeline import (
             build_and_compile_pipeline,
             build_pipeline,
@@ -42,22 +42,29 @@ class TestM3Pipeline:
 
     def test_public_facade_exports_are_stable(self) -> None:
         import arnold_pipelines.megaplan.pipeline as pipeline_mod
+        from arnold_pipelines.megaplan.workflows import planning
 
         assert pipeline_mod.__all__ == [
             "build_and_compile_pipeline",
             "build_pipeline",
         ]
+        assert pipeline_mod.build_pipeline is planning.build_pipeline
         assert callable(pipeline_mod.build_pipeline)
         assert callable(pipeline_mod.build_and_compile_pipeline)
 
     def test_pipeline_compiles_to_valid_manifest(self) -> None:
-        from arnold_pipelines.megaplan.pipeline import build_pipeline
+        from arnold_pipelines.megaplan.pipeline import (
+            build_and_compile_pipeline,
+            build_pipeline,
+        )
 
         pipeline = build_pipeline()
-        manifest = compile_pipeline(pipeline)
+        manifest = build_and_compile_pipeline()
+        compiled_from_public_builder = compile_pipeline(pipeline)
         assert manifest.id == "megaplan"
         assert manifest.manifest_hash is not None
         assert manifest.topology_hash is not None
+        assert manifest.to_json() == compiled_from_public_builder.to_json()
 
     def test_gate_routes_encoded(self) -> None:
         from arnold_pipelines.megaplan.pipeline import build_pipeline
@@ -112,7 +119,7 @@ class TestM3Pipeline:
         revise = next(step for step in pipeline.steps if step.id == "revise")
         assert revise.policy is not None
         assert revise.policy.loop is not None
-        assert revise.policy.loop.max_iterations == 5
+        assert revise.policy.loop.max_iterations == 4
 
     def test_tiebreaker_loop_is_bounded(self) -> None:
         from arnold_pipelines.megaplan.pipeline import build_pipeline
@@ -121,14 +128,15 @@ class TestM3Pipeline:
         decide = next(step for step in pipeline.steps if step.id == "tiebreaker_decide")
         assert decide.policy is not None
         assert decide.policy.loop is not None
-        assert decide.policy.loop.max_iterations == 7
+        assert decide.policy.loop.max_iterations == 4
 
     def test_compile_idempotency(self) -> None:
-        from arnold_pipelines.megaplan.pipeline import build_pipeline
+        from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline, build_pipeline
 
         m1 = compile_pipeline(build_pipeline())
-        m2 = compile_pipeline(build_pipeline())
+        m2 = build_and_compile_pipeline()
         assert m1.manifest_hash == m2.manifest_hash
+        assert m1.topology_hash == m2.topology_hash
 
     # ── Absence tests: removed legacy names must not be importable ──────────
 
