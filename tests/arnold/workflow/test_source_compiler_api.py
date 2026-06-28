@@ -555,6 +555,84 @@ def test_source_compiler_compiles_function_body_bindings_through_manifest_contra
     assert nodes["review"].metadata["input_bindings"]["evidence"]["value_ref"] == "output:evidence"
 
 
+def test_source_compiler_compiles_and_validates_single_step_linear_workflow() -> None:
+    source_path = FIXTURE_DIR / "valid_linear_single_step.py"
+
+    check_result = workflow.check_workflow_file(source_path)
+    pipeline = workflow.lower_workflow_file(source_path)
+    manifest = workflow.compile_workflow_file(source_path)
+
+    workflow.validate_manifest(manifest)
+    assert check_result.ok
+    assert pipeline.id == "linear-single-step"
+    assert [step.id for step in pipeline.steps] == ["plan"]
+    assert pipeline.routes == ()
+    assert manifest.id == "linear-single-step"
+    assert [node.id for node in manifest.nodes] == ["plan"]
+    assert manifest.edges == ()
+
+
+def test_source_compiler_allows_tuple_assignment_outputs_to_remain_unused() -> None:
+    source_path = FIXTURE_DIR / "valid_linear_tuple_unused_outputs.py"
+
+    check_result = workflow.check_workflow_file(source_path)
+    pipeline = workflow.lower_workflow_file(source_path)
+    manifest = workflow.compile_workflow_file(source_path)
+
+    workflow.validate_manifest(manifest)
+    assert check_result.ok
+    assert [step.id for step in pipeline.steps] == ["plan", "execute", "review"]
+    execute_step = {step.id: step for step in pipeline.steps}["execute"]
+    assert [output.name for output in execute_step.outputs] == ["execute_output", "evidence"]
+    review_step = {step.id: step for step in pipeline.steps}["review"]
+    assert [(binding.name, binding.value_ref) for binding in review_step.inputs] == [
+        ("evidence", "output:evidence")
+    ]
+    manifest_nodes = {node.id: node for node in manifest.nodes}
+    assert manifest_nodes["execute"].outputs == ("execute_output", "evidence")
+    assert manifest_nodes["review"].metadata["input_bindings"]["evidence"]["value_ref"] == (
+        "output:evidence"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source_name", "halt_call"),
+    [
+        ("intrinsic_missing_required_keyword", "halt()"),
+        ("intrinsic_wrong_keyword_set", "halt(route_id='human_gate')"),
+    ],
+)
+def test_source_compiler_rejects_malformed_intrinsic_keyword_sets(
+    source_name: str,
+    halt_call: str,
+) -> None:
+    source = f"""
+from arnold.workflow.authoring import halt, workflow
+
+@workflow(id="{source_name}", version="1.0")
+def flow() -> None:
+    {halt_call}
+"""
+
+    result = workflow.check_workflow_source(source, source_path=f"{source_name}.py")
+
+    assert not result.ok
+    assert _codes(result) == {diagnostics.DiagnosticCode.UNSUPPORTED_SYNTAX}
+    assert [
+        diagnostic.message
+        for diagnostic in result.diagnostics
+        if diagnostic.code is diagnostics.DiagnosticCode.UNSUPPORTED_SYNTAX
+    ] == [
+        "compiler intrinsic call is outside the V1 authoring grammar",
+        "compiler intrinsic calls are not workflow component steps",
+    ]
+    with pytest.raises(workflow.SourceCompileError) as source_error:
+        workflow.compile_workflow_source(source, source_path=f"{source_name}.py")
+    assert _diagnostic_codes(source_error.value.diagnostics) == {
+        diagnostics.DiagnosticCode.UNSUPPORTED_SYNTAX
+    }
+
+
 @pytest.mark.parametrize(
     ("fixture_name", "expected_topology_hash", "expected_manifest_hash"),
     [
@@ -1716,6 +1794,10 @@ workflow(id="no-exec-file", steps=[plan(id="plan")])
 
 def _codes(result: workflow.CheckWorkflowSourceResult) -> set[diagnostics.DiagnosticCode]:
     return {diagnostic.code for diagnostic in result.diagnostics}
+
+
+def _diagnostic_codes(diagnostic_list) -> set[diagnostics.DiagnosticCode]:
+    return {diagnostic.code for diagnostic in diagnostic_list}
 
 
 def _diagnostic_payloads(result: workflow.CheckWorkflowSourceResult) -> list[dict[str, object]]:

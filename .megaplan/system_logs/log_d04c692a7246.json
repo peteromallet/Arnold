@@ -1,0 +1,82 @@
+{
+  "id": "log_d04c692a7246",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 5388,
+      "schema_version": 1,
+      "ts_utc": "2026-06-28T00:14:22.425799+00:00",
+      "ts_rel_init_s": 11839.638984,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "t3_add_valid_fixture_sources",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "stale_evidence:head_mismatch:task_files_changed",
+        "missing_outputs": [],
+        "stale_evidence": [
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_files_changed",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run",
+          "head_mismatch:task_commands_run"
+        ],
+        "would_block_reasons": [
+          "stale_evidence:head_mismatch:task_files_changed",
+          "stale_evidence:head_mismatch:task_commands_run"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "t3_add_valid_fixture_sources",
+          "declared_outputs": {
+            "files_changed": [
+              "tests/fixtures/workflow_authoring/valid_linear_halt_intrinsic.py",
+              "tests/fixtures/workflow_authoring/valid_linear_suspend_intrinsic.py",
+              "tests/fixtures/workflow_authoring/valid_linear_transition_intrinsic.py",
+              "tests/fixtures/workflow_authoring/valid_linear_single_step.py",
+              "tests/fixtures/workflow_authoring/valid_linear_tuple_unused_outputs.py"
+            ],
+            "commands_run": [
+              "python -m py_compile tests/fixtures/workflow_authoring/valid_linear_halt_intrinsic.py tests/fixtures/workflow_authoring/valid_linear_suspend_intrinsic.py tests/fixtures/workflow_authoring/valid_linear_transition_intrinsic.py tests/fixtures/workflow_authoring/valid_linear_single_step.py tests/fixtures/workflow_authoring/valid_linear_tuple_unused_outputs.py tests/fixtures/workflow_authoring/invalid_intrinsic_missing_required_keyword.py tests/fixtures/workflow_authoring/invalid_intrinsic_unknown_keyword.py tests/fixtures/workflow_authoring/invalid_intrinsic_wrong_keyword_set.py",
+              "narrow compiler source check script for the eight new fixtures"
+            ]
+          },
+          "linked_evidence_count": 18,
+          "evidence_count": 93,
+          "normalization": "iterable",
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 93,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-06-28T00:14:22.423426+00:00"
+      },
+      "transaction_id": "65d731af7ca4ae00",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m2-compiler-core-and-linear-20260627-2056",
+  "occurred_at": "2026-06-28T00:14:22.425968Z"
+}
