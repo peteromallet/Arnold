@@ -26,6 +26,10 @@ def _discover_wrapper() -> str:
     return _wrapper("arnold-cloud-discover")
 
 
+def _repair_wrapper() -> str:
+    return _wrapper("arnold-repair-loop")
+
+
 def _extract_wrapper_function(name: str) -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index(f"{name}() {{")
@@ -82,6 +86,15 @@ def _extract_repair_stall_program() -> str:
     return text[py_start:py_end]
 
 
+def _extract_repair_program(function_name: str, marker: str) -> str:
+    text = _repair_wrapper()
+    start = text.index(f"{function_name}() {{")
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
 def _run_repair_stall(
     tmp_path: Path,
     ps_rows: str,
@@ -111,6 +124,18 @@ def _run_repair_stall(
     )
     assert result.returncode == 0, result.stderr
     return [line for line in result.stdout.strip().splitlines() if line]
+
+
+def _run_embedded_python(program: str, *args: str) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        prog_path = Path(tmpdir) / "_embedded.py"
+        prog_path.write_text(program, encoding="utf-8")
+        return subprocess.run(
+            [sys.executable, str(prog_path), *args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
 
 def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subprocess.CompletedProcess[str]:
@@ -158,6 +183,153 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"' in text
     assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-${MEGAPLAN_REF' not in text
     assert "workflow-manifest-runtime" not in text
+
+
+def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
+    text = _repair_wrapper()
+
+    assert "## Incident Snapshot" in text
+    assert "Start from the inline incident snapshot above." in text
+    assert "Use the raw failure signal, chain narrative, and prior-attempt history" in text
+    assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
+
+
+def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "finalized",
+                "iteration": 21,
+                "latest_failure": {
+                    "kind": "phase_failed",
+                    "message": "phase 'execute' internal_error",
+                    "phase": "execute",
+                    "recorded_at": "2026-06-28T19:30:34Z",
+                    "metadata": {
+                        "exit_code": 2,
+                        "stderr": "__main__.py: error: unrecognized arguments: --confirm-destructive",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        "\n".join(
+            [
+                json.dumps({"kind": "phase_started", "phase": "execute", "payload": {"msg": "launch execute"}}),
+                json.dumps({"kind": "phase_failed", "phase": "execute", "payload": {"reason": "cli rejected flags"}}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": "demo-plan",
+                "last_state": "awaiting_human",
+                "events": [{"msg": "milestone demo starting"}, {"msg": "resuming existing plan demo-plan"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "\n".join(
+            [
+                "[chain] milestone demo starting",
+                "[chain] resuming existing plan demo-plan",
+                "[auto demo-plan] phase 'execute' exited with internal_error",
+                "__main__.py: error: unrecognized arguments: --confirm-destructive",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "demo")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "cli_or_argument_error"
+    assert any("unrecognized arguments" in item for item in payload["raw_failure_signals"])
+    assert "phase 'execute' exited with internal_error" in payload["chain_log_tail"]
+    assert "execute:phase_failed | reason=cli rejected flags" in payload["plan_events_tail"]
+    assert payload["plan_latest_failure"]["state_path"].endswith("/demo-plan/state.json")
+
+
+def test_repair_loop_summary_inlines_error_narrative_and_attempt_history(tmp_path: Path) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "initial_facts": {},
+                "iterations": [
+                    {
+                        "i": 1,
+                        "dev_model": "gpt-5.4",
+                        "dev_summary": "cleared stale markers only",
+                        "mechanical_launch": "failed:retrying_failure",
+                        "kimi_launch": "failed:retrying_failure",
+                        "why": "status label changed but same execute failure remained",
+                    },
+                    {
+                        "i": 2,
+                        "dev_model": "gpt-5.5",
+                        "failure_classification": "cli_or_argument_error",
+                        "raw_failure_signals": [
+                            "__main__.py: error: unrecognized arguments: --confirm-destructive --user-approved"
+                        ],
+                        "chain_log_tail": "[chain] resuming existing plan demo-plan\n[auto demo-plan] phase 'execute' exited with internal_error",
+                        "plan_events_tail": "execute:phase_failed | reason=cli rejected flags",
+                        "plan_latest_failure": {
+                            "current_state": "finalized",
+                            "phase": "execute",
+                            "iteration": 21,
+                            "kind": "phase_failed",
+                            "message": "phase 'execute' internal_error",
+                            "recorded_at": "2026-06-28T19:30:34Z",
+                            "state_path": "/tmp/demo/state.json",
+                            "events_path": "/tmp/demo/events.ndjson",
+                            "metadata": {"exit_code": 2},
+                        },
+                        "chain_state_summary": {
+                            "path": "/tmp/demo/chain.json",
+                            "last_state": "awaiting_human",
+                            "current_plan_name": "demo-plan",
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    summary = result.stdout
+    assert "## Incident Snapshot" in summary
+    assert "unrecognized arguments: --confirm-destructive --user-approved" in summary
+    assert "[auto demo-plan] phase 'execute' exited with internal_error" in summary
+    assert "## Prior repair attempts" in summary
+    assert "i1 model=gpt-5.4 attempted=cleared stale markers only" in summary
+    assert "plan events: /tmp/demo/events.ndjson" in summary
 
 
 def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
@@ -1839,6 +2011,11 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "repair_data_record_kimi()" in text
     assert "collect_failure_context_json()" in text
     assert "render_failure_summary()" in text
+    assert '"failure_context"' in text
+    assert '"raw_failure_signals"' in text
+    assert '"failure_classification"' in text
+    assert '"chain_log_tail"' in text
+    assert '"plan_events_tail"' in text
     assert '"mechanical_log_tail"' in text
     assert '"plan_latest_failure"' in text
     assert '"chain_state_summary"' in text
@@ -1851,10 +2028,11 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'repair_data_set_outcome "discord_escalated"' in text
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
-    assert "## Why the chain stopped (most recent failure)" in text
-    assert "## Prior iterations (what was tried)" in text
-    assert "Full accumulated repair data: $DATA_FILE" in text
-    assert "Repair data file (read this first): $DATA_FILE" in text
+    assert "## Incident Snapshot" in text
+    assert "primary failure signal(s)" in text
+    assert "current chain narrative (last 20 chain-log lines)" in text
+    assert "## Prior repair attempts" in text
+    assert "Repair data file: $DATA_FILE" in text
     assert "do not relaunch the chain yourself" in text.lower()
 
 
