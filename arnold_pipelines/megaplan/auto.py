@@ -56,7 +56,7 @@ from arnold_pipelines.megaplan.orchestration.phase_result import (
 )
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
-    corroborated_completed_task_ids,
+    effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.orchestration.recovery_policy import RecoveryPolicy
 from arnold_pipelines.megaplan.store import PlanRepository
@@ -1975,10 +1975,19 @@ def _execute_completion_authority(plan_dir: Path | None) -> tuple[bool, list[str
     tasks = _finalize_tasks(plan_dir)
     if not tasks:
         return True, []
+    state_data = _read_state_data(plan_dir)
+    project_dir = None
+    if isinstance(state_data, dict):
+        config = state_data.get("config")
+        raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
+        if isinstance(raw_project_dir, str) and raw_project_dir:
+            project_dir = Path(raw_project_dir)
     decisions: dict[str, AuthorityDecision] = {}
-    completed = corroborated_completed_task_ids(
+    completed = effective_execute_completed_task_ids(
         tasks,
         plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state_data,
         decisions=decisions,
     )
     missing: list[str] = []

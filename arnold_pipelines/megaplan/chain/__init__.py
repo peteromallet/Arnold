@@ -73,7 +73,7 @@ from arnold_pipelines.megaplan._core import atomic_write_json, resolve_plan_dir
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
-    corroborated_completed_task_ids,
+    effective_execute_completed_task_ids,
 )
 from arnold_pipelines.megaplan.profiles import (
     VALID_CRITIC_CHOICES,
@@ -1057,6 +1057,13 @@ def _run_full_suite_backstop_gate(
 
 
 def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
+    try:
+        state_payload = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        state_payload = {}
+    config = state_payload.get("config") if isinstance(state_payload, dict) else {}
+    raw_project_dir = config.get("project_dir") if isinstance(config, dict) else None
+    project_dir = Path(raw_project_dir) if isinstance(raw_project_dir, str) and raw_project_dir else None
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
         key=_execution_batch_sort_key,
@@ -1080,9 +1087,11 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return False, f"{latest.name} has no task records"
 
     batch_decisions: dict[str, AuthorityDecision] = {}
-    completed = corroborated_completed_task_ids(
+    completed = effective_execute_completed_task_ids(
         task_records,
         plan_dir=plan_dir,
+        project_dir=project_dir,
+        state=state_payload,
         decisions=batch_decisions,
     )
     if not completed:
@@ -1128,9 +1137,11 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                 if str(task.get("id") or "") not in baseline_unavailable
             ]
             finalize_decisions: dict[str, AuthorityDecision] = {}
-            finalize_completed = corroborated_completed_task_ids(
+            finalize_completed = effective_execute_completed_task_ids(
                 authoritative_finalize_records,
                 plan_dir=plan_dir,
+                project_dir=project_dir,
+                state=state_payload,
                 decisions=finalize_decisions,
             )
             pending = _non_authoritative_task_reasons(
@@ -1545,6 +1556,16 @@ def _finalize_records_missing_authority_fields(
             continue
         kind = task.get("kind")
         notes = task.get("executor_notes")
+        reviewer_verdict = task.get("reviewer_verdict")
+        if (
+            task.get("status") == "skipped"
+            and isinstance(notes, str)
+            and notes.strip()
+            and not is_rubber_stamp(notes, strict=True)
+        ):
+            continue
+        if reviewer_verdict == "deferred_baseline_unavailable":
+            continue
         if (
             kind in {"audit", "research"}
             and isinstance(notes, str)

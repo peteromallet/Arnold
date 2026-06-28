@@ -279,6 +279,147 @@ def scheduler_completed_ids(
     )
 
 
+def execute_execution_window(
+    state: Mapping[str, Any] | None,
+    *,
+    project_dir: Path,
+    current_head: str | None = None,
+) -> EvidenceExecutionWindow | None:
+    """Return the execution-window freshness envelope from persisted plan state."""
+
+    if not isinstance(state, Mapping):
+        return None
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    baseline = meta.get("execution_baseline")
+    if not isinstance(baseline, Mapping):
+        return None
+    base_sha = _optional_str(baseline.get("base_sha")) or _optional_str(
+        baseline.get("head")
+    )
+    if base_sha is None:
+        return None
+    head_sha = current_head or _optional_str(baseline.get("head"))
+    base_ref = _optional_str(baseline.get("base_ref"))
+    return EvidenceExecutionWindow(
+        project_dir=project_dir,
+        base_sha=base_sha,
+        head_sha=head_sha,
+        base_ref=base_ref,
+    )
+
+
+def effective_execute_completed_task_ids(
+    tasks: Iterable[Mapping[str, Any]],
+    *,
+    plan_dir: Path | str | None = None,
+    project_dir: Path | str | None = None,
+    state: Mapping[str, Any] | None = None,
+    evidence_nucleus: Any = None,
+    current_head: str | None = None,
+    current_code_hash: str | None = None,
+    decisions: dict[str, AuthorityDecision] | None = None,
+) -> set[str]:
+    """Return execute completion IDs with execution-window freshness and explained skips.
+
+    Execute scheduling and end-of-run accounting need one shared notion of
+    "effectively complete": corroborated task evidence may come from an earlier
+    commit within the same execution window, and conditional tasks can be
+    explicitly skipped with a substantive executor note. Execute also treats
+    narrow verification checkpoints as complete when their only declared
+    command outputs are already corroborated by another authoritative task in
+    the same execute run.
+    """
+
+    resolved_plan_dir = Path(plan_dir) if plan_dir is not None else None
+    resolved_project_dir = Path(project_dir) if project_dir is not None else None
+    if resolved_project_dir is None and isinstance(state, Mapping):
+        config = state.get("config")
+        raw_project_dir = config.get("project_dir") if isinstance(config, Mapping) else None
+        if isinstance(raw_project_dir, (str, Path)):
+            resolved_project_dir = Path(raw_project_dir)
+    if current_head is None:
+        head_root = resolved_project_dir or resolved_plan_dir
+        if head_root is not None:
+            current_head = _best_effort_git_head_for_path(head_root)
+    execution_window = (
+        execute_execution_window(
+            state,
+            project_dir=resolved_project_dir,
+            current_head=current_head,
+        )
+        if resolved_project_dir is not None
+        else None
+    )
+    completed = corroborated_completed_task_ids(
+        tasks,
+        plan_dir=resolved_plan_dir,
+        evidence_nucleus=evidence_nucleus,
+        current_head=current_head,
+        current_code_hash=current_code_hash,
+        execution_window=execution_window,
+        decisions=decisions,
+    )
+    explained_skips = {
+        task_id
+        for task in tasks
+        if isinstance(task, Mapping)
+        and isinstance(task_id := _task_id(task), str)
+        and _optional_str(task.get("status")) == "skipped"
+        and (
+            _optional_str(task.get("reviewer_verdict")) == "deferred_baseline_unavailable"
+            or (
+                isinstance(task.get("executor_notes"), str)
+                and task["executor_notes"].strip()
+                and not is_rubber_stamp(task["executor_notes"], strict=True)
+            )
+        )
+    }
+    completed |= explained_skips
+
+    authoritative_commands = {
+        command
+        for task in tasks
+        if isinstance(task, Mapping)
+        and _task_id(task) in completed
+        for command in _string_values(task.get("commands_run"))
+    }
+    for task in tasks:
+        if not isinstance(task, Mapping):
+            continue
+        task_id = _task_id(task)
+        if task_id in completed or not _is_execute_command_checkpoint(task):
+            continue
+        commands = set(_string_values(task.get("commands_run")))
+        if commands and commands.issubset(authoritative_commands):
+            completed.add(task_id)
+            if decisions is not None:
+                decisions[task_id] = AuthorityDecision(
+                    task_id=task_id,
+                    status=EvidenceStatus.satisfied,
+                    satisfied=True,
+                    diagnostics={
+                        "raw_terminal_status": _optional_str(task.get("status")),
+                        "execute_completion": "shared_authoritative_commands",
+                    },
+                )
+    return completed
+
+
+def _is_execute_command_checkpoint(task: Mapping[str, Any]) -> bool:
+    if _optional_str(task.get("status")) != "pending":
+        return False
+    if _optional_str(task.get("kind")) != "test":
+        return False
+    if not _string_values(task.get("commands_run")):
+        return False
+    return not any(
+        _string_values(task.get(field))
+        for field in ("files_changed", "evidence_files", "sections_written")
+    )
+
+
 def load_evidence_nucleus(plan_dir: Path | str) -> tuple[EvidenceRef, ...]:
     """Load the small task evidence nucleus from existing plan artifacts."""
 
