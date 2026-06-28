@@ -8,8 +8,16 @@ from types import SimpleNamespace
 
 import pytest
 
+import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan.auto import DriverOutcome
-from arnold_pipelines.megaplan.chain import _drive_plan, _init_plan, _plan_state
+from arnold_pipelines.megaplan.chain import (
+    _drive_plan,
+    _init_plan,
+    _plan_state,
+    load_chain_state,
+    run_chain,
+    save_chain_state,
+)
 from arnold_pipelines.megaplan.chain.git_ops import (
     _clean_worktree_for_chain,
     _commit_and_push_phase,
@@ -45,6 +53,26 @@ def _init_repo(repo: Path) -> None:
     (repo / "README.md").write_text("base\n", encoding="utf-8")
     _git(repo, "add", "README.md")
     _git(repo, "commit", "-m", "initial")
+    _git(repo, "branch", "-M", "main")
+
+
+def _write_chain_spec(root: Path) -> Path:
+    idea = root / "idea.md"
+    idea.write_text("ship milestone\n", encoding="utf-8")
+    north_star = root / "NORTHSTAR.md"
+    north_star.write_text("north star\n", encoding="utf-8")
+    spec_path = root / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {idea}\n"
+        "    branch: test/m1\n",
+        encoding="utf-8",
+    )
+    return spec_path
 
 
 def _worktree_registered(repo: Path, target: Path) -> bool:
@@ -312,6 +340,78 @@ def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
     assert ["git", "rebase", "--abort"] in subprocess_calls
     assert ["git", "push", "--no-verify", "--force-with-lease", "origin", "branch-x"] in run_command_calls
     assert any("warning: git rebase --abort failed" in message for message in messages)
+
+
+def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    spec_path = _write_chain_spec(root)
+    plan_dir = root / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"plan-m1","current_state":"planned"}\n',
+        encoding="utf-8",
+    )
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="failed",
+            pr_number=118,
+            pr_state="merged",
+        ),
+    )
+
+    checkout_calls: list[tuple[str, str, bool]] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._plan_state",
+        lambda *_args, **_kwargs: "planned",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+        lambda _root, branch, *, base_branch, writer, from_origin=False: checkout_calls.append(
+            (branch, base_branch, from_origin)
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._capture_sync_state",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("_ensure_milestone_pr should not run when PR state exists")
+        ),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    result = run_chain(spec_path, root, writer=lambda _message: None)
+
+    assert result["status"] == "stopped"
+    assert checkout_calls == [("test/m1", "main", True)]
+    saved = load_chain_state(spec_path)
+    assert saved.pr_number == 118
+    assert saved.pr_state == "merged"
 
 
 def test_drive_plan_restores_process_cwd_after_auto_driver(tmp_path: Path, monkeypatch) -> None:
