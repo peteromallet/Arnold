@@ -48,15 +48,16 @@ from arnold.workflow.diagnostics import (
     RESERVED_AUTHORING_INTRINSICS,
     diagnostic_spec,
 )
-from arnold.workflow.dsl import Input, Output, Pipeline, Route, Step
+from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
 _SUPPORTED_STEP_POLICY_TYPES = frozenset(
     {"approval", "authority", "control-transition", "retry", "timing"}
 )
 _SUPPORTED_WORKFLOW_CONTROL_POLICY_TYPES = frozenset(
-    {"approval", "authority", "control-transition", "suspension"}
+    {"approval", "authority", "control-transition", "retry", "suspension", "timing"}
 )
+_LOWERED_STEP_METADATA_KEYS = frozenset({"handler_ref", "terminal"})
 _MANIFEST_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
@@ -420,6 +421,16 @@ class _LoweredSourceBlock:
 
 
 @dataclass(frozen=True)
+class _LoopBackedgeBinding:
+    tail_step_id: str
+    route_id: str
+    label: str
+    condition_ref: str
+    source_span: SourceSpan
+    component_ref: str
+
+
+@dataclass(frozen=True)
 class StaticComponentResolver:
     """Concrete resolver that imports module-level authoring component exports."""
 
@@ -493,7 +504,15 @@ def _lower_workflow_source_result(
     resolver: ComponentResolver | None = None,
 ) -> LowerWorkflowSourceResult:
     parsed_source = parse_workflow_source(source, source_path=source_path, resolver=resolver)
-    pipeline = _lower_parsed_source(parsed_source) if not parsed_source.diagnostics else None
+    pipeline: Pipeline | None = None
+    diagnostics = list(parsed_source.diagnostics)
+    if not diagnostics:
+        pipeline, lower_diagnostics = _lower_parsed_source(parsed_source)
+        diagnostics.extend(lower_diagnostics)
+        if lower_diagnostics:
+            pipeline = None
+    if diagnostics != list(parsed_source.diagnostics):
+        parsed_source = replace(parsed_source, diagnostics=tuple(diagnostics))
     return LowerWorkflowSourceResult(parsed_source=parsed_source, pipeline=pipeline)
 
 
@@ -2217,6 +2236,13 @@ def _workflow_policy_binding_from_node(
             )
         )
         return None
+    if not _validate_retry_timing_policy_config(
+        binding.component,
+        source_path=source_path,
+        node=invalid_span,
+        diagnostics=diagnostics,
+    ):
+        return None
     return WorkflowPolicyBinding(
         keyword=keyword_name,
         component_ref=binding.component_ref,
@@ -2235,6 +2261,67 @@ def _workflow_policy_keyword_diagnostic(
         f"workflow policy keyword {keyword_name!r} must reference imported PolicyComponent names",
         source_span=source_span_for_node(source_path, node),
         details={"keyword": keyword_name},
+    )
+
+
+def _validate_retry_timing_policy_config(
+    component: PolicyComponent,
+    *,
+    source_path: str,
+    node: ast.AST,
+    diagnostics: list[AuthoringDiagnostic],
+) -> bool:
+    invalid_fields: list[str] = []
+    config = component.config
+    if component.policy_type == "retry":
+        max_attempts = config.get("max_attempts", 1)
+        backoff = config.get("backoff", "none")
+        retry_on = config.get("retry_on", ())
+        if not _is_positive_int(max_attempts):
+            invalid_fields.append("max_attempts")
+        if not isinstance(backoff, str):
+            invalid_fields.append("backoff")
+        if (
+            isinstance(retry_on, (str, bytes))
+            or not isinstance(retry_on, Sequence)
+            or not all(isinstance(item, str) for item in retry_on)
+        ):
+            invalid_fields.append("retry_on")
+    elif component.policy_type == "timing":
+        timeout_seconds = config.get("timeout_seconds")
+        deadline_ref = config.get("deadline_ref")
+        ttl_seconds = config.get("ttl_seconds")
+        if timeout_seconds is not None and not _is_positive_number(timeout_seconds):
+            invalid_fields.append("timeout_seconds")
+        if deadline_ref is not None and not isinstance(deadline_ref, str):
+            invalid_fields.append("deadline_ref")
+        if ttl_seconds is not None and not _is_positive_number(ttl_seconds):
+            invalid_fields.append("ttl_seconds")
+    if not invalid_fields:
+        return True
+    diagnostics.append(
+        _diagnostic(
+            DiagnosticCode.MALFORMED_POLICY_CONFIG,
+            f"policy {component.id!r} has malformed {component.policy_type} config",
+            source_span=source_span_for_node(source_path, node),
+            details={
+                "policy_type": component.policy_type,
+                "invalid_fields": tuple(invalid_fields),
+            },
+        )
+    )
+    return False
+
+
+def _is_positive_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
+
+def _is_positive_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value > 0
     )
 
 
@@ -2310,6 +2397,13 @@ def _policy_binding_from_node(
                 details={"policy_type": binding.component.policy_type},
             )
         )
+        return None
+    if not _validate_retry_timing_policy_config(
+        binding.component,
+        source_path=source_path,
+        node=invalid_span,
+        diagnostics=diagnostics,
+    ):
         return None
     return StepPolicyBinding(
         keyword=keyword_name,
@@ -2494,15 +2588,28 @@ def _is_reserved_intrinsic_call(node: ast.AST, imports: Mapping[str, ImportBindi
     )
 
 
-def _lower_parsed_source(parsed_source: ParsedWorkflowSource) -> Pipeline | None:
+def _lower_parsed_source(
+    parsed_source: ParsedWorkflowSource,
+) -> tuple[Pipeline | None, tuple[AuthoringDiagnostic, ...]]:
     workflow = parsed_source.workflow
     if workflow is None:
-        return None
+        return None, ()
+    diagnostics: list[AuthoringDiagnostic] = []
     lowered_block = _lower_source_block(
         workflow.source_block,
         source_form=workflow.source_form,
         initial_output_producers={},
+        diagnostics=diagnostics,
     )
+    if diagnostics:
+        return None, tuple(diagnostics)
+    routes = _bind_route_metadata(
+        lowered_block.routes,
+        workflow.source_block,
+        diagnostics,
+    )
+    if diagnostics:
+        return None, tuple(diagnostics)
     policy = _merge_workflow_policies(
         _lower_workflow_policy_bindings(workflow.policies),
         _lower_workflow_policy(workflow.intrinsics),
@@ -2511,11 +2618,11 @@ def _lower_parsed_source(parsed_source: ParsedWorkflowSource) -> Pipeline | None
         id=workflow.id,
         version=workflow.version,
         steps=lowered_block.steps,
-        routes=lowered_block.routes,
+        routes=routes,
         policy=policy,
         source_span=workflow.source_span,
         metadata={"source_form": workflow.source_form},
-    )
+    ), ()
 
 
 def _lower_source_block(
@@ -2523,6 +2630,7 @@ def _lower_source_block(
     *,
     source_form: str,
     initial_output_producers: Mapping[str, str],
+    diagnostics: list[AuthoringDiagnostic],
 ) -> _LoweredSourceBlock:
     steps: list[Step] = []
     routes: list[Route] = []
@@ -2532,7 +2640,7 @@ def _lower_source_block(
 
     for statement in block.statements:
         if isinstance(statement, ParsedStepCall):
-            step = _lower_step_call(statement, source_form)
+            step = _lower_step_call(statement, source_form, diagnostics)
             if entry_step_id is None:
                 entry_step_id = step.id
             routes.extend(
@@ -2558,6 +2666,7 @@ def _lower_source_block(
                 statement,
                 source_form=source_form,
                 output_producers=output_producers,
+                diagnostics=diagnostics,
             )
             if entry_step_id is None:
                 entry_step_id = branch.entry_step_id
@@ -2573,6 +2682,7 @@ def _lower_source_block(
                 statement.body,
                 source_form=source_form,
                 initial_output_producers=output_producers,
+                diagnostics=diagnostics,
             )
             if entry_step_id is None:
                 entry_step_id = loop.entry_step_id
@@ -2582,27 +2692,53 @@ def _lower_source_block(
                     for source_id in pending_exits
                 )
             backedge_condition_ref = _loop_backedge_condition_ref(statement.policy)
+            loop_backedges = _loop_backedge_bindings(
+                statement,
+                loop,
+                default_condition_ref=backedge_condition_ref,
+                diagnostics=diagnostics,
+            )
+            loop_policy_backedges = (
+                MappingProxyType({binding.tail_step_id: binding for binding in loop_backedges})
+                if loop_backedges
+                else MappingProxyType({})
+            )
             steps.extend(
-                _attach_loop_policy_to_entry_step(
+                _attach_loop_policy_to_step(
                     step,
-                    loop.entry_step_id,
                     statement.policy,
-                    backedge_condition_ref,
+                    carrier_backedges=loop_policy_backedges,
+                    fallback_carrier_id=loop.entry_step_id,
+                    fallback_reentry_id=backedge_condition_ref,
                 )
                 for step in loop.steps
             )
             routes.extend(loop.routes)
-            if loop.entry_step_id is not None and len(loop.exit_step_ids) == 1:
-                tail_step_id = loop.exit_step_ids[0]
-                routes.append(
-                    _loop_backedge_route(
-                        statement,
-                        source_id=tail_step_id,
-                        target_id=loop.entry_step_id,
-                        condition_ref=backedge_condition_ref,
-                        source_form=source_form,
+            if loop.entry_step_id is not None:
+                for binding in loop_backedges:
+                    routes.append(
+                        _loop_backedge_route(
+                            statement,
+                            source_id=binding.tail_step_id,
+                            target_id=loop.entry_step_id,
+                            label=binding.label,
+                            condition_ref=binding.condition_ref,
+                            source_form=source_form,
+                            route_id=binding.route_id,
+                        )
                     )
-                )
+                if not loop_backedges and len(loop.exit_step_ids) == 1:
+                    tail_step_id = loop.exit_step_ids[0]
+                    routes.append(
+                        _loop_backedge_route(
+                            statement,
+                            source_id=tail_step_id,
+                            target_id=loop.entry_step_id,
+                            label="reentry",
+                            condition_ref=backedge_condition_ref,
+                            source_form=source_form,
+                        )
+                    )
             pending_exits = loop.exit_step_ids
             output_producers.update(loop.output_producers)
 
@@ -2620,6 +2756,7 @@ def _lower_branch_block(
     *,
     source_form: str,
     output_producers: Mapping[str, str],
+    diagnostics: list[AuthoringDiagnostic],
 ) -> _LoweredSourceBlock:
     steps: list[Step] = []
     branch_routes: list[Route] = []
@@ -2634,6 +2771,7 @@ def _lower_branch_block(
             arm.body,
             source_form=source_form,
             initial_output_producers=output_producers,
+            diagnostics=diagnostics,
         )
         steps.extend(lowered_arm.steps)
         if lowered_arm.entry_step_id is not None:
@@ -2665,7 +2803,12 @@ def _lower_branch_block(
     )
 
 
-def _lower_step_call(step: ParsedStepCall, source_form: str) -> Step:
+def _lower_step_call(
+    step: ParsedStepCall,
+    source_form: str,
+    diagnostics: list[AuthoringDiagnostic],
+) -> Step:
+    metadata = _lower_step_metadata(step)
     return Step(
         id=step.id,
         kind=step.component.step_type,
@@ -2685,12 +2828,104 @@ def _lower_step_call(step: ParsedStepCall, source_form: str) -> Step:
             )
             for output_binding in step.outputs
         ),
+        capabilities=_lower_step_capabilities(step, diagnostics),
         policy=_lower_step_policy_bindings(step.policies),
         source_span=step.source_span,
         metadata={
             "component_ref": step.component_ref,
             "source_form": source_form,
+            **metadata,
         },
+    )
+
+
+def _lower_step_metadata(step: ParsedStepCall) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for key in _LOWERED_STEP_METADATA_KEYS:
+        value = step.component.metadata.get(key)
+        if key == "handler_ref" and isinstance(value, str) and value:
+            metadata[key] = value
+        elif key == "terminal" and isinstance(value, bool):
+            metadata[key] = value
+    return metadata
+
+
+def _lower_step_capabilities(
+    step: ParsedStepCall,
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[Capability, ...]:
+    raw_capabilities = step.component.metadata.get("capability_requirements", ())
+    if raw_capabilities in (None, ()):
+        return ()
+    if (
+        isinstance(raw_capabilities, (str, bytes, Mapping))
+        or not isinstance(raw_capabilities, Sequence)
+    ):
+        diagnostics.append(
+            _capability_metadata_diagnostic(
+                step,
+                "capability_requirements metadata must be a sequence of capability mappings",
+            )
+        )
+        return ()
+
+    capabilities: list[Capability] = []
+    for raw_capability in raw_capabilities:
+        if not isinstance(raw_capability, Mapping):
+            diagnostics.append(
+                _capability_metadata_diagnostic(
+                    step,
+                    "capability requirement metadata must be a mapping",
+                )
+            )
+            continue
+        capability_id = raw_capability.get("id")
+        route = raw_capability.get("route", "default")
+        required = raw_capability.get("required", True)
+        capability_metadata = raw_capability.get("metadata", {})
+        if (
+            not isinstance(capability_id, str)
+            or not capability_id
+            or not isinstance(route, str)
+            or not route
+            or not isinstance(required, bool)
+            or not isinstance(capability_metadata, Mapping)
+        ):
+            diagnostics.append(
+                _capability_metadata_diagnostic(
+                    step,
+                    "capability requirement metadata must declare string id, optional string route, and optional boolean required",
+                )
+            )
+            continue
+        try:
+            capabilities.append(
+                Capability(
+                    id=capability_id,
+                    route=route,
+                    required=required,
+                    source_span=step.source_span,
+                    metadata=capability_metadata,
+                )
+            )
+        except ValueError:
+            diagnostics.append(
+                _capability_metadata_diagnostic(
+                    step,
+                    "capability requirement metadata has invalid DSL field values",
+                )
+            )
+    return tuple(capabilities)
+
+
+def _capability_metadata_diagnostic(step: ParsedStepCall, message: str) -> AuthoringDiagnostic:
+    spec = diagnostic_spec(DiagnosticCode.MALFORMED_CAPABILITY_METADATA)
+    return AuthoringDiagnostic(
+        code=DiagnosticCode.MALFORMED_CAPABILITY_METADATA,
+        severity=spec.severity,
+        message=message,
+        source_span=step.source_span,
+        component_ref=step.component_ref,
     )
 
 
@@ -2774,13 +3009,27 @@ def _lower_workflow_policy_bindings(
 ) -> WorkflowPolicy | None:
     if not policies:
         return None
+    retry: RetryPolicy | None = None
+    timing: TimingPolicy | None = None
     authority: list[AuthorityRequirement] = []
     control_transitions: list[ControlTransitionSlot] = []
     suspension_routes: list[SuspensionRoute] = []
     for binding in policies:
         component = binding.component
         config = component.config
-        if component.policy_type in {"approval", "authority"}:
+        if component.policy_type == "retry":
+            retry = RetryPolicy(
+                max_attempts=config.get("max_attempts", 1),
+                backoff=config.get("backoff", "none"),
+                retry_on=tuple(config.get("retry_on", ())),
+            )
+        elif component.policy_type == "timing":
+            timing = TimingPolicy(
+                timeout_seconds=config.get("timeout_seconds"),
+                deadline_ref=config.get("deadline_ref"),
+                ttl_seconds=config.get("ttl_seconds"),
+            )
+        elif component.policy_type in {"approval", "authority"}:
             authority.append(
                 AuthorityRequirement(
                     authority_id=config.get("authority_id", component.id),
@@ -2813,6 +3062,8 @@ def _lower_workflow_policy_bindings(
                 )
             )
     return WorkflowPolicy(
+        retry=retry,
+        timing=timing,
         authority=tuple(authority),
         control_transitions=tuple(control_transitions),
         suspension_routes=tuple(suspension_routes),
@@ -2824,10 +3075,33 @@ def _merge_workflow_policies(*policies: WorkflowPolicy | None) -> WorkflowPolicy
     if not present:
         return None
     return WorkflowPolicy(
+        budget=_last_policy_value(present, "budget"),
+        retry=_last_policy_value(present, "retry"),
+        loop=_last_policy_value(present, "loop"),
+        fanout=_last_policy_value(present, "fanout"),
+        timing=_last_policy_value(present, "timing"),
+        idempotency=_last_policy_value(present, "idempotency"),
+        effects=tuple(
+            effect
+            for policy in present
+            for effect in policy.effects
+        ),
+        reducers=tuple(
+            reducer
+            for policy in present
+            for reducer in policy.reducers
+        ),
+        compensation=_last_policy_value(present, "compensation"),
+        escalation=_last_policy_value(present, "escalation"),
         control_transitions=tuple(
             transition
             for policy in present
             for transition in policy.control_transitions
+        ),
+        topology_overlays=tuple(
+            overlay
+            for policy in present
+            for overlay in policy.topology_overlays
         ),
         suspension_routes=tuple(
             route
@@ -2842,29 +3116,180 @@ def _merge_workflow_policies(*policies: WorkflowPolicy | None) -> WorkflowPolicy
     )
 
 
-def _attach_loop_policy_to_entry_step(
+def _last_policy_value(policies: Sequence[WorkflowPolicy], field_name: str) -> Any:
+    for policy in reversed(policies):
+        value = getattr(policy, field_name)
+        if value is not None:
+            return value
+    return None
+
+
+def _loop_backedge_bindings(
+    loop_block: ParsedLoopBlock,
+    lowered_loop: _LoweredSourceBlock,
+    *,
+    default_condition_ref: str,
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[_LoopBackedgeBinding, ...]:
+    if lowered_loop.entry_step_id is None:
+        return ()
+
+    diagnostic_count = len(diagnostics)
+    step_calls = _step_calls_by_id(loop_block.body)
+    explicit_bindings: dict[str, _LoopBackedgeBinding] = {}
+    for tail_step_id in lowered_loop.exit_step_ids:
+        step_call = step_calls.get(tail_step_id)
+        if step_call is None:
+            continue
+        matches: list[_LoopBackedgeBinding] = []
+        for raw_binding in _raw_route_bindings_for_step(step_call, diagnostics):
+            if raw_binding is None:
+                continue
+            target_ref = raw_binding.get("target_ref")
+            if target_ref != lowered_loop.entry_step_id:
+                continue
+            binding_id = raw_binding.get("id")
+            label = raw_binding.get("label", "default")
+            condition_ref = raw_binding.get("condition_ref", default_condition_ref)
+            if (
+                not isinstance(binding_id, str)
+                or not binding_id
+                or not isinstance(label, str)
+                or not label
+                or not isinstance(condition_ref, str)
+                or not condition_ref
+            ):
+                diagnostics.append(
+                    _loop_policy_binding_diagnostic(
+                        step_call,
+                        "loop backedge route binding metadata must declare string id, label, target_ref, and condition_ref",
+                    )
+                )
+                continue
+            matches.append(
+                _LoopBackedgeBinding(
+                    tail_step_id=tail_step_id,
+                    route_id=binding_id,
+                    label=label,
+                    condition_ref=condition_ref,
+                    source_span=step_call.source_span,
+                    component_ref=step_call.component_ref,
+                )
+            )
+        if len(matches) > 1:
+            diagnostics.append(
+                _loop_policy_binding_diagnostic(
+                    step_call,
+                    "loop backedge route binding metadata is ambiguous for an explicit tail carrier",
+                )
+            )
+        elif len(matches) == 1:
+            explicit_bindings[tail_step_id] = matches[0]
+
+    if len(diagnostics) != diagnostic_count:
+        return ()
+    if not explicit_bindings:
+        return ()
+    missing_tail_ids = [
+        tail_step_id
+        for tail_step_id in lowered_loop.exit_step_ids
+        if tail_step_id not in explicit_bindings
+    ]
+    if missing_tail_ids:
+        for tail_step_id in missing_tail_ids:
+            step_call = step_calls.get(tail_step_id)
+            if step_call is not None:
+                diagnostics.append(
+                    _loop_policy_binding_diagnostic(
+                        step_call,
+                        "loop backedge route binding metadata is missing for an explicit tail carrier",
+                    )
+                )
+        return ()
+    return tuple(explicit_bindings[tail_step_id] for tail_step_id in lowered_loop.exit_step_ids)
+
+
+def _raw_route_bindings_for_step(
+    step_call: ParsedStepCall,
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[Mapping[str, Any] | None, ...]:
+    raw_bindings = step_call.component.metadata.get("route_bindings", ())
+    if raw_bindings is None:
+        return ()
+    if not isinstance(raw_bindings, Sequence) or isinstance(raw_bindings, (str, bytes)):
+        diagnostics.append(
+            _loop_policy_binding_diagnostic(
+                step_call,
+                "route_bindings metadata must be a sequence of route binding mappings",
+            )
+        )
+        return (None,)
+    bindings: list[Mapping[str, Any] | None] = []
+    for raw_binding in raw_bindings:
+        if isinstance(raw_binding, Mapping):
+            bindings.append(raw_binding)
+        else:
+            diagnostics.append(
+                _loop_policy_binding_diagnostic(
+                    step_call,
+                    "route binding metadata must be a mapping",
+                )
+            )
+            bindings.append(None)
+    return tuple(bindings)
+
+
+def _attach_loop_policy_to_step(
     step: Step,
-    entry_step_id: str | None,
     policy: ParsedLoopPolicy,
-    backedge_condition_ref: str,
+    *,
+    carrier_backedges: Mapping[str, _LoopBackedgeBinding],
+    fallback_carrier_id: str | None,
+    fallback_reentry_id: str,
 ) -> Step:
-    if entry_step_id is None or step.id != entry_step_id:
-        return step
-    return replace(
-        step,
-        policy=WorkflowPolicy(
-            loop=LoopPolicy(
-                max_iterations=policy.max_iterations,
-                until_ref=policy.until_ref,
-            ),
-            suspension_routes=(
-                SuspensionRoute(
-                    route_id=f"{step.id}-reentry",
-                    reentry_id=backedge_condition_ref,
-                ),
-            ),
+    backedge = carrier_backedges.get(step.id)
+    if backedge is None:
+        if carrier_backedges or fallback_carrier_id is None or step.id != fallback_carrier_id:
+            return step
+        suspension_route = SuspensionRoute(
+            route_id=f"{step.id}-reentry",
+            reentry_id=fallback_reentry_id,
+        )
+    else:
+        suspension_route = SuspensionRoute(
+            route_id=backedge.condition_ref,
+            reentry_id=backedge.condition_ref,
+        )
+    existing_policy = step.policy
+    merged_policy = WorkflowPolicy(
+        budget=None if existing_policy is None else existing_policy.budget,
+        retry=None if existing_policy is None else existing_policy.retry,
+        loop=LoopPolicy(
+            max_iterations=policy.max_iterations,
+            until_ref=policy.until_ref,
+        ),
+        fanout=None if existing_policy is None else existing_policy.fanout,
+        timing=None if existing_policy is None else existing_policy.timing,
+        idempotency=None if existing_policy is None else existing_policy.idempotency,
+        effects=() if existing_policy is None else existing_policy.effects,
+        reducers=() if existing_policy is None else existing_policy.reducers,
+        compensation=None if existing_policy is None else existing_policy.compensation,
+        escalation=None if existing_policy is None else existing_policy.escalation,
+        control_transitions=(
+            () if existing_policy is None else existing_policy.control_transitions
+        ),
+        topology_overlays=(
+            () if existing_policy is None else existing_policy.topology_overlays
+        ),
+        authority=() if existing_policy is None else existing_policy.authority,
+        suspension_routes=(
+            (() if existing_policy is None else existing_policy.suspension_routes)
+            + (suspension_route,)
         ),
     )
+    if existing_policy is not None and existing_policy.loop is not None:
+        return step
+    return replace(step, policy=merged_policy)
 
 
 def _loop_backedge_condition_ref(policy: ParsedLoopPolicy) -> str:
@@ -2877,14 +3302,16 @@ def _loop_backedge_route(
     *,
     source_id: str,
     target_id: str,
+    label: str,
     condition_ref: str,
     source_form: str,
+    route_id: str | None = None,
 ) -> Route:
     return Route(
-        id=f"{source_id}-{target_id}",
+        id=route_id or f"{source_id}-{target_id}",
         source=source_id,
         target=target_id,
-        label="reentry",
+        label=label,
         condition_ref=condition_ref,
         source_span=loop.source_span,
         metadata={
@@ -2906,6 +3333,136 @@ def _default_route(
         target=target_id,
         source_span=source_span,
         metadata={"source_form": source_form},
+    )
+
+
+def _bind_route_metadata(
+    routes: Sequence[Route],
+    block: ParsedSourceBlock,
+    diagnostics: list[AuthoringDiagnostic],
+) -> tuple[Route, ...]:
+    step_calls = _step_calls_by_id(block)
+    routes_by_visible_key: dict[tuple[str, str, str], list[Route]] = {}
+    for route in routes:
+        routes_by_visible_key.setdefault((route.source, route.target, route.label), []).append(route)
+
+    replacements: dict[tuple[str, str, str], Route] = {}
+    bound_route_ids: dict[str, tuple[str, str, str]] = {}
+    for step_id, step_call in step_calls.items():
+        raw_bindings = step_call.component.metadata.get("route_bindings", ())
+        if raw_bindings is None:
+            continue
+        if not isinstance(raw_bindings, Sequence) or isinstance(raw_bindings, (str, bytes)):
+            diagnostics.append(
+                _route_metadata_diagnostic(
+                    step_call,
+                    "route_bindings metadata must be a sequence of route binding mappings",
+                )
+            )
+            continue
+        seen_keys: set[tuple[str, str, str]] = set()
+        for raw_binding in raw_bindings:
+            if not isinstance(raw_binding, Mapping):
+                diagnostics.append(
+                    _route_metadata_diagnostic(
+                        step_call,
+                        "route binding metadata must be a mapping",
+                    )
+                )
+                continue
+            binding_id = raw_binding.get("id")
+            target_ref = raw_binding.get("target_ref")
+            label = raw_binding.get("label", "default")
+            condition_ref = raw_binding.get("condition_ref")
+            if (
+                not isinstance(binding_id, str)
+                or not binding_id
+                or not isinstance(target_ref, str)
+                or not target_ref
+                or not isinstance(label, str)
+                or not label
+                or (condition_ref is not None and not isinstance(condition_ref, str))
+            ):
+                diagnostics.append(
+                    _route_metadata_diagnostic(
+                        step_call,
+                        "route binding metadata must declare string id, target_ref, label, and condition_ref",
+                    )
+                )
+                continue
+
+            visible_key = (step_id, target_ref, label)
+            matching_routes = routes_by_visible_key.get(visible_key, [])
+            if visible_key in seen_keys or len(matching_routes) > 1:
+                diagnostics.append(
+                    _route_metadata_diagnostic(
+                        step_call,
+                        "route binding metadata is ambiguous for a visible lowered route",
+                    )
+                )
+                continue
+            seen_keys.add(visible_key)
+            if not matching_routes:
+                diagnostics.append(
+                    _route_metadata_diagnostic(
+                        step_call,
+                        "route binding metadata does not match a visible lowered route",
+                    )
+                )
+                continue
+            existing_key = bound_route_ids.get(binding_id)
+            if existing_key is not None and existing_key != visible_key:
+                diagnostics.append(
+                    _route_metadata_diagnostic(
+                        step_call,
+                        "route binding metadata reuses a canonical route id",
+                    )
+                )
+                continue
+            bound_route_ids[binding_id] = visible_key
+            route = matching_routes[0]
+            replacements[visible_key] = replace(
+                route,
+                id=binding_id,
+                condition_ref=condition_ref,
+            )
+
+    if diagnostics:
+        return tuple(routes)
+    return tuple(replacements.get((route.source, route.target, route.label), route) for route in routes)
+
+
+def _step_calls_by_id(block: ParsedSourceBlock) -> dict[str, ParsedStepCall]:
+    step_calls: dict[str, ParsedStepCall] = {}
+    for statement in block.statements:
+        if isinstance(statement, ParsedStepCall):
+            step_calls[statement.id] = statement
+        elif isinstance(statement, ParsedBranchBlock):
+            for arm in statement.arms:
+                step_calls.update(_step_calls_by_id(arm.body))
+        elif isinstance(statement, ParsedLoopBlock):
+            step_calls.update(_step_calls_by_id(statement.body))
+    return step_calls
+
+
+def _route_metadata_diagnostic(step: ParsedStepCall, message: str) -> AuthoringDiagnostic:
+    return _diagnostic(
+        DiagnosticCode.ROUTE_METADATA_MISMATCH,
+        message,
+        source_span=step.source_span,
+        component_ref=step.component_ref,
+    )
+
+
+def _loop_policy_binding_diagnostic(
+    step: ParsedStepCall,
+    message: str,
+) -> AuthoringDiagnostic:
+    return _diagnostic(
+        DiagnosticCode.LOOP_POLICY_BINDING_MISMATCH,
+        message,
+        source_span=step.source_span,
+        component_ref=step.component_ref,
     )
 
 

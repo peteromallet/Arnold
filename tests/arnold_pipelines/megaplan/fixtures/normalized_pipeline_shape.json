@@ -52,6 +52,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_prep"
       }
@@ -78,6 +79,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_plan"
       }
@@ -104,6 +106,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_critique"
       }
@@ -176,6 +179,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_gate"
       }
@@ -213,6 +217,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_revise",
         "max_iterations": 4
@@ -240,6 +245,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_run"
       }
@@ -300,6 +306,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_tiebreaker_decide"
       }
@@ -326,6 +333,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_finalize"
       }
@@ -352,6 +360,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_execute"
       }
@@ -400,6 +409,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_review"
       }
@@ -421,6 +431,7 @@
       },
       "handler_ref": null,
       "terminal": true,
+      "subpipeline": null,
       "metadata": {
         "terminal": true
       }
@@ -447,6 +458,7 @@
       },
       "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override",
       "terminal": false,
+      "subpipeline": null,
       "metadata": {
         "handler_ref": "arnold_pipelines.megaplan.handlers:handle_override"
       }

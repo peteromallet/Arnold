@@ -17,7 +17,7 @@ import pytest
 
 from arnold.execution import ExecutionRegistries, ExecutionState, run
 from arnold.execution.backend import LocalJournalBackend
-from arnold.kernel import read_event_journal
+from arnold.kernel import CapabilityCheck, CapabilityId, read_event_journal
 from arnold.workflow import compile_workflow_file
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -42,6 +42,27 @@ class _DeterministicBackend(LocalJournalBackend):
     def _monotonic(self) -> float:
         self._monotonic_value += 1.0
         return self._monotonic_value
+
+
+class _AllowCapability:
+    def check(
+        self,
+        requirement_id: str,
+        *,
+        route: str,
+        context: dict[str, Any],
+    ) -> CapabilityCheck:
+        del route, context
+        namespace, _, name = requirement_id.partition(":")
+        return CapabilityCheck(
+            capability_id=CapabilityId(namespace=namespace, name=name),
+            allowed=True,
+            reason="test capability",
+        )
+
+
+def _registries() -> ExecutionRegistries:
+    return ExecutionRegistries(capabilities={"artifact:write": _AllowCapability()})
 
 
 def _normalize_event(event: Any) -> dict[str, Any]:
@@ -92,7 +113,7 @@ def test_compiled_authoring_fixture_runs_to_completion(
     result = run(
         manifest,
         artifact_root=tmp_path,
-        registries=ExecutionRegistries(),
+        registries=_registries(),
         backend=backend,
     )
 
@@ -145,7 +166,7 @@ def test_compiled_authoring_fixture_emits_expected_shape_events(
     result = run(
         manifest,
         artifact_root=tmp_path,
-        registries=ExecutionRegistries(),
+        registries=_registries(),
         backend=backend,
     )
 
@@ -176,7 +197,7 @@ def test_compiled_authoring_fixture_is_deterministic_across_runs(
         return run(
             manifest,
             artifact_root=root,
-            registries=ExecutionRegistries(),
+            registries=_registries(),
             backend=backend,
         )
 
@@ -212,7 +233,7 @@ def test_compiled_authoring_manifest_hash_is_stable(tmp_path: Path) -> None:
     run(
         first,
         artifact_root=tmp_path,
-        registries=ExecutionRegistries(),
+        registries=_registries(),
         backend=backend,
     )
     assert first.manifest_hash == second.manifest_hash
