@@ -3614,7 +3614,22 @@ def _can_attempt_local_additive_revise(state: AgentEditState) -> bool:
             return False
         return True
     if not _runtime_code_additive_request(state):
-        return False
+        route = _canonical_agent_edit_route(state.route)
+        if route != "revise":
+            return False
+        if topology.missing_graph or topology.dangling_links or topology.absent_endpoint_nodes:
+            return False
+        if topology.socket_type_mismatches or topology.missing_required_inputs:
+            return False
+        if topology.schema_available is False:
+            return False
+        if readiness.no_gpu_detected or readiness.validation_errors or readiness.readiness_blockers:
+            return False
+        return bool(
+            topology.unknown_class_types
+            or readiness.missing_models
+            or readiness.missing_node_packs
+        )
     if topology.missing_graph or topology.dangling_links or topology.absent_endpoint_nodes:
         return False
     if readiness.no_gpu_detected or readiness.validation_errors or readiness.readiness_blockers:
@@ -3658,6 +3673,12 @@ def _localized_additive_scoped_evidence(
     topology = state.revision_evidence.topology
     readiness = state.revision_evidence.readiness
     empty_graph_authoring = _empty_graph_authoring_request(state)
+    runtime_code_addition = _runtime_code_additive_request(state)
+    localized_reason = (
+        "localized runtime code-node addition"
+        if runtime_code_addition
+        else "localized existing-graph revise"
+    )
     filtered_original_topology = TopologyFindings(
         missing_graph=False if empty_graph_authoring else topology.missing_graph,
         dangling_links=topology.dangling_links,
@@ -3667,8 +3688,8 @@ def _localized_additive_scoped_evidence(
         summary=(
             "pre-existing empty-graph authoring baseline ignored for new workflow"
             if empty_graph_authoring
-            else "pre-existing unknown/custom-node blockers ignored for localized "
-            "runtime code-node addition"
+            else "pre-existing unknown/custom-node blockers ignored for "
+            f"{localized_reason}"
         ),
     )
     filtered_original_readiness = ReadinessReport(
@@ -3677,8 +3698,8 @@ def _localized_additive_scoped_evidence(
         readiness_blockers=readiness.readiness_blockers,
         object_info_available=readiness.object_info_available,
         summary=(
-            "pre-existing missing model/node-pack blockers ignored for localized "
-            "runtime code-node addition"
+            "pre-existing missing model/node-pack blockers ignored for "
+            f"{localized_reason}"
         ),
     )
     filtered_candidate_topology = TopologyFindings(
@@ -3699,8 +3720,8 @@ def _localized_additive_scoped_evidence(
         ),
         schema_available=candidate_topology.schema_available,
         summary=(
-            "pre-existing unknown/custom-node blockers subtracted for localized "
-            "runtime code-node addition"
+            "pre-existing unknown/custom-node blockers subtracted for "
+            f"{localized_reason}"
         ),
     )
     filtered_candidate_readiness = ReadinessReport(
@@ -3717,8 +3738,8 @@ def _localized_additive_scoped_evidence(
         readiness_blockers=candidate_readiness.readiness_blockers,
         object_info_available=candidate_readiness.object_info_available,
         summary=(
-            "pre-existing missing model/node-pack blockers subtracted for localized "
-            "runtime code-node addition"
+            "pre-existing missing model/node-pack blockers subtracted for "
+            f"{localized_reason}"
         ),
     )
     return (
