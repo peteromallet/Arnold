@@ -5,7 +5,6 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from .critique_status import build_unverifiable_warnings
 from arnold_pipelines.megaplan.schemas import GateSignals
 from arnold_pipelines.megaplan.types import FLAG_BLOCKING_STATUSES, FlagRecord, PlanState
 from arnold_pipelines.megaplan._core import (
@@ -229,7 +228,11 @@ def build_gate_signals(plan_dir: Path, state: PlanState, root: Path | None = Non
     }
     if unverifiable_checks:
         result["signals"]["unverifiable_checks"] = unverifiable_checks
-        result["warnings"].extend(build_unverifiable_warnings(unverifiable_checks))
+        result["signals"]["execution_acceptance_contract"] = {
+            "scope": "execute",
+            "verification_mode": "verification_suite",
+            "required_checks": unverifiable_checks,
+        }
     if open_scope_creep:
         result["warnings"].append(
             "Scope creep detected: the plan appears to be expanding beyond the original idea or recorded user notes."
