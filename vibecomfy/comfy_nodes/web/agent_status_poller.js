@@ -676,6 +676,104 @@ export async function storeOpenRouterCredential(panel, apiKey, descriptor = null
   }
 }
 
+export async function refreshResearchContributionSetting(panel, deps = {}) {
+  if (!panel) {
+    return;
+  }
+  const {
+    getPersistedResearchContributionEnabled,
+    renderAgentPanel,
+    RENDER_SECTIONS,
+    setPersistedResearchContributionEnabled,
+    syncResearchContributionControl,
+  } = deps;
+  try {
+    const res = await fetch("/vibecomfy/agent/settings");
+    const result = await res.json();
+    if (result?.ok === false) {
+      throw new Error(result.user_facing_message || result.reason || "settings unavailable");
+    }
+    const enabled = Boolean(result?.research_contribution_enabled);
+    panel.state.researchContributionEnabled = enabled;
+    if (typeof setPersistedResearchContributionEnabled === "function") {
+      setPersistedResearchContributionEnabled(enabled);
+    }
+    if (typeof syncResearchContributionControl === "function") {
+      syncResearchContributionControl(panel);
+    }
+    if (typeof renderAgentPanel === "function" && RENDER_SECTIONS) {
+      renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.SETTINGS] });
+    }
+  } catch (_e) {
+    const fallback = typeof getPersistedResearchContributionEnabled === "function"
+      ? getPersistedResearchContributionEnabled()
+      : false;
+    panel.state.researchContributionEnabled = fallback;
+    if (typeof syncResearchContributionControl === "function") {
+      syncResearchContributionControl(panel);
+    }
+  }
+}
+
+export async function saveResearchContributionSetting(panel, enabled, { trigger = false } = {}, deps = {}) {
+  if (!panel) {
+    return;
+  }
+  const {
+    getPersistedResearchContributionEnabled,
+    renderAgentPanel,
+    SETTINGS_STATUS_RENDER_SECTIONS,
+    setPersistedResearchContributionEnabled,
+    syncResearchContributionControl,
+    triggerResearchContributionWorkflow,
+  } = deps;
+  panel.state.researchContributionEnabled = Boolean(enabled);
+  panel.state.settingsMessage = enabled ? "Saving research contribution opt-in…" : "Saving research contribution opt-out…";
+  panel.state.settingsMessageKind = "pending";
+  if (typeof setPersistedResearchContributionEnabled === "function") {
+    setPersistedResearchContributionEnabled(Boolean(enabled));
+  }
+  if (typeof renderAgentPanel === "function") {
+    renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+  }
+  try {
+    const res = await fetch("/vibecomfy/agent/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ research_contribution_enabled: Boolean(enabled) }),
+    });
+    const result = await res.json();
+    if (result?.ok === false) {
+      throw new Error(result.user_facing_message || result.reason || "settings save failed");
+    }
+    panel.state.researchContributionEnabled = Boolean(result?.research_contribution_enabled);
+    if (typeof setPersistedResearchContributionEnabled === "function") {
+      setPersistedResearchContributionEnabled(panel.state.researchContributionEnabled);
+    }
+    let message = panel.state.researchContributionEnabled
+      ? "Research contribution is on."
+      : "Research contribution is off.";
+    if (trigger && panel.state.researchContributionEnabled && typeof triggerResearchContributionWorkflow === "function") {
+      message = await triggerResearchContributionWorkflow(panel);
+    }
+    panel.state.settingsMessage = message;
+    panel.state.settingsMessageKind = "success";
+  } catch (e) {
+    panel.state.researchContributionEnabled = typeof getPersistedResearchContributionEnabled === "function"
+      ? getPersistedResearchContributionEnabled()
+      : Boolean(enabled);
+    panel.state.settingsMessage = `Research contribution save failed: ${String(e)}`;
+    panel.state.settingsMessageKind = "error";
+  } finally {
+    if (typeof syncResearchContributionControl === "function") {
+      syncResearchContributionControl(panel);
+    }
+    if (typeof renderAgentPanel === "function") {
+      renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
+    }
+  }
+}
+
 // ── persistAgentSettings ────────────────────────────────────────────────────
 
 export async function persistAgentSettings(panel, {

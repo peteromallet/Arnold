@@ -641,6 +641,7 @@ export function renderSettings(panel, deps = {}) {
     routeStatusState,
     ROUTE_STATUS_KIND,
     setVisible,
+    syncResearchContributionControl,
   } = deps;
   const routeStatus = routeStatusState(panel);
   const descriptor = getRouteDescriptor(panel);
@@ -650,6 +651,9 @@ export function renderSettings(panel, deps = {}) {
   const apiKeyVisible = controlsReady && Boolean(descriptor.browser_api_key_allowed);
   panel.fields.route.disabled = !controlsReady;
   panel.fields.model.disabled = !controlsReady;
+  if (typeof syncResearchContributionControl === "function") {
+    syncResearchContributionControl(panel);
+  }
   setVisible(panel.fields.apiKey, apiKeyVisible, "");
   const storedBrowserKey = typeof hasStoredBrowserCredential === "function"
     ? hasStoredBrowserCredential(panel, panel.fields.route.value)

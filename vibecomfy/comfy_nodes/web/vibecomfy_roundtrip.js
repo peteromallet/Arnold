@@ -46,7 +46,10 @@ import {
   renderComposerActions as renderComposerActionsImpl,
   renderComposerNotice as renderComposerNoticeImpl,
   renderComposerNoticeSection as renderComposerNoticeSectionImpl,
+  renderDeveloper as composerRenderDeveloper,
+  renderDeveloperDisclosure as composerRenderDeveloperDisclosure,
   renderDeveloperSection as composerRenderDeveloperSection,
+  renderSettings as composerRenderSettings,
   renderSettingsSection as composerRenderSettingsSection,
   submitReadinessState as submitReadinessStateImpl,
   syncComposerButtons as syncComposerButtonsImpl,
@@ -132,7 +135,9 @@ import {
   persistAgentSettings,
   populateRouteSelect as pollerPopulateRouteSelect,
   refreshAgentStatus as pollerRefreshAgentStatus,
+  refreshResearchContributionSetting as pollerRefreshResearchContributionSetting,
   routeStatusState,
+  saveResearchContributionSetting as pollerSaveResearchContributionSetting,
   scheduleAgentStatusRetry as pollerScheduleAgentStatusRetry,
   setPersistedAgentProvider,
   storeOpenRouterCredential,
@@ -8478,171 +8483,8 @@ function composerRenderDeps() {
     ROUTE_STATUS_KIND,
     scrubDebugPayload,
     setVisible,
+    syncResearchContributionControl,
   };
-}
-
-function renderDeveloper(panel) {
-  const body = panel?.sections?.developer;
-  if (!body) {
-    return;
-  }
-  clearNode(body);
-
-  const caps = adapterCapabilitySnapshot();
-
-  const devData = el("div");
-  Object.assign(devData.style, {
-    display: "grid",
-    gap: "4px",
-    fontSize: "10px",
-    color: "#8d93a1",
-    lineHeight: "1.4",
-  });
-
-  // ── Adapter capability state ──────────────────────────────────────────
-  const adapterSection = renderDeveloperSubsection("Adapter Capabilities");
-  const capLines = [
-    `graphApply: ${caps.graphApply.available ? "✓" : "✗"} (${caps.graphApply.detail})`,
-    `previewForeground: ${caps.previewForeground.available ? "✓" : "✗"} (${caps.previewForeground.detail})`,
-    caps.previewStrategy ? `preview strategy: ${caps.previewStrategy}${caps.previewPolling ? " (polling fallback)" : ""}` : null,
-    `queueGuard: ${caps.queueGuard.available ? "✓" : "✗"} (${caps.queueGuard.detail})`,
-    caps.queueGuard.fallbackWarning ? `queueGuard fallback: ${caps.queueGuard.fallbackWarning}` : null,
-    `supportsAll: ${caps.supportsAll ? "yes" : "no"} (frontend ${caps.frontendVersion})`,
-  ].filter(Boolean);
-  for (const line of capLines) {
-    const div = el("div", line);
-    div.style.color = line.startsWith("graphApply: ✗") || line.startsWith("previewForeground: ✗") || line.startsWith("queueGuard: ✗") ? "#ff8d8d" : "#8d93a1";
-    adapterSection.appendChild(div);
-  }
-  devData.appendChild(adapterSection);
-
-  // ── Queue guard state ─────────────────────────────────────────────────
-  const qgSection = renderDeveloperSubsection("Queue Guard State");
-  const qgState = getQueueGuardStateForPanel();
-  const runtime = getAgentPanelRuntime();
-  const qgLines = [
-    `hookInstalled: ${qgState.hookInstalled}`,
-    `hookPath: ${qgState.hookPath || "none"}`,
-    qgState.fallbackWarning ? `fallbackWarning: ${qgState.fallbackWarning}` : null,
-    qgState.activeContext ? `activeContext: turn=${qgState.activeContext.turnId || "?"} queueAllowed=${qgState.activeContext.queueAllowed}` : "activeContext: none",
-    qgState.lastBlockNotice ? `lastBlock: ${qgState.lastBlockNotice.at || "?"} — ${qgState.lastBlockNotice.message}` : "lastBlockNotice: none",
-    `blockedTurnKeys: ${runtime.queueGuardBlockedTurnKeys.size}`,
-  ].filter(Boolean);
-  for (const line of qgLines) {
-    qgSection.appendChild(el("div", line));
-  }
-  devData.appendChild(qgSection);
-
-  // ── Hashes ────────────────────────────────────────────────────────────
-  const hashSection = renderDeveloperSubsection("Hashes");
-  const hashLines = [
-    `baselineGraphHash: ${panel.state.baselineGraphHash || "none"}`,
-    panel.state.baselineGraphHashKind ? `baselineGraphHashKind: ${panel.state.baselineGraphHashKind}` : null,
-    panel.state.baselineGraphHashVersion != null ? `baselineGraphHashVersion: ${panel.state.baselineGraphHashVersion}` : null,
-    `candidateGraphHash: ${panel.state.candidateGraphHash || "none"}`,
-    `serverSubmitGraphHash: ${panel.state.serverSubmitGraphHash || "none"}`,
-    panel.state.lastSubmit?.client_graph_hash ? `lastSubmit.client_graph_hash: ${panel.state.lastSubmit.client_graph_hash}` : null,
-    panel.state.lastSubmit?.client_structural_graph_hash ? `lastSubmit.client_structural_graph_hash: ${panel.state.lastSubmit.client_structural_graph_hash}` : null,
-  ].filter(Boolean);
-  for (const line of hashLines) {
-    hashSection.appendChild(el("div", line));
-  }
-  devData.appendChild(hashSection);
-
-  // ── Raw booleans ──────────────────────────────────────────────────────
-  const boolSection = renderDeveloperSubsection("Raw Booleans");
-  const boolLines = [
-    `canvasApplyAllowed: ${panel.state.canvasApplyAllowed}`,
-    `queueAllowed: ${panel.state.queueAllowed}`,
-    `applyAllowed: ${panel.state.applyAllowed}`,
-    `applyEligibility: ${JSON.stringify(panel.state.applyEligibility)}`,
-    panel.state.applyEligibilityWarning ? `applyEligibilityWarning: ${JSON.stringify(panel.state.applyEligibilityWarning)}` : null,
-  ].filter(Boolean);
-  for (const line of boolLines) {
-    boolSection.appendChild(el("div", line));
-  }
-  devData.appendChild(boolSection);
-
-  // ── Missing-contract warning ──────────────────────────────────────────
-  if (panel.state.applyEligibilityWarning && panel.state.applyEligibilityWarning.reason === APPLY_ELIGIBILITY_REASON.MISSING_CONTRACT) {
-    const mcSection = renderDeveloperSubsection("Missing Contract");
-    mcSection.style.color = "#ffc107";
-    mcSection.appendChild(el("div", `turn_id: ${panel.state.applyEligibilityWarning.turn_id || "?"}`));
-    mcSection.appendChild(el("div", `message: ${panel.state.applyEligibilityWarning.message}`));
-    if (panel.state.applyEligibilityWarning.candidate_graph_hash) {
-      mcSection.appendChild(el("div", `candidate_graph_hash: ${panel.state.applyEligibilityWarning.candidate_graph_hash}`));
-    }
-    devData.appendChild(mcSection);
-  }
-
-  // ── Raw JSON ──────────────────────────────────────────────────────────
-  const rawSection = renderDeveloperSubsection("Raw JSON");
-  const statusSnapshot = scrubDebugPayload(panel.state.statusSnapshot);
-  const debugPayload = scrubDebugPayload(panel.state.debugPayload);
-  if (statusSnapshot || debugPayload) {
-    if (statusSnapshot) {
-      rawSection.appendChild(createDetails("Status snapshot", statusSnapshot));
-    }
-    if (debugPayload) {
-      rawSection.appendChild(createDetails("Debug payload", debugPayload));
-    }
-    devData.appendChild(rawSection);
-  }
-
-  body.appendChild(devData);
-  if (Object.prototype.hasOwnProperty.call(body, "textContent")) {
-    const summaryText = [
-      "Adapter Capabilities",
-      ...capLines,
-      "Queue Guard State",
-      ...qgLines,
-      "Raw Booleans",
-      ...boolLines,
-    ].join("\n");
-    body.textContent = summaryText;
-    if (body.parentNode && Object.prototype.hasOwnProperty.call(body.parentNode, "textContent")) {
-      body.parentNode.textContent = summaryText;
-    }
-  }
-}
-
-function renderDeveloperDisclosure(panel) {
-  const body = panel?.sections?.developer;
-  const toggle = getPanelElementById(panel, PANEL_IDS.developerToggle);
-  const expanded = Boolean(panel?.state?.developerExpanded);
-  if (toggle) {
-    toggle.textContent = expanded ? "▾ Developer" : "▸ Developer";
-    toggle.ariaExpanded = expanded ? "true" : "false";
-    if (typeof toggle.setAttribute === "function") {
-      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    } else if (toggle.attributes && typeof toggle.attributes === "object") {
-      toggle.attributes["aria-expanded"] = expanded ? "true" : "false";
-    }
-  }
-  if (body) {
-    body.style.display = expanded ? "grid" : "none";
-  }
-}
-
-function renderDeveloperSubsection(title) {
-  const section = el("div");
-  Object.assign(section.style, {
-    border: "1px solid #282a32",
-    borderRadius: "4px",
-    padding: "6px",
-    background: "#0d0f14",
-  });
-  const heading = el("div", title);
-  Object.assign(heading.style, {
-    fontSize: "10px",
-    fontWeight: "700",
-    color: "#9da1ac",
-    textTransform: "uppercase",
-    letterSpacing: "0.06em",
-    marginBottom: "4px",
-  });
-  section.appendChild(heading);
-  return section;
 }
 
 function syncResearchContributionControl(panel) {
@@ -8668,73 +8510,6 @@ function syncResearchContributionControl(panel) {
   }
   styleSegment(yesButton, enabled);
   styleSegment(noButton, !enabled);
-}
-
-function renderSettings(panel) {
-  const routeStatus = routeStatusState(panel);
-  const descriptor = getRouteDescriptor(panel);
-  const controlsReady =
-    Boolean(descriptor)
-    && routeStatus.kind === ROUTE_STATUS_KIND.READY;
-  const apiKeyVisible = controlsReady && Boolean(descriptor.browser_api_key_allowed);
-  panel.fields.route.disabled = !controlsReady;
-  panel.fields.model.disabled = !controlsReady;
-  syncResearchContributionControl(panel);
-  setVisible(panel.fields.apiKey, apiKeyVisible, "");
-  const storedBrowserKey = hasStoredBrowserCredential(panel, panel.fields.route.value);
-  const browserKeyLabel = normalizeRoutePreference(panel.fields.route.value) === "deepseek" ? "DeepSeek" : "OpenRouter";
-  panel.fields.apiKey.placeholder = apiKeyVisible
-    ? (storedBrowserKey ? `Saved ${browserKeyLabel} key present; paste a new key to replace` : `${browserKeyLabel} API key`)
-    : "Browser API keys are not accepted for this route";
-  if (!apiKeyVisible) {
-    clearCredentialInput(panel);
-  }
-
-  const statusNode = getPanelElementById(panel, PANEL_IDS.settingsStatus);
-  const guidanceNode = getPanelElementById(panel, PANEL_IDS.settingsGuidance);
-  if (!statusNode || !guidanceNode) {
-    return;
-  }
-  statusNode.style.color =
-    panel.state.settingsMessageKind === "success"
-      ? "#7ee787"
-      : panel.state.settingsMessageKind === "error"
-        ? "#ff8d8d"
-        : panel.state.settingsMessageKind === "pending"
-          ? "#f2cc60"
-          : "#8d93a1";
-  if (!controlsReady) {
-    if (routeStatus.kind === ROUTE_STATUS_KIND.LOADING) {
-      statusNode.textContent = panel.state.settingsMessage || "Loading route/model status…";
-      guidanceNode.textContent = "Waiting for /vibecomfy/agent/status before enabling route/model controls.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MISSING_OPTIONS) {
-      statusNode.textContent = panel.state.settingsMessage || "Status missing route options; route/model controls disabled.";
-      guidanceNode.textContent = "The backend returned status without route_options. Check /vibecomfy/agent/status and retry.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.MALFORMED) {
-      statusNode.textContent = panel.state.settingsMessage || "Malformed status payload; route/model controls disabled.";
-      guidanceNode.textContent = "The backend status payload is malformed. Fix /vibecomfy/agent/status and retry.";
-    } else if (routeStatus.kind === ROUTE_STATUS_KIND.UNAVAILABLE) {
-      statusNode.textContent = panel.state.settingsMessage || "Status unavailable.";
-      guidanceNode.textContent = "Could not reach /vibecomfy/agent/status. Retry with Test Provider after restoring the backend.";
-    } else {
-      statusNode.textContent = panel.state.settingsMessage || "Route/model controls unavailable.";
-      guidanceNode.textContent = "";
-    }
-    return;
-  }
-
-  const normalizedRoute = descriptor.normalized_route || normalizeRoutePreference(panel.fields.route.value);
-  const providerAvailable = panel.state.statusSnapshot?.provider_available;
-  const availability = providerAvailable === false ? "provider unavailable" : "provider ready";
-  statusNode.textContent = panel.state.settingsMessage
-    || `${descriptor.requested_route} → ${normalizedRoute} (${availability})`;
-  guidanceNode.textContent = descriptor.guidance || "";
-  if (apiKeyVisible && storedBrowserKey) {
-    guidanceNode.textContent += `${guidanceNode.textContent ? "\n" : ""}Saved ${browserKeyLabel} key present. Paste a new key only if you want to replace it.`;
-  }
-  if (descriptor.requested_route === "anthropic") {
-    guidanceNode.textContent += "\nClaude runs through your local CLI setup; browser-submitted API keys are not stored for this route.";
-  }
 }
 
 function syncComposerButtons(panel, {
@@ -9035,25 +8810,13 @@ async function saveAgentSettings(panel, { includeCredential = false } = {}) {
 }
 
 async function refreshResearchContributionSetting(panel) {
-  if (!panel) {
-    return;
-  }
-  try {
-    const res = await fetch("/vibecomfy/agent/settings");
-    const result = await res.json();
-    if (result?.ok === false) {
-      throw new Error(result.user_facing_message || result.reason || "settings unavailable");
-    }
-    const enabled = Boolean(result?.research_contribution_enabled);
-    panel.state.researchContributionEnabled = enabled;
-    setPersistedResearchContributionEnabled(enabled);
-    syncResearchContributionControl(panel);
-    renderAgentPanel(panel, { dirtySections: [RENDER_SECTIONS.SETTINGS] });
-  } catch (_e) {
-    const fallback = getPersistedResearchContributionEnabled();
-    panel.state.researchContributionEnabled = fallback;
-    syncResearchContributionControl(panel);
-  }
+  return pollerRefreshResearchContributionSetting(panel, {
+    getPersistedResearchContributionEnabled,
+    renderAgentPanel,
+    RENDER_SECTIONS,
+    setPersistedResearchContributionEnabled,
+    syncResearchContributionControl,
+  });
 }
 
 async function triggerResearchContributionWorkflow(panel) {
@@ -9073,42 +8836,14 @@ async function triggerResearchContributionWorkflow(panel) {
 }
 
 async function saveResearchContributionSetting(panel, enabled, { trigger = false } = {}) {
-  if (!panel) {
-    return;
-  }
-  panel.state.researchContributionEnabled = Boolean(enabled);
-  panel.state.settingsMessage = enabled ? "Saving research contribution opt-in…" : "Saving research contribution opt-out…";
-  panel.state.settingsMessageKind = "pending";
-  setPersistedResearchContributionEnabled(Boolean(enabled));
-  renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-  try {
-    const res = await fetch("/vibecomfy/agent/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ research_contribution_enabled: Boolean(enabled) }),
-    });
-    const result = await res.json();
-    if (result?.ok === false) {
-      throw new Error(result.user_facing_message || result.reason || "settings save failed");
-    }
-    panel.state.researchContributionEnabled = Boolean(result?.research_contribution_enabled);
-    setPersistedResearchContributionEnabled(panel.state.researchContributionEnabled);
-    let message = panel.state.researchContributionEnabled
-      ? "Research contribution is on."
-      : "Research contribution is off.";
-    if (trigger && panel.state.researchContributionEnabled) {
-      message = await triggerResearchContributionWorkflow(panel);
-    }
-    panel.state.settingsMessage = message;
-    panel.state.settingsMessageKind = "success";
-  } catch (e) {
-    panel.state.researchContributionEnabled = getPersistedResearchContributionEnabled();
-    panel.state.settingsMessage = `Research contribution save failed: ${String(e)}`;
-    panel.state.settingsMessageKind = "error";
-  } finally {
-    syncResearchContributionControl(panel);
-    renderAgentPanel(panel, { dirtySections: SETTINGS_STATUS_RENDER_SECTIONS });
-  }
+  return pollerSaveResearchContributionSetting(panel, enabled, { trigger }, {
+    getPersistedResearchContributionEnabled,
+    renderAgentPanel,
+    SETTINGS_STATUS_RENDER_SECTIONS,
+    setPersistedResearchContributionEnabled,
+    syncResearchContributionControl,
+    triggerResearchContributionWorkflow,
+  });
 }
 
 async function autoSaveAgentSettings(panel, { includeCredential = false } = {}) {
