@@ -18,10 +18,10 @@ tiebreaker_researcher = "premium:low"
 tiebreaker_challenger = "premium:low"
 
 [profiles.partnered-5.tier_models.execute]
-1 = "codex:gpt-5.5"
-2 = "codex:gpt-5.5"
-3 = "codex:gpt-5.5"
-4 = "codex:gpt-5.5"
+1 = "hermes:deepseek:deepseek-v4-flash"
+2 = "hermes:deepseek:deepseek-v4-pro"
+3 = "hermes:deepseek:deepseek-v4-pro"
+4 = "codex:gpt-5.4"
 5 = "codex:gpt-5.5"
 
 [profiles.partnered-5.tier_models.critique]
