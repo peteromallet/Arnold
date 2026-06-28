@@ -81,3 +81,68 @@ def test_drive_stops_on_non_retryable_recover_blocked_error(
     assert "explicitly resolved as non-terminal" in outcome.reason
     assert status_calls == 1
     assert run_calls == 1
+
+
+def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_blocked_loop(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "blocked",
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "manual_review",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured_failures: list[dict[str, object]] = []
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "blocked",
+            "next_step": "recover-blocked",
+            "valid_next": ["recover-blocked"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        assert args == [
+            "override",
+            "recover-blocked",
+            "--reason",
+            "megaplan auto: recover blocked plan after blocker resolution",
+            "--plan",
+            "demo",
+        ]
+        return (1, "", "recover-blocked failed without structured payload")
+
+    def fake_record_failure(**kwargs):
+        captured_failures.append(dict(kwargs))
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", fake_record_failure)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=2)
+
+    assert outcome.status == "cap"
+    assert outcome.final_state == "blocked"
+    assert outcome.iterations == 2
+    assert outcome.last_phase == "recover-blocked"
+    iteration_cap_failure = captured_failures[-1]
+    assert iteration_cap_failure["kind"] == "iteration_cap"
+    assert iteration_cap_failure["resume_cursor"] == {
+        "phase": "execute",
+        "retry_strategy": "manual_review",
+    }
