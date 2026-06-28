@@ -338,7 +338,7 @@ def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
     _commit_and_push_phase(root, "branch-x", "plan-x", "finalize", writer=messages.append)
 
     assert ["git", "rebase", "--abort"] in subprocess_calls
-    assert ["git", "push", "--no-verify", "--force-with-lease", "origin", "branch-x"] in run_command_calls
+    assert ["git", "push", "--no-verify", "--force-with-lease", "origin", "HEAD:branch-x"] in run_command_calls
     assert any("warning: git rebase --abort failed" in message for message in messages)
 
 
@@ -391,6 +391,10 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "merged",
+    )
+    monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._ensure_milestone_pr",
         lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError("_ensure_milestone_pr should not run when PR state exists")
@@ -407,8 +411,8 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
 
     result = run_chain(spec_path, root, writer=lambda _message: None)
 
-    assert result["status"] == "stopped"
-    assert checkout_calls == [("test/m1", "main", True)]
+    assert result["status"] == "blocked"
+    assert checkout_calls == []
     saved = load_chain_state(spec_path)
     assert saved.pr_number == 118
     assert saved.pr_state == "merged"
