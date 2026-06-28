@@ -253,10 +253,19 @@ def _blocked_phase_rerun_target(
     if not isinstance(latest_failure, Mapping):
         return None
     failure_kind = latest_failure.get("kind")
+    stale_recover_blocked_failure = (
+        failure_kind == "blocked_recovery_not_resolved"
+        and _string_from_path(state, ("latest_failure", "phase")) == "recover-blocked"
+        and source in {"resume_cursor.phase", "phase_result.phase"}
+    )
     rerun_from_stale_recovery_helper = (
         failure_kind == "iteration_cap" and source == "phase_result.phase"
     )
-    if failure_kind != "authority_divergence" and not rerun_from_stale_recovery_helper:
+    if (
+        failure_kind != "authority_divergence"
+        and not rerun_from_stale_recovery_helper
+        and not stale_recover_blocked_failure
+    ):
         return None
     return _workflow_step_target(
         phase,
