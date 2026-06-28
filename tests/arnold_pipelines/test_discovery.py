@@ -38,8 +38,6 @@ def test_discover_migrated_pipelines_have_builders() -> None:
         "evidence_pack_verifier",
         "my-pipeline",
         "epic-blitz",
-        "folder-audit",
-        "deliberation",
     }
     assert ids == expected, f"missing or extra: {ids ^ expected}"
     for info in results:
@@ -71,7 +69,6 @@ def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
         "writing-panel-strict": "arnold_pipelines/megaplan/pipelines/writing_panel_strict",
         "epic-blitz": "arnold_pipelines/megaplan/pipelines/epic_blitz.py",
         "select-tournament": "arnold_pipelines/megaplan/pipelines/select_tournament",
-        "folder-audit": "arnold/pipelines/folder_audit",
     }
     for pipeline_id, package_path in expected.items():
         info = by_id[pipeline_id]
@@ -118,13 +115,6 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
     assert by_id["creative"].builder_contract == "native"
     assert by_id["creative"].load_state == "loadable-native"
 
-    deliberation = by_id["deliberation"]
-    assert deliberation.builder_contract == "native"
-    assert deliberation.load_state == "loadable-native"
-    assert deliberation.builder is not None
-    assert deliberation.canonical_builder_path == "arnold.pipelines.deliberation:build_pipeline"
-    assert deliberation.docs_path == "arnold/pipelines/deliberation/SKILL.md"
-
 
 def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
     """Megaplan migrated rows use the product package as their canonical source."""
@@ -142,8 +132,6 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         "writing-panel-strict": "arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline",
         "epic-blitz": "arnold_pipelines.megaplan.pipelines.epic_blitz:build_pipeline",
         "select-tournament": "arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline",
-        "folder-audit": "arnold.pipelines.folder_audit:build_pipeline",
-        "deliberation": "arnold.pipelines.deliberation:build_pipeline",
         "my-pipeline": "arnold_pipelines._template:build_pipeline",
     }
 
@@ -151,9 +139,6 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
     for pipeline_id, target in expected.items():
         info = native_or_deferred[pipeline_id]
         assert info.canonical_builder_path == target
-        if pipeline_id in {"folder-audit", "deliberation"}:
-            assert not info.package_path.startswith("arnold_pipelines/")
-
 
 def test_load_builder_works_with_module_target() -> None:
     builder = load_builder("arnold_pipelines.megaplan.pipelines.jokes:build_pipeline")
@@ -176,3 +161,5 @@ def test_archived_pipelines_included_when_requested() -> None:
     results = discover_shipped_pipelines(include_archived=True)
     archived = {info.id for info in results if info.disposition == "archive"}
     assert "megaplan.epic_blitz_py" in archived or "megaplan.epic_blitz" in archived
+    assert "legacy.folder_audit" in archived
+    assert "legacy.deliberation" in archived

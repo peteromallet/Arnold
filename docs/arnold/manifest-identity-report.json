@@ -48,7 +48,7 @@
       },
       "registry_id": "megaplan.core",
       "registry_manifest_hash": null,
-      "registry_path": "arnold/pipelines/megaplan/_pipeline/pipeline_ids.json",
+      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
         "path": "arnold_pipelines/megaplan/SKILL.md"
@@ -73,7 +73,7 @@
       },
       "registry_id": "megaplan.creative",
       "registry_manifest_hash": null,
-      "registry_path": "arnold/pipelines/megaplan/_pipeline/pipeline_ids.json",
+      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
         "path": "arnold_pipelines/megaplan/pipelines/creative/SKILL.md"
@@ -98,7 +98,7 @@
       },
       "registry_id": "megaplan.doc",
       "registry_manifest_hash": null,
-      "registry_path": "arnold/pipelines/megaplan/_pipeline/pipeline_ids.json",
+      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
         "path": "arnold_pipelines/megaplan/pipelines/doc/SKILL.md"
@@ -123,7 +123,7 @@
       },
       "registry_id": "megaplan.jokes",
       "registry_manifest_hash": null,
-      "registry_path": "arnold/pipelines/megaplan/_pipeline/pipeline_ids.json",
+      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
         "path": "arnold_pipelines/megaplan/pipelines/jokes/SKILL.md"
@@ -168,7 +168,7 @@
       },
       "registry_id": "megaplan.planning",
       "registry_manifest_hash": null,
-      "registry_path": "arnold/pipelines/megaplan/_pipeline/pipeline_ids.json",
+      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
         "path": "arnold_pipelines/megaplan/pipelines/planning/SKILL.md"
@@ -217,7 +217,7 @@
   ],
   "identity_count": 9,
   "registry_files": [
-    "arnold/pipelines/megaplan/_pipeline/pipeline_ids.json",
+    "arnold_pipelines/megaplan/pipeline_ids.json",
     "arnold_pipelines/evidence_pack/pipeline_ids.json"
   ],
   "source": "Derived from arnold_pipelines.discovery, discovered pipeline_ids.json files, generated docs/skill paths, and compile_pipeline(builder()).",
