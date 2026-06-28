@@ -33,6 +33,13 @@ def _extract_wrapper_function(name: str) -> str:
     return text[start:end]
 
 
+def _extract_wrapper_function_until(name: str, next_name: str) -> str:
+    text = _wrapper("arnold-watchdog")
+    start = text.index(f"{name}() {{")
+    end = text.index(f"\n{next_name}() {{", start)
+    return text[start:end]
+
+
 def _extract_reap_program() -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index("reap_stale_repair_candidates() {")
@@ -356,9 +363,12 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
     assert "dispatch_kimi_repair()" in text
     assert 'setsid bash -c \'echo "$$" > "$0"; exec /usr/local/bin/arnold-kimi-goal-operator "$@"\'' in text
     assert "kimi_dispatch_marker_set" in text
+    assert "mechanical_relaunch_attempted_previously" in text
     assert "kimi_dispatch_failed_previously" in text
     # The direct-relaunch fallback consumes the marker (Kimi tried + exited w/o recovery).
     assert "session stopped; Kimi tried and exited without recovery -> direct relaunch" in text
+    assert "session stopped; mechanical relaunch first" in text
+    assert "session stopped after mechanical relaunch: background-dispatched Kimi goal operator" in text
     # The marker is cleared once the session is observed alive + healthy.
     assert "kimi_dispatch_marker_clear" in text
     assert 'rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")"' in text
@@ -689,6 +699,7 @@ def test_watchdog_done_plan_reports_complete_without_repair_or_relaunch(tmp_path
             _extract_wrapper_function("session_marker_path"),
             _extract_wrapper_function("kimi_dispatch_marker_clear"),
             _extract_wrapper_function("clear_session_tracking_artifacts"),
+            _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -701,6 +712,8 @@ session_health_status() { echo stopped; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+kimi_dispatch_marker_set() { :; }
+mechanical_relaunch_attempted_previously() { return 1; }
 kimi_dispatch_failed_previously() { return 1; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
@@ -708,6 +721,21 @@ ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
+plan_attention_status_env() {
+  cat <<'EOF'
+PLAN_STATUS_FOUND='1'
+PLAN_STATUS_PLAN_NAME='demo-plan'
+PLAN_STATUS_CURRENT_STATE=''
+PLAN_STATUS_RETRY_STRATEGY=''
+PLAN_STATUS_FAILURE_KIND=''
+PLAN_STATUS_FAILURE_MESSAGE=''
+PLAN_STATUS_FAILURE_PHASE=''
+PLAN_STATUS_FAILURE_RECORDED_AT=''
+PLAN_STATUS_TIERS_TRIED=''
+PLAN_STATUS_PUSHED_COMMITS=''
+PLAN_STATUS_MANUAL_REVIEW='0'
+EOF
+}
 """.strip(),
             f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
@@ -739,6 +767,7 @@ def test_watchdog_done_plan_without_marker_plan_name_uses_newest_plan_dir(tmp_pa
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -751,6 +780,8 @@ session_health_status() { echo stopped; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+kimi_dispatch_marker_set() { :; }
+mechanical_relaunch_attempted_previously() { return 1; }
 kimi_dispatch_failed_previously() { return 1; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
@@ -758,6 +789,21 @@ ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
+plan_attention_status_env() {
+  cat <<'EOF'
+PLAN_STATUS_FOUND='1'
+PLAN_STATUS_PLAN_NAME='newer-plan'
+PLAN_STATUS_CURRENT_STATE=''
+PLAN_STATUS_RETRY_STRATEGY=''
+PLAN_STATUS_FAILURE_KIND=''
+PLAN_STATUS_FAILURE_MESSAGE=''
+PLAN_STATUS_FAILURE_PHASE=''
+PLAN_STATUS_FAILURE_RECORDED_AT=''
+PLAN_STATUS_TIERS_TRIED=''
+PLAN_STATUS_PUSHED_COMMITS=''
+PLAN_STATUS_MANUAL_REVIEW='0'
+EOF
+}
 """.strip(),
             f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan '' ''",
         ]
@@ -771,7 +817,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert "TMUX" not in result.stderr
 
 
-def test_watchdog_nonterminal_plan_state_still_uses_stopped_repair_path(tmp_path: Path) -> None:
+def test_watchdog_nonterminal_plan_state_mechanically_relaunches_before_kimi(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
@@ -785,6 +831,12 @@ def test_watchdog_nonterminal_plan_state_still_uses_stopped_repair_path(tmp_path
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -797,13 +849,22 @@ session_health_status() { echo stopped; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
-kimi_dispatch_failed_previously() { return 1; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
-tmux() { echo TMUX >&2; return 1; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  if [[ "$1" == "new-session" ]]; then
+    echo TMUX_NEW >&2
+    return 0
+  fi
+  echo "TMUX_$1" >&2
+  return 0
+}
 """.strip(),
             f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
@@ -811,11 +872,12 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched\t" in report
+    assert "\trestart\trestarted\tstopped session relaunched\t" in report
     assert "\tobserve\tcomplete\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
-    assert "TMUX" not in result.stderr
+    assert "TMUX_NEW" in result.stderr
+    assert (marker_dir / "demo-session.kimi-dispatch").exists()
 
 
 def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_path: Path) -> None:
@@ -835,6 +897,7 @@ def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_pa
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -847,13 +910,40 @@ session_health_status() { echo stopped; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+kimi_dispatch_marker_set() { :; }
+mechanical_relaunch_attempted_previously() { return 1; }
 kimi_dispatch_failed_previously() { return 1; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
-tmux() { echo TMUX >&2; return 1; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  if [[ "$1" == "new-session" ]]; then
+    echo TMUX_NEW >&2
+    return 0
+  fi
+  echo "TMUX_$1" >&2
+  return 0
+}
+plan_attention_status_env() {
+  cat <<'EOF'
+PLAN_STATUS_FOUND='0'
+PLAN_STATUS_PLAN_NAME=''
+PLAN_STATUS_CURRENT_STATE=''
+PLAN_STATUS_RETRY_STRATEGY=''
+PLAN_STATUS_FAILURE_KIND=''
+PLAN_STATUS_FAILURE_MESSAGE=''
+PLAN_STATUS_FAILURE_PHASE=''
+PLAN_STATUS_FAILURE_RECORDED_AT=''
+PLAN_STATUS_TIERS_TRIED=''
+PLAN_STATUS_PUSHED_COMMITS=''
+PLAN_STATUS_MANUAL_REVIEW='0'
+EOF
+}
 """.strip(),
             f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
         ]
@@ -861,11 +951,11 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched\t" in report
+    assert "\trestart\trestarted\tstopped session relaunched\t" in report
     assert "\tobserve\tcomplete\t" not in report
-    assert "DISPATCH" in result.stderr
+    assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
-    assert "TMUX" not in result.stderr
+    assert "TMUX_NEW" in result.stderr
 
 
 def test_watchdog_unreadable_plan_state_falls_through_to_existing_stopped_path(tmp_path: Path) -> None:
@@ -880,6 +970,12 @@ def test_watchdog_unreadable_plan_state_falls_through_to_existing_stopped_path(t
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -892,7 +988,68 @@ session_health_status() { echo stopped; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
-kimi_dispatch_failed_previously() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  if [[ "$1" == "new-session" ]]; then
+    echo TMUX_NEW >&2
+    return 0
+  fi
+  echo "TMUX_$1" >&2
+  return 0
+}
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trestart\trestarted\tstopped session relaunched\t" in report
+    assert "\tobserve\tcomplete\t" not in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX_NEW" in result.stderr
+
+
+def test_watchdog_restopped_session_falls_back_to_kimi_after_mechanical_relaunch(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {"iteration": 1, "current_state": "planning", "active_step": {"phase": "plan", "attempt": 1}},
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    (marker_dir / "demo-session.kimi-dispatch").write_text("2026-06-28T00:00:00Z\n", encoding="utf-8")
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { :; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
@@ -906,11 +1063,151 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched\t" in report
-    assert "\tobserve\tcomplete\t" not in report
+    assert "\trepair\trepair_dispatched\tKimi goal operator dispatched after mechanical relaunch\t" in report
     assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
     assert "TMUX" not in result.stderr
+
+
+def test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch_or_kimi(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 9,
+            "current_state": "blocked",
+            "resume_cursor": {"phase": "recover-blocked", "retry_strategy": "manual_review"},
+            "latest_failure": {"kind": "iteration_cap", "message": "exceeded max_iterations=200"},
+            "history": [
+                {
+                    "step": "execute",
+                    "result": "blocked",
+                    "batch_to_tier": [
+                        {"actual_agent": "codex", "actual_model": "gpt-5.4"},
+                        {"tier_model_spec": "codex:gpt-5.5"},
+                    ],
+                }
+            ],
+        },
+        events_body="{}\n",
+    )
+    chain_dir = spec_path.parent / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan_name,
+                "last_state": "blocked",
+                "last_pushed_commit": "abc123def456",
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tneeds_human\tmanual_review halt;" in report
+    assert "abc123def456" in report
+    assert "gpt-5.4" in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_needs_human_webhook_posts_once_when_configured(tmp_path: Path) -> None:
+    curl_path = tmp_path / "curl"
+    curl_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"echo called >> {str(tmp_path / 'curl-calls.txt')!r}\n"
+        f"for arg in \"$@\"; do\n"
+        "  case \"$arg\" in\n"
+        f"    @*) cp \"${{arg#@}}\" {str(tmp_path / 'webhook-payload.json')!r} ;;\n"
+        "  esac\n"
+        "done\n",
+        encoding="utf-8",
+    )
+    curl_path.chmod(curl_path.stat().st_mode | stat.S_IXUSR)
+
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    notify_line = (
+        f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws "
+        ".megaplan/briefs/demo.md chain stopped 'manual_review halt'"
+    )
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            f"LOG={str(log_path)!r}",
+            "REPORT_WEBHOOK='https://example.test/watchdog'",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+PLAN_STATUS_PLAN_NAME='demo-plan'
+PLAN_STATUS_CURRENT_STATE='blocked'
+PLAN_STATUS_RETRY_STRATEGY='manual_review'
+PLAN_STATUS_FAILURE_KIND='iteration_cap'
+PLAN_STATUS_FAILURE_MESSAGE='exceeded max_iterations=200'
+PLAN_STATUS_FAILURE_PHASE='recover-blocked'
+PLAN_STATUS_FAILURE_RECORDED_AT='2026-06-28T11:29:34Z'
+PLAN_STATUS_TIERS_TRIED='codex:gpt-5.4, codex:gpt-5.5'
+PLAN_STATUS_PUSHED_COMMITS='abc123def456'
+""".strip(),
+            notify_line,
+        ]
+    )
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "curl-calls.txt").read_text(encoding="utf-8").strip().splitlines() == ["called"]
+    payload = json.loads((tmp_path / "webhook-payload.json").read_text(encoding="utf-8"))
+    assert payload["session"] == "demo-session"
+    assert payload["plan"]["name"] == "demo-plan"
+    assert payload["plan"]["tiers_tried"] == ["codex:gpt-5.4", "codex:gpt-5.5"]
+    assert payload["plan"]["pushed_commit_shas"] == ["abc123def456"]
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tnotify\twebhook_sent\tneeds-human webhook delivered\t" in report
 
 
 def test_watchdog_resolves_relative_chain_specs_against_workspace(tmp_path: Path) -> None:
