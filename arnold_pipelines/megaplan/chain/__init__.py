@@ -1072,20 +1072,11 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         else {}
     )
     baseline_head = execution_baseline.get("head")
-    current_head = baseline_head if isinstance(baseline_head, str) and baseline_head.strip() else None
-    if project_dir is not None:
-        try:
-            actual_head = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
-                cwd=project_dir,
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout.strip()
-            if actual_head:
-                current_head = actual_head
-        except (OSError, subprocess.SubprocessError):
-            pass
+    current_head = _resolve_authority_current_head(
+        plan_dir,
+        project_dir=project_dir,
+        baseline_head=baseline_head if isinstance(baseline_head, str) and baseline_head.strip() else None,
+    )
     evidence_nucleus = load_evidence_nucleus(plan_dir, default_head=current_head)
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
@@ -1187,6 +1178,88 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                     f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
                 )
     return True, latest.name
+
+
+def _resolve_authority_current_head(
+    plan_dir: Path,
+    *,
+    project_dir: Path | None,
+    baseline_head: str | None,
+) -> str | None:
+    actual_head = _best_effort_git_head(project_dir) if project_dir is not None else None
+    recorded_head = _latest_recorded_execution_head(plan_dir)
+    if actual_head and recorded_head:
+        if actual_head == recorded_head:
+            return actual_head
+        if project_dir is not None:
+            if _git_is_ancestor(project_dir, recorded_head, actual_head):
+                return actual_head
+            if _git_is_ancestor(project_dir, actual_head, recorded_head):
+                return recorded_head
+    return actual_head or recorded_head or baseline_head
+
+
+def _best_effort_git_head(project_dir: Path) -> str | None:
+    try:
+        actual_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return actual_head or None
+
+
+def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
+    for path in sorted(
+        plan_dir.glob("execution_batch_*.json"),
+        key=_execution_batch_sort_key,
+        reverse=True,
+    ):
+        head = _latest_head_in_artifact(path)
+        if head:
+            return head
+    return _latest_head_in_artifact(plan_dir / "finalize.json")
+
+
+def _latest_head_in_artifact(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    latest_head: str | None = None
+    for key in ("task_updates", "tasks"):
+        raw_records = payload.get(key)
+        if not isinstance(raw_records, list):
+            continue
+        for record in raw_records:
+            if not isinstance(record, dict):
+                continue
+            observed = record.get("head_sha") or record.get("head")
+            if isinstance(observed, str) and observed.strip():
+                latest_head = observed.strip()
+    return latest_head
+
+
+def _git_is_ancestor(project_dir: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=project_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _plan_terminal_completion_is_authoritative(

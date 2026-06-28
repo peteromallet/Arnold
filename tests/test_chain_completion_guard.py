@@ -316,6 +316,76 @@ def test_latest_execution_batch_all_tasks_done_uses_persisted_execute_baseline_h
     assert reason == "execution_batch_1.json"
 
 
+def test_latest_execution_batch_all_tasks_done_prefers_latest_recorded_head_over_stale_baseline(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-b", "work")
+    recorded_head = _commit_semantic_change(tmp_path)
+    plan_dir = tmp_path / ".megaplan" / "plans" / "plan-m1"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    state = {
+        "name": "plan-m1",
+        "current_state": "blocked",
+        "config": {"project_dir": str(tmp_path)},
+        "meta": {"execution_baseline": {"head": base}},
+    }
+    (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "code",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": recorded_head,
+                    },
+                    {
+                        "id": "T2",
+                        "status": "pending",
+                        "kind": "test",
+                        "commands_run": ["pytest -q tests/test_app.py"],
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "files_changed": ["src/app.py"],
+                        "head_sha": recorded_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    real_run = subprocess.run
+
+    def _fake_run(cmd: list[str], *args: object, **kwargs: object):
+        if cmd[:3] == ["git", "rev-parse", "HEAD"]:
+            raise subprocess.SubprocessError("simulated rev-parse failure")
+        return real_run(cmd, *args, **kwargs)
+
+    with patch("arnold_pipelines.megaplan.chain.subprocess.run", side_effect=_fake_run):
+        ok, reason = chain_module._latest_execution_batch_all_tasks_done(plan_dir)
+
+    assert ok is False
+    assert "T2='unsatisfied':missing_linked_evidence" in reason
+    assert "T1" not in reason
+
+
 def test_empty_finalize_tasks_and_no_execution_batch_blocks(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     _commit_semantic_change(tmp_path)
