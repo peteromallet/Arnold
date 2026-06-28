@@ -21,24 +21,9 @@ from .cache import (
     validate_object_info_cache,
     write_object_info_cache,
 )
+from .types import InputSpec, OutputSpec
 
 _logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class InputSpec:
-    type: str | None = None
-    required: bool = False
-    default: Any = None
-    choices: list[Any] | None = None
-    min: int | float | None = None
-    max: int | float | None = None
-
-
-@dataclass(frozen=True)
-class OutputSpec:
-    type: str | None = None
-    name: str | None = None
 
 
 @dataclass
