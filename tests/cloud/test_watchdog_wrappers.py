@@ -1428,6 +1428,18 @@ def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> Non
     assert scan_once.index('sync_editable_source_branch "$report_items" || true') < scan_once.rindex("maybe_reexec_updated_watchdog")
 
 
+def test_watchdog_refresh_syncs_cloud_runtime_wrappers() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert "sync_cloud_runtime_wrappers()" in text
+    assert 'local wrapper_src_dir="$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers"' in text
+    assert 'local wrapper_dest_dir="/usr/local/bin"' in text
+    assert 'local support_dest_dir="/usr/local/share/arnold-watchdog"' in text
+    assert 'install -m 0755 "$wrapper" "$wrapper_dest_dir/$(basename "$wrapper")"' in text
+    assert 'install -m 0644 "$wrapper_src_dir/principles.md" "$support_dest_dir/principles.md"' in text
+    assert 'sync_cloud_runtime_wrappers >> "$LOG" 2>&1 || return 1' in text
+
+
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:
     text = _wrapper("arnold-chain")
 
