@@ -56,22 +56,28 @@ def _init_repo(repo: Path) -> None:
     _git(repo, "branch", "-M", "main")
 
 
-def _write_chain_spec(root: Path) -> Path:
+def _write_chain_spec(
+    root: Path,
+    *,
+    base_branch: str = "main",
+    branch: str | None = "test/m1",
+) -> Path:
     idea = root / "idea.md"
     idea.write_text("ship milestone\n", encoding="utf-8")
     north_star = root / "NORTHSTAR.md"
     north_star.write_text("north star\n", encoding="utf-8")
     spec_path = root / "chain.yaml"
-    spec_path.write_text(
-        "base_branch: main\n"
+    contents = (
+        f"base_branch: {base_branch}\n"
         "anchors:\n"
         "  north_star: NORTHSTAR.md\n"
         "milestones:\n"
         "  - label: m1\n"
         f"    idea: {idea}\n"
-        "    branch: test/m1\n",
-        encoding="utf-8",
     )
+    if branch:
+        contents += f"    branch: {branch}\n"
+    spec_path.write_text(contents, encoding="utf-8")
     return spec_path
 
 
@@ -253,6 +259,137 @@ def test_checkout_existing_milestone_reconciles_with_refreshed_base(
     assert any("git rebase origin/native-python-working-tree -> rc=0" in m for m in messages)
 
 
+def test_run_chain_repushes_deleted_remote_base_branch_from_local_ref(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+    base_branch = "stack/base"
+    messages: list[str] = []
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "README.md").write_text("base\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "base")
+    _git(source, "branch", "-M", base_branch)
+    _git(source, "push", "-u", "origin", base_branch)
+
+    _git(tmp_path, "clone", "--branch", base_branch, str(origin), str(runner))
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+
+    spec_path = _write_chain_spec(runner, base_branch=base_branch, branch=None)
+    local_base_sha = _git(runner, "rev-parse", f"refs/heads/{base_branch}").stdout.strip()
+
+    _git(source, "push", "origin", f":{base_branch}")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._init_plan",
+        lambda *args, **kwargs: "plan-m1",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._write_chain_policy_into_plan_meta",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._attach_chain_anchors_to_plan",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+        lambda *args, **kwargs: SimpleNamespace(status="blocked", reason="stop"),
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._handle_outcome",
+        lambda *args, **kwargs: "stop",
+    )
+
+    result = run_chain(spec_path, runner, writer=messages.append)
+
+    assert result["status"] == "stopped"
+    assert _git(runner, "ls-remote", "--heads", "origin", base_branch).stdout.split()[0] == local_base_sha
+    saved = load_chain_state(spec_path)
+    assert saved.target_base_ref == local_base_sha
+    assert any(
+        f"re-pushed missing base branch {base_branch} from local at {local_base_sha}" in message
+        for message in messages
+    )
+
+
+def test_run_chain_surfaces_unrecoverable_missing_base_branch_as_terminal_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    origin = tmp_path / "origin.git"
+    source = tmp_path / "source"
+    runner = tmp_path / "runner"
+    base_branch = "stack/base"
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(source))
+    _git(source, "config", "user.email", "test@example.com")
+    _git(source, "config", "user.name", "Test User")
+    (source / "README.md").write_text("base\n", encoding="utf-8")
+    _git(source, "add", "README.md")
+    _git(source, "commit", "-m", "base")
+    base_sha = _git(source, "rev-parse", "HEAD").stdout.strip()
+    _git(source, "branch", "-M", "main")
+    _git(source, "push", "-u", "origin", "main")
+    _git(source, "checkout", "-b", base_branch)
+    _git(source, "push", "-u", "origin", base_branch)
+
+    _git(tmp_path, "clone", "--branch", "main", str(origin), str(runner))
+    _git(runner, "config", "user.email", "test@example.com")
+    _git(runner, "config", "user.name", "Test User")
+    _git(runner, "fetch", "origin", base_branch)
+    _git(runner, "update-ref", "-d", f"refs/remotes/origin/{base_branch}")
+
+    spec_path = _write_chain_spec(runner, base_branch=base_branch, branch=None)
+    save_chain_state(
+        spec_path,
+        chain_module.ChainState(
+            current_milestone_index=0,
+            target_base_ref="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        ),
+    )
+
+    _git(source, "push", "origin", f":{base_branch}")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._preflight_agent_backends",
+        lambda spec, *, writer: None,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.resolve_execution_environment",
+        lambda **_kwargs: SimpleNamespace(to_dict=lambda: {}),
+    )
+
+    result = run_chain(spec_path, runner, writer=lambda _message: None)
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "stopped"
+    assert saved.last_state == "missing_base_ref"
+    assert saved.metadata["missing_base_ref"]["base_branch"] == base_branch
+    assert (
+        saved.metadata["missing_base_ref"]["last_known_sha"]
+        == "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    )
+    assert "cannot be restored from local refs" in result["reason"]
+
+
 def test_chain_child_python_commands_use_safe_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -338,7 +475,7 @@ def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
     _commit_and_push_phase(root, "branch-x", "plan-x", "finalize", writer=messages.append)
 
     assert ["git", "rebase", "--abort"] in subprocess_calls
-    assert ["git", "push", "--no-verify", "--force-with-lease", "origin", "branch-x"] in run_command_calls
+    assert ["git", "push", "--no-verify", "--force-with-lease", "origin", "HEAD:branch-x"] in run_command_calls
     assert any("warning: git rebase --abort failed" in message for message in messages)
 
 
@@ -382,7 +519,7 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     )
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
-        lambda _root, branch, *, base_branch, writer, from_origin=False: checkout_calls.append(
+        lambda _root, branch, *, base_branch, writer, from_origin=False, expected_base_ref=None: checkout_calls.append(
             (branch, base_branch, from_origin)
         ),
     )
@@ -403,6 +540,10 @@ def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     monkeypatch.setattr(
         "arnold_pipelines.megaplan.chain._handle_outcome",
         lambda *args, **kwargs: "stop",
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain._pr_state",
+        lambda *args, **kwargs: "open",
     )
 
     result = run_chain(spec_path, root, writer=lambda _message: None)

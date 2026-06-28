@@ -333,6 +333,7 @@ from .git_ops import (
     _dirty_worktree_paths,
     _enable_auto_merge,
     _ensure_milestone_pr,
+    _fetch_base_branch,
     _is_transient_gh_error,
     _is_worktree_dirty,
     _list_open_pr_for_branch,
@@ -1830,6 +1831,75 @@ def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
     )
 
 
+def _mark_plan_missing_base_ref(root: Path, plan_name: str | None, *, failure: dict[str, Any]) -> None:
+    if not plan_name:
+        return
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        return
+    state_path = plan_dir / "state.json"
+    try:
+        raw = json.loads(state_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return
+    if not isinstance(raw, dict):
+        return
+    resume_cursor = raw.get("resume_cursor")
+    if not isinstance(resume_cursor, dict):
+        resume_cursor = {}
+    resume_cursor["phase"] = "recover-base-branch"
+    resume_cursor["retry_strategy"] = "manual_review"
+    raw["resume_cursor"] = resume_cursor
+    raw["current_state"] = "manual_review"
+    raw["latest_failure"] = {
+        "kind": "missing_base_ref",
+        "message": str(failure.get("message") or ""),
+        "phase": "chain",
+        "recorded_at": str(failure.get("recorded_at") or ""),
+    }
+    atomic_write_json(state_path, raw)
+
+
+def _handle_missing_base_ref(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    *,
+    spec: ChainSpec,
+    events: list[dict[str, Any]],
+    milestone_label: str | None,
+    error: CliError,
+) -> dict[str, Any]:
+    last_known_sha = None
+    if isinstance(error.extra, dict):
+        raw_sha = error.extra.get("last_known_sha")
+        if isinstance(raw_sha, str) and raw_sha:
+            last_known_sha = raw_sha
+    if not last_known_sha:
+        last_known_sha = state.target_base_ref
+    failure = {
+        "base_branch": spec.base_branch,
+        "last_known_sha": last_known_sha,
+        "message": error.message,
+        "milestone": milestone_label,
+        "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "retry_strategy": "manual_review",
+    }
+    state.last_state = "missing_base_ref"
+    state.metadata["missing_base_ref"] = failure
+    _mark_plan_missing_base_ref(root, state.current_plan_name, failure=failure)
+    chain_spec.save_chain_state(spec_path, state)
+    events.append({"msg": error.message, "state": "missing_base_ref", "base_branch": spec.base_branch})
+    return _result(
+        "stopped",
+        state,
+        events,
+        spec=spec,
+        reason=error.message,
+    )
+
+
 def _recover_blocked_execute_if_tasks_done(
     root: Path,
     outcome: DriverOutcome,
@@ -2598,26 +2668,128 @@ def run_chain(
             continue
 
         # Resume mid-milestone if we already have a plan name recorded.
-        if (
-            state.current_plan_name
-            and state.current_milestone_index == idx
-            and _plan_state(root, state.current_plan_name, timeout=spec.status_timeout)
-            not in ("missing",)
-        ):
-            plan_name = state.current_plan_name
-            log(f"resuming existing plan {plan_name} for {milestone.label}")
-            if use_pr and milestone.branch:
-                _checkout_milestone_branch(
+        try:
+            if (
+                state.current_plan_name
+                and state.current_milestone_index == idx
+                and _plan_state(root, state.current_plan_name, timeout=spec.status_timeout)
+                not in ("missing",)
+            ):
+                plan_name = state.current_plan_name
+                log(f"resuming existing plan {plan_name} for {milestone.label}")
+                if use_pr and milestone.branch:
+                    base_ref = _checkout_milestone_branch(
+                        root,
+                        milestone.branch or "",
+                        base_branch=spec.base_branch,
+                        writer=writer,
+                        from_origin=push_enabled and not no_git_refresh,
+                        expected_base_ref=state.target_base_ref,
+                    )
+                    if isinstance(base_ref, str) and base_ref:
+                        state.target_base_ref = base_ref
+                        chain_spec.save_chain_state(spec_path, state)
+                    _capture_sync_state(
+                        root, spec_path, branch=milestone.branch, pr_number=state.pr_number
+                    )
+                    if state.pr_number is None:
+                        state = chain_spec.load_chain_state(spec_path)
+                        state.pr_number = _ensure_milestone_pr(
+                            root,
+                            milestone,
+                            base_branch=spec.base_branch,
+                            writer=writer,
+                        )
+                        state.pr_state = "open" if state.pr_number is not None else None
+                        chain_spec.save_chain_state(spec_path, state)
+            else:
+                base_ref = _refresh_base_branch(
                     root,
-                    milestone.branch or "",
-                    base_branch=spec.base_branch,
+                    spec.base_branch,
                     writer=writer,
-                    from_origin=push_enabled and not no_git_refresh,
+                    no_git_refresh=no_git_refresh,
+                    expected_sha=state.target_base_ref,
                 )
-                _capture_sync_state(
-                    root, spec_path, branch=milestone.branch, pr_number=state.pr_number
+                if isinstance(base_ref, str) and base_ref:
+                    state.target_base_ref = base_ref
+                    chain_spec.save_chain_state(spec_path, state)
+                if spec.require_clean_base:
+                    _assert_clean_base(
+                        root,
+                        milestone,
+                        no_push=not push_enabled,
+                        writer=writer,
+                    )
+                if use_pr:
+                    base_ref = _checkout_milestone_branch(
+                        root,
+                        milestone.branch or "",
+                        base_branch=spec.base_branch,
+                        writer=writer,
+                        from_origin=push_enabled and not no_git_refresh,
+                        expected_base_ref=state.target_base_ref,
+                    )
+                    if isinstance(base_ref, str) and base_ref:
+                        state.target_base_ref = base_ref
+                        chain_spec.save_chain_state(spec_path, state)
+                    _capture_sync_state(
+                        root, spec_path, branch=milestone.branch, pr_number=None
+                    )
+                    state = chain_spec.load_chain_state(spec_path)
+                eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
+                eff_robustness = (
+                    state.robustness_bumps.get(milestone.label)
+                    or milestone.robustness
+                    or spec.robustness
                 )
-                if state.pr_number is None:
+                eff_depth = state.depth_bumps.get(milestone.label) or milestone.depth
+                if (
+                    eff_profile != milestone.profile
+                    or eff_robustness != (milestone.robustness or spec.robustness)
+                    or eff_depth != milestone.depth
+                ):
+                    log(
+                        f"milestone {milestone.label} using bumped tiers "
+                        f"profile={eff_profile} robustness={eff_robustness} depth={eff_depth}"
+                    )
+                plan_name = _init_plan(
+                    root,
+                    milestone.idea,
+                    robustness=eff_robustness,
+                    auto_approve=spec.auto_approve,
+                    profile=eff_profile,
+                    vendor=milestone.vendor,
+                    depth=eff_depth,
+                    critic=milestone.critic,
+                    deepseek_provider=milestone.deepseek_provider,
+                    with_prep=milestone.with_prep,
+                    with_feedback=milestone.with_feedback,
+                    prep_clarify=milestone.prep_clarify,
+                    prep_direction=milestone.prep_direction,
+                    phase_model=milestone.phase_model,
+                    writer=writer,
+                )
+                # Record effective chain policy in the newly initialized plan's
+                # state.json metadata so downstream consumers can introspect it.
+                _write_chain_policy_into_plan_meta(
+                    root, plan_name, spec, spec_path, milestone.label
+                )
+                _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
+                state.current_milestone_index = idx
+                state.current_plan_name = plan_name
+                chain_spec.save_chain_state(spec_path, state)
+                if use_pr:
+                    _commit_and_push_phase(
+                        root,
+                        milestone.branch or "",
+                        plan_name,
+                        "init",
+                        writer=writer,
+                        preexisting_dirty_paths=preexisting_dirty_paths,
+                    )
+                    _capture_sync_state(
+                        root, spec_path, branch=milestone.branch, pr_number=state.pr_number
+                    )
                     state = chain_spec.load_chain_state(spec_path)
                     state.pr_number = _ensure_milestone_pr(
                         root,
@@ -2625,97 +2797,20 @@ def run_chain(
                         base_branch=spec.base_branch,
                         writer=writer,
                     )
-                    state.pr_state = "open" if state.pr_number is not None else None
+                    state.pr_state = "open"
                     chain_spec.save_chain_state(spec_path, state)
-        else:
-            _refresh_base_branch(
-                root,
-                spec.base_branch,
-                writer=writer,
-                no_git_refresh=no_git_refresh,
-            )
-            if spec.require_clean_base:
-                _assert_clean_base(
+        except CliError as exc:
+            if exc.code == "missing_base_ref":
+                return _handle_missing_base_ref(
                     root,
-                    milestone,
-                    no_push=not push_enabled,
-                    writer=writer,
+                    spec_path,
+                    state,
+                    spec=spec,
+                    events=events,
+                    milestone_label=milestone.label,
+                    error=exc,
                 )
-            if use_pr:
-                _checkout_milestone_branch(
-                    root,
-                    milestone.branch or "",
-                    base_branch=spec.base_branch,
-                    writer=writer,
-                    from_origin=push_enabled and not no_git_refresh,
-                )
-                _capture_sync_state(
-                    root, spec_path, branch=milestone.branch, pr_number=None
-                )
-                state = chain_spec.load_chain_state(spec_path)
-            eff_profile = state.profile_bumps.get(milestone.label) or milestone.profile
-            eff_robustness = (
-                state.robustness_bumps.get(milestone.label)
-                or milestone.robustness
-                or spec.robustness
-            )
-            eff_depth = state.depth_bumps.get(milestone.label) or milestone.depth
-            if (
-                eff_profile != milestone.profile
-                or eff_robustness != (milestone.robustness or spec.robustness)
-                or eff_depth != milestone.depth
-            ):
-                log(
-                    f"milestone {milestone.label} using bumped tiers "
-                    f"profile={eff_profile} robustness={eff_robustness} depth={eff_depth}"
-                )
-            plan_name = _init_plan(
-                root,
-                milestone.idea,
-                robustness=eff_robustness,
-                auto_approve=spec.auto_approve,
-                profile=eff_profile,
-                vendor=milestone.vendor,
-                depth=eff_depth,
-                critic=milestone.critic,
-                deepseek_provider=milestone.deepseek_provider,
-                with_prep=milestone.with_prep,
-                with_feedback=milestone.with_feedback,
-                prep_clarify=milestone.prep_clarify,
-                prep_direction=milestone.prep_direction,
-                phase_model=milestone.phase_model,
-                writer=writer,
-            )
-            # Record effective chain policy in the newly initialized plan's
-            # state.json metadata so downstream consumers can introspect it.
-            _write_chain_policy_into_plan_meta(
-                root, plan_name, spec, spec_path, milestone.label
-            )
-            _attach_chain_anchors_to_plan(root, spec_path, plan_name, spec, milestone)
-            state.current_milestone_index = idx
-            state.current_plan_name = plan_name
-            chain_spec.save_chain_state(spec_path, state)
-            if use_pr:
-                _commit_and_push_phase(
-                    root,
-                    milestone.branch or "",
-                    plan_name,
-                    "init",
-                    writer=writer,
-                    preexisting_dirty_paths=preexisting_dirty_paths,
-                )
-                _capture_sync_state(
-                    root, spec_path, branch=milestone.branch, pr_number=state.pr_number
-                )
-                state = chain_spec.load_chain_state(spec_path)
-                state.pr_number = _ensure_milestone_pr(
-                    root,
-                    milestone,
-                    base_branch=spec.base_branch,
-                    writer=writer,
-                )
-                state.pr_state = "open"
-                chain_spec.save_chain_state(spec_path, state)
+            raise
 
         def phase_callback(phase: str, _code: int, _out: str, _err: str) -> None:
             if use_pr and milestone.branch:
