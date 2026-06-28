@@ -1075,6 +1075,7 @@ class PlanningControlBinding:
             evaluation = evaluate_blocker_recovery(
                 finalize_data,
                 state,
+                plan_dir=plan_dir,
                 blocked_tasks=phase_result.blocked_tasks,
                 deviations=phase_result.deviations,
             )

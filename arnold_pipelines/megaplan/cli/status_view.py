@@ -400,6 +400,7 @@ def _build_blocker_recovery_context(
     evaluation = evaluate_blocker_recovery(
         finalize_data,
         state,
+        plan_dir=plan_dir,
         blocked_tasks=prereq_blocked_tasks,
         deviations=deviations,
     )
