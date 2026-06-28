@@ -94,6 +94,19 @@ def _run_repair_stall(
     return [line for line in result.stdout.strip().splitlines() if line]
 
 
+def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subprocess.CompletedProcess[str]:
+    env = dict(os.environ)
+    if path_prefix is not None:
+        env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
+    return subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
 def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -109,7 +122,7 @@ def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     assert 'local remote_spec="$3"' in text
     assert "ps -eww -o args=" in text
     assert 'grep -Fq -- "$remote_spec"' in text
-    assert 'health="$(session_health_status "$session" "$workspace" "$remote_spec")"' in text
+    assert 'health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"' in text
 
 
 def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
@@ -447,15 +460,128 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
     text = _wrapper("arnold-watchdog")
 
     assert "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in text
-    assert "cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-}" in text
+    assert "resolve_relaunch_command()" in text
+    assert "default_plan_relaunch_command()" in text
     assert "python3 -P -m arnold_pipelines.megaplan chain start" in text
-    assert '"$SRC_DIR" "$remote_spec" "$workspace"' in text
-    assert "--project-dir %q >> %q 2>&1" in text
+    assert "python3 -P -m arnold_pipelines.megaplan auto --plan" in text
+    assert '"$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command"' in text
     assert "--project-dir %q --one" not in text
     assert 'tmux kill-session -t "$session"' in text
     assert 'sleep 0.2' in text
     assert "relaunch raced with existing tmux session" in text
     assert "session exists after relaunch race" in text
+
+
+def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = Path("/workspace/test-watchdog-vibecomfy-per-workflow-window-chat-20260628")
+    (workspace / ".megaplan" / "plans" / "per-workflow-window-chat-cloud-20260628").mkdir(parents=True, exist_ok=True)
+
+    tmux_path = tmp_path / "tmux"
+    tmux_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        f"vibecomfy-per-workflow-window-chat\t4000\t{workspace}\t"
+        "cd "
+        f"{workspace}"
+        " && MEGAPLAN_TRUSTED_CONTAINER=1 python3 -m arnold_pipelines.megaplan init "
+        "--project-dir . --idea-file .megaplan/briefs/per-workflow-window-chat.md "
+        "--name per-workflow-window-chat-cloud-20260628 --auto-start\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    tmux_path.chmod(tmux_path.stat().st_mode | stat.S_IXUSR)
+
+    ps_path = tmp_path / "ps"
+    ps_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        "4000 1 bash -lc bootstrap\n"
+        "4001 4000 /root/.pyenv/versions/3.11.11/bin/python3 -m arnold_pipelines.megaplan init "
+        "--project-dir . --idea-file .megaplan/briefs/per-workflow-window-chat.md "
+        "--name per-workflow-window-chat-cloud-20260628 --auto-start\n"
+        "4002 4001 /root/.pyenv/versions/3.11.11/bin/python3 -m arnold_pipelines.megaplan critique "
+        "--plan per-workflow-window-chat-cloud-20260628\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    ps_path.chmod(ps_path.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("adopt_unmarked_tmux_sessions"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "adopt_unmarked_tmux_sessions",
+        ]
+    )
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert "vibecomfy-per-workflow-window-chat" in result.stdout
+
+    marker_path = marker_dir / "vibecomfy-per-workflow-window-chat.json"
+    payload = json.loads(marker_path.read_text(encoding="utf-8"))
+    assert payload["session"] == "vibecomfy-per-workflow-window-chat"
+    assert payload["workspace"] == str(workspace)
+    assert payload["run_kind"] == "plan"
+    assert payload["plan_name"] == "per-workflow-window-chat-cloud-20260628"
+    assert payload["remote_spec"] == ".megaplan/briefs/per-workflow-window-chat.md"
+    assert "python3 -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in payload["relaunch_command"]
+
+
+def test_watchdog_does_not_adopt_non_arnold_tmux_sessions(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = Path("/workspace/test-watchdog-random-workspace")
+    workspace.mkdir(exist_ok=True)
+
+    tmux_path = tmp_path / "tmux"
+    tmux_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        f"scratch\t5000\t{workspace}\tbash -lc 'python3 -m http.server 8080'\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    tmux_path.chmod(tmux_path.stat().st_mode | stat.S_IXUSR)
+
+    ps_path = tmp_path / "ps"
+    ps_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "cat <<'EOF'\n"
+        "5000 1 bash -lc python3 -m http.server 8080\n"
+        "5001 5000 python3 -m http.server 8080\n"
+        "EOF\n",
+        encoding="utf-8",
+    )
+    ps_path.chmod(ps_path.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("adopt_unmarked_tmux_sessions"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "adopt_unmarked_tmux_sessions",
+        ]
+    )
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == ""
+    assert not marker_dir.exists()
+
+
+def test_watchdog_plan_markers_relaunch_with_auto_not_chain_start(tmp_path: Path) -> None:
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("default_plan_relaunch_command"),
+            _extract_wrapper_function("resolve_relaunch_command"),
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            "resolve_relaunch_command demo-session /tmp/workspace /tmp/not-a-chain.yaml plan demo-plan ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "python3 -P -m arnold_pipelines.megaplan auto --plan demo-plan" in result.stdout
+    assert "chain start" not in result.stdout
 
 
 def test_arnold_chain_wrapper_reloads_hot_env_before_launch() -> None:

@@ -86,6 +86,237 @@ with open(path, "a", encoding="utf-8") as handle:
 PY
 }
 
+adopt_unmarked_tmux_sessions() {
+  python3 - "$MARKER_DIR" "$SRC_DIR" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import re
+import shlex
+import subprocess
+import sys
+
+marker_dir = pathlib.Path(sys.argv[1])
+src_dir = sys.argv[2]
+
+try:
+    panes_proc = subprocess.run(
+        ["tmux", "list-panes", "-a", "-F", "#S\t#{pane_pid}\t#{pane_current_path}\t#{pane_start_command}"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+except FileNotFoundError:
+    raise SystemExit(0)
+if panes_proc.returncode != 0:
+    raise SystemExit(0)
+
+ps_proc = subprocess.run(
+    ["ps", "-eo", "pid=,ppid=,args="],
+    text=True,
+    capture_output=True,
+    check=False,
+)
+children: dict[int, list[tuple[int, str]]] = {}
+if ps_proc.returncode == 0:
+    for raw in ps_proc.stdout.splitlines():
+        parts = raw.strip().split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        children.setdefault(ppid, []).append((pid, parts[2]))
+
+
+def _split(raw: str) -> list[str]:
+    try:
+        return shlex.split(raw)
+    except Exception:
+        return raw.split()
+
+
+def _extract_flag(tokens: list[str], flag: str) -> str | None:
+    prefix = flag + "="
+    for idx, token in enumerate(tokens):
+        if token == flag and idx + 1 < len(tokens):
+            return tokens[idx + 1]
+        if token.startswith(prefix):
+            return token[len(prefix):]
+    return None
+
+
+def _workspace_for(current_path: str) -> str | None:
+    if not current_path.startswith("/workspace/"):
+        return None
+    current = pathlib.Path(current_path)
+    for candidate in (current, *current.parents):
+        if str(candidate) == "/workspace":
+            break
+        if (candidate / ".megaplan").exists():
+            return str(candidate)
+    return None
+
+
+def _descendants(root_pid: int) -> list[str]:
+    stack = [root_pid]
+    seen: set[int] = set()
+    out: list[str] = []
+    while stack:
+        current = stack.pop()
+        for child_pid, args in children.get(current, []):
+            if child_pid in seen:
+                continue
+            seen.add(child_pid)
+            out.append(args)
+            stack.append(child_pid)
+    return out
+
+
+def _skip_session(session: str) -> bool:
+    lowered = session.lower()
+    return (
+        lowered == "heartbeat"
+        or lowered.startswith("watchdog-")
+        or lowered.startswith("auditor-")
+        or "watchdog" in lowered
+        or "auditor" in lowered
+        or "kimi" in lowered
+    )
+
+
+def _plan_relaunch_command(plan_name: str, workspace: str) -> str:
+    log_path = f"{workspace}/.megaplan/cloud-logs/{plan_name}.log"
+    return (
+        "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; "
+        f"cd {shlex.quote(src_dir)} && "
+        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(src_dir)}:${{PYTHONPATH:-}} "
+        "MEGAPLAN_TRUSTED_CONTAINER=1 "
+        f"python3 -P -m arnold_pipelines.megaplan auto --plan {shlex.quote(plan_name)} "
+        f"--project-dir {shlex.quote(workspace)} >> {shlex.quote(log_path)} 2>&1"
+    )
+
+
+def _chain_relaunch_command(remote_spec: str, workspace: str, session: str) -> str:
+    log_relative = ".megaplan/cloud-chain.log" if session == "megaplan-chain" else f".megaplan/cloud-chain-{session}.log"
+    return (
+        "if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; "
+        f"cd {shlex.quote(src_dir)} && "
+        f"PYTHONSAFEPATH=1 PYTHONPATH={shlex.quote(src_dir)}:${{PYTHONPATH:-}} "
+        "MEGAPLAN_TRUSTED_CONTAINER=1 "
+        f"python3 -P -m arnold_pipelines.megaplan chain start --spec {shlex.quote(remote_spec)} "
+        f"--project-dir {shlex.quote(workspace)} >> {shlex.quote(workspace + '/' + log_relative)} 2>&1"
+    )
+
+
+def _classify(session: str, workspace: str, commands: list[str]) -> dict[str, str] | None:
+    run_kind = "chain"
+    plan_name: str | None = None
+    remote_spec: str | None = None
+    relaunch_command: str | None = None
+
+    for raw in commands:
+        if not raw or "/usr/local/bin/arnold-watchdog" in raw or "/usr/local/bin/arnold-progress-auditor" in raw:
+            continue
+        tokens = _split(raw)
+        lowered = raw.lower()
+        if re.search(r"arnold_pipelines\.megaplan\s+chain\s+start\b", raw) or "arnold-chain" in lowered:
+            candidate_spec = _extract_flag(tokens, "--spec")
+            if candidate_spec:
+                remote_spec = candidate_spec
+                relaunch_command = _chain_relaunch_command(candidate_spec, workspace, session)
+                break
+        if (
+            re.search(r"arnold_pipelines\.megaplan\s+init\b", raw)
+            or re.search(r"\b(?:arnold|megaplan)\s+init\b", raw)
+        ) and "--auto-start" in raw:
+            plan_name = _extract_flag(tokens, "--name") or plan_name
+            remote_spec = _extract_flag(tokens, "--idea-file") or remote_spec
+            run_kind = "plan"
+        elif (
+            re.search(r"arnold_pipelines\.megaplan\s+(?:auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)\b", raw)
+            or re.search(r"\b(?:arnold|megaplan)\s+(?:auto|resume)\b", raw)
+        ):
+            plan_name = _extract_flag(tokens, "--plan") or plan_name
+            run_kind = "plan"
+
+    if run_kind == "plan":
+        plans_dir = pathlib.Path(workspace) / ".megaplan" / "plans"
+        if plan_name is None and plans_dir.is_dir():
+            plans = sorted(p.name for p in plans_dir.iterdir() if p.is_dir())
+            if len(plans) == 1:
+                plan_name = plans[0]
+        if plan_name is None:
+            return None
+        if remote_spec is None:
+            remote_spec = str(pathlib.Path(workspace) / ".megaplan" / "plans" / plan_name)
+        return {
+            "run_kind": "plan",
+            "plan_name": plan_name,
+            "remote_spec": remote_spec,
+            "relaunch_command": _plan_relaunch_command(plan_name, workspace),
+        }
+
+    if remote_spec is None:
+        return None
+    return {
+        "run_kind": "chain",
+        "remote_spec": remote_spec,
+        "relaunch_command": relaunch_command or _chain_relaunch_command(remote_spec, workspace, session),
+    }
+
+
+started_at = dt.datetime.now(dt.timezone.utc).isoformat()
+for raw in panes_proc.stdout.splitlines():
+    if not raw.strip():
+        continue
+    try:
+        session, pane_pid_raw, current_path, start_command = raw.split("\t", 3)
+    except ValueError:
+        continue
+    if _skip_session(session):
+        continue
+    marker_path = marker_dir / f"{session}.json"
+    if marker_path.exists():
+        continue
+    workspace = _workspace_for(current_path)
+    if workspace is None or workspace in {"/workspace", src_dir}:
+        continue
+    try:
+        pane_pid = int(pane_pid_raw)
+    except ValueError:
+        continue
+    classified = _classify(session, workspace, [start_command, *_descendants(pane_pid)])
+    if classified is None:
+        continue
+    marker_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "session": session,
+        "workspace": workspace,
+        "remote_spec": classified["remote_spec"],
+        "started_at": started_at,
+    }
+    if classified.get("run_kind") == "plan":
+        payload["run_kind"] = "plan"
+        payload["plan_name"] = classified["plan_name"]
+        payload["relaunch_command"] = classified["relaunch_command"]
+    marker_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    print(
+        "\t".join(
+            [
+                session,
+                workspace,
+                classified["remote_spec"],
+                classified.get("run_kind", "chain"),
+                classified.get("plan_name", ""),
+            ]
+        )
+    )
+PY
+}
+
 repo_url_with_token() {
   local repo="$1"
   if [[ "$repo" == https://github.com/* && "$repo" != https://*@github.com/* && -n "${GITHUB_TOKEN:-}" ]]; then
@@ -432,12 +663,16 @@ session_health_status() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
   local wait_status
   if ! tmux has-session -t "$session" 2>/dev/null; then
-    wait_status="$(chain_wait_status "$workspace")"
-    if [[ "$wait_status" != "none" ]]; then
-      echo "$wait_status"
-      return 0
+    if [[ "$run_kind" == "chain" ]]; then
+      wait_status="$(chain_wait_status "$workspace")"
+      if [[ "$wait_status" != "none" ]]; then
+        echo "$wait_status"
+        return 0
+      fi
     fi
     echo "stopped"
     return 0
@@ -450,25 +685,40 @@ session_health_status() {
     return 0
   fi
 
-  if [[ "$session" == "megaplan-chain" ]]; then
-    log_path="$workspace/.megaplan/cloud-chain.log"
-  else
-    log_path="$workspace/.megaplan/cloud-chain-${session}.log"
-  fi
-  if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "invalid_spec"|invalid_spec|"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
-    echo "chain_log_failure"
-    return 0
-  fi
+  if [[ "$run_kind" == "chain" ]]; then
+    if [[ "$session" == "megaplan-chain" ]]; then
+      log_path="$workspace/.megaplan/cloud-chain.log"
+    else
+      log_path="$workspace/.megaplan/cloud-chain-${session}.log"
+    fi
+    if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "invalid_spec"|invalid_spec|"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
+      echo "chain_log_failure"
+      return 0
+    fi
 
-  if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
-    echo "alive"
-    return 0
-  fi
+    if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+      echo "alive"
+      return 0
+    fi
 
-  wait_status="$(chain_wait_status "$workspace")"
-  if [[ "$wait_status" != "none" ]]; then
-    echo "$wait_status"
-    return 0
+    wait_status="$(chain_wait_status "$workspace")"
+    if [[ "$wait_status" != "none" ]]; then
+      echo "$wait_status"
+      return 0
+    fi
+  elif [[ -n "$plan_name" ]]; then
+    if ps -eww -o args= \
+      | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan (init|auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)" \
+      | grep -Eq -- "(--plan[=[:space:]]$plan_name|--name[=[:space:]]$plan_name.*--auto-start|--auto-start.*--name[=[:space:]]$plan_name)"; then
+      echo "alive"
+      return 0
+    fi
+    if ps -eww -o args= \
+      | grep -E "[a]rnold (auto|resume)|[m]egaplan (auto|resume)" \
+      | grep -Fq -- "--plan $plan_name"; then
+      echo "alive"
+      return 0
+    fi
   fi
 
   echo "stopped"
@@ -509,6 +759,42 @@ session_marker_path() {
 
 repair_progress_snapshot_path() {
   printf '%s/%s.reap-progress.json' "$MARKER_DIR" "$1"
+}
+
+default_plan_relaunch_command() {
+  local plan_name="$1"
+  local workspace="$2"
+  local log_path="$workspace/.megaplan/cloud-logs/${plan_name}.log"
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan auto --plan %q --project-dir %q >> %q 2>&1' \
+    "$SRC_DIR" "$SRC_DIR" "$plan_name" "$workspace" "$log_path"
+}
+
+resolve_relaunch_command() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local relaunch_command="${6:-}"
+
+  if [[ -n "$relaunch_command" ]]; then
+    printf '%s' "$relaunch_command"
+    return 0
+  fi
+  if [[ "$run_kind" == "plan" ]]; then
+    [[ -n "$plan_name" ]] || return 1
+    default_plan_relaunch_command "$plan_name" "$workspace"
+    return 0
+  fi
+
+  local log_relative
+  if [[ "$session" == "megaplan-chain" ]]; then
+    log_relative=".megaplan/cloud-chain.log"
+  else
+    log_relative=".megaplan/cloud-chain-${session}.log"
+  fi
+  printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
+    "$SRC_DIR" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
 }
 
 kimi_dispatch_marker_set() {
@@ -1523,19 +1809,22 @@ launch_chain_tick() {
   local workspace="$2"
   local remote_spec="$3"
   local report_items="$4"
+  local run_kind="${5:-chain}"
+  local plan_name="${6:-}"
+  local relaunch_command="${7:-}"
 
   if [[ ! -d "$workspace" ]]; then
     log "skip $session: workspace missing: $workspace"
     report_item "$report_items" "$session" "skip" "workspace_missing" "workspace missing" "$workspace" "$remote_spec"
     return 1
   fi
-  if [[ ! -f "$remote_spec" ]]; then
+  if [[ "$run_kind" == "chain" && ! -f "$remote_spec" ]]; then
     log "skip $session: chain spec missing: $remote_spec"
     report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
     return 1
   fi
   local health
-  health="$(session_health_status "$session" "$workspace" "$remote_spec")"
+  health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
   if [[ "$health" == "alive" ]]; then
     local phase_health
     phase_health="$(plan_phase_health_status "$workspace")"
@@ -1612,16 +1901,13 @@ launch_chain_tick() {
 
   local safe log_relative launch_script quoted_command
   safe="$(safe_name "$session")"
-  if [[ "$session" == "megaplan-chain" ]]; then
-    log_relative=".megaplan/cloud-chain.log"
-  else
-    log_relative=".megaplan/cloud-chain-${session}.log"
-  fi
   launch_script="$(mktemp)"
-  quoted_command=$(
-    printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
-      "$SRC_DIR" "$SRC_DIR" "$remote_spec" "$workspace" "$workspace/$log_relative"
-  )
+  quoted_command="$(resolve_relaunch_command "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$relaunch_command")" || {
+    log "unable to determine relaunch command session=$session kind=$run_kind"
+    report_item "$report_items" "$session" "restart" "needs_attention" "unable to determine relaunch command" "$workspace" "$remote_spec"
+    rm -f "$launch_script"
+    return 1
+  }
   cat > "$launch_script" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1630,7 +1916,7 @@ exec /usr/local/bin/arnold-supervise "watchdog-$safe" bash -lc "$quoted_command"
 EOF
   chmod +x "$launch_script"
 
-  log "relaunching stopped chain session=$session spec=$remote_spec"
+  log "relaunching stopped session=$session kind=$run_kind spec=$remote_spec"
   tmux new-session -d -s "$session" -c "$workspace" "bash '$launch_script'" || {
     if tmux has-session -t "$session" 2>/dev/null; then
       log "relaunch raced with existing tmux session; treating as relaunched: $session"
@@ -1651,6 +1937,11 @@ scan_once() {
   local report_items
   report_items="$(mktemp)"
   sync_editable_source_branch "$report_items" || true
+  while IFS=$'\t' read -r adopted_session adopted_workspace adopted_remote_spec adopted_kind adopted_plan_name; do
+    [[ -n "$adopted_session" ]] || continue
+    log "adopted marker-less tmux session=$adopted_session kind=${adopted_kind:-chain}"
+    report_item "$report_items" "$adopted_session" "adopt" "adopted" "adopted marker-less tmux session" "$adopted_workspace" "$adopted_remote_spec"
+  done < <(adopt_unmarked_tmux_sessions)
   if [[ ! -d "$MARKER_DIR" ]]; then
     log "scan complete: marker directory missing"
     emit_report "$report_items" 0
@@ -1662,7 +1953,7 @@ scan_once() {
   shopt -s nullglob
   for marker in "$MARKER_DIR"/*.json; do
     found=$((found + 1))
-    local session workspace remote_spec
+    local session workspace remote_spec run_kind plan_name relaunch_command
     session="$(json_field "$marker" session 2>/dev/null)" || {
       log "skip invalid marker (missing session): $marker"
       report_item "$report_items" "" "skip" "invalid_marker" "missing session: $marker"
@@ -1678,7 +1969,10 @@ scan_once() {
       report_item "$report_items" "$session" "skip" "invalid_marker" "missing remote_spec: $marker" "$workspace"
       continue
     }
-    launch_chain_tick "$session" "$workspace" "$remote_spec" "$report_items" || true
+    run_kind="$(json_field "$marker" run_kind 2>/dev/null || true)"
+    plan_name="$(json_field "$marker" plan_name 2>/dev/null || true)"
+    relaunch_command="$(json_field "$marker" relaunch_command 2>/dev/null || true)"
+    launch_chain_tick "$session" "$workspace" "$remote_spec" "$report_items" "${run_kind:-chain}" "$plan_name" "$relaunch_command" || true
   done
   shopt -u nullglob
   reap_stale_repairs "$report_items"
