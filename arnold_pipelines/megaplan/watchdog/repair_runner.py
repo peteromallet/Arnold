@@ -66,8 +66,9 @@ class RepairRunner:
     def _argv_for_command(self, command: str) -> tuple[list[str], str | None, bool]:
         """Return (argv, cwd, is_megaplan_subcommand) for *command*.
 
-        Megaplan subcommands are rewritten to ``python -m arnold_pipelines.megaplan``,
-        or to a ``megaplan`` executable found on the search path if one exists.
+        Megaplan subcommands are always rewritten to
+        ``python -P -m arnold_pipelines.megaplan`` so the subprocess cannot
+        import stale checkout-local packages from the active workflow cwd.
         System commands are passed through. The returned cwd is the directory in
         which the command should run, or None for the current directory.
         """
@@ -88,11 +89,6 @@ class RepairRunner:
             cwd = None
 
         if first in _MEGAPLAN_SUBCOMMANDS:
-            # Prefer a real ``megaplan`` executable on PATH if available;
-            # otherwise fall back to the module invocation.
-            megaplan_exe = shutil.which("megaplan", path=self._search_path)
-            if megaplan_exe is not None:
-                return [megaplan_exe] + parts, cwd, True
             return [self._python_bin, "-P", "-m", "arnold_pipelines.megaplan"] + parts, cwd, True
 
         # Bare subcommands like "rm" or "kill" that are not standalone executables

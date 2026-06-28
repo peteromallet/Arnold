@@ -250,7 +250,8 @@ if [[ ! -d "$RUN_CWD" ]]; then
 fi
 (
   cd "$RUN_CWD" &&
-  timeout "$TIMEOUT" python3 -m arnold.agent.run_agent \
+  PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
+  timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \
     --query="$(cat "$PROMPT")" \
     --model="$MODEL" \
     --api_key="$KIMI_API_KEY" \
