@@ -548,6 +548,7 @@ class ChainState:
     current_milestone_index: int = -1
     current_plan_name: str | None = None
     current_milestone_base_sha: str | None = None
+    target_base_ref: str | None = None
     last_state: str | None = None
     pr_number: int | None = None
     pr_state: str | None = None
@@ -578,6 +579,7 @@ class ChainState:
             "current_milestone_index": self.current_milestone_index,
             "current_plan_name": self.current_plan_name,
             "current_milestone_base_sha": self.current_milestone_base_sha,
+            "target_base_ref": self.target_base_ref,
             "last_state": self.last_state,
             "pr_number": self.pr_number,
             "pr_state": self.pr_state,
@@ -666,6 +668,7 @@ class ChainState:
             current_milestone_index=int(raw.get("current_milestone_index", -1)),
             current_plan_name=raw.get("current_plan_name"),
             current_milestone_base_sha=raw.get("current_milestone_base_sha"),
+            target_base_ref=raw.get("target_base_ref"),
             last_state=raw.get("last_state"),
             pr_number=int(raw["pr_number"]) if raw.get("pr_number") is not None else None,
             pr_state=raw.get("pr_state"),

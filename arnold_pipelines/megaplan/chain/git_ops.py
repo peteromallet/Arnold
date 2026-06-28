@@ -13,6 +13,12 @@ from typing import Any
 
 from arnold_pipelines.megaplan.types import CliError
 
+_MISSING_REMOTE_REF_MARKERS = (
+    "couldn't find remote ref",
+    "could not find remote ref",
+    "remote ref does not exist",
+)
+
 
 @dataclass(frozen=True)
 class CommitResult:
@@ -38,7 +44,8 @@ def _refresh_base_branch(
     *,
     writer,
     no_git_refresh: bool = False,
-) -> None:
+    expected_sha: str | None = None,
+) -> str | None:
     """Run a best-effort refresh of ``base_branch`` before milestone work.
 
     When ``no_git_refresh`` is True, this is a no-op (still logs that it was
@@ -54,42 +61,14 @@ def _refresh_base_branch(
     """
     if no_git_refresh:
         writer("[chain] skipping git refresh (--no-git-refresh)\n")
-        return
-    fetch_cmd = ["git", "fetch", "origin", base_branch]
-    try:
-        proc = _compat().subprocess.run(
-            fetch_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
-        )
-        writer(f"[chain] {' '.join(fetch_cmd)} -> rc={proc.returncode}\n")
-        if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or "").strip()
-            if detail:
-                writer(f"[chain] {' '.join(fetch_cmd)} output:\n{detail}\n")
-            raise CliError(
-                "git_refresh_failed",
-                (
-                    "Chain git refresh failed before milestone initialization: "
-                    f"{' '.join(fetch_cmd)} exited {proc.returncode}. "
-                    "Resolve the fetch failure or rerun with --no-git-refresh."
-                ),
-                extra={
-                    "command": fetch_cmd,
-                    "returncode": proc.returncode,
-                    "stdout": proc.stdout,
-                    "stderr": proc.stderr,
-                },
-            )
-    except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        writer(f"[chain] {' '.join(fetch_cmd)} failed: {exc}\n")
-        raise CliError(
-            "git_refresh_failed",
-            (
-                "Chain git refresh failed before milestone initialization: "
-                f"{' '.join(fetch_cmd)} failed with {exc}. "
-                "Resolve the fetch failure or rerun with --no-git-refresh."
-            ),
-            extra={"command": fetch_cmd, "error": str(exc)},
-        ) from exc
+        return None
+    remote_sha = _compat()._fetch_base_branch(
+        root,
+        base_branch,
+        writer=writer,
+        expected_sha=expected_sha,
+        error_code="git_refresh_failed",
+    )
 
     current_cmd = ["git", "symbolic-ref", "--short", "HEAD"]
     current = _compat().subprocess.run(
@@ -127,6 +106,232 @@ def _refresh_base_branch(
             "This is expected when the local base has milestone commits "
             "or origin moved independently.\n"
         )
+    return remote_sha
+
+
+def _command_detail(proc: subprocess.CompletedProcess[str]) -> str:
+    return (proc.stderr or proc.stdout or "").strip()
+
+
+def _is_missing_remote_ref_detail(detail: str) -> bool:
+    lowered = detail.lower()
+    return any(marker in lowered for marker in _MISSING_REMOTE_REF_MARKERS)
+
+
+def _is_missing_remote_ref_result(proc: subprocess.CompletedProcess[str]) -> bool:
+    if proc.returncode == 2:
+        return True
+    detail = _command_detail(proc)
+    return proc.returncode == 128 and _is_missing_remote_ref_detail(detail)
+
+
+def _resolve_commitish(root: Path, commitish: str, *, writer) -> str | None:
+    proc = _compat().subprocess.run(
+        ["git", "rev-parse", "--verify", f"{commitish}^{{commit}}"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    writer(f"[chain] git rev-parse --verify {commitish}^{{commit}} -> rc={proc.returncode}\n")
+    if proc.returncode != 0:
+        return None
+    sha = proc.stdout.strip()
+    return sha or None
+
+
+def _recover_missing_remote_base_branch(
+    root: Path,
+    base_branch: str,
+    *,
+    writer,
+    expected_sha: str | None,
+) -> str:
+    candidates: list[tuple[str, str]] = []
+    for ref in (f"refs/heads/{base_branch}", f"refs/remotes/origin/{base_branch}"):
+        sha = _resolve_commitish(root, ref, writer=writer)
+        if sha is not None:
+            candidates.append((ref, sha))
+
+    if expected_sha:
+        for ref, sha in candidates:
+            if sha == expected_sha:
+                source_ref = ref
+                recovered_sha = sha
+                break
+        else:
+            recovered_sha = _resolve_commitish(root, expected_sha, writer=writer)
+            if recovered_sha is not None:
+                source_ref = expected_sha
+            else:
+                raise CliError(
+                    "missing_base_ref",
+                    (
+                        f"Base branch {base_branch!r} is missing on origin and cannot be "
+                        f"restored from local refs at expected sha {expected_sha}."
+                    ),
+                    extra={
+                        "base_branch": base_branch,
+                        "last_known_sha": expected_sha,
+                        "local_candidates": [{"ref": ref, "sha": sha} for ref, sha in candidates],
+                    },
+                )
+    elif candidates:
+        source_ref, recovered_sha = candidates[0]
+    else:
+        raise CliError(
+            "missing_base_ref",
+            (
+                f"Base branch {base_branch!r} is missing on origin and no local ref is "
+                "available to restore it."
+            ),
+            extra={
+                "base_branch": base_branch,
+                "last_known_sha": expected_sha,
+                "local_candidates": [],
+            },
+        )
+
+    push_cmd = ["git", "push", "origin", f"{source_ref}:refs/heads/{base_branch}"]
+    try:
+        proc = _compat().subprocess.run(
+            push_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        writer(f"[chain] {' '.join(push_cmd)} failed: {exc}\n")
+        raise CliError(
+            "missing_base_ref",
+            (
+                f"Base branch {base_branch!r} is missing on origin and local recovery "
+                f"failed while re-pushing {source_ref}: {exc}"
+            ),
+            extra={
+                "base_branch": base_branch,
+                "last_known_sha": expected_sha or recovered_sha,
+                "source_ref": source_ref,
+                "error": str(exc),
+            },
+        ) from exc
+    writer(f"[chain] {' '.join(push_cmd)} -> rc={proc.returncode}\n")
+    if proc.returncode != 0:
+        detail = _command_detail(proc)
+        if detail:
+            writer(f"[chain] {' '.join(push_cmd)} output:\n{detail}\n")
+        raise CliError(
+            "missing_base_ref",
+            (
+                f"Base branch {base_branch!r} is missing on origin and local recovery "
+                f"failed while re-pushing {source_ref}."
+            ),
+            extra={
+                "base_branch": base_branch,
+                "last_known_sha": expected_sha or recovered_sha,
+                "source_ref": source_ref,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+        )
+    writer(
+        f"[chain] re-pushed missing base branch {base_branch} from local at {recovered_sha}\n"
+    )
+    return recovered_sha
+
+
+def _fetch_base_branch(
+    root: Path,
+    base_branch: str,
+    *,
+    writer,
+    expected_sha: str | None,
+    error_code: str,
+) -> str:
+    ls_remote_cmd = ["git", "ls-remote", "--exit-code", "--heads", "origin", base_branch]
+    try:
+        remote = _compat().subprocess.run(
+            ls_remote_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        writer(f"[chain] {' '.join(ls_remote_cmd)} failed: {exc}\n")
+        raise CliError(
+            error_code,
+            f"{' '.join(ls_remote_cmd)} failed with {exc}",
+            extra={"command": ls_remote_cmd, "error": str(exc)},
+        ) from exc
+    writer(f"[chain] {' '.join(ls_remote_cmd)} -> rc={remote.returncode}\n")
+
+    recovered_sha: str | None = None
+    if remote.returncode == 0 and remote.stdout.strip():
+        recovered_sha = remote.stdout.strip().splitlines()[0].split()[0]
+    elif _is_missing_remote_ref_result(remote):
+        recovered_sha = _recover_missing_remote_base_branch(
+            root,
+            base_branch,
+            writer=writer,
+            expected_sha=expected_sha,
+        )
+    else:
+        detail = _command_detail(remote)
+        raise CliError(
+            error_code,
+            f"{' '.join(ls_remote_cmd)} exited {remote.returncode}: {detail}",
+            extra={
+                "command": ls_remote_cmd,
+                "returncode": remote.returncode,
+                "stdout": remote.stdout,
+                "stderr": remote.stderr,
+            },
+        )
+
+    fetch_cmd = ["git", "fetch", "origin", base_branch]
+    try:
+        proc = _compat().subprocess.run(
+            fetch_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+        )
+    except (_compat().subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        writer(f"[chain] {' '.join(fetch_cmd)} failed: {exc}\n")
+        raise CliError(
+            error_code,
+            (
+                f"{' '.join(fetch_cmd)} failed with {exc}. "
+                "Resolve the fetch failure or rerun with --no-git-refresh."
+            ),
+            extra={"command": fetch_cmd, "error": str(exc)},
+        ) from exc
+    writer(f"[chain] {' '.join(fetch_cmd)} -> rc={proc.returncode}\n")
+    if proc.returncode != 0 and _is_missing_remote_ref_result(proc):
+        recovered_sha = _recover_missing_remote_base_branch(
+            root,
+            base_branch,
+            writer=writer,
+            expected_sha=expected_sha or recovered_sha,
+        )
+        proc = _compat().subprocess.run(
+            fetch_cmd, cwd=str(root), capture_output=True, text=True, check=False, timeout=120
+        )
+        writer(f"[chain] {' '.join(fetch_cmd)} -> rc={proc.returncode}\n")
+    if proc.returncode != 0:
+        detail = _command_detail(proc)
+        if detail:
+            writer(f"[chain] {' '.join(fetch_cmd)} output:\n{detail}\n")
+        raise CliError(
+            error_code,
+            (
+                "Chain git refresh failed before milestone initialization: "
+                f"{' '.join(fetch_cmd)} exited {proc.returncode}. "
+                "Resolve the fetch failure or rerun with --no-git-refresh."
+            ),
+            extra={
+                "command": fetch_cmd,
+                "returncode": proc.returncode,
+                "stdout": proc.stdout,
+                "stderr": proc.stderr,
+            },
+        )
+
+    remote_sha = _resolve_commitish(root, f"refs/remotes/origin/{base_branch}", writer=writer)
+    return remote_sha or recovered_sha or expected_sha or base_branch
 
 
 def _run_command(
@@ -336,7 +541,8 @@ def _checkout_milestone_branch(
     base_branch: str,
     writer,
     from_origin: bool = False,
-) -> None:
+    expected_base_ref: str | None = None,
+) -> str | None:
     """Create or resume the milestone branch and push it to origin.
 
     When ``from_origin`` is True, a new milestone branch forks from
@@ -347,11 +553,13 @@ def _checkout_milestone_branch(
     if _compat()._remote_branch_exists(root, branch, writer=writer):
         _clean_worktree_for_chain(root, writer)
         _compat()._run_command(root, ["git", "fetch", "origin", branch], writer=writer, error_code="git_branch_failed")
+        base_sha: str | None = None
         if from_origin:
-            _compat()._run_command(
+            base_sha = _compat()._fetch_base_branch(
                 root,
-                ["git", "fetch", "origin", base_branch],
+                base_branch,
                 writer=writer,
+                expected_sha=expected_base_ref,
                 error_code="git_branch_failed",
             )
         _compat()._run_command(
@@ -435,33 +643,26 @@ def _checkout_milestone_branch(
                         "stderr": ancestor.stderr,
                     },
                 )
-        return
+        return base_sha
     _clean_worktree_for_chain(root, writer)
     fork_point = base_branch
+    base_sha: str | None = None
     if from_origin:
-        fetch = _compat().subprocess.run(
-            ["git", "fetch", "origin", base_branch],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
+        base_sha = _compat()._fetch_base_branch(
+            root,
+            base_branch,
+            writer=writer,
+            expected_sha=expected_base_ref,
+            error_code="git_branch_failed",
         )
-        writer(f"[chain] git fetch origin {base_branch} -> rc={fetch.returncode}\n")
-        if fetch.returncode == 0:
-            fork_point = f"origin/{base_branch}"
-            writer(
-                f"[chain] forking {branch} from {fork_point} "
-                "(authoritative merged history)\n"
-            )
-        else:
-            detail = (fetch.stderr or fetch.stdout or "").strip()
-            writer(
-                f"[chain] fetch failed; forking {branch} from local "
-                f"{base_branch}{(': ' + detail) if detail else ''}\n"
-            )
+        fork_point = f"origin/{base_branch}"
+        writer(
+            f"[chain] forking {branch} from {fork_point} "
+            "(authoritative merged history)\n"
+        )
     _compat()._run_command(root, ["git", "checkout", "-B", branch, fork_point], writer=writer, error_code="git_branch_failed")
     _compat()._run_command(root, ["git", "push", "--no-verify", "-u", "origin", branch], writer=writer, error_code="git_push_failed")
+    return base_sha
 
 
 def _parse_pr_number_from_url(output: str) -> int | None:
