@@ -14,11 +14,13 @@ from arnold_pipelines.megaplan.cli.status_view import handle_status
 from arnold_pipelines.megaplan.handlers import override as override_handler
 from arnold_pipelines.megaplan.handlers.init import handle_init
 from arnold_pipelines.megaplan.orchestration.phase_result import (
+    Deviation,
     ExitKind,
     PhaseResult,
     atomic_write_phase_result,
 )
 from arnold_pipelines.megaplan.planning.state import STATE_BLOCKED
+from arnold_pipelines.megaplan.quality_resolutions import build_quality_resolution_event
 from arnold_pipelines.megaplan.types import CliError
 from tests.conftest import load_state
 
@@ -140,3 +142,56 @@ def test_status_projects_execute_for_stale_recover_blocked_iteration_cap(
     assert response["state"] == STATE_BLOCKED
     assert response["next_step"] == "execute"
     assert response["valid_next"] == ["execute"]
+
+
+def test_recover_blocked_allows_fixed_quality_rerun(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    state = load_state(local_plan_fixture.plan_dir)
+    state["current_state"] = STATE_BLOCKED
+    state["resume_cursor"] = {"phase": "execute", "retry_strategy": "fresh_session"}
+    state.setdefault("meta", {})["quality_gate_resolutions"] = [
+        build_quality_resolution_event(
+            blocker_id="quality:global:pending-tasks",
+            resolution="fixed",
+            phase="execute",
+        )
+    ]
+    write_plan_state(local_plan_fixture.plan_dir, mode="replace", state=state)
+    (local_plan_fixture.plan_dir / "finalize.json").write_text(
+        '{"tasks":[]}\n',
+        encoding="utf-8",
+    )
+    atomic_write_phase_result(
+        local_plan_fixture.plan_dir,
+        PhaseResult(
+            phase="execute",
+            invocation_id="fixture-invocation",
+            exit_kind=ExitKind.blocked_by_quality.value,
+            deviations=(
+                Deviation(
+                    kind="quality_gate",
+                    message=(
+                        "Advisory audit finding: Tasks left pending after execute "
+                        "(executor never started them): T12, T13, T14"
+                    ),
+                    blocker_id="quality:global:pending-tasks",
+                ),
+            ),
+        ),
+    )
+
+    response = override_handler.handle_override(
+        local_plan_fixture.root,
+        local_plan_fixture.make_args(
+            plan=local_plan_fixture.plan_name,
+            override_action="recover-blocked",
+            reason="rerun execute after resolving quality blockers as fixed",
+        ),
+    )
+
+    updated = load_state(local_plan_fixture.plan_dir)
+    assert response["success"] is True
+    assert response["state"] == "finalized"
+    assert response["next_step"] == "execute"
+    assert updated["current_state"] == "finalized"
