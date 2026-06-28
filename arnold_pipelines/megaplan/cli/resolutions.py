@@ -213,7 +213,12 @@ def handle_quality_gate(root: Path, args: argparse.Namespace) -> StepResponse:
     )
     phase_result = read_phase_result(plan_dir)
     deviations = phase_result.deviations if phase_result is not None else ()
-    evaluation = evaluate_blocker_recovery(finalize_data, state, deviations=deviations)
+    evaluation = evaluate_blocker_recovery(
+        finalize_data,
+        state,
+        plan_dir=plan_dir,
+        deviations=deviations,
+    )
     known_blockers = evaluation.by_id()
     if known_blockers and blocker_id not in known_blockers:
         raise CliError(
