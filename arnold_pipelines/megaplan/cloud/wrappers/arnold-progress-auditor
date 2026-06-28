@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # arnold-progress-auditor — periodic Codex-orchestrated DeepSeek-backed plan progress audit.
 #
-# Host-side systemd oneshot (megaplan-progress-audit.service, every 5h via
+# Host-side systemd oneshot (megaplan-progress-audit.service, every 6h via
 # megaplan-progress-audit.timer). When invoked on the host it docker-execs into
 # the megaplan-cloud-agent container (mirroring ensure-megaplan-watchdog) and
 # re-invokes itself there. When invoked inside the container it runs the audit.
 #
 # In-container loop:
 #   * iterate active markers in /workspace/.megaplan/cloud-sessions/
-#   * gather the last AUDIT_WINDOW_HOURS (default 5h) of activity per plan
+#   * gather the last AUDIT_WINDOW_HOURS (default 6h) of activity per plan
 #     (plan_v*.md count/sizes, iteration/attempt progression, gate verdicts,
 #     critique trend, events.ndjson growth, progress_stall flags from
 #     /workspace/watchdog-report.json)
@@ -20,7 +20,9 @@
 #   * write /workspace/audit-reports/<ts>-audit.{json,md}, append one line to
 #     /workspace/audit-report.log
 #
-# REPORT ONLY — does not auto-fix.
+# TWO-MODE: passive findings get logged (report); ACTIONABLE findings — a plan
+# stuck looping / retrying constantly (phase_failed / stalled / execution_blocked)
+# — get a Codex root-cause fix + push; the watchdog then relaunches the chain.
 set -uo pipefail
 
 CONTAINER="${MEGAPLAN_CLOUD_CONTAINER:-megaplan-cloud-agent}"
@@ -50,7 +52,7 @@ REPORT_LOG="${MEGAPLAN_AUDIT_REPORT_LOG:-/workspace/audit-report.log}"
 WATCHDOG_REPORT="${MEGAPLAN_AUDIT_WATCHDOG_REPORT:-/workspace/watchdog-report.json}"
 ARNOLD_SRC="${MEGAPLAN_AUDIT_ARNOLD_SRC:-/workspace/arnold}"
 LAUNCHER="${MEGAPLAN_AUDIT_LAUNCHER:-/root/.claude/skills/subagent-launcher/launch_hermes_agent.py}"
-AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-5}"
+AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"
 SUBAGENT_TIMEOUT="${MEGAPLAN_AUDIT_SUBAGENT_TIMEOUT_SECS:-900}"
 SUBAGENT_MAX_TOKENS="${MEGAPLAN_AUDIT_SUBAGENT_MAX_TOKENS:-8192}"
 SUBAGENT_PROFILE="${MEGAPLAN_AUDIT_SUBAGENT_PROFILE:-partnered-5}"
@@ -233,12 +235,15 @@ for entry in plans:
             reasons.append(f"score regression {scores[0]}->{scores[-1]}")
         if ev["active_step_attempt"] and int(ev["active_step_attempt"]) >= 8:
             reasons.append(f"step on attempt {ev['active_step_attempt']}")
-        if ev["latest_failure_kind"] in ("stalled", "phase_failed"):
+        if ev["latest_failure_kind"] in ("stalled", "phase_failed", "execution_blocked"):
             reasons.append(f"{ev['latest_failure_kind']}: {ev['latest_failure_message']}")
         if not reasons:
             continue
         ev["reasons"] = reasons
         ev["session"] = entry["session"]
+        # TWO-MODE classification: a hard/recurring failure the plan is stuck
+        # retrying is actionable (audit fixes + pushes); other signals are passive (log).
+        ev["actionable"] = ev["latest_failure_kind"] in ("stalled", "phase_failed", "execution_blocked")
         findings.append(ev)
 
 with open(os.path.join(gather_dir, "findings.json"), "w", encoding="utf-8") as h:
@@ -260,6 +265,9 @@ dispatch_one() {
   plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
   workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
   reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
+  local actionable
+  actionable="$(python3 -c "import json,sys; print('1' if json.load(open(sys.argv[1])).get('actionable') else '0')" "$gather_file")"
+  log "plan=$plan actionable=$actionable reasons=$reasons"
 
   local brief="$GATHER_DIR/brief-${plan}.md"
   {
@@ -273,7 +281,21 @@ dispatch_one() {
     cat "$gather_file"
     echo '```'
     echo
-    cat <<EOF
+    if [[ "$actionable" == "1" ]]; then
+      cat <<EOF
+You are the audit FIXER. This plan is stuck looping / retrying on a hard failure
+($reasons) — a non-critical deadlock the run cannot break on its own. Root-cause
+it from the evidence above and the workspace, then FIX the root cause in
+$ARNOLD_SRC on the editible-install branch (Arnold source only — do NOT touch the
+running chain's project tree). Keep the fix narrow and safe; validate with
+python3 -m py_compile and a focused test where possible. Commit and push to
+origin/editible-install — the cloud watchdog will relaunch the chain on your fix
+on its next tick (mirroring the 1h watchdog repair). If you cannot safely fix it,
+say so plainly with the specific blocker and apply no fix. Cite specific evidence.
+Under 250 words.
+EOF
+    else
+      cat <<EOF
 You are the audit orchestrator. First read
 \`$SUBAGENT_SKILL\`.
 
@@ -297,11 +319,12 @@ score movement, and plan_v churn when relevant.
 Keep the whole response under 250 words. No preamble. If DeepSeek subagents
 cannot be launched, say so plainly and still synthesize the evidence yourself.
 EOF
+    fi
   } > "$brief"
 
   local resp_path="$GATHER_DIR/resp-${plan}.txt"
   if command -v codex >/dev/null 2>&1; then
-    log "dispatching Codex audit orchestrator plan=$plan deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
+    log "dispatching Codex audit mode=$([ "$actionable" = 1 ] && echo fixer || echo orchestrator) plan=$plan deepseek_model=$DEEPSEEK_MODEL profile=$SUBAGENT_PROFILE"
     (
       cd "$workspace" &&
       if [[ -f /workspace/.cloud-hot-env ]]; then
