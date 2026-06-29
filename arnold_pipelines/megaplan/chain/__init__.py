@@ -2633,6 +2633,18 @@ def run_chain(
         log(f"milestone {milestone.label} starting")
         use_pr = push_enabled and bool(milestone.branch)
 
+        if (
+            use_pr
+            and state.current_milestone_index == idx
+            and state.last_state == "pr_closed"
+        ):
+            state = _clear_stale_closed_pr_state(
+                spec_path=spec_path,
+                state=state,
+                milestone_label=milestone.label,
+                log_fn=log,
+            )
+
         if state.current_milestone_index == idx and state.pr_number is not None and use_pr:
             pr_state = _pr_state(root, state.pr_number, writer=writer)
             if pr_state == "merged":
@@ -3251,6 +3263,36 @@ def _stop_for_closed_pr(
         spec=spec,
         reason=f"milestone {milestone_label} PR #{pr_number} is closed",
     )
+
+
+def _clear_stale_closed_pr_state(
+    *,
+    spec_path: Path,
+    state: ChainState,
+    milestone_label: str,
+    log_fn: Callable[[str], None],
+) -> ChainState:
+    """Drop persisted PR context after a restart if the prior PR was closed.
+
+    A closed milestone PR is a valid stop signal for the live run that observed
+    it, but persisting that state as terminal wedges every later restart on the
+    same milestone. Clearing the stale PR binding lets the chain resume the
+    existing plan and recreate PR context if needed.
+    """
+
+    if state.last_state != "pr_closed":
+        return state
+    if state.pr_number is None and state.pr_state not in {None, "closed"}:
+        return state
+    log_fn(
+        f"clearing stale closed PR context for {milestone_label}; "
+        "resuming milestone with a fresh PR binding"
+    )
+    state.last_state = None
+    state.pr_number = None
+    state.pr_state = None
+    chain_spec.save_chain_state(spec_path, state)
+    return state
 
 
 def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:
