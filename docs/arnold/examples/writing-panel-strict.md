@@ -32,13 +32,16 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = 'writing-panel-strict'
-description: str = 'Adversarial review of prose drafts by N reviewers, then revise. Not for code.'
+name: str = "writing-panel-strict"
+description: str = (
+    "Adversarial review of prose drafts by N reviewers, then revise. "
+    "Not for code."
+)
 
-driver: tuple[str, str] = ('native', 'panel')
-entrypoint: str = 'build_pipeline'
-arnold_api_version: str = '1.0'
-capabilities: tuple[str, ...] = ('writing', 'critique', 'revise')
+driver: tuple[str, str] = ("native", "panel")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ("writing", "critique", "revise")
 ```
 
 ## Step Surface
@@ -152,7 +155,7 @@ entry: panel_review
 id: writing-panel-strict
 instruction_count: 9
 native_program: writing-panel-strict
-stage_count: 0
+stage_count: 4
 ```
 
 ## Package Skill

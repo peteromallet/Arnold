@@ -30,4 +30,4 @@ arnold workflow check --module <package.module>:build_pipeline
 
 ## Disallowed surfaces
 
-Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, hand-built graph fallback builders, or ``arnold.pipelines.megaplan`` imports.  New packages must be native-first: use native declarations and return an ``arnold.pipeline.Pipeline`` with ``native_program`` set.
+Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, hand-built graph fallback builders, native-backed factories, executor objects, or deleted Megaplan-root imports.  New packages must be workflow-first: use explicit-node ``arnold.workflow.Pipeline`` authoring and return a ``Pipeline`` from ``build_pipeline()``.  ``WorkflowManifest`` is compiler output only.
