@@ -1288,6 +1288,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     build_chain_parser(subparsers)
 
+    from arnold_pipelines.megaplan.chain.epic_chain import build_epic_chain_parser
+
+    build_epic_chain_parser(subparsers)
+
     cloud_parser = subparsers.add_parser(
         "cloud",
         add_help=False,

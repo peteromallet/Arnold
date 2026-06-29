@@ -3784,6 +3784,196 @@
             }
           }
         },
+        "epic-chain": {
+          "mutually_exclusive_groups": [],
+          "options": [
+            {
+              "action": "_HelpAction",
+              "choices": null,
+              "const": null,
+              "default": "<SUPPRESS>",
+              "dest": "help",
+              "help": "show this help message and exit",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--help",
+                "-h"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "spec",
+              "help": "Path to the epic-chain spec YAML (required at top-level or on subcommands)",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--spec"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreAction",
+              "choices": null,
+              "const": null,
+              "default": null,
+              "dest": "project_dir",
+              "help": "Run the epic-chain against this project directory instead of discovering from CWD.",
+              "metavar": null,
+              "nargs": null,
+              "option_strings": [
+                "--project-dir"
+              ],
+              "required": false,
+              "type": null
+            },
+            {
+              "action": "_StoreTrueAction",
+              "choices": null,
+              "const": true,
+              "default": false,
+              "dest": "one",
+              "help": "Advance at most one completed child epic, persist progress, then stop cleanly.",
+              "metavar": null,
+              "nargs": "0",
+              "option_strings": [
+                "--one"
+              ],
+              "required": false,
+              "type": null
+            }
+          ],
+          "positionals": [],
+          "subcommands": {
+            "start": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the epic-chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": "Run the epic-chain against this project directory instead of discovering from CWD.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreTrueAction",
+                  "choices": null,
+                  "const": true,
+                  "default": false,
+                  "dest": "one",
+                  "help": "Advance at most one completed child epic, persist progress, then stop cleanly.",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--one"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            },
+            "status": {
+              "mutually_exclusive_groups": [],
+              "options": [
+                {
+                  "action": "_HelpAction",
+                  "choices": null,
+                  "const": null,
+                  "default": "<SUPPRESS>",
+                  "dest": "help",
+                  "help": "show this help message and exit",
+                  "metavar": null,
+                  "nargs": "0",
+                  "option_strings": [
+                    "--help",
+                    "-h"
+                  ],
+                  "required": false,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "spec",
+                  "help": "Path to the epic-chain spec YAML",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--spec"
+                  ],
+                  "required": true,
+                  "type": null
+                },
+                {
+                  "action": "_StoreAction",
+                  "choices": null,
+                  "const": null,
+                  "default": null,
+                  "dest": "project_dir",
+                  "help": "Read epic-chain state from this project directory instead of discovering from CWD.",
+                  "metavar": null,
+                  "nargs": null,
+                  "option_strings": [
+                    "--project-dir"
+                  ],
+                  "required": false,
+                  "type": null
+                }
+              ],
+              "positionals": [],
+              "subcommands": {}
+            }
+          }
+        },
         "execute": {
           "mutually_exclusive_groups": [],
           "options": [
@@ -6407,7 +6597,7 @@
               "action": "_StoreAction",
               "choices": null,
               "const": null,
-              "default": "/Users/peteromalley",
+              "default": "/root",
               "dest": "source_home",
               "help": null,
               "metavar": null,
