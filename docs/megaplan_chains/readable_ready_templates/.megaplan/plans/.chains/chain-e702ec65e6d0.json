@@ -1,0 +1,53 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 0,
+  "current_plan_name": "sprint-1-safe-compiler-20260629-2007",
+  "current_milestone_base_sha": null,
+  "target_base_ref": "e2d52950cd9bec718c2cf956bd182d77aa14c297",
+  "last_state": null,
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [],
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": null,
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/workspace/vibecomfy-readable-ready-templates",
+      "target_root": "/workspace/vibecomfy-readable-ready-templates",
+      "work_dir": "/workspace/vibecomfy-readable-ready-templates",
+      "engine_root": "/workspace/arnold",
+      "target_head": "e2d52950cd9bec718c2cf956bd182d77aa14c297",
+      "target_base": "e2d52950cd9bec718c2cf956bd182d77aa14c297",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    },
+    "ground_truth_reconciliation": {
+      "reconciled_at": "2026-06-29T20:07:06Z",
+      "plan": null,
+      "current_state": null,
+      "latest_failure": null,
+      "last_gate": null,
+      "active_step": null,
+      "pr_number": null,
+      "pr_state": null
+    }
+  }
+}
