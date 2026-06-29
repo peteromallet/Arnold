@@ -7,7 +7,7 @@ from arnold.pipelines.megaplan._pipeline.pattern_topology import (
     phase_zero_gate,
 )
 from arnold.pipelines.megaplan._pipeline.types import Edge, ParallelStage, Stage, StepResult
-from arnold.pipeline.step_invocation import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold.pipeline.types import Port, PortRef, ReadRef, WriteRef
 from arnold.pipeline.native.graph_projection import _NativePhaseStep
 from arnold.pipelines.megaplan.pipeline import (

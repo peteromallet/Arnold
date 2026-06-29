@@ -71,7 +71,7 @@ _register_megaplan_content_types()
 def _install_model_adapter_once() -> None:
     """Import megaplan model_seam first (registers hooks) then wire the adapter."""
     import arnold_pipelines.megaplan.model_seam as _ms  # noqa: F401 — side-effect: registers hooks
-    from arnold.pipeline.step_invocation import get_default_adapter_registry
+    from arnold.execution.step_invocation import get_default_adapter_registry
     from arnold_pipelines.megaplan.model_seam import (
         ModelStepInvocationAdapter,
         install_model_step_adapter,

@@ -41,7 +41,7 @@ import logging
 from datetime import datetime
 import yaml
 from dataclasses import dataclass, field
-from arnold.runtime.process import kill_group, spawn, spawn_async
+from arnold_pipelines.megaplan.runtime.process import kill_group, spawn, spawn_async
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 

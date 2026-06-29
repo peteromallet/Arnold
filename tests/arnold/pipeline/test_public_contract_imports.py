@@ -8,7 +8,7 @@ import pytest
 
 import arnold.pipeline as pipeline
 import arnold.pipeline.native as native
-from arnold.pipeline.builder import PipelineBuilder
+from arnold.workflow.builder import PipelineBuilder
 from arnold.pipeline.native import NativeInstruction, NativeProgram, project_graph
 from arnold.pipeline.types import Edge, Stage, StepContext, StepResult
 

@@ -16,11 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Collection, Mapping
 
 from arnold.conformance import ConformanceCheckResult
-from arnold.pipeline.step_invocation import (
-    StepInvocation,
-    StepInvocationAdapter,
-    StepInvocationAdapterRegistry,
-)
+from arnold.execution.registries import CapabilityHandler, ExecutionRegistries
 from arnold.pipeline.types import ContractResult, ContractStatus
 
 
@@ -30,7 +26,6 @@ _DEFAULT_MEGAPLAN_COUPLING_ALLOWLIST = (
 )
 ACTIVE_MEGAPLAN_PACKAGE_NAMES = (
     "megaplan",
-    "arnold.pipelines.megaplan",
     "arnold_pipelines.megaplan",
 )
 
@@ -41,23 +36,23 @@ ACTIVE_MEGAPLAN_PACKAGE_NAMES = (
 
 
 def check_adapter_protocol_conformance(
-    registry: StepInvocationAdapterRegistry | None = None,
+    registry: ExecutionRegistries | None = None,
     *,
     smoke_kind: str | None = None,
-    smoke_invocation: StepInvocation | None = None,
+    smoke_invocation: Mapping[str, Any] | None = None,
 ) -> ConformanceCheckResult:
-    """Verify ``StepInvocationAdapter`` protocol and registry fail-closed behaviour.
+    """Verify execution registry protocol and fail-closed behaviour.
 
     Parameters
     ----------
     registry:
-        The adapter registry to check.  When *None* a fresh fail-closed
-        ``StepInvocationAdapterRegistry()`` is constructed.
+        The execution registries to check.  When *None* a fresh fail-closed
+        ``ExecutionRegistries()`` is constructed.
     smoke_kind:
         An optional registered kind whose adapter should survive a no-op
         smoke invocation.
     smoke_invocation:
-        An optional invocation to pass to the smoke adapter's ``invoke``.
+        An optional mapping to pass as smoke invocation context.
 
     Returns
     -------
@@ -65,63 +60,40 @@ def check_adapter_protocol_conformance(
         ``passed=True`` when the registry behaves correctly.
     """
     if registry is None:
-        registry = StepInvocationAdapterRegistry()
+        registry = ExecutionRegistries()
 
     diagnostics: list[str] = []
 
     # --- unknown-kind fail-closed ---
     unknown_kind = "_conformance_unknown_kind_"
     try:
-        registry.resolve(unknown_kind)
+        registry.capabilities.get(unknown_kind)
         diagnostics.append(
-            f"registry.resolve({unknown_kind!r}) did not raise KeyError "
+            f"registry.capabilities.get({unknown_kind!r}) did not raise LookupError "
             f"(fail-closed broken)"
         )
-    except KeyError:
+    except LookupError:
         pass  # expected
     except Exception as exc:
         diagnostics.append(
-            f"registry.resolve({unknown_kind!r}) raised unexpected "
+            f"registry.capabilities.get({unknown_kind!r}) raised unexpected "
             f"{type(exc).__name__}: {exc}"
         )
 
-    # --- registered_kinds returns deterministic tuple ---
-    kinds = registry.registered_kinds
+    # --- registered keys expose deterministic ordering for diagnostics ---
+    kinds = _registry_keys(registry.capabilities)
     if not isinstance(kinds, tuple):
-        diagnostics.append(
-            f"registry.registered_kinds returned {type(kinds).__name__}, expected tuple"
-        )
+        diagnostics.append(f"registry keys returned {type(kinds).__name__}, expected tuple")
     elif list(kinds) != sorted(kinds):
-        diagnostics.append(
-            f"registry.registered_kinds is not sorted: {list(kinds)}"
-        )
-
-    # --- model slot exists by default ---
-    if "model" not in kinds:
-        diagnostics.append("default registry missing reserved 'model' slot")
-
-    # --- register rejects duplicates ---
-    test_kind = "_conformance_dup_kind_"
-    try:
-        registry.register(test_kind, _NoOpAdapter())
-        try:
-            registry.register(test_kind, _NoOpAdapter())
-            diagnostics.append(
-                f"registry.register({test_kind!r}) did not raise ValueError "
-                f"on duplicate"
-            )
-        except ValueError:
-            pass  # expected
-    except Exception as exc:
-        diagnostics.append(
-            f"registry.register raised unexpected {type(exc).__name__}: {exc}"
-        )
+        diagnostics.append(f"registry keys are not sorted: {list(kinds)}")
 
     # --- smoke invocation (if requested) ---
     if smoke_kind is not None and smoke_invocation is not None:
         try:
-            adapter = registry.resolve(smoke_kind)
-            _ = adapter.invoke(smoke_invocation)
+            _ = registry.capabilities.check(
+                smoke_kind,
+                context={"invocation": dict(smoke_invocation)},
+            )
         except Exception as exc:
             diagnostics.append(
                 f"smoke invocation for kind {smoke_kind!r} raised "
@@ -131,15 +103,15 @@ def check_adapter_protocol_conformance(
     # --- resolve returns something satisfying the protocol ---
     for kind in kinds:
         try:
-            adapter = registry.resolve(kind)
-            if not isinstance(adapter, StepInvocationAdapter):
+            adapter = registry.capabilities.get(kind)
+            if not isinstance(adapter, CapabilityHandler):
                 diagnostics.append(
                     f"resolved adapter for {kind!r} is not a "
-                    f"StepInvocationAdapter: {type(adapter).__name__}"
+                    f"CapabilityHandler: {type(adapter).__name__}"
                 )
         except Exception as exc:
             diagnostics.append(
-                f"registry.resolve({kind!r}) raised {type(exc).__name__}: {exc}"
+                f"registry.capabilities.get({kind!r}) raised {type(exc).__name__}: {exc}"
             )
 
     if diagnostics:
@@ -153,28 +125,28 @@ def check_adapter_protocol_conformance(
 
 
 def check_adapter_unknown_kind_fail_closed(
-    registry: StepInvocationAdapterRegistry | None = None,
+    registry: ExecutionRegistries | None = None,
 ) -> ConformanceCheckResult:
-    """Verify that resolving an unknown kind raises ``KeyError`` and that
+    """Verify that resolving an unknown kind raises ``LookupError`` and that
     the error message names the kind and lists registered kinds.
 
     This check is deliberately isolated so callers can assert the exact
     fail-closed behaviour that the validator and C4 passes rely on.
     """
     if registry is None:
-        registry = StepInvocationAdapterRegistry()
+        registry = ExecutionRegistries()
 
     unknown_kind = "_conformance_fail_closed_kind_"
     try:
-        registry.resolve(unknown_kind)
+        registry.capabilities.get(unknown_kind)
         return ConformanceCheckResult(
             check_id="adapter-unknown-kind-fail-closed",
             passed=False,
-            message=f"registry.resolve({unknown_kind!r}) did not raise KeyError",
+            message=f"registry.capabilities.get({unknown_kind!r}) did not raise LookupError",
         )
-    except KeyError as exc:
+    except LookupError as exc:
         message = str(exc)
-        registered_kinds = sorted(registry._adapters)
+        registered_kinds = _registry_keys(registry.capabilities)
         if unknown_kind not in message:
             return ConformanceCheckResult(
                 check_id="adapter-unknown-kind-fail-closed",
@@ -193,7 +165,7 @@ def check_adapter_unknown_kind_fail_closed(
             check_id="adapter-unknown-kind-fail-closed",
             passed=False,
             message=(
-                f"registry.resolve({unknown_kind!r}) raised unexpected "
+                f"registry.capabilities.get({unknown_kind!r}) raised unexpected "
                 f"{type(exc).__name__}: {exc}"
             ),
         )
@@ -637,10 +609,22 @@ def check_never_port_artifacts(
 
 
 class _NoOpAdapter:
-    """An adapter that satisfies ``StepInvocationAdapter`` but does nothing."""
+    """A capability handler fixture for conformance smoke checks."""
 
-    def invoke(self, invocation: StepInvocation) -> None:
-        return None
+    def check(
+        self,
+        requirement_id: str,
+        *,
+        route: str,
+        context: Mapping[str, Any],
+    ):
+        from arnold.kernel import CapabilityCheck, CapabilityId
+
+        del route, context
+        return CapabilityCheck(
+            capability_id=CapabilityId(namespace="conformance", name=requirement_id),
+            allowed=True,
+        )
 
 
 def _make_representative_contract() -> ContractResult:
@@ -711,6 +695,10 @@ def _read_megaplan_coupling_allowlist(path: Path) -> set[str]:
     return allowed
 
 
+def _registry_keys(registry: Any) -> tuple[str, ...]:
+    return tuple(sorted(getattr(registry, "_handlers", {}).keys()))
+
+
 def _scan_generic_arnold_megaplan_imports(root: Path) -> dict[str, tuple[str, ...]]:
     coupled: dict[str, tuple[str, ...]] = {}
     for path in sorted(root.rglob("*.py")):
@@ -740,7 +728,7 @@ def _is_excluded_from_generic_arnold_scan(root: Path, path: Path) -> bool:
     relative_parts = path.relative_to(root).parts
     if "__pycache__" in relative_parts or "tests" in relative_parts:
         return True
-    return relative_parts[:2] == ("pipelines", "megaplan")
+    return False
 
 
 def _module_name_from_path(root: Path, path: Path) -> str:
@@ -828,9 +816,9 @@ def _string_constants(tree: ast.AST) -> set[str]:
 
 
 def check_adapter_smoke_invocation(
-    registry: StepInvocationAdapterRegistry,
+    registry: ExecutionRegistries,
     kind: str,
-    invocation: StepInvocation,
+    invocation: Mapping[str, Any],
 ) -> ConformanceCheckResult:
     """Run a smoke invocation through a registered adapter and surface failures.
 
@@ -839,8 +827,8 @@ def check_adapter_smoke_invocation(
     so callers can target specific adapters.
     """
     try:
-        adapter = registry.resolve(kind)
-    except KeyError as exc:
+        registry.capabilities.get(kind)
+    except LookupError as exc:
         return ConformanceCheckResult(
             check_id=f"adapter-smoke-{kind}",
             passed=False,
@@ -848,7 +836,7 @@ def check_adapter_smoke_invocation(
         )
 
     try:
-        adapter.invoke(invocation)
+        registry.capabilities.check(kind, context={"invocation": dict(invocation)})
     except Exception as exc:
         return ConformanceCheckResult(
             check_id=f"adapter-smoke-{kind}",
@@ -864,7 +852,7 @@ def check_adapter_smoke_invocation(
 
 
 def check_adapter_registry_round_trip(
-    registry: StepInvocationAdapterRegistry,
+    registry: ExecutionRegistries,
     kind: str,
 ) -> ConformanceCheckResult:
     """Verify that a registered adapter survives resolve → invoke → re-resolve.
@@ -873,9 +861,9 @@ def check_adapter_registry_round_trip(
     and resolving it twice should return the same adapter object.
     """
     try:
-        adapter1 = registry.resolve(kind)
-        adapter2 = registry.resolve(kind)
-    except KeyError as exc:
+        adapter1 = registry.capabilities.get(kind)
+        adapter2 = registry.capabilities.get(kind)
+    except LookupError as exc:
         return ConformanceCheckResult(
             check_id=f"adapter-round-trip-{kind}",
             passed=False,

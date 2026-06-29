@@ -12,15 +12,35 @@ No ``megaplan`` imports.  No forbidden vocabulary literals.
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Protocol, Sequence
 
 from arnold.conformance import ConformanceCheckResult
-from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks
 from arnold.pipeline.types import (
     ParallelStage,
     StepContext,
     StepResult,
 )
+
+
+class JoinHooks(Protocol):
+    def join_parallel_results(
+        self,
+        stage: ParallelStage,
+        ctx: StepContext,
+        child_results: list[StepResult],
+    ) -> StepResult: ...
+
+
+class DefaultJoinHooks:
+    def join_parallel_results(
+        self,
+        stage: ParallelStage,
+        ctx: StepContext,
+        child_results: list[StepResult],
+    ) -> StepResult:
+        if stage.join is not None:
+            return stage.join(child_results, ctx)
+        return StepResult()
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +82,7 @@ def _make_sentinel_parallel_stage() -> ParallelStage:
 
 
 def check_join_delegation(
-    hooks: ExecutorHooks | None = None,
+    hooks: JoinHooks | None = None,
 ) -> ConformanceCheckResult:
     """Verify that ``join_parallel_results`` delegates to ``stage.join``.
 
@@ -71,13 +91,13 @@ def check_join_delegation(
     that the returned ``StepResult`` matches the sentinel — proving delegation
     occurred.
 
-    When *hooks* is ``None`` (or a ``NullExecutorHooks``), the default
+    When *hooks* is ``None``, the default
     behaviour is delegation to ``stage.join``, which returns the sentinel.
 
     Parameters
     ----------
     hooks:
-        The hook implementation to test.  When *None*, ``NullExecutorHooks``
+        The hook implementation to test.  When *None*, ``DefaultJoinHooks``
         is used (which delegates by default).
 
     Returns
@@ -86,7 +106,7 @@ def check_join_delegation(
         ``passed=True`` when the hook delegates to ``stage.join``.
     """
     if hooks is None:
-        hooks = NullExecutorHooks()
+        hooks = DefaultJoinHooks()
 
     stage = _make_sentinel_parallel_stage()
     ctx = StepContext(artifact_root="/tmp/conformance", state=None)
@@ -137,7 +157,7 @@ def check_join_delegation(
 
 
 def check_join_delegation_with_child_results(
-    hooks: ExecutorHooks | None = None,
+    hooks: JoinHooks | None = None,
 ) -> ConformanceCheckResult:
     """Verify that ``join_parallel_results`` passes child results to ``stage.join``.
 
@@ -147,7 +167,7 @@ def check_join_delegation_with_child_results(
     forwarded correctly.
     """
     if hooks is None:
-        hooks = NullExecutorHooks()
+        hooks = DefaultJoinHooks()
 
     expected_child_results: list[StepResult] = [
         StepResult(next="child_a", outputs={"idx": 0}),
@@ -210,7 +230,7 @@ def check_join_delegation_with_child_results(
 
 
 def check_join_delegation_non_delegating(
-    hooks: ExecutorHooks,
+    hooks: JoinHooks,
 ) -> ConformanceCheckResult:
     """Verify that a deliberately non-delegating hook does NOT delegate to
     ``stage.join``.
@@ -256,7 +276,7 @@ def check_join_delegation_non_delegating(
 
 
 def check_join_delegation_context_forwarding(
-    hooks: ExecutorHooks | None = None,
+    hooks: JoinHooks | None = None,
 ) -> ConformanceCheckResult:
     """Verify that ``join_parallel_results`` forwards the ``StepContext`` to
     ``stage.join``.
@@ -265,7 +285,7 @@ def check_join_delegation_context_forwarding(
     receives and checks it matches what was passed to the hook.
     """
     if hooks is None:
-        hooks = NullExecutorHooks()
+        hooks = DefaultJoinHooks()
 
     received_ctx: list[StepContext] = []
 
@@ -327,16 +347,16 @@ def check_join_delegation_context_forwarding(
 
 
 def run_join_conformance_suite(
-    hooks: ExecutorHooks | None = None,
+    hooks: JoinHooks | None = None,
 ) -> list[ConformanceCheckResult]:
     """Run all join delegation conformance checks against *hooks*.
 
-    When *hooks* is ``None``, ``NullExecutorHooks`` is used.
+    When *hooks* is ``None``, ``DefaultJoinHooks`` is used.
 
     Returns an ordered list of ``ConformanceCheckResult`` values.
     """
     if hooks is None:
-        hooks = NullExecutorHooks()
+        hooks = DefaultJoinHooks()
 
     return [
         check_join_delegation(hooks),

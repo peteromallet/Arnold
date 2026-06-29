@@ -286,7 +286,7 @@ def _translate_pipeline(mp_pipeline: Any) -> Any:
 class MegaplanExecutorHooks:
     """Lifecycle hooks bridging megaplan executor behavior into the neutral walk-loop.
 
-    Implements the :class:`~arnold.pipeline.hooks.ExecutorHooks` structural
+    Implements the :class:`~arnold.execution.hooks.ExecutorHooks` structural
     protocol with megaplan-specific semantics:
 
     - ``on_stage_complete``: persists state to disk via ``executor-key-merge``

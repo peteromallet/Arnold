@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from arnold.runtime.sandbox import (
+from arnold.agent.tools.sandbox import (
     SANDBOX_CWD,
     SandboxViolation,
     get_sandbox_cwd,

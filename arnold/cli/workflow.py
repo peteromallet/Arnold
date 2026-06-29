@@ -17,6 +17,7 @@ import argparse
 import importlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -37,18 +38,58 @@ from arnold.execution.state_store import FileStateStore
 from arnold.execution.result import ExecutionResult
 from arnold.manifest.refs import NodeRef, manifest_coordinate
 from arnold.workflow import (
-    Pipeline,
     compile_pipeline,
     dry_run,
     inspect_manifest,
     to_dot,
     to_yaml,
 )
+from arnold.pipeline.types import Pipeline as GraphPipeline
+from arnold.workflow.dsl import Pipeline as WorkflowPipeline, Route as WorkflowRoute, Step as WorkflowStep
 from arnold_pipelines.discovery import load_builder
 
 
-def _load_builder(target: str) -> Callable[[], Pipeline]:
+def _load_builder(target: str) -> Callable[[], Any]:
     return load_builder(target)
+
+
+def _ref_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.:-]+", "_", value.strip())
+    return token or "default"
+
+
+def _workflow_from_graph_pipeline(pipeline: GraphPipeline, *, target: str) -> WorkflowPipeline:
+    steps = tuple(
+        WorkflowStep(
+            id=_ref_token(name),
+            kind=_ref_token(str(getattr(stage.step, "kind", "compute"))),
+            label=name,
+            metadata={"source": "arnold.pipeline", "builder": target},
+        )
+        for name, stage in pipeline.stages.items()
+    )
+    routes: list[WorkflowRoute] = []
+    for source, stage in pipeline.stages.items():
+        for edge in getattr(stage, "edges", ()) or ():
+            target_name = getattr(edge, "target", "")
+            if not target_name or target_name == "halt":
+                continue
+            label = _ref_token(str(getattr(edge, "label", "default") or "default"))
+            routes.append(
+                WorkflowRoute(
+                    id=_ref_token(f"{source}:{target_name}:{label}"),
+                    source=_ref_token(source),
+                    target=_ref_token(str(target_name)),
+                    label=label,
+                )
+            )
+    return WorkflowPipeline(
+        id=_ref_token(getattr(pipeline, "entry", None) or target.rsplit(":", 1)[0]),
+        version="1.0",
+        steps=steps,
+        routes=tuple(routes),
+        metadata={"source": "arnold.pipeline", "builder": target},
+    )
 
 
 def _source_path_from_advertised_value(value: Any, *, module_file: str | None) -> Path | None:
@@ -93,7 +134,9 @@ def _advertised_authoring_source_path(target: str) -> Path | None:
 def _compile_from_target(target: str) -> workflow.WorkflowManifest:
     builder = _load_builder(target)
     pipeline = builder()
-    if not isinstance(pipeline, Pipeline):
+    if isinstance(pipeline, GraphPipeline):
+        pipeline = _workflow_from_graph_pipeline(pipeline, target=target)
+    if not isinstance(pipeline, WorkflowPipeline):
         raise ValueError(
             f"builder {target!r} returned {type(pipeline).__name__}, expected Pipeline"
         )

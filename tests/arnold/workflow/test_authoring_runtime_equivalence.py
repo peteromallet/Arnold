@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from arnold.execution import ExecutionRegistries, ExecutionState, run
-from arnold.execution.backend import LocalJournalBackend
+from arnold.execution.backend import LocalJournalBackend, NodeOutcome, NodeState
 from arnold.kernel import CapabilityCheck, CapabilityId, read_event_journal
 from arnold.workflow import compile_workflow_file
 
@@ -59,6 +59,27 @@ class _AllowCapability:
             allowed=True,
             reason="test capability",
         )
+
+
+class _SuspendOnceBackend(_DeterministicBackend):
+    """Backend that suspends selected authored nodes on their first execution."""
+
+    def __init__(self, suspend_node: str, route_id: str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._suspend_node = suspend_node
+        self._route_id = route_id
+        self._suspended = False
+
+    def _execute_node_payload(self, coordinate: Any, node: Any, context: Any) -> NodeOutcome:
+        del node, context
+        if coordinate.node_ref == self._suspend_node and not self._suspended:
+            self._suspended = True
+            return NodeOutcome(
+                state=NodeState.SUSPENDED,
+                suspension_route_id=self._route_id,
+                outputs={"awaiting": "operator"},
+            )
+        return NodeOutcome(state=NodeState.COMPLETED)
 
 
 def _registries() -> ExecutionRegistries:
@@ -237,3 +258,64 @@ def test_compiled_authoring_manifest_hash_is_stable(tmp_path: Path) -> None:
         backend=backend,
     )
     assert first.manifest_hash == second.manifest_hash
+
+
+def test_compiled_authoring_fixture_suspends_and_resumes_through_manifest_runtime(
+    tmp_path: Path,
+) -> None:
+    """Authored source must use the journal-backed manifest runtime resume path."""
+
+    manifest = compile_workflow_file(FIXTURE_DIR / "valid_m3_bounded_loop.py")
+    execute = next(node for node in manifest.nodes if node.id == "execute")
+    route = execute.policy.suspension_routes[0]
+
+    first = run(
+        manifest,
+        artifact_root=tmp_path,
+        registries=_registries(),
+        backend=_SuspendOnceBackend(
+            suspend_node="execute",
+            route_id=route.route_id,
+            run_id="m7-authored-suspend-resume",
+        ),
+    )
+
+    assert first.state is ExecutionState.SUSPENDED
+    assert first.resume_cursor is not None
+    assert first.resume_cursor.node is not None
+    assert first.resume_cursor.node.id == "execute"
+    assert first.resume_cursor.reentry_id is None
+
+    before_resume = read_event_journal(tmp_path)
+    suspended = [event for event in before_resume if event.kind == "node_suspended"]
+    assert len(suspended) == 1
+    assert suspended[0].payload["node_ref"] == "execute"
+    assert suspended[0].payload["route_id"] == route.route_id
+    assert not any(event.kind == "node_resumed" for event in before_resume)
+
+    second = run(
+        manifest,
+        artifact_root=tmp_path,
+        registries=_registries(),
+        backend=_DeterministicBackend(
+            run_id="m7-authored-suspend-resume",
+            reentry_id=route.reentry_id,
+        ),
+        resume_cursor=first.resume_cursor,
+    )
+
+    assert second.state is ExecutionState.COMPLETED
+    after_resume = read_event_journal(tmp_path)
+    resumed = [event for event in after_resume if event.kind == "node_resumed"]
+    assert len(resumed) == 1
+    assert resumed[0].payload == {
+        "node_ref": "execute",
+        "reentry_id": "",
+    }
+    completed = {
+        event.payload["node_ref"]
+        for event in after_resume
+        if event.kind == "node_completed" and event.payload.get("child_key") is None
+    }
+    assert completed == {"plan", "execute", "review", "revise"}
+    assert after_resume[-1].kind == "run_completed"

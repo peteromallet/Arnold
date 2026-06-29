@@ -99,7 +99,7 @@ from arnold_pipelines.megaplan.types import (
     PlanState,
     StepResponse,
 )
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.planning.state import (
     STATE_BLOCKED,
     STATE_EXECUTED,

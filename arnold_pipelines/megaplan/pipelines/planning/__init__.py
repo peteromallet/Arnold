@@ -1,7 +1,7 @@
 """Thin re-export: canonical ``megaplan`` pipeline (legacy planning → megaplan alias).
 
 Registry identity is ``megaplan``; the legacy alias ``planning`` resolves to it.
-All canonical metadata lives in :mod:`arnold.pipelines.megaplan`.
+All canonical metadata lives in :mod:`arnold_pipelines.megaplan`.
 """
 
 from __future__ import annotations

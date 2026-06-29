@@ -841,7 +841,7 @@ def resume_plan(
         )
     rollback_state = dict(previous_state)
     try:
-        from arnold.runtime.operations import OperationKind, OperationRequest
+        from arnold.execution.operations import OperationKind, OperationRequest
 
         operation_runner = None
         if runner is not None:
