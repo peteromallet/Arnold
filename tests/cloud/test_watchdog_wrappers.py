@@ -464,6 +464,72 @@ def test_repair_loop_classifies_completed_chain_as_chain_completed(tmp_path: Pat
     assert payload["failure_classification"] == "chain_completed"
 
 
+def test_repair_loop_classifies_completed_chain_with_null_current_fields(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": None,
+                "current_state": None,
+                "last_state": "done",
+                "events": [{"msg": "all milestones complete"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "demo-chain")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "chain_completed"
+
+
+def test_repair_loop_reclassifies_completed_chain_history_unknown_sentinels(tmp_path: Path) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "iterations": [
+                    {
+                        "failure_classification": "timeout_or_hang",
+                        "plan_latest_failure": {"kind": "phase_failed", "message": "phase failed"},
+                        "raw_failure_signals": ["latest_failure.kind: phase_failed"],
+                        "chain_state_summary": {
+                            "last_state": "done",
+                            "current_plan_name": "unknown",
+                            "current_state": "unknown",
+                            "events": [{"msg": "all milestones complete"}],
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    assert "failure classification: chain_completed" in result.stdout
+
+
 def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     text = _wrapper("arnold-watchdog")
 
