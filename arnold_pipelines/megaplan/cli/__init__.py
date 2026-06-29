@@ -2338,8 +2338,9 @@ def _normalize_execute_compat_argv(argv: list[str]) -> list[str]:
     first ``execute`` token before any parsing happens.
 
     A second stale-wrapper shape drops the ``execute`` token entirely and
-    forwards only execute-only flags. In that case, synthesize the missing
-    subcommand so compatibility routing still lands in the execute parser.
+    forwards execute options directly after the root options. In that case,
+    synthesize the missing subcommand so compatibility routing still lands in
+    the execute parser.
     """
     recognized = {
         "--confirm-destructive",
@@ -2364,7 +2365,11 @@ def _normalize_execute_compat_argv(argv: list[str]) -> list[str]:
             prefix.extend(argv[index:end])
             index = end
         execute_tail = argv[index:]
-        if execute_tail and all(token in recognized for token in execute_tail):
+        if (
+            execute_tail
+            and execute_tail[0].startswith("-")
+            and any(token in recognized for token in execute_tail)
+        ):
             return [*prefix, "execute", *execute_tail]
         return argv
 
