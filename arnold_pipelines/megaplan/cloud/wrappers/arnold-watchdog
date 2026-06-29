@@ -1808,9 +1808,15 @@ dispatch_kimi_repair() {
   fi
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
-  setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
-    _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
-    >> "$LOG" 2>&1 < /dev/null &
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
+      >> "$LOG" 2>&1 < /dev/null &
+  else
+    bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
+      >> "$LOG" 2>&1 < /dev/null &
+  fi
   log "repair loop background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
   return 0
