@@ -1476,6 +1476,34 @@ def _semantic_diff_nonempty_between_refs(
     return True, f"{target_label} semantic diff files: {', '.join(changed[:10])}"
 
 
+def _raw_diff_nonempty_between_refs(
+    root: Path, base_sha: str | None, target_ref: str, *, target_label: str
+) -> tuple[bool | None, str]:
+    if not base_sha:
+        return None, "milestone_base_sha unavailable"
+    target_ref = target_ref.strip()
+    if not target_ref:
+        return None, f"{target_label} unavailable"
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", base_sha, target_ref, "--"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        return (
+            None,
+            f"git diff from milestone_base_sha to {target_label} failed: "
+            f"{proc.stderr.strip() or proc.stdout.strip()}",
+        )
+    changed = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not changed:
+        return False, f"no raw diff from milestone_base_sha {base_sha} to {target_label}"
+    return True, f"{target_label} raw diff files: {', '.join(changed[:10])}"
+
+
 def _semantic_diff_nonempty_from_base(
     root: Path, base_sha: str | None
 ) -> tuple[bool, str]:
@@ -1683,9 +1711,17 @@ def _chain_completion_guard(
         )
         local_diff_ok = False
         local_diff_reason = ""
+        local_raw_diff_ok: bool | None = None
+        local_raw_diff_reason = ""
         if published_diff_ok is not True:
             local_diff_ok, local_diff_reason = _semantic_diff_nonempty_from_base(
                 root, milestone_base_sha
+            )
+            local_raw_diff_ok, local_raw_diff_reason = _raw_diff_nonempty_between_refs(
+                root,
+                milestone_base_sha,
+                "HEAD",
+                target_label="local HEAD",
             )
         if published_diff_ok is True:
             if waiver_ok:
@@ -1706,6 +1742,33 @@ def _chain_completion_guard(
             if waiver_ok:
                 return True, f"typed no-op waiver accepted: {waiver_reason}"
             return True, f"completion guard passed: {local_diff_reason}; {published_diff_reason}"
+        if (
+            published_diff_ok is False
+            and not local_diff_ok
+            and local_raw_diff_ok is False
+        ):
+            authoritative, authority_reason = _latest_execution_batch_all_tasks_done(
+                plan_dir
+            )
+            empty_finalize_tasks, finalize_reason = _finalize_payload_has_empty_tasks(
+                plan_dir
+            )
+            if authoritative and not empty_finalize_tasks:
+                if waiver_ok:
+                    return True, f"typed no-op waiver accepted: {waiver_reason}"
+                reason_parts = []
+                if merged_pr_state_bypass_reason:
+                    reason_parts.append(merged_pr_state_bypass_reason)
+                reason_parts.extend(
+                    [
+                        authority_reason,
+                        finalize_reason,
+                        "merged PR accepted with authoritative execution and true no-op diff",
+                        local_diff_reason,
+                        published_diff_reason,
+                    ]
+                )
+                return True, f"completion guard passed: {'; '.join(reason_parts)}"
         if not waiver_ok:
             return False, f"{published_diff_reason}; {waiver_reason}"
         if waiver_ok:
