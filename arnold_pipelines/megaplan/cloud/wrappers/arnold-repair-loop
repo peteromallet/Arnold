@@ -2276,17 +2276,52 @@ EOF
   echo "running"
 }
 
+render_chain_health_block() {
+  # Read the chain-health artifact the watchdog writes when it detects a
+  # chain-level cycle / stuck-state / completion-guard rejection, and render the
+  # evidence block for the dev-fix prompt. Returns empty when no chain-level
+  # issue is flagged (so plan-level prompts are unchanged).
+  local artifact
+  artifact="$(dirname "$DATA_FILE")/${SESSION}.chain-health.json"
+  [[ -f "$artifact" ]] || return 0
+  python3 - "$artifact" <<'PY'
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+if not d or d.get("status") == "ok":
+    sys.exit(0)
+md = d.get("evidence_markdown") or ""
+if md:
+    print(md)
+    sys.exit(0)
+issue = d.get("issue_kind") or d.get("status") or "chain-level issue"
+summary = (d.get("summary") or "").strip()
+print("## CHAIN HEALTH EVIDENCE")
+print(f"- Issue: {issue}")
+if summary:
+    print(f"- Summary: {summary}")
+print("- This is a CHAIN-DRIVER issue (completion guard / state progression), not a plan bug.")
+print("- Investigate: arnold_pipelines/megaplan/chain/__init__.py and arnold_pipelines/megaplan/chain/status.py")
+PY
+}
+
 write_dev_prompt() {
   local prompt_path="$1"
   local requested_model="$2"
   local dispatch_model="$3"
   local report_path="$4"
-  local failure_summary
+  local failure_summary chain_health_block
   failure_summary="$(render_failure_summary "$DATA_FILE")"
+  chain_health_block="$(render_chain_health_block)"
   cat > "$prompt_path" <<EOF
 You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud session.
 
 $failure_summary
+$chain_health_block
+
+**IF A "CHAIN HEALTH EVIDENCE" BLOCK IS PRESENT ABOVE: the root cause is a CHAIN-DRIVER code bug (completion guard / state progression / authority_divergence cycle) in arnold_pipelines/megaplan/chain/, NOT a plan bug. Read the recurring chain-log lines and the completion-guard verdict in that block, then fix the chain driver there. Do NOT chase the plan's latest_failure -- for a chain-level cycle the plan is a victim, not the cause.**
 
 Session: $SESSION
 Workspace: $WORKSPACE
