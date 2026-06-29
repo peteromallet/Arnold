@@ -32,6 +32,13 @@ def _repair_wrapper() -> str:
     return _wrapper("arnold-repair-loop")
 
 
+def _extract_repair_function(name: str) -> str:
+    text = _repair_wrapper()
+    start = text.index(f"{name}() {{")
+    end = text.index("\n}\n", start) + 3
+    return text[start:end]
+
+
 def _extract_wrapper_function(name: str) -> str:
     text = _wrapper("arnold-watchdog")
     start = text.index(f"{name}() {{")
@@ -1010,6 +1017,80 @@ def test_repair_loop_reclassifies_completed_chain_history_unknown_sentinels(tmp_
     assert "failure classification: chain_completed" in result.stdout
 
 
+def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_root = tmp_path / "repair-root"
+    workspace = tmp_path / "ws"
+    bin_dir = tmp_path / "bin"
+    marker_dir.mkdir()
+    repair_root.mkdir()
+    workspace.mkdir()
+    bin_dir.mkdir()
+
+    calls_log = tmp_path / "calls.log"
+    for name in ("tmux", "codex"):
+        path = bin_dir / name
+        path.write_text(
+            "#!/usr/bin/env bash\n"
+            f"printf '%s\\n' {name!r} >> {str(calls_log)!r}\n"
+            "exit 97\n",
+            encoding="utf-8",
+        )
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    timeout_path = bin_dir / "timeout"
+    timeout_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "shift\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
+    timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
+
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text(json.dumps({"run_kind": "chain"}), encoding="utf-8")
+    _write_chain_state(
+        workspace / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_plan_name": "demo-plan",
+            "current_milestone_index": 3,
+            "last_state": "done",
+            "completed": [{"label": "m1"}, {"label": "m2"}, {"label": "m3"}],
+            "milestones": [{"label": "m1"}, {"label": "m2"}, {"label": "m3"}],
+        },
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "demo-plan",
+        {
+            "name": "demo-plan",
+            "current_state": "blocked",
+            "iteration": 3,
+            "latest_failure": {"kind": "authority_divergence", "message": "stale", "recorded_at": "2026-06-29T00:00:00Z"},
+        },
+    )
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    result = subprocess.run(
+        ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), str(spec_path)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "chain already complete; no repair needed" in combined
+    assert not calls_log.exists() or not calls_log.read_text(encoding="utf-8").strip()
+    assert not (marker_dir / "demo-session.repair-loop.pid").exists()
+
+
 def test_watchdog_liveness_is_scoped_to_marked_chain_spec() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -1245,17 +1326,15 @@ def test_watchdog_kimi_repair_is_backgrounded_so_it_cannot_block_the_tick() -> N
             )), f"bare synchronous Kimi invocation remains: {ln!r}"
 
 
-def test_watchdog_repair_dispatch_has_systemwide_busy_gate() -> None:
+def test_watchdog_repair_dispatch_is_scoped_per_session() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"' in text
-    assert 'exec {repair_lock_fd}> "$REPAIR_LOCK_FILE"' in text
-    assert 'CLOUD_WATCHDOG_REPAIR_LOCK_HELD=1' in text
-    assert 'CLOUD_WATCHDOG_REPAIR_LOCK_FD="$repair_lock_fd"' in text
-    assert "repair_loop_running_anywhere()" in text
-    assert 'if ! flock -n "$REPAIR_LOCK_FILE" true >/dev/null 2>&1; then' in text
+    assert "repair_pidfile_path()" in text
+    assert "repair_loop_pid_matches_session()" in text
     assert "repair_loop_busy_state()" in text
     assert 'repair_busy="$(repair_loop_busy_state "$session")"' in text
+    assert 'pidfile="$(repair_pidfile_path "$session")"' in text
+    assert 'if repair_loop_pid_matches_session "$existing_pid" "$session"; then' in text
     assert "another repair loop already running; waiting turn" in text
 
 
@@ -1325,6 +1404,9 @@ def test_watchdog_skips_same_session_dispatch_when_repair_loop_is_already_runnin
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
             _extract_wrapper_function("repair_loop_busy_state"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -1335,14 +1417,12 @@ report_item() {
 log() { :; }
 session_health_status() { echo stopped; }
 plan_attention_status_env() { return 0; }
-repair_loop_running_anywhere() { return 0; }
 kimi_operator_running() { [[ "$1" == "demo-session" ]]; }
 mechanical_relaunch_attempted_previously() { return 1; }
 kimi_dispatch_failed_previously() { return 1; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
-safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
             f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
@@ -1357,69 +1437,60 @@ tmux() { echo TMUX >&2; return 1; }
     assert "TMUX" not in result.stderr
 
 
-def test_watchdog_serializes_repairs_across_sessions_one_dispatch_at_a_time(tmp_path: Path) -> None:
+def test_watchdog_allows_concurrent_repairs_for_different_sessions(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
-    workspace_a = tmp_path / "ws-a"
-    workspace_b = tmp_path / "ws-b"
-    workspace_a.mkdir()
-    workspace_b.mkdir()
-    spec_a = workspace_a / "demo-a.yaml"
-    spec_b = workspace_b / "demo-b.yaml"
-    spec_a.write_text("milestones: []\n", encoding="utf-8")
-    spec_b.write_text("milestones: []\n", encoding="utf-8")
-    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    launch_log = tmp_path / "repair-launches.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$1\" >> {str(launch_log)!r}\n"
+        "sleep 5\n",
+        encoding="utf-8",
+    )
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
             _extract_wrapper_function("repair_loop_busy_state"),
-            _extract_wrapper_function("repair_unhealthy_session"),
-            _extract_wrapper_function("launch_chain_tick"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
             """
-report_item() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
-}
-log() { :; }
-GLOBAL_BUSY=0
-session_health_status() {
-  if [[ "$1" == "demo-a" ]]; then
-    echo retrying_failure
-  else
-    echo stopped
-  fi
-}
-plan_attention_status_env() { return 0; }
-repair_loop_running_anywhere() { [[ "${GLOBAL_BUSY:-0}" == "1" ]]; }
-kimi_operator_running() { return 1; }
-mechanical_relaunch_attempted_previously() { return 1; }
-kimi_dispatch_failed_previously() { return 1; }
-dispatch_kimi_repair() {
-  GLOBAL_BUSY=1
-  echo "DISPATCH:$1" >&2
-  return 0
-}
-ensure_install_or_repair() { return 0; }
-resolve_relaunch_command() { echo RELAUNCH; }
-safe_name() { printf '%s\n' "$1"; }
-tmux() { echo TMUX >&2; return 1; }
+log() { printf '%s\n' "$*" >> "$LOG"; }
+dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
+echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
+dispatch_kimi_repair demo-b /tmp/ws /tmp/spec
+echo "second:${REPAIR_DISPATCH_RESULT:-unset}"
+sleep 0.3
+if [[ -f "$(kimi_pgid_path demo-a)" ]]; then
+  kill -- "-$(cat "$(kimi_pgid_path demo-a)")" 2>/dev/null || true
+fi
+if [[ -f "$(kimi_pgid_path demo-b)" ]]; then
+  kill -- "-$(cat "$(kimi_pgid_path demo-b)")" 2>/dev/null || true
+fi
+sleep 0.1
 """.strip(),
-            f"launch_chain_tick demo-a {str(workspace_a)!r} {str(spec_a)!r} {str(report_path)!r} chain '' ''",
-            f"launch_chain_tick demo-b {str(workspace_b)!r} {str(spec_b)!r} {str(report_path)!r} chain '' ''",
         ]
     )
 
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
-    report = report_path.read_text(encoding="utf-8")
-    assert "DISPATCH:demo-a" in result.stderr
-    assert "DISPATCH:demo-b" not in result.stderr
-    assert "\trepair\trepair_running\tretrying_failure\t" in report
-    assert "\trepair\trepair_running\tanother repair loop already running; waiting turn\t" in report
-    assert "TMUX" not in result.stderr
+    assert result.stdout.strip().splitlines() == ["first:dispatched", "second:dispatched"]
+    assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a", "demo-b"]
 
 
-def test_watchdog_dispatch_claims_repair_lock_before_background_loop_starts(
+def test_watchdog_dispatch_skips_duplicate_same_session_repair(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -1437,19 +1508,24 @@ def test_watchdog_dispatch_claims_repair_lock_before_background_loop_starts(
 
     script = "\n\n".join(
         [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
             _extract_wrapper_function("kimi_dispatch_marker_path"),
             _extract_wrapper_function("kimi_pgid_path"),
             _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
             _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
-            f"REPAIR_LOCK_FILE={str(marker_dir / 'repair-loop.lock')!r}",
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
             f"LOG={str(log_path)!r}",
             """
 log() { printf '%s\n' "$*" >> "$LOG"; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
-dispatch_kimi_repair demo-b /tmp/ws /tmp/spec
+dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "second:${REPAIR_DISPATCH_RESULT:-unset}"
 sleep 0.3
 if [[ -f "$(kimi_pgid_path demo-a)" ]]; then
@@ -1464,9 +1540,165 @@ sleep 0.1
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["first:dispatched", "second:busy"]
     assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a"]
-    assert "repair loop already active; skipping dispatch session=demo-b" in log_path.read_text(
+    assert "repair loop already active; skipping dispatch session=demo-a" in log_path.read_text(
         encoding="utf-8"
     )
+
+
+def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_term(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_root = tmp_path / "repair-root"
+    workspace = tmp_path / "ws"
+    bin_dir = tmp_path / "bin"
+    marker_dir.mkdir()
+    repair_root.mkdir()
+    workspace.mkdir()
+    bin_dir.mkdir()
+
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text(
+        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
+        encoding="utf-8",
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "demo-plan",
+        {
+            "name": "demo-plan",
+            "current_state": "blocked",
+            "iteration": 1,
+            "latest_failure": {
+                "kind": "phase_failed",
+                "message": "boom",
+                "recorded_at": "2026-06-29T00:00:00Z",
+                "metadata": {"exit_code": 1},
+            },
+        },
+    )
+
+    timeout_path = bin_dir / "timeout"
+    timeout_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "shift\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
+    timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
+    codex_path = bin_dir / "codex"
+    codex_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "sleep 5\n",
+        encoding="utf-8",
+    )
+    codex_path.chmod(codex_path.stat().st_mode | stat.S_IXUSR)
+    launcher_path = tmp_path / "launcher.py"
+    launcher_path.write_text("import time\n\ntime.sleep(5)\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+
+    args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    pidfile = marker_dir / "demo-session.repair-loop.pid"
+    try:
+        for _ in range(100):
+            if pidfile.exists():
+                break
+            time.sleep(0.05)
+        assert pidfile.exists(), "repair loop never claimed pidfile"
+
+        second = subprocess.run(args, capture_output=True, text=True, env=env, check=False)
+        assert second.returncode == 75
+        assert "another repair loop is already active" in f"{second.stdout}\n{second.stderr}"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=15)
+
+    assert not pidfile.exists()
+
+
+def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_root = tmp_path / "repair-root"
+    workspace = tmp_path / "ws"
+    bin_dir = tmp_path / "bin"
+    marker_dir.mkdir()
+    repair_root.mkdir()
+    workspace.mkdir()
+    bin_dir.mkdir()
+
+    marker_path = marker_dir / "demo-session.json"
+    marker_path.write_text(
+        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
+        encoding="utf-8",
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "demo-plan",
+        {
+            "name": "demo-plan",
+            "current_state": "blocked",
+            "iteration": 1,
+            "latest_failure": {
+                "kind": "phase_failed",
+                "message": "boom",
+                "recorded_at": "2026-06-29T00:00:00Z",
+                "metadata": {"exit_code": 1},
+            },
+        },
+    )
+    stale_pidfile = marker_dir / "demo-session.repair-loop.pid"
+    stale_pidfile.write_text("999999\n", encoding="utf-8")
+
+    timeout_path = bin_dir / "timeout"
+    timeout_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "shift\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
+    timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
+    codex_path = bin_dir / "codex"
+    codex_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "sleep 5\n",
+        encoding="utf-8",
+    )
+    codex_path.chmod(codex_path.stat().st_mode | stat.S_IXUSR)
+    launcher_path = tmp_path / "launcher.py"
+    launcher_path.write_text("import time\n\ntime.sleep(5)\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+
+    proc = subprocess.Popen(
+        ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    try:
+        for _ in range(100):
+            if stale_pidfile.exists() and stale_pidfile.read_text(encoding="utf-8").strip() == str(proc.pid):
+                break
+            time.sleep(0.05)
+        assert stale_pidfile.read_text(encoding="utf-8").strip() == str(proc.pid)
+    finally:
+        proc.terminate()
+        stdout, stderr = proc.communicate(timeout=15)
+
+    combined = f"{stdout}\n{stderr}"
+    assert "stale repair pidfile detected; reclaiming" in combined
+    assert not stale_pidfile.exists()
 
 
 def test_watchdog_complete_teardown_collects_setsid_descendant_pgids(tmp_path: Path) -> None:
@@ -3052,12 +3284,18 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"' in text
     assert 'FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"' in text
     assert 'FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"' in text
-    assert 'REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"' in text
+    assert 'REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"' in text
     assert "acquire_repair_lock()" in text
-    assert 'if [[ "${CLOUD_WATCHDOG_REPAIR_LOCK_HELD:-0}" == "1" ]]; then' in text
-    assert 'log "repair lock inherited from watchdog dispatch; continuing session=$SESSION"' in text
-    assert 'if ! flock -n "$REPAIR_LOCK_FD"; then' in text
+    assert "repair_loop_pid_matches_session()" in text
+    assert 'if ( set -o noclobber; printf \'%s\\n\' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then' in text
+    assert 'log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"' in text
+    assert 'log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"' in text
+    assert "guard_against_recursive_repair_loop()" in text
+    assert 'export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1' in text
+    assert 'log "repair loop recursion blocked; parent repair loop already active' in text
     assert "acquire_repair_lock || exit 75" in text
+    assert 'exit_if_repair_target_complete "start"' in text
+    assert 'exit_if_repair_target_complete "iteration-$iteration-start"' in text
     assert "repair_data_init()" in text
     assert "repair_data_record_dev()" in text
     assert "append_repair_finding_if_reported()" in text

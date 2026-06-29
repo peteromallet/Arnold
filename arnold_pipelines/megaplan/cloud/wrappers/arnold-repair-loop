@@ -22,7 +22,6 @@ MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
 ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
 DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"
 FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"
 FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"
 ARNOLD_SRC="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
@@ -47,11 +46,14 @@ RUN_DIR="$ROOT/${TS}-${SAFE_SESSION}"
 LOG="$RUN_DIR/operator.log"
 DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"
 NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
+REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
 
 mkdir -p "$RUN_DIR" "$DATA_DIR" "$FINDINGS_DIR"
 
 CHILD_PIDS=()
 CLEANUP_CHILDREN_RAN=0
+REPAIR_PID_FILE_OWNED=0
+REPAIR_SHUTDOWN_RAN=0
 cleanup_children() {
   local pid pgid
   if [[ "$CLEANUP_CHILDREN_RAN" == "1" ]]; then
@@ -77,36 +79,152 @@ cleanup_children() {
     kill -9 "$pid" 2>/dev/null || true
   done
 }
-trap cleanup_children EXIT INT TERM HUP
 
 log() {
   echo "[repair-loop $(date -Iseconds)] $*" | tee -a "$LOG"
 }
 
-acquire_repair_lock() {
-  mkdir -p "$(dirname "$REPAIR_LOCK_FILE")"
-  if ! command -v flock >/dev/null 2>&1; then
-    log "flock unavailable; cannot enforce single active repair loop"
-    return 1
+clear_session_repair_markers_now() {
+  rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || true
+}
+
+repair_loop_pid_matches_session() {
+  local pid="$1"
+  local session="${2:-}"
+  python3 - "$pid" "$session" <<'PY'
+import os
+import pathlib
+import shlex
+import subprocess
+import sys
+
+pid_text, session = sys.argv[1:]
+try:
+    pid = int(pid_text)
+except (TypeError, ValueError):
+    raise SystemExit(1)
+if pid <= 0:
+    raise SystemExit(1)
+
+def parse_args() -> list[str]:
+    cmdline_path = pathlib.Path(f"/proc/{pid}/cmdline")
+    if cmdline_path.exists():
+        raw = cmdline_path.read_bytes()
+        return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+    proc = subprocess.run(
+        ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return []
+    text = proc.stdout.strip()
+    if not text:
+        return []
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
+
+args = parse_args()
+if not args:
+    raise SystemExit(1)
+
+def match_at(idx: int) -> bool:
+    if idx >= len(args):
+        return False
+    base = os.path.basename(args[idx])
+    if base != "arnold-repair-loop":
+        return False
+    if not session:
+        return True
+    return idx + 1 < len(args) and args[idx + 1] == session
+
+for idx in range(len(args)):
+    if match_at(idx):
+        raise SystemExit(0)
+    base = os.path.basename(args[idx])
+    if base in {"bash", "sh"} and match_at(idx + 1):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+release_repair_lock() {
+  local current_pid=""
+  if [[ "$REPAIR_PID_FILE_OWNED" != "1" ]]; then
+    return
   fi
-  if [[ "${CLOUD_WATCHDOG_REPAIR_LOCK_HELD:-0}" == "1" ]]; then
-    if [[ "${CLOUD_WATCHDOG_REPAIR_LOCK_FD:-}" =~ ^[0-9]+$ ]] \
-      && [[ -e "/proc/$$/fd/${CLOUD_WATCHDOG_REPAIR_LOCK_FD}" ]]; then
-      REPAIR_LOCK_FD="$CLOUD_WATCHDOG_REPAIR_LOCK_FD"
-      log "repair lock inherited from watchdog dispatch; continuing session=$SESSION"
+  if [[ -r "$REPAIR_PID_FILE" ]]; then
+    read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
+  fi
+  if [[ "$current_pid" == "$$" ]]; then
+    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+  fi
+  REPAIR_PID_FILE_OWNED=0
+}
+
+shutdown_repair_loop() {
+  if [[ "$REPAIR_SHUTDOWN_RAN" == "1" ]]; then
+    return
+  fi
+  REPAIR_SHUTDOWN_RAN=1
+  cleanup_children
+  release_repair_lock
+}
+
+trap 'shutdown_repair_loop' EXIT
+trap 'shutdown_repair_loop; exit 129' HUP
+trap 'shutdown_repair_loop; exit 130' INT
+trap 'shutdown_repair_loop; exit 143' TERM
+
+acquire_repair_lock() {
+  local existing_pid=""
+  mkdir -p "$(dirname "$REPAIR_PID_FILE")"
+  while true; do
+    if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+      REPAIR_PID_FILE_OWNED=1
+      log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
       return 0
     fi
-    log "repair lock was marked inherited but fd missing; reacquiring session=$SESSION"
-  fi
-  exec {REPAIR_LOCK_FD}> "$REPAIR_LOCK_FILE"
-  if ! flock -n "$REPAIR_LOCK_FD"; then
-    log "another repair loop is already active; exiting session=$SESSION"
-    return 1
-  fi
+    if [[ -r "$REPAIR_PID_FILE" ]]; then
+      read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
+    else
+      existing_pid=""
+    fi
+    if repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
+      log "another repair loop is already active; exiting session=$SESSION owner_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
+      return 1
+    fi
+    if [[ -n "$existing_pid" ]]; then
+      log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
+    else
+      log "empty repair pidfile detected; reclaiming session=$SESSION pidfile=$REPAIR_PID_FILE"
+    fi
+    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+    sleep 0.05
+  done
 }
 
 safe_name() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
+}
+
+guard_against_recursive_repair_loop() {
+  local parent_pid="${CLOUD_WATCHDOG_REPAIR_LOOP_PID:-}"
+  if [[ "${CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ "$parent_pid" == "$$" ]]; then
+    return 0
+  fi
+  if [[ -n "$parent_pid" ]] && ! repair_loop_pid_matches_session "$parent_pid"; then
+    return 0
+  fi
+  log "repair loop recursion blocked; parent repair loop already active owner_session=${CLOUD_WATCHDOG_REPAIR_LOOP_SESSION:-unknown} owner_pid=${parent_pid:-unknown} requested_session=$SESSION"
+  return 1
 }
 
 json_field() {
@@ -294,6 +412,155 @@ resolve_relaunch_command() {
   fi
   printf 'if [[ -f /workspace/.cloud-hot-env ]]; then set -a; . /workspace/.cloud-hot-env; set +a; fi; cd %q && PYTHONSAFEPATH=1 PYTHONPATH=%q:${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python3 -P -m arnold_pipelines.megaplan chain start --spec %q --project-dir %q >> %q 2>&1' \
     "$ARNOLD_SRC" "$ARNOLD_SRC" "$remote_spec" "$workspace" "$workspace/$log_relative"
+}
+
+repair_target_completion_status() {
+  local workspace="$1"
+  local run_kind="$2"
+  local plan_name="${3:-}"
+  python3 - "$workspace" "$run_kind" "$plan_name" <<'PY'
+import json
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+run_kind = sys.argv[2]
+plan_name = sys.argv[3]
+
+def load_json(path: pathlib.Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
+    candidates: list[tuple[float, pathlib.Path]] = []
+    for pattern in (
+        ".megaplan/plans/*/state.json",
+        ".megaplan/briefs/*/.megaplan/plans/*/state.json",
+    ):
+        for path in root.glob(pattern):
+            try:
+                candidates.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+    candidates.sort(reverse=True)
+    return [path for _, path in candidates]
+
+def latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
+    candidates = set()
+    candidates.update((root / ".megaplan" / "plans" / ".chains").glob("*.json"))
+    candidates.update(root.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"))
+    candidates.update((root / ".megaplan").glob("**/chain_state.json"))
+    ordered: list[tuple[float, pathlib.Path]] = []
+    for path in candidates:
+        try:
+            ordered.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    ordered.sort(reverse=True)
+    return ordered[0][1] if ordered else None
+
+def resolve_plan_state(root: pathlib.Path, preferred_name: str) -> pathlib.Path | None:
+    candidates = candidate_plan_states(root)
+    if preferred_name:
+        preferred = [path for path in candidates if path.parent.name == preferred_name]
+        if preferred:
+            return preferred[0]
+        return None
+    return candidates[0] if candidates else None
+
+def is_terminal_plan(plan_state: dict[str, object]) -> tuple[bool, str]:
+    current_state = str(plan_state.get("current_state") or plan_state.get("state") or "").strip().lower()
+    if current_state in {"done", "complete"}:
+        return True, f"plan_state={current_state}"
+    return False, current_state
+
+def chain_completion_reason(chain_state: dict[str, object]) -> str:
+    last_state = str(chain_state.get("last_state") or "").strip().lower()
+    if last_state in {"done", "complete"}:
+        return f"last_state={last_state}"
+    milestones = chain_state.get("milestones")
+    milestones = milestones if isinstance(milestones, list) else []
+    completed = chain_state.get("completed")
+    completed = completed if isinstance(completed, list) else []
+    milestone_count = len(milestones)
+    completed_count = len(completed)
+    current_idx = chain_state.get("current_milestone_index")
+    try:
+        current_idx_int = int(current_idx)
+    except (TypeError, ValueError):
+        current_idx_int = None
+    if milestone_count and current_idx_int is not None and current_idx_int >= milestone_count:
+        return f"current_milestone_index={current_idx_int} past_last_milestone={milestone_count - 1}"
+    milestone_labels = [
+        str(item.get("label") or item.get("id") or "").strip()
+        for item in milestones
+        if isinstance(item, dict)
+    ]
+    completed_labels = {
+        str(item.get("label") or item.get("id") or item.get("plan") or "").strip()
+        for item in completed
+        if isinstance(item, dict)
+    }
+    milestone_labels = [label for label in milestone_labels if label]
+    if milestone_labels and all(label in completed_labels for label in milestone_labels):
+        return f"all_milestones_completed={len(milestone_labels)}/{milestone_count}"
+    if milestone_count and completed_count >= milestone_count:
+        return f"completed_entries={completed_count}/{milestone_count}"
+    return ""
+
+chain_path = latest_chain_state(workspace) if run_kind == "chain" else None
+chain_state = load_json(chain_path)
+preferred_plan_name = plan_name or str(chain_state.get("current_plan_name") or "").strip()
+plan_path = resolve_plan_state(workspace, preferred_plan_name)
+plan_state = load_json(plan_path)
+plan_complete, plan_reason = is_terminal_plan(plan_state)
+chain_reason = chain_completion_reason(chain_state) if run_kind == "chain" else ""
+
+if run_kind == "chain" and chain_reason:
+    print(
+        "\t".join(
+            [
+                "1",
+                "chain",
+                chain_reason,
+                str(chain_path or ""),
+                str(plan_path or ""),
+                str(plan_state.get("current_state") or plan_state.get("state") or ""),
+            ]
+        )
+    )
+elif run_kind == "plan" and plan_complete:
+    print(
+        "\t".join(
+            [
+                "1",
+                "plan",
+                plan_reason,
+                str(chain_path or ""),
+                str(plan_path or ""),
+                str(plan_state.get("current_state") or plan_state.get("state") or ""),
+            ]
+        )
+    )
+else:
+    print(
+        "\t".join(
+            [
+                "0",
+                "",
+                "",
+                str(chain_path or ""),
+                str(plan_path or ""),
+                str(plan_state.get("current_state") or plan_state.get("state") or ""),
+            ]
+        )
+    )
+PY
 }
 
 collect_failure_context_json() {
@@ -2197,7 +2464,26 @@ PY
 }
 
 clear_repair_markers() {
-  rm -f "$NEEDS_HUMAN_FILE" "$MARKER_DIR/$SESSION.kimi-dispatch" "$MARKER_DIR/$SESSION.kimi-pgid" 2>/dev/null || true
+  clear_session_repair_markers_now
+}
+
+exit_if_repair_target_complete() {
+  local phase="$1"
+  local complete_flag scope reason chain_path plan_path plan_state
+  IFS=$'\t' read -r complete_flag scope reason chain_path plan_path plan_state <<< "$(repair_target_completion_status "$WORKSPACE" "$RUN_KIND" "$PLAN_NAME")"
+  if [[ "${complete_flag:-0}" != "1" ]]; then
+    return 0
+  fi
+  if [[ -f "$DATA_FILE" ]]; then
+    repair_data_set_outcome "complete"
+  fi
+  clear_repair_markers
+  if [[ "$scope" == "chain" ]]; then
+    log "chain already complete; no repair needed session=$SESSION phase=$phase reason=$reason chain_state_path=${chain_path:-n/a} plan_state=${plan_state:-unknown} plan_state_path=${plan_path:-n/a}"
+  else
+    log "plan already complete; no repair needed session=$SESSION phase=$phase reason=$reason plan_state_path=${plan_path:-n/a}"
+  fi
+  exit 0
 }
 
 verify_started_and_holding() {
@@ -2596,7 +2882,11 @@ PY
 }
 
 log "starting session=$SESSION workspace=$WORKSPACE spec=$REMOTE_SPEC source=$ARNOLD_SRC branch=$SYNC_BRANCH"
+guard_against_recursive_repair_loop || exit 0
 acquire_repair_lock || exit 75
+export CLOUD_WATCHDOG_REPAIR_LOOP_ACTIVE=1
+export CLOUD_WATCHDOG_REPAIR_LOOP_SESSION="$SESSION"
+export CLOUD_WATCHDOG_REPAIR_LOOP_PID="$$"
 
 RUN_KIND="$(json_field "$MARKER_PATH" run_kind 2>/dev/null || true)"
 PLAN_NAME="$(json_field "$MARKER_PATH" plan_name 2>/dev/null || true)"
@@ -2608,6 +2898,7 @@ if [[ -z "$RUN_KIND" ]]; then
     RUN_KIND="chain"
   fi
 fi
+exit_if_repair_target_complete "start"
 
 INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
 repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
@@ -2637,6 +2928,7 @@ else
 fi
 
 for iteration in 1 2 3; do
+  exit_if_repair_target_complete "iteration-$iteration-start"
   case "$iteration" in
     1)
       DEV_REQUESTED_MODEL="glm-5.2"
@@ -2664,6 +2956,7 @@ for iteration in 1 2 3; do
   esac
 
   run_dev_fix_turn "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
+  exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
 
   mechanical_status="$(mechanical_launch_step "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
     repair_data_record_mechanical "$iteration" "$mechanical_status" "$mechanical_status"
@@ -2681,6 +2974,7 @@ for iteration in 1 2 3; do
     continue
   fi
 
+  exit_if_repair_target_complete "iteration-$iteration-pre-kimi"
   resolved_relaunch_command="$(resolve_relaunch_command "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" 2>/dev/null || true)"
   if run_kimi_launch_turn "$iteration" "$RUN_KIND" "$PLAN_NAME" "$resolved_relaunch_command"; then
     repair_data_set_outcome "running"

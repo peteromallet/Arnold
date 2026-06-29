@@ -29,7 +29,6 @@ REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-REPAIR_LOCK_FILE="${CLOUD_WATCHDOG_REPAIR_LOCK_FILE:-$MARKER_DIR/repair-loop.lock}"
 REPAIR_WITH_CODEX="${CLOUD_WATCHDOG_CODEX_REPAIR:-0}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
@@ -88,6 +87,74 @@ PY
 
 safe_name() {
   printf '%s' "$1" | tr -c 'A-Za-z0-9_.-' '-'
+}
+
+repair_pidfile_path() {
+  printf '%s/%s.repair-loop.pid' "$MARKER_DIR" "$(safe_name "$1")"
+}
+
+repair_loop_pid_matches_session() {
+  local pid="$1"
+  local session="${2:-}"
+  python3 - "$pid" "$session" <<'PY'
+import os
+import pathlib
+import shlex
+import subprocess
+import sys
+
+pid_text, session = sys.argv[1:]
+try:
+    pid = int(pid_text)
+except (TypeError, ValueError):
+    raise SystemExit(1)
+if pid <= 0:
+    raise SystemExit(1)
+
+def parse_args() -> list[str]:
+    cmdline_path = pathlib.Path(f"/proc/{pid}/cmdline")
+    if cmdline_path.exists():
+        raw = cmdline_path.read_bytes()
+        return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+    proc = subprocess.run(
+        ["ps", "-ww", "-o", "args=", "-p", str(pid)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return []
+    text = proc.stdout.strip()
+    if not text:
+        return []
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return text.split()
+
+args = parse_args()
+if not args:
+    raise SystemExit(1)
+
+def match_at(idx: int) -> bool:
+    if idx >= len(args):
+        return False
+    base = os.path.basename(args[idx])
+    if base != "arnold-repair-loop":
+        return False
+    if not session:
+        return True
+    return idx + 1 < len(args) and args[idx + 1] == session
+
+for idx in range(len(args)):
+    if match_at(idx):
+        raise SystemExit(0)
+    base = os.path.basename(args[idx])
+    if base in {"bash", "sh"} and match_at(idx + 1):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
 }
 
 report_item() {
@@ -1085,25 +1152,21 @@ kimi_operator_running() {
     | grep -Eq 'arnold-repair-loop|arnold-kimi-goal-operator|arnold\.agent\.run_agent|codex exec|launch_hermes_agent\.py'
 }
 
-repair_loop_running_anywhere() {
-  if command -v flock >/dev/null 2>&1; then
-    mkdir -p "$(dirname "$REPAIR_LOCK_FILE")"
-    if ! flock -n "$REPAIR_LOCK_FILE" true >/dev/null 2>&1; then
-      return 0
-    fi
-  fi
-  pgrep -f "/$PRIMARY_REPAIR_BASENAME([[:space:]]|$)" >/dev/null 2>&1
-}
-
 repair_loop_busy_state() {
   local session="$1"
+  local pidfile existing_pid=""
   if kimi_operator_running "$session"; then
     echo "same_session"
     return 0
   fi
-  if repair_loop_running_anywhere; then
-    echo "other_session"
-    return 0
+  pidfile="$(repair_pidfile_path "$session")"
+  if [[ -r "$pidfile" ]]; then
+    read -r existing_pid < "$pidfile" || existing_pid=""
+    if repair_loop_pid_matches_session "$existing_pid" "$session"; then
+      echo "same_session"
+      return 0
+    fi
+    rm -f "$pidfile" 2>/dev/null || true
   fi
   echo "none"
 }
@@ -1732,37 +1795,22 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path repair_lock_fd
+  local pgid_path repair_busy
   REPAIR_DISPATCH_RESULT="unavailable"
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     return 1
   fi
-  if ! command -v flock >/dev/null 2>&1; then
-    pgid_path="$(kimi_pgid_path "$session")"
-    kimi_dispatch_marker_set "$session"
-    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
-      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
-      >> "$LOG" 2>&1 < /dev/null &
-    log "repair loop background-dispatched without flock session=$session pid=$!"
-    REPAIR_DISPATCH_RESULT="dispatched"
-    return 0
-  fi
-  mkdir -p "$(dirname "$REPAIR_LOCK_FILE")"
-  exec {repair_lock_fd}> "$REPAIR_LOCK_FILE"
-  if ! flock -n "$repair_lock_fd"; then
-    exec {repair_lock_fd}>&-
+  repair_busy="$(repair_loop_busy_state "$session")"
+  if [[ "$repair_busy" == "same_session" ]]; then
     log "repair loop already active; skipping dispatch session=$session"
     REPAIR_DISPATCH_RESULT="busy"
     return 0
   fi
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
-  CLOUD_WATCHDOG_REPAIR_LOCK_HELD=1 \
-  CLOUD_WATCHDOG_REPAIR_LOCK_FD="$repair_lock_fd" \
   setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
     _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
     >> "$LOG" 2>&1 < /dev/null &
-  exec {repair_lock_fd}>&-
   log "repair loop background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
   return 0
