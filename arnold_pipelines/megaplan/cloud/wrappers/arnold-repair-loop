@@ -313,6 +313,13 @@ def _tail_text(path: pathlib.Path, lines: int = 20) -> str:
     return "\n".join(tail)
 
 
+def _clip_text(text: object, limit: int = 12000) -> str:
+    rendered = str(text or "")
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[-limit:]
+
+
 def _load_json(path: pathlib.Path) -> dict[str, object]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -702,6 +709,50 @@ def _stale_state_analysis(
     }
 
 
+def _state_mismatch_analysis(
+    plan_latest_failure: dict[str, object],
+    chain_state_summary: dict[str, object],
+) -> dict[str, object]:
+    plan_state = str(plan_latest_failure.get("current_state") or "").strip()
+    chain_last_state = str(chain_state_summary.get("last_state") or "").strip()
+    chain_state_path = str(chain_state_summary.get("path") or "").strip()
+    plan_state_path = str(plan_latest_failure.get("state_path") or "").strip()
+    chain_plan = str(chain_state_summary.get("current_plan_name") or "").strip()
+    plan_name = str(plan_latest_failure.get("plan_name") or "").strip()
+    has_latest_failure = bool(
+        str(plan_latest_failure.get("kind") or "").strip()
+        or str(plan_latest_failure.get("message") or "").strip()
+        or str(plan_latest_failure.get("state") or "").strip()
+    )
+    detected = (
+        bool(plan_state_path)
+        and bool(chain_state_path)
+        and plan_state == "finalized"
+        and chain_last_state in {"awaiting_human", "blocked"}
+        and not has_latest_failure
+        and (not chain_plan or not plan_name or chain_plan == plan_name)
+    )
+    if not detected:
+        return {"detected": False}
+    return {
+        "detected": True,
+        "plan_state": plan_state,
+        "chain_last_state": chain_last_state,
+        "plan_name": plan_name or chain_plan,
+        "chain_plan_name": chain_plan,
+        "plan_state_path": plan_state_path,
+        "chain_state_path": chain_state_path,
+        "classification": "PLAN_CHAIN_STATE_MISMATCH",
+        "summary": (
+            f"state mismatch detected: plan={plan_state} is ready to execute, "
+            f"but chain last_state={chain_last_state} is stale"
+        ),
+        "recommended_action": (
+            "sync chain last_state from plan current_state and mechanically re-drive"
+        ),
+    }
+
+
 def _collect_signal_values(value: object, prefix: str = "", depth: int = 0) -> list[str]:
     if depth > 4:
         return []
@@ -737,6 +788,7 @@ def _collect_signal_values(value: object, prefix: str = "", depth: int = 0) -> l
             child_prefix = f"{prefix}.{key}" if prefix else str(key)
             if str(key).lower() in signal_keys and child not in (None, "", [], {}):
                 rendered = json.dumps(child, sort_keys=True) if isinstance(child, (dict, list)) else str(child)
+                rendered = _clip_text(rendered, limit=2000)
                 collected.append(f"{child_prefix}: {rendered}")
             collected.extend(_collect_signal_values(child, child_prefix, depth + 1))
     elif isinstance(value, list):
@@ -805,7 +857,7 @@ else:
     if session == "megaplan-chain":
         log_candidates.append(session_log)
 log_path = next((path for path in log_candidates if path.exists()), None)
-chain_log_tail = _tail_text(log_path, lines=20) if log_path is not None else ""
+chain_log_tail = _clip_text(_tail_text(log_path, lines=20), limit=12000) if log_path is not None else ""
 
 chain_state_summary = {}
 chain_state_path = _latest_chain_state(workspace) if run_kind == "chain" else None
@@ -933,11 +985,12 @@ if plan_state_path is not None:
 else:
     latest_failure = {}
 
+state_mismatch = _state_mismatch_analysis(plan_latest_failure, chain_state_summary)
 raw_failure_signals = _unique_strings(
     [
         *_collect_signal_values(latest_failure, "plan.latest_failure"),
-        *_collect_signal_values(chain_state, "chain.state"),
         *_collect_signal_values(chain_state_summary, "chain.summary"),
+        *_collect_signal_values(state_mismatch, "state_mismatch"),
         *_collect_signal_values(user_action_context, "user_actions"),
         *_interesting_log_lines(chain_log_tail),
         *_interesting_log_lines(plan_events_tail),
@@ -945,7 +998,9 @@ raw_failure_signals = _unique_strings(
 )
 
 failure_classification = _classify_failure(raw_failure_signals, latest_failure, chain_state)
-if stale_state.get("classification") == "STALE STATE":
+if state_mismatch.get("detected"):
+    failure_classification = "plan_chain_state_mismatch"
+elif stale_state.get("classification") == "STALE STATE":
     failure_classification = "stale_state"
 
 payload = {
@@ -953,6 +1008,7 @@ payload = {
     "requested_plan_name": marker_plan_name,
     "failure_classification": failure_classification,
     "stale_state": stale_state,
+    "state_mismatch": state_mismatch,
     "raw_failure_signals": raw_failure_signals,
     "chain_log_tail": chain_log_tail if run_kind == "chain" else "",
     "chain_log_path": str(log_path) if run_kind == "chain" and log_path is not None else "",
@@ -961,7 +1017,7 @@ payload = {
     "chain_recent_events": chain_state_summary.get("events") or [],
     "plan_events_tail": plan_events_tail,
     "plan_events_path": str(plan_events_path) if plan_events_path is not None and plan_events_path.exists() else "",
-    "mechanical_log_tail": _tail_text(log_path, lines=15) if log_path is not None else "",
+    "mechanical_log_tail": _clip_text(_tail_text(log_path, lines=15), limit=12000) if log_path is not None else "",
     "mechanical_log_path": str(log_path) if log_path is not None else "",
     "plan_latest_failure": plan_latest_failure,
     "chain_state_summary": chain_state_summary,
@@ -993,6 +1049,7 @@ for entry in reversed(iterations):
         or entry.get("mechanical_log_tail")
         or entry.get("plan_latest_failure")
         or entry.get("chain_state_summary")
+        or entry.get("state_mismatch")
     ):
         latest_context = entry
         break
@@ -1005,8 +1062,11 @@ run_kind = (payload.get("run_kind") or latest_context.get("run_kind") or "chain"
 metadata = plan_failure.get("metadata") or {}
 classification = latest_context.get("failure_classification") or "unknown_failure_mode"
 stale_state = latest_context.get("stale_state") or {}
+state_mismatch = latest_context.get("state_mismatch") or {}
 state_classification = stale_state.get("classification") or (
-    "STALE STATE" if classification == "stale_state" else "LIVE FAILURE"
+    "STATE MISMATCH" if classification == "plan_chain_state_mismatch" else (
+        "STALE STATE" if classification == "stale_state" else "LIVE FAILURE"
+    )
 )
 signals = list(latest_context.get("raw_failure_signals") or [])
 if not signals:
@@ -1101,6 +1161,9 @@ stale_summary = stale_state.get("summary") or (
     else "no stale-state analysis captured"
 )
 stale_recommendation = stale_state.get("recommended_action") or ""
+if state_mismatch.get("detected"):
+    stale_summary = state_mismatch.get("summary") or stale_summary
+    stale_recommendation = state_mismatch.get("recommended_action") or stale_recommendation
 exit_code = metadata.get("exit_code")
 exit_code_text = str(exit_code) if exit_code not in (None, "") else "unknown"
 chain_last_state = chain_state.get("last_state") or "unknown"
@@ -1123,6 +1186,23 @@ else:
         f"current_state={chain_current_state} current_plan={chain_plan_name}{chain_notes_text}"
     )
     run_narrative_label = "- current chain narrative (last 20 chain-log lines):"
+
+mismatch_lines = []
+if state_mismatch.get("detected"):
+    mismatch_lines = [
+        "",
+        "## STATE MISMATCH DETECTED + CLEARED",
+        f"- Plan state: {state_mismatch.get('plan_state') or 'unknown'} (ready to execute)",
+        (
+            f"- Chain state was: {state_mismatch.get('chain_last_state') or 'unknown'} "
+            "(STALE - from a prior run)"
+        ),
+        "- Action taken: cleared chain last_state to match plan current_state",
+        (
+            "- The chain should now proceed. If it still stops, investigate WHY the "
+            "execute phase re-blocks despite the plan being ready."
+        ),
+    ]
 
 user_action_context = latest_context.get("user_action_context") or {}
 unresolved_user_actions = user_action_context.get("unresolved_user_actions") or []
@@ -1200,6 +1280,7 @@ summary = "\n".join(
         "```markdown",
         user_actions_md,
         "```",
+        *mismatch_lines,
         "",
         "## Prior repair attempts",
         *history_lines,
@@ -1278,6 +1359,7 @@ payload = {
         "plan_events_path": failure_context_payload.get("plan_events_path", ""),
         "failure_classification": failure_context_payload.get("failure_classification", ""),
         "stale_state": failure_context_payload.get("stale_state", {}),
+        "state_mismatch": failure_context_payload.get("state_mismatch", {}),
         "raw_failure_signals": failure_context_payload.get("raw_failure_signals", []),
         "mechanical_log_tail": failure_context_payload.get("mechanical_log_tail", ""),
         "mechanical_log_path": failure_context_payload.get("mechanical_log_path", ""),
@@ -1483,6 +1565,7 @@ entry["mechanical_detail"] = detail
 entry["failure_context"] = failure_context_payload
 entry["failure_classification"] = failure_context_payload.get("failure_classification", "")
 entry["stale_state"] = failure_context_payload.get("stale_state", {})
+entry["state_mismatch"] = failure_context_payload.get("state_mismatch", {})
 entry["raw_failure_signals"] = failure_context_payload.get("raw_failure_signals", [])
 entry["chain_log_tail"] = failure_context_payload.get("chain_log_tail", "")
 entry["chain_log_path"] = failure_context_payload.get("chain_log_path", "")
@@ -1547,6 +1630,7 @@ entry["why"] = (
 entry["failure_context"] = failure_context_payload
 entry["failure_classification"] = failure_context_payload.get("failure_classification", entry.get("failure_classification", ""))
 entry["stale_state"] = failure_context_payload.get("stale_state", entry.get("stale_state", {}))
+entry["state_mismatch"] = failure_context_payload.get("state_mismatch", entry.get("state_mismatch", {}))
 entry["raw_failure_signals"] = failure_context_payload.get("raw_failure_signals", entry.get("raw_failure_signals", []))
 entry["chain_log_tail"] = failure_context_payload.get("chain_log_tail", entry.get("chain_log_tail", ""))
 entry["chain_log_path"] = failure_context_payload.get("chain_log_path", entry.get("chain_log_path", ""))
@@ -1592,12 +1676,21 @@ data_path_raw, failure_context_raw = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
 failure_context = json.loads(failure_context_raw)
 stale_state = failure_context.get("stale_state") if isinstance(failure_context, dict) else {}
-if not isinstance(stale_state, dict) or stale_state.get("classification") != "STALE STATE":
+if not isinstance(stale_state, dict):
+    stale_state = {}
+state_mismatch = failure_context.get("state_mismatch") if isinstance(failure_context, dict) else {}
+if not isinstance(state_mismatch, dict):
+    state_mismatch = {}
+has_stale_state = stale_state.get("classification") == "STALE STATE"
+has_state_mismatch = bool(state_mismatch.get("detected"))
+if not has_stale_state and not has_state_mismatch:
     print("none")
     raise SystemExit(0)
 
 plan_failure = failure_context.get("plan_latest_failure") if isinstance(failure_context, dict) else {}
 state_path_raw = plan_failure.get("state_path") if isinstance(plan_failure, dict) else ""
+if not state_path_raw:
+    state_path_raw = state_mismatch.get("plan_state_path") or ""
 if not state_path_raw:
     print("failed:missing_state_path")
     raise SystemExit(1)
@@ -1613,13 +1706,13 @@ if not isinstance(state, dict):
 
 actions: list[str] = []
 stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-if stale_state.get("latest_failure_stale") and state.get("latest_failure") is not None:
+if has_stale_state and stale_state.get("latest_failure_stale") and state.get("latest_failure") is not None:
     state["latest_failure"] = None
     success = stale_state.get("latest_success_after_failure")
     success_ts = success.get("timestamp") if isinstance(success, dict) else "unknown"
     actions.append(f"latest_failure was stale (predates last success at {success_ts}) -- cleared")
 
-block = stale_state.get("stale_block_replay")
+block = stale_state.get("stale_block_replay") if has_stale_state else {}
 if isinstance(block, dict) and block.get("detected"):
     artifact_hash = block.get("artifact_hash")
     history = state.get("history")
@@ -1653,6 +1746,53 @@ if isinstance(block, dict) and block.get("detected"):
         except OSError as exc:
             actions.append(f"failed to move stale phase_result.json: {exc}")
 
+if has_state_mismatch:
+    chain_state_path = pathlib.Path(str(state_mismatch.get("chain_state_path") or ""))
+    plan_current_state = str(state.get("current_state") or state_mismatch.get("plan_state") or "").strip()
+    chain_was = str(state_mismatch.get("chain_last_state") or "").strip()
+    if not chain_state_path:
+        actions.append("state mismatch detected but chain state path was unavailable")
+    elif not plan_current_state:
+        actions.append("state mismatch detected but plan current_state was unavailable")
+    else:
+        try:
+            chain_payload = json.loads(chain_state_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            actions.append(f"state mismatch detected but chain state was unreadable: {exc}")
+        else:
+            if not isinstance(chain_payload, dict):
+                actions.append("state mismatch detected but chain state was not a JSON object")
+            else:
+                chain_was = str(chain_payload.get("last_state") or chain_was or "").strip()
+                chain_payload["last_state"] = plan_current_state
+                metadata = chain_payload.setdefault("metadata", {})
+                if isinstance(metadata, dict):
+                    records = metadata.setdefault("watchdog_repair_state_mismatch_clears", [])
+                    if isinstance(records, list):
+                        records.append(
+                            {
+                                "cleared_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+                                "plan_state": plan_current_state,
+                                "chain_last_state_was": chain_was,
+                                "plan_state_path": str(state_path),
+                                "chain_state_path": str(chain_state_path),
+                            }
+                        )
+                tmp_chain_path = chain_state_path.with_suffix(chain_state_path.suffix + ".tmp")
+                tmp_chain_path.write_text(
+                    json.dumps(chain_payload, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+                os.replace(tmp_chain_path, chain_state_path)
+                state_mismatch["cleared"] = True
+                state_mismatch["action_taken"] = (
+                    f"cleared chain last_state to match plan current_state ({plan_current_state})"
+                )
+                actions.append(
+                    "state mismatch detected + cleared "
+                    f"(plan={plan_current_state}, chain was {chain_was or 'unknown'}, synced)"
+                )
+
 if not actions:
     print("none")
     raise SystemExit(0)
@@ -1666,6 +1806,7 @@ if isinstance(meta, dict):
                 "cleared_at": dt.datetime.now(dt.timezone.utc).isoformat(),
                 "actions": actions,
                 "stale_state": stale_state,
+                "state_mismatch": state_mismatch,
             }
         )
 
@@ -1674,17 +1815,20 @@ tmp_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding
 os.replace(tmp_path, state_path)
 
 payload = json.loads(data_path.read_text(encoding="utf-8"))
+failure_context["state_mismatch"] = state_mismatch
 payload.setdefault("stale_state_actions", []).append(
     {
         "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "actions": actions,
         "stale_state": stale_state,
+        "state_mismatch": state_mismatch,
         "state_path": str(state_path),
     }
 )
 initial = payload.setdefault("initial_facts", {})
 initial["failure_context"] = failure_context
 initial["stale_state"] = stale_state
+initial["state_mismatch"] = state_mismatch
 data_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 print("cleared:" + "; ".join(actions))
 PY
