@@ -9,6 +9,7 @@ import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan.chain import (
     _append_completed_with_guard,
     _chain_completion_guard,
+    _mark_plan_completed_by_chain,
     load_chain_state,
     run_chain,
     save_chain_state,
@@ -981,6 +982,35 @@ def test_merged_pr_completion_allows_authority_block_with_published_semantic_dif
 
     assert ok is True
     assert "published PR target" in reason
+
+
+def test_chain_completion_reconciliation_clears_stale_plan_failure(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    plan_dir = _write_plan(
+        tmp_path,
+        current_state="blocked",
+        finalize_tasks=[{"id": "T1"}],
+        latest_failure={
+            "kind": "authority_divergence",
+            "message": "execute terminal success lacks corroborated task completion",
+        },
+    )
+
+    _mark_plan_completed_by_chain(
+        tmp_path,
+        "plan-m1",
+        milestone_label="m1",
+        completion_reason="completion guard passed",
+        writer=lambda _text: None,
+    )
+
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "done"
+    assert "latest_failure" not in state
+    events = (plan_dir / "events.ndjson").read_text(encoding="utf-8").splitlines()
+    assert any('"kind":"plan_finished"' in line for line in events)
 
 
 def test_merged_pr_completion_allows_blocked_plan_with_published_semantic_diff(

@@ -1914,6 +1914,68 @@ def _mark_blocked_execute_as_executed(plan_dir: Path) -> None:
     )
 
 
+def _mark_plan_completed_by_chain(
+    root: Path,
+    plan_name: str,
+    *,
+    milestone_label: str,
+    completion_reason: str,
+    writer,
+) -> None:
+    """Mirror an authoritative chain-level milestone completion into plan state."""
+
+    from arnold_pipelines.megaplan._core.state import write_plan_state
+    from arnold_pipelines.megaplan.observability.events import EventKind, emit as emit_event
+
+    try:
+        plan_dir = resolve_plan_dir(root, plan_name)
+    except CliError:
+        return
+
+    def _patch_completed(current: dict[str, Any]) -> bool:
+        current["current_state"] = STATE_DONE
+        current.pop("active_step", None)
+        current.pop("latest_failure", None)
+        current.pop("resume_cursor", None)
+        meta = current.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            current["meta"] = meta = {}
+        meta["chain_completion"] = {
+            "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "milestone_label": milestone_label,
+            "reason": completion_reason,
+        }
+        return True
+
+    try:
+        state = write_plan_state(
+            plan_dir,
+            mode="patch-many",
+            patch={},
+            mutation=_patch_completed,
+        )
+    except Exception as error:
+        writer(
+            f"[chain] warning: failed to reconcile completed plan {plan_name}: {error}\n"
+        )
+        return
+    try:
+        emit_event(
+            EventKind.PLAN_FINISHED,
+            plan_dir=plan_dir,
+            payload={
+                "state": state,
+                "source": "chain_completion",
+                "milestone_label": milestone_label,
+                "reason": completion_reason,
+            },
+        )
+    except Exception as error:
+        writer(
+            f"[chain] warning: failed to emit plan_finished for {plan_name}: {error}\n"
+        )
+
+
 def _mark_plan_missing_base_ref(root: Path, plan_name: str | None, *, failure: dict[str, Any]) -> None:
     if not plan_name:
         return
@@ -3041,6 +3103,14 @@ def run_chain(
                         spec=spec,
                         reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
                     )
+                if state.current_plan_name:
+                    _mark_plan_completed_by_chain(
+                        root,
+                        state.current_plan_name,
+                        milestone_label=milestone.label,
+                        completion_reason=reason,
+                        writer=writer,
+                    )
                 idx += 1
                 state.current_milestone_index = idx
                 state.current_plan_name = None
@@ -3156,6 +3226,14 @@ def run_chain(
                     events,
                     spec=spec,
                     reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                )
+            if state.current_plan_name:
+                _mark_plan_completed_by_chain(
+                    root,
+                    state.current_plan_name,
+                    milestone_label=milestone.label,
+                    completion_reason=reason,
+                    writer=writer,
                 )
             idx += 1
             state.current_milestone_index = idx
@@ -3636,6 +3714,13 @@ def run_chain(
                 spec=spec,
                 reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
             )
+        _mark_plan_completed_by_chain(
+            root,
+            plan_name,
+            milestone_label=milestone.label,
+            completion_reason=reason,
+            writer=writer,
+        )
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None
