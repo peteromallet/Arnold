@@ -16,7 +16,7 @@ import subprocess
 import threading
 import time
 from collections import deque
-from arnold.runtime.process import kill_group, spawn
+from arnold_pipelines.megaplan.runtime.process import kill_group, spawn
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any

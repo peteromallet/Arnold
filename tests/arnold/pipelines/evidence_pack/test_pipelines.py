@@ -14,7 +14,7 @@ from arnold.pipeline.types import (
     PortRef,
     Stage,
 )
-from arnold.pipeline.validator import validate, Diagnostics
+from arnold.workflow.validator import validate, Diagnostics
 from arnold.pipelines.evidence_pack.pipeline import build_pipeline
 
 

@@ -62,7 +62,7 @@ from arnold_pipelines.megaplan.prompts import (
     _resolve_prompt_root,
     create_codex_prompt,
 )
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
     ModelBudgetError,
     ModelTier,

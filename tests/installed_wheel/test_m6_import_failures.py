@@ -4,12 +4,30 @@ import subprocess
 import sys
 import tarfile
 import textwrap
+import os
 from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
 
+from arnold.conformance.deleted_surfaces import (
+    DELETED_ARTIFACT_PATH_PREFIXES,
+    DELETED_CLI_HELP_FRAGMENTS,
+    DELETED_IMPORT_MODULES,
+    DELETED_IMPORT_PREFIXES,
+    DELETED_MEGAPLAN_LEGACY_SYMBOLS,
+    DELETED_PIPELINE_TOP_LEVEL_SYMBOLS,
+    DELETED_SOURCE_PATHS,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _clean_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
 
 
 # ---------------------------------------------------------------------------
@@ -27,6 +45,7 @@ def _build_wheel(tmp_path: Path) -> Path:
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
+        env=_clean_env(),
     )
     wheels = list(build_dir.glob("*.whl"))
     assert wheels, "no wheel produced"
@@ -43,6 +62,7 @@ def _build_sdist(tmp_path: Path) -> Path:
         capture_output=True,
         text=True,
         cwd=str(REPO_ROOT),
+        env=_clean_env(),
     )
     sdists = list(sdist_dir.glob("*.tar.gz"))
     assert sdists, "no sdist produced"
@@ -64,6 +84,7 @@ def _install_artifact_into_venv(
         check=True,
         capture_output=True,
         text=True,
+        env=_clean_env(),
     )
     return python
 
@@ -89,34 +110,10 @@ def _run_probe(python: Path, probe: str, *, cwd: Path | None = None) -> tuple[in
         capture_output=True,
         text=True,
         cwd=cwd or str(REPO_ROOT),
+        env=_clean_env(),
     )
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
-
-DELETED_IMPORT_PREFIXES = (
-    "arnold.pipelines.megaplan",
-    "arnold_pipelines.megaplan._pipeline",
-    "arnold_pipelines.megaplan.stages",
-    "arnold_pipelines.megaplan._compatibility",
-)
-
-DELETED_CLI_HELP_FRAGMENTS = (
-    "arnold pipelines",
-    "arnold.pipelines.megaplan",
-    "arnold_pipelines.megaplan._pipeline",
-    "arnold_pipelines.megaplan.stages",
-    "arnold_pipelines.megaplan._compatibility",
-    "megaplan init",
-    "megaplan prep",
-    "megaplan plan",
-    "megaplan critique",
-    "megaplan gate",
-    "megaplan revise",
-    "megaplan finalize",
-    "megaplan execute",
-    "megaplan review",
-    "megaplan run",
-)
 
 WORKFLOW_HELP_SUBCOMMANDS = (
     "check",
@@ -142,7 +139,7 @@ def test_m6_deleted_public_imports_fail_in_installed_wheel(tmp_path: Path) -> No
 
     probe = (
         "import importlib\n"
-        'for name in ("megaplan", "arnold.pipelines.megaplan"):\n'
+        f'for name in {("megaplan", "arnold.pipelines.megaplan")!r}:\n'
         "    try:\n"
         "        importlib.import_module(name)\n"
         "    except ModuleNotFoundError:\n"
@@ -150,7 +147,7 @@ def test_m6_deleted_public_imports_fail_in_installed_wheel(tmp_path: Path) -> No
         "    else:\n"
         '        raise SystemExit(f"deleted module {name!r} is still importable")\n'
         "from arnold.pipeline import Pipeline, StepContext\n"
-        'for name in ("Stage", "Edge", "ParallelStage", "PipelineBuilder", "run_pipeline"):\n'
+        f"for name in {DELETED_PIPELINE_TOP_LEVEL_SYMBOLS!r}:\n"
         "    try:\n"
         '        exec(f"from arnold.pipeline import {name}")\n'
         "    except ImportError:\n"
@@ -171,16 +168,7 @@ def test_m6_deleted_submodules_fail_in_installed_wheel(tmp_path: Path) -> None:
     wheel = _build_wheel(tmp_path)
     python = _install_wheel_into_venv(tmp_path, wheel)
 
-    deleted_submodules = (
-        "arnold_pipelines.megaplan._pipeline",
-        "arnold_pipelines.megaplan._pipeline.builder",
-        "arnold_pipelines.megaplan._pipeline.runtime",
-        "arnold_pipelines.megaplan._pipeline.dispatch",
-        "arnold_pipelines.megaplan._pipeline.types",
-        "arnold_pipelines.megaplan.stages",
-        "arnold_pipelines.megaplan.stages.inprocess_step",
-        "arnold_pipelines.megaplan._compatibility",
-    )
+    deleted_submodules = DELETED_IMPORT_MODULES
 
     probe_lines = ["import importlib", "import sys"]
     for mod_name in deleted_submodules:
@@ -212,15 +200,7 @@ def test_m6_deleted_top_level_symbols_fail_in_installed_wheel(tmp_path: Path) ->
 
     probe = (
         "import arnold_pipelines.megaplan as m\n"
-        "deleted = (\n"
-        "    'build_legacy_pipeline',\n"
-        "    'compile_planning_pipeline',\n"
-        "    'WorkflowManifest',\n"
-        "    'run_pipeline',\n"
-        "    'InProcessHandlerStep',\n"
-        "    'HandlerStep',\n"
-        "    'Stage',\n"
-        ")\n"
+        f"deleted = {DELETED_MEGAPLAN_LEGACY_SYMBOLS!r}\n"
         "# top-level hasattr/getattr probe\n"
         "for name in deleted:\n"
         "    if hasattr(m, name):\n"
@@ -249,11 +229,7 @@ def test_m6_no_sys_modules_leakage_in_installed_wheel(tmp_path: Path) -> None:
     probe = (
         "import sys\n"
         "import arnold_pipelines.megaplan\n"
-        "deleted_prefixes = (\n"
-        "    'arnold_pipelines.megaplan._pipeline',\n"
-        "    'arnold_pipelines.megaplan.stages',\n"
-        "    'arnold_pipelines.megaplan._compatibility',\n"
-        ")\n"
+        f"deleted_prefixes = {DELETED_IMPORT_PREFIXES!r}\n"
         "leaked = [\n"
         "    key for key in sys.modules\n"
         "    if any(key == p or key.startswith(p + '.') for p in deleted_prefixes)\n"
@@ -280,12 +256,7 @@ def test_wheel_record_and_namelist_lack_deleted_paths(tmp_path: Path) -> None:
     """
     wheel = _build_wheel(tmp_path)
 
-    deleted_path_prefixes = (
-        "arnold_pipelines/megaplan/_pipeline/",
-        "arnold_pipelines/megaplan/stages/",
-        "arnold_pipelines/megaplan/_compatibility.py",
-        "arnold/pipelines/megaplan/",
-    )
+    deleted_path_prefixes = DELETED_ARTIFACT_PATH_PREFIXES
 
     with ZipFile(wheel) as whl:
         names = whl.namelist()
@@ -362,12 +333,7 @@ def test_sdist_lacks_deleted_paths(tmp_path: Path) -> None:
     """Unpack the sdist and assert zero members under deleted directories."""
     sdist = _build_sdist(tmp_path)
 
-    deleted_path_prefixes = (
-        "arnold_pipelines/megaplan/_pipeline/",
-        "arnold_pipelines/megaplan/stages/",
-        "arnold_pipelines/megaplan/_compatibility.py",
-        "arnold/pipelines/megaplan/",
-    )
+    deleted_path_prefixes = DELETED_ARTIFACT_PATH_PREFIXES
 
     with tarfile.open(sdist, "r:gz") as tar:
         members = tar.getnames()
@@ -447,6 +413,7 @@ def test_sdist_install_imports_compile_and_cli_workflow(tmp_path: Path) -> None:
             capture_output=True,
             text=True,
             cwd=tmp_path,
+            env=_clean_env(),
         )
         assert result.returncode == 0, (
             f"arnold workflow {subcommand} failed after sdist install: {result.stderr}"
@@ -462,26 +429,8 @@ def test_sdist_install_deleted_surfaces_fail(tmp_path: Path) -> None:
     sdist = _build_sdist(tmp_path)
     python = _install_sdist_into_venv(tmp_path, sdist)
 
-    deleted_submodules = (
-        "arnold_pipelines.megaplan._pipeline",
-        "arnold_pipelines.megaplan._pipeline.builder",
-        "arnold_pipelines.megaplan._pipeline.runtime",
-        "arnold_pipelines.megaplan._pipeline.dispatch",
-        "arnold_pipelines.megaplan._pipeline.types",
-        "arnold_pipelines.megaplan.stages",
-        "arnold_pipelines.megaplan.stages.inprocess_step",
-        "arnold_pipelines.megaplan._compatibility",
-        "arnold.pipelines.megaplan",
-    )
-    deleted_symbols = (
-        "build_legacy_pipeline",
-        "compile_planning_pipeline",
-        "WorkflowManifest",
-        "run_pipeline",
-        "InProcessHandlerStep",
-        "HandlerStep",
-        "Stage",
-    )
+    deleted_submodules = DELETED_IMPORT_MODULES
+    deleted_symbols = DELETED_MEGAPLAN_LEGACY_SYMBOLS
 
     probe_lines = [
         "import importlib",
@@ -508,12 +457,7 @@ def test_sdist_install_deleted_surfaces_fail(tmp_path: Path) -> None:
         "        pass\n"
     )
     probe_lines.append(
-        "deleted_prefixes = (\n"
-        "    'arnold_pipelines.megaplan._pipeline',\n"
-        "    'arnold_pipelines.megaplan.stages',\n"
-        "    'arnold_pipelines.megaplan._compatibility',\n"
-        "    'arnold.pipelines.megaplan',\n"
-        ")\n"
+        f"deleted_prefixes = {DELETED_IMPORT_PREFIXES!r}\n"
         "leaked = [\n"
         "    key for key in sys.modules\n"
         "    if any(key == p or key.startswith(p + '.') for p in deleted_prefixes)\n"
@@ -544,13 +488,7 @@ def test_entry_points_lack_deleted_modules(tmp_path: Path) -> None:
         "import json\n"
         "dist = importlib.metadata.distribution('arnold')\n"
         "eps = dist.entry_points\n"
-        "deleted_modules = (\n"
-        "    'arnold.pipelines.megaplan',\n"
-        "    'megaplan',\n"
-        "    'arnold_pipelines.megaplan._pipeline',\n"
-        "    'arnold_pipelines.megaplan.stages',\n"
-        "    'arnold_pipelines.megaplan._compatibility',\n"
-        ")\n"
+        f"deleted_modules = {('megaplan', *DELETED_IMPORT_PREFIXES)!r}\n"
         "for ep in eps:\n"
         "    if any(dm in ep.value for dm in deleted_modules):\n"
         '        raise SystemExit(f"entry point {ep.name!r} references deleted module: {ep.value}")\n'
@@ -590,6 +528,7 @@ def test_installed_console_help_lacks_deleted_commands_and_paths(
             capture_output=True,
             text=True,
             cwd=tmp_path,
+            env=_clean_env(),
         )
         assert result.returncode == 0, (
             f"{label} failed: stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -735,13 +674,7 @@ def test_installed_runtime_import_tracing_lacks_deleted_prefixes(
         if leaked_events:
             raise SystemExit(f"deleted prefix import event leakage: {{leaked_events}}")
 
-        for name in (
-            "arnold_pipelines.megaplan._pipeline",
-            "arnold_pipelines.megaplan._pipeline.builder",
-            "arnold_pipelines.megaplan.stages",
-            "arnold_pipelines.megaplan._compatibility",
-            "arnold.pipelines.megaplan",
-        ):
+        for name in {DELETED_IMPORT_MODULES!r}:
             try:
                 importlib.import_module(name)
             except ModuleNotFoundError:
@@ -777,22 +710,14 @@ def test_python_m_deleted_targets_fail(tmp_path: Path) -> None:
     wheel = _build_wheel(tmp_path)
     python = _install_wheel_into_venv(tmp_path, wheel)
 
-    deleted_modules = (
-        "arnold_pipelines.megaplan._pipeline",
-        "arnold_pipelines.megaplan._pipeline.builder",
-        "arnold_pipelines.megaplan._pipeline.runtime",
-        "arnold_pipelines.megaplan._pipeline.dispatch",
-        "arnold_pipelines.megaplan._pipeline.types",
-        "arnold_pipelines.megaplan.stages",
-        "arnold_pipelines.megaplan.stages.inprocess_step",
-        "arnold_pipelines.megaplan._compatibility",
-    )
+    deleted_modules = DELETED_IMPORT_MODULES
 
     for mod_name in deleted_modules:
         result = subprocess.run(
             [str(python), "-m", mod_name],
             capture_output=True,
             text=True,
+            env=_clean_env(),
         )
         assert result.returncode != 0, (
             f"python -m {mod_name} unexpectedly succeeded"
@@ -829,12 +754,7 @@ def test_public_surface_import_then_sys_modules_clean(tmp_path: Path) -> None:
         "import arnold.kernel\n"
         "import arnold.pipeline\n"
         "# Check sys.modules for deleted prefixes\n"
-        "deleted_prefixes = (\n"
-        "    'arnold_pipelines.megaplan._pipeline',\n"
-        "    'arnold_pipelines.megaplan.stages',\n"
-        "    'arnold_pipelines.megaplan._compatibility',\n"
-        "    'arnold.pipelines.megaplan',\n"
-        ")\n"
+        f"deleted_prefixes = {DELETED_IMPORT_PREFIXES!r}\n"
         "leaked = [\n"
         "    key for key in sys.modules\n"
         "    if any(key == p or key.startswith(p + '.') for p in deleted_prefixes)\n"
@@ -860,27 +780,7 @@ def test_public_surface_import_then_sys_modules_clean(tmp_path: Path) -> None:
 
 def test_source_tree_lacks_deleted_paths() -> None:
     """Deleted source roots are absent from the working tree."""
-    deleted = [
-        REPO_ROOT / "arnold" / "pipelines" / "megaplan",
-        REPO_ROOT / "arnold" / "pipelines" / "jokes",
-        REPO_ROOT / "arnold" / "pipelines" / "creative",
-        REPO_ROOT / "arnold" / "pipelines" / "doc",
-        REPO_ROOT / "arnold" / "pipelines" / "live_supervisor",
-        REPO_ROOT / "arnold" / "pipelines" / "select_tournament",
-        REPO_ROOT / "arnold" / "pipelines" / "writing_panel_strict.py",
-        REPO_ROOT / "arnold" / "pipelines" / "writing_panel_strict",
-        REPO_ROOT / "arnold" / "pipelines" / "evidence_pack",
-        REPO_ROOT / "arnold" / "pipelines" / "_template",
-        REPO_ROOT / "arnold" / "pipelines" / "_authoring.py",
-        REPO_ROOT / "arnold" / "pipelines" / "__init__.py",
-        REPO_ROOT / "scripts" / "backfill_step_receipts.py",
-        REPO_ROOT / "scripts" / "m4_oracle_bisect.py",
-        REPO_ROOT / "scripts" / "record_oracle_traces.py",
-        REPO_ROOT / "scripts" / "silent_failure_census.py",
-        REPO_ROOT / "tools" / "m4_oracle_bisect.py",
-        REPO_ROOT / "_gen_corpus.py",
-        REPO_ROOT / "_gen_golden_traces.py",
-    ]
+    deleted = [REPO_ROOT / path.rstrip("/") for path in DELETED_SOURCE_PATHS]
     present = [str(p.relative_to(REPO_ROOT)) for p in deleted if p.exists()]
     assert not present, f"deleted paths still present: {present}"
 
@@ -894,9 +794,9 @@ def test_source_tree_lacks_deleted_megaplan_dirs() -> None:
     caches is handled by T14; this test documents the expected steady state.
     """
     deleted_megaplan = [
-        REPO_ROOT / "arnold_pipelines" / "megaplan" / "_pipeline",
-        REPO_ROOT / "arnold_pipelines" / "megaplan" / "stages",
-        REPO_ROOT / "arnold_pipelines" / "megaplan" / "_compatibility.py",
+        REPO_ROOT / path.rstrip("/")
+        for path in DELETED_ARTIFACT_PATH_PREFIXES
+        if path.startswith("arnold_pipelines/megaplan/")
     ]
     present = [str(p.relative_to(REPO_ROOT)) for p in deleted_megaplan if p.exists()]
     assert not present, f"deleted megaplan paths still present: {present}"

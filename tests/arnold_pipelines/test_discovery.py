@@ -37,9 +37,6 @@ def test_discover_migrated_pipelines_have_builders() -> None:
         "writing-panel-strict",
         "evidence_pack_verifier",
         "my-pipeline",
-        "epic-blitz",
-        "folder-audit",
-        "deliberation",
     }
     assert ids == expected, f"missing or extra: {ids ^ expected}"
     for info in results:
@@ -64,25 +61,19 @@ def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
     by_id = {info.id: info for info in results}
 
     expected = {
-        "creative": "arnold/pipelines/megaplan/pipelines/creative",
-        "doc": "arnold/pipelines/megaplan/pipelines/doc",
-        "jokes": "arnold/pipelines/megaplan/pipelines/jokes",
-        "live-supervisor": "arnold/pipelines/megaplan/pipelines/live_supervisor",
-        "writing-panel-strict": "arnold/pipelines/megaplan/pipelines/writing_panel_strict",
-        "epic-blitz": "arnold/pipelines/megaplan/pipelines/epic_blitz.py",
-        "select-tournament": "arnold/pipelines/megaplan/pipelines/select_tournament",
-        "folder-audit": "arnold/pipelines/folder_audit",
+        "creative": "arnold_pipelines/megaplan/pipelines/creative",
+        "doc": "arnold_pipelines/megaplan/pipelines/doc",
+        "jokes": "arnold_pipelines/megaplan/pipelines/jokes",
+        "live-supervisor": "arnold_pipelines/megaplan/pipelines/live_supervisor",
+        "writing-panel-strict": "arnold_pipelines/megaplan/pipelines/writing_panel_strict",
+        "select-tournament": "arnold_pipelines/megaplan/pipelines/select_tournament",
     }
     for pipeline_id, package_path in expected.items():
         info = by_id[pipeline_id]
         assert info.package_path == package_path
-        if package_path.endswith(".py"):
-            assert info.docs_path == "arnold/pipelines/megaplan/pipelines/epic-blitz/SKILL.md"
-        else:
-            assert info.docs_path == f"{package_path}/SKILL.md"
-        if pipeline_id != "epic-blitz":
-            assert not info.package_path.endswith(".py")
-            assert "-" not in info.package_path
+        assert info.docs_path == f"{package_path}/SKILL.md"
+        assert not info.package_path.endswith(".py")
+        assert "-" not in info.package_path
         assert info.builder is not None
         built = info.builder()
         if hasattr(built, "id"):
@@ -118,16 +109,9 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
     assert by_id["creative"].builder_contract == "native"
     assert by_id["creative"].load_state == "loadable-native"
 
-    deliberation = by_id["deliberation"]
-    assert deliberation.builder_contract == "native"
-    assert deliberation.load_state == "loadable-native"
-    assert deliberation.builder is not None
-    assert deliberation.canonical_builder_path == "arnold.pipelines.deliberation:build_pipeline"
-    assert deliberation.docs_path == "arnold/pipelines/deliberation/SKILL.md"
-
 
 def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
-    """Mirrored ``arnold_pipelines`` modules may exist, but are not canonical."""
+    """Megaplan migrated rows use the product package as their canonical source."""
 
     native_or_deferred = {
         info.id: info
@@ -135,15 +119,12 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         if info.builder_contract in {"native", "deferred-native"}
     }
     expected = {
-        "creative": "arnold.pipelines.megaplan.pipelines.creative:build_pipeline",
-        "doc": "arnold.pipelines.megaplan.pipelines.doc:build_pipeline",
-        "jokes": "arnold.pipelines.megaplan.pipelines.jokes:build_pipeline",
-        "live-supervisor": "arnold.pipelines.megaplan.pipelines.live_supervisor:build_pipeline",
-        "writing-panel-strict": "arnold.pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline",
-        "epic-blitz": "arnold.pipelines.megaplan.pipelines.epic_blitz:build_pipeline",
-        "select-tournament": "arnold.pipelines.megaplan.pipelines.select_tournament:build_pipeline",
-        "folder-audit": "arnold.pipelines.folder_audit:build_pipeline",
-        "deliberation": "arnold.pipelines.deliberation:build_pipeline",
+        "creative": "arnold_pipelines.megaplan.pipelines.creative:build_pipeline",
+        "doc": "arnold_pipelines.megaplan.pipelines.doc:build_pipeline",
+        "jokes": "arnold_pipelines.megaplan.pipelines.jokes:build_pipeline",
+        "live-supervisor": "arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline",
+        "writing-panel-strict": "arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline",
+        "select-tournament": "arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline",
         "my-pipeline": "arnold_pipelines._template:build_pipeline",
     }
 
@@ -151,12 +132,9 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
     for pipeline_id, target in expected.items():
         info = native_or_deferred[pipeline_id]
         assert info.canonical_builder_path == target
-        if pipeline_id != "my-pipeline":
-            assert not info.package_path.startswith("arnold_pipelines/")
-
 
 def test_load_builder_works_with_module_target() -> None:
-    builder = load_builder("arnold.pipelines.megaplan.pipelines.jokes:build_pipeline")
+    builder = load_builder("arnold_pipelines.megaplan.pipelines.jokes:build_pipeline")
     pipeline = builder()
     assert isinstance(pipeline, NativePipeline)
     assert pipeline.entry == "draft"
@@ -169,10 +147,12 @@ def test_load_builder_rejects_malformed_target() -> None:
 
 def test_load_builder_rejects_missing_builder() -> None:
     with pytest.raises(ValueError):
-        load_builder("arnold.pipelines.megaplan.pipelines.jokes:missing_builder")
+        load_builder("arnold_pipelines.megaplan.pipelines.jokes:missing_builder")
 
 
 def test_archived_pipelines_included_when_requested() -> None:
     results = discover_shipped_pipelines(include_archived=True)
     archived = {info.id for info in results if info.disposition == "archive"}
     assert "megaplan.epic_blitz_py" in archived or "megaplan.epic_blitz" in archived
+    assert "legacy.folder_audit" in archived
+    assert "legacy.deliberation" in archived

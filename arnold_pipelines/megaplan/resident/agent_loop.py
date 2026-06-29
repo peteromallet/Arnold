@@ -12,7 +12,7 @@ from typing import Any, Mapping, Protocol
 
 from pydantic import BaseModel, ValidationError
 
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import ModelBudgetError, ModelTier, render_step_message
 
 from .config import ResidentConfig

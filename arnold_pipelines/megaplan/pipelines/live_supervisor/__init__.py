@@ -1,8 +1,16 @@
-"""Compatibility mirror for the canonical ``live-supervisor`` pipeline package."""
+"""Megaplan Live Watchdog Supervisor pipeline.
+
+An Arnold pipeline that consumes a Snapshot of likely-live Megaplan/Arnold
+runs, classifies each incident into a health category, produces a diagnosis,
+ decides whether a repair action is safe via an explicit allowlist, and emits
+a recheck request for the outer daemon.
+"""
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.live_supervisor import build_pipeline
+from arnold_pipelines.megaplan.pipelines.live_supervisor.pipeline import (
+    build_pipeline,
+)
 
 
 name: str = "live-supervisor"
@@ -23,14 +31,14 @@ capabilities: tuple[str, ...] = (
 )
 
 __all__ = [
-    "arnold_api_version",
     "build_pipeline",
-    "capabilities",
-    "default_profile",
+    "name",
     "description",
+    "default_profile",
+    "supported_modes",
+    "recommended_profiles",
     "driver",
     "entrypoint",
-    "name",
-    "recommended_profiles",
-    "supported_modes",
+    "arnold_api_version",
+    "capabilities",
 ]

@@ -98,7 +98,6 @@ assert not any("megaplan" in name for name in sys.modules)
 def test_active_megaplan_package_names_are_scanned() -> None:
     assert ACTIVE_MEGAPLAN_PACKAGE_NAMES == (
         "megaplan",
-        "arnold.pipelines.megaplan",
         "arnold_pipelines.megaplan",
     )
 

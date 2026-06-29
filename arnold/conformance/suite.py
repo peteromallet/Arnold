@@ -25,7 +25,7 @@ No ``megaplan`` imports.  No forbidden vocabulary literals.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Mapping, Protocol, Sequence
 
 from arnold.conformance import ConformanceCheckResult, ConformanceSuiteResult
 from arnold.conformance.checks import (
@@ -45,12 +45,12 @@ from arnold.conformance.checks import (
 )
 from arnold.conformance.join import run_join_conformance_suite
 from arnold.conformance.routing import run_routing_conformance_suite
-from arnold.pipeline.hooks import ExecutorHooks
-from arnold.pipeline.step_invocation import (
-    StepInvocation,
-    StepInvocationAdapterRegistry,
-)
+from arnold.execution.registries import ExecutionRegistries
 from arnold.pipeline.types import ContractResult, Pipeline
+
+
+class JoinHooks(Protocol):
+    def join_parallel_results(self, stage: Any, ctx: Any, child_results: list[Any]) -> Any: ...
 
 _CHECK_ALLOWLIST_PATH = Path(__file__).resolve().parent / "_allowlist.txt"
 
@@ -62,12 +62,12 @@ _CHECK_ALLOWLIST_PATH = Path(__file__).resolve().parent / "_allowlist.txt"
 
 def run_conformance_suite(
     *,
-    registry: StepInvocationAdapterRegistry | None = None,
+    registry: ExecutionRegistries | None = None,
     pipelines: Sequence[Pipeline] | None = None,
-    adapter_smoke_kinds: Sequence[tuple[str, StepInvocation]] | None = None,
+    adapter_smoke_kinds: Sequence[tuple[str, Mapping[str, Any]]] | None = None,
     adapter_round_trip_kinds: Sequence[str] | None = None,
     sample_contracts: Sequence[ContractResult] | None = None,
-    hooks: ExecutorHooks | Sequence[ExecutorHooks] | None = None,
+    hooks: JoinHooks | Sequence[JoinHooks] | None = None,
     suite_id: str = "ar1-conformance",
 ) -> ConformanceSuiteResult:
     """Run Arnold conformance-check domains and aggregate into one result.
@@ -81,7 +81,7 @@ def run_conformance_suite(
     ----------
     registry:
         The adapter registry to validate.  When *None* a fresh fail-closed
-        ``StepInvocationAdapterRegistry()`` is constructed inside the adapter
+        ``ExecutionRegistries()`` is constructed inside the adapter
         checks.
     pipelines:
         One or more ``Pipeline`` instances to check for routing-vocabulary
@@ -102,7 +102,7 @@ def run_conformance_suite(
         :func:`check_contract_result_schema_round_trip`.
     hooks:
         The hook implementation for join-delegation checks.  When *None*,
-        ``NullExecutorHooks`` are used (which delegate by default).
+        conformance-local default join hooks are used (which delegate by default).
     suite_id:
         Identifier for the returned ``ConformanceSuiteResult``.
 
@@ -128,7 +128,7 @@ def run_conformance_suite(
     for kind, invocation in (adapter_smoke_kinds or []):
         results.append(
             check_adapter_smoke_invocation(
-                registry or StepInvocationAdapterRegistry(),
+                registry or ExecutionRegistries(),
                 kind,
                 invocation,
             )
@@ -137,7 +137,7 @@ def run_conformance_suite(
     for kind in (adapter_round_trip_kinds or []):
         results.append(
             check_adapter_registry_round_trip(
-                registry or StepInvocationAdapterRegistry(),
+                registry or ExecutionRegistries(),
                 kind,
             )
         )
@@ -165,7 +165,7 @@ def run_conformance_suite(
     # ------------------------------------------------------------------
     # Domain 4 — Join delegation
     # ------------------------------------------------------------------
-    hook_targets: Sequence[ExecutorHooks | None]
+    hook_targets: Sequence[JoinHooks | None]
     if hooks is None:
         hook_targets = (None,)
     elif isinstance(hooks, Sequence):

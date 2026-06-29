@@ -105,7 +105,6 @@ from .feedback import (
     _render_feedback_table,
     handle_feedback,
 )
-from .parser import _add_vendor_critic_args, build_parser
 from .resolutions import handle_quality_gate, handle_user_action
 from .roots import (
     _collect_megaplan_roots,
@@ -142,6 +141,59 @@ from .skills import (
     bundled_global_file,
     handle_regen_composed,
 )
+
+
+def _add_vendor_critic_args(parser: argparse.ArgumentParser) -> None:
+    """Wire profile modifier flags onto a subparser."""
+
+    parser.add_argument("--vendor", choices=["claude", "codex"], default=None)
+    parser.add_argument(
+        "--depth",
+        choices=["minimal", "low", "medium", "high", "xhigh", "max"],
+        default=None,
+    )
+    parser.add_argument("--critic", choices=["kimi", "cross"], default=None)
+    parser.add_argument("--deepseek-provider", choices=["direct"], default=None)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the Megaplan CLI parser from the surviving CLI module."""
+
+    parser = argparse.ArgumentParser(description="Megaplan orchestration CLI")
+    parser.add_argument("--actor", default=None, metavar="ID")
+    parser.add_argument("--backend", choices=["file", "db"], default=None)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    setup_parser = subparsers.add_parser("setup")
+    setup_parser.add_argument("--local", action="store_true")
+    setup_parser.add_argument("--target-dir")
+    setup_parser.add_argument("--force", action="store_true")
+    setup_parser.add_argument("--regen-composed", action="store_true")
+    setup_parser.add_argument("--install-hooks", action="store_true")
+
+    init_parser = subparsers.add_parser("init")
+    init_parser.add_argument("--project-dir", required=False)
+    init_parser.add_argument("--in-worktree", default=None)
+    init_parser.add_argument("--worktree-from", default=None)
+    init_parser.add_argument("--clean-worktree", action="store_true", default=False)
+    init_parser.add_argument("--carry-dirty", action="store_true", default=False)
+    init_parser.add_argument("--name")
+    init_parser.add_argument("--auto-approve", action="store_true", default=None)
+    init_parser.add_argument("--adaptive-critique", action="store_true", default=None)
+    init_parser.add_argument("--strict-adaptive-critique", action="store_true", default=None)
+    init_parser.add_argument("--profile", default=None)
+    init_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED, default=None)
+    init_parser.add_argument("--with-prep", action="store_true", default=False)
+    init_parser.add_argument("--with-feedback", action="store_true", default=False)
+    init_parser.add_argument("--no-prep-clarify", dest="prep_clarify", action="store_false", default=True)
+    _add_vendor_critic_args(init_parser)
+    init_parser.add_argument("idea", nargs="?")
+
+    for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
+        sub = subparsers.add_parser(command)
+        sub.add_argument("--plan", required=False)
+
+    return parser
 from .status_view import (
     _build_active_step,
     _build_progress_payload,
@@ -1577,7 +1629,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         )
         from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
         from arnold_pipelines.megaplan.runtime.discovery import scan_python_pipelines
-        from arnold.pipeline.validator import ValidationOptions, validate
+        from arnold.workflow.validator import ValidationOptions, validate
 
         canonical_name = canonical_pipeline_name(name)
         original_manifest_discovery = os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")

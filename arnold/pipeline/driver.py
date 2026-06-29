@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from arnold.runtime.driver import AdvanceOutcome, CheckpointOutcome
+from arnold.execution.driver import AdvanceOutcome, CheckpointOutcome
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
 

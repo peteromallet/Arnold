@@ -55,7 +55,7 @@ from arnold.pipeline.schema_registry import AcceptedVersionRange
 from arnold.runtime.envelope import RunContext
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
-    from arnold.pipeline.step_invocation import StepInvocation
+    from arnold.execution.step_invocation import StepInvocation
     from arnold.pipeline.native.ir import NativeProgram
 
 

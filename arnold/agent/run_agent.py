@@ -373,7 +373,7 @@ from arnold.agent.agent.trajectory import (
     save_trajectory as _save_trajectory_to_file,
 )
 from arnold.pipeline.cost_types import CostResult
-from arnold.pipeline.media_cost import (
+from arnold.agent.costing.media_cost import (
     MediaUsage,
     compute_media_cost,
     media_usage_from_hook_metadata,
@@ -744,7 +744,7 @@ def _resolve_checkpoint_cwd() -> str:
     Fallback order: active sandbox cwd → TERMINAL_CWD env var → os.getcwd().
     """
     try:
-        from arnold.runtime.sandbox import get_sandbox_cwd
+        from arnold.agent.tools.sandbox import get_sandbox_cwd
     except ImportError:
         get_sandbox_cwd = None  # type: ignore[assignment]
 

@@ -11,7 +11,7 @@ import time
 
 _IS_WINDOWS = platform.system() == "Windows"
 
-from arnold.runtime.process import kill_group, spawn
+from arnold_pipelines.megaplan.runtime.process import kill_group, spawn
 from arnold.agent.tools.environments.base import BaseEnvironment
 from arnold.agent.tools.environments.persistent_shell import PersistentShellMixin
 from arnold.agent.tools.interrupt import is_interrupted

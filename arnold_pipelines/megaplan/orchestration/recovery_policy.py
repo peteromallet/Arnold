@@ -307,7 +307,7 @@ class RecoveryPolicy:
         ``status=\"decided\"``, opaque ``action`` / ``reason``, and
         ``budget_consumed`` carrying the budget kind, delta, and halt kind.
         """
-        from arnold.runtime.recovery import RecoveryDecision as ArnoldDecision
+        from arnold_pipelines.megaplan.orchestration.recovery import RecoveryDecision as ArnoldDecision
 
         meta = getattr(context, "metadata", {}) or {}
         layer = meta.get("layer", "phase")

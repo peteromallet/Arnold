@@ -1,8 +1,8 @@
-"""Compatibility mirror for the canonical ``doc`` pipeline package."""
+"""Native-backed public surface for the first-class ``doc`` pipeline."""
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.doc import build_pipeline
+from arnold_pipelines.megaplan.pipelines.doc.pipeline import build_pipeline
 
 name: str = "doc"
 description: str = (

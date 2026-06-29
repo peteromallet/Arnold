@@ -1,8 +1,10 @@
-"""Compatibility mirror for the canonical ``creative`` pipeline package."""
+"""Native-backed public surface for the first-class ``creative`` pipeline."""
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.creative import build_pipeline
+from arnold_pipelines.megaplan.pipelines.creative.pipeline import (
+    build_pipeline,
+)
 
 name: str = "creative"
 description: str = (

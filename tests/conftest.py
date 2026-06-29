@@ -9,7 +9,7 @@ from typing import Any, Callable
 import pytest
 
 import arnold_pipelines.megaplan as megaplan
-from arnold_pipelines.megaplan.cli.parser import build_parser
+from arnold_pipelines.megaplan.cli import build_parser
 from arnold_pipelines.megaplan.orchestration.phase_result import (
     BlockedTask,
     Deviation,

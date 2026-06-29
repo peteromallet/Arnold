@@ -37,7 +37,7 @@ from arnold.conformance.checks import (
     check_contract_result_schema_version_skew,
     check_contract_result_empty_schema_version_accepted,
 )
-from arnold.pipeline.step_invocation import StepInvocation, StepInvocationAdapterRegistry
+from arnold.execution.step_invocation import StepInvocation, StepInvocationAdapterRegistry
 
 
 class TestM8ConformanceGuard:

@@ -1,8 +1,10 @@
-"""Compatibility mirror for the canonical ``writing-panel-strict`` package."""
+"""Native-backed public surface for ``writing-panel-strict``."""
 
 from __future__ import annotations
 
-from arnold.pipelines.megaplan.pipelines.writing_panel_strict import build_pipeline
+from arnold_pipelines.megaplan.pipelines.writing_panel_strict.pipeline import (
+    build_pipeline,
+)
 
 name: str = "writing-panel-strict"
 description: str = (

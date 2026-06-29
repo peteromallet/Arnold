@@ -30,7 +30,7 @@ from arnold_pipelines.megaplan.workers._impl import (
     session_key_for,
 )
 from arnold_pipelines.megaplan._core import creative_form_id, read_json, schemas_root, touch_active_step
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
     ModelBudgetError,
     ModelStructuralAuditError,

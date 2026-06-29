@@ -1,6 +1,6 @@
 """Pipeline registry — megaplan-owned policy authority.
 
-The neutral Arnold registry core lives at :mod:`arnold.pipeline.registry`.
+The neutral Arnold registry core lives at :mod:`arnold.workflow.registry`.
 This module supplies Megaplan-specific defaults (budget quota reservation,
 operation-registry fallbacks, planning override catalogs) and wires the
 global singleton.
@@ -25,20 +25,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
-from arnold.pipeline.discovery.manifest import (
+from arnold.workflow.discovery.manifest import (
     Manifest,
     read_manifest,
 )
-from arnold.pipeline.registry import PipelineRegistry as ArnoldPipelineRegistry
+from arnold.workflow.registry import PipelineRegistry as ArnoldPipelineRegistry
 from arnold.pipeline.types import Pipeline
-from arnold.runtime.operations import (
+from arnold.execution.operations import (
     NullOperationRegistry,
     OperationKind,
     OperationRegistry,
     OperationRequest,
     OperationResult,
 )
-from arnold.pipeline.discovery.trust import BLESSED_ALLOWLIST, TrustGrade
+from arnold.workflow.discovery.trust import BLESSED_ALLOWLIST, TrustGrade
 from arnold_pipelines.megaplan.runtime.discovery import classify
 from arnold_pipelines.megaplan.runtime.discovery import (
     CANONICAL_BUILTIN_PIPELINE,

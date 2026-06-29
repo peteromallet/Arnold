@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from arnold.pipeline.topology import compute_topology_hash
-from arnold.pipeline.validator import validate
+from arnold.workflow.validator import validate
 from arnold.pipelines.megaplan.pipeline import _build_legacy_graph_pipeline
 from arnold.pipelines.megaplan.routing import tiebreaker_edges
 

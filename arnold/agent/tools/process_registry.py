@@ -42,7 +42,7 @@ import time
 import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
-from arnold.runtime.process import kill_group, spawn
+from arnold_pipelines.megaplan.runtime.process import kill_group, spawn
 from arnold.agent.tools.environments.local import _find_shell, _sanitize_subprocess_env
 from dataclasses import dataclass, field
 from pathlib import Path

@@ -13,7 +13,7 @@ import arnold.pipelines.megaplan  # noqa: F401 — triggers hook registration + 
 import pytest
 
 from arnold.pipeline.model_seam import _NATIVE_NORMALIZERS, RenderedStepMessage
-from arnold.pipeline.step_invocation import StepInvocation, get_default_adapter_registry
+from arnold.execution.step_invocation import StepInvocation, get_default_adapter_registry
 
 _EXPECTED_STEPS = {
     "review",

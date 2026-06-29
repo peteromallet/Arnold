@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from arnold.pipeline.cost_types import CanonicalUsage
-from arnold.pipeline.token_cost import (
+from arnold.agent.costing.token_cost import (
     PricingEntry,
     estimate_cost_usd,
     estimate_usage_cost,
@@ -194,7 +194,7 @@ def test_format_helpers_are_stable_for_compact_display() -> None:
 
 
 def test_token_cost_module_has_no_megaplan_imports() -> None:
-    import arnold.pipeline.token_cost as token_cost
+    import arnold.agent.costing.token_cost as token_cost
 
     tree = ast.parse(inspect.getsource(token_cost))
     for node in ast.walk(tree):

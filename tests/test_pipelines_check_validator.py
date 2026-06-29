@@ -32,7 +32,7 @@ from arnold.pipelines.megaplan._pipeline.types import (
     Stage,
     WriteRef,
 )
-from arnold.pipeline.step_invocation import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold.pipelines.megaplan._pipeline.validator import (
     Diagnostics,
     MISSING_BINDING_CODE,
