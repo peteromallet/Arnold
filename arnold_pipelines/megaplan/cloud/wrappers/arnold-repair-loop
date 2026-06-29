@@ -521,7 +521,11 @@ def _classify_failure(signals: list[str], latest_failure: dict[str, object], cha
     last_state = str(chain_state.get("last_state") or "").lower()
     current_state = str(chain_state.get("current_state") or "").lower()
     current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
-    if last_state == "done" and current_state in {"", "done"} and not current_plan_name:
+    if (
+        last_state == "done"
+        and current_state in {"", "done", "unknown"}
+        and current_plan_name.lower() in {"", "unknown"}
+    ):
         return "chain_completed"
     if "unrecognized arguments" in combined or "usage:" in combined:
         return "cli_or_argument_error"
@@ -760,6 +764,16 @@ if not signals:
         if rendered and rendered not in fallback_signals:
             fallback_signals.append(rendered)
     signals = fallback_signals
+
+chain_last_state_for_classification = str(chain_state.get("last_state") or "").lower()
+chain_current_state_for_classification = str(chain_state.get("current_state") or "").lower()
+chain_plan_for_classification = str(chain_state.get("current_plan_name") or "").strip().lower()
+if (
+    chain_last_state_for_classification == "done"
+    and chain_current_state_for_classification in {"", "done", "unknown"}
+    and chain_plan_for_classification in {"", "unknown"}
+):
+    classification = "chain_completed"
 
 if classification == "unknown_failure_mode":
     combined_signals = "\n".join(str(item) for item in signals).lower()
