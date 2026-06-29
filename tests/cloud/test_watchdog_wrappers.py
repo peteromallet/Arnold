@@ -192,6 +192,10 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "Start from the inline incident snapshot above." in text
     assert "ATTEMPT to resolve those user actions before treating this as a human stop" in text
     assert "Classification guide:" in text
+    assert "LAST EXECUTE ATTEMPT" in text
+    assert "The root cause might be in the Arnold SOURCE" in text
+    assert "OR in the PLAN STATE" in text
+    assert "deferred or blocked rather than failed" in text
     assert "LIVE FAILURE: The latest_failure is recent" in text
     assert "STALE STATE: The latest_failure predates a successful run" in text
     assert "## STATE MISMATCH DETECTED + CLEARED" in text
@@ -298,6 +302,146 @@ def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: 
     assert user_action_context["user_actions_path"].endswith("/demo-plan/user_actions.md")
     assert user_action_context["unresolved_user_actions"][0]["id"] == "ua-01-decide-cleanup"
     assert user_action_context["unresolved_user_actions"][0]["blocks_task_ids"] == ["T1"]
+
+
+def test_repair_loop_collects_execute_attempt_artifacts_and_renders_summary(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    history = [
+        {
+            "step": "execute",
+            "result": "blocked",
+            "timestamp": f"2026-06-29T02:0{i}:00Z",
+            "output_file": "execution_batch_2.json",
+        }
+        for i in range(8)
+    ]
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "finalized",
+                "iteration": 21,
+                "latest_failure": {
+                    "kind": "phase_failed",
+                    "message": "phase 'execute' internal_error",
+                    "phase": "execute",
+                    "recorded_at": "2026-06-29T01:00:00Z",
+                    "metadata": {"stderr": "old internal_error"},
+                },
+                "history": history,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        json.dumps({"kind": "phase_end", "phase": "execute", "payload": {"status": "blocked"}}) + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execute_batch_2_output.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {"task_id": "m7-01", "status": "completed", "executor_notes": "done"},
+                    {"task_id": "m7-13-full-suite-final-gate", "status": "pending", "executor_notes": ""},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_2.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {"task_id": "m7-01", "status": "completed", "executor_notes": "done"},
+                    {
+                        "task_id": "m7-13-full-suite-final-gate",
+                        "status": "blocked",
+                        "executor_notes": "Deferred by harness until baseline is available.",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "baseline_test_note": "runner error exit code 2",
+                "baseline_test_collection_errors": ["tests/test_import_bad.py"],
+                "tasks": [
+                    {"id": "m7-01", "status": "completed", "executor_notes": "done"},
+                    {
+                        "id": "m7-13-full-suite-final-gate",
+                        "status": "skipped",
+                        "reviewer_verdict": "deferred_baseline_unavailable",
+                        "executor_notes": (
+                            "Collection failed with 43 errors - stale test imports "
+                            "of deleted arnold.pipeline.*"
+                        ),
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "full_suite_backstop.json").write_text(
+        json.dumps(
+            {
+                "status": "failed",
+                "baseline_failing_count": 0,
+                "current_failing_count": 43,
+                "failing_tests": ["tests/test_import_bad.py"],
+                "collection_errors": ["tests/test_import_bad.py"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "blocked"}),
+        encoding="utf-8",
+    )
+
+    collect_program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(collect_program, str(workspace), "demo", "chain", "")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    execute_context = payload["execute_attempt_context"]
+    assert execute_context["execute_batch_output"]["path"].endswith("execute_batch_2_output.json")
+    assert execute_context["execution_batch"]["status_counts"]["blocked"] == 1
+    assert execute_context["finalize"]["baseline_test_failures"] is None
+    assert execute_context["plan_history"]["consecutive_execute_blocked"] == 8
+
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps({"initial_facts": {}, "iterations": [payload]}),
+        encoding="utf-8",
+    )
+    summary_program = _extract_repair_program(
+        "render_failure_summary",
+        "python3 - \"$data_path\" <<'PY'",
+    )
+    summary_result = _run_embedded_python(summary_program, str(data_path))
+
+    assert summary_result.returncode == 0, summary_result.stderr
+    summary = summary_result.stdout
+    assert summary.startswith("## LAST EXECUTE ATTEMPT")
+    assert "Blocked/deferred task: m7-13-full-suite-final-gate" in summary
+    assert "deferred_baseline_unavailable" in summary
+    assert "baseline_test_failures is null" in summary
+    assert "runner error exit code 2" in summary
+    assert "pytest collection: 1 errors" in summary
+    assert "8 consecutive execute=blocked" in summary
+    assert "NOTE: this may be STALE" in summary
 
 
 def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None:
