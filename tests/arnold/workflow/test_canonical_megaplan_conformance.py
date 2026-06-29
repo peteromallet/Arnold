@@ -10,20 +10,13 @@ import arnold.patterns as patterns
 import arnold.workflow as workflow_api
 from arnold.workflow import (
     BudgetPolicy,
-    Capability,
-    Input,
-    LoopPolicy,
-    Output,
     Pipeline,
     Route,
     SourceSpan,
     Step,
-    SubpipelineRef,
-    SuspensionRoute,
     WorkflowPolicy,
     compile_pipeline,
 )
-from tests.arnold.patterns import _fixtures
 
 HASH_A = "sha256:" + "a" * 64
 FIXTURE_PATH = Path(__file__).parent.parent.parent / "fixtures" / "workflow" / "canonical_megaplan_shapes.yaml"
@@ -39,40 +32,69 @@ def _load_fixture_matrix() -> dict[str, Any]:
         return yaml.safe_load(handle)
 
 
+EXPECTED_SHAPES_DIR = FIXTURE_PATH.parent
+
+
+def _load_expected_shape(name: str) -> dict[str, Any]:
+    path = EXPECTED_SHAPES_DIR / name
+    with path.open("r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def _build_pattern_blocks() -> tuple[patterns.PatternBlock, ...]:
+    """Return the composite pattern blocks used by the canonical fixture."""
+
+    return (
+        patterns.branch(
+            "branch-decide",
+            condition_ref="tests.arnold.patterns._fixtures:decide_condition",
+            then_id="branch-plan",
+            else_id="branch-fallback",
+        ),
+        patterns.loop(
+            "loop",
+            "loop-body",
+            until_ref="tests.arnold.patterns._fixtures:decide_condition",
+            max_iterations=3,
+            reentry_id="retry",
+        ),
+        patterns.revise(
+            "revise",
+            "draft",
+            revise_ref="tests.arnold.patterns._fixtures:agent_prompt",
+            until_ref="tests.arnold.patterns._fixtures:decide_condition",
+            max_iterations=4,
+            reentry_id="retry-revise",
+        ),
+        patterns.panel(
+            "fan",
+            branch_ids=("fan-branch-a", "fan-branch-b"),
+            merge_id="fan-merged",
+            reducer_ref="tests.arnold.patterns._fixtures:reducer",
+        ),
+        patterns.retry(
+            "retry",
+            target_id="retry-fragile",
+            max_attempts=3,
+            retry_on=("error",),
+        ),
+        patterns.tournament(
+            "tourney",
+            candidate_ids=("tourney-candidate-a", "tourney-candidate-b"),
+            merge_id="tourney-winner",
+            winner_ref="tests.arnold.patterns._fixtures:judge_winner",
+            tie_ref="tests.arnold.patterns._fixtures:decide_condition",
+        ),
+    )
+
+
 def _build_pipeline() -> Pipeline:
-    branch_block = patterns.branch(
-        "branch-decide",
-        condition_ref="tests.arnold.patterns._fixtures:decide_condition",
-        then_id="branch-plan",
-        else_id="branch-fallback",
-    )
-    loop_block = patterns.loop(
-        "loop",
-        "loop-body",
-        until_ref="tests.arnold.patterns._fixtures:decide_condition",
-        max_iterations=3,
-        reentry_id="retry",
-    )
-    revise_block = patterns.revise(
-        "revise",
-        "draft",
-        revise_ref="tests.arnold.patterns._fixtures:agent_prompt",
-        until_ref="tests.arnold.patterns._fixtures:decide_condition",
-        max_iterations=4,
-        reentry_id="retry-revise",
-    )
-    panel_block = patterns.panel(
-        "fan",
-        branch_ids=("fan-branch-a", "fan-branch-b"),
-        merge_id="fan-merged",
-        reducer_ref="tests.arnold.patterns._fixtures:reducer",
-    )
-    retry_block = patterns.retry(
-        "retry",
-        target_id="retry-fragile",
-        max_attempts=3,
-        retry_on=("error",),
-    )
+    """Return the explicit-step/r portion of the canonical fixture.
+
+    Composite pattern blocks are returned separately so tests exercise the
+    real ``compile_pipeline(..., patterns=...)`` expansion path.
+    """
+
     sub_step = patterns.subpipeline("inner", manifest_hash=HASH_A, alias="nested")
     gate_step = patterns.human_gate("gate", capability_id="human:operator", reentry_id="resume")
 
@@ -139,27 +161,15 @@ def _build_pipeline() -> Pipeline:
             ],
         },
     )
-    tournament_block = patterns.tournament(
-        "tourney",
-        candidate_ids=("tourney-candidate-a", "tourney-candidate-b"),
-        merge_id="tourney-winner",
-        winner_ref="tests.arnold.patterns._fixtures:judge_winner",
-        tie_ref="tests.arnold.patterns._fixtures:decide_condition",
-    )
 
-    all_steps = [
+    steps = [
         Step(id="branch-plan", kind="agent"),
         Step(id="branch-fallback", kind="agent"),
-        *branch_block.steps,
         Step(id="loop-body", kind="agent"),
-        *loop_block.steps,
         Step(id="draft", kind="agent"),
-        *revise_block.steps,
         Step(id="fan-branch-a", kind="agent"),
         Step(id="fan-branch-b", kind="agent"),
-        *panel_block.steps,
         Step(id="retry-fragile", kind="agent"),
-        *retry_block.steps,
         sub_step,
         gate_step,
         override_decide,
@@ -175,29 +185,22 @@ def _build_pipeline() -> Pipeline:
         feedback_plan,
         robust_plan,
         overlay,
-        *tournament_block.steps,
         Step(id="tourney-candidate-a", kind="agent"),
         Step(id="tourney-candidate-b", kind="agent"),
     ]
-    all_routes = [
-        *branch_block.routes,
+    routes = [
         Route(id="loop-loop-body", source="loop", target="loop-body", label="go"),
-        *loop_block.routes,
-        *revise_block.routes,
-        *panel_block.routes,
-        *retry_block.routes,
         *override_routes,
         escalate_route,
         compensate_route,
         promote_route,
         feedback_route,
-        *tournament_block.routes,
     ]
     return Pipeline(
         id="canonical-megaplan",
         version="conformance-v1",
-        steps=all_steps,
-        routes=all_routes,
+        steps=steps,
+        routes=routes,
         source_span=SourceSpan("pipeline.py", 1),
     )
 
@@ -393,14 +396,15 @@ def _assert_m3_supported_subset_matches(manifest, contract: dict[str, Any]) -> N
 def test_canonical_shape(shape_name: str) -> None:
     shapes = _load_shapes()
     pipeline = _build_pipeline()
-    manifest = compile_pipeline(pipeline)
+    manifest = compile_pipeline(pipeline, patterns=_build_pattern_blocks())
     _assert_shape_matches(manifest, shapes[shape_name])
 
 
 def test_compiled_manifest_validates_and_hashes_stably() -> None:
     pipeline = _build_pipeline()
-    first = compile_pipeline(pipeline)
-    second = compile_pipeline(pipeline)
+    patterns = _build_pattern_blocks()
+    first = compile_pipeline(pipeline, patterns=patterns)
+    second = compile_pipeline(pipeline, patterns=patterns)
 
     assert first.manifest_hash == second.manifest_hash
     assert first.topology_hash == second.topology_hash
@@ -411,7 +415,7 @@ def test_compiled_manifest_validates_and_hashes_stably() -> None:
 def test_tournament_has_two_full_tiebreaker_rounds() -> None:
     shapes = _load_shapes()
     pipeline = _build_pipeline()
-    manifest = compile_pipeline(pipeline)
+    manifest = compile_pipeline(pipeline, patterns=_build_pattern_blocks())
     _assert_shape_matches(manifest, shapes["tournament"])
 
     tie_routes = [
@@ -424,11 +428,25 @@ def test_tournament_has_two_full_tiebreaker_rounds() -> None:
     assert tie_routes[1].source == "tourney-tiebreak-1"
     assert tie_routes[1].target == "tourney-tiebreak-2"
 
+    retry_edge = next(
+        edge for edge in manifest.edges
+        if edge.label == "retry" and edge.source == "tourney-tiebreak-2"
+    )
+    assert retry_edge.source == "tourney-tiebreak-2"
+    assert retry_edge.target == "tourney-judge"
+    assert retry_edge.condition_ref == "tourney:tiebreak"
+
+    judge = next(node for node in manifest.nodes if node.id == "tourney-judge")
+    assert judge.policy is not None
+    assert judge.policy.loop is not None
+    assert judge.policy.loop.max_iterations == 2
+    assert any(route.reentry_id == "tourney:tiebreak" for route in judge.policy.suspension_routes)
+
 
 def test_loop_revise_is_explicit_bounded_reentry() -> None:
     shapes = _load_shapes()
     pipeline = _build_pipeline()
-    manifest = compile_pipeline(pipeline)
+    manifest = compile_pipeline(pipeline, patterns=_build_pattern_blocks())
     _assert_shape_matches(manifest, shapes["loop_revise"])
 
     assert any(edge.condition_ref == "retry" for edge in manifest.edges)
@@ -463,3 +481,121 @@ def test_python_authoring_m3_deferred_canonical_shapes_are_annotated() -> None:
         assert annotation["reason"], shape_name
         if "expected_diagnostic" in annotation:
             assert annotation["expected_diagnostic"] in diagnostic_codes
+
+
+def _canonical_manifest():
+    pipeline = _build_pipeline()
+    patterns = _build_pattern_blocks()
+    return compile_pipeline(pipeline, patterns=patterns)
+
+
+def test_locked_expected_nodes_match_compiled_manifest() -> None:
+    manifest = _canonical_manifest()
+    expected = _load_expected_shape("canonical_megaplan_nodes.yaml")["nodes"]
+    nodes_by_id = {node.id: node for node in manifest.nodes}
+
+    assert len(expected) == len(manifest.nodes)
+    for expected_node in expected:
+        node = nodes_by_id[expected_node["id"]]
+        assert node.kind == expected_node["kind"]
+        assert list(node.inputs) == expected_node["inputs"]
+        assert list(node.outputs) == expected_node["outputs"]
+
+
+def test_locked_expected_refs_match_compiled_manifest() -> None:
+    manifest = _canonical_manifest()
+    from arnold.workflow import inspect_manifest
+
+    view = inspect_manifest(manifest)
+    expected = _load_expected_shape("canonical_megaplan_refs.yaml")
+
+    assert set(view["refs"]["nodes"]) == set(expected["nodes"])
+    assert set(view["refs"]["edges"]) == set(expected["edges"])
+
+
+def test_locked_expected_capabilities_match_compiled_manifest() -> None:
+    manifest = _canonical_manifest()
+    from arnold.workflow import inspect_manifest
+
+    view = inspect_manifest(manifest)
+    expected = _load_expected_shape("canonical_megaplan_capabilities.yaml")
+
+    assert [dict(c) for c in view["capabilities"]["manifest"]] == expected["manifest"]
+    assert {
+        node_id: [dict(c) for c in caps]
+        for node_id, caps in view["capabilities"]["nodes"].items()
+    } == expected["nodes"]
+
+
+def test_locked_expected_suspension_points_match_compiled_manifest() -> None:
+    manifest = _canonical_manifest()
+    from arnold.workflow import inspect_manifest
+
+    view = inspect_manifest(manifest)
+    expected = _load_expected_shape("canonical_megaplan_suspension_points.yaml")[
+        "suspension_points"
+    ]
+
+    assert [dict(sp) for sp in view["suspension_points"]] == expected
+
+
+def test_locked_expected_control_routes_match_compiled_manifest() -> None:
+    manifest = _canonical_manifest()
+    from arnold.workflow import inspect_manifest
+
+    view = inspect_manifest(manifest)
+    expected = _load_expected_shape("canonical_megaplan_control_routes.yaml")[
+        "control_routes"
+    ]
+
+    assert [dict(cr) for cr in view["control_routes"]] == expected
+
+
+def test_locked_expected_overlay_slots_match_compiled_manifest() -> None:
+    manifest = _canonical_manifest()
+    expected = _load_expected_shape("canonical_megaplan_overlay_slots.yaml")["overlay_slots"]
+
+    actual = []
+    for node in manifest.nodes:
+        dynamic_events = node.metadata.get("dynamic_events")
+        if dynamic_events:
+            actual.append({"node_id": node.id, "dynamic_events": dynamic_events})
+        if node.policy is not None:
+            for slot in node.policy.topology_overlays:
+                actual.append(
+                    {
+                        "node_id": node.id,
+                        "overlay_id": slot.overlay_id,
+                        "overlay_type": slot.overlay_type,
+                        "source_ref": slot.source_ref,
+                        "target_refs": list(slot.target_refs),
+                        "condition_ref": slot.condition_ref,
+                        "payload_schema_hash": slot.payload_schema_hash,
+                    }
+                )
+    if manifest.policy is not None:
+        for slot in manifest.policy.topology_overlays:
+            actual.append(
+                {
+                    "node_id": None,
+                    "overlay_id": slot.overlay_id,
+                    "overlay_type": slot.overlay_type,
+                    "source_ref": slot.source_ref,
+                    "target_refs": list(slot.target_refs),
+                    "condition_ref": slot.condition_ref,
+                    "payload_schema_hash": slot.payload_schema_hash,
+                }
+            )
+
+    assert actual == expected
+
+
+def test_locked_expected_hashes_match_compiled_manifest() -> None:
+    manifest = _canonical_manifest()
+    expected = _load_expected_shape("canonical_megaplan_hashes.yaml")
+
+    assert manifest.id == expected["id"]
+    assert manifest.schema_version == expected["schema_version"]
+    assert manifest.version == expected["version"]
+    assert manifest.topology_hash == expected["topology_hash"]
+    assert manifest.manifest_hash == expected["manifest_hash"]

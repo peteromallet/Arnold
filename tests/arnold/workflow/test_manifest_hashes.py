@@ -111,3 +111,36 @@ def test_control_transition_and_overlay_slots_are_manifest_hash_inputs_not_topol
 
     assert base.topology_hash == with_control_slots.topology_hash
     assert base.manifest_hash != with_control_slots.manifest_hash
+
+
+def test_inspect_hash_inputs_match_manifest_identity() -> None:
+    from arnold.workflow import compile_pipeline, inspect_manifest
+    from arnold.workflow.dsl import Capability, Input, Output, Pipeline, Route, Step
+
+    pipeline = Pipeline(
+        id="planning",
+        version="v1",
+        steps=(
+            Step(
+                id="plan",
+                kind="agent",
+                outputs=(Output("draft"),),
+                capabilities=(Capability("agent:planner"),),
+            ),
+            Step(
+                id="review",
+                kind="agent",
+                inputs=(Input("draft", value_ref="plan.draft"), Input("criteria")),
+            ),
+        ),
+        routes=(Route(id="plan-review", source="plan", target="review", label="review"),),
+    )
+    manifest = compile_pipeline(pipeline)
+    view = inspect_manifest(manifest)
+
+    assert view["hash_inputs"]["id"] == manifest.id
+    assert view["hash_inputs"]["schema_version"] == manifest.schema_version
+    assert view["hash_inputs"]["version"] == manifest.version
+    assert view["hash_inputs"]["topology_hash"] == manifest.topology_hash
+    assert view["hash_inputs"]["manifest_hash"] == manifest.manifest_hash
+    assert view["hash_inputs"]["manifest_hash"].startswith("sha256:")

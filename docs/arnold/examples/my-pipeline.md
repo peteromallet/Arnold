@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/_template
-- manifest_hash: native:my-pipeline
+- manifest_hash: sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -21,10 +21,10 @@ Provenance:
 | Builder target | arnold_pipelines._template:build_pipeline|
 | Builder source | arnold_pipelines/_template/__init__.py|
 | Skill | arnold_pipelines/_template/SKILL.md|
-| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
-| Contract | native|
-| Load state | loadable-native|
-| Identity | native:my-pipeline|
+| Validation | `arnold workflow check --module arnold_pipelines._template:build_pipeline`|
+| Contract | workflow|
+| Load state | workflow|
+| Identity | sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d|
 
 ## Builder Surface
 
@@ -36,31 +36,53 @@ description: str = (
     "A new Arnold pipeline (replace this description with a meaningful one-liner)."
 )
 
-driver: tuple[str, str] = ("native", "linear")
+driver: tuple[str, str] = ("graph", "linear")
 entrypoint: str = "build_pipeline"
 arnold_api_version: str = "1.0"
 capabilities: tuple[str, ...] = ("skeleton",)
 
-def build_pipeline(name: str = "my-pipeline", description: str = "") -> Pipeline:
-    """Build a skeleton native-first pipeline.
+def build_pipeline() -> Pipeline:
+    """Build a skeleton explicit-node workflow pipeline.
 
-    Replace the phases and pipeline body with the real shape of your pipeline.
-    The returned :class:`arnold.pipeline.Pipeline` carries the compiled native
-    program so the native runtime can execute it directly.
+    Replace the steps and routes with the real shape of your pipeline. The
+    returned :class:`arnold.workflow.Pipeline` is the package source; the
+    compiler produces the manifest and hashes at build time.
     """
 
-    program = compile_pipeline(_my_pipeline)
-    return project_graph(program, key_mode="phase")
+    return Pipeline(
+        id="my-pipeline",
+        version="1.0",
+        steps=(
+            Step(id="start", kind="agent"),
+            Step(id="finish", kind="agent"),
+        ),
+        routes=(
+            Route(id="start-finish", source="start", target="finish"),
+        ),
+    )
 ```
 
-## Native builder report
+## Dry-run report
 
 ```yaml
-entry: start
+edge_count: 1
 id: my-pipeline
-instruction_count: 3
-native_program: my-pipeline
-stage_count: 2
+manifest_hash: sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d
+node_count: 2
+possible_routes:
+- condition_ref: null
+  label: default
+  source: start
+  target: finish
+suspension_point_count: 0
+topology_summary:
+  edge_count: 1
+  entry_nodes:
+  - start
+  exit_nodes:
+  - finish
+  node_count: 2
+unresolved_inputs: {}
 ```
 
 ## Package Skill
@@ -70,26 +92,26 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 ---
 name: new-arnold-pipeline-template
-description: Scaffold a new Arnold pipeline package from the _template skeleton.
+description: Scaffold a new Arnold workflow pipeline package from the _template skeleton.
 ---
 
 # New Arnold Pipeline Template
 
 Copy `arnold_pipelines/_template/` to a new package under `arnold_pipelines/`,
-rename it (remove the leading underscore), and replace the skeleton native
-declaration body with your workflow entrypoint.
+rename it (remove the leading underscore), and replace the skeleton explicit-node
+workflow with your pipeline logic.
 
 ## Contract
 
-- `build_pipeline(...) -> arnold.pipeline.Pipeline` with `native_program` set.
+- `build_pipeline(...) -> arnold.workflow.Pipeline` returning explicit-node data.
 - Module-level metadata: `name`, `description`, `driver`, `entrypoint`,
   `arnold_api_version`, `capabilities`
 - Optional: `default_profile`, `supported_modes`, `recommended_profiles`
 
-New packages must be native-first. Use `@phase` and `@pipeline` declarations
-from `arnold.pipeline.native`, compile them with `compile_pipeline`, and return
-the result of `project_graph(...)`. Do not add `_legacy.py`, graph fallback
-builders, compatibility namespaces, or temporary wrapper modules for new work.
+New packages must be workflow-first. Use `arnold.workflow.Pipeline`, `Step`,
+`Route`, `Input`, `Output`, and `Capability` to declare the graph. Do not add
+`_legacy.py`, native fallback builders, compatibility namespaces, or temporary
+wrapper modules for new work.
 
 `build_pipeline()` remains the current package entrypoint used by discovery and
 `arnold workflow check`.
@@ -97,39 +119,31 @@ builders, compatibility namespaces, or temporary wrapper modules for new work.
 ## Example
 
 ```python
-from arnold import pipeline
+from arnold.workflow import Pipeline, Route, Step
 
 
-@pipeline.native.phase(name="start")
-def start(ctx):
-    return {"intermediate": "TODO"}
-
-
-@pipeline.native.phase(name="finish")
-def finish(ctx):
-    return {"result": "TODO"}
-
-
-@pipeline.native.pipeline("my-pipeline")
-def my_pipeline(ctx):
-    yield start(ctx)
-    yield finish(ctx)
-
-
-def build_pipeline() -> pipeline.Pipeline:
-    return pipeline.native.project_graph(
-        pipeline.native.compile_pipeline(my_pipeline), key_mode="phase"
+def build_pipeline() -> Pipeline:
+    return Pipeline(
+        id="my-pipeline",
+        version="1.0",
+        steps=(
+            Step(id="start", kind="agent"),
+            Step(id="finish", kind="agent"),
+        ),
+        routes=(
+            Route(id="start-finish", source="start", target="finish"),
+        ),
     )
 ```
 
 ## Validation
 
 - Validate import: `arnold_pipelines.my_pipeline:build_pipeline`
-- Contract: `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram` set.
+- Contract: `build_pipeline()` returns `arnold.workflow.Pipeline`.
 
 Run through the Arnold workflow checker:
 
 ```bash
-arnold workflow check my-pipeline
+arnold workflow check --module arnold_pipelines.my_pipeline:build_pipeline
 ```
 ````

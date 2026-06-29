@@ -146,6 +146,28 @@ def test_diagnostic_dataclass_rejects_malformed_required_fields() -> None:
         )
 
 
+def test_runtime_ref_can_be_serialized_in_diagnostic_details() -> None:
+    from arnold.workflow import RuntimeRef
+
+    ref = RuntimeRef(
+        node_id="plan",
+        output="draft",
+        dependencies=("research.note",),
+        fallback_route="fallback.draft",
+        metadata={"schema_hash": "sha256:" + "a" * 64},
+    )
+    diagnostic = diagnostics.AuthoringDiagnostic(
+        code=diagnostics.DiagnosticCode.UNSUPPORTED_MUTATION,
+        message="runtime ref used in unsupported control flow",
+        details={"runtime_ref": ref, "reason": "truthiness"},
+    )
+
+    payload = diagnostic.to_dict()
+    assert payload["details"]["runtime_ref"].identity == "plan.draft"
+    assert payload["details"]["runtime_ref"].dependencies == ("research.note",)
+    assert payload["details"]["reason"] == "truthiness"
+
+
 def test_diagnostics_module_is_declarative_and_static_only() -> None:
     source_path = Path(diagnostics.__file__)
     tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))

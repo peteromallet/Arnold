@@ -154,7 +154,7 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": "arnold_pipelines/_template/SKILL.md",
         "disposition": "migrate",
         "migrated": True,
-        "builder_contract": "native",
+        "builder_contract": "workflow",
     },
     # Archives
     "arnold_pipelines/megaplan/pipelines/epic_blitz.py": {

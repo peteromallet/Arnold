@@ -10,7 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from arnold.manifest.refs import HookRef, ImportRef, _require_ref_segment
+from arnold.manifest.refs import _require_ref_segment
+from arnold.workflow.refs import HookRef, ImportRef, as_hook_ref
 
 
 @dataclass(frozen=True, order=True)
@@ -51,13 +52,7 @@ def expression_ref(
 ) -> ExpressionRef:
     """Create an inert expression ref from stable string/import identities."""
 
-    hook_ref: HookRef | None
-    if hook is None:
-        hook_ref = None
-    elif isinstance(hook, HookRef):
-        hook_ref = hook
-    elif isinstance(hook, ImportRef):
-        hook_ref = HookRef(hook)
-    else:
-        hook_ref = HookRef.parse(hook)
+    hook_ref: HookRef | None = None
+    if hook is not None:
+        hook_ref = as_hook_ref(hook, node_id=id, field="hook")
     return ExpressionRef(id=id, dependencies=tuple(dependencies), hook=hook_ref)

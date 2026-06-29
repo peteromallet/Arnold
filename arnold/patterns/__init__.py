@@ -1,15 +1,16 @@
 """Pure workflow pattern constructors for the M2 explicit-node DSL.
 
-Stability:
-    public: base constructors ``agent``, ``external_call``, ``merge``,
-        ``subpipeline``
-    public: control constructors ``branch``, ``loop``, ``fanout``, ``panel``,
-        ``retry``, ``human_gate``
-    public: review constructors ``critique``, ``review``, ``revise``,
-        ``tournament``
-    provisional: ``panel``, ``retry``, and all review constructors are
-        provisional until the canonical fixture matrix validates their lowering.
-    internal: ``PatternBlock`` and module-level helper symbols.
+Stability markers (mirrored in ``docs/arnold/pattern-stability-matrix.md``):
+
+- stable / public: ``agent``, ``external_call``, ``merge``, ``subpipeline``,
+  ``branch``, ``fanout``, ``loop``, ``human_gate``
+- provisional: ``panel``, ``retry``, ``critique``, ``review``, ``revise``,
+  ``tournament``
+- internal: ``PatternBlock`` and module-level helper symbols
+
+The marker tuples ``PUBLIC_EXPORTS``, ``PROVISIONAL_EXPORTS``, and
+``INTERNAL_EXPORTS`` are part of the import-boundary contract and may be used
+by scanners and conformance tests.
 
 Pattern constructors return pure DSL values.  They do not import
 ``arnold.execution`` or product Megaplan modules, and they never capture
@@ -53,7 +54,7 @@ PROVISIONAL_EXPORTS = (
     "revise",
     "tournament",
 )
-INTERNAL_EXPORTS = ()
+INTERNAL_EXPORTS = ("PatternBlock",)
 
 __all__ = [
     "INTERNAL_EXPORTS",
@@ -78,4 +79,4 @@ __all__ = [
 
 # Delayed import of PatternBlock to keep the public namespace clean while still
 # exposing the composite carrier for advanced callers.
-from arnold.patterns._core import PatternBlock as PatternBlock
+from arnold.patterns._core import PatternBlock as PatternBlock  # noqa: E402

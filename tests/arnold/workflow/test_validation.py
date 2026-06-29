@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +16,11 @@ from arnold.workflow import (
     IdempotencyPolicy,
     LoopPolicy,
     ManifestValidationError,
+    Pipeline,
     ReducerRef,
+    Route,
+    RuntimeRef,
+    Step,
     SubpipelineRef,
     SuspensionRoute,
     TimingPolicy,
@@ -23,6 +29,8 @@ from arnold.workflow import (
     WorkflowManifest,
     WorkflowNode,
     WorkflowPolicy,
+    check_workflow_file,
+    compile_pipeline,
     validate_manifest,
 )
 
@@ -416,3 +424,186 @@ def test_validation_rejects_bad_m3_runtime_reserved_policy_slots() -> None:
     assert "overlay_id 'overlay' is duplicated" in message
     assert "authority/action pair 'execute-authority'/'complete' is duplicated" in message
     assert "resume_schema_hash" in message
+
+
+def test_runtime_ref_exposes_stable_identity_and_metadata() -> None:
+    ref = RuntimeRef(
+        node_id="plan",
+        output="draft",
+        dependencies=("research.note",),
+        fallback_route="fallback.draft",
+        metadata={"schema_hash": "sha256:" + "a" * 64},
+    )
+
+    assert ref.identity == "plan.draft"
+    assert ref.node_id == "plan"
+    assert ref.output == "draft"
+    assert ref.dependencies == ("research.note",)
+    assert ref.fallback_route == "fallback.draft"
+    assert ref.metadata["schema_hash"] == "sha256:" + "a" * 64
+
+
+def test_runtime_ref_rejects_python_truthiness() -> None:
+    ref = RuntimeRef(node_id="plan", output="draft")
+
+    with pytest.raises(TypeError, match="inert reference"):
+        bool(ref)
+
+    with pytest.raises(TypeError, match="inert reference"):
+        if ref:  # type: ignore[truthy-bool]
+            pass
+
+
+def test_runtime_ref_rejects_iteration_and_length() -> None:
+    ref = RuntimeRef(node_id="plan", output="draft")
+
+    with pytest.raises(TypeError, match="not iterable"):
+        iter(ref)
+
+    with pytest.raises(TypeError, match="no length"):
+        len(ref)
+
+    with pytest.raises(TypeError, match="not iterable"):
+        for _ in ref:  # type: ignore[attr-defined]
+            pass
+
+
+def test_runtime_ref_rejects_arithmetic() -> None:
+    ref = RuntimeRef(node_id="plan", output="draft")
+
+    for op in (lambda: ref + 1, lambda: ref - 1, lambda: ref * 2, lambda: ref / 2, lambda: 1 + ref):
+        with pytest.raises(TypeError, match="arithmetic"):
+            op()
+
+    with pytest.raises(TypeError, match="coerced to a number"):
+        int(ref)
+
+    with pytest.raises(TypeError, match="coerced to a number"):
+        float(ref)
+
+
+def test_runtime_ref_rejects_attribute_probing_and_indexing() -> None:
+    ref = RuntimeRef(node_id="plan", output="draft")
+
+    with pytest.raises(AttributeError, match="declared"):
+        ref.some_attribute  # type: ignore[attr-defined]
+
+    with pytest.raises(TypeError, match="indexing"):
+        ref[0]  # type: ignore[index]
+
+    with pytest.raises(TypeError, match="membership"):
+        "x" in ref  # type: ignore[operator]
+
+
+def test_runtime_ref_rejects_mutation() -> None:
+    ref = RuntimeRef(node_id="plan", output="draft")
+
+    with pytest.raises(AttributeError):
+        ref.node_id = "other"  # type: ignore[misc]
+
+
+def test_runtime_ref_validates_ref_segments() -> None:
+    with pytest.raises(ValueError, match="node_id"):
+        RuntimeRef(node_id="", output="draft")
+
+    with pytest.raises(ValueError, match="output"):
+        RuntimeRef(node_id="plan", output="bad/output")
+
+    with pytest.raises(ValueError, match="dependency"):
+        RuntimeRef(node_id="plan", output="draft", dependencies=("bad dep",))
+
+
+def test_runtime_ref_metadata_is_frozen_and_json_serializable() -> None:
+    ref = RuntimeRef(
+        node_id="plan",
+        output="draft",
+        metadata={"tags": ["seed"]},
+    )
+
+    assert ref.metadata["tags"] == ("seed",)
+    with pytest.raises(TypeError):
+        ref.metadata["tags"] = ("other",)  # type: ignore[index]
+
+
+_RUNTIME_REF_FIXTURES = (
+    "invalid_runtime_truthiness",
+    "invalid_runtime_iteration",
+    "invalid_runtime_arithmetic",
+    "invalid_runtime_attribute",
+)
+
+
+def _diagnostic_payload(diagnostic) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "code": diagnostic.code.value,
+        "message": diagnostic.message,
+    }
+    if diagnostic.source_span is not None:
+        payload["source_span"] = {
+            "start_line": diagnostic.source_span.start_line,
+            "start_column": diagnostic.source_span.start_column,
+            "end_line": diagnostic.source_span.end_line,
+            "end_column": diagnostic.source_span.end_column,
+        }
+    return payload
+
+
+def _load_runtime_ref_expected(fixture_name: str) -> dict:
+    path = Path(f"tests/fixtures/workflow_authoring/{fixture_name}.expected.json")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("fixture_name", _RUNTIME_REF_FIXTURES)
+def test_runtime_ref_rejection_fixtures_pin_source_diagnostics(fixture_name: str) -> None:
+    expected = _load_runtime_ref_expected(fixture_name)
+    source_path = Path(f"tests/fixtures/workflow_authoring/{fixture_name}.py")
+
+    result = check_workflow_file(source_path)
+
+    assert result.diagnostics
+    assert expected["outcome"] == "invalid"
+    actual = [_diagnostic_payload(diag) for diag in result.diagnostics]
+    assert actual == expected["expected_diagnostics"]
+
+
+def test_loop_and_retry_control_patterns_validate_as_bounded_reentry() -> None:
+    import arnold.patterns as patterns
+
+    pipeline = Pipeline(
+        id="control",
+        version="v1",
+        steps=[
+            Step(id="fragile", kind="agent"),
+            Step(id="body", kind="agent"),
+        ],
+        routes=[Route(id="loop-body", source="loop", target="body", label="go")],
+    )
+    blocks = (
+        patterns.loop(
+            "loop",
+            "body",
+            until_ref="tests.arnold.patterns._fixtures:decide_condition",
+            max_iterations=3,
+            reentry_id="retry",
+        ),
+        patterns.retry("retry", target_id="fragile", max_attempts=3),
+    )
+
+    manifest = compile_pipeline(pipeline, patterns=blocks)
+
+    validate_manifest(manifest)
+    assert any(edge.condition_ref == "retry" for edge in manifest.edges)
+    assert any(edge.condition_ref == "retry:retry" for edge in manifest.edges)
+
+
+def test_human_gate_compiles_to_valid_suspension_node() -> None:
+    import arnold.patterns as patterns
+
+    gate = patterns.human_gate("gate", capability_id="human:operator", reentry_id="resume")
+    manifest = compile_pipeline(Pipeline(id="gate", version="v1", steps=[gate]))
+
+    validate_manifest(manifest)
+    node = next(node for node in manifest.nodes if node.id == "gate")
+    assert node.kind == "suspension"
+    assert node.policy is not None
+    assert node.policy.suspension_routes[0].reentry_id == "resume"

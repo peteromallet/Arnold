@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Union
 
+from arnold.kernel.ids import derive_discovery_runtime_pipeline_id
+
 # The SDK's current major version.  ``arnold_api_version`` must satisfy
 # ``1 <= major < CURRENT_MAJOR``.  Bumping the SDK to 2.x updates this.
 CURRENT_MAJOR: int = 2
@@ -47,7 +49,12 @@ ARNOLD_IDENTITY_SCHEMA: str = "arnold.pipeline-manifest.v1"
 
 @dataclass(frozen=True)
 class Manifest:
-    """Static metadata extracted from a pipeline module without importing."""
+    """Static package-discovery metadata extracted without importing.
+
+    ``manifest_hash`` is the package-discovery hash for this metadata snapshot.
+    It is not a compiled workflow runtime manifest hash and must not be used as
+    a runtime, replay, deletion, or workflow identity authority.
+    """
 
     path: Path
     name: str
@@ -261,7 +268,7 @@ def _manifest_hash(
     extras: dict[str, object],
     identity_schema: str = ARNOLD_IDENTITY_SCHEMA,
 ) -> str:
-    """Compute the deterministic manifest hash.
+    """Compute the deterministic package-discovery manifest hash.
 
     The *identity_schema* parameter is embedded in the hash payload so
     that the same module scanned with different schema identities
@@ -269,6 +276,11 @@ def _manifest_hash(
     ``"arnold.pipeline-manifest.v1"``; external consumers (e.g. Megaplan)
     pass a contextual identity string such as
     ``"vendor.pipeline-manifest.v1"`` through the bridge.
+
+    This hash identifies package metadata discovered from source without
+    importing the module.  It does not promote this discovery manifest into a
+    runtime workflow manifest.  Runtime pipeline identity must be derived from
+    an explicit workflow alias plus compiled workflow ``manifest_hash``.
     """
     payload = {
         "identity_schema": identity_schema,
@@ -292,6 +304,18 @@ def _manifest_hash(
         default=str,
     ).encode("utf-8")
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
+
+
+def derive_runtime_pipeline_id(alias: str, manifest_hash: str) -> str:
+    """Derive the runtime discovery ``pipeline_id`` from workflow identity.
+
+    Call this only when the caller already has the workflow alias and compiled
+    workflow manifest hash.  Do not pass :class:`Manifest.manifest_hash` from
+    package discovery unless that value is also the compiled workflow manifest
+    hash at the call boundary.
+    """
+
+    return derive_discovery_runtime_pipeline_id(alias, manifest_hash)
 
 
 def read_manifest(

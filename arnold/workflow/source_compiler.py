@@ -4,12 +4,17 @@ This module owns source-oriented parsing data, resolver boundaries, spans, and
 result carriers.  It is intentionally separate from ``arnold.workflow.compiler``:
 that module lowers explicit DSL objects to manifests, while this one parses
 Python-shaped source into compiler-owned intermediate data.
+
+Ownership:
+    Source diagnostics are produced here before lowering.  Explicit-node data
+    is owned by ``arnold.workflow.dsl``, manifest output by
+    ``arnold.workflow.compiler``, and shared scalar ref/hash predicates by
+    ``arnold.workflow.refs``.
 """
 
 from __future__ import annotations
 
 import ast
-import re
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -49,6 +54,7 @@ from arnold.workflow.diagnostics import (
     diagnostic_spec,
 )
 from arnold.workflow.dsl import Input, Output, Pipeline, Route, Step
+from arnold.workflow.refs import is_manifest_hash, is_ref
 
 _DEFAULT_SOURCE_PATH = "<workflow-source>"
 _SUPPORTED_STEP_POLICY_TYPES = frozenset(
@@ -57,7 +63,7 @@ _SUPPORTED_STEP_POLICY_TYPES = frozenset(
 _SUPPORTED_WORKFLOW_CONTROL_POLICY_TYPES = frozenset(
     {"approval", "authority", "control-transition", "suspension"}
 )
-_MANIFEST_HASH_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_INVALID_REF = object()
 
 
 class SourceCompileError(ValueError):
@@ -1783,16 +1789,18 @@ def _parse_subflow_call(
         )
         return None
 
-    subflow_id = _string_keyword(node, "id")
+    id_keyword = _keyword(node, "id")
+    subflow_id = _validated_string_ref_keyword(
+        node,
+        id_keyword,
+        source_path,
+        diagnostics,
+        code=DiagnosticCode.MALFORMED_COMPONENT_EXPORT,
+        missing_message="subflow calls must include a literal id keyword",
+        invalid_message="subflow id must use the workflow ref alphabet",
+        component_ref=binding.component_ref,
+    )
     if subflow_id is None:
-        diagnostics.append(
-            _diagnostic(
-                DiagnosticCode.MALFORMED_COMPONENT_EXPORT,
-                "subflow calls must include a literal id keyword",
-                source_span=source_span_for_node(source_path, node),
-                component_ref=binding.component_ref,
-            )
-        )
         return None
 
     manifest_hash = _subflow_manifest_hash(node, component, source_path, binding, diagnostics)
@@ -1805,7 +1813,7 @@ def _parse_subflow_call(
         local_outputs=local_outputs,
         diagnostics=diagnostics,
     )
-    if manifest_hash is None or inputs is None:
+    if manifest_hash is None or alias is _INVALID_REF or inputs is None:
         return None
     return ParsedSubflowCall(
         id=subflow_id,
@@ -1873,7 +1881,7 @@ def _validated_subflow_manifest_hash(
     node: ast.AST,
     diagnostics: list[AuthoringDiagnostic],
 ) -> str | None:
-    if _MANIFEST_HASH_RE.fullmatch(manifest_hash):
+    if is_manifest_hash(manifest_hash):
         return manifest_hash
     diagnostics.append(
         _diagnostic(
@@ -1894,7 +1902,16 @@ def _subflow_alias(
     if keyword is None:
         return None
     if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
-        return keyword.value.value
+        if is_ref(keyword.value.value):
+            return keyword.value.value
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
+                "subflow alias must use the workflow ref alphabet",
+                source_span=source_span_for_node(source_path, keyword),
+            )
+        )
+        return _INVALID_REF
     diagnostics.append(
         _diagnostic(
             DiagnosticCode.UNSUPPORTED_SUBFLOW_REFERENCE,
@@ -2046,15 +2063,18 @@ def _parse_step_call(
             )
         )
         return None
-    step_id = _string_keyword(node, "id")
+    id_keyword = _keyword(node, "id")
+    step_id = _validated_string_ref_keyword(
+        node,
+        id_keyword,
+        source_path,
+        diagnostics,
+        code=DiagnosticCode.MALFORMED_COMPONENT_EXPORT,
+        missing_message="component calls must include a literal id keyword",
+        invalid_message="component call id must use the workflow ref alphabet",
+        component_ref=binding.component_ref,
+    )
     if step_id is None:
-        diagnostics.append(
-            _diagnostic(
-                DiagnosticCode.MALFORMED_COMPONENT_EXPORT,
-                "component calls must include a literal id keyword",
-                source_span=source_span_for_node(source_path, node),
-            )
-        )
         return None
     policies = _parse_step_policy_keywords(node, source_path, imports, diagnostics)
     if policies is None:
@@ -2976,9 +2996,49 @@ def _keyword(call: ast.Call, name: str) -> ast.keyword | None:
 
 def _string_keyword(call: ast.Call, name: str) -> str | None:
     keyword = _keyword(call, name)
-    if keyword is None or not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
+    if (
+        keyword is None
+        or not isinstance(keyword.value, ast.Constant)
+        or not isinstance(keyword.value.value, str)
+    ):
         return None
     return keyword.value.value
+
+
+def _validated_string_ref_keyword(
+    call: ast.Call,
+    keyword: ast.keyword | None,
+    source_path: str,
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    code: DiagnosticCode,
+    missing_message: str,
+    invalid_message: str,
+    component_ref: str | None = None,
+) -> str | None:
+    if keyword is None or not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
+        diagnostics.append(
+            _diagnostic(
+                code,
+                missing_message,
+                source_span=source_span_for_node(source_path, call),
+                component_ref=component_ref,
+            )
+        )
+        return None
+    value = keyword.value.value
+    if is_ref(value):
+        return value
+    diagnostics.append(
+        _diagnostic(
+            code,
+            invalid_message,
+            source_span=source_span_for_node(source_path, keyword),
+            component_ref=component_ref,
+            details={"value": value},
+        )
+    )
+    return None
 
 
 def _is_workflow_call(node: ast.AST, imports: Mapping[str, ImportBinding]) -> bool:

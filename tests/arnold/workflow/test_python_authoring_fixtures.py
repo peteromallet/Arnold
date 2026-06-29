@@ -28,6 +28,10 @@ EXPECTED_CASES = {
     "invalid_unsupported_syntax": "invalid",
     "invalid_unsupported_control_flow": "invalid",
     "invalid_wrong_component_kind": "invalid",
+    "invalid_runtime_truthiness": "invalid",
+    "invalid_runtime_iteration": "invalid",
+    "invalid_runtime_arithmetic": "invalid",
+    "invalid_runtime_attribute": "invalid",
 }
 SUPPORT_MODULES = {"components"}
 SOURCE_SPAN_FIELDS = {"start_line", "start_column", "end_line", "end_column"}

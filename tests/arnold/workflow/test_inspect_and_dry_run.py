@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import pytest
-
 import arnold.workflow as workflow
 from arnold.workflow import (
     Capability,
     Input,
-    LoopPolicy,
     Output,
     Pipeline,
     Route,
@@ -56,17 +53,14 @@ def test_inspect_manifest_exposes_stable_fields() -> None:
     assert "edge:plan->review:review" in view["refs"]["edges"]
     assert view["dependencies"]["review"][0].startswith("value:review.draft")
     assert view["unresolved_inputs"] == {"review": ("criteria",)}
-    assert view["source_spans"]["plan"] == {
-        "path": "pipeline.py",
-        "start_line": 10,
-        "start_column": 1,
-        "end_line": None,
-        "end_column": None,
-    }
     assert view["hash_inputs"]["topology_hash"] == manifest.topology_hash
     assert view["hash_inputs"]["manifest_hash"] == manifest.manifest_hash
     assert view["control_routes"][0]["source"] == "plan"
     assert view["suspension_points"][0]["reentry_id"] == "resume-review"
+    assert view["topology_summary"]["node_count"] == 2
+    assert view["topology_summary"]["edge_count"] == 1
+    assert "plan" in view["topology_summary"]["entry_nodes"]
+    assert "review" in view["topology_summary"]["exit_nodes"]
 
 
 def test_inspect_manifest_reports_manifest_level_capabilities() -> None:
@@ -111,6 +105,25 @@ def test_yaml_helper_serializes_inspect_data() -> None:
 
     assert "node_ids" in yaml_text
     assert "plan" in yaml_text
+
+
+def test_inspect_manifest_does_not_expose_source_spans_as_stable() -> None:
+    manifest = compile_pipeline(_sample_pipeline())
+    view = inspect_manifest(manifest)
+
+    assert "source_spans" not in view
+    # Source spans remain reachable through the manifest nodes for diagnostics.
+    assert manifest.nodes[0].source_span is not None
+
+
+def test_dry_run_reports_topology_summary() -> None:
+    manifest = compile_pipeline(_sample_pipeline())
+    report = dry_run(manifest)
+
+    assert report["topology_summary"]["node_count"] == 2
+    assert report["topology_summary"]["edge_count"] == 1
+    assert "plan" in report["topology_summary"]["entry_nodes"]
+    assert "review" in report["topology_summary"]["exit_nodes"]
 
 
 def test_inspect_and_dry_run_are_exposed_from_workflow_namespace() -> None:

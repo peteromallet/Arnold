@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from types import MappingProxyType
 from typing import Any
@@ -13,6 +14,7 @@ from arnold.patterns import (
     PatternBlock,
     agent,
     branch,
+    critique,
     external_call,
     fanout,
     human_gate,
@@ -20,23 +22,20 @@ from arnold.patterns import (
     merge,
     panel,
     retry,
+    review,
     revise,
     subpipeline,
     tournament,
 )
 from arnold.workflow import (
     Capability,
-    Input,
-    LoopPolicy,
-    Output,
     Pipeline,
     RefDiagnosticError,
-    RetryPolicy,
     Route,
     SourceSpan,
     Step,
-    WorkflowPolicy,
     compile_pipeline,
+    validate_manifest,
 )
 from tests.arnold.patterns import _fixtures
 
@@ -239,6 +238,17 @@ def test_tournament_lowers_two_full_tiebreaker_rounds() -> None:
     winner_routes = [route for route in block.routes if route.label == "winner"]
     assert len(winner_routes) == 3  # judge, tiebreak1, tiebreak2 -> merge
 
+    retry_route = next(route for route in block.routes if route.label == "retry")
+    assert retry_route.source == "tourney-tiebreak-2"
+    assert retry_route.target == "tourney-judge"
+    assert retry_route.condition_ref == "tourney:tiebreak"
+
+    judge = next(step for step in block.steps if step.id == "tourney-judge")
+    assert judge.policy is not None
+    assert judge.policy.loop is not None
+    assert judge.policy.loop.max_iterations == 2
+    assert any(route.reentry_id == "tourney:tiebreak" for route in judge.policy.suspension_routes)
+
 
 def test_revise_pattern_lowers_bounded_reentry() -> None:
     block = revise(
@@ -264,3 +274,128 @@ def test_patterns_module_exports_stability_markers() -> None:
     assert "agent" in patterns.PUBLIC_EXPORTS
     assert "tournament" in patterns.PUBLIC_EXPORTS
     assert "tournament" in patterns.PROVISIONAL_EXPORTS
+
+
+def _collect_string_values(value: Any) -> list[str]:
+    """Recursively collect all string values from a pure data structure."""
+
+    if value is None or isinstance(value, (int, float, bool)):
+        return []
+    if isinstance(value, str):
+        return [value]
+    if is_dataclass(value):
+        return [item for field in fields(value) for item in _collect_string_values(getattr(value, field.name))]
+    if isinstance(value, (MappingProxyType, Mapping)):
+        return [item for subvalue in value.values() for item in _collect_string_values(subvalue)]
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [item for subvalue in value for item in _collect_string_values(subvalue)]
+    return []
+
+
+def _assert_no_product_literals(value: Any) -> None:
+    """Assert a pattern value carries no Megaplan-specific literals."""
+
+    for text in _collect_string_values(value):
+        lowered = text.lower()
+        assert "megaplan" not in lowered, f"unexpected product literal: {text!r}"
+
+
+def test_base_patterns_are_product_neutral_and_lowerable() -> None:
+    step_agent = agent(
+        "plan",
+        task="draft",
+        prompt_ref="tests.arnold.patterns._fixtures:agent_prompt",
+    )
+    step_call = external_call("call", endpoint_ref="tests.arnold.patterns._fixtures:decide_condition")
+    step_merge = merge("merged", reducer_ref="tests.arnold.patterns._fixtures:reducer")
+    step_sub = subpipeline("inner", manifest_hash=HASH_A)
+
+    for step in (step_agent, step_call, step_merge, step_sub):
+        assert isinstance(step, Step)
+        _no_live_objects(step)
+        _assert_no_product_literals(step)
+
+
+def test_control_patterns_are_product_neutral_and_lowerable() -> None:
+    block_branch = branch(
+        "decide",
+        condition_ref="tests.arnold.patterns._fixtures:decide_condition",
+        then_id="plan",
+        else_id="fallback",
+    )
+    block_loop = loop(
+        "loop",
+        "body",
+        until_ref="tests.arnold.patterns._fixtures:decide_condition",
+        max_iterations=3,
+        reentry_id="retry",
+    )
+    block_fanout = fanout("fan", ("a", "b"), reducer_ref="tests.arnold.patterns._fixtures:reducer")
+    step_gate = human_gate("gate", capability_id="human:operator", reentry_id="resume")
+    block_retry = retry("retry", target_id="fragile", max_attempts=3)
+
+    for value in (block_branch, block_loop, block_fanout, step_gate, block_retry):
+        _no_live_objects(value)
+        _assert_no_product_literals(value)
+
+    assert step_gate.kind == "suspension"
+    assert step_gate.capabilities[0].id == "human:operator"
+
+
+def test_review_patterns_are_product_neutral_and_lowerable() -> None:
+    block_critique = critique(
+        "critique",
+        "draft",
+        critique_ref="tests.arnold.patterns._fixtures:agent_prompt",
+    )
+    block_review = review(
+        "review",
+        "draft",
+        review_ref="tests.arnold.patterns._fixtures:agent_prompt",
+        approve_ref="tests.arnold.patterns._fixtures:decide_condition",
+    )
+    block_revise = revise(
+        "revise",
+        "draft",
+        revise_ref="tests.arnold.patterns._fixtures:agent_prompt",
+        until_ref="tests.arnold.patterns._fixtures:decide_condition",
+        max_iterations=4,
+        reentry_id="retry",
+    )
+    block_tournament = tournament(
+        "tourney",
+        candidate_ids=("candidate-a", "candidate-b"),
+        merge_id="winner",
+        winner_ref="tests.arnold.patterns._fixtures:judge_winner",
+        tie_ref="tests.arnold.patterns._fixtures:decide_condition",
+    )
+
+    for value in (block_critique, block_review, block_revise, block_tournament):
+        _no_live_objects(value)
+        _assert_no_product_literals(value)
+
+
+def test_review_patterns_compile_to_valid_manifests() -> None:
+    for factory, kwargs in [
+        (
+            critique,
+            {"target_id": "draft", "critique_ref": "tests.arnold.patterns._fixtures:agent_prompt"},
+        ),
+        (
+            review,
+            {
+                "target_id": "draft",
+                "review_ref": "tests.arnold.patterns._fixtures:agent_prompt",
+                "approve_ref": "tests.arnold.patterns._fixtures:decide_condition",
+            },
+        ),
+    ]:
+        block = factory("node", **kwargs)
+        pipeline = Pipeline(
+            id=f"{factory.__name__}-pattern",
+            version="v1",
+            steps=[Step(id="draft", kind="agent")],
+            routes=[],
+        )
+        manifest = compile_pipeline(pipeline, patterns=(block,))
+        validate_manifest(manifest)
