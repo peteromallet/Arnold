@@ -92,6 +92,7 @@ from arnold_pipelines.megaplan.resolutions import effective_user_action_resoluti
 from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.planning.state import (
     STATE_AWAITING_PR_MERGE,
+    STATE_BLOCKED,
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FINALIZED,
@@ -1635,10 +1636,18 @@ def _chain_completion_guard(
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
+    latest_failure = plan_state.get("latest_failure")
+    authority_blocked_merged_pr = (
+        is_merged_pr
+        and current_state == STATE_BLOCKED
+        and isinstance(latest_failure, dict)
+        and latest_failure.get("kind") == "authority_divergence"
+    )
     finalized_merged_pr = is_merged_pr and current_state == STATE_FINALIZED
     if (
         implementation_milestone
         and current_state != STATE_DONE
+        and not authority_blocked_merged_pr
         and not finalized_merged_pr
     ):
         return (
