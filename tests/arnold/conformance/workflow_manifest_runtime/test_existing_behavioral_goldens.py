@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -15,14 +16,33 @@ BEHAVIORAL_GOLDENS = (
 )
 
 
+def _push_base_ref() -> str:
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    if event_path:
+        try:
+            before = json.loads(Path(event_path).read_text(encoding="utf-8")).get("before")
+        except (OSError, json.JSONDecodeError):
+            before = None
+        if before and set(before) != {"0"}:
+            subprocess.run(
+                ["git", "fetch", "--depth=1", "origin", before],
+                check=False,
+                capture_output=True,
+            )
+            return before
+    return "origin/main"
+
+
 def _base_ref() -> str:
-    # In CI, compare against the PR target branch; locally fall back to origin/main.
-    base = os.environ.get("GITHUB_BASE_REF", "main")
-    ref = f"origin/{base}"
-    # Make sure the base ref is available in CI (actions/checkout may not fetch it).
-    if "GITHUB_BASE_REF" in os.environ:
+    # In PR CI, compare against the target branch; locally fall back to origin/main.
+    # Push CI does not set GITHUB_BASE_REF, so compare against the pushed-from SHA.
+    base = os.environ.get("GITHUB_BASE_REF")
+    if base:
         subprocess.run(["git", "fetch", "origin", base], check=False, capture_output=True)
-    return ref
+        return f"origin/{base}"
+    if os.environ.get("GITHUB_EVENT_NAME") == "push":
+        return _push_base_ref()
+    return "origin/main"
 
 
 @pytest.mark.parametrize("fixture", BEHAVIORAL_GOLDENS)
