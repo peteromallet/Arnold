@@ -3235,7 +3235,11 @@ def drive(
                     phase=last_phase,
                     resume_cursor={"phase": last_phase or str(next_step or "status"), "retry_strategy": "manual_review"},
                     suggested_action="Review the plan state before resuming automation.",
-                    metadata={"stall_count": stall_count, "iteration": iteration},
+                    metadata={
+                        "stall_count": stall_count,
+                        "iteration": iteration,
+                        "manual_review_origin": "auto_stall",
+                    },
                 )
                 return _outcome(
                     "stalled",

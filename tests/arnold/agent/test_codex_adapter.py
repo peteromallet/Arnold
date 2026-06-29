@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -181,6 +182,33 @@ def test_run_codex_step_free_text_omits_output_schema(
     assert "--output-schema" not in captured["command"]
     assert result.payload == {}
     assert result.raw_output == "batch([done()])"
+
+
+def test_run_command_reads_prompt_file_path_as_file_contents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan.workers import _impl
+
+    prompt_path = tmp_path / "gate-prompt.txt"
+    prompt_path.write_text("Stage: gate\nEvaluate the actual prompt.\n", encoding="utf-8")
+    captured: dict[str, str] = {}
+
+    def fake_subprocess_run(command, stdin, **kwargs):
+        assert stdin is not None
+        captured["stdin"] = stdin.read().decode("utf-8")
+        return subprocess.CompletedProcess(command, 0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(_impl.subprocess, "run", fake_subprocess_run)
+
+    result = _impl.run_command(
+        ["codex", "exec", "-"],
+        cwd=tmp_path,
+        stdin_text=str(prompt_path),
+    )
+
+    assert result.returncode == 0
+    assert captured["stdin"] == prompt_path.read_text(encoding="utf-8")
+    assert captured["stdin"] != str(prompt_path)
 
 
 def test_run_codex_step_read_only_trusted_container_bypasses_inner_sandbox(

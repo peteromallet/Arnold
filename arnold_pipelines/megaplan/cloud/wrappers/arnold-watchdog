@@ -333,6 +333,7 @@ failure_kind = ""
 failure_message = ""
 failure_phase = ""
 failure_recorded_at = ""
+manual_review_origin = ""
 if isinstance(latest_failure, dict):
     for key, target in (
         ("kind", "failure_kind"),
@@ -350,6 +351,11 @@ if isinstance(latest_failure, dict):
                 failure_phase = value
             else:
                 failure_recorded_at = value
+    latest_failure_metadata = latest_failure.get("metadata")
+    if isinstance(latest_failure_metadata, dict):
+        value = latest_failure_metadata.get("manual_review_origin")
+        if isinstance(value, str):
+            manual_review_origin = value
 
 awaiting_human_reason = ""
 
@@ -506,6 +512,7 @@ emit("PLAN_STATUS_FAILURE_KIND", failure_kind)
 emit("PLAN_STATUS_FAILURE_MESSAGE", failure_message)
 emit("PLAN_STATUS_FAILURE_PHASE", failure_phase)
 emit("PLAN_STATUS_FAILURE_RECORDED_AT", failure_recorded_at)
+emit("PLAN_STATUS_MANUAL_REVIEW_ORIGIN", manual_review_origin)
 emit("PLAN_STATUS_TIERS_TRIED", ", ".join(tiers_tried))
 emit("PLAN_STATUS_PUSHED_COMMITS", ", ".join(pushed_commits))
 emit("PLAN_STATUS_MANUAL_REVIEW", "1" if manual_review else "0")
@@ -3096,6 +3103,7 @@ launch_chain_tick() {
   PLAN_STATUS_FAILURE_MESSAGE=
   PLAN_STATUS_FAILURE_PHASE=
   PLAN_STATUS_FAILURE_RECORDED_AT=
+  PLAN_STATUS_MANUAL_REVIEW_ORIGIN=
   PLAN_STATUS_TIERS_TRIED=
   PLAN_STATUS_PUSHED_COMMITS=
   PLAN_STATUS_MANUAL_REVIEW=0
@@ -3185,8 +3193,12 @@ launch_chain_tick() {
     return 0
   fi
   if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
-    local human_summary
+    local human_summary repair_busy repair_summary manual_review_origin
+    manual_review_origin="${PLAN_STATUS_MANUAL_REVIEW_ORIGIN:-}"
     human_summary="manual_review halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; retry=${PLAN_STATUS_RETRY_STRATEGY:-unknown}; failure=${PLAN_STATUS_FAILURE_KIND:-unknown}"
+    if [[ -n "$manual_review_origin" ]]; then
+      human_summary="$human_summary; origin=$manual_review_origin"
+    fi
     if [[ -n "${PLAN_STATUS_FAILURE_MESSAGE:-}" ]]; then
       human_summary="$human_summary; detail=${PLAN_STATUS_FAILURE_MESSAGE}"
     fi
@@ -3195,6 +3207,36 @@ launch_chain_tick() {
     fi
     if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
+    fi
+    if [[ "$manual_review_origin" == "auto_stall" ]]; then
+      if [[ -f "$(repair_needs_human_path "$session")" ]]; then
+        repair_summary="$(repair_needs_human_summary "$session")"
+        log "session auto-stalled into manual_review and repair loop already requested human session=$session summary=$repair_summary"
+        report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+        return 0
+      fi
+      repair_busy="$(repair_loop_busy_state "$session")"
+      if [[ "$repair_busy" == "same_session" ]]; then
+        log "session auto-stalled into manual_review; repair already running session=$session summary=$human_summary"
+        report_item "$report_items" "$session" "repair" "repair_running" "auto_stall manual_review repair already running" "$workspace" "$remote_spec"
+        return 0
+      fi
+      if [[ "$repair_busy" == "other_session" ]]; then
+        log "session auto-stalled into manual_review; another repair loop already running so waiting turn session=$session summary=$human_summary"
+        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        return 0
+      fi
+      if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+          log "session auto-stalled into manual_review; another repair loop already running so waiting turn session=$session summary=$human_summary"
+          report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        else
+          log "session auto-stalled into manual_review; background-dispatched repair loop before needs_human session=$session summary=$human_summary"
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "auto_stall manual_review repair loop dispatched before needs_human" "$workspace" "$remote_spec"
+        fi
+        return 0
+      fi
+      log "session auto-stalled into manual_review but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     fi
     log "session requires human review session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"

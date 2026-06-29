@@ -2244,6 +2244,71 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_auto_stall_manual_review_dispatches_repair_before_needs_human(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 6,
+            "current_state": "critiqued",
+            "resume_cursor": {"retry_strategy": "manual_review"},
+            "latest_failure": {
+                "kind": "stalled",
+                "message": "stalled at 'critiqued' for 5 iterations",
+                "metadata": {"manual_review_origin": "auto_stall"},
+            },
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tauto_stall manual_review repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
+    assert "DISPATCH" in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
+
+
 def test_watchdog_awaiting_human_plan_state_dispatches_repair_before_needs_human(
     tmp_path: Path,
 ) -> None:

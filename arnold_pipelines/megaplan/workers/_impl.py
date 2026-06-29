@@ -122,6 +122,31 @@ def _project_local_tmp_dir(base: Path) -> Path:
     return tmp
 
 
+def _normalize_stdin_text(stdin_text: str | None) -> str | None:
+    """Read prompt-file contents when a worker is handed a file path.
+
+    The codex path accepts prompt text via stdin. Some callers hand that seam a
+    temp-file path containing the real prompt; if the path string reaches the
+    model verbatim, the worker sees only a filename. When *stdin_text* names an
+    existing file, read and return its contents instead.
+    """
+    if stdin_text is None:
+        return None
+    candidate = stdin_text.strip()
+    if not candidate or "\n" in candidate or "\r" in candidate:
+        return stdin_text
+    try:
+        path = Path(candidate).expanduser()
+    except (TypeError, ValueError):
+        return stdin_text
+    if not path.is_file():
+        return stdin_text
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return stdin_text
+
+
 @dataclass
 class CommandResult:
     command: list[str]
@@ -700,6 +725,7 @@ def run_command(
     progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
+    stdin_text = _normalize_stdin_text(stdin_text)
     # Codex CLI (v0.137+) interprets a trailing "-" as "read the prompt from
     # stdin".  Older versions wedged on piped stdin, so the code previously wrote
     # the prompt to a temp file and passed "@/path/to/file".  Modern Codex treats
