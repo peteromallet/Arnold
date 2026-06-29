@@ -152,7 +152,7 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
     if path_prefix is not None:
         env["PATH"] = f"{path_prefix}:{env.get('PATH', '')}"
     return subprocess.run(
-        ["bash", "-lc", script],
+        ["bash", "-c", script],
         capture_output=True,
         text=True,
         env=env,
@@ -168,6 +168,7 @@ def _run_discover(
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PATH"] = f"{tmp_path}:{env.get('PATH', '')}"
+    env.setdefault("MEGAPLAN_DISCOVER_WORKSPACE_ROOT", str(tmp_path / "workspace-root"))
     return subprocess.run(
         [
             "bash",
@@ -1472,22 +1473,27 @@ dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
 dispatch_kimi_repair demo-b /tmp/ws /tmp/spec
 echo "second:${REPAIR_DISPATCH_RESULT:-unset}"
-sleep 0.3
+for _ in {1..20}; do
+  [[ -f __LAUNCH_LOG__ ]] && [[ "$(wc -l < __LAUNCH_LOG__)" -ge 2 ]] && break
+  sleep 0.1
+done
 if [[ -f "$(kimi_pgid_path demo-a)" ]]; then
-  kill -- "-$(cat "$(kimi_pgid_path demo-a)")" 2>/dev/null || true
+  demo_pgid="$(cat "$(kimi_pgid_path demo-a)")"
+  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
 fi
 if [[ -f "$(kimi_pgid_path demo-b)" ]]; then
-  kill -- "-$(cat "$(kimi_pgid_path demo-b)")" 2>/dev/null || true
+  demo_pgid="$(cat "$(kimi_pgid_path demo-b)")"
+  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
 fi
 sleep 0.1
-""".strip(),
+""".replace("__LAUNCH_LOG__", shlex.quote(str(launch_log))).strip(),
         ]
     )
 
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip().splitlines() == ["first:dispatched", "second:dispatched"]
-    assert launch_log.read_text(encoding="utf-8").strip().splitlines() == ["demo-a", "demo-b"]
+    assert sorted(launch_log.read_text(encoding="utf-8").strip().splitlines()) == ["demo-a", "demo-b"]
 
 
 def test_watchdog_dispatch_skips_duplicate_same_session_repair(
@@ -1525,14 +1531,18 @@ def test_watchdog_dispatch_skips_duplicate_same_session_repair(
 log() { printf '%s\n' "$*" >> "$LOG"; }
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
+for _ in {1..20}; do
+  [[ -f __LAUNCH_LOG__ ]] && break
+  sleep 0.1
+done
 dispatch_kimi_repair demo-a /tmp/ws /tmp/spec
 echo "second:${REPAIR_DISPATCH_RESULT:-unset}"
-sleep 0.3
 if [[ -f "$(kimi_pgid_path demo-a)" ]]; then
-  kill -- "-$(cat "$(kimi_pgid_path demo-a)")" 2>/dev/null || true
+  demo_pgid="$(cat "$(kimi_pgid_path demo-a)")"
+  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
 fi
 sleep 0.1
-""".strip(),
+""".replace("__LAUNCH_LOG__", shlex.quote(str(launch_log))).strip(),
         ]
     )
 
@@ -1868,7 +1878,8 @@ def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace()
 
 def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
-    workspace = Path("/workspace/test-watchdog-vibecomfy-per-workflow-window-chat-20260628")
+    workspace_root = tmp_path / "workspace-root"
+    workspace = workspace_root / "test-watchdog-vibecomfy-per-workflow-window-chat-20260628"
     (workspace / ".megaplan" / "plans" / "per-workflow-window-chat-cloud-20260628").mkdir(parents=True, exist_ok=True)
 
     tmux_path = tmp_path / "tmux"
@@ -1907,6 +1918,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
             f"MARKER_DIR={str(marker_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"DISCOVER_BIN={str(WRAPPER_DIR / 'arnold-cloud-discover')!r}",
+            f"export MEGAPLAN_DISCOVER_WORKSPACE_ROOT={str(workspace_root)!r}",
             "adopt_unmarked_tmux_sessions",
         ]
     )
@@ -1926,8 +1938,9 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
 
 def test_watchdog_does_not_adopt_non_arnold_tmux_sessions(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
-    workspace = Path("/workspace/test-watchdog-random-workspace")
-    workspace.mkdir(exist_ok=True)
+    workspace_root = tmp_path / "workspace-root"
+    workspace = workspace_root / "test-watchdog-random-workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
 
     tmux_path = tmp_path / "tmux"
     tmux_path.write_text(
@@ -1956,6 +1969,7 @@ def test_watchdog_does_not_adopt_non_arnold_tmux_sessions(tmp_path: Path) -> Non
             f"MARKER_DIR={str(marker_dir)!r}",
             f"SRC_DIR={str(REPO_ROOT)!r}",
             f"DISCOVER_BIN={str(WRAPPER_DIR / 'arnold-cloud-discover')!r}",
+            f"export MEGAPLAN_DISCOVER_WORKSPACE_ROOT={str(workspace_root)!r}",
             "adopt_unmarked_tmux_sessions",
         ]
     )
@@ -1969,7 +1983,8 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
-    workspace = Path("/workspace/test-shared-discover-vibecomfy")
+    workspace_root = tmp_path / "workspace-root"
+    workspace = workspace_root / "test-shared-discover-vibecomfy"
     (workspace / ".megaplan" / "plans" / "shared-discover-plan").mkdir(parents=True, exist_ok=True)
 
     tmux_path = tmp_path / "tmux"

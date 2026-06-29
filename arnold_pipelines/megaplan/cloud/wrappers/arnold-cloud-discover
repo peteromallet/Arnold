@@ -32,9 +32,11 @@ import re
 import shlex
 import subprocess
 import sys
+import os
 
 marker_dir = pathlib.Path(sys.argv[1])
 src_dir = sys.argv[2]
+workspace_root = os.environ.get("MEGAPLAN_DISCOVER_WORKSPACE_ROOT", "/workspace").rstrip("/") or "/workspace"
 
 try:
     panes_proc = subprocess.run(
@@ -86,11 +88,11 @@ def _extract_flag(tokens: list[str], flag: str) -> str | None:
 
 
 def _workspace_for(current_path: str) -> str | None:
-    if not current_path.startswith("/workspace/"):
+    if not current_path.startswith(workspace_root + "/"):
         return None
     current = pathlib.Path(current_path)
     for candidate in (current, *current.parents):
-        if str(candidate) == "/workspace":
+        if str(candidate) == workspace_root:
             break
         if (candidate / ".megaplan").exists():
             return str(candidate)
@@ -218,7 +220,7 @@ for raw in panes_proc.stdout.splitlines():
     if (marker_dir / f"{session}.json").exists():
         continue
     workspace = _workspace_for(current_path)
-    if workspace is None or workspace in {"/workspace", src_dir}:
+    if workspace is None or workspace in {workspace_root, src_dir}:
         continue
     try:
         pane_pid = int(pane_pid_raw)
