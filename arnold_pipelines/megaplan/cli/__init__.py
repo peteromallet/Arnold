@@ -2515,6 +2515,14 @@ def main(argv: list[str] | None = None) -> int:
         except CliError as error:
             return error_response(error, root=root)
 
+    if args.command == "epic-chain":
+        from arnold_pipelines.megaplan.chain.epic_chain import run_epic_chain_cli
+
+        try:
+            return run_epic_chain_cli(root, args)
+        except CliError as error:
+            return error_response(error, root=root)
+
     if args.command == "tiebreaker":
         from arnold_pipelines.megaplan.prompts.tiebreaker_orchestrator import run_tiebreaker_cli
 

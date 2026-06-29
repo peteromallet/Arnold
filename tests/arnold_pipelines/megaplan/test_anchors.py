@@ -360,6 +360,11 @@ def test_parser_exposes_north_star_and_anchor_show() -> None:
     assert no_anchor_args.require_anchor is False
     assert no_anchor_args.missing_anchor_ack == "Mechanical chain"
 
+    epic_chain_args = parser.parse_args(["epic-chain", "start", "--spec", "epic-chain.yaml", "--one"])
+    assert epic_chain_args.command == "epic-chain"
+    assert epic_chain_args.epic_chain_action == "start"
+    assert epic_chain_args.one is True
+
 
 def test_chain_status_enforces_anchor_requirement_like_start(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     from arnold_pipelines.megaplan.chain import run_chain_cli
