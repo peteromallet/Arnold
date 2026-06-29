@@ -4,7 +4,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/writing_panel_strict
+- source_package: arnold_pipelines/megaplan/pipelines/writing_panel_strict
 - manifest_hash: native:writing-panel-strict
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
@@ -17,11 +17,11 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/writing_panel_strict|
-| Builder target | arnold.pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline|
-| Steps | arnold/pipelines/megaplan/pipelines/writing_panel_strict/steps.py|
-| Builder source | arnold/pipelines/megaplan/pipelines/writing_panel_strict/__init__.py|
-| Skill | arnold/pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md|
+| Package | arnold_pipelines/megaplan/pipelines/writing_panel_strict|
+| Builder target | arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline|
+| Steps | arnold_pipelines/megaplan/pipelines/writing_panel_strict/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/writing_panel_strict/__init__.py|
+| Skill | arnold_pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
 | Load state | loadable-native|
