@@ -379,12 +379,6 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
-      "path": "docs/arnold/manifest-identity-report.json",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
       "path": "docs/arnold/megaplan-plugin-clean-gap.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
@@ -409,55 +403,13 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
-      "path": "docs/arnold/package-authoring-contract.md",
+      "path": "docs/arnold/m3-merge-result-closeout-20260626.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
+      "reason": "Merge-result closeout checklist verifying the legacy root is absent from HEAD."
     },
     {
       "path": "docs/arnold/package-disposition.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-completion-plan-v2.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-completion-plan-v3.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-completion-plan-v4.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-final-import-inventory.md",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-final-import-inventory.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/migration-plan-sense-check.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Historical documentation referencing the pre-migration package layout."
-    },
-    {
-      "path": "docs/arnold/pipelines/native-default-handoff.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "historical-non-shipped",
       "reason": "Historical documentation referencing the pre-migration package layout."

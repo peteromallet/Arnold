@@ -12,10 +12,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Mapping, TypeVar, get_args, get_origin, get_type_hints
 
 from arnold.kernel.content_types import ContentTypeRegistration, ContentTypeRegistry, RetentionPin
+from arnold.kernel.ids import workflow_identity
 
 _VERSIONED_NAME_RE = re.compile(
     r"^v(?P<version>[1-9][0-9]*)\.(?P<ext>[A-Za-z0-9][A-Za-z0-9._-]*)$"
 )
+_LOGICAL_ROOT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 
 
 class ArtifactRootKind(StrEnum):
@@ -32,6 +34,20 @@ class ArtifactRoot:
     root_id: str
     path: str
     kind: ArtifactRootKind = ArtifactRootKind.PLAN_ARTIFACT_ROOT
+
+    def __post_init__(self) -> None:
+        validate_logical_root_id(self.root_id)
+        if not self.path:
+            raise ValueError("artifact root path must be non-empty")
+        if "\x00" in self.path:
+            raise ValueError("artifact root path must not contain NUL bytes")
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "kind": self.kind.value,
+            "path": self.path,
+            "root_id": self.root_id,
+        }
 
 
 @dataclass(frozen=True)
@@ -52,24 +68,57 @@ class GeneratedArtifactProvenance:
     generated_at: str
     input_hashes: tuple[str, ...] = ()
     parents: tuple[ProvenanceParent, ...] = ()
+    workflow_alias: str | None = None
+    manifest_hash: str | None = None
+    pipeline_identity: str | None = None
+
+    def __post_init__(self) -> None:
+        identity_values = (
+            self.workflow_alias,
+            self.manifest_hash,
+            self.pipeline_identity,
+        )
+        present = tuple(value is not None for value in identity_values)
+        if any(present) and not all(present):
+            raise ValueError(
+                "workflow_alias, manifest_hash, and pipeline_identity must be "
+                "all present or all absent"
+            )
+        if not all(present):
+            return
+
+        identity = workflow_identity(self.workflow_alias or "", self.manifest_hash or "")
+        if self.pipeline_identity != identity.pipeline_identity:
+            raise ValueError("pipeline_identity does not match workflow_alias and manifest_hash")
+        object.__setattr__(self, "workflow_alias", identity.alias)
+        object.__setattr__(self, "manifest_hash", identity.manifest_hash)
 
     @property
     def provenance_hash(self) -> str:
+        payload_data = {
+            "generated_at": self.generated_at,
+            "generator_module": self.generator_module,
+            "generator_source_hash": self.generator_source_hash,
+            "input_hashes": list(self.input_hashes),
+            "manifest_contract_version": self.manifest_contract_version,
+            "parents": [
+                {
+                    "artifact_id": parent.artifact_id,
+                    "content_hash": parent.content_hash,
+                }
+                for parent in self.parents
+            ],
+        }
+        if self.workflow_alias is not None:
+            payload_data.update(
+                {
+                    "manifest_hash": self.manifest_hash,
+                    "pipeline_identity": self.pipeline_identity,
+                    "workflow_alias": self.workflow_alias,
+                }
+            )
         payload = json.dumps(
-            {
-                "generated_at": self.generated_at,
-                "generator_module": self.generator_module,
-                "generator_source_hash": self.generator_source_hash,
-                "input_hashes": list(self.input_hashes),
-                "manifest_contract_version": self.manifest_contract_version,
-                "parents": [
-                    {
-                        "artifact_id": parent.artifact_id,
-                        "content_hash": parent.content_hash,
-                    }
-                    for parent in self.parents
-                ],
-            },
+            payload_data,
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -86,6 +135,40 @@ class ArtifactBinding:
     content_type: ContentTypeRegistration
     provenance: GeneratedArtifactProvenance
     retention_pins: tuple[RetentionPin, ...] = ()
+
+    def __post_init__(self) -> None:
+        validate_logical_root_id(self.artifact_id)
+        validate_safe_relative_subpath(self.relative_path)
+
+    def to_dict(self) -> dict[str, Any]:
+        return _plain_value(self)
+
+
+def validate_logical_root_id(value: str) -> str:
+    """Validate a stable logical artifact root or artifact id."""
+
+    if not value:
+        raise ValueError("logical root id must be non-empty")
+    if not _LOGICAL_ROOT_ID_RE.fullmatch(value):
+        raise ValueError("logical root id contains unsupported characters")
+    return value
+
+
+def validate_safe_relative_subpath(value: str) -> str:
+    """Validate an artifact-relative POSIX path that cannot escape its root."""
+
+    if not value:
+        raise ValueError("relative artifact path must be non-empty")
+    if "\\" in value or "\x00" in value:
+        raise ValueError("relative artifact path contains unsupported characters")
+    path = PurePosixPath(value)
+    if str(path) != value:
+        raise ValueError("relative artifact path must use canonical POSIX spelling")
+    if path.is_absolute():
+        raise ValueError("relative artifact path must not be absolute")
+    if any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("relative artifact path must not contain empty, dot, or parent segments")
+    return value
 
 
 def versioned_artifact_name(stem: str, version: int, extension: str) -> str:
@@ -222,6 +305,7 @@ class FileBackedArtifactStore:
         self._quarantine_dir = self.root / ".quarantine" / "legacy"
 
     def _artifact_dir(self, artifact_id: str) -> Path:
+        validate_logical_root_id(artifact_id)
         directory = self.root / artifact_id
         directory.mkdir(parents=True, exist_ok=True)
         return directory
@@ -264,6 +348,7 @@ class FileBackedArtifactStore:
     ) -> ArtifactBinding:
         """Write a versioned artifact and return its binding."""
 
+        validate_logical_root_id(artifact_id)
         content_type = self.registry.require(content_type_id)
         artifact_dir = self._artifact_dir(artifact_id)
         self._quarantine_legacy_files(artifact_dir)
@@ -306,6 +391,7 @@ class FileBackedArtifactStore:
     ) -> ArtifactBinding | None:
         """Return the binding for the newest ``vN.<ext>`` artifact."""
 
+        validate_logical_root_id(artifact_id)
         artifact_dir = self.root / artifact_id
         if not artifact_dir.exists():
             return None
@@ -328,6 +414,7 @@ class FileBackedArtifactStore:
     def list_versions(self, artifact_id: str, extension: str) -> list[int]:
         """Return all ``vN.<ext>`` version numbers for an artifact."""
 
+        validate_logical_root_id(artifact_id)
         artifact_dir = self.root / artifact_id
         if not artifact_dir.exists():
             return []
@@ -356,6 +443,7 @@ class FileBackedArtifactStore:
     def legacy_inputs(self, artifact_id: str) -> Mapping[str, bytes]:
         """Return quarantined legacy flat artifact contents as migration input."""
 
+        validate_logical_root_id(artifact_id)
         target_dir = self._quarantine_dir / artifact_id
         if not target_dir.exists():
             return {}
@@ -375,5 +463,7 @@ __all__ = [
     "ProvenanceParent",
     "latest_version",
     "next_version_path",
+    "validate_logical_root_id",
+    "validate_safe_relative_subpath",
     "versioned_artifact_name",
 ]

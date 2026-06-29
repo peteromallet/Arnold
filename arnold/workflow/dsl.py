@@ -8,19 +8,22 @@ Stability:
 
 The DSL is intentionally pure data.  It provides no builder, fluent chaining,
 decorator, ``Stage``, or public ``Edge`` authoring surface.
+
+Ownership:
+    This module owns only explicit authored node dataclasses.  Shared scalar ref
+    validation lives in ``arnold.workflow.refs``; source parsing and diagnostics
+    live in ``arnold.workflow.source_compiler``; manifest lowering lives in
+    ``arnold.workflow.compiler``.
 """
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Mapping
 
 from arnold.manifest.manifests import SubpipelineRef, WorkflowPolicy
-from arnold.manifest.refs import SourceSpan, canonical_alias
-
-_REF_RE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+from arnold.workflow.refs import SourceSpan, canonical_alias, optional_ref, require_ref
 
 PUBLIC_EXPORTS = ("Pipeline", "Step", "Route", "Input", "Output", "Capability")
 PROVISIONAL_EXPORTS = ()
@@ -53,20 +56,6 @@ def _freeze_value(value: Any) -> Any:
     return value
 
 
-def _require_ref(name: str, value: str) -> str:
-    if not isinstance(value, str) or not value:
-        raise ValueError(f"{name} must be a non-empty string")
-    if not _REF_RE.fullmatch(value):
-        raise ValueError(f"{name} has invalid ref format: {value!r}")
-    return value
-
-
-def _optional_ref(name: str, value: str | None) -> str | None:
-    if value is None:
-        return None
-    return _require_ref(name, value)
-
-
 @dataclass(frozen=True)
 class Input:
     """Public authored input binding for an explicit ``Step`` node."""
@@ -78,8 +67,8 @@ class Input:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "name", _require_ref("input name", self.name))
-        object.__setattr__(self, "value_ref", _optional_ref("input value_ref", self.value_ref))
+        object.__setattr__(self, "name", require_ref("input name", self.name))
+        object.__setattr__(self, "value_ref", optional_ref("input value_ref", self.value_ref))
         object.__setattr__(self, "metadata", _freeze_metadata(self.metadata))
 
 
@@ -93,7 +82,7 @@ class Output:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "name", _require_ref("output name", self.name))
+        object.__setattr__(self, "name", require_ref("output name", self.name))
         object.__setattr__(self, "metadata", _freeze_metadata(self.metadata))
 
 
@@ -108,8 +97,8 @@ class Capability:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "id", _require_ref("capability id", self.id))
-        object.__setattr__(self, "route", _require_ref("capability route", self.route))
+        object.__setattr__(self, "id", require_ref("capability id", self.id))
+        object.__setattr__(self, "route", require_ref("capability route", self.route))
         object.__setattr__(self, "metadata", _freeze_metadata(self.metadata))
 
 
@@ -126,14 +115,14 @@ class Route:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "id", _require_ref("route id", self.id))
-        object.__setattr__(self, "source", _require_ref("route source", self.source))
-        object.__setattr__(self, "target", _require_ref("route target", self.target))
-        object.__setattr__(self, "label", _require_ref("route label", self.label))
+        object.__setattr__(self, "id", require_ref("route id", self.id))
+        object.__setattr__(self, "source", require_ref("route source", self.source))
+        object.__setattr__(self, "target", require_ref("route target", self.target))
+        object.__setattr__(self, "label", require_ref("route label", self.label))
         object.__setattr__(
             self,
             "condition_ref",
-            _optional_ref("route condition_ref", self.condition_ref),
+            optional_ref("route condition_ref", self.condition_ref),
         )
         object.__setattr__(self, "metadata", _freeze_metadata(self.metadata))
 
@@ -154,8 +143,8 @@ class Step:
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "id", _require_ref("step id", self.id))
-        object.__setattr__(self, "kind", _require_ref("step kind", self.kind))
+        object.__setattr__(self, "id", require_ref("step id", self.id))
+        object.__setattr__(self, "kind", require_ref("step kind", self.kind))
         object.__setattr__(self, "inputs", tuple(self.inputs))
         object.__setattr__(self, "outputs", tuple(self.outputs))
         object.__setattr__(self, "capabilities", tuple(self.capabilities))

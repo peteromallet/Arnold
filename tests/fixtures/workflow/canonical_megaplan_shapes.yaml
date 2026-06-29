@@ -263,7 +263,7 @@ shapes:
             slot: suspension
 
   tournament:
-    description: Tournament lowers two full tiebreaker rounds to explicit nodes/routes.
+    description: Tournament lowers two full tiebreaker rounds plus a bounded retry loop-back to the judge.
     nodes:
       - id: tourney-judge
         kind: branch
@@ -306,11 +306,24 @@ shapes:
         target: tourney-winner
         label: winner
         condition_ref: tests.arnold.patterns._fixtures:judge_winner
+      - id: tourney-tiebreak-2-tourney-judge
+        source: tourney-tiebreak-2
+        target: tourney-judge
+        label: retry
+        condition_ref: tourney:tiebreak
       - id: tourney-tiebreak-2-tourney-winner
         source: tourney-tiebreak-2
         target: tourney-winner
         label: winner
         condition_ref: tests.arnold.patterns._fixtures:judge_winner
+    policies:
+      tourney-judge:
+        loop:
+          max_iterations: 2
+        suspension_routes:
+          - route_id: tourney-reentry
+            capability_id: null
+            reentry_id: tourney:tiebreak
 
 python_authoring_m3:
   supported_subset:

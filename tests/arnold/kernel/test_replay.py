@@ -77,6 +77,66 @@ def test_legacy_alias_resolves_after_native_miss() -> None:
     assert resolution.resolution.alias_manifest_hash == _hash("a")
 
 
+def test_native_cursor_wins_without_consulting_unsafe_alias() -> None:
+    cursor = ReplayCursor(manifest_hash=_hash("a"), event_sequence=2)
+    aliases = {
+        _hash("a"): LegacyAliasRecord(
+            alias="arnold_pipelines.megaplan:unsafe",
+            source_manifest_hash=_hash("a"),
+            target_manifest_hash=_hash("b"),
+        ),
+    }
+    resolution = resolve_cursor(cursor, native_manifest_hash=_hash("a"), legacy_aliases=aliases)
+
+    assert resolution.resolution.decision is ReplayDecision.REUSE
+    assert resolution.cursor == cursor
+    assert resolution.quarantine is None
+
+
+def test_ambiguous_legacy_alias_target_is_quarantined() -> None:
+    cursor = ReplayCursor(manifest_hash=_hash("b"), event_sequence=0)
+    aliases = {
+        _hash("b"): LegacyAliasRecord(
+            alias="legacy-pipeline",
+            source_manifest_hash=_hash("b"),
+            target_manifest_hash=_hash("c"),
+        ),
+    }
+    resolution = resolve_cursor(cursor, native_manifest_hash=_hash("a"), legacy_aliases=aliases)
+
+    assert resolution.resolution.decision is ReplayDecision.QUARANTINE
+    assert resolution.cursor is None
+    assert resolution.quarantine is not None
+    assert "ambiguous legacy alias target" in resolution.quarantine.reason
+
+
+def test_legacy_alias_resolution_preserves_cursor_coordinate_fields() -> None:
+    cursor = ReplayCursor(
+        manifest_hash=_hash("b"),
+        reentry_id="resume-1",
+        scope_stack=("parent", "child"),
+        artifact_root="/tmp/artifacts",
+        event_sequence=12,
+    )
+    aliases = {
+        _hash("b"): LegacyAliasRecord(
+            alias="legacy-pipeline",
+            source_manifest_hash=_hash("b"),
+            target_manifest_hash=_hash("a"),
+        ),
+    }
+    resolution = resolve_cursor(cursor, native_manifest_hash=_hash("a"), legacy_aliases=aliases)
+
+    assert resolution.resolution.decision is ReplayDecision.ALIAS
+    assert resolution.cursor == ReplayCursor(
+        manifest_hash=_hash("a"),
+        reentry_id="resume-1",
+        scope_stack=("parent", "child"),
+        artifact_root="/tmp/artifacts",
+        event_sequence=12,
+    )
+
+
 def test_missing_legacy_alias_is_quarantined() -> None:
     cursor = ReplayCursor(manifest_hash=_hash("c"), event_sequence=0)
     resolution = resolve_cursor(cursor, native_manifest_hash=_hash("a"), run_id="run-1")

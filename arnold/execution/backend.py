@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import StrEnum
 from pathlib import Path
@@ -38,6 +38,7 @@ from arnold.kernel import (
     require_idempotency_policy,
     reservation_payload,
     settlement_payload,
+    workflow_identity_from_manifest,
 )
 from arnold.kernel.artifacts import ArtifactBinding, ProvenanceParent
 from arnold.kernel.effect_ledger import derive_effect_idempotency_key
@@ -652,9 +653,10 @@ class LocalJournalBackend:
     # ------------------------------------------------------------------
 
     def _manifest_ref(self) -> ManifestReference:
+        identity = workflow_identity_from_manifest(self._manifest)
         return ManifestReference(
-            alias=self._manifest.id,
-            manifest_hash=self._manifest.manifest_hash or "",
+            alias=identity.alias,
+            manifest_hash=identity.manifest_hash,
         )
 
     def _append(
@@ -1358,6 +1360,7 @@ class LocalJournalBackend:
                 manifest_contract_version=self._manifest.SCHEMA_VERSION,
                 generated_at=self._now().isoformat(),
             )
+        provenance = self._workflow_bound_provenance(provenance)
         binding = self._store.write_artifact(
             artifact_id=spec.artifact_id,
             content=spec.content,
@@ -1378,6 +1381,26 @@ class LocalJournalBackend:
             scope_stack=coordinate.scope_stack,
         )
         return binding
+
+    def _workflow_bound_provenance(
+        self, provenance: GeneratedArtifactProvenance
+    ) -> GeneratedArtifactProvenance:
+        identity = workflow_identity_from_manifest(self._manifest)
+        expected = {
+            "workflow_alias": identity.alias,
+            "manifest_hash": identity.manifest_hash,
+            "pipeline_identity": identity.pipeline_identity,
+        }
+        actual = {
+            "workflow_alias": provenance.workflow_alias,
+            "manifest_hash": provenance.manifest_hash,
+            "pipeline_identity": provenance.pipeline_identity,
+        }
+        if all(value is None for value in actual.values()):
+            return replace(provenance, **expected)
+        if actual != expected:
+            raise ValueError("artifact provenance workflow identity does not match executing manifest")
+        return provenance
 
     # ------------------------------------------------------------------
     # Control transitions, compensation, and escalation

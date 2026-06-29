@@ -28,6 +28,32 @@ def _append_event(
 
 
 class TestStatusProjection:
+    def test_structural_plan_failure_projects_retry_not_critique(self) -> None:
+        from arnold_pipelines.megaplan.cli.status_view import _projected_valid_next
+        from arnold_pipelines.megaplan.orchestration.plan_structure import (
+            PLAN_STRUCTURE_REQUIRED_STEP_ISSUE,
+        )
+
+        state = {
+            "current_state": "planned",
+            "iteration": 1,
+            "plan_versions": [{"version": 1, "file": "plan_v1.md", "hash": "old"}],
+            "history": [
+                {
+                    "step": "plan",
+                    "result": "error",
+                    "message": (
+                        "Plan output failed structural validation: "
+                        f"{PLAN_STRUCTURE_REQUIRED_STEP_ISSUE}"
+                    ),
+                }
+            ],
+            "meta": {},
+            "config": {},
+        }
+
+        assert _projected_valid_next(state) == ["plan"]
+
     def test_project_status_from_events(self, tmp_path: Path) -> None:
         from arnold_pipelines.megaplan.cli.projection import project_status
 

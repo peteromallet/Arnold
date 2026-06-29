@@ -2,8 +2,9 @@
 
 An Arnold package is a discoverable pipeline module plus its adjacent agent
 instructions. The contract is intentionally small: the package must expose
-stable metadata for no-import discovery, return a valid `Pipeline` from its
-entrypoint, and keep human/agent-facing guidance in `SKILL.md`.
+stable metadata for no-import discovery, return a valid
+`arnold.workflow.Pipeline` from its entrypoint, and keep human/agent-facing
+guidance in `SKILL.md`.
 
 Generated details for manifest fields, discovery facts, dispositions, schemas,
 and CLI inventories are maintained in
@@ -18,7 +19,7 @@ This page describes the authoring contract around those facts.
 The normal package shape is:
 
 ```text
-megaplan/pipelines/
+arnold_pipelines/megaplan/pipelines/
   my_module.py
   my-module/
     SKILL.md
@@ -42,24 +43,44 @@ A package module should keep these concepts visible at top level:
 
 - the public Arnold name and description;
 - the Arnold API version;
-- the driver declaration (`("native", "<kind>")` for native-first packages);
+- the driver declaration (`("graph", "<kind>")` for workflow-first packages);
 - the entrypoint function name;
 - optional supported modes, default profile, and capability labels;
-- an entrypoint that returns a `Pipeline` shell with `native_program` set.
+- an entrypoint that returns an explicit-node `arnold.workflow.Pipeline`.
 
 Keep these values static. Discovery must be able to inspect the package without
 executing arbitrary code. Runtime work belongs inside stages, not in module
 metadata.
 
-## Native-First Execution
+## Workflow-First Execution
 
-The canonical package compiles a `@pipeline` declaration via
-`arnold.pipeline.native.compile_pipeline`, projects it through
-`project_graph`, and attaches the resulting `NativeProgram` to the returned
-`Pipeline` shell. The native runtime executes the compiled program directly;
-the graph shell remains available for validation, introspection, and legacy
-compatibility, but it is derived from the native declaration rather than the
-other way around.
+The canonical package constructs an explicit-node `arnold.workflow.Pipeline`
+and returns it from `build_pipeline()`. The workflow compiler lowers the
+pipeline to a neutral `WorkflowManifest` with deterministic hashes. The native
+runtime may execute a compiled manifest, but the package itself must not
+hand-author manifest objects, hashes, or native execution structures.
+
+```python
+from arnold.workflow import Pipeline, Step, Route
+
+
+def build_pipeline() -> Pipeline:
+    return Pipeline(
+        id="my-pipeline",
+        version="1.0",
+        steps=(
+            Step(id="start", kind="agent"),
+            Step(id="finish", kind="agent"),
+        ),
+        routes=(
+            Route(id="start-finish", source="start", target="finish"),
+        ),
+    )
+```
+
+Packages must not return `NativeProgram`, native-backed factories, builder
+objects, executor objects, or `_forward_m2_m3` graph objects from
+`build_pipeline()`. `WorkflowManifest` is compiler output only.
 
 ## Entrypoint Rules
 
@@ -106,13 +127,12 @@ field inventories.
 
 ## Validation Contract
 
-`megaplan pipelines check NAME` is the package's basic compatibility gate. It
-must be able to load the package, build the graph, and validate graph
-structure. `arnold pipelines check NAME` reaches the same check through the
-Arnold namespace.
+`arnold workflow check --module <package>:build_pipeline` is the package's basic
+compatibility gate. It must be able to load the package, build the pipeline, and
+validate pipeline structure.
 
-`megaplan pipelines doctor` and `arnold pipelines doctor` are discovery tools.
-Use them when a package is skipped or rejected before graph validation begins.
+`arnold workflow doctor` is a discovery tool. Use it when a package is skipped or
+rejected before graph validation begins.
 
 ## Capsule Contract Interaction
 
@@ -129,15 +149,16 @@ inside package metadata to make a Capsule look more complete.
 
 ## Compatibility Policy
 
-**Canonical surface**: `arnold pipelines <subcommand>` is the canonical Arnold
-CLI. `megaplan pipelines <subcommand>` is the legacy compatibility path; it
-continues to work during the migration but new authoring guidance and
-conformance checks target the Arnold namespace and the native-first contract.
+**Canonical surface**: `arnold workflow <subcommand>` is the canonical Arnold
+CLI. `arnold pipelines <subcommand>` and `megaplan pipelines <subcommand>` are
+legacy compatibility paths; they continue to work during the migration but new
+authoring guidance and conformance checks target the Arnold namespace and the
+workflow-first contract.
 
-Graph-only packages, package-level `hooks`, `resume` drivers, and
+Native-first packages, package-level `hooks`, `resume` drivers, and
 `build_continuation_pipeline` entrypoints are deprecated. New packages must be
-native-first; legacy packages should migrate to `@pipeline` declarations and
-`native_program`.
+workflow-first; legacy packages should migrate to explicit-node
+`arnold.workflow.Pipeline` authoring.
 
 Forward-compatible projection schemas ignore unknown keys, but package modules
 should not rely on that to smuggle behavior through undocumented metadata. Add

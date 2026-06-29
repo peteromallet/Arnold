@@ -23,6 +23,44 @@
 | `M6 delete` | Deletion target after parity is proven and in-flight runs are drained. | M6 |
 | `non-legacy neutral surface` | Owned by neutral Arnold (`arnold.execution`, `arnold.workflow`, `arnold.kernel`, `arnold.agent`, `arnold.conformance`); must not import product package. | permanent |
 
+## M4 core bridge-caller inventory
+
+This inventory covers the surfaces requested for the M4 manifest-runtime
+cutover.  In the current worktree the legacy `arnold/pipelines/megaplan/`
+tree has already been removed; the surviving product code lives under
+`arnold_pipelines/megaplan/`.  Legacy bridge, forwarder, and shim files are
+listed for M6 deletion.
+
+### What `_pipeline` means in this repository
+
+`_pipeline` is the obsolete Megaplan-native execution layer: the package root
+`arnold/pipelines/megaplan/_pipeline/` (and its M4 mirror
+`arnold_pipelines/megaplan/_pipeline/`), the conceptual API names
+`run_pipeline` / `run_pipeline_with_policy`, re-exported symbols such as
+`Pipeline`, `Stage`, `HandlerStep`, `InProcessHandlerStep`, generated
+references like `_BRIDGE_CALLERS.md`, docs references to the old CLI, and
+tests under `tests/_pipeline/` and `tests/pipelines/`.  All of these surfaces
+are deletion targets for M6.
+
+### Bridge-caller inventory
+
+| Surface | Location | Current status | M6 disposition | Owner / expiry |
+| --- | --- | --- | --- | --- |
+| `_pipeline` package root | `arnold/pipelines/megaplan/_pipeline/` (legacy); `arnold_pipelines/megaplan/_pipeline/` (M4 landing) | Deleted in current worktree | `delete` | megaplan / M6 |
+| `_bridge` | `arnold/pipelines/megaplan/_pipeline/_bridge.py`; `arnold_pipelines/megaplan/_pipeline/_bridge.py` | Deleted | `delete` | megaplan / M6 |
+| `_forward_m2_m3` | `arnold/pipelines/megaplan/_pipeline/_forward_m2_m3.py` | Deleted | `delete` | megaplan / M6 |
+| `_compatibility` | `arnold/pipelines/megaplan/_compatibility.py`; `arnold_pipelines/megaplan/_compatibility.py` | Deleted | `delete` | megaplan / M6 |
+| `builder.py` (legacy pipeline builder) | `arnold/pipelines/megaplan/_pipeline/builder.py`; neutral `arnold/workflow/compiler.py` | Migration target / neutral replacement live | `delete` legacy file; keep neutral compiler | megaplan / M6 for legacy file |
+| `native_runner.py` | Historical native runner shim (not present in worktree) | Deleted | `delete` | megaplan / M6 |
+| `native_hooks.py` | Historical native hooks shim (not present in worktree) | Deleted | `delete` | megaplan / M6 |
+| Old `arnold.runtime` surfaces – neutralized journal/resume | `arnold/runtime/event_journal.py`, `arnold/runtime/resume.py`, `arnold/runtime/semantic_replay.py`, `arnold/runtime/driver.py`, `arnold/runtime/__init__.py` | Neutral runtime surface | `keep` (permanent) | arnold / permanent |
+| Old `arnold.runtime` surfaces – legacy state persistence | `arnold/runtime/state_persistence.py` | Temporary parity shim | `delete` | arnold / M6 |
+| CLI forwarders – legacy megaplan subcommands | `arnold/cli/__init__.py` (legacy subcommands removed); `arnold/pipelines/megaplan/__main__.py`; `arnold_pipelines/megaplan/cli/arnold.py`, `roots.py` | Legacy forwarders deleted; remaining files are temporary parity shims | `delete` legacy surfaces; keep `arnold.cli.workflow/operators` | arnold & megaplan / M6 |
+| Subloop callers | `arnold/pipelines/megaplan/_pipeline/subloop.py`; `arnold_pipelines/megaplan/_pipeline/subloop.py` | Deleted | `delete` | megaplan / M6 |
+| Resume paths – legacy token converters | `arnold/pipeline/resume.py`; `arnold_pipelines/megaplan/_core/state.py` | Temporary parity shim / migration target | `delete` | arnold & megaplan / M6 |
+| Resume paths – manifest cursor converter | `arnold/runtime/resume.py` | Neutral runtime surface | `keep` | arnold / permanent |
+| Demo entries | `arnold/pipelines/megaplan/_pipeline/demos/`; `arnold_pipelines/megaplan/_pipeline/demos/` | Deleted | `delete` | megaplan / M6 |
+
 ## 1. `arnold/pipelines/megaplan/` top-level product surface
 
 | Path / group | Class | Owner | Blocker | Expiry |

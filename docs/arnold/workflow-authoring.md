@@ -166,6 +166,47 @@ and `json` emits a stable node/edge/source-span payload. All three are derived
 from the compiled manifest but annotated with authored source spans where
 available.
 
+## Pattern-Based Explicit-Node Example
+
+Pattern constructors return pure lowerable values. Compose them into a
+`Pipeline` before returning from `build_pipeline()`:
+
+```python
+from arnold.workflow import Pipeline, Route
+from arnold.patterns import agent
+
+
+def build_pipeline() -> Pipeline:
+    plan = agent(
+        "plan",
+        task="Plan the implementation",
+        prompt_ref="arnold.example:plan",
+    )
+    code = agent(
+        "code",
+        task="Implement the plan",
+        prompt_ref="arnold.example:code",
+    )
+    review = agent(
+        "review",
+        task="Review the implementation",
+        prompt_ref="arnold.example:review",
+    )
+
+    return Pipeline(
+        id="plan-code-review",
+        version="1.0",
+        steps=(plan, code, review),
+        routes=(
+            Route(id="plan-code", source="plan", target="code"),
+            Route(id="code-review", source="code", target="review"),
+        ),
+    )
+```
+
+See [`pattern-stability-matrix.md`](pattern-stability-matrix.md) for the
+stability of individual constructors.
+
 ## Shipped Example
 
 A minimal shipped pipeline lives at `examples/workflow_authoring/hello/`. It

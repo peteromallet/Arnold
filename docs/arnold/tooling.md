@@ -1,9 +1,9 @@
 # Arnold Tooling
 
-Arnold tooling falls into four groups: module discovery, graph validation,
-Capsule operations, and Warrant operations. This page explains when to use each
-tool. Generated inventories for command surfaces, projection schemas, defect
-templates, and vocabulary live in
+Arnold tooling falls into four groups: pipeline discovery, workflow validation
+and execution, Capsule operations, and Warrant operations. This page explains
+when to use each tool. Generated inventories for command surfaces, projection
+schemas, defect templates, and vocabulary live in
 [`docs/reference/arnold-projections.md`](../reference/arnold-projections.md).
 
 ## Discovery Tools
@@ -12,15 +12,14 @@ Use discovery tools when you need to know which pipeline modules Arnold can see
 and why a module was skipped or rejected.
 
 ```bash
-arnold pipelines list
-arnold pipelines list --json
-arnold pipelines doctor
-megaplan pipelines doctor
+python scripts/check_workflow_pipeline_inventory.py
+python scripts/check_pipeline_id_registry.py --check-identity-report
 ```
 
-`list` is for operator-facing selection. `doctor` is for author-facing
-diagnosis. When a package appears in `doctor` as rejected, fix discovery before
-debugging the graph itself.
+`check_workflow_pipeline_inventory.py` is the author-facing disposition gate. It
+fails when a shipped root is missing from the inventory, when a migrated root
+contains forbidden legacy patterns, or when active docs reference deleted CLI
+commands. Fix discovery errors before debugging the workflow graph itself.
 
 Manifest-first discovery is gated separately from runtime builds. It lets
 Arnold read stable module facts without importing the module. Trusted runtime
@@ -29,41 +28,38 @@ pipeline to be built.
 
 ## Scaffold and Check
 
-Create new native-first modules with:
+Create new workflow-first packages by copying the canonical template:
 
 ```bash
-arnold pipelines new my-module
+cp -r arnold_pipelines/_template arnold_pipelines/my_pipeline
 ```
 
-The `--driver graph` switch is deprecated and should only be used for temporary
-compatibility baselines.
-
-Validate with the canonical Arnold namespace when documenting a public flow:
+Then validate the canonical builder target:
 
 ```bash
-arnold pipelines check my-module
+arnold workflow check --module arnold_pipelines.my_pipeline:build_pipeline
 ```
 
-The Megaplan namespace remains a legacy compatibility path during the migration
-but new packages target the Arnold namespace and the native-first contract.
+The old `arnold pipelines *` commands and `arnold <module> *` module verbs are
+deprecated and are deleted in M6. New packages target the `arnold workflow`
+surface and the explicit-node authoring contract.
 
 ## Run and Describe
 
-Arnold dispatches module verbs through the pipeline registry:
+Workflow CLI commands operate on a builder target:
 
 ```bash
-arnold my-module describe
-arnold my-module run --help
-arnold my-module run [module-specific args]
+arnold workflow describe --module arnold_pipelines.my_module:build_pipeline
+arnold workflow dry-run --module arnold_pipelines.my_module:build_pipeline
+arnold workflow run --module arnold_pipelines.my_module:build_pipeline --backend fake
 ```
 
-Planning remains special only where the legacy planning workflow has additional
-control verbs:
+Use `--backend fake` for fast, deterministic fake-backend smoke tests. Omit the
+flag to use the default local backend.
 
-```bash
-arnold planning auto
-arnold planning override force-proceed
-```
+Retained operator commands (`arnold status`, `arnold trace`, `arnold inspect`,
+`arnold override`) project from event journals, artifacts, and control
+transitions rather than from pipeline module verbs.
 
 Use the generated CLI facts for exact verb inventories. Authored docs should
 show only the commands needed for a workflow.
@@ -133,10 +129,15 @@ exact facts.
 
 When a module does not work:
 
-1. Run `arnold pipelines doctor` to confirm discovery.
-2. Run `arnold pipelines check NAME` to validate the graph or judge manifest.
-3. Run the module's `describe` or `run --help` path to confirm CLI dispatch.
-4. If the issue is replay/export related, inspect the Capsule build or Contract
+1. Run `python scripts/check_workflow_pipeline_inventory.py` to confirm
+   disposition and scan for forbidden patterns.
+2. Run `arnold workflow check --module <package.module>:build_pipeline` to
+   validate the compiled manifest.
+3. Run `arnold workflow dry-run --module <package.module>:build_pipeline` to
+   inspect the route graph without executing.
+4. Run `arnold workflow run --module <package.module>:build_pipeline --backend fake`
+   for a deterministic smoke test.
+5. If the issue is replay/export related, inspect the Capsule build or Contract
    failure before changing the module.
-5. If the issue is signing related, inspect the Warrant source projection before
+6. If the issue is signing related, inspect the Warrant source projection before
    changing receipts or signing code.

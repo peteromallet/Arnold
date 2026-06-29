@@ -24,22 +24,21 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-import arnold.pipeline as native_pipeline
-import arnold.workflow as workflow
-from arnold.cli.workflow import build_parser as build_workflow_parser
-from arnold.execution import ExecutionLogger, ExecutionRegistries, SkeletalBackend, run
-from arnold.manifest.manifests import (
+import arnold.pipeline as native_pipeline  # noqa: E402
+import arnold.workflow as workflow  # noqa: E402
+from arnold.cli.workflow import build_parser as build_workflow_parser  # noqa: E402
+from arnold.execution import ExecutionLogger, ExecutionRegistries, SkeletalBackend, run  # noqa: E402
+from arnold.manifest.manifests import (  # noqa: E402
     WorkflowEdge,
     WorkflowManifest,
     WorkflowNode,
 )
-from arnold.pipeline import NativeProgram
-from arnold.workflow import compile_pipeline, dry_run, inspect_manifest, to_dot, to_yaml
-from arnold_pipelines.discovery import (
+from arnold.pipeline import NativeProgram  # noqa: E402
+from arnold.workflow import compile_pipeline, dry_run, to_yaml  # noqa: E402
+from arnold_pipelines.discovery import (  # noqa: E402
     ShippedPipelineInfo,
     discover_migrated_pipelines,
     discover_shipped_pipelines,
-    load_builder,
 )
 
 DEFAULT_DOCS_ROOT = REPO_ROOT / "docs"
@@ -227,9 +226,10 @@ def _compile_and_validate_workflow(info: ShippedPipelineInfo) -> WorkflowManifes
     if builder is None:
         raise RuntimeError(f"pipeline {info.id!r} has no builder")
     pipeline = builder()
-    if not isinstance(pipeline, workflow.Pipeline):
+    if type(pipeline).__module__ != "arnold.workflow.dsl" or type(pipeline).__name__ != "Pipeline":
         raise RuntimeError(
-            f"builder for {info.id!r} returned {type(pipeline).__name__}, expected Pipeline"
+            f"builder for {info.id!r} returned {type(pipeline).__module__}.{type(pipeline).__name__}, "
+            "expected arnold.workflow.dsl.Pipeline"
         )
     return compile_pipeline(pipeline)
 
@@ -243,7 +243,7 @@ def _validate_native_builder(info: ShippedPipelineInfo) -> native_pipeline.Pipel
     if builder is None:
         raise RuntimeError(f"pipeline {info.id!r} has no builder")
     pipeline = builder()
-    if not isinstance(pipeline, native_pipeline.Pipeline):
+    if type(pipeline).__module__ != "arnold.pipeline.types" or type(pipeline).__name__ != "Pipeline":
         raise RuntimeError(
             f"builder for {info.id!r} returned {type(pipeline).__module__}.{type(pipeline).__name__}, "
             "expected arnold.pipeline.Pipeline"
@@ -652,9 +652,10 @@ def _render_composed_skill(name: str, description: str) -> str:
             "## Disallowed surfaces",
             "",
             "Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, "
-            "hand-built graph fallback builders, or deleted Megaplan-root imports.  New "
-            "packages must be native-first: use native declarations and return an "
-            "``arnold.pipeline.Pipeline`` with ``native_program`` set.",
+            "hand-built graph fallback builders, native-backed factories, executor objects, "
+            "or deleted Megaplan-root imports.  New packages must be workflow-first: use "
+            "explicit-node ``arnold.workflow.Pipeline`` authoring and return a ``Pipeline`` "
+            "from ``build_pipeline()``.  ``WorkflowManifest`` is compiler output only.",
             "",
         ]
     )

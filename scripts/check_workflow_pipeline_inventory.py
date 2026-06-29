@@ -11,10 +11,9 @@ Fails when:
 from __future__ import annotations
 
 import argparse
-import importlib
 import sys
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -78,6 +77,16 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "registry_id": None,
         "migrated": True,
     },
+    "arnold/pipelines/folder_audit": {
+        "status": "migrate",
+        "registry_id": "arnold.folder_audit",
+        "migrated": True,
+    },
+    "arnold/pipelines/deliberation": {
+        "status": "migrate",
+        "registry_id": "arnold.deliberation",
+        "migrated": True,
+    },
     # Archives
     "arnold_pipelines/megaplan/pipelines/epic_blitz.py": {
         "status": "archive",
@@ -92,14 +101,6 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "registry_id": None,
     },
     "arnold/pipelines/epic_blitz": {
-        "status": "archive",
-        "registry_id": None,
-    },
-    "arnold/pipelines/folder_audit": {
-        "status": "archive",
-        "registry_id": None,
-    },
-    "arnold/pipelines/deliberation": {
         "status": "archive",
         "registry_id": None,
     },

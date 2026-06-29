@@ -12,7 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from arnold.workflow import HookRef, ImportRef, RefDiagnosticError, Step, Route
+from arnold.workflow import Step, Route
+from arnold.workflow.refs import HookRef, RefDiagnosticError, as_hook_ref
 
 
 @dataclass(frozen=True)
@@ -31,34 +32,14 @@ def _as_hook_ref(
 ) -> HookRef:
     """Convert a string/ImportRef/HookRef into a validated durable hook ref."""
 
-    if isinstance(value, HookRef):
-        return value
-    if isinstance(value, ImportRef):
-        return HookRef(value)
-    if isinstance(value, str):
-        try:
-            return HookRef.parse(value)
-        except RefDiagnosticError as exc:
-            # Re-raise with caller node/field context if the original lacks it.
-            message = str(exc)
-            if node_id is not None or field is not None:
-                parts = []
-                if node_id is not None:
-                    parts.append(f"node {node_id!r}")
-                if field is not None:
-                    parts.append(f"field {field!r}")
-                prefix = " ".join(parts)
-                if prefix and not message.startswith(prefix):
-                    message = f"{prefix}: {message}"
-            raise RefDiagnosticError(message) from exc
-        except Exception as exc:  # noqa: BLE001 - wrap unexpected parsing errors.
-            raise RefDiagnosticError(
-                f"node {node_id!r} field {field!r}: invalid hook ref {value!r}: {exc}"
-            ) from exc
-    raise RefDiagnosticError(
-        f"node {node_id!r} field {field!r}: "
-        "hook refs must be a durable 'module:qualname' string, ImportRef, or HookRef"
-    )
+    try:
+        return as_hook_ref(value, node_id=node_id, field=field)
+    except RefDiagnosticError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - wrap unexpected resolver errors.
+        raise RefDiagnosticError(
+            f"node {node_id!r} field {field!r}: invalid hook ref {value!r}: {exc}"
+        ) from exc
 
 
 def _as_optional_hook_ref(

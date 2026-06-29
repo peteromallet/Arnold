@@ -49,6 +49,17 @@ def test_source_compiler_public_api_names_are_exported() -> None:
     assert "SourceCompileError" in workflow.__all__
 
 
+def test_source_compiler_identity_adapters_are_exported_for_hook_and_policy_refs() -> None:
+    """Source-compiler parity relies on the same durable ref adapters as patterns."""
+
+    assert hasattr(workflow, "as_hook_ref")
+    assert hasattr(workflow, "as_import_ref")
+    assert hasattr(workflow, "as_optional_hook_ref")
+    assert "as_hook_ref" in workflow.__all__
+    assert "as_import_ref" in workflow.__all__
+    assert "as_optional_hook_ref" in workflow.__all__
+
+
 def test_source_compiler_public_api_call_shapes_accept_source_and_file_inputs() -> None:
     source = Path("tests/fixtures/workflow_authoring/valid_direct_linear.py").read_text(
         encoding="utf-8"

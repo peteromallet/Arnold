@@ -63,8 +63,8 @@ code-owned facts and are generated in the Arnold projection reference.
 It is fine to include the small command sequence an agent actually needs:
 
 ```bash
-arnold pipelines check my-module
-arnold my-module run --help
+arnold workflow check --module arnold_pipelines.my_module:build_pipeline
+arnold workflow run --module arnold_pipelines.my_module:build_pipeline --help
 ```
 
 It is also fine to explain which generated reference to consult when an agent
