@@ -8,6 +8,7 @@ from pathlib import Path
 from arnold.pipeline.native.checkpoint import classify_resume_cursor, read_native_cursor
 from arnold.pipeline.resume import persist_resume_cursor
 from arnold_pipelines.megaplan.cli import arnold
+from arnold_pipelines.megaplan.cli import _normalize_execute_compat_argv
 
 
 def test_arnold_pipelines_list_wraps_discovery_and_lists_first_class_modules(
@@ -83,3 +84,18 @@ def test_arnold_console_module_entry_lists_pipelines() -> None:
     assert "creative" in proc.stdout
     assert "doc" in proc.stdout
     assert "jokes" in proc.stdout
+
+
+def test_normalize_execute_compat_argv_infers_missing_execute_for_execute_only_flags() -> None:
+    assert _normalize_execute_compat_argv(
+        [
+            "--confirm-destructive",
+            "--user-approved",
+            "--retry-blocked-tasks",
+        ]
+    ) == [
+        "execute",
+        "--confirm-destructive",
+        "--user-approved",
+        "--retry-blocked-tasks",
+    ]
