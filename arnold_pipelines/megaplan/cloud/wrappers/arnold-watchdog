@@ -2089,9 +2089,24 @@ for path in chain_paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         continue
-    if payload.get("last_state") != "awaiting_pr_merge":
-        continue
+    last_state = payload.get("last_state")
     pr_number = payload.get("pr_number")
+    if last_state == "awaiting_pr_merge":
+        pass
+    elif last_state in ("done", "complete") and pr_number:
+        # Ground-truth guard: the chain driver can mark last_state=done once the
+        # milestone plan is finalized even when the milestone PR is still open
+        # under merge_policy: review. Verify the PR live; if it is not merged yet
+        # the chain is really awaiting_pr_merge, not done. Without this the
+        # watchdog trusts last_state=done and falls through to a stale
+        # repair-loop marker, mislabeling the session needs_human.
+        try:
+            if _pr_state(int(pr_number)) == "merged":
+                continue
+        except Exception:
+            continue
+    else:
+        continue
     if not pr_number:
         print("awaiting_pr_merge")
         raise SystemExit(0)
@@ -2464,6 +2479,10 @@ launch_chain_tick() {
   fi
 
   if [[ "$health" == "awaiting_pr_merge" ]]; then
+    # The chain is waiting on a (human-gated) PR merge. A prior repair-loop
+    # exhaustion marker is stale here -- clear it so we do not keep re-emitting a
+    # needs_human verdict after the chain advanced to the merge wait state.
+    rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
     log "session awaiting PR merge: $session"
     report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge" "$workspace" "$remote_spec"
     return 0
