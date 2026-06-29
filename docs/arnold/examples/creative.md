@@ -4,8 +4,8 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/creative
-- manifest_hash: native:creative
+- source_package: arnold_pipelines/megaplan/pipelines/creative
+- manifest_hash: 
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -17,15 +17,15 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/creative|
-| Builder target | arnold.pipelines.megaplan.pipelines.creative:build_pipeline|
-| Steps | arnold/pipelines/megaplan/pipelines/creative/steps.py|
-| Builder source | arnold/pipelines/megaplan/pipelines/creative/__init__.py|
-| Skill | arnold/pipelines/megaplan/pipelines/creative/SKILL.md|
-| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
+| Package | arnold_pipelines/megaplan/pipelines/creative|
+| Builder target | arnold_pipelines.megaplan.pipelines.creative:build_pipeline|
+| Steps | arnold_pipelines/megaplan/pipelines/creative/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/creative/__init__.py|
+| Skill | arnold_pipelines/megaplan/pipelines/creative/SKILL.md|
+| Diagnostic | No callable canonical build_pipeline could be imported.|
 | Contract | native|
-| Load state | loadable-native|
-| Identity | native:creative|
+| Load state | not-loadable|
+| Identity | not-loadable|
 
 ## Builder Surface
 
@@ -191,15 +191,9 @@ def _artifact_text(
     )
 ```
 
-## Native builder report
+## Deferred native diagnostic
 
-```yaml
-entry: prep
-id: creative
-instruction_count: 6
-native_program: creative
-stage_count: 5
-```
+No callable canonical build_pipeline could be imported.
 
 ## Package Skill
 
@@ -208,14 +202,13 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 # creative pipeline — skill reference
 
-**Runtime**: native-backed pipeline<br>
+**Driver**: compatibility mirror for the native canonical package<br>
 **Arnold API version**: `1.0`<br>
-**Run surface**: `megaplan run creative ...` or `arnold pipelines run creative ...`<br>
-**Supported modes**: form-controlled with `--form`
+**Supported modes**: `native`
 
-Fresh `creative` runs use the native runtime and persist runtime ownership in
-`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. Native
-resume cursors resume on native, and corrupt native cursors fail closed.
+This mirror delegates to
+`arnold_pipelines.megaplan.pipelines.creative`. New runtime and discovery
+surfaces should import the canonical package directly.
 
 ## Purpose
 

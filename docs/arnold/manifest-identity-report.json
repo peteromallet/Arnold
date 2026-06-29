@@ -55,101 +55,6 @@
       }
     },
     {
-      "compiled_manifest_hash": "sha256:43d30d31c2eb11de4ad7216c930a3311dd6cfd5bd6b8b2e8926aa304bee7cfe9",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/creative.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/creative",
-      "pipeline_id": "creative",
-      "registry_entry": {
-        "name": "creative",
-        "seam_ids": [],
-        "stable_id": "megaplan.creative",
-        "typed_contract_capable": true
-      },
-      "registry_id": "megaplan.creative",
-      "registry_manifest_hash": null,
-      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/creative/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "sha256:24d157216c83c61765a047ae14d8207b6831eccda9f7492fd1dfb9760fd9cda5",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/doc.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/doc",
-      "pipeline_id": "doc",
-      "registry_entry": {
-        "name": "doc",
-        "seam_ids": [],
-        "stable_id": "megaplan.doc",
-        "typed_contract_capable": true
-      },
-      "registry_id": "megaplan.doc",
-      "registry_manifest_hash": null,
-      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/doc/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "sha256:3a49d0895f747685fdaaf40b3435ced81e653b8cd9f0ffdd6242150e15a0f3d5",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/jokes.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/jokes",
-      "pipeline_id": "jokes",
-      "registry_entry": {
-        "name": "jokes",
-        "seam_ids": [],
-        "stable_id": "megaplan.jokes",
-        "typed_contract_capable": false
-      },
-      "registry_id": "megaplan.jokes",
-      "registry_manifest_hash": null,
-      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/jokes/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "sha256:15c141b2d40bb116002e2638eb469b9f7f47cff8f7101b28582f34d115876c66",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/live-supervisor.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/live_supervisor",
-      "pipeline_id": "live-supervisor",
-      "registry_entry": null,
-      "registry_id": "megaplan.live_supervisor",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/live_supervisor/SKILL.md"
-      }
-    },
-    {
       "compiled_manifest_hash": "sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba",
       "disposition": "migrate",
       "example_docs": {
@@ -173,52 +78,12 @@
         "exists": true,
         "path": "arnold_pipelines/megaplan/pipelines/planning/SKILL.md"
       }
-    },
-    {
-      "compiled_manifest_hash": "sha256:2b133a69d3265834ae8e9094ee32bd58c14ebde7ad0d08be451eed4d5b220c77",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/select-tournament.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/select_tournament",
-      "pipeline_id": "select-tournament",
-      "registry_entry": null,
-      "registry_id": "megaplan.select_tournament",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/select_tournament/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "sha256:5162f36a03c859978f9dfb7332a4742c6462518d2df67a730262e8c59925c14f",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/writing-panel-strict.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/writing_panel_strict",
-      "pipeline_id": "writing-panel-strict",
-      "registry_entry": null,
-      "registry_id": "megaplan.writing_panel_strict",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md"
-      }
     }
   ],
-  "identity_count": 9,
+  "identity_count": 3,
   "registry_files": [
-    "arnold_pipelines/megaplan/pipeline_ids.json",
-    "arnold_pipelines/evidence_pack/pipeline_ids.json"
+    "arnold_pipelines/evidence_pack/pipeline_ids.json",
+    "arnold_pipelines/megaplan/pipeline_ids.json"
   ],
   "source": "Derived from arnold_pipelines.discovery, discovered pipeline_ids.json files, generated docs/skill paths, and compile_pipeline(builder()).",
   "version": 1

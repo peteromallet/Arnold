@@ -21,8 +21,12 @@ from pathlib import Path
 from typing import Any, Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+_repo_str = str(REPO_ROOT)
+# Ensure the local repo is first in sys.path so the generator uses the
+# canonical arnold_pipelines.discovery module rather than an installed copy.
+if _repo_str in sys.path:
+    sys.path.remove(_repo_str)
+sys.path.insert(0, _repo_str)
 
 import arnold.pipeline as native_pipeline
 import arnold.workflow as workflow

@@ -4,7 +4,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 
 Provenance:
 - generator: scripts/generate_arnold_docs.py
-- source_package: arnold/pipelines/megaplan/pipelines/doc
+- source_package: arnold_pipelines/megaplan/pipelines/doc
 - manifest_hash: native:doc
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
@@ -17,11 +17,11 @@ Provenance:
 
 | item | value |
 | --- | --- |
-| Package | arnold/pipelines/megaplan/pipelines/doc|
-| Builder target | arnold.pipelines.megaplan.pipelines.doc:build_pipeline|
-| Steps | arnold/pipelines/megaplan/pipelines/doc/steps.py|
-| Builder source | arnold/pipelines/megaplan/pipelines/doc/__init__.py|
-| Skill | arnold/pipelines/megaplan/pipelines/doc/SKILL.md|
+| Package | arnold_pipelines/megaplan/pipelines/doc|
+| Builder target | arnold_pipelines.megaplan.pipelines.doc:build_pipeline|
+| Steps | arnold_pipelines/megaplan/pipelines/doc/steps.py|
+| Builder source | arnold_pipelines/megaplan/pipelines/doc/__init__.py|
+| Skill | arnold_pipelines/megaplan/pipelines/doc/SKILL.md|
 | Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
 | Load state | loadable-native|
@@ -180,19 +180,9 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 # doc pipeline — skill reference
 
-**Runtime**: native-default converted pipeline<br>
+**Driver**: `subprocess_isolated`<br>
 **Arnold API version**: `1.0`<br>
-**Run surface**: `megaplan run doc ...` or `arnold pipelines run doc ...`<br>
-**Supported modes**: *(none)*
-
-Fresh `doc` runs use the native runtime by default and persist runtime
-ownership in `state.json.runtime_envelope.runtime` and
-`state.json.meta.executor`. During the M7 deprecation window, the derived graph
-remains available as a compatibility fallback: pass `--runtime graph` (or the
-deprecated `--executor graph`) for a fresh run that must use the graph executor.
-Existing graph-born plan directories keep resuming on graph. Native-born runs
-resume on native, and corrupt native cursors fail closed rather than silently
-falling back to graph.
+**Supported modes**: *(none — invoked directly, not via `megaplan run`)*
 
 ## Purpose
 

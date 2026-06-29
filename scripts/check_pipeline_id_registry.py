@@ -9,8 +9,12 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+_repo_str = str(REPO_ROOT)
+# Ensure the local repo is first in sys.path so the script uses the
+# canonical arnold_pipelines.discovery module rather than an installed copy.
+if _repo_str in sys.path:
+    sys.path.remove(_repo_str)
+sys.path.insert(0, _repo_str)
 
 from arnold.pipeline import (
     load_pipeline_id_registries,
@@ -210,6 +214,8 @@ def _expected_manifest_hashes() -> dict[str, str]:
     for info in discover_migrated_pipelines():
         if info.registry_id is None or info.builder is None:
             continue
+        if info.load_state != "workflow":
+            continue
         manifest = compile_pipeline(info.builder())
         expected[info.registry_id] = manifest.manifest_hash or ""
     return expected
@@ -377,6 +383,8 @@ def build_manifest_identity_report(
     identities: list[dict[str, Any]] = []
     for info in discover_migrated_pipelines():
         if info.registry_id is None or info.builder is None:
+            continue
+        if info.load_state != "workflow":
             continue
         manifest = compile_pipeline(info.builder())
         registry_entry = registry_entries.get(info.registry_id)
