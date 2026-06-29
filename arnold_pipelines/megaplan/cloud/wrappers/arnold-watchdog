@@ -1216,7 +1216,7 @@ GUARD_REPEATS = max(
         )
     ),
 )
-LOG_WINDOW = max(60, int(os.environ.get("CLOUD_WATCHDOG_CHAIN_LOG_WINDOW_LINES", "320")))
+LOG_WINDOW = max(120, int(os.environ.get("CLOUD_WATCHDOG_CHAIN_LOG_WINDOW_LINES", "1500")))
 NONTERMINAL_STATES = {"authority_divergence", "blocked", "error", "awaiting_human"}
 
 
