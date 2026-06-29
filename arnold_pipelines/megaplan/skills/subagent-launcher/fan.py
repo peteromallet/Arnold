@@ -197,6 +197,7 @@ def _add_fallback_megaplan_paths() -> None:
         if (
             (root / "megaplan" / "agent" / "__init__.py").exists()
             or (root / "arnold" / "pipelines" / "megaplan" / "agent" / "__init__.py").exists()
+            or (root / "arnold" / "agent" / "run_agent.py").exists()
         ):
             root_str = str(root)
             if root_str not in sys.path:
@@ -221,14 +222,21 @@ try:
     except ModuleNotFoundError as legacy_exc:
         if legacy_exc.name not in {"megaplan", "run_agent", "hermes_state"}:
             raise
-        vendored_agent = Path.cwd() / "arnold" / "pipelines" / "megaplan" / "agent"
-        if vendored_agent.exists():
-            vendored_agent_str = str(vendored_agent)
-            if vendored_agent_str not in sys.path:
-                sys.path.insert(0, vendored_agent_str)
-        from arnold.agent.run_agent import AIAgent
-        from arnold.pipelines.megaplan.agent.hermes_state import SessionDB
-        from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
+        try:
+            from arnold.agent.run_agent import AIAgent
+            from arnold.agent.hermes_state import SessionDB
+            from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
+        except ModuleNotFoundError as current_exc:
+            if current_exc.name not in {"arnold", "arnold.agent", "arnold.agent.run_agent", "arnold.agent.hermes_state"}:
+                raise
+            vendored_agent = Path.cwd() / "arnold" / "pipelines" / "megaplan" / "agent"
+            if vendored_agent.exists():
+                vendored_agent_str = str(vendored_agent)
+                if vendored_agent_str not in sys.path:
+                    sys.path.insert(0, vendored_agent_str)
+            from arnold.agent.run_agent import AIAgent
+            from arnold.pipelines.megaplan.agent.hermes_state import SessionDB
+            from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
 except Exception:
     _eprint("[fan] FATAL: could not import megaplan/hermes runtime:")
     _eprint(traceback.format_exc())
