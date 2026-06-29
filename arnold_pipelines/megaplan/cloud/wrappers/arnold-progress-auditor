@@ -160,6 +160,7 @@ def _merge(
             ("created_at", "created_at"),
             ("started_at", "started_at"),
             ("updated_at", "updated_at"),
+            ("plan_name", "plan_name"),
         ):
             value = marker_payload.get(source_key)
             if value and not entry.get(dest_key):
@@ -182,7 +183,14 @@ for marker_path in sorted(pathlib.Path(marker_dir).glob("*.json")):
         continue
     session = payload.get("session") or marker_path.stem
     updated = payload.get("updated_at") or payload.get("created_at") or ""
-    for plan_dir in _plan_dirs(workspace):
+    marker_run_kind = str(payload.get("run_kind") or payload.get("kind") or "").strip().lower()
+    marker_plan_name = str(payload.get("plan_name") or "").strip()
+    if marker_run_kind == "plan" and marker_plan_name:
+        marker_plan_dir = workspace / ".megaplan" / "plans" / marker_plan_name
+        plan_dirs = [marker_plan_dir] if marker_plan_dir.is_dir() else []
+    else:
+        plan_dirs = _plan_dirs(workspace)
+    for plan_dir in plan_dirs:
         _merge(entries, workspace, plan_dir, session, "marker", updated, marker_path, payload)
 
 # (b) Tmux-discovered live marker-less workspaces.
@@ -207,7 +215,12 @@ if discover_proc and discover_proc.returncode == 0:
         workspace = pathlib.Path(workspace_raw)
         if not workspace.is_dir():
             continue
-        for plan_dir in _plan_dirs(workspace):
+        if _run_kind == "plan" and _plan_name:
+            marker_plan_dir = workspace / ".megaplan" / "plans" / _plan_name
+            plan_dirs = [marker_plan_dir] if marker_plan_dir.is_dir() else []
+        else:
+            plan_dirs = _plan_dirs(workspace)
+        for plan_dir in plan_dirs:
             _merge(entries, workspace, plan_dir, session, "tmux")
 
 # (c) Workspace-activity-discovered plans with recent state/events.
@@ -839,7 +852,7 @@ def _blocked_history_entry(item):
         return False
     return duration == 0 and bool(item.get("artifact_hash"))
 
-def _stale_block_replay(history, chain_log, chain_state):
+def _stale_block_replay(history, chain_log, chain_state, run_kind):
     by_hash = {}
     for item in (history if isinstance(history, list) else []):
         if not _blocked_history_entry(item):
@@ -862,11 +875,14 @@ def _stale_block_replay(history, chain_log, chain_state):
                 "output_file": items[-1].get("output_file") or "",
             }
         )
-    chain_exits = bool((chain_log or {}).get("recent_stops")) or (chain_state or {}).get("last_state") in {
-        "awaiting_human",
-        "blocked",
-        "stopped",
-    }
+    if run_kind == "plan":
+        chain_exits = True
+    else:
+        chain_exits = bool((chain_log or {}).get("recent_stops")) or (chain_state or {}).get("last_state") in {
+            "awaiting_human",
+            "blocked",
+            "stopped",
+        }
     return {
         "stale_block_replay": bool(repeated and chain_exits),
         "stale_block_replay_hash": repeated[0]["artifact_hash"] if repeated else "",
@@ -903,10 +919,20 @@ def _between_milestone_cycling(chain_log, chain_state, repair_data):
         "repair_one_milestone_advances": one_step_repair_advances,
     }
 
-def _stale_state_evidence(plan_latest_failure, latest_failure, events_path, history, chain_log, chain_state, repair_data):
+def _stale_state_evidence(plan_latest_failure, latest_failure, events_path, history, chain_log, chain_state, repair_data, run_kind):
     evidence = _latest_failure_staleness(latest_failure, events_path)
-    evidence.update(_stale_block_replay(history, chain_log, chain_state))
-    evidence.update(_between_milestone_cycling(chain_log, chain_state, repair_data))
+    evidence.update(_stale_block_replay(history, chain_log, chain_state, run_kind))
+    if run_kind == "chain":
+        evidence.update(_between_milestone_cycling(chain_log, chain_state, repair_data))
+    else:
+        evidence.update(
+            {
+                "between_milestone_cycling": False,
+                "one_milestone_stop_cycle_count": 0,
+                "one_milestone_stop_cycles": [],
+                "repair_one_milestone_advances": 0,
+            }
+        )
     clear_actions = []
     if evidence.get("latest_failure_is_stale"):
         clear_actions.append(f"set {plan_latest_failure.get('state_path')} latest_failure to null")
@@ -949,10 +975,13 @@ def _plan_evidence(entry):
     events_recent = bool(events_mtime) and dt.datetime.fromtimestamp(events_mtime, tz=dt.timezone.utc) >= cutoff
 
     session = entry.get("session") or workspace_path.name
+    run_kind = str(entry.get("kind") or "").strip().lower()
+    if run_kind not in {"chain", "plan"}:
+        run_kind = "chain"
     session_header = {
         "session": session,
         "workspace": workspace,
-        "kind": entry.get("kind") or "",
+        "kind": run_kind,
         "remote_spec": entry.get("remote_spec") or "",
         "launch_command": entry.get("launch_command") or "",
         "log": entry.get("log") or "",
@@ -1027,6 +1056,7 @@ def _plan_evidence(entry):
         chain_log,
         chain_current,
         repair_data,
+        run_kind,
     )
 
     return {
@@ -1099,9 +1129,10 @@ for entry in plans:
             "between-milestone cycling "
             f"{stale_state.get('one_milestone_stop_cycle_count')} one-milestone stop cycles"
         )
+    run_kind = ((ev.get("session_header") or {}).get("kind") or "chain")
     chain_current = (ev.get("chain_state_summary") or {}).get("current") or {}
     chain_last_state = chain_current.get("last_state")
-    if chain_last_state in ("awaiting_human", "pr_closed", "missing_base_ref", "blocked"):
+    if run_kind == "chain" and chain_last_state in ("awaiting_human", "pr_closed", "missing_base_ref", "blocked"):
         reasons.append(
             f"chain last_state={chain_last_state} current_plan={chain_current.get('current_plan_name') or 'unknown'}"
         )
@@ -1122,9 +1153,9 @@ for entry in plans:
     if repeated_failures:
         reasons.append(f"repair data repeats same failure signature {repeated_failures[0].get('count')}x")
     unresolved_actions = (ev.get("user_action_context") or {}).get("unresolved_user_actions") or []
-    if chain_last_state == "awaiting_human" and unresolved_actions:
+    if (run_kind == "plan" or chain_last_state == "awaiting_human") and unresolved_actions:
         ids = ",".join(str(item.get("id")) for item in unresolved_actions[:5])
-        reasons.append(f"awaiting_human with unresolved user actions: {ids}")
+        reasons.append(f"unresolved user actions: {ids}")
     if not reasons:
         continue
     ev["reasons"] = reasons
@@ -1145,10 +1176,11 @@ log "suspicious_plans=$FINDING_COUNT stall_flags=$stall_summary"
 # existing report-writer path below.
 dispatch_one() {
   local gather_file="$1"
-  local plan workspace reasons
+  local plan workspace reasons kind
   plan="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['plan'])" "$gather_file")"
   workspace="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['workspace'])" "$gather_file")"
   reasons="$(python3 -c "import json,sys; print('; '.join(json.load(open(sys.argv[1]))['reasons']))" "$gather_file")"
+  kind="$(python3 -c "import json,sys; print(((json.load(open(sys.argv[1])).get('session_header') or {}).get('kind') or 'chain'))" "$gather_file")"
   log "plan=$plan reasons=$reasons"
 
   local brief="$GATHER_DIR/brief-${plan}.md"
@@ -1165,10 +1197,15 @@ dispatch_one() {
     echo
     cat <<EOF
 You are auditing a cloud megaplan SESSION, not just one plan. Suspicious
-signals: $reasons. Evidence JSON is above, including session header, chain log
-tail/excerpts/repetition summary, chain state, repair-data history,
-stale_state_evidence, latest_failure.metadata.stderr, and user_actions evidence
-when present.
+signals: $reasons. Run kind: $kind.
+
+Evidence JSON is above. For kind=chain, inspect chain log tail/excerpts/repetition
+summary, chain state, repair-data history, plan evidence, stale_state_evidence,
+latest_failure.metadata.stderr, and user_actions evidence when present.
+For kind=plan, inspect plan state, events, plan logs, repair-data history,
+stale_state_evidence, latest_failure.metadata.stderr, and user_actions evidence.
+Missing chain log, chain state, chain.yaml, milestones, and base-ref evidence is
+expected for kind=plan and is not itself a failure.
 
 Return one of:
 - STALE: stale latest_failure or stale block replay detected; clear stale state and re-drive.
@@ -1187,10 +1224,11 @@ Evaluate these questions in order:
 - If stale block replay is present, classify STALE or INEFFICIENT and recommend clearing/quarantining the stale block artifact/state before re-driving.
 
 2. Deadlock vs passive for live failures
-- Is the chain process running, stopped, or repeatedly relaunched?
-- Does the chain log show the same milestone start/stop signature repeated?
-- Does the chain advance continuously across milestones, or exit after each milestone/terminal plan state?
-- Cite chain log line numbers and chain state fields.
+- Is the run process running, stopped, or repeatedly relaunched?
+- For kind=chain, does the chain log show the same milestone start/stop signature repeated?
+- For kind=chain, does the chain advance continuously across milestones, or exit after each milestone/terminal plan state?
+- For kind=plan, use plan state/events/log evidence instead of chain state/logs.
+- Cite chain log line numbers and chain state fields only for kind=chain.
 
 3. Inefficiency / cycling
 - Is progress happening only one milestone per watchdog/repair cycle?
@@ -1219,19 +1257,19 @@ a stale failure unless you also find a live source bug.
 
 If you identify a source bug: root-cause it from the evidence + workspace, FIX
 the root cause in $ARNOLD_SRC on the editible-install branch (Arnold source only
-— do NOT touch the running chain's project tree), keep it narrow + safe,
+— do NOT touch the running run's project tree), keep it narrow + safe,
 validate with python3 -m py_compile and a focused test, commit + push to
-origin/editible-install. The cloud watchdog relaunches the chain on your fix.
+origin/editible-install. The cloud watchdog relaunches the run on your fix.
 
 If no source fix is appropriate: do NOT fix. Return a hypothesis (likely cause
 of the lack of convergence/inefficiency/gate stop) + a recommendation
 (highest-leverage next action for the operator).
 
 Start with your verdict on its own line — FIXED <commit-sha>, ESCALATE,
-STALE, INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (chain log lines,
-chain state path/fields, stale_state_evidence flags, repair-data iterations,
-user_action IDs, exact stderr, iteration/attempt counts, gate verdicts, whether
-the milestone is completed, plan_v churn). Under 350 words.
+STALE, INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (plan state/events/logs,
+stale_state_evidence flags, repair-data iterations, user_action IDs, exact stderr,
+iteration/attempt counts, gate verdicts, plan_v churn, and chain log/state evidence
+only when kind=chain). Under 350 words.
 EOF
 
   } > "$brief"

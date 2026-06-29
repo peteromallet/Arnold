@@ -196,7 +196,7 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "STALE STATE: The latest_failure predates a successful run" in text
     assert "repair_clear_stale_state_if_needed()" in text
     assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
-    assert "Use the raw failure signal, chain narrative, and prior-attempt history" in text
+    assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
 
 
@@ -281,9 +281,9 @@ def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: 
 
     program = _extract_repair_program(
         "collect_failure_context_json",
-        "python3 - \"$workspace\" \"$session\" <<'PY'",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(workspace), "demo")
+    result = _run_embedded_python(program, str(workspace), "demo", "chain", "")
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -359,9 +359,9 @@ def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None
 
     program = _extract_repair_program(
         "collect_failure_context_json",
-        "python3 - \"$workspace\" \"$session\" <<'PY'",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(workspace), "demo")
+    result = _run_embedded_python(program, str(workspace), "demo", "chain", "")
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -372,6 +372,62 @@ def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None
     assert stale["latest_success_after_failure"]["timestamp"] == "2026-06-29T01:30:00Z"
     assert stale["stale_block_replay"]["detected"] is True
     assert stale["stale_block_replay"]["artifact_hash"] == "sha256:repeat"
+
+
+def test_repair_loop_collects_named_single_plan_in_mixed_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    target = workspace / ".megaplan" / "plans" / "target-plan"
+    unrelated = workspace / ".megaplan" / "plans" / "newer-unrelated"
+    _write_plan(
+        target,
+        {
+            "name": "target-plan",
+            "current_state": "planning",
+            "latest_failure": None,
+            "history": [],
+        },
+        plan_v_bodies={"plan_v1.md": "target"},
+        events_body=json.dumps({"kind": "plan_started", "phase": "plan"}) + "\n",
+    )
+    _write_plan(
+        unrelated,
+        {
+            "name": "newer-unrelated",
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "phase_failed",
+                "phase": "execute",
+                "message": "newer unrelated failure",
+            },
+            "history": [{"step": "execute", "result": "error"}],
+        },
+        plan_v_bodies={"plan_v1.md": "unrelated"},
+        events_body=json.dumps({"kind": "phase_end", "phase": "execute", "payload": {"status": "failed"}}) + "\n",
+    )
+    log_dir = workspace / ".megaplan" / "cloud-logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "target-plan-cloud.log").write_text("target plan log line\n", encoding="utf-8")
+    old_ts = time.time() - 600
+    new_ts = time.time()
+    os.utime(target / "state.json", (old_ts, old_ts))
+    os.utime(unrelated / "state.json", (new_ts, new_ts))
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "single-session", "plan", "target-plan")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["run_kind"] == "plan"
+    assert payload["requested_plan_name"] == "target-plan"
+    assert payload["plan_latest_failure"]["plan_name"] == "target-plan"
+    assert payload["plan_latest_failure"]["state_path"].endswith("/target-plan/state.json")
+    assert payload["failure_classification"] == "unknown_failure_mode"
+    assert "target plan log line" in payload["run_log_tail"]
+    assert payload["chain_log_tail"] == ""
+    assert payload["chain_state_summary"] == {}
 
 
 def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_result(tmp_path: Path) -> None:
@@ -490,9 +546,9 @@ def test_repair_loop_collects_state_meta_user_action_resolutions(tmp_path: Path)
 
     program = _extract_repair_program(
         "collect_failure_context_json",
-        "python3 - \"$workspace\" \"$session\" <<'PY'",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(workspace), "demo")
+    result = _run_embedded_python(program, str(workspace), "demo", "chain", "")
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -660,9 +716,9 @@ def test_repair_loop_classifies_completed_chain_as_chain_completed(tmp_path: Pat
 
     program = _extract_repair_program(
         "collect_failure_context_json",
-        "python3 - \"$workspace\" \"$session\" <<'PY'",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(workspace), "demo-chain")
+    result = _run_embedded_python(program, str(workspace), "demo-chain", "chain", "")
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -693,9 +749,9 @@ def test_repair_loop_classifies_completed_chain_with_null_current_fields(tmp_pat
 
     program = _extract_repair_program(
         "collect_failure_context_json",
-        "python3 - \"$workspace\" \"$session\" <<'PY'",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(workspace), "demo-chain")
+    result = _run_embedded_python(program, str(workspace), "demo-chain", "chain", "")
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
@@ -748,7 +804,7 @@ def test_watchdog_checks_plan_phase_health_even_when_session_alive() -> None:
     text = _wrapper("arnold-watchdog")
 
     assert "plan_phase_health_status()" in text
-    assert 'phase_health="$(plan_phase_health_status "$workspace")"' in text
+    assert 'phase_health="$(plan_phase_health_status "$workspace" "$run_kind" "$plan_name")"' in text
     assert 'latest_failure.get("kind") != "phase_failed"' in text
     assert "success_after_failure" in text
     assert 'f"recorded={recorded_at or' in text
@@ -2661,7 +2717,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "send_discord_escalation" in text
     assert "## Incident Snapshot" in text
     assert "primary failure signal(s)" in text
-    assert "current chain narrative (last 20 chain-log lines)" in text
+    assert "current run narrative (plan log tail when present)" in text
     assert "## Prior repair attempts" in text
     assert "Repair data file: $DATA_FILE" in text
     assert "Persistent findings doc: $FINDINGS_DOC" in text
@@ -2671,7 +2727,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "structural_pattern, other_instantiations, human_review_recommendation" in text
     assert "findings_doc_path, findings_doc_appended" in text
     assert 'entry["structural_pattern"] = report.get("structural_pattern") or ""' in text
-    assert "do not relaunch the chain yourself" in text.lower()
+    assert "do not relaunch the run yourself" in text.lower()
 
 
 def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
@@ -2750,18 +2806,49 @@ tmux() { echo TMUX >&2; return 1; }
 # ---------------------------------------------------------------------------
 
 
-def _extract_stall_program() -> str:
-    """Pull the python body of plan_progress_stall_status() out of the wrapper."""
+def _extract_phase_program() -> str:
+    """Pull the python body of plan_phase_health_status() out of the wrapper."""
     text = _wrapper("arnold-watchdog")
-    start = text.index("plan_progress_stall_status() {")
-    marker = "python3 - \"$workspace\" \"$MARKER_DIR\" <<'PY'"
+    start = text.index("plan_phase_health_status() {")
+    marker = "python3 - \"$workspace\" \"$run_kind\" \"$plan_name\" <<'PY'"
     py_start = text.index(marker, start)
     py_start = text.index("\n", py_start) + 1
     py_end = text.index("\nPY\n", py_start)
     return text[py_start:py_end]
 
 
-def _run_stall(workspace: Path, marker: Path, env_overrides: dict[str, str] | None = None) -> str:
+def _run_phase(workspace: Path, run_kind: str = "chain", plan_name: str = "") -> str:
+    program = _extract_phase_program()
+    prog_path = workspace.parent / "_phase_prog.py"
+    prog_path.write_text(program, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(prog_path), str(workspace), run_kind, plan_name],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"phase program failed: {result.stderr}"
+    return result.stdout.strip()
+
+
+def _extract_stall_program() -> str:
+    """Pull the python body of plan_progress_stall_status() out of the wrapper."""
+    text = _wrapper("arnold-watchdog")
+    start = text.index("plan_progress_stall_status() {")
+    marker = "python3 - \"$workspace\" \"$MARKER_DIR\" \"$run_kind\" \"$plan_name\" <<'PY'"
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    return text[py_start:py_end]
+
+
+def _run_stall(
+    workspace: Path,
+    marker: Path,
+    env_overrides: dict[str, str] | None = None,
+    run_kind: str = "chain",
+    plan_name: str = "",
+) -> str:
     program = _extract_stall_program()
     prog_path = workspace.parent / "_stall_prog.py"
     prog_path.write_text(program, encoding="utf-8")
@@ -2769,7 +2856,7 @@ def _run_stall(workspace: Path, marker: Path, env_overrides: dict[str, str] | No
     if env_overrides:
         env.update(env_overrides)
     result = subprocess.run(
-        [sys.executable, str(prog_path), str(workspace), str(marker)],
+        [sys.executable, str(prog_path), str(workspace), str(marker), run_kind, plan_name],
         capture_output=True,
         text=True,
         env=env,
@@ -2793,7 +2880,7 @@ def test_plan_progress_stall_status_is_wired_into_launch_chain_tick() -> None:
     text = _wrapper("arnold-watchdog")
 
     assert "plan_progress_stall_status()" in text
-    assert 'stall_health="$(plan_progress_stall_status "$workspace")"' in text
+    assert 'stall_health="$(plan_progress_stall_status "$workspace" "$run_kind" "$plan_name")"' in text
     # FLAG ONLY — emits a progress_stall report item, no repair dispatch.
     assert 'report_item "$report_items" "$session" "observe" "progress_stall"' in text
     # The progress_stall status must NOT be in the alive-allowlist so it surfaces
@@ -2840,6 +2927,50 @@ def test_plan_progress_stall_status_flags_attempt_threshold() -> None:
     out = _run_stall(ws, marker)
     assert "progress_stall:m1-y" in out
     assert "active_step.attempt=11>=10" in out
+
+
+def test_watchdog_plan_helpers_use_named_single_plan_in_mixed_workspace() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    target = ws / ".megaplan" / "plans" / "target-plan"
+    unrelated = ws / ".megaplan" / "plans" / "newer-unrelated"
+    _write_plan(
+        target,
+        {
+            "iteration": 1,
+            "current_state": "planning",
+            "active_step": {"phase": "plan", "attempt": 0},
+            "history": [],
+        },
+        plan_v_bodies={"plan_v1.md": "target"},
+        events_body="{}\n",
+    )
+    _write_plan(
+        unrelated,
+        {
+            "iteration": 25,
+            "current_state": "blocked",
+            "active_step": {"phase": "execute", "attempt": 12},
+            "latest_failure": {
+                "kind": "phase_failed",
+                "phase": "execute",
+                "message": "unrelated failure should not be inspected",
+            },
+            "history": [{"step": "execute", "result": "error"}],
+        },
+        plan_v_bodies={"plan_v1.md": "unrelated"},
+        events_body="{}\n",
+    )
+    old_ts = time.time() - 600
+    new_ts = time.time()
+    os.utime(target / "state.json", (old_ts, old_ts))
+    os.utime(unrelated / "state.json", (new_ts, new_ts))
+
+    assert _run_phase(ws, "plan", "target-plan") == "ok"
+    assert _run_stall(ws, marker, run_kind="plan", plan_name="target-plan") == "ok"
+    assert _run_phase(ws).startswith("phase_failure:newer-unrelated")
+    assert _run_stall(ws, marker).startswith("progress_stall:newer-unrelated")
 
 
 def test_plan_progress_stall_status_ok_for_healthy_plan() -> None:
@@ -3199,13 +3330,26 @@ def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_ar
     chain_ws = workspace_root / "vibecomfy-god-file-splits"
     bootstrap_ws = workspace_root / "vibecomfy-per-workflow-window-chat-20260628"
     done_ws = workspace_root / "python-shaped-workflow-authoring"
-    for ws in (chain_ws, bootstrap_ws, done_ws):
+    plan_marker_ws = workspace_root / "single-plan-marker-workspace"
+    for ws in (chain_ws, bootstrap_ws, done_ws, plan_marker_ws):
         (ws / ".megaplan" / "plans").mkdir(parents=True)
 
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     (marker_dir / "chain-session.json").write_text(
         json.dumps({"session": "chain-session", "workspace": str(chain_ws), "updated_at": _iso_hours_ago(0.2)}),
+        encoding="utf-8",
+    )
+    (marker_dir / "single-plan-session.json").write_text(
+        json.dumps(
+            {
+                "session": "single-plan-session",
+                "workspace": str(plan_marker_ws),
+                "run_kind": "plan",
+                "plan_name": "target-plan",
+                "updated_at": _iso_hours_ago(0.2),
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -3225,6 +3369,8 @@ def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_ar
     write_recent_plan(bootstrap_ws, "m1-bootstrap", state_recent=False, events_recent=True)
     write_recent_plan(done_ws, "m5-done", state_recent=False, events_recent=True)
     write_recent_plan(done_ws, "m6-done", state_recent=True, events_recent=False)
+    write_recent_plan(plan_marker_ws, "target-plan", state_recent=False, events_recent=False)
+    write_recent_plan(plan_marker_ws, "stale-unrelated", state_recent=False, events_recent=False)
     write_recent_plan(arnold_src, "should-not-scan", state_recent=True)
 
     discover_bin = tmp_path / "discover_stub.sh"
@@ -3258,6 +3404,9 @@ def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_ar
     assert observed[(str(done_ws), "m5-done")] == {"workspace_activity"}
     assert (str(done_ws), "m6-done") in observed
     assert observed[(str(done_ws), "m6-done")] == {"workspace_activity"}
+    assert (str(plan_marker_ws), "target-plan") in observed
+    assert observed[(str(plan_marker_ws), "target-plan")] == {"marker"}
+    assert (str(plan_marker_ws), "stale-unrelated") not in observed
     assert all(entry["workspace"] != str(arnold_src) for entry in entries)
 
 
@@ -3566,9 +3715,89 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
     assert "chain last_state=awaiting_human" in reasons
     assert "chain log repeats" in reasons
     assert "repair data has 2 repair iterations" in reasons
-    assert "awaiting_human with unresolved user actions" in reasons
+    assert "unresolved user actions" in reasons
     assert "latest_failure is stale" in reasons
     assert "stale block replay" in reasons
+
+
+def test_auditor_gather_flags_plan_stale_block_without_chain_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "single-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 4,
+            "current_state": "blocked",
+            "active_step": None,
+            "latest_failure": {
+                "kind": "execution_blocked",
+                "message": "blocked replay",
+                "phase": "execute",
+            },
+            "last_gate": {"recommendation": "PASS"},
+            "meta": {"weighted_scores": [8.0], "plan_deltas": [1.0], "significant_counts": [1]},
+            "history": [
+                {
+                    "step": "execute",
+                    "result": "blocked",
+                    "timestamp": _iso_hours_ago(1.0),
+                    "duration_ms": 0,
+                    "artifact_hash": "sha256:plan-stale",
+                    "output_file": "execution.json",
+                },
+                {
+                    "step": "execute",
+                    "result": "blocked",
+                    "timestamp": _iso_hours_ago(0.5),
+                    "duration_ms": 0,
+                    "artifact_hash": "sha256:plan-stale",
+                    "output_file": "execution.json",
+                },
+            ],
+        },
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="{}\n",
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "single-plan-session",
+                "kind": "plan",
+                "plan_name": plan_name,
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected plan-level stale block replay to produce a finding"
+    finding = findings[0]
+    assert finding["session_header"]["kind"] == "plan"
+    assert finding["chain_log"]["path"] == ""
+    assert finding["chain_state_summary"]["current"] == {}
+    stale = finding["stale_state_evidence"]
+    assert stale["stale_block_replay"] is True
+    assert stale["stale_block_replay_hash"] == "sha256:plan-stale"
+    assert stale["between_milestone_cycling"] is False
+    assert "stale block replay" in " ".join(finding["reasons"])
 
 
 def test_auditor_gather_flags_between_milestone_cycling(tmp_path: Path) -> None:
