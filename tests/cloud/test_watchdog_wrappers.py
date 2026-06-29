@@ -190,6 +190,8 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
 
     assert "## Incident Snapshot" in text
     assert "Start from the inline incident snapshot above." in text
+    assert "ATTEMPT to resolve those user actions before treating this as a human stop" in text
+    assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
     assert "Use the raw failure signal, chain narrative, and prior-attempt history" in text
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
 
@@ -231,6 +233,25 @@ def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: 
         + "\n",
         encoding="utf-8",
     )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "user_actions": [
+                    {
+                        "id": "ua-01-decide-cleanup",
+                        "phase": "before_execute",
+                        "blocks_task_ids": ["T1"],
+                        "rationale": "Maintainer decision affects cleanup.",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "user_actions.md").write_text(
+        "# User Actions\n\n- **ua-01-decide-cleanup**: Decide cleanup scope.\n",
+        encoding="utf-8",
+    )
     (chain_dir / "chain-demo.json").write_text(
         json.dumps(
             {
@@ -267,6 +288,10 @@ def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: 
     assert "phase 'execute' exited with internal_error" in payload["chain_log_tail"]
     assert "execute:phase_failed | reason=cli rejected flags" in payload["plan_events_tail"]
     assert payload["plan_latest_failure"]["state_path"].endswith("/demo-plan/state.json")
+    user_action_context = payload["user_action_context"]
+    assert user_action_context["user_actions_path"].endswith("/demo-plan/user_actions.md")
+    assert user_action_context["unresolved_user_actions"][0]["id"] == "ua-01-decide-cleanup"
+    assert user_action_context["unresolved_user_actions"][0]["blocks_task_ids"] == ["T1"]
 
 
 def test_repair_loop_summary_inlines_error_narrative_and_attempt_history(tmp_path: Path) -> None:
@@ -309,6 +334,22 @@ def test_repair_loop_summary_inlines_error_narrative_and_attempt_history(tmp_pat
                             "last_state": "awaiting_human",
                             "current_plan_name": "demo-plan",
                         },
+                        "user_action_context": {
+                            "plan_dir": "/tmp/demo",
+                            "user_actions_path": "/tmp/demo/user_actions.md",
+                            "resolutions_path": "/tmp/demo/user_action_resolutions.json",
+                            "finalize_path": "/tmp/demo/finalize.json",
+                            "user_actions_md": "# User Actions\n\n- **ua-01-decide-cleanup**: Decide cleanup scope.",
+                            "unresolved_user_actions": [
+                                {
+                                    "id": "ua-01-decide-cleanup",
+                                    "phase": "before_execute",
+                                    "blocks_task_ids": ["T1"],
+                                    "resolution_state": "unresolved",
+                                    "summary": "Decide cleanup scope.",
+                                }
+                            ],
+                        },
                     },
                 ],
             }
@@ -330,6 +371,9 @@ def test_repair_loop_summary_inlines_error_narrative_and_attempt_history(tmp_pat
     assert "## Prior repair attempts" in summary
     assert "i1 model=gpt-5.4 attempted=cleared stale markers only" in summary
     assert "plan events: /tmp/demo/events.ndjson" in summary
+    assert "## User Action Gate" in summary
+    assert "ua-01-decide-cleanup" in summary
+    assert "user action resolutions: /tmp/demo/user_action_resolutions.json" in summary
 
 
 def test_repair_loop_summary_falls_back_to_latest_failure_metadata(tmp_path: Path) -> None:
@@ -1223,7 +1267,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_awaiting_human_plan_state_reports_needs_human_without_relaunch_or_kimi(
+def test_watchdog_awaiting_human_plan_state_dispatches_repair_before_needs_human(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -1249,6 +1293,7 @@ def test_watchdog_awaiting_human_plan_state_reports_needs_human_without_relaunch
         [
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("plan_terminal_status"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
@@ -1262,6 +1307,7 @@ session_health_status() { echo stopped; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
@@ -1275,14 +1321,14 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tneeds_human\tawaiting_human halt;" in report
-    assert "execute reported blocked tasks awaiting user action: T1" in report
+    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
     assert "\tobserve\tcomplete\t" not in report
-    assert "DISPATCH" not in result.stderr
+    assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
-    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_nonterminal_plan_state_mechanically_relaunches_before_kimi(tmp_path: Path) -> None:
@@ -1623,7 +1669,7 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 
 
-def test_watchdog_awaiting_human_chain_state_reports_needs_human_without_relaunch_or_kimi(
+def test_watchdog_awaiting_human_chain_state_dispatches_repair_before_needs_human(
     tmp_path: Path,
 ) -> None:
     marker_dir = tmp_path / "markers"
@@ -1684,6 +1730,7 @@ def test_watchdog_awaiting_human_chain_state_reports_needs_human_without_relaunc
         [
             _extract_wrapper_function("plan_attention_status_env"),
             _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"LOG={str(log_path)!r}",
@@ -1696,6 +1743,7 @@ session_health_status() { echo stopped; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
@@ -1709,14 +1757,13 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tneeds_human\tawaiting_human halt;" in report
-    assert "ua-01-reclassify-deletion-targets" in report
-    assert "m7-06-runtime-deletion-target-purge" in report
-    assert "DISPATCH" not in result.stderr
+    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\t" not in report
+    assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
     assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
-    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+    assert "needs-human webhook unset" not in log_path.read_text(encoding="utf-8")
 
 
 def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_state(
