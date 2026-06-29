@@ -294,6 +294,63 @@ def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: 
     assert user_action_context["unresolved_user_actions"][0]["blocks_task_ids"] == ["T1"]
 
 
+def test_repair_loop_collects_state_meta_user_action_resolutions(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "finalized",
+                "latest_failure": {"kind": "phase_failed", "message": "phase 'execute' internal_error"},
+                "meta": {
+                    "user_action_resolutions": {
+                        "ua-01-decide-cleanup": {"state": "satisfied", "reason": "covered by evidence"}
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "user_actions": [
+                    {
+                        "id": "ua-01-decide-cleanup",
+                        "phase": "before_execute",
+                        "blocks_task_ids": ["T1"],
+                        "rationale": "Maintainer decision affects cleanup.",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "user_actions.md").write_text(
+        "# User Actions\n\n- **ua-01-decide-cleanup**: Decide cleanup scope.\n",
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "awaiting_human"}),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "demo")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["user_action_context"]["unresolved_user_actions"] == []
+
+
 def test_repair_loop_summary_inlines_error_narrative_and_attempt_history(tmp_path: Path) -> None:
     data_path = tmp_path / "repair-data.json"
     data_path.write_text(
