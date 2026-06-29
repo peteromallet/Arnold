@@ -519,6 +519,10 @@ def _classify_failure(signals: list[str], latest_failure: dict[str, object], cha
     kind = str(latest_failure.get("kind") or "").lower()
     phase = str(latest_failure.get("phase") or "").lower()
     last_state = str(chain_state.get("last_state") or "").lower()
+    current_state = str(chain_state.get("current_state") or "").lower()
+    current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
+    if last_state == "done" and current_state in {"", "done"} and not current_plan_name:
+        return "chain_completed"
     if "unrecognized arguments" in combined or "usage:" in combined:
         return "cli_or_argument_error"
     if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":
