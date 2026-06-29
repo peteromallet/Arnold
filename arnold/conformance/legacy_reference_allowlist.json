@@ -121,12 +121,6 @@
       "reason": "Sphinx cross-reference to deleted legacy module; retained as historical documentation of the interface ancestry."
     },
     {
-      "path": "arnold/pipelines/deliberation/native.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Zero-leak gate docstring/comment that names the deleted legacy package as forbidden import boundary enforcement."
-    },
-    {
       "path": "arnold/runtime/CONTRACT.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",

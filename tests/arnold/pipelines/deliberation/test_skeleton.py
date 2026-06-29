@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipeline.discovery import Manifest, ManifestError, read_manifest
-from arnold.pipeline.profiles import (
+from arnold.workflow.discovery import Manifest, ManifestError, read_manifest
+from arnold_pipelines.megaplan.profiles import (
     ProfileLoadError,
     load_profiles,
 )

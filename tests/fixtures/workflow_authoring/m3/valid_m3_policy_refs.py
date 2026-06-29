@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from arnold.workflow.authoring import workflow
 from tests.fixtures.workflow_authoring.components import (
-    execute,
+    execute_with_artifact_capability,
     fast_retry,
     handoff_transition,
     operator_suspend,
@@ -20,7 +20,7 @@ from tests.fixtures.workflow_authoring.components import (
 )
 def flow(brief):
     plan_output = plan(id="plan", brief=brief)
-    evidence = execute(id="execute", plan=plan_output, policy=fast_retry)
+    evidence = execute_with_artifact_capability(id="execute", plan=plan_output, policy=fast_retry)
     review(
         id="review",
         evidence=evidence,

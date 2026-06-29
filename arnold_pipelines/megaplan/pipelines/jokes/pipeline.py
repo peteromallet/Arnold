@@ -6,7 +6,7 @@ from dataclasses import replace
 from functools import wraps
 from typing import Any, Callable
 
-from arnold.pipeline import Edge, Pipeline, Stage, StepContext, StepResult
+from arnold.pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
 from arnold.pipeline.native import (
     NativeProgram,
     compile_pipeline,

@@ -31,7 +31,7 @@ import time
 import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
-from arnold.runtime.process import kill_group
+from arnold_pipelines.megaplan.runtime.process import kill_group
 from typing import Any, Dict, List, Optional
 
 # Availability gate: UDS requires a POSIX OS

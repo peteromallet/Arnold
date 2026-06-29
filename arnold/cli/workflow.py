@@ -14,8 +14,10 @@ Subcommands operate on a single builder target:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -28,6 +30,7 @@ from arnold.cli.workflow_diagnostics import (
     render_json_envelope,
 )
 from arnold.cli.workflow_explain import build_explain_entries
+from arnold.cli.workflow_source_topology import build_source_topology
 from arnold.execution import ExecutionRegistries, run
 from arnold.execution.backend import SkeletalBackend
 from arnold.execution.observability import ExecutionLogger
@@ -35,24 +38,105 @@ from arnold.execution.state_store import FileStateStore
 from arnold.execution.result import ExecutionResult
 from arnold.manifest.refs import NodeRef, manifest_coordinate
 from arnold.workflow import (
-    Pipeline,
     compile_pipeline,
     dry_run,
     inspect_manifest,
     to_dot,
     to_yaml,
 )
+from arnold.pipeline.types import Pipeline as GraphPipeline
+from arnold.workflow.dsl import Pipeline as WorkflowPipeline, Route as WorkflowRoute, Step as WorkflowStep
 from arnold_pipelines.discovery import load_builder
 
 
-def _load_builder(target: str) -> Callable[[], Pipeline]:
+def _load_builder(target: str) -> Callable[[], Any]:
     return load_builder(target)
+
+
+def _ref_token(value: str) -> str:
+    token = re.sub(r"[^A-Za-z0-9_.:-]+", "_", value.strip())
+    return token or "default"
+
+
+def _workflow_from_graph_pipeline(pipeline: GraphPipeline, *, target: str) -> WorkflowPipeline:
+    steps = tuple(
+        WorkflowStep(
+            id=_ref_token(name),
+            kind=_ref_token(str(getattr(stage.step, "kind", "compute"))),
+            label=name,
+            metadata={"source": "arnold.pipeline", "builder": target},
+        )
+        for name, stage in pipeline.stages.items()
+    )
+    routes: list[WorkflowRoute] = []
+    for source, stage in pipeline.stages.items():
+        for edge in getattr(stage, "edges", ()) or ():
+            target_name = getattr(edge, "target", "")
+            if not target_name or target_name == "halt":
+                continue
+            label = _ref_token(str(getattr(edge, "label", "default") or "default"))
+            routes.append(
+                WorkflowRoute(
+                    id=_ref_token(f"{source}:{target_name}:{label}"),
+                    source=_ref_token(source),
+                    target=_ref_token(str(target_name)),
+                    label=label,
+                )
+            )
+    return WorkflowPipeline(
+        id=_ref_token(getattr(pipeline, "entry", None) or target.rsplit(":", 1)[0]),
+        version="1.0",
+        steps=steps,
+        routes=tuple(routes),
+        metadata={"source": "arnold.pipeline", "builder": target},
+    )
+
+
+def _source_path_from_advertised_value(value: Any, *, module_file: str | None) -> Path | None:
+    if value is None:
+        return None
+    try:
+        path = Path(value)
+    except TypeError:
+        return None
+    if not path.is_absolute() and module_file:
+        cwd_path = Path.cwd() / path
+        if cwd_path.exists():
+            return cwd_path
+        path = Path(module_file).resolve().parent / path
+    return path
+
+
+def _advertised_authoring_source_path(target: str) -> Path | None:
+    builder = _load_builder(target)
+    module = sys.modules.get(getattr(builder, "__module__", ""))
+    if module is None and ":" in target:
+        module_name, _ = target.rsplit(":", 1)
+        module = importlib.import_module(module_name)
+    module_file = getattr(module, "__file__", None) if module is not None else None
+    for owner in (builder, module):
+        if owner is None:
+            continue
+        for attr in (
+            "AUTHORING_SOURCE_PATH",
+            "authoring_source_path",
+            "__authoring_source_path__",
+        ):
+            path = _source_path_from_advertised_value(
+                getattr(owner, attr, None),
+                module_file=module_file,
+            )
+            if path is not None:
+                return path
+    return None
 
 
 def _compile_from_target(target: str) -> workflow.WorkflowManifest:
     builder = _load_builder(target)
     pipeline = builder()
-    if not isinstance(pipeline, Pipeline):
+    if isinstance(pipeline, GraphPipeline):
+        pipeline = _workflow_from_graph_pipeline(pipeline, target=target)
+    if not isinstance(pipeline, WorkflowPipeline):
         raise ValueError(
             f"builder {target!r} returned {type(pipeline).__name__}, expected Pipeline"
         )
@@ -100,8 +184,16 @@ def _print_result(result: ExecutionResult) -> None:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
-    if getattr(args, "source_path", None):
-        source_path = Path(args.source_path)
+    try:
+        source_path = _source_path_from_args_or_module(args)
+    except Exception as exc:
+        if args.format == "json":
+            print(render_json_envelope(exc, source_kind="module"))
+        else:
+            print(f"check failed: {exc}", file=sys.stderr)
+        return 1
+
+    if source_path is not None:
         result = workflow.check_workflow_file(source_path)
         if args.format == "json":
             if result.ok:
@@ -278,6 +370,16 @@ def _source_path_or_none(args: argparse.Namespace) -> Path | None:
     return Path(raw) if raw else None
 
 
+def _source_path_from_args_or_module(args: argparse.Namespace) -> Path | None:
+    source_path = _source_path_or_none(args)
+    if source_path is not None:
+        return source_path
+    module = getattr(args, "module", None)
+    if module:
+        return _advertised_authoring_source_path(module)
+    return None
+
+
 def _cmd_compile(args: argparse.Namespace) -> int:
     source_path = _source_path_or_none(args)
     try:
@@ -318,8 +420,8 @@ def _cmd_compile(args: argparse.Namespace) -> int:
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
-    source_path = _source_path_or_none(args)
     try:
+        source_path = _source_path_from_args_or_module(args)
         if source_path is not None:
             check_result = workflow.check_workflow_file(source_path)
             manifest = workflow.compile_workflow_file(source_path)
@@ -385,10 +487,14 @@ def _span_dict(span: Any) -> dict[str, Any] | None:
 
 
 def _cmd_explain(args: argparse.Namespace) -> int:
-    source_path = _source_path_or_none(args)
+    try:
+        source_path = _source_path_from_args_or_module(args)
+    except Exception as exc:
+        print(f"explain failed: {exc}", file=sys.stderr)
+        return 1
     if source_path is None:
         print(
-            "explain requires <workflow.py>",
+            "explain requires <workflow.py> or --module with AUTHORING_SOURCE_PATH",
             file=sys.stderr,
         )
         return 2
@@ -433,12 +539,121 @@ def _cmd_explain(args: argparse.Namespace) -> int:
         )
     else:
         print(f"Workflow {decl.id} (v{decl.version}) in {source_path}")
-        for idx, entry in enumerate(entries, start=1):
+        def render_entry(entry: dict[str, Any], *, prefix: str, depth: int) -> None:
             source = entry.get("source") or {}
             line = source.get("start_line")
             loc = f"line {line}" if line is not None else "unknown location"
-            print(f"{idx}. [{entry['kind']}] {entry['id']} ({loc}) - {entry['summary']}")
+            indent = "  " * depth
+            print(f"{indent}{prefix} [{entry['kind']}] {entry['id']} ({loc}) - {entry['summary']}")
+            for child_index, child in enumerate(entry.get("children", []), start=1):
+                render_entry(child, prefix=f"{prefix}.{child_index}", depth=depth + 1)
+
+        for idx, entry in enumerate(entries, start=1):
+            render_entry(entry, prefix=str(idx), depth=0)
     return 0
+
+
+def _graph_annotations_from_source_topology(
+    source_topology: dict[str, Any],
+    manifest: workflow.WorkflowManifest,
+) -> dict[str, Any]:
+    edge_annotations: dict[str, dict[str, str]] = {}
+    for branch in source_topology.get("branches", []):
+        if not isinstance(branch, dict):
+            continue
+        decision_output = branch.get("decision_output")
+        if not isinstance(decision_output, str) or not decision_output:
+            continue
+        for arm in branch.get("arms", []):
+            if not isinstance(arm, dict):
+                continue
+            condition = arm.get("condition")
+            if isinstance(condition, dict):
+                literal = condition.get("literal")
+                suffix = f".{decision_output}.eq.{literal}"
+                label = str(literal) if literal is not None else None
+            else:
+                suffix = f".{decision_output}.else"
+                label = "else"
+            if not label:
+                continue
+            for edge in manifest.edges:
+                if edge.condition_ref and edge.condition_ref.endswith(suffix):
+                    edge_annotations[edge.id] = {
+                        "label": label,
+                        "condition_ref": edge.condition_ref,
+                    }
+    return {"edges": edge_annotations}
+
+
+def _mermaid_group_id(raw: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in raw)
+
+
+def _mermaid_node_line(node: Any) -> str:
+    label = node.label or node.id
+    return f"    {node.id}[\"{label}\"]"
+
+
+def _render_mermaid_graph(
+    manifest: workflow.WorkflowManifest,
+    source_topology: dict[str, Any],
+) -> str:
+    grouped_node_ids: set[str] = set()
+    lines = ["flowchart TD"]
+
+    for loop in source_topology.get("loops", []):
+        if not isinstance(loop, dict):
+            continue
+        body_node_ids = [
+            node_id for node_id in loop.get("body_node_ids", []) if isinstance(node_id, str)
+        ]
+        if not body_node_ids:
+            continue
+        loop_id = str(loop.get("id") or "loop")
+        lines.append(f"    subgraph {_mermaid_group_id(loop_id)}[\"loop: {loop_id}\"]")
+        for node in manifest.nodes:
+            if node.id in body_node_ids:
+                lines.append("    " + _mermaid_node_line(node))
+                grouped_node_ids.add(node.id)
+        lines.append("    end")
+
+    for branch in source_topology.get("branches", []):
+        if not isinstance(branch, dict):
+            continue
+        branch_id = str(branch.get("id") or "branch")
+        arms = [arm for arm in branch.get("arms", []) if isinstance(arm, dict)]
+        if not arms:
+            continue
+        lines.append(f"    subgraph {_mermaid_group_id(branch_id)}[\"branch: {branch_id}\"]")
+        for arm in arms:
+            node_ids = [
+                node_id for node_id in arm.get("node_ids", []) if isinstance(node_id, str)
+            ]
+            if not node_ids:
+                continue
+            condition = arm.get("condition")
+            arm_label = "else"
+            if isinstance(condition, dict) and condition.get("literal") is not None:
+                arm_label = str(condition["literal"])
+            arm_id = str(arm.get("id") or f"{branch_id}-arm-{arm.get('index', 0)}")
+            lines.append(f"        subgraph {_mermaid_group_id(arm_id)}[\"{arm_label}\"]")
+            for node in manifest.nodes:
+                if node.id in node_ids:
+                    lines.append("        " + _mermaid_node_line(node))
+                    grouped_node_ids.add(node.id)
+            lines.append("        end")
+        lines.append("    end")
+
+    for node in manifest.nodes:
+        if node.id not in grouped_node_ids:
+            lines.append(_mermaid_node_line(node))
+    for edge in manifest.edges:
+        label = edge.label or ""
+        if edge.condition_ref:
+            label = f"{label}:{edge.condition_ref}"
+        lines.append(f"    {edge.source} -->|{label}| {edge.target}")
+    return "\n".join(lines)
 
 
 def _cmd_graph(args: argparse.Namespace) -> int:
@@ -448,6 +663,16 @@ def _cmd_graph(args: argparse.Namespace) -> int:
         return 2
 
     try:
+        check_result = workflow.check_workflow_file(source_path)
+        if not check_result.ok:
+            if args.format == "json":
+                print(render_json_envelope(check_result.diagnostics, source_path=source_path))
+            else:
+                print(
+                    render_human_diagnostics(check_result.diagnostics, source_path=source_path),
+                    file=sys.stderr,
+                )
+            return 1
         manifest = workflow.compile_workflow_file(source_path)
     except (workflow.SourceCompileError, workflow.ManifestValidationError) as exc:
         if args.format == "json":
@@ -464,28 +689,38 @@ def _cmd_graph(args: argparse.Namespace) -> int:
 
     fmt = args.format
     output: str
+    decl = check_result.parsed_source.workflow
+    source_topology = (
+        build_source_topology(decl, manifest)
+        if decl is not None
+        else {"nodes": {}, "branches": [], "loops": []}
+    )
     if fmt == "dot":
-        output = workflow.to_dot(manifest)
+        output = workflow.to_dot(
+            manifest,
+            annotations=_graph_annotations_from_source_topology(source_topology, manifest),
+        )
     elif fmt == "mermaid":
-        lines = ["flowchart TD"]
-        for node in manifest.nodes:
-            label = node.label or node.id
-            lines.append(f"    {node.id}[\"{label}\"]")
-        for edge in manifest.edges:
-            label = edge.label or ""
-            if edge.condition_ref:
-                label = f"{label}:{edge.condition_ref}"
-            lines.append(f"    {edge.source} -->|{label}| {edge.target}")
-        output = "\n".join(lines)
+        output = _render_mermaid_graph(manifest, source_topology)
     elif fmt == "json":
         nodes = []
         for node in manifest.nodes:
+            annotation = source_topology["nodes"].get(node.id, {})
             nodes.append(
                 {
                     "id": node.id,
                     "kind": node.kind,
                     "label": node.label,
                     "source_span": _span_dict(node.source_span),
+                    "nesting_depth": annotation.get("nesting_depth"),
+                    "source_role": annotation.get("source_role") or annotation.get("kind"),
+                    "branch_id": annotation.get("branch_id"),
+                    "branch_arm_id": annotation.get("branch_arm_id"),
+                    "branch_decision_output": annotation.get("branch_decision_output"),
+                    "branch_condition_literal": annotation.get("branch_condition_literal"),
+                    "loop_id": annotation.get("loop_id"),
+                    "loop_policy_ref": annotation.get("loop_policy_ref"),
+                    "loop_reentry_id": annotation.get("loop_reentry_id"),
                 }
             )
         edges = [
@@ -499,7 +734,13 @@ def _cmd_graph(args: argparse.Namespace) -> int:
             for edge in manifest.edges
         ]
         output = json.dumps(
-            {"nodes": nodes, "edges": edges}, sort_keys=True, indent=2
+            {
+                "nodes": nodes,
+                "edges": edges,
+                "source_topology": source_topology,
+            },
+            sort_keys=True,
+            indent=2,
         )
     else:
         print(f"unsupported graph format: {fmt}", file=sys.stderr)

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from arnold.runtime.operations import OperationResult
+from arnold.execution.operations import OperationResult
 
 
 def preflight_or_raise(profile: Mapping[str, Any], **kwargs: Any) -> None:

@@ -5,7 +5,7 @@ with stage/edge metadata, guarded-loop ``loop_condition``, and an
 optional typed-port binding map derived via ``derive_binding_map()``.
 
 The resulting Pipeline validates cleanly through
-:func:`arnold.pipeline.validator.validate` and can be executed by the
+:func:`arnold.workflow.validator.validate` and can be executed by the
 existing graph executor (``run_pipeline`` / ``run_pipeline_resume``).
 """
 

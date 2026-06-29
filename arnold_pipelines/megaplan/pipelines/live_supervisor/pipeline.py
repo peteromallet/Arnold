@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Callable
 
-from arnold.pipeline import Edge, Pipeline, Stage, StepContext
+from arnold.pipeline.types import Edge, Pipeline, Stage, StepContext
 from arnold.pipeline.native import NativeProgram, compile_pipeline, phase, pipeline
 from arnold_pipelines.megaplan.pipelines.live_supervisor.repair_agent import RepairAgent
 from arnold_pipelines.megaplan.pipelines.live_supervisor.steps import (

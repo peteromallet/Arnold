@@ -27,8 +27,8 @@ import pytest
 
 SEAM_MATRIX_DOC = Path("docs/m8-seam-coverage-matrix.md")
 VERIFIER_MODULE = "arnold.pipelines.evidence_pack.verifier"
-EVIDENCE_PACK_REGISTRY = Path("arnold/pipelines/evidence_pack/pipeline_ids.json")
-MEGAPLAN_REGISTRY = Path("arnold/pipelines/megaplan/_pipeline/pipeline_ids.json")
+EVIDENCE_PACK_REGISTRY = Path("arnold_pipelines/evidence_pack/pipeline_ids.json")
+MEGAPLAN_REGISTRY = Path("arnold_pipelines/megaplan/pipeline_ids.json")
 
 # ---------------------------------------------------------------------------
 # Required seam matrix columns

@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from arnold.runtime.operations import (
+from arnold.execution.operations import (
     OperationKind,
     OperationRegistry,
     OperationRequest,

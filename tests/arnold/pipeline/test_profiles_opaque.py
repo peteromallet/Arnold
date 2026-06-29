@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipeline.profiles import (
+from arnold_pipelines.megaplan.profiles import (
     ProfileLoadError,
     load_profiles,
     load_profile_metadata,

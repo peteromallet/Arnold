@@ -3,6 +3,9 @@
 # Owner: Platform  Expiry: 2026-12-31
 arnold.supervisor.model
 arnold.supervisor.outcomes
-arnold.agent.adapters._oneshot
-arnold.agent.adapters.codex
-arnold.agent.adapters.shannon
+arnold.agent.agent.copilot_acp_client
+arnold.agent.tools.code_execution_tool
+arnold.agent.tools.environments.local
+arnold.agent.tools.environments.persistent_shell
+arnold.agent.tools.process_registry
+arnold.agent.tools.rl_training_tool

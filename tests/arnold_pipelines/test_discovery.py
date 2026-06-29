@@ -37,8 +37,6 @@ def test_discover_migrated_pipelines_have_builders() -> None:
         "writing-panel-strict",
         "evidence_pack_verifier",
         "my-pipeline",
-        "folder-audit",
-        "deliberation",
     }
     assert ids == expected, f"missing or extra: {ids ^ expected}"
     for info in results:
@@ -69,15 +67,13 @@ def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
         "live-supervisor": "arnold_pipelines/megaplan/pipelines/live_supervisor",
         "writing-panel-strict": "arnold_pipelines/megaplan/pipelines/writing_panel_strict",
         "select-tournament": "arnold_pipelines/megaplan/pipelines/select_tournament",
-        "folder-audit": "arnold/pipelines/folder_audit",
     }
     for pipeline_id, package_path in expected.items():
         info = by_id[pipeline_id]
         assert info.package_path == package_path
         assert info.docs_path == f"{package_path}/SKILL.md"
-        if pipeline_id != "epic-blitz":
-            assert not info.package_path.endswith(".py")
-            assert "-" not in info.package_path
+        assert not info.package_path.endswith(".py")
+        assert "-" not in info.package_path
         assert info.builder is not None
         built = info.builder()
         if hasattr(built, "id"):
@@ -113,16 +109,9 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
     assert by_id["creative"].builder_contract == "native"
     assert by_id["creative"].load_state == "loadable-native"
 
-    deliberation = by_id["deliberation"]
-    assert deliberation.builder_contract == "native"
-    assert deliberation.load_state == "loadable-native"
-    assert deliberation.builder is not None
-    assert deliberation.canonical_builder_path == "arnold.pipelines.deliberation:build_pipeline"
-    assert deliberation.docs_path == "arnold/pipelines/deliberation/SKILL.md"
-
 
 def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
-    """Mirrored ``arnold_pipelines`` modules may exist, but are not canonical."""
+    """Megaplan migrated rows use the product package as their canonical source."""
 
     native_or_deferred = {
         info.id: info
@@ -136,28 +125,12 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         "live-supervisor": "arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline",
         "writing-panel-strict": "arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline",
         "select-tournament": "arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline",
-        "folder-audit": "arnold.pipelines.folder_audit:build_pipeline",
-        "deliberation": "arnold.pipelines.deliberation:build_pipeline",
     }
 
     assert set(native_or_deferred) == set(expected)
     for pipeline_id, target in expected.items():
         info = native_or_deferred[pipeline_id]
         assert info.canonical_builder_path == target
-
-
-def test_workflow_template_is_discovered_separately_from_native() -> None:
-    """The workflow-first template is discovered as a workflow builder."""
-
-    results = discover_shipped_pipelines()
-    by_id = {info.id: info for info in results}
-    template = by_id["my-pipeline"]
-    assert template.builder_contract == "workflow"
-    assert template.load_state == "workflow"
-    assert template.canonical_builder_path == "arnold_pipelines._template:build_pipeline"
-    assert template.builder is not None
-    pipeline = template.builder()
-    assert isinstance(pipeline, Pipeline)
 
 
 def test_load_builder_works_with_module_target() -> None:
@@ -181,3 +154,5 @@ def test_archived_pipelines_included_when_requested() -> None:
     results = discover_shipped_pipelines(include_archived=True)
     archived = {info.id for info in results if info.disposition == "archive"}
     assert "megaplan.epic_blitz_py" in archived or "megaplan.epic_blitz" in archived
+    assert "legacy.folder_audit" in archived
+    assert "legacy.deliberation" in archived

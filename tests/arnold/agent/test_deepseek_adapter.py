@@ -8,7 +8,7 @@ import pytest
 
 from arnold.agent import AgentRequest, BackendAdapter
 from arnold.agent.adapters.deepseek import DeepSeekAdapter
-from arnold.pipeline.token_cost import PricingEntry
+from arnold.agent.costing.token_cost import PricingEntry
 
 
 class _FakeKeyPool:

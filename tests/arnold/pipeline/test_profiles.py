@@ -1,4 +1,4 @@
-"""Tests for neutral profile loading in ``arnold.pipeline.profiles``."""
+"""Tests for neutral profile loading in ``arnold_pipelines.megaplan.profiles``."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from arnold.pipeline.profiles import (
+from arnold_pipelines.megaplan.profiles import (
     ProfileLoadError,
     load_profile_metadata,
     load_profiles,

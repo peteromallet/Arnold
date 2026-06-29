@@ -11,7 +11,7 @@ from arnold_pipelines.megaplan.store import ProgressEventInput, ResidentConversa
 from arnold_pipelines.megaplan.schemas.base import utc_now
 from arnold_pipelines.megaplan.model_seam import render_step_message
 from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 
 from agentbox.redaction import redact_text
 

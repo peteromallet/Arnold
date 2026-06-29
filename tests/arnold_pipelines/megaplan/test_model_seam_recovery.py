@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.model_seam import (
     ModelStructuralAuditError,
     audit_step_payload,

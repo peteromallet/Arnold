@@ -14,11 +14,11 @@ a single :class:`StepResult` for dispatch.
 Hook protocol
 -------------
 
-Pass an :class:`~arnold.pipeline.hooks.ExecutorHooks` implementation to
+Pass an :class:`~arnold.execution.hooks.ExecutorHooks` implementation to
 inject behaviour at 12 documented insertion points without importing
 product-specific pipeline code from inside ``arnold/pipeline/``.  Omitting *hooks* (or
 passing ``None``) produces byte-for-byte identical behaviour to the
-pre-hooks path via :class:`~arnold.pipeline.hooks.NullExecutorHooks`.
+pre-hooks path via :class:`~arnold.execution.hooks.NullExecutorHooks`.
 
 Walk-loop terminal exits
 ------------------------
@@ -49,7 +49,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks
+from arnold.execution.hooks import ExecutorHooks, NullExecutorHooks
 from arnold.pipeline.native.routing import (
     RUNTIME_GRAPH,
     RUNTIME_NATIVE,
@@ -73,7 +73,7 @@ from arnold.pipeline.types import (
     StepResult,
 )
 from arnold.runtime.envelope import RuntimeEnvelope
-from arnold.runtime.operations import NullOperationRegistry, OperationRegistry
+from arnold.execution.operations import NullOperationRegistry, OperationRegistry
 
 
 def _global_runtime_kill_switch() -> RuntimeOwner | None:
@@ -295,7 +295,7 @@ def _find_native_program(pipeline: Pipeline) -> Any | None:
         if isinstance(bundle, NativeProgram):
             return bundle
     return None
-from arnold.runtime.wal_fold import (
+from arnold.kernel.fold import (
     fold_journal,
     last_state_snapshot_projector,
     read_event_journal,
@@ -320,9 +320,9 @@ class MediaCostAccumulator:
     """Opt-in accumulator for media cost lines from step hook metadata.
 
     Hook implementations can instantiate this as an attribute and call
-    :meth:`account` from their :meth:`~arnold.pipeline.hooks.ExecutorHooks.on_step_end`
+    :meth:`account` from their :meth:`~arnold.execution.hooks.ExecutorHooks.on_step_end`
     override.  It delegates to
-    :func:`~arnold.pipeline.hooks.account_media_cost_from_result` and
+    :func:`~arnold.execution.hooks.account_media_cost_from_result` and
     appends the returned ``CostResult`` lines to :attr:`lines`.
 
     When a hook implementation does **not** use this accumulator, no media
@@ -358,9 +358,9 @@ class MediaCostAccumulator:
         """Account media usage from *result* and append cost lines.
 
         Parameters are forwarded to
-        :func:`~arnold.pipeline.hooks.account_media_cost_from_result`.
+        :func:`~arnold.execution.hooks.account_media_cost_from_result`.
         """
-        from arnold.pipeline.hooks import account_media_cost_from_result
+        from arnold.execution.hooks import account_media_cost_from_result
 
         cost_lines = account_media_cost_from_result(
             result,

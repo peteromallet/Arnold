@@ -1,4 +1,4 @@
-"""Canonical public surface for the ``select-tournament`` pipeline package."""
+"""Package entrypoint for the ``select-tournament`` pipeline."""
 
 from __future__ import annotations
 
@@ -6,7 +6,10 @@ from collections.abc import Sequence
 
 from arnold.pipeline import Pipeline
 
-from .pipeline import DEFAULT_CANDIDATES, build_pipeline as _build_pipeline
+from .pipeline import (
+    DEFAULT_CANDIDATES,
+    build_pipeline as _build_pipeline,
+)
 
 
 name: str = "select-tournament"

@@ -55,17 +55,16 @@ This page is generated from the ``arnold.workflow`` manifest contract, the shipp
 | label | str | 'default'|
 | metadata | Mapping[str, Any] | default_factory=dict|
 | source | str | required|
+| source_span | SourceSpan \| None | None|
 | target | str | required|
 
 ## Shipped Pipeline Registry
 
 | stable_id | alias | manifest_hash | package_path | m6_disposition |
 | --- | --- | --- | --- | --- |
-| arnold.deliberation | deliberation | native:deliberation | arnold/pipelines/deliberation | keep|
-| arnold.folder_audit | folder-audit | native:folder-audit | arnold/pipelines/folder_audit | keep|
-| evidence_pack.verifier | evidence_pack_verifier | sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70 | arnold_pipelines/evidence_pack | keep|
+| evidence_pack.verifier | evidence_pack_verifier | sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2 | arnold_pipelines/evidence_pack | keep|
 | megaplan.core | megaplan | sha256:245a06ac778caf20c645772b7c0570655af7a79a0d00eda959b19d2cf01a3eba | arnold_pipelines/megaplan | keep|
-| megaplan.creative | creative | native:creative | arnold_pipelines/megaplan/pipelines/creative | keep|
+| megaplan.creative | creative | not-loadable | arnold_pipelines/megaplan/pipelines/creative | keep|
 | megaplan.doc | doc | native:doc | arnold_pipelines/megaplan/pipelines/doc | keep|
 | megaplan.jokes | jokes | native:jokes | arnold_pipelines/megaplan/pipelines/jokes | keep|
 | megaplan.live_supervisor | live-supervisor | native:live-supervisor | arnold_pipelines/megaplan/pipelines/live_supervisor | keep|

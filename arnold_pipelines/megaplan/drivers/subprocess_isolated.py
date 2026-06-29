@@ -25,7 +25,7 @@ from arnold_pipelines.megaplan.auto import _supervise_subprocess
 from arnold_pipelines.megaplan.runtime.process import spawn
 
 if TYPE_CHECKING:
-    from arnold.runtime.batch import BatchRuntimeSettings
+    from arnold_pipelines.megaplan.runtime.batch import BatchRuntimeSettings
 
 
 @dataclass

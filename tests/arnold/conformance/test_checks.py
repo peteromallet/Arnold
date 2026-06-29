@@ -22,10 +22,8 @@ from arnold.conformance.checks import (
     check_contract_result_schema_version_skew,
     check_contract_result_empty_schema_version_accepted,
 )
-from arnold.pipeline.step_invocation import (
-    StepInvocation,
-    StepInvocationAdapterRegistry,
-)
+from arnold.execution.registries import ExecutionRegistries
+from arnold.kernel import CapabilityCheck, CapabilityId
 from arnold.pipeline.types import ContractResult, ContractStatus
 
 
@@ -34,31 +32,38 @@ from arnold.pipeline.types import ContractResult, ContractStatus
 # ---------------------------------------------------------------------------
 
 class _GreenAdapter:
-    """An adapter that always succeeds on invoke."""
+    """A capability handler that always succeeds."""
 
-    def invoke(self, invocation: StepInvocation) -> None:
-        return None
+    def check(self, requirement_id, *, route, context):
+        return CapabilityCheck(
+            capability_id=CapabilityId(namespace="test", name=requirement_id),
+            allowed=True,
+        )
 
 
 class _RecordingAdapter:
     """An adapter that records invocations."""
 
     def __init__(self) -> None:
-        self.called_with: list[StepInvocation] = []
+        self.called_with: list[dict] = []
 
-    def invoke(self, invocation: StepInvocation) -> None:
-        self.called_with.append(invocation)
+    def check(self, requirement_id, *, route, context):
+        self.called_with.append(dict(context.get("invocation", {})))
+        return CapabilityCheck(
+            capability_id=CapabilityId(namespace="test", name=requirement_id),
+            allowed=True,
+        )
 
 
-def _fresh_registry() -> StepInvocationAdapterRegistry:
-    """Return a fresh fail-closed registry (only the reserved model slot)."""
-    return StepInvocationAdapterRegistry()
+def _fresh_registry() -> ExecutionRegistries:
+    """Return a fresh fail-closed registry set."""
+    return ExecutionRegistries()
 
 
-def _registry_with_green(kind: str = "_conformance_green_") -> StepInvocationAdapterRegistry:
+def _registry_with_green(kind: str = "_conformance_green_") -> ExecutionRegistries:
     """Return a registry with one non-model green adapter registered."""
-    reg = StepInvocationAdapterRegistry()
-    reg.register(kind, _GreenAdapter())
+    reg = ExecutionRegistries()
+    reg.capabilities.register(kind, _GreenAdapter())
     return reg
 
 
@@ -89,15 +94,15 @@ class TestAdapterProtocolConformanceGreen:
         assert result.passed is True
 
     def test_multiple_non_model_adapters_pass(self) -> None:
-        reg = StepInvocationAdapterRegistry()
-        reg.register("green_a", _GreenAdapter())
-        reg.register("green_b", _GreenAdapter())
+        reg = ExecutionRegistries()
+        reg.capabilities.register("green_a", _GreenAdapter())
+        reg.capabilities.register("green_b", _GreenAdapter())
         result = check_adapter_protocol_conformance(reg)
         assert result.passed is True
 
     def test_with_smoke_invocation_passes(self) -> None:
         reg = _registry_with_green()
-        invocation = StepInvocation(kind="_conformance_green_")
+        invocation = {"kind": "_conformance_green_"}
         result = check_adapter_protocol_conformance(
             reg, smoke_kind="_conformance_green_", smoke_invocation=invocation,
         )
@@ -165,23 +170,23 @@ class TestAdapterUnknownKindFailClosedGreen:
         result = check_adapter_unknown_kind_fail_closed(reg)
         assert result.passed is True
 
-    def test_unknown_kind_raises_keyerror_direct(self) -> None:
-        """Direct assertion: resolve unknown kind raises KeyError with kind name."""
+    def test_unknown_kind_raises_lookup_error_direct(self) -> None:
+        """Direct assertion: resolving unknown kind raises LookupError with kind name."""
         reg = _fresh_registry()
         unknown = "_direct_unknown_kind_"
-        with pytest.raises(KeyError) as exc_info:
-            reg.resolve(unknown)
+        with pytest.raises(LookupError) as exc_info:
+            reg.capabilities.get(unknown)
         error_msg = str(exc_info.value)
         assert unknown in error_msg
 
-    def test_unknown_kind_keyerror_lists_registered_kinds_direct(self) -> None:
-        """Direct assertion: KeyError message lists registered kinds."""
+    def test_unknown_kind_lookup_error_names_unregistered_handler_direct(self) -> None:
+        """Direct assertion: LookupError message names the missing handler."""
         reg = _registry_with_green("capability")
         unknown = "_missing_kind_"
-        with pytest.raises(KeyError) as exc_info:
-            reg.resolve(unknown)
+        with pytest.raises(LookupError) as exc_info:
+            reg.capabilities.get(unknown)
         error_msg = str(exc_info.value)
-        assert "capability" in error_msg or "model" in error_msg
+        assert unknown in error_msg
 
 
 # ---------------------------------------------------------------------------
@@ -211,27 +216,27 @@ class TestAdapterSmokeInvocation:
 
     def test_green_adapter_smoke_passes(self) -> None:
         reg = _registry_with_green("smoke_test")
-        invocation = StepInvocation(kind="smoke_test")
+        invocation = {"kind": "smoke_test"}
         result = check_adapter_smoke_invocation(reg, "smoke_test", invocation)
         assert result.passed is True
         assert result.check_id == "adapter-smoke-smoke_test"
 
     def test_unregistered_kind_fails_smoke(self) -> None:
         reg = _fresh_registry()
-        invocation = StepInvocation(kind="missing")
+        invocation = {"kind": "missing"}
         result = check_adapter_smoke_invocation(reg, "missing", invocation)
         assert result.passed is False
         assert "missing" in result.message
 
     def test_raising_adapter_fails_smoke(self) -> None:
-        reg = StepInvocationAdapterRegistry()
+        reg = ExecutionRegistries()
 
         class _FailingAdapter:
-            def invoke(self, invocation: StepInvocation) -> None:
+            def check(self, requirement_id, *, route, context):
                 raise RuntimeError("boom")
 
-        reg.register("failing", _FailingAdapter())
-        invocation = StepInvocation(kind="failing")
+        reg.capabilities.register("failing", _FailingAdapter())
+        invocation = {"kind": "failing"}
         result = check_adapter_smoke_invocation(reg, "failing", invocation)
         assert result.passed is False
         assert "RuntimeError" in result.message

@@ -2,47 +2,7 @@
   "generated_by": "scripts/check_pipeline_id_registry.py --write-identity-report",
   "identities": [
     {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/deliberation.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold/pipelines/deliberation",
-      "pipeline_id": "deliberation",
-      "registry_entry": null,
-      "registry_id": "arnold.deliberation",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold/pipelines/deliberation/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/folder-audit.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold/pipelines/folder_audit",
-      "pipeline_id": "folder-audit",
-      "registry_entry": null,
-      "registry_id": "arnold.folder_audit",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold/pipelines/folder_audit/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70",
+      "compiled_manifest_hash": "sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2",
       "disposition": "migrate",
       "example_docs": {
         "exists": true,
@@ -54,7 +14,7 @@
       "pipeline_id": "evidence_pack_verifier",
       "registry_entry": {
         "m6_disposition": "keep",
-        "manifest_hash": "sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70",
+        "manifest_hash": "sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2",
         "name": "evidence_pack_verifier",
         "previous_stable_ids": [],
         "seam_ids": [],
@@ -62,7 +22,7 @@
         "typed_contract_capable": true
       },
       "registry_id": "evidence_pack.verifier",
-      "registry_manifest_hash": "sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70",
+      "registry_manifest_hash": "sha256:71e3242c2ea95afdaa6376648cbb6826826e652f5d9249a0b69b741031db96c2",
       "registry_path": "arnold_pipelines/evidence_pack/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
@@ -80,93 +40,18 @@
       "package_exists": true,
       "package_path": "arnold_pipelines/megaplan",
       "pipeline_id": "megaplan",
-      "registry_entry": null,
+      "registry_entry": {
+        "name": "megaplan",
+        "seam_ids": [],
+        "stable_id": "megaplan.core",
+        "typed_contract_capable": false
+      },
       "registry_id": "megaplan.core",
       "registry_manifest_hash": null,
-      "registry_path": null,
+      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
         "path": "arnold_pipelines/megaplan/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/creative.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/creative",
-      "pipeline_id": "creative",
-      "registry_entry": null,
-      "registry_id": "megaplan.creative",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/creative/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/doc.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/doc",
-      "pipeline_id": "doc",
-      "registry_entry": null,
-      "registry_id": "megaplan.doc",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/doc/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/jokes.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/jokes",
-      "pipeline_id": "jokes",
-      "registry_entry": null,
-      "registry_id": "megaplan.jokes",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/jokes/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/live-supervisor.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/live_supervisor",
-      "pipeline_id": "live-supervisor",
-      "registry_entry": null,
-      "registry_id": "megaplan.live_supervisor",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/live_supervisor/SKILL.md"
       }
     },
     {
@@ -180,59 +65,25 @@
       "package_exists": true,
       "package_path": "arnold_pipelines/megaplan/pipelines/planning",
       "pipeline_id": "megaplan",
-      "registry_entry": null,
+      "registry_entry": {
+        "name": "planning",
+        "seam_ids": [],
+        "stable_id": "megaplan.planning",
+        "typed_contract_capable": true
+      },
       "registry_id": "megaplan.planning",
       "registry_manifest_hash": null,
-      "registry_path": null,
+      "registry_path": "arnold_pipelines/megaplan/pipeline_ids.json",
       "skill_docs": {
         "exists": true,
         "path": "arnold_pipelines/megaplan/pipelines/planning/SKILL.md"
       }
-    },
-    {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/select-tournament.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/select_tournament",
-      "pipeline_id": "select-tournament",
-      "registry_entry": null,
-      "registry_id": "megaplan.select_tournament",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/select_tournament/SKILL.md"
-      }
-    },
-    {
-      "compiled_manifest_hash": "",
-      "disposition": "migrate",
-      "example_docs": {
-        "exists": true,
-        "path": "docs/arnold/examples/writing-panel-strict.md"
-      },
-      "generated_asset_path": null,
-      "package_exists": true,
-      "package_path": "arnold_pipelines/megaplan/pipelines/writing_panel_strict",
-      "pipeline_id": "writing-panel-strict",
-      "registry_entry": null,
-      "registry_id": "megaplan.writing_panel_strict",
-      "registry_manifest_hash": null,
-      "registry_path": null,
-      "skill_docs": {
-        "exists": true,
-        "path": "arnold_pipelines/megaplan/pipelines/writing_panel_strict/SKILL.md"
-      }
     }
   ],
-  "identity_count": 11,
+  "identity_count": 3,
   "registry_files": [
-    "arnold_pipelines/evidence_pack/pipeline_ids.json"
+    "arnold_pipelines/evidence_pack/pipeline_ids.json",
+    "arnold_pipelines/megaplan/pipeline_ids.json"
   ],
   "source": "Derived from arnold_pipelines.discovery, discovered pipeline_ids.json files, generated docs/skill paths, and compile_pipeline(builder()).",
   "version": 1

@@ -12,11 +12,12 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from arnold.workflow.authoring import ComponentProvenance, PromptComponent, StepComponent
+from arnold.workflow.authoring import ComponentProvenance, PolicyComponent, PromptComponent, StepComponent
 
 PROMPT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt"
 PROMPT_COMPONENT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt_components"
 HANDLER_MODULE = "arnold_pipelines.megaplan.handlers"
+M4_LOOP_MAX_ITERATIONS = 4
 
 CAPABILITY_REQUIREMENTS = MappingProxyType(
     {
@@ -76,6 +77,25 @@ def _prompt(step_id: str) -> PromptComponent:
     )
 
 
+def _policy(
+    *,
+    export_name: str,
+    policy_id: str,
+    policy_type: str,
+    config: Mapping[str, Any],
+    label: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+) -> PolicyComponent:
+    return PolicyComponent(
+        id=policy_id,
+        provenance=_provenance(export_name),
+        policy_type=policy_type,
+        label=label or f"Megaplan {policy_id.removeprefix('megaplan:')} policy",
+        config=config,
+        metadata={} if metadata is None else metadata,
+    )
+
+
 def _step(
     *,
     export_name: str,
@@ -85,7 +105,7 @@ def _step(
     handler_ref: str | None = None,
     inputs: tuple[Mapping[str, str], ...] = (),
     outputs: tuple[Mapping[str, str], ...] = (),
-    policy_id: str = "megaplan:default",
+    policy: PolicyComponent | None = None,
     route_bindings: tuple[Mapping[str, Any], ...] = (),
     capability_ids: tuple[str, ...] = (),
     terminal: bool = False,
@@ -95,7 +115,7 @@ def _step(
         "kind": kind,
         "inputs": inputs,
         "outputs": outputs,
-        "policy_id": policy_id,
+        "policy_id": policy.id if policy is not None else "megaplan:default",
         "route_bindings": route_bindings,
         "capability_requirements": tuple(
             {
@@ -118,6 +138,7 @@ def _step(
         label=f"Megaplan {step_id}",
         step_type=kind,
         prompt=prompt,
+        policy=policy,
         metadata=component_metadata,
     )
 
@@ -130,6 +151,218 @@ REVISE_PROMPT = _prompt("revise")
 FINALIZE_PROMPT = _prompt("finalize")
 EXECUTE_PROMPT = _prompt("execute")
 REVIEW_PROMPT = _prompt("review")
+TIEBREAKER_RESEARCHER_PROMPT = _prompt("tiebreaker_researcher")
+TIEBREAKER_CHALLENGER_PROMPT = _prompt("tiebreaker_challenger")
+
+DEFAULT_POLICY = _policy(
+    export_name="DEFAULT_POLICY",
+    policy_id="megaplan:default",
+    policy_type="timing",
+    config={"timeout_seconds_ref": "build_pipeline.timeout_seconds"},
+    metadata={
+        "canonical_carriers": (
+            "prep",
+            "plan",
+            "critique",
+            "tiebreaker_run",
+            "finalize",
+            "execute",
+            "halt",
+            "override",
+        )
+    },
+)
+GATE_POLICY = _policy(
+    export_name="GATE_POLICY",
+    policy_id="megaplan:gate",
+    policy_type="control",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "suspension_routes": (
+            {"route_id": "gate:human", "capability_id": "human:gate"},
+        ),
+        "control_transitions": (
+            {
+                "transition_id": "gate:proceed",
+                "transition_type": "override",
+                "trigger_ref": "gate.recommendation",
+                "target_ref": "finalize",
+                "policy_ref": "megaplan:gate",
+            },
+            {
+                "transition_id": "gate:iterate",
+                "transition_type": "override",
+                "trigger_ref": "gate.recommendation",
+                "target_ref": "revise",
+                "policy_ref": "megaplan:gate",
+            },
+            {
+                "transition_id": "gate:tiebreaker",
+                "transition_type": "override",
+                "trigger_ref": "gate.recommendation",
+                "target_ref": "tiebreaker_run",
+                "policy_ref": "megaplan:gate",
+            },
+            {
+                "transition_id": "gate:escalate",
+                "transition_type": "escalation",
+                "trigger_ref": "gate.recommendation",
+                "target_ref": "override",
+                "policy_ref": "megaplan:gate",
+            },
+            {
+                "transition_id": "gate:abort",
+                "transition_type": "override",
+                "trigger_ref": "gate.recommendation",
+                "target_ref": "halt",
+                "policy_ref": "megaplan:gate",
+            },
+        ),
+    },
+    metadata={"canonical_carriers": ("gate",)},
+)
+REVISE_LOOP_POLICY = _policy(
+    export_name="REVISE_LOOP_POLICY",
+    policy_id="megaplan:revise-loop",
+    policy_type="loop",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "max_iterations": M4_LOOP_MAX_ITERATIONS,
+        "until_ref": "critique_gate_pass",
+        "suspension_routes": (
+            {
+                "route_id": "revise:loop",
+                "reentry_id": "revise:loop",
+                "capability_id": "megaplan:planning",
+            },
+        ),
+    },
+    metadata={"canonical_carriers": ("revise",)},
+)
+TIEBREAKER_POLICY = _policy(
+    export_name="TIEBREAKER_POLICY",
+    policy_id="megaplan:tiebreaker",
+    policy_type="loop",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "max_iterations": M4_LOOP_MAX_ITERATIONS,
+        "until_ref": "tiebreaker_resolved",
+        "suspension_routes": (
+            {
+                "route_id": "tiebreaker:loop",
+                "reentry_id": "tiebreaker:loop",
+                "capability_id": "megaplan:planning",
+            },
+        ),
+        "control_transitions": (
+            {
+                "transition_id": "tiebreaker:iterate",
+                "transition_type": "override",
+                "trigger_ref": "tiebreaker_decide.decision",
+                "target_ref": "critique",
+                "policy_ref": "megaplan:tiebreaker",
+            },
+            {
+                "transition_id": "tiebreaker:proceed",
+                "transition_type": "override",
+                "trigger_ref": "tiebreaker_decide.decision",
+                "target_ref": "finalize",
+                "policy_ref": "megaplan:tiebreaker",
+            },
+            {
+                "transition_id": "tiebreaker:escalate",
+                "transition_type": "escalation",
+                "trigger_ref": "tiebreaker_decide.decision",
+                "target_ref": "override",
+                "policy_ref": "megaplan:tiebreaker",
+            },
+        ),
+    },
+    metadata={"canonical_carriers": ("tiebreaker_decide",)},
+)
+REVIEW_POLICY = _policy(
+    export_name="REVIEW_POLICY",
+    policy_id="megaplan:review",
+    policy_type="control",
+    config={
+        "timeout_seconds_ref": "build_pipeline.timeout_seconds",
+        "suspension_routes": (
+            {"route_id": "review:human", "capability_id": "human:review"},
+        ),
+        "control_transitions": (
+            {
+                "transition_id": "review:rework",
+                "transition_type": "fallback",
+                "trigger_ref": "review.verdict",
+                "target_ref": "revise",
+                "policy_ref": "megaplan:review",
+            },
+            {
+                "transition_id": "review:done",
+                "transition_type": "override",
+                "trigger_ref": "review.verdict",
+                "target_ref": "halt",
+                "policy_ref": "megaplan:review",
+            },
+        ),
+    },
+    metadata={"canonical_carriers": ("review",)},
+)
+OVERRIDE_POLICY = _policy(
+    export_name="OVERRIDE_POLICY",
+    policy_id="megaplan:override",
+    policy_type="timing",
+    config={"timeout_seconds_ref": "build_pipeline.timeout_seconds"},
+    metadata={"canonical_carriers": ("override",)},
+)
+MODEL_ROUTING_POLICY = _policy(
+    export_name="MODEL_ROUTING_POLICY",
+    policy_id="megaplan:model-routing",
+    policy_type="routing",
+    config={
+        "default_routing_ref": "arnold_pipelines.megaplan.profiles:DEFAULT_AGENT_ROUTING",
+        "profile_loader_ref": "arnold_pipelines.megaplan.profiles:load_profile_metadata",
+        "phase_model_override_ref": "state.config.phase_model",
+    },
+    metadata={"authoring_surface": True},
+)
+ROBUSTNESS_POLICY = _policy(
+    export_name="ROBUSTNESS_POLICY",
+    policy_id="megaplan:robustness",
+    policy_type="robustness",
+    config={
+        "levels_ref": "arnold_pipelines.megaplan.profiles:ROBUSTNESS_LEVELS",
+        "accepted_ref": "arnold_pipelines.megaplan.profiles:ROBUSTNESS_ACCEPTED",
+        "normalizer_ref": "arnold_pipelines.megaplan.profiles:normalize_robustness",
+    },
+    metadata={"authoring_surface": True},
+)
+ARTIFACT_CONTRACT_POLICY = _policy(
+    export_name="ARTIFACT_CONTRACT_POLICY",
+    policy_id="megaplan:artifact-contract",
+    policy_type="artifact_contract",
+    config={
+        "step_contracts_ref": "arnold_pipelines.megaplan.step_contracts:STEP_CONTRACTS",
+        "content_types_ref": "arnold_pipelines.megaplan.content_types:CONTENT_TYPE_REGISTRY",
+    },
+    metadata={"authoring_surface": True},
+)
+SUSPENSION_POLICY = _policy(
+    export_name="SUSPENSION_POLICY",
+    policy_id="megaplan:suspension",
+    policy_type="suspension",
+    config={
+        "runtime_status": "suspended",
+        "resume_contract_ref": "arnold_pipelines.megaplan.runtime.resume:ResumeContract",
+        "routes": (
+            {"route_id": "gate:human", "capability_id": "human:gate"},
+            {"route_id": "review:human", "capability_id": "human:review"},
+            {"route_id": "revise:loop", "capability_id": "megaplan:planning"},
+            {"route_id": "tiebreaker:loop", "capability_id": "megaplan:planning"},
+        ),
+    },
+    metadata={"authoring_surface": True},
+)
 
 PREP = _step(
     export_name="PREP",
@@ -138,6 +371,8 @@ PREP = _step(
     prompt=PREP_PROMPT,
     handler_ref=f"{HANDLER_MODULE}:handle_prep",
     outputs=({"name": "prep_payload"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=({"id": "prep:plan", "label": "default", "target_ref": "plan"},),
 )
 PLAN = _step(
     export_name="PLAN",
@@ -147,6 +382,8 @@ PLAN = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_plan",
     inputs=({"name": "prep_payload", "value_ref": "prep.prep_payload"},),
     outputs=({"name": "plan_payload"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=({"id": "plan:critique", "label": "default", "target_ref": "critique"},),
 )
 CRITIQUE = _step(
     export_name="CRITIQUE",
@@ -156,6 +393,8 @@ CRITIQUE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_critique",
     inputs=({"name": "plan_payload", "value_ref": "plan.plan_payload"},),
     outputs=({"name": "critique_payload"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=({"id": "critique:gate", "label": "default", "target_ref": "gate"},),
 )
 GATE = _step(
     export_name="GATE",
@@ -165,7 +404,7 @@ GATE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_gate",
     inputs=({"name": "critique_payload", "value_ref": "critique.critique_payload"},),
     outputs=({"name": "gate_payload"}, {"name": "recommendation"}),
-    policy_id="megaplan:gate",
+    policy=GATE_POLICY,
     route_bindings=(
         {"id": "gate:finalize", "label": "proceed", "condition_ref": "proceed", "target_ref": "finalize"},
         {"id": "gate:revise", "label": "iterate", "condition_ref": "iterate", "target_ref": "revise"},
@@ -201,7 +440,7 @@ REVISE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_revise",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "revise_payload"},),
-    policy_id="megaplan:revise-loop",
+    policy=REVISE_LOOP_POLICY,
     route_bindings=(
         {"id": "revise:critique", "label": "default", "condition_ref": "revise:loop", "target_ref": "critique"},
     ),
@@ -215,6 +454,10 @@ TIEBREAKER_RUN = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "tiebreaker_payload"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=(
+        {"id": "tiebreaker_run:decide", "label": "default", "target_ref": "tiebreaker_decide"},
+    ),
 )
 TIEBREAKER_DECIDE = _step(
     export_name="TIEBREAKER_DECIDE",
@@ -223,7 +466,7 @@ TIEBREAKER_DECIDE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_decide",
     inputs=({"name": "tiebreaker_payload", "value_ref": "tiebreaker_run.tiebreaker_payload"},),
     outputs=({"name": "decision"},),
-    policy_id="megaplan:tiebreaker",
+    policy=TIEBREAKER_POLICY,
     route_bindings=(
         {
             "id": "tiebreaker_decide:critique",
@@ -255,6 +498,8 @@ FINALIZE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_finalize",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "finalize_payload"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=({"id": "finalize:execute", "label": "default", "target_ref": "execute"},),
 )
 EXECUTE = _step(
     export_name="EXECUTE",
@@ -264,6 +509,8 @@ EXECUTE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_execute",
     inputs=({"name": "finalize_payload", "value_ref": "finalize.finalize_payload"},),
     outputs=({"name": "execute_payload"},),
+    policy=DEFAULT_POLICY,
+    route_bindings=({"id": "execute:review", "label": "default", "target_ref": "review"},),
 )
 REVIEW = _step(
     export_name="REVIEW",
@@ -273,7 +520,7 @@ REVIEW = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_review",
     inputs=({"name": "execute_payload", "value_ref": "execute.execute_payload"},),
     outputs=({"name": "review_payload"},),
-    policy_id="megaplan:review",
+    policy=REVIEW_POLICY,
     route_bindings=(
         {"id": "review:halt", "label": "default", "condition_ref": "pass", "target_ref": "halt"},
         {"id": "review:revise", "label": "rework", "condition_ref": "rework", "target_ref": "revise"},
@@ -285,6 +532,7 @@ HALT = _step(
     step_id="halt",
     kind="megaplan:halt",
     outputs=({"name": "status"},),
+    policy=DEFAULT_POLICY,
     terminal=True,
 )
 OVERRIDE = _step(
@@ -294,7 +542,7 @@ OVERRIDE = _step(
     handler_ref=f"{HANDLER_MODULE}:handle_override",
     inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
     outputs=({"name": "override_result"},),
-    policy_id="megaplan:override",
+    policy=OVERRIDE_POLICY,
     route_bindings=(
         {"id": "override:halt", "label": "abort", "condition_ref": "abort", "target_ref": "halt"},
         {
@@ -305,6 +553,117 @@ OVERRIDE = _step(
         },
         {"id": "override:revise", "label": "replan", "condition_ref": "replan", "target_ref": "revise"},
     ),
+)
+SUSPEND = _step(
+    export_name="SUSPEND",
+    step_id="suspend",
+    kind="megaplan:suspend",
+    outputs=({"name": "suspension"},),
+    policy=SUSPENSION_POLICY,
+    terminal=True,
+    metadata={
+        "runtime_status": "suspended",
+        "topology_export": False,
+    },
+)
+
+SOURCE_PREP = _step(
+    export_name="SOURCE_PREP",
+    step_id="prep",
+    kind="megaplan:prep",
+    handler_ref=f"{HANDLER_MODULE}:handle_prep",
+    outputs=({"name": "prep_payload"},),
+)
+SOURCE_PLAN = _step(
+    export_name="SOURCE_PLAN",
+    step_id="plan",
+    kind="megaplan:plan",
+    handler_ref=f"{HANDLER_MODULE}:handle_plan",
+    inputs=({"name": "prep_payload", "value_ref": "prep.prep_payload"},),
+    outputs=({"name": "plan_payload"},),
+)
+SOURCE_CRITIQUE = _step(
+    export_name="SOURCE_CRITIQUE",
+    step_id="critique",
+    kind="megaplan:critique",
+    handler_ref=f"{HANDLER_MODULE}:handle_critique",
+    inputs=({"name": "plan_payload", "value_ref": "plan.plan_payload"},),
+    outputs=({"name": "critique_payload"},),
+)
+SOURCE_GATE = _step(
+    export_name="SOURCE_GATE",
+    step_id="gate",
+    kind="megaplan:gate",
+    handler_ref=f"{HANDLER_MODULE}:handle_gate",
+    inputs=({"name": "critique_payload", "value_ref": "critique.critique_payload"},),
+    outputs=({"name": "gate_payload"},),
+    capability_ids=("human:gate",),
+)
+SOURCE_REVISE = _step(
+    export_name="SOURCE_REVISE",
+    step_id="revise",
+    kind="megaplan:revise",
+    handler_ref=f"{HANDLER_MODULE}:handle_revise",
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "revise_payload"},),
+    capability_ids=("megaplan:planning",),
+)
+SOURCE_TIEBREAKER_RUN = _step(
+    export_name="SOURCE_TIEBREAKER_RUN",
+    step_id="tiebreaker_run",
+    kind="megaplan:tiebreaker_run",
+    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_run",
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "tiebreaker_payload"},),
+)
+SOURCE_TIEBREAKER_DECIDE = _step(
+    export_name="SOURCE_TIEBREAKER_DECIDE",
+    step_id="tiebreaker_decide",
+    kind="megaplan:tiebreaker_decide",
+    handler_ref=f"{HANDLER_MODULE}:handle_tiebreaker_decide",
+    inputs=({"name": "tiebreaker_payload", "value_ref": "tiebreaker_run.tiebreaker_payload"},),
+    outputs=({"name": "decision"},),
+    capability_ids=("megaplan:planning",),
+)
+SOURCE_FINALIZE = _step(
+    export_name="SOURCE_FINALIZE",
+    step_id="finalize",
+    kind="megaplan:finalize",
+    handler_ref=f"{HANDLER_MODULE}:handle_finalize",
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "finalize_payload"},),
+)
+SOURCE_EXECUTE = _step(
+    export_name="SOURCE_EXECUTE",
+    step_id="execute",
+    kind="megaplan:execute",
+    handler_ref=f"{HANDLER_MODULE}:handle_execute",
+    inputs=({"name": "finalize_payload", "value_ref": "finalize.finalize_payload"},),
+    outputs=({"name": "execute_payload"},),
+)
+SOURCE_REVIEW = _step(
+    export_name="SOURCE_REVIEW",
+    step_id="review",
+    kind="megaplan:review",
+    handler_ref=f"{HANDLER_MODULE}:handle_review",
+    inputs=({"name": "execute_payload", "value_ref": "execute.execute_payload"},),
+    outputs=({"name": "review_payload"},),
+    capability_ids=("human:review",),
+)
+SOURCE_HALT = _step(
+    export_name="SOURCE_HALT",
+    step_id="halt",
+    kind="megaplan:halt",
+    outputs=({"name": "status"},),
+    terminal=True,
+)
+SOURCE_OVERRIDE = _step(
+    export_name="SOURCE_OVERRIDE",
+    step_id="override",
+    kind="megaplan:override",
+    handler_ref=f"{HANDLER_MODULE}:handle_override",
+    inputs=({"name": "gate_payload", "value_ref": "gate.gate_payload"},),
+    outputs=({"name": "override_result"},),
 )
 
 ALL_STEP_COMPONENTS = (
@@ -328,9 +687,19 @@ PROMPT_COMPONENTS = (
     CRITIQUE_PROMPT,
     GATE_PROMPT,
     REVISE_PROMPT,
+    TIEBREAKER_RESEARCHER_PROMPT,
+    TIEBREAKER_CHALLENGER_PROMPT,
     FINALIZE_PROMPT,
     EXECUTE_PROMPT,
     REVIEW_PROMPT,
+)
+POLICY_COMPONENTS = (
+    DEFAULT_POLICY,
+    GATE_POLICY,
+    REVISE_LOOP_POLICY,
+    TIEBREAKER_POLICY,
+    REVIEW_POLICY,
+    OVERRIDE_POLICY,
 )
 
 __all__ = [
@@ -338,25 +707,40 @@ __all__ = [
     "CAPABILITY_REQUIREMENTS",
     "CRITIQUE",
     "CRITIQUE_PROMPT",
+    "DEFAULT_POLICY",
     "EXECUTE",
     "EXECUTE_PROMPT",
     "FINALIZE",
     "FINALIZE_PROMPT",
     "GATE",
     "GATE_PROMPT",
+    "GATE_POLICY",
     "HALT",
+    "ARTIFACT_CONTRACT_POLICY",
+    "M4_LOOP_MAX_ITERATIONS",
+    "MODEL_ROUTING_POLICY",
     "OVERRIDE",
+    "OVERRIDE_POLICY",
     "PLAN",
     "PLAN_PROMPT",
+    "POLICY_COMPONENTS",
     "PREP",
     "PREP_PROMPT",
     "PROMPT_COMPONENTS",
     "REVIEW",
     "REVIEW_PROMPT",
+    "REVIEW_POLICY",
     "REVISE",
+    "REVISE_LOOP_POLICY",
     "REVISE_PROMPT",
+    "ROBUSTNESS_POLICY",
     "RUNTIME_BRANCH_VOCABULARY",
     "STEP_COMPONENTS_BY_ID",
+    "SUSPEND",
+    "SUSPENSION_POLICY",
+    "TIEBREAKER_CHALLENGER_PROMPT",
     "TIEBREAKER_DECIDE",
+    "TIEBREAKER_POLICY",
+    "TIEBREAKER_RESEARCHER_PROMPT",
     "TIEBREAKER_RUN",
 ]

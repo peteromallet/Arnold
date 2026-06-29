@@ -1,7 +1,7 @@
 """Pipeline discovery — megaplan-owned scan and load logic.
 
 The neutral Arnold discovery primitives live at
-:mod:`arnold.pipeline.discovery`.  This module supplies Megaplan-specific
+:mod:`arnold.workflow.discovery`.  This module supplies Megaplan-specific
 scan roots, the legacy ``planning`` → ``megaplan`` alias, manifest-first
 discovery (M6 flag-gated), trust-tier classification, and the
 ``scan_python_pipelines`` / ``discover_python_pipelines`` entry points.
@@ -24,19 +24,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from arnold.pipeline.discovery.manifest import (
+from arnold.workflow.discovery.manifest import (
     Manifest,
     ManifestError,
     read_manifest,
 )
-from arnold.pipeline.discovery.trust import (
+from arnold.workflow.discovery.trust import (
     BLESSED_ALLOWLIST,
     TrustGrade,
     derive_tenant_id,
 )
-from arnold.pipeline.discovery.trust import classify as _arnold_classify
+from arnold.workflow.discovery.trust import classify as _arnold_classify
 from arnold.pipeline.types import Pipeline
-from arnold.runtime.operations import (
+from arnold.execution.operations import (
     NullOperationRegistry,
     OperationKind,
     OperationRegistry,

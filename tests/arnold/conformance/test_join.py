@@ -21,7 +21,7 @@ from arnold.conformance.join import (
     check_join_delegation_context_forwarding,
     run_join_conformance_suite,
 )
-from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks
+from arnold.execution.hooks import ExecutorHooks, NullExecutorHooks
 from arnold.pipeline.types import (
     ParallelStage,
     StepContext,

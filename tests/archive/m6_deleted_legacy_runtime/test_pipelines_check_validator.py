@@ -15,15 +15,15 @@ import sys
 from argparse import Namespace
 from pathlib import Path
 
-from arnold_pipelines.megaplan._pipeline.judge_manifest import (
+from arnold.pipelines.megaplan._pipeline.judge_manifest import (
     EVALUAND_RECORD_CONTENT_TYPE,
     JudgeManifestPort,
     dump_judge_manifest,
     make_judge_manifest,
 )
-from arnold_pipelines.megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
-from arnold_pipelines.megaplan._pipeline.registry import get_pipeline
-from arnold_pipelines.megaplan._pipeline.types import (
+from arnold.pipelines.megaplan._pipeline.judge_manifest_discovery import validate_judge_manifest
+from arnold.pipelines.megaplan._pipeline.registry import get_pipeline
+from arnold.pipelines.megaplan._pipeline.types import (
     Edge,
     Pipeline,
     Port,
@@ -32,8 +32,8 @@ from arnold_pipelines.megaplan._pipeline.types import (
     Stage,
     WriteRef,
 )
-from arnold.pipeline.step_invocation import StepInvocation
-from arnold_pipelines.megaplan._pipeline.validator import (
+from arnold.execution.step_invocation import StepInvocation
+from arnold.pipelines.megaplan._pipeline.validator import (
     Diagnostics,
     MISSING_BINDING_CODE,
     UNKNOWN_ADAPTER_CODE,
@@ -353,7 +353,7 @@ def test_diagnostics_ok_property() -> None:
 
 def _run_cli(*argv: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
-        [sys.executable, "-m", "arnold_pipelines.megaplan", *argv],
+        [sys.executable, "-m", "arnold.pipelines.megaplan", *argv],
         capture_output=True,
         text=True,
         env=env,
@@ -456,7 +456,7 @@ def test_cli_pipelines_check_reports_missing_native_program_contextual_rejection
         tmp_path,
         name,
         f'''\
-from arnold_pipelines.megaplan._pipeline.types import Pipeline
+from arnold.pipelines.megaplan._pipeline.types import Pipeline
 
 name = "{name}"
 description = "native manifest but graph-only build result"
@@ -490,7 +490,7 @@ def test_cli_pipelines_check_accepts_explicit_graph_compatibility_manifest(
         tmp_path,
         name,
         f'''\
-from arnold_pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
 
 name = "{name}"
 description = "explicit graph compatibility manifest"
@@ -532,14 +532,14 @@ def test_manifest_scan_and_registry_metadata_report_contextual_rejection(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    from arnold_pipelines.megaplan._pipeline import registry as registry_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
 
     name = "trusted-native-without-program"
     _write_user_pipeline(
         tmp_path,
         name,
         f'''\
-from arnold_pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
+from arnold.pipelines.megaplan._pipeline.types import Edge, Pipeline, Stage
 
 name = "{name}"
 description = "native manifest but graph-only build result"
@@ -637,8 +637,8 @@ def test_cli_pipelines_check_distinguishes_contract_mismatch_from_missing_bindin
     monkeypatch,
     capsys,
 ) -> None:
-    from arnold_pipelines.megaplan import cli as cli_mod
-    from arnold_pipelines.megaplan._pipeline import registry as registry_mod
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
 
     pipeline = Pipeline(
         stages={
@@ -688,8 +688,8 @@ def test_cli_pipelines_check_reports_declaration_drift_with_stable_code(
     monkeypatch,
     capsys,
 ) -> None:
-    from arnold_pipelines.megaplan import cli as cli_mod
-    from arnold_pipelines.megaplan._pipeline import registry as registry_mod
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
 
     pipeline = Pipeline(
         stages={
@@ -722,8 +722,8 @@ def test_cli_pipelines_check_preserves_existing_graph_validation_codes(
     monkeypatch,
     capsys,
 ) -> None:
-    from arnold_pipelines.megaplan import cli as cli_mod
-    from arnold_pipelines.megaplan._pipeline import registry as registry_mod
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
 
     pipeline = Pipeline(
         stages={
@@ -750,8 +750,8 @@ def test_cli_pipelines_check_non_model_invocation_is_authorable_but_fail_closed(
     monkeypatch,
     capsys,
 ) -> None:
-    from arnold_pipelines.megaplan import cli as cli_mod
-    from arnold_pipelines.megaplan._pipeline import registry as registry_mod
+    from arnold.pipelines.megaplan import cli as cli_mod
+    from arnold.pipelines.megaplan._pipeline import registry as registry_mod
 
     run_attempted = False
 
@@ -810,7 +810,7 @@ def test_cli_pipelines_check_non_model_invocation_is_authorable_but_fail_closed(
 def test_m5_judge_manifest_shape_validates() -> None:
     manifest = make_judge_manifest(
         name="m5-wrapper-eval",
-        implementation="arnold_pipelines.megaplan.eval.wrapper:Judge",
+        implementation="arnold.pipelines.megaplan.eval.wrapper:Judge",
         arnold_api_version="2026-05-31",
         model_identity="model:gpt-5.4",
         rubric_body={"rubric": "return an EvaluandRecord judgment"},
@@ -827,10 +827,10 @@ def test_m5_judge_manifest_shape_validates() -> None:
 def test_cli_pipelines_check_registered_m5_manifest_does_not_import_wrapper(
     monkeypatch,
 ) -> None:
-    from arnold_pipelines.megaplan.cli import _handle_pipelines
+    from arnold.pipelines.megaplan.cli import _handle_pipelines
 
     def blocked_import(name, package=None):
-        if name == "arnold_pipelines.megaplan._pipeline.eval_judge_wrapper":
+        if name == "arnold.pipelines.megaplan._pipeline.eval_judge_wrapper":
             raise AssertionError("pipelines check imported the eval judge wrapper")
         return real_import_module(name, package=package)
 

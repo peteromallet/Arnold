@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan._core import (
     apply_session_update,
     append_history,

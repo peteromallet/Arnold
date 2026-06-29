@@ -34,11 +34,10 @@ from typing import Any, Callable, Mapping
 from arnold.pipeline import (
     ContractResult,
     Provenance,
-    StepInvocation,
-    StepInvocationAdapterRegistry,
     validate_contract_result,
     validate_payload_against_schema,
 )
+from arnold.execution.step_invocation import StepInvocation, StepInvocationAdapterRegistry
 from arnold.pipeline import model_seam as _generic
 from arnold.pipeline.model_seam import (  # re-exports for megaplan consumers
     AuditStatus,

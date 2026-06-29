@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal, Mapping, TYPE_CHECKING
 
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold_pipelines.megaplan.types import PREMIUM_AGENT
 
 

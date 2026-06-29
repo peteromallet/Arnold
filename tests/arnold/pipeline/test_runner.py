@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from arnold.pipeline.executor import run_pipeline as executor_run_pipeline
-from arnold.pipeline.hooks import NullExecutorHooks
+from arnold.execution.hooks import NullExecutorHooks
 from arnold.pipeline.runner import run_pipeline
 from arnold.pipeline.types import (
     Edge,

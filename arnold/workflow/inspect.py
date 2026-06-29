@@ -138,8 +138,14 @@ def inspect_manifest(manifest: WorkflowManifest) -> dict[str, Any]:
     }
 
 
-def to_dot(manifest: WorkflowManifest) -> str:
+def to_dot(manifest: WorkflowManifest, annotations: Mapping[str, Any] | None = None) -> str:
     """Return a diagnostic DOT graph rendering of the manifest topology."""
+
+    edge_annotations = {}
+    if annotations is not None:
+        raw_edges = annotations.get("edges", {}) if isinstance(annotations, Mapping) else {}
+        if isinstance(raw_edges, Mapping):
+            edge_annotations = raw_edges
 
     lines = ["digraph workflow {"]
     for node in manifest.nodes:
@@ -149,6 +155,16 @@ def to_dot(manifest: WorkflowManifest) -> str:
         label = edge.label
         if edge.condition_ref:
             label = f"{label}:{edge.condition_ref}"
+        edge_annotation = edge_annotations.get(edge.id) or (
+            edge_annotations.get(edge.condition_ref) if edge.condition_ref else None
+        )
+        if isinstance(edge_annotation, Mapping):
+            annotated_label = edge_annotation.get("label")
+            debug_ref = edge_annotation.get("condition_ref")
+            if isinstance(annotated_label, str) and annotated_label:
+                label = annotated_label
+                if isinstance(debug_ref, str) and debug_ref:
+                    label = f"{label} ({debug_ref})"
         lines.append(f'  "{edge.source}" -> "{edge.target}" [label="{label}"];')
     lines.append("}")
     return "\n".join(lines)

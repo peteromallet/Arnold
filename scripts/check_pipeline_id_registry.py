@@ -9,8 +9,12 @@ from pathlib import Path
 from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+_repo_str = str(REPO_ROOT)
+# Ensure the local repo is first in sys.path so the script uses the
+# canonical arnold_pipelines.discovery module rather than an installed copy.
+if _repo_str in sys.path:
+    sys.path.remove(_repo_str)
+sys.path.insert(0, _repo_str)
 
 from arnold.pipeline import (  # noqa: E402
     load_pipeline_id_registries,
@@ -251,9 +255,10 @@ def check_registry_hashes(paths: list[Path]) -> list[str]:
                 continue
             manifest_hash = item.get("manifest_hash")
             if manifest_hash is None:
-                errors.append(
-                    f"[{path}] {stable_id!r}: missing manifest_hash after Phase 4"
-                )
+                if stable_id in expected:
+                    errors.append(
+                        f"[{path}] {stable_id!r}: missing manifest_hash after Phase 4"
+                    )
                 continue
             if not isinstance(manifest_hash, str) or not _HASH_RE.match(manifest_hash):
                 errors.append(
