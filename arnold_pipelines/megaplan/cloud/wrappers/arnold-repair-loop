@@ -89,6 +89,15 @@ acquire_repair_lock() {
     log "flock unavailable; cannot enforce single active repair loop"
     return 1
   fi
+  if [[ "${CLOUD_WATCHDOG_REPAIR_LOCK_HELD:-0}" == "1" ]]; then
+    if [[ "${CLOUD_WATCHDOG_REPAIR_LOCK_FD:-}" =~ ^[0-9]+$ ]] \
+      && [[ -e "/proc/$$/fd/${CLOUD_WATCHDOG_REPAIR_LOCK_FD}" ]]; then
+      REPAIR_LOCK_FD="$CLOUD_WATCHDOG_REPAIR_LOCK_FD"
+      log "repair lock inherited from watchdog dispatch; continuing session=$SESSION"
+      return 0
+    fi
+    log "repair lock was marked inherited but fd missing; reacquiring session=$SESSION"
+  fi
   exec {REPAIR_LOCK_FD}> "$REPAIR_LOCK_FILE"
   if ! flock -n "$REPAIR_LOCK_FD"; then
     log "another repair loop is already active; exiting session=$SESSION"

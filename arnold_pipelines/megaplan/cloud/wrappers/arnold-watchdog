@@ -49,6 +49,7 @@ KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-go
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
 PRIMARY_REPAIR_BASENAME="$(basename "$PRIMARY_REPAIR_BIN")"
+REPAIR_DISPATCH_RESULT=
 
 mkdir -p "$(dirname "$LOG")"
 
@@ -1134,6 +1135,14 @@ repair_needs_human_path() {
   printf '%s/%s.needs-human.json' "$REPAIR_DATA_DIR" "$1"
 }
 
+chain_health_snapshot_path() {
+  printf '%s/%s.chain-health.progress.json' "$MARKER_DIR" "$1"
+}
+
+chain_health_artifact_path() {
+  printf '%s/%s.chain-health.json' "$REPAIR_DATA_DIR" "$1"
+}
+
 repair_needs_human_summary() {
   local session="$1"
   python3 - "$(repair_needs_human_path "$session")" <<'PY'
@@ -1159,6 +1168,424 @@ if isinstance(discord_status, str) and discord_status:
     parts.append(f"discord={discord_status}")
 print("; ".join(parts) if parts else "repair loop exhausted; needs human")
 PY
+}
+
+chain_health_status() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec_path="$3"
+  local health="${4:-unknown}"
+  CHAIN_HEALTH_STATUS="ok"
+  CHAIN_HEALTH_KIND=""
+  CHAIN_HEALTH_SUMMARY=""
+  CHAIN_HEALTH_ARTIFACT_PATH=""
+  CHAIN_HEALTH_STATE_PATH=""
+  CHAIN_HEALTH_LOG_PATH=""
+  eval "$(python3 - "$session" "$workspace" "$remote_spec_path" "$health" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
+import collections
+import datetime as dt
+import hashlib
+import json
+import os
+import re
+import shlex
+import sys
+from pathlib import Path
+
+session = sys.argv[1]
+workspace = Path(sys.argv[2])
+remote_spec_raw = sys.argv[3]
+health = sys.argv[4]
+marker_dir = Path(sys.argv[5])
+repair_data_dir = Path(sys.argv[6])
+
+CYCLE_REPEATS = max(2, int(os.environ.get("CLOUD_WATCHDOG_CHAIN_CYCLE_REPEATS", "3")))
+STUCK_TICKS = max(2, int(os.environ.get("CLOUD_WATCHDOG_CHAIN_STUCK_TICKS", "3")))
+NO_ADVANCE_TICKS = max(
+    2,
+    int(os.environ.get("CLOUD_WATCHDOG_CHAIN_NO_ADVANCE_TICKS", os.environ.get("CLOUD_WATCHDOG_CHAIN_STUCK_TICKS", "3"))),
+)
+GUARD_REPEATS = max(
+    2,
+    int(
+        os.environ.get(
+            "CLOUD_WATCHDOG_CHAIN_COMPLETION_GUARD_REPEATS",
+            os.environ.get("CLOUD_WATCHDOG_CHAIN_CYCLE_REPEATS", "3"),
+        )
+    ),
+)
+LOG_WINDOW = max(60, int(os.environ.get("CLOUD_WATCHDOG_CHAIN_LOG_WINDOW_LINES", "320")))
+NONTERMINAL_STATES = {"authority_divergence", "blocked", "error", "awaiting_human"}
+
+
+def emit(name: str, value: str) -> None:
+    print(f"{name}={shlex.quote(value)}")
+
+
+def safe_session_name(raw: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "-", raw).strip("-")
+    return cleaned or "chain"
+
+
+def clear_artifact(path: Path) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    except Exception:
+        return
+
+
+def load_json(path: Path) -> dict[str, object]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def resolve_chain_state_path() -> Path | None:
+    candidates: list[Path] = []
+    if remote_spec_raw:
+        try:
+            spec_path = Path(remote_spec_raw)
+            if not spec_path.is_absolute():
+                spec_path = workspace / spec_path
+            try:
+                spec_resolved = spec_path.resolve()
+            except Exception:
+                spec_resolved = spec_path
+            digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+            candidates.extend(
+                [
+                    workspace / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+                    spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+                    spec_resolved.with_name("chain_state.json"),
+                ]
+            )
+        except Exception:
+            pass
+    fallback: list[Path] = []
+    for glob_pat in (
+        ".megaplan/plans/.chains/*.json",
+        ".megaplan/briefs/*/.megaplan/plans/.chains/*.json",
+        ".megaplan/**/chain_state.json",
+    ):
+        try:
+            fallback.extend(workspace.glob(glob_pat))
+        except Exception:
+            continue
+    candidates.extend(sorted(set(fallback), key=lambda path: path.stat().st_mtime, reverse=True))
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        payload = load_json(candidate)
+        if payload:
+            return candidate
+    return None
+
+
+def resolve_chain_log_path() -> Path | None:
+    candidates = []
+    if session == "megaplan-chain":
+        candidates.append(workspace / ".megaplan" / "cloud-chain.log")
+    else:
+        candidates.extend(
+            [
+                workspace / ".megaplan" / f"cloud-chain-{session}.log",
+                workspace / ".megaplan" / "cloud-chain.log",
+            ]
+        )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def read_tail_lines(path: Path | None, *, max_lines: int) -> list[str]:
+    if path is None or not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            return list(collections.deque((line.rstrip("\n") for line in handle), maxlen=max_lines))
+    except Exception:
+        return []
+
+
+artifact_path = repair_data_dir / f"{safe_session_name(session)}.chain-health.json"
+snapshot_path = marker_dir / f"{safe_session_name(session)}.chain-health.progress.json"
+marker_dir.mkdir(parents=True, exist_ok=True)
+repair_data_dir.mkdir(parents=True, exist_ok=True)
+
+chain_state_path = resolve_chain_state_path()
+chain_state = load_json(chain_state_path) if chain_state_path is not None else {}
+chain_log_path = resolve_chain_log_path()
+log_lines = read_tail_lines(chain_log_path, max_lines=LOG_WINDOW)
+current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
+last_state = str(chain_state.get("last_state") or "").strip()
+pr_state = str(chain_state.get("pr_state") or "").strip()
+pr_number = chain_state.get("pr_number")
+current_index = int(chain_state.get("current_milestone_index") or 0)
+completed = chain_state.get("completed")
+completed_list = completed if isinstance(completed, list) else []
+completed_count = len(completed_list)
+
+events_path = workspace / ".megaplan" / "plans" / current_plan_name / "events.ndjson" if current_plan_name else None
+events_exists = events_path is not None and events_path.exists()
+events_mtime = events_path.stat().st_mtime if events_exists else 0.0
+events_size = events_path.stat().st_size if events_exists else 0
+
+previous = load_json(snapshot_path)
+stuck_ticks = 1 if last_state in NONTERMINAL_STATES else 0
+if (
+    previous
+    and last_state in NONTERMINAL_STATES
+    and previous.get("last_state") == last_state
+    and int(previous.get("current_milestone_index") or -1) == current_index
+    and int(previous.get("completed_count") or -1) == completed_count
+):
+    stuck_ticks = int(previous.get("stuck_ticks") or 0) + 1
+
+no_advance_ticks = 0
+events_advanced = False
+if previous:
+    prev_events_mtime = float(previous.get("events_mtime") or 0.0)
+    prev_events_size = int(previous.get("events_size") or 0)
+    events_advanced = events_exists and (
+        events_mtime > prev_events_mtime or events_size > prev_events_size
+    )
+    if (
+        events_advanced
+        and int(previous.get("current_milestone_index") or -1) == current_index
+        and int(previous.get("completed_count") or -1) == completed_count
+    ):
+        no_advance_ticks = int(previous.get("no_advance_ticks") or 0) + 1
+
+snapshot = {
+    "session": session,
+    "current_plan_name": current_plan_name,
+    "last_state": last_state,
+    "current_milestone_index": current_index,
+    "completed_count": completed_count,
+    "pr_state": pr_state,
+    "pr_number": pr_number,
+    "events_mtime": events_mtime,
+    "events_size": events_size,
+    "stuck_ticks": stuck_ticks,
+    "no_advance_ticks": no_advance_ticks,
+    "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+}
+try:
+    snapshot_path.write_text(json.dumps(snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+except Exception:
+    pass
+
+skip_detection = (
+    health == "awaiting_pr_merge"
+    or last_state in {"awaiting_pr_merge", "done", "complete"}
+    or not chain_state
+)
+if skip_detection:
+    clear_artifact(artifact_path)
+    emit("CHAIN_HEALTH_STATUS", "ok")
+    emit("CHAIN_HEALTH_KIND", "")
+    emit("CHAIN_HEALTH_SUMMARY", "")
+    emit("CHAIN_HEALTH_ARTIFACT_PATH", "")
+    emit("CHAIN_HEALTH_STATE_PATH", str(chain_state_path) if chain_state_path is not None else "")
+    emit("CHAIN_HEALTH_LOG_PATH", str(chain_log_path) if chain_log_path is not None else "")
+    raise SystemExit(0)
+
+merged_counts: collections.Counter[str] = collections.Counter()
+merged_examples: dict[str, str] = {}
+guard_counts: collections.Counter[str] = collections.Counter()
+guard_examples: dict[str, str] = {}
+guard_reasons: dict[str, str] = {}
+interesting_lines: list[str] = []
+merged_pattern = re.compile(r"^\[chain\] PR #(?P<pr>\d+) merged; advancing past (?P<milestone>.+)$")
+guard_pattern = re.compile(r"^\[chain\] completion guard blocked (?P<milestone>[^:]+): (?P<reason>.+)$")
+
+for raw_line in log_lines:
+    line = raw_line.strip()
+    if not line:
+        continue
+    merged_match = merged_pattern.match(line)
+    if merged_match:
+        milestone = merged_match.group("milestone").strip()
+        merged_counts[milestone] += 1
+        merged_examples.setdefault(milestone, line)
+        interesting_lines.append(line)
+        continue
+    guard_match = guard_pattern.match(line)
+    if guard_match:
+        milestone = guard_match.group("milestone").strip()
+        guard_counts[milestone] += 1
+        guard_examples.setdefault(milestone, line)
+        guard_reasons[milestone] = guard_match.group("reason").strip()
+        interesting_lines.append(line)
+        continue
+    if "authority_divergence" in line or '"last_state": "authority_divergence"' in line:
+        interesting_lines.append(line)
+
+status = "ok"
+issue_kind = ""
+summary = ""
+recurring_lines: list[str] = []
+completion_guard = {
+    "milestone": "",
+    "reason": "",
+    "repeat_count": 0,
+}
+details: dict[str, object] = {}
+
+cycle_milestone = next(
+    (
+        milestone
+        for milestone, repeat_count in merged_counts.items()
+        if repeat_count >= CYCLE_REPEATS and guard_counts.get(milestone, 0) >= CYCLE_REPEATS
+    ),
+    "",
+)
+if cycle_milestone:
+    status = "chain_cycle"
+    issue_kind = "chain_cycle"
+    repeat_count = min(merged_counts[cycle_milestone], guard_counts[cycle_milestone])
+    recurring_lines = [
+        merged_examples.get(cycle_milestone, ""),
+        guard_examples.get(cycle_milestone, ""),
+    ]
+    completion_guard = {
+        "milestone": cycle_milestone,
+        "reason": guard_reasons.get(cycle_milestone, ""),
+        "repeat_count": repeat_count,
+    }
+    summary = (
+        f"chain-layer cycle on {cycle_milestone}: merged PR/completion-guard pattern repeated "
+        f"{repeat_count}x; do not route to plan repair"
+    )
+    details = {
+        "cycle_milestone": cycle_milestone,
+        "merged_repeats": merged_counts[cycle_milestone],
+        "completion_guard_repeats": guard_counts[cycle_milestone],
+    }
+if status == "ok" and guard_counts:
+    guard_milestone, guard_repeat_count = max(guard_counts.items(), key=lambda item: item[1])
+    if guard_repeat_count >= GUARD_REPEATS:
+        status = "chain_completion_guard_rejections"
+        issue_kind = "chain_completion_guard_rejections"
+        recurring_lines = [guard_examples.get(guard_milestone, "")]
+        completion_guard = {
+            "milestone": guard_milestone,
+            "reason": guard_reasons.get(guard_milestone, ""),
+            "repeat_count": guard_repeat_count,
+        }
+        summary = (
+            f"chain completion guard rejected {guard_milestone} {guard_repeat_count}x; "
+            "plan repair loop will not fix a chain-driver completion pathology"
+        )
+        details = {"completion_guard_repeats": guard_repeat_count}
+if status == "ok" and last_state in NONTERMINAL_STATES and stuck_ticks >= STUCK_TICKS:
+    status = "chain_stuck"
+    issue_kind = "chain_stuck_nonterminal"
+    recurring_lines = interesting_lines[-3:] if interesting_lines else log_lines[-3:]
+    summary = (
+        f"chain stuck in nonterminal state {last_state} for {stuck_ticks} ticks with no completed[] growth; "
+        "treat as chain-layer sickness"
+    )
+    details = {"stuck_ticks": stuck_ticks}
+if status == "ok" and no_advance_ticks >= NO_ADVANCE_TICKS:
+    status = "chain_no_advance"
+    issue_kind = "chain_no_advance"
+    recurring_lines = interesting_lines[-3:] if interesting_lines else log_lines[-3:]
+    summary = (
+        f"current_milestone_index stayed at {current_index} for {no_advance_ticks} busy ticks while "
+        "plan events kept moving; the chain is busy but not advancing"
+    )
+    details = {"no_advance_ticks": no_advance_ticks, "events_advanced": events_advanced}
+
+chain_state_summary = {
+    "path": str(chain_state_path) if chain_state_path is not None else "",
+    "current_plan_name": current_plan_name,
+    "current_milestone_index": current_index,
+    "completed_count": completed_count,
+    "last_state": last_state,
+    "pr_number": pr_number,
+    "pr_state": pr_state,
+}
+
+why_chain_layer = (
+    "This evidence points at chain-driver state progression or completion-guard behavior after the plan "
+    "already executed or the PR already merged. Route to arnold_pipelines/megaplan/chain/, not the plan repair loop."
+)
+
+if status == "ok":
+    clear_artifact(artifact_path)
+else:
+    rendered_lines = [line for line in recurring_lines if line]
+    if not rendered_lines:
+        rendered_lines = log_lines[-5:]
+    evidence_markdown = "\n".join(
+        [
+            "## CHAIN HEALTH EVIDENCE",
+            f"- Issue: {issue_kind or status}",
+            (
+                "- Chain state summary: "
+                f"last_state={last_state or 'unknown'} "
+                f"pr_state={pr_state or 'unknown'} "
+                f"current_milestone_index={current_index} "
+                f"completed_count={completed_count}"
+            ),
+            "- Recurring chain-log lines:",
+            *[f"> {line}" for line in rendered_lines[:6]],
+            (
+                "- Completion guard verdict: "
+                f"{completion_guard['milestone'] or 'n/a'} -> "
+                f"{completion_guard['reason'] or 'n/a'}"
+            ),
+            f"- Why this is chain-layer: {why_chain_layer}",
+            "- Investigate: arnold_pipelines/megaplan/chain/__init__.py and arnold_pipelines/megaplan/chain/status.py",
+        ]
+    )
+    artifact = {
+        "session": session,
+        "workspace": str(workspace),
+        "remote_spec": remote_spec_raw,
+        "detected_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "status": status,
+        "issue_kind": issue_kind or status,
+        "summary": summary,
+        "health": health,
+        "thresholds": {
+            "chain_cycle_repeats": CYCLE_REPEATS,
+            "chain_stuck_ticks": STUCK_TICKS,
+            "chain_no_advance_ticks": NO_ADVANCE_TICKS,
+            "chain_completion_guard_repeats": GUARD_REPEATS,
+            "chain_log_window_lines": LOG_WINDOW,
+        },
+        "chain_state_summary": chain_state_summary,
+        "chain_state_path": str(chain_state_path) if chain_state_path is not None else "",
+        "chain_log_path": str(chain_log_path) if chain_log_path is not None else "",
+        "chain_log_tail": log_lines[-40:],
+        "recurring_cycle_lines": rendered_lines[:10],
+        "completion_guard": completion_guard,
+        "details": details,
+        "snapshot": snapshot,
+        "why_chain_layer_issue": why_chain_layer,
+        "investigation_hint": "arnold_pipelines/megaplan/chain/",
+        "evidence_markdown": evidence_markdown,
+    }
+    try:
+        artifact_path.write_text(json.dumps(artifact, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
+emit("CHAIN_HEALTH_STATUS", status)
+emit("CHAIN_HEALTH_KIND", (issue_kind or status) if status != "ok" else "")
+emit("CHAIN_HEALTH_SUMMARY", summary)
+emit("CHAIN_HEALTH_ARTIFACT_PATH", str(artifact_path) if status != "ok" else "")
+emit("CHAIN_HEALTH_STATE_PATH", str(chain_state_path) if chain_state_path is not None else "")
+emit("CHAIN_HEALTH_LOG_PATH", str(chain_log_path) if chain_log_path is not None else "")
+PY
+)"
 }
 
 default_plan_relaunch_command() {
@@ -1211,6 +1638,7 @@ clear_session_tracking_artifacts() {
   rm -f "$(session_marker_path "$session")" 2>/dev/null || true
   kimi_dispatch_marker_clear "$session"
   rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+  rm -f "$(chain_health_snapshot_path "$session")" "$(chain_health_artifact_path "$session")" 2>/dev/null || true
   if [[ -n "$plan_name" ]]; then
     rm -f "$MARKER_DIR/$plan_name.progress.json" 2>/dev/null || true
   fi
@@ -1300,16 +1728,39 @@ dispatch_kimi_repair() {
   local session="$1"
   local workspace="$2"
   local remote_spec="$3"
-  local pgid_path
+  local pgid_path repair_lock_fd
+  REPAIR_DISPATCH_RESULT="unavailable"
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
     return 1
   fi
+  if ! command -v flock >/dev/null 2>&1; then
+    pgid_path="$(kimi_pgid_path "$session")"
+    kimi_dispatch_marker_set "$session"
+    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
+      _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
+      >> "$LOG" 2>&1 < /dev/null &
+    log "repair loop background-dispatched without flock session=$session pid=$!"
+    REPAIR_DISPATCH_RESULT="dispatched"
+    return 0
+  fi
+  mkdir -p "$(dirname "$REPAIR_LOCK_FILE")"
+  exec {repair_lock_fd}> "$REPAIR_LOCK_FILE"
+  if ! flock -n "$repair_lock_fd"; then
+    exec {repair_lock_fd}>&-
+    log "repair loop already active; skipping dispatch session=$session"
+    REPAIR_DISPATCH_RESULT="busy"
+    return 0
+  fi
   pgid_path="$(kimi_pgid_path "$session")"
   kimi_dispatch_marker_set "$session"
+  CLOUD_WATCHDOG_REPAIR_LOCK_HELD=1 \
+  CLOUD_WATCHDOG_REPAIR_LOCK_FD="$repair_lock_fd" \
   setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3" "$4" "$5"' \
     _ "$pgid_path" "$PRIMARY_REPAIR_BIN" "$session" "$workspace" "$remote_spec" \
     >> "$LOG" 2>&1 < /dev/null &
+  exec {repair_lock_fd}>&-
   log "repair loop background-dispatched session=$session pid=$!"
+  REPAIR_DISPATCH_RESULT="dispatched"
   return 0
 }
 
@@ -2443,6 +2894,10 @@ repair_unhealthy_session() {
   fi
   if mechanical_relaunch_attempted_previously "$session"; then
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+      if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+        log "session unhealthy after mechanical relaunch; another repair loop already running so waiting turn session=$session reason=$reason"
+        return 0
+      fi
       log "session unhealthy after mechanical relaunch: background-dispatched repair loop session=$session reason=$reason"
       tmux kill-session -t "$session" 2>/dev/null || true
       return 0
@@ -2456,6 +2911,10 @@ repair_unhealthy_session() {
     return 1
   fi
   if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+    if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+      log "session unhealthy; another repair loop already running so waiting turn session=$session reason=$reason"
+      return 0
+    fi
     log "session unhealthy: background-dispatched repair loop session=$session reason=$reason"
     tmux kill-session -t "$session" 2>/dev/null || true
     return 0
@@ -2488,12 +2947,25 @@ launch_chain_tick() {
   fi
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
-  if [[ "$health" == "alive" ]]; then
-    if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-      log "skip $session: chain spec missing: $remote_spec"
-      report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
-      return 1
+  if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
+    log "skip $session: chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    return 1
+  fi
+  if [[ "$run_kind" == "chain" ]]; then
+    chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
+    if [[ "${CHAIN_HEALTH_STATUS:-ok}" != "ok" ]]; then
+      local chain_health_message
+      chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain-level issue detected}"
+      if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
+        chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
+      fi
+      log "chain-level health issue detected session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
+      report_item "$report_items" "$session" "observe" "${CHAIN_HEALTH_STATUS:-chain_issue}" "$chain_health_message" "$workspace" "$remote_spec"
+      return 0
     fi
+  fi
+  if [[ "$health" == "alive" ]]; then
   local phase_health
   phase_health="$(plan_phase_health_status "$workspace" "$run_kind" "$plan_name")"
   if [[ "$phase_health" != "ok" ]]; then
@@ -2506,8 +2978,13 @@ launch_chain_tick() {
         log "session alive but plan unhealthy; another repair loop already running so waiting turn session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
       elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-        log "session alive but plan unhealthy: background-dispatched repair loop session=$session reason=$phase_health"
-        report_item "$report_items" "$session" "repair" "repair_dispatched" "$phase_health" "$workspace" "$remote_spec"
+        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+          log "session alive but plan unhealthy; another repair loop already running so waiting turn session=$session reason=$phase_health"
+          report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        else
+          log "session alive but plan unhealthy: background-dispatched repair loop session=$session reason=$phase_health"
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "$phase_health" "$workspace" "$remote_spec"
+        fi
       else
         log "session alive but plan unhealthy; repair loop missing session=$session reason=$phase_health"
         report_item "$report_items" "$session" "repair" "repair_unavailable" "$phase_health" "$workspace" "$remote_spec"
@@ -2588,8 +3065,13 @@ launch_chain_tick() {
       return 0
     fi
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-      log "session has plan/chain state mismatch; background-dispatched repair loop session=$session summary=$mismatch_summary"
-      report_item "$report_items" "$session" "repair" "repair_dispatched" "state mismatch repair loop dispatched" "$workspace" "$remote_spec"
+      if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+        log "session has plan/chain state mismatch; another repair loop already running session=$session summary=$mismatch_summary"
+        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+      else
+        log "session has plan/chain state mismatch; background-dispatched repair loop session=$session summary=$mismatch_summary"
+        report_item "$report_items" "$session" "repair" "repair_dispatched" "state mismatch repair loop dispatched" "$workspace" "$remote_spec"
+      fi
       return 0
     fi
     log "session has plan/chain state mismatch but repair loop is unavailable session=$session summary=$mismatch_summary"
@@ -2626,8 +3108,13 @@ launch_chain_tick() {
       return 0
     fi
     if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-      log "session awaits human action; background-dispatched repair loop to attempt user-action resolution session=$session summary=$human_summary"
-      report_item "$report_items" "$session" "repair" "repair_dispatched" "awaiting_human repair loop dispatched before needs_human" "$workspace" "$remote_spec"
+      if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+        log "session awaits human action; another repair loop already running so waiting turn session=$session summary=$human_summary"
+        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+      else
+        log "session awaits human action; background-dispatched repair loop to attempt user-action resolution session=$session summary=$human_summary"
+        report_item "$report_items" "$session" "repair" "repair_dispatched" "awaiting_human repair loop dispatched before needs_human" "$workspace" "$remote_spec"
+      fi
       return 0
     fi
     log "session awaits human action but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
@@ -2709,8 +3196,13 @@ launch_chain_tick() {
   else
     if mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
-        log "session stopped after mechanical relaunch: background-dispatched repair loop session=$session"
-        report_item "$report_items" "$session" "repair" "repair_dispatched" "repair loop dispatched after mechanical relaunch" "$workspace" "$remote_spec"
+        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+          log "session stopped after mechanical relaunch; another repair loop already running so waiting turn session=$session"
+          report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        else
+          log "session stopped after mechanical relaunch: background-dispatched repair loop session=$session"
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "repair loop dispatched after mechanical relaunch" "$workspace" "$remote_spec"
+        fi
         return 0
       fi
       log "session stopped after mechanical relaunch; repair loop missing -> direct relaunch session=$session"
@@ -2789,7 +3281,7 @@ scan_once() {
   shopt -s nullglob
   for marker in "$MARKER_DIR"/*.json; do
     case "$marker" in
-      *.progress.json|*.reap-progress.json)
+      *.progress.json|*.reap-progress.json|*.chain-health.progress.json)
         continue
         ;;
     esac

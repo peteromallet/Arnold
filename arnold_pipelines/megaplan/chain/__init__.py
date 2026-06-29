@@ -1636,24 +1636,25 @@ def _chain_completion_guard(
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
-    latest_failure = plan_state.get("latest_failure")
-    authority_blocked_merged_pr = (
-        is_merged_pr
-        and current_state == STATE_BLOCKED
-        and isinstance(latest_failure, dict)
-        and latest_failure.get("kind") == "authority_divergence"
-    )
-    finalized_merged_pr = is_merged_pr and current_state == STATE_FINALIZED
+    merged_pr_internal_state_bypass = is_merged_pr and current_state in {
+        STATE_BLOCKED,
+        STATE_FINALIZED,
+    }
+    merged_pr_state_bypass_reason = ""
     if (
         implementation_milestone
         and current_state != STATE_DONE
-        and not authority_blocked_merged_pr
-        and not finalized_merged_pr
+        and not merged_pr_internal_state_bypass
     ):
         return (
             False,
             f"plan {plan_name} current_state={current_state!r} is not terminal-success "
             f"{STATE_DONE!r}",
+        )
+    if implementation_milestone and current_state != STATE_DONE and merged_pr_internal_state_bypass:
+        merged_pr_state_bypass_reason = (
+            f"merged PR milestone; internal plan state {current_state!r} bypassed "
+            "because PR is merged"
         )
 
     if not implementation_milestone:
@@ -1688,6 +1689,8 @@ def _chain_completion_guard(
             if waiver_ok:
                 return True, f"typed no-op waiver accepted: {waiver_reason}"
             reason_parts: list[str] = []
+            if merged_pr_state_bypass_reason:
+                reason_parts.append(merged_pr_state_bypass_reason)
             if local_diff_reason:
                 if local_diff_ok:
                     reason_parts.append(local_diff_reason)
@@ -2247,7 +2250,14 @@ def _reconcile_chain_from_ground_truth(
         and state.last_state != "pr_closed"
     ):
         live_active_pr_state = _pr_state(root, state.pr_number, writer=writer)
-        if state.pr_state != live_active_pr_state:
+        if state.pr_state == "merged" and live_active_pr_state != "merged":
+            writer(
+                f"[chain] preserved recorded merged PR state for "
+                f"{active_milestone.label if active_milestone else 'milestone'} "
+                f"#{state.pr_number} despite live state {live_active_pr_state}\n"
+            )
+            live_active_pr_state = "merged"
+        elif state.pr_state != live_active_pr_state:
             writer(
                 f"[chain] reconciled live PR state for "
                 f"{active_milestone.label if active_milestone else 'milestone'} "
