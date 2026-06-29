@@ -1985,6 +1985,58 @@ reap_stale_repairs() {
   rm -f "$ps_rows" "$candidates"
 }
 
+chain_current_pr_merged() {
+  # Ground-truth check: is the chain's current-milestone PR merged LIVE (gh)?
+  # Returns "merged", "open", or "unknown". Used to verify a stale
+  # repair-exhausted marker: if the PR merged after the marker was written, the
+  # chain can now reconcile+complete on relaunch, so the marker is stale.
+  local workspace="$1" remote_spec="${2:-}"
+  python3 - "$workspace" "$remote_spec" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+plans_dir = workspace / ".megaplan" / "plans"
+chain_paths = sorted(
+    {
+        *plans_dir.glob(".chains/*.json"),
+        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *(workspace / ".megaplan").glob("**/chain_state.json"),
+    },
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+for path in chain_paths:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    pr_number = payload.get("pr_number")
+    if not pr_number:
+        continue
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "state"],
+            cwd=workspace,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if proc.returncode != 0:
+            continue
+        state = json.loads(proc.stdout or "{}").get("state", "")
+        state = state.lower() if isinstance(state, str) else ""
+        print("merged" if state == "merged" else "open" if state == "open" else "unknown")
+        raise SystemExit(0)
+    except Exception:
+        continue
+print("unknown")
+PY
+}
+
 chain_wait_status() {
   local workspace="$1"
   local remote_spec="${2:-}"
@@ -2606,12 +2658,21 @@ launch_chain_tick() {
 
   # The repair loop leaves a persistent sidecar after 3 bounded failures so the
   # watchdog reports needs-human instead of immediately re-arming automation.
+  # Ground-truth guard: that marker reflects a PAST exhaustion. If the chain's
+  # current-milestone PR has since MERGED, the chain can now reconcile+complete
+  # on relaunch, so the marker is stale -- clear it and fall through to the
+  # relaunch path instead of suppressing it with a stale needs_human.
   if [[ -f "$(repair_needs_human_path "$session")" ]]; then
-    local repair_summary
-    repair_summary="$(repair_needs_human_summary "$session")"
-    log "session marked needs human by repair loop session=$session summary=$repair_summary"
-    report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
-    return 0
+    if [[ "$run_kind" == "chain" ]] && [[ "$(chain_current_pr_merged "$workspace" "$remote_spec")" == "merged" ]]; then
+      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+      log "stale repair marker cleared; current milestone PR merged, falling through to relaunch session=$session"
+    else
+      local repair_summary
+      repair_summary="$(repair_needs_human_summary "$session")"
+      log "session marked needs human by repair loop session=$session summary=$repair_summary"
+      report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+      return 0
+    fi
   fi
 
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
