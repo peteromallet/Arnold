@@ -382,6 +382,81 @@ def test_execute_completion_authority_prefers_fresh_execution_evidence_over_stal
     assert missing == []
 
 
+def test_execute_completion_authority_prefers_recorded_head_when_repo_head_moved_elsewhere(
+    tmp_path: Path,
+) -> None:
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=project_dir, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=project_dir, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=project_dir, check=True)
+    (project_dir / "file.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "file.txt"], cwd=project_dir, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=project_dir, check=True, capture_output=True)
+    baseline_head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=project_dir, text=True
+    ).strip()
+
+    plan_dir = project_dir / ".megaplan" / "plans" / "plan-head-drift"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "config": {"project_dir": str(project_dir)},
+                "meta": {"execution_baseline": {"head": baseline_head}},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "kind": "test",
+                        "commands_run": ["pytest tests/test_example.py -q"],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "kind": "test",
+                        "commands_run": ["pytest tests/test_example.py -q"],
+                        "head_sha": baseline_head,
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    subprocess.run(["git", "checkout", "--orphan", "other-branch"], cwd=project_dir, check=True)
+    subprocess.run(["git", "rm", "-rf", "."], cwd=project_dir, check=True, capture_output=True)
+    (project_dir / "other.txt").write_text("other\n", encoding="utf-8")
+    subprocess.run(["git", "add", "other.txt"], cwd=project_dir, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "unrelated"], cwd=project_dir, check=True, capture_output=True
+    )
+
+    ok, missing = _execute_completion_authority(plan_dir)
+
+    assert ok is True
+    assert missing == []
+
+
 def test_find_synthetic_before_execute_gate_ignores_baseline_checkpoint_root() -> None:
     finalize_data = {
         "tasks": [

@@ -341,9 +341,12 @@ def effective_execute_completed_task_ids(
         if isinstance(raw_project_dir, (str, Path)):
             resolved_project_dir = Path(raw_project_dir)
     if current_head is None:
-        head_root = resolved_project_dir or resolved_plan_dir
-        if head_root is not None:
-            current_head = _best_effort_git_head_for_path(head_root)
+        baseline_head = _execution_baseline_head(state)
+        current_head = _resolve_execute_authority_current_head(
+            resolved_plan_dir,
+            project_dir=resolved_project_dir,
+            baseline_head=baseline_head,
+        )
     execution_window = (
         execute_execution_window(
             state,
@@ -406,6 +409,38 @@ def effective_execute_completed_task_ids(
                     },
                 )
     return completed
+
+
+def _execution_baseline_head(state: Mapping[str, Any] | None) -> str | None:
+    if not isinstance(state, Mapping):
+        return None
+    meta = state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    baseline = meta.get("execution_baseline")
+    if not isinstance(baseline, Mapping):
+        return None
+    head = baseline.get("head")
+    return head.strip() if isinstance(head, str) and head.strip() else None
+
+
+def _resolve_execute_authority_current_head(
+    plan_dir: Path | None,
+    *,
+    project_dir: Path | None,
+    baseline_head: str | None,
+) -> str | None:
+    actual_head = _best_effort_git_head_for_path(project_dir) if project_dir is not None else None
+    recorded_head = _latest_recorded_execution_head(plan_dir) if plan_dir is not None else None
+    if actual_head and recorded_head:
+        if actual_head == recorded_head:
+            return actual_head
+        if project_dir is not None:
+            if _git_is_ancestor(project_dir, recorded_head, actual_head):
+                return actual_head
+            if _git_is_ancestor(project_dir, actual_head, recorded_head):
+                return recorded_head
+    return recorded_head or baseline_head or actual_head
 
 
 def _is_execute_command_checkpoint(task: Mapping[str, Any]) -> bool:
@@ -533,6 +568,63 @@ def _best_effort_git_head_for_path(path: Path) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return completed.stdout.strip() or None
+
+
+def _latest_recorded_execution_head(plan_dir: Path) -> str | None:
+    for path in sorted(
+        plan_dir.glob("execution_batch_*.json"),
+        key=_execution_batch_sort_key,
+        reverse=True,
+    ):
+        head = _latest_head_in_artifact(path)
+        if head:
+            return head
+    return _latest_head_in_artifact(plan_dir / "finalize.json")
+
+
+def _latest_head_in_artifact(path: Path) -> str | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    latest_head: str | None = None
+    for key in ("task_updates", "tasks"):
+        raw_records = payload.get(key)
+        if not isinstance(raw_records, Sequence):
+            continue
+        for record in raw_records:
+            if not isinstance(record, Mapping):
+                continue
+            observed = record.get("head_sha") or record.get("head")
+            if isinstance(observed, str) and observed.strip():
+                latest_head = observed.strip()
+    return latest_head
+
+
+def _execution_batch_sort_key(path: Path) -> int:
+    name = path.stem
+    try:
+        return int(name.rsplit("_", 1)[-1])
+    except ValueError:
+        return -1
+
+
+def _git_is_ancestor(project_dir: Path, ancestor: str, descendant: str) -> bool:
+    try:
+        completed = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", ancestor, descendant],
+            cwd=project_dir,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.returncode == 0
 
 
 def _evidence_from_task_record(
