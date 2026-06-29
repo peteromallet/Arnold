@@ -1670,6 +1670,24 @@ def _record_lifecycle_failure(
             progress_emitter.plan_failed(summary=message, **failure_details)
 
 
+def _clear_latest_failure_for_success(plan_dir: Path | None) -> None:
+    if plan_dir is None:
+        return
+
+    def _clear(current: dict[str, Any]) -> bool:
+        changed = current.get("latest_failure") is not None
+        current["latest_failure"] = None
+        if "resume_cursor" in current:
+            current.pop("resume_cursor", None)
+            changed = True
+        return changed
+
+    try:
+        write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_clear)
+    except (CliError, OSError, RuntimeError, ValueError):
+        return
+
+
 def _reconcile_latest_execution_batch(plan_dir: Path | None) -> dict[str, Any] | None:
     if plan_dir is None:
         return None
@@ -2839,6 +2857,8 @@ def drive(
                     )
             # Emit plan_finished or plan_aborted
             if plan_dir is not None:
+                if terminal_status == "done":
+                    _clear_latest_failure_for_success(plan_dir)
                 try:
                     if terminal_status == "aborted":
                         emit_event(EventKind.PLAN_ABORTED, plan_dir=plan_dir, payload={"state": state})

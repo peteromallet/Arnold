@@ -2071,6 +2071,31 @@ def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None
     return current_state if isinstance(current_state, str) else None
 
 
+def _sync_chain_last_state_from_plan(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    *,
+    writer,
+) -> ChainState:
+    """Refresh chain.last_state from the current plan's authoritative state.json."""
+
+    plan_name = state.current_plan_name
+    if not plan_name:
+        return state
+    plan_state = _plan_current_state_from_payload(root, plan_name)
+    if not plan_state or plan_state == state.last_state:
+        return state
+    previous = state.last_state
+    state.last_state = plan_state
+    writer(
+        f"[chain] synced last_state for {plan_name}: "
+        f"{previous or 'unknown'} -> {plan_state}\n"
+    )
+    chain_spec.save_chain_state(spec_path, state)
+    return state
+
+
 def _resolve_idea_path(root: Path, idea: str) -> Path:
     idea_path = Path(idea).expanduser()
     if idea_path.is_absolute():
@@ -2755,6 +2780,12 @@ def run_chain(
                 not in ("missing",)
             ):
                 plan_name = state.current_plan_name
+                state = _sync_chain_last_state_from_plan(
+                    root,
+                    spec_path,
+                    state,
+                    writer=writer,
+                )
                 log(f"resuming existing plan {plan_name} for {milestone.label}")
                 if use_pr and milestone.branch:
                     base_ref = _checkout_milestone_branch(

@@ -4,8 +4,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from arnold_pipelines.megaplan.auto import DriverOutcome
-from arnold_pipelines.megaplan.chain import _handle_outcome
-from arnold_pipelines.megaplan.chain.spec import ChainState
+from arnold_pipelines.megaplan.chain import (
+    _handle_outcome,
+    _sync_chain_last_state_from_plan,
+)
+from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state
 
 
 def test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions(
@@ -122,3 +125,31 @@ def test_handle_outcome_retries_finalized_plan_when_execute_finds_satisfied_gate
 
     assert decision == "retry"
     assert state.retry_counts == {"m7": 1}
+
+
+def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"m7-plan","current_state":"finalized","meta":{}}',
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    state = ChainState(
+        current_milestone_index=6,
+        current_plan_name="m7-plan",
+        last_state="awaiting_human",
+    )
+
+    synced = _sync_chain_last_state_from_plan(
+        tmp_path,
+        spec_path,
+        state,
+        writer=messages.append,
+    )
+
+    assert synced.last_state == "finalized"
+    assert load_chain_state(spec_path).last_state == "finalized"
+    assert any("awaiting_human -> finalized" in message for message in messages)
