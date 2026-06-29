@@ -2336,16 +2336,21 @@ def _normalize_execute_compat_argv(argv: list[str]) -> list[str]:
     argparse only binds them reliably when they appear inside the execute
     subparser's argv segment. Move recognized flags to immediately after the
     first ``execute`` token before any parsing happens.
+
+    A second stale-wrapper shape drops the ``execute`` token entirely and
+    forwards only execute-only flags. In that case, synthesize the missing
+    subcommand so compatibility routing still lands in the execute parser.
     """
-
-    if "execute" not in argv:
-        return argv
-
     recognized = {
         "--confirm-destructive",
         "--user-approved",
         "--retry-blocked-tasks",
     }
+    if "execute" not in argv:
+        if argv and all(token in recognized for token in argv):
+            return ["execute", *argv]
+        return argv
+
     execute_index = argv.index("execute")
     before_execute = argv[:execute_index]
     moved_flags = [token for token in before_execute if token in recognized]
