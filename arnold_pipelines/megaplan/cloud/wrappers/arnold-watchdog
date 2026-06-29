@@ -337,6 +337,9 @@ if not current_state and not retry_strategy:
         if missing_base_ref_recorded_at:
             failure_recorded_at = missing_base_ref_recorded_at
 
+if run_kind == "chain" and not resolved_plan_name and not current_state and chain_last_state == "done":
+    current_state = "done"
+
 if current_state == "awaiting_human" or chain_last_state == "awaiting_human":
     metadata = chain_state.get("metadata") if isinstance(chain_state, dict) else None
     metadata_reason = ""
@@ -2417,6 +2420,11 @@ launch_chain_tick() {
     fi
     log "session awaits human action but repair loop is unavailable; needs human session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
+    return 0
+  fi
+  if [[ "$run_kind" == "chain" && -z "${PLAN_STATUS_PLAN_NAME:-}" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" ]]; then
+    log "chain complete; skipping repair/relaunch session=$session state=done"
+    report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0
   fi
   if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
