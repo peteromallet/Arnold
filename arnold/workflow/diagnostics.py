@@ -82,8 +82,14 @@ class DiagnosticCode(StrEnum):
     AMBIGUOUS_LOOP = "AWF013_AMBIGUOUS_LOOP"
     UNSUPPORTED_POLICY_CARRIER = "AWF014_UNSUPPORTED_POLICY_CARRIER"
     UNSUPPORTED_SUBFLOW_REFERENCE = "AWF015_UNSUPPORTED_SUBFLOW_REFERENCE"
-    MISSING_FALLTHROUGH_ROUTE = "AWF017_MISSING_FALLTHROUGH_ROUTE"
     UNREACHABLE_CONTROL_PATH = "AWF016_UNREACHABLE_CONTROL_PATH"
+    MISSING_FALLTHROUGH_ROUTE = "AWF017_MISSING_FALLTHROUGH_ROUTE"
+    ROUTE_METADATA_MISMATCH = "AWF018_ROUTE_METADATA_MISMATCH"
+    MALFORMED_POLICY_CONFIG = "AWF019_MALFORMED_POLICY_CONFIG"
+    MALFORMED_CAPABILITY_METADATA = "AWF020_MALFORMED_CAPABILITY_METADATA"
+    LOOP_POLICY_BINDING_MISMATCH = "AWF021_LOOP_POLICY_BINDING_MISMATCH"
+    MISSING_PROMPT_DEPENDENCY = "AWF022_MISSING_PROMPT_DEPENDENCY"
+    MISSING_RESOURCE_DEPENDENCY = "AWF023_MISSING_RESOURCE_DEPENDENCY"
 
 
 class DiagnosticFamily(StrEnum):
@@ -104,8 +110,14 @@ class DiagnosticFamily(StrEnum):
     AMBIGUOUS_LOOP = "ambiguous_loop"
     UNSUPPORTED_POLICY_CARRIER = "unsupported_policy_carrier"
     UNSUPPORTED_SUBFLOW_REFERENCE = "unsupported_subflow_reference"
-    MISSING_FALLTHROUGH_ROUTE = "missing_fallthrough_route"
     UNREACHABLE_CONTROL_PATH = "unreachable_control_path"
+    MISSING_FALLTHROUGH_ROUTE = "missing_fallthrough_route"
+    ROUTE_METADATA_MISMATCH = "route_metadata_mismatch"
+    MALFORMED_POLICY_CONFIG = "malformed_policy_config"
+    MALFORMED_CAPABILITY_METADATA = "malformed_capability_metadata"
+    LOOP_POLICY_BINDING_MISMATCH = "loop_policy_binding_mismatch"
+    MISSING_PROMPT_DEPENDENCY = "missing_prompt_dependency"
+    MISSING_RESOURCE_DEPENDENCY = "missing_resource_dependency"
 
 
 @dataclass(frozen=True)
@@ -240,6 +252,13 @@ DIAGNOSTIC_CODE_SPECS = (
         remediation="use an imported SubflowComponent with a literal manifest_hash or resolver metadata",
     ),
     DiagnosticCodeSpec(
+        code=DiagnosticCode.UNREACHABLE_CONTROL_PATH,
+        family=DiagnosticFamily.UNREACHABLE_CONTROL_PATH,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="source contains a path unreachable after terminal control flow",
+        remediation="remove statements after branches where every arm exits control flow",
+    ),
+    DiagnosticCodeSpec(
         code=DiagnosticCode.MISSING_FALLTHROUGH_ROUTE,
         family=DiagnosticFamily.MISSING_FALLTHROUGH_ROUTE,
         severity=DiagnosticSeverity.ERROR,
@@ -247,14 +266,50 @@ DIAGNOSTIC_CODE_SPECS = (
         remediation="add an else arm so every branch path lowers to an explicit route",
     ),
     DiagnosticCodeSpec(
-        code=DiagnosticCode.UNREACHABLE_CONTROL_PATH,
-        family=DiagnosticFamily.UNREACHABLE_CONTROL_PATH,
+        code=DiagnosticCode.ROUTE_METADATA_MISMATCH,
+        family=DiagnosticFamily.ROUTE_METADATA_MISMATCH,
         severity=DiagnosticSeverity.ERROR,
-        message_template="source contains a path unreachable after terminal control flow",
-        remediation="remove statements after branches where every arm exits control flow",
+        message_template="lowered route metadata does not match the declared source contract",
+        remediation="preserve route ids, labels, condition refs, and whitelisted metadata during lowering",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.MALFORMED_POLICY_CONFIG,
+        family=DiagnosticFamily.MALFORMED_POLICY_CONFIG,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="policy component metadata is missing required static configuration",
+        remediation="export a PolicyComponent with literal policy_type and policy fields",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.MALFORMED_CAPABILITY_METADATA,
+        family=DiagnosticFamily.MALFORMED_CAPABILITY_METADATA,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="capability metadata is missing or malformed",
+        remediation="declare literal capability metadata on the component export",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.LOOP_POLICY_BINDING_MISMATCH,
+        family=DiagnosticFamily.LOOP_POLICY_BINDING_MISMATCH,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="loop policy binding does not match the canonical loop carrier",
+        remediation="bind loop policy to the canonical tail carrier without replacing existing policy fields",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.MISSING_PROMPT_DEPENDENCY,
+        family=DiagnosticFamily.MISSING_PROMPT_DEPENDENCY,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="step component declares a static prompt dependency that is not satisfied",
+        remediation="attach a PromptComponent to the StepComponent or remove the static prompt_key metadata",
+    ),
+    DiagnosticCodeSpec(
+        code=DiagnosticCode.MISSING_RESOURCE_DEPENDENCY,
+        family=DiagnosticFamily.MISSING_RESOURCE_DEPENDENCY,
+        severity=DiagnosticSeverity.ERROR,
+        message_template="step component declares a static resource dependency that is not satisfied",
+        remediation="declare the required resource in component metadata resources or remove the dependency",
     ),
 )
 
+DIAGNOSTIC_SPECS = DIAGNOSTIC_CODE_SPECS
 DIAGNOSTIC_CODE_BY_FAMILY = MappingProxyType(
     {spec.family: spec.code for spec in DIAGNOSTIC_CODE_SPECS}
 )
@@ -352,6 +407,7 @@ __all__ = [
     "AuthoringDiagnostic",
     "DIAGNOSTIC_CODE_BY_FAMILY",
     "DIAGNOSTIC_CODE_SPECS",
+    "DIAGNOSTIC_SPECS",
     "DIAGNOSTIC_SPEC_BY_CODE",
     "DiagnosticCode",
     "DiagnosticCodeSpec",

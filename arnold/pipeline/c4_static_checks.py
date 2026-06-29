@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Sequence
 
 from arnold.pipeline.declaration_lowering import lower_stage_declarations
-from arnold.pipeline.model_resource_capabilities import (
+from arnold.agent.costing.model_resource_capabilities import (
     prove_stage_required_capabilities,
 )
 from arnold.pipeline.schema_registry import (
@@ -575,7 +575,7 @@ def _pass_call_sites(
 ) -> None:
     if registry is None or not hasattr(registry, "registered_kinds"):
         try:
-            from arnold.pipeline.step_invocation import get_default_adapter_registry
+            from arnold.execution.step_invocation import get_default_adapter_registry
 
             registry = get_default_adapter_registry()
         except Exception:  # pragma: no cover - defensive
@@ -602,7 +602,7 @@ def _pass_media_pricing(pipeline: Any, warnings: list[StaticCheckFinding]) -> No
     Scans every stage's ``produces`` / ``consumes`` ports for content types
     that fall under ``image/*``, ``video/*``, or ``audio/*``.  For each
     detected media category the pass maps it to a semantic pricing unit and
-    checks whether :data:`arnold.pipeline.media_cost.DEFAULT_MEDIA_PRICING`
+    checks whether :data:`arnold.agent.costing.media_cost.DEFAULT_MEDIA_PRICING`
     contains at least one row for that unit.
 
     Warnings are **advisory only** — they are added to the report's
@@ -641,7 +641,7 @@ def _pass_media_pricing(pipeline: Any, warnings: list[StaticCheckFinding]) -> No
         needed_units.add(_CATEGORY_TO_PRICING_UNIT[cat])
 
     # ── check DEFAULT_MEDIA_PRICING coverage ─────────────────────────
-    from arnold.pipeline.media_cost import DEFAULT_MEDIA_PRICING
+    from arnold.agent.costing.media_cost import DEFAULT_MEDIA_PRICING
 
     priced_units: set[str] = {entry.unit.lower() for entry in DEFAULT_MEDIA_PRICING}
 

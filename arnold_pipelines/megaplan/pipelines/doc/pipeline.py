@@ -38,10 +38,9 @@ from arnold.pipeline.native import (
     phase,
     pipeline,
 )
-from arnold.pipeline import Edge, Pipeline, Stage
-from arnold_pipelines.megaplan.pattern_dynamic import dynamic_fanout
-from arnold.pipeline import StepContext
-from arnold_pipelines.megaplan.step_types import StepResult
+from arnold.pipeline.types import Edge, Pipeline, Stage
+from arnold.pipeline.pattern_dynamic import run_fanout
+from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 from arnold_pipelines.megaplan.pipelines.doc.steps import (
     AssemblyStep,
     CritiqueStep,
@@ -119,19 +118,24 @@ def _json_safe_step_result(result: StepResult) -> StepResult:
     )
 
 
-def _section_drafts_step() -> Any:
-    """Return the existing graph dynamic fanout step used by doc drafts.
+class _SectionDraftsFanoutStep:
+    name = "section_drafts"
+    kind = "fanout"
+    prompt_key = None
+    slot = None
 
-    TODO(M7): Replace this legacy ``SubloopStep``-based dynamic fanout with a
-    native dynamic-fanout primitive once the runtime primitive is stable. The
-    current wrapper is intentionally preserved so tests stay green.
-    """
-    return dynamic_fanout(
-        generator=OutlineArtifactReader(artifact_label="sections"),
-        base_prompt=SectionDraftStep(),
-        join=concat_sections_join,
-        name="section_drafts",
-    )
+    def run(self, ctx: StepContext) -> StepResult:
+        return run_fanout(
+            OutlineArtifactReader(artifact_label="sections"),
+            SectionDraftStep(),
+            concat_sections_join,
+            ctx,
+            typed_ports=False,
+        )
+
+
+def _section_drafts_step() -> Any:
+    return _SectionDraftsFanoutStep()
 
 
 # ── Native phase wrappers ───────────────────────────────────────────────

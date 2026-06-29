@@ -10,28 +10,15 @@ import from the relevant submodule (``arnold.runtime.driver``,
 ``arnold.runtime.state_persistence``, etc.) rather than relying on broad
 package re-exports.
 
-Sub-modules (landed incrementally across M2a, M3d and M8 tasks):
+Sub-modules retained after the M7 runtime deletion purge:
 * ``envelope``         — ``RuntimeEnvelope``, the runtime-owned run envelope.
 * ``resume``           — ``ResumeCursor`` and legacy-resume migration contract.
-* ``operations``       — ``OperationRequest`` / ``OperationResult`` carriers.
-* ``driver``           — ``StepwiseDriver`` Protocol and ``IsolationMode``.
-* ``settings``         — Runtime settings shape and ``EffectiveSetting``.
-* ``settings_resolver`` — Precedence-chain resolver and ``ResolvedSettings``.
-* ``dry_run``          — ``--dry-run`` CLI entrypoint (proof harness).
-* ``batch``            — Neutral batch carriers (BatchUnit, BatchRunResult, …).
-* ``batch_settings``   — Batch-runtime settings normalization.
-* ``recovery``         — Neutral recovery-classifier seam (Protocol +
-                        ``NullRecoveryPolicy``).
-* ``oracle``           — ``OracleResult`` + ``run`` typed subprocess seam.
 * ``state_persistence`` — ``plan_state_lock``, ``atomic_write_bytes``,
                          ``atomic_write_text``, ``atomic_write_json``.
 * ``event_journal``    — ``EventEnvelope``, ``EventSink`` Protocol,
                          ``NdjsonEventJournal``, ``NdjsonEventSink``.
 * ``effect``           — ``Effect`` dataclass, ``ReplayClass`` enum,
                          ``NONCOMPENSABLE`` sentinel.
-* ``wal_fold``         — ``fold_journal`` parameterized fold combinator,
-                         ``last_state_snapshot_projector``, and
-                         ``read_event_journal`` re-export.
 * ``semantic_replay``  — ``semantic_equivalent`` deep structural
                          comparison with dotted-path ignore/unordered
                          support, and ``semantic_replay_journal`` for
@@ -59,7 +46,7 @@ defaults, policy interpretation, and argument translation for its phases.
 
 Import from ``arnold.runtime``:
 
-    from arnold.runtime import RuntimeEnvelope, RunOutcome, OracleResult
+    from arnold.runtime import RuntimeEnvelope, RunOutcome
     from arnold.runtime.event_journal import read_event_journal
 
 No Megaplan re-exports appear here; this is the neutral surface.
@@ -67,10 +54,8 @@ No Megaplan re-exports appear here; this is the neutral surface.
 
 # Re-export boundary-guard metadata so the AST-scan test can verify
 # the package is self-describing about its contract.
-from arnold.runtime import oracle  # noqa: F401 — make the oracle module accessible as arnold.runtime.oracle
 from arnold.runtime.envelope import RunContext, RunEnvelope, RuntimeEnvelope
 from arnold.runtime.errors import ArnoldError
-from arnold.runtime.oracle import OracleResult, run as oracle_run
 from arnold.runtime.outcome import RunOutcome, RunResultMetadata
 from arnold.runtime.effect import NONCOMPENSABLE, Effect, ReplayClass  # noqa: F401 — re-export for convenience
 from arnold.runtime.event_journal import (  # noqa: F401 — re-export for convenience
@@ -86,10 +71,6 @@ from arnold.runtime.semantic_replay import (  # noqa: F401 — re-export for con
     semantic_equivalent,
     semantic_replay_journal,
 )
-from arnold.runtime.wal_fold import (  # noqa: F401 — re-export for convenience
-    fold_journal,
-    last_state_snapshot_projector,
-)
 
 __all__: list[str] = [
     "ArnoldError",
@@ -99,16 +80,12 @@ __all__: list[str] = [
     "NdjsonEventJournal",
     "NdjsonEventSink",
     "NONCOMPENSABLE",
-    "OracleResult",
     "ReplayClass",
     "RunContext",
     "RunEnvelope",
     "RuntimeEnvelope",
     "RunOutcome",
     "RunResultMetadata",
-    "fold_journal",
-    "last_state_snapshot_projector",
-    "oracle_run",
     "read_event_journal",
     "read_event_journal_paged",
     "stream_event_journal",

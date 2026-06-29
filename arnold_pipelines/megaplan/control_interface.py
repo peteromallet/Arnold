@@ -185,7 +185,7 @@ def read_valid_targets(
     if binding is _MISSING_BINDING:
         raise ValueError("read_valid_targets requires an explicit binding or plugin identity")
     if isinstance(binding, str) and binding in {"megaplan", "planning"}:
-        from arnold.runtime.operations import OperationKind, OperationRequest
+        from arnold.execution.operations import OperationKind, OperationRequest
         from arnold_pipelines.megaplan.registry import (
             control_status_result_from_operation_result,
             dispatch_operation_for,

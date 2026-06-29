@@ -4,8 +4,8 @@ Covers one motivating failure class: unknown ``StepInvocation`` adapter
 kinds must fail closed during validation, preventing a pipeline from
 bypassing the registered adapter surface.
 
-The test uses only the neutral :func:`arnold.pipeline.validator.validate`
-and :class:`arnold.pipeline.step_invocation.StepInvocation` — no
+The test uses only the neutral :func:`arnold.workflow.validator.validate`
+and :class:`arnold.execution.step_invocation.StepInvocation` — no
 evidence-pack runtime fixtures or imports from
 ``arnold.pipelines.evidence_pack``.
 
@@ -26,9 +26,9 @@ from typing import Any
 
 import pytest
 
-from arnold.pipeline.step_invocation import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 from arnold.pipeline.types import Edge, Pipeline, Stage
-from arnold.pipeline.validator import (
+from arnold.workflow.validator import (
     UNKNOWN_ADAPTER_CODE,
     validate,
     validate_invocation_requirements,

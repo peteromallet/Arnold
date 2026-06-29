@@ -1,11 +1,11 @@
-"""Tests for ``arnold.pipeline.registry`` (M3a T11)."""
+"""Tests for ``arnold.workflow.registry`` (M3a T11)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 import pytest
 
-from arnold.pipeline.registry import (
+from arnold.workflow.registry import (
     PipelineBuilder,
     PipelineRegistry,
     ResourcePathPolicy,
@@ -382,7 +382,7 @@ class TestRegistryBoundary:
 class TestDiscoveryManifest:
     def test_well_formed_manifest_with_neutral_identity(self, tmp_path: Path) -> None:
         """The Arnold manifest reader must use the neutral identity schema."""
-        from arnold.pipeline.discovery.manifest import Manifest, read_manifest
+        from arnold.workflow.discovery.manifest import Manifest, read_manifest
 
         module = tmp_path / "my_pipeline.py"
         module.write_text(
@@ -411,7 +411,7 @@ class TestDiscoveryManifest:
 
     def test_manifest_uses_neutral_identity_by_default(self, tmp_path: Path) -> None:
         """Default identity schema should be 'arnold.pipeline-manifest.v1'."""
-        from arnold.pipeline.discovery.manifest import ARNOLD_IDENTITY_SCHEMA, read_manifest
+        from arnold.workflow.discovery.manifest import ARNOLD_IDENTITY_SCHEMA, read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -433,7 +433,7 @@ class TestDiscoveryManifest:
 
     def test_read_manifest_with_custom_identity_schema(self, tmp_path: Path) -> None:
         """Caller can override the identity schema."""
-        from arnold.pipeline.discovery.manifest import read_manifest
+        from arnold.workflow.discovery.manifest import read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -455,7 +455,7 @@ class TestDiscoveryManifest:
 
     def test_manifest_hash_stable(self, tmp_path: Path) -> None:
         """Same module must produce the same hash on repeated reads."""
-        from arnold.pipeline.discovery.manifest import read_manifest
+        from arnold.workflow.discovery.manifest import read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -476,7 +476,7 @@ class TestDiscoveryManifest:
         assert h1 == h2
 
     def test_missing_required_field_is_error(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
+        from arnold.workflow.discovery.manifest import ManifestError, read_manifest
 
         module = tmp_path / "p.py"
         module.write_text('name = "p"\ndef build_pipeline(): pass\n')
@@ -485,7 +485,7 @@ class TestDiscoveryManifest:
 
     def test_skill_md_sibling_file_layout(self, tmp_path: Path) -> None:
         """Sibling-file modules resolve SKILL.md from <parent>/<cli-name>/SKILL.md."""
-        from arnold.pipeline.discovery.manifest import Manifest, read_manifest
+        from arnold.workflow.discovery.manifest import Manifest, read_manifest
 
         # Sibling file: writing_panel_strict.py
         module = tmp_path / "writing_panel_strict.py"
@@ -510,7 +510,7 @@ class TestDiscoveryManifest:
 
     def test_skill_md_package_layout(self, tmp_path: Path) -> None:
         """Package modules resolve SKILL.md from <package>/SKILL.md."""
-        from arnold.pipeline.discovery.manifest import Manifest, read_manifest
+        from arnold.workflow.discovery.manifest import Manifest, read_manifest
 
         pkg = tmp_path / "my_pkg"
         pkg.mkdir()
@@ -540,14 +540,14 @@ class TestDiscoveryManifest:
 class TestDiscoveryTrust:
     def test_classify_with_no_fragment_is_quarantined(self) -> None:
         """Without an in_tree_path_fragment, everything is QUARANTINED."""
-        from arnold.pipeline.discovery.trust import TrustGrade, classify
+        from arnold.workflow.discovery.trust import TrustGrade, classify
 
         tier = classify(Path("/some/random/path.py"))
         assert tier == TrustGrade.QUARANTINED
 
     def test_classify_with_fragment_detects_in_tree(self, tmp_path: Path) -> None:
         """With in_tree_path_fragment, paths inside it are AUTO_EXEC."""
-        from arnold.pipeline.discovery.trust import TrustGrade, classify
+        from arnold.workflow.discovery.trust import TrustGrade, classify
 
         root = tmp_path / "myapp" / "pipelines"
         root.mkdir(parents=True)
@@ -562,7 +562,7 @@ class TestDiscoveryTrust:
 
     def test_classify_with_fragment_outside_is_quarantined(self) -> None:
         """Paths outside the fragment are QUARANTINED."""
-        from arnold.pipeline.discovery.trust import TrustGrade, classify
+        from arnold.workflow.discovery.trust import TrustGrade, classify
 
         tier = classify(
             Path("/other/place/mod.py"),
@@ -572,7 +572,7 @@ class TestDiscoveryTrust:
 
     def test_blessed_allowlist_overrides(self, tmp_path: Path) -> None:
         """A path in the blessed allowlist is BLESSED regardless."""
-        from arnold.pipeline.discovery.trust import TrustGrade, classify
+        from arnold.workflow.discovery.trust import TrustGrade, classify
 
         module = tmp_path / "blessed.py"
         module.write_text("")
@@ -586,7 +586,7 @@ class TestDiscoveryTrust:
         assert tier == TrustGrade.BLESSED
 
     def test_derive_tenant_id_is_stable(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.trust import derive_tenant_id
+        from arnold.workflow.discovery.trust import derive_tenant_id
 
         module = tmp_path / "test.py"
         module.write_text("")
@@ -818,7 +818,7 @@ class TestDiscoverySkillMdLookup:
 
     def test_manifest_from_non_megaplan_package(self, tmp_path: Path) -> None:
         """Read a manifest from a temp package that is NOT under megaplan."""
-        from arnold.pipeline.discovery.manifest import Manifest, read_manifest
+        from arnold.workflow.discovery.manifest import Manifest, read_manifest
 
         pkg = tmp_path / "my_custom_pkg"
         pkg.mkdir()
@@ -843,7 +843,7 @@ class TestDiscoverySkillMdLookup:
         assert result.capabilities == ("plan", "review")
 
     def test_skill_md_missing_is_error(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
+        from arnold.workflow.discovery.manifest import ManifestError, read_manifest
 
         module = tmp_path / "nop.py"
         module.write_text(
@@ -862,7 +862,7 @@ class TestDiscoverySkillMdLookup:
         assert "SKILL.md missing" in result.reason
 
     def test_manifest_hash_changes_with_skill_md_content(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import read_manifest
+        from arnold.workflow.discovery.manifest import read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -886,7 +886,7 @@ class TestDiscoverySkillMdLookup:
         assert h1 != h2
 
     def test_manifest_hash_changes_with_source_content(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import read_manifest
+        from arnold.workflow.discovery.manifest import read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -920,7 +920,7 @@ class TestDiscoverySkillMdLookup:
         assert h1 != h2
 
     def test_malformed_python_is_error(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
+        from arnold.workflow.discovery.manifest import ManifestError, read_manifest
 
         module = tmp_path / "bad.py"
         module.write_text("this is not valid python {{{")
@@ -929,7 +929,7 @@ class TestDiscoverySkillMdLookup:
         assert "malformed Python" in result.reason
 
     def test_api_version_out_of_range_is_error(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
+        from arnold.workflow.discovery.manifest import ManifestError, read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -950,7 +950,7 @@ class TestDiscoverySkillMdLookup:
         assert "outside supported range" in result.reason
 
     def test_missing_entrypoint_symbol_is_error(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
+        from arnold.workflow.discovery.manifest import ManifestError, read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -971,7 +971,7 @@ class TestDiscoverySkillMdLookup:
         assert "no top-level" in result.reason
 
     def test_unreadable_module_file_is_error(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
+        from arnold.workflow.discovery.manifest import ManifestError, read_manifest
 
         nonexistent = tmp_path / "does_not_exist.py"
         result = read_manifest(nonexistent)
@@ -979,7 +979,7 @@ class TestDiscoverySkillMdLookup:
         assert "unable to read" in result.reason
 
     def test_manifest_with_default_profile(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import Manifest, read_manifest
+        from arnold.workflow.discovery.manifest import Manifest, read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -1000,7 +1000,7 @@ class TestDiscoverySkillMdLookup:
         assert result.default_profile == "production"
 
     def test_manifest_extras_captured(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.manifest import Manifest, read_manifest
+        from arnold.workflow.discovery.manifest import Manifest, read_manifest
 
         module = tmp_path / "p.py"
         module.write_text(
@@ -1088,7 +1088,7 @@ class TestTrustClassificationExtended:
     """Extended trust classification tests."""
 
     def test_classify_blessed_wins_over_fragment(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.trust import TrustGrade, classify
+        from arnold.workflow.discovery.trust import TrustGrade, classify
 
         module = tmp_path / "myapp" / "pipelines" / "mod.py"
         module.parent.mkdir(parents=True)
@@ -1103,13 +1103,13 @@ class TestTrustClassificationExtended:
         assert tier == TrustGrade.BLESSED
 
     def test_classify_no_fragment_no_allowlist_is_quarantined(self) -> None:
-        from arnold.pipeline.discovery.trust import TrustGrade, classify
+        from arnold.workflow.discovery.trust import TrustGrade, classify
 
         tier = classify(Path("/any/path.py"))
         assert tier == TrustGrade.QUARANTINED
 
     def test_derive_tenant_id_different_inputs_different_ids(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.trust import derive_tenant_id
+        from arnold.workflow.discovery.trust import derive_tenant_id
 
         m1 = tmp_path / "a.py"
         m2 = tmp_path / "b.py"
@@ -1120,7 +1120,7 @@ class TestTrustClassificationExtended:
         assert tid1 != tid2
 
     def test_derive_tenant_id_different_cli_names(self, tmp_path: Path) -> None:
-        from arnold.pipeline.discovery.trust import derive_tenant_id
+        from arnold.workflow.discovery.trust import derive_tenant_id
 
         module = tmp_path / "mod.py"
         module.write_text("")

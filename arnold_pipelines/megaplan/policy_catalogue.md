@@ -125,9 +125,10 @@ must be shown to match between legacy and manifest-backed runs:
 
 ## 13. Notes
 
-* All legacy paths above are relative to `arnold_pipelines/megaplan/`.  After
-  M4 Phase 2 the same modules exist under `arnold_pipelines/megaplan/` with
-  identical behavior.
+* All paths above are relative to `arnold_pipelines/megaplan/`.  These modules
+  were originally shipped under `arnold/pipelines/megaplan/` (dot-path) and
+  migrated to the current `arnold_pipelines/megaplan/` (underscore-path) during
+  the Python-shaped workflow authoring transition.
 * Stable identifiers for prompt builders and topology overlays should be
   recorded as `arnold_pipelines.megaplan.prompts.<module>:<qualname>` or
   `arnold_pipelines.megaplan._core.topology:<qualname>` in manifest metadata

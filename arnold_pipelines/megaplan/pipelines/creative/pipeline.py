@@ -35,9 +35,8 @@ from arnold.pipeline.native import (
     phase,
     pipeline,
 )
-from arnold.pipeline import Edge, Pipeline, Stage
-from arnold.pipeline import StepContext
-from arnold_pipelines.megaplan.step_types import StepResult
+from arnold.pipeline.types import Edge, Pipeline, Stage
+from arnold_pipelines.megaplan.step_types import StepContext, StepResult
 from arnold_pipelines.megaplan.forms import available_form_ids
 from arnold_pipelines.megaplan.types import CliError
 

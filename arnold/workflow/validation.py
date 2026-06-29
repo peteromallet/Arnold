@@ -11,6 +11,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
+from arnold.manifest.refs import SourceSpan
 from arnold.manifest.manifests import (
     AuthorityRequirement,
     CompensationPolicy,
@@ -154,6 +155,7 @@ class ManifestValidationIssue:
     field: str | None = None
     node_id: str | None = None
     edge_id: str | None = None
+    source_span: SourceSpan | None = None
     severity: str = "error"
     details: Mapping[str, Any] = dataclass_field(default_factory=dict)
 
@@ -211,15 +213,22 @@ def validate_manifest(manifest: WorkflowManifest) -> None:
                 edge_id=edge_id,
             )
     known_nodes = set(node_ids)
+    node_spans = {node.id: node.source_span for node in manifest.nodes}
+    edge_spans = {edge.id: edge.source_span for edge in manifest.edges}
     _validate_metadata(f"manifest {manifest.id!r} metadata", manifest.metadata, errors)
     _validate_policy(f"manifest {manifest.id!r} policy", manifest.policy, errors)
     for edge in manifest.edges:
-        _validate_id("edge id", edge.id, errors)
-        _validate_ref(f"edge {edge.id!r} source", edge.source, errors)
-        _validate_ref(f"edge {edge.id!r} target", edge.target, errors)
-        _validate_ref(f"edge {edge.id!r} label", edge.label, errors)
-        _validate_optional_ref(f"edge {edge.id!r} condition_ref", edge.condition_ref, errors)
-        _validate_metadata(f"edge {edge.id!r} metadata", edge.metadata, errors)
+        _validate_id("edge id", edge.id, errors, source_span=edge.source_span)
+        _validate_ref(f"edge {edge.id!r} source", edge.source, errors, source_span=edge.source_span)
+        _validate_ref(f"edge {edge.id!r} target", edge.target, errors, source_span=edge.source_span)
+        _validate_ref(f"edge {edge.id!r} label", edge.label, errors, source_span=edge.source_span)
+        _validate_optional_ref(
+            f"edge {edge.id!r} condition_ref",
+            edge.condition_ref,
+            errors,
+            source_span=edge.source_span,
+        )
+        _validate_metadata(f"edge {edge.id!r} metadata", edge.metadata, errors, source_span=edge.source_span)
         if edge.source not in known_nodes:
             _add_issue(
                 errors,
@@ -227,6 +236,7 @@ def validate_manifest(manifest: WorkflowManifest) -> None:
                 code="dangling_edge_source",
                 field="edges[].source",
                 edge_id=edge.id,
+                source_span=edge.source_span,
                 details={"source": edge.source},
             )
         if edge.target not in known_nodes:
@@ -236,28 +246,46 @@ def validate_manifest(manifest: WorkflowManifest) -> None:
                 code="dangling_edge_target",
                 field="edges[].target",
                 edge_id=edge.id,
+                source_span=edge.source_span,
                 details={"target": edge.target},
             )
     for node in manifest.nodes:
-        _validate_id("node id", node.id, errors)
-        _validate_ref(f"node {node.id!r} kind", node.kind, errors)
+        _validate_id("node id", node.id, errors, source_span=node.source_span)
+        _validate_ref(f"node {node.id!r} kind", node.kind, errors, source_span=node.source_span)
         for value_ref in node.inputs:
-            _validate_ref(f"node {node.id!r} input", value_ref, errors)
+            _validate_ref(f"node {node.id!r} input", value_ref, errors, source_span=node.source_span)
         for value_ref in node.outputs:
-            _validate_ref(f"node {node.id!r} output", value_ref, errors)
+            _validate_ref(f"node {node.id!r} output", value_ref, errors, source_span=node.source_span)
         for capability in node.capabilities:
-            _validate_ref(f"node {node.id!r} capability_id", capability.capability_id, errors)
-            _validate_ref(f"node {node.id!r} capability route", capability.route, errors)
+            _validate_ref(
+                f"node {node.id!r} capability_id",
+                capability.capability_id,
+                errors,
+                source_span=node.source_span,
+            )
+            _validate_ref(
+                f"node {node.id!r} capability route",
+                capability.route,
+                errors,
+                source_span=node.source_span,
+            )
         if node.subpipeline is not None:
             _validate_hash(
                 f"node {node.id!r} subpipeline manifest_hash",
                 node.subpipeline.manifest_hash,
                 errors,
+                source_span=node.source_span,
             )
-            _validate_optional_ref(f"node {node.id!r} subpipeline alias", node.subpipeline.alias, errors)
-        _validate_policy(f"node {node.id!r} policy", node.policy, errors)
-        _validate_metadata(f"node {node.id!r} metadata", node.metadata, errors)
+            _validate_optional_ref(
+                f"node {node.id!r} subpipeline alias",
+                node.subpipeline.alias,
+                errors,
+                source_span=node.source_span,
+            )
+        _validate_policy(f"node {node.id!r} policy", node.policy, errors, source_span=node.source_span)
+        _validate_metadata(f"node {node.id!r} metadata", node.metadata, errors, source_span=node.source_span)
     _validate_cycles(manifest.nodes, manifest.edges, manifest.policy, errors)
+    _backfill_issue_spans(errors, node_spans=node_spans, edge_spans=edge_spans)
     _validate_hash("topology_hash", manifest.topology_hash, errors)
     _validate_hash("manifest_hash", manifest.manifest_hash, errors)
     if manifest.topology_hash != compute_topology_hash(manifest):
@@ -328,6 +356,7 @@ def _add_issue(
     field: str | None = None,
     node_id: str | None = None,
     edge_id: str | None = None,
+    source_span: SourceSpan | None = None,
     details: Mapping[str, Any] | None = None,
 ) -> None:
     errors.append(
@@ -337,6 +366,7 @@ def _add_issue(
             field=field,
             node_id=node_id,
             edge_id=edge_id,
+            source_span=source_span,
             details=dict(details or {}),
         )
     )
@@ -349,6 +379,7 @@ def _add_generic_issue(
     name: str,
     code: str | None = None,
     details: Mapping[str, Any] | None = None,
+    source_span: SourceSpan | None = None,
 ) -> None:
     context = _issue_context(name)
     issue_code = code or f"invalid_{str(context.get('field') or name).replace('.', '_').replace('[]', '')}"
@@ -360,6 +391,7 @@ def _add_generic_issue(
         node_id=context.get("node_id"),
         edge_id=context.get("edge_id"),
         details=details,
+        source_span=source_span,
     )
 
 
@@ -433,11 +465,23 @@ def _code_for_invalid_ref(name: str, value: Any) -> str:
     return f"invalid_{prefix}_{leaf}"
 
 
-def _validate_id(name: str, value: str, errors: list[ManifestValidationIssue]) -> None:
-    _validate_ref(name, value, errors)
+def _validate_id(
+    name: str,
+    value: str,
+    errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
+) -> None:
+    _validate_ref(name, value, errors, source_span=source_span)
 
 
-def _validate_ref(name: str, value: str, errors: list[ManifestValidationIssue]) -> None:
+def _validate_ref(
+    name: str,
+    value: str,
+    errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
+) -> None:
     context = _issue_context(name, value)
     if not isinstance(value, str) or not value:
         _add_issue(
@@ -447,6 +491,7 @@ def _validate_ref(name: str, value: str, errors: list[ManifestValidationIssue]) 
             field=context.get("field"),
             node_id=context.get("node_id"),
             edge_id=context.get("edge_id"),
+            source_span=source_span,
             details={"value": value},
         )
         return
@@ -458,6 +503,7 @@ def _validate_ref(name: str, value: str, errors: list[ManifestValidationIssue]) 
             field=context.get("field"),
             node_id=context.get("node_id"),
             edge_id=context.get("edge_id"),
+            source_span=source_span,
             details={"value": value},
         )
 
@@ -466,12 +512,20 @@ def _validate_optional_ref(
     name: str,
     value: str | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if value is not None:
-        _validate_ref(name, value, errors)
+        _validate_ref(name, value, errors, source_span=source_span)
 
 
-def _validate_hash(name: str, value: str | None, errors: list[ManifestValidationIssue]) -> None:
+def _validate_hash(
+    name: str,
+    value: str | None,
+    errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
+) -> None:
     if not isinstance(value, str) or not _HASH_RE.fullmatch(value):
         context = _issue_context(name, value)
         _add_issue(
@@ -481,6 +535,7 @@ def _validate_hash(name: str, value: str | None, errors: list[ManifestValidation
             field=context.get("field"),
             node_id=context.get("node_id"),
             edge_id=context.get("edge_id"),
+            source_span=source_span,
             details={"value": value},
         )
 
@@ -489,43 +544,46 @@ def _validate_policy(
     name: str,
     policy: WorkflowPolicy | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if policy is None:
         return
     if policy.budget is not None:
-        _validate_optional_positive_number(f"{name}.budget.max_cost", policy.budget.max_cost, errors)
-        _validate_optional_positive_number(f"{name}.budget.max_seconds", policy.budget.max_seconds, errors)
-        _validate_optional_positive_int(f"{name}.budget.max_attempts", policy.budget.max_attempts, errors)
-        _validate_optional_positive_int(f"{name}.budget.token_budget", policy.budget.token_budget, errors)
+        _validate_optional_positive_number(f"{name}.budget.max_cost", policy.budget.max_cost, errors, source_span=source_span)
+        _validate_optional_positive_number(f"{name}.budget.max_seconds", policy.budget.max_seconds, errors, source_span=source_span)
+        _validate_optional_positive_int(f"{name}.budget.max_attempts", policy.budget.max_attempts, errors, source_span=source_span)
+        _validate_optional_positive_int(f"{name}.budget.token_budget", policy.budget.token_budget, errors, source_span=source_span)
     if policy.retry is not None:
         if policy.retry.max_attempts < 1:
-            _add_generic_issue(errors, f"{name}.retry.max_attempts must be >= 1", name=f"{name}.retry.max_attempts")
-        _validate_ref(f"{name}.retry.backoff", policy.retry.backoff, errors)
+            _add_generic_issue(errors, f"{name}.retry.max_attempts must be >= 1", name=f"{name}.retry.max_attempts", source_span=source_span)
+        _validate_ref(f"{name}.retry.backoff", policy.retry.backoff, errors, source_span=source_span)
         for retry_ref in policy.retry.retry_on:
-            _validate_ref(f"{name}.retry.retry_on", retry_ref, errors)
+            _validate_ref(f"{name}.retry.retry_on", retry_ref, errors, source_span=source_span)
     if policy.loop is not None:
-        _validate_optional_positive_int(f"{name}.loop.max_iterations", policy.loop.max_iterations, errors)
-        _validate_optional_ref(f"{name}.loop.until_ref", policy.loop.until_ref, errors)
+        _validate_optional_positive_int(f"{name}.loop.max_iterations", policy.loop.max_iterations, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.loop.until_ref", policy.loop.until_ref, errors, source_span=source_span)
     if policy.fanout is not None:
-        _validate_ref(f"{name}.fanout.mode", policy.fanout.mode, errors)
-        _validate_optional_positive_int(f"{name}.fanout.width", policy.fanout.width, errors)
-        _validate_optional_ref(f"{name}.fanout.reducer_ref", policy.fanout.reducer_ref, errors)
-    _validate_timing_policy(f"{name}.timing", policy.timing, errors)
-    _validate_idempotency_policy(f"{name}.idempotency", policy.idempotency, errors)
-    _validate_effects(f"{name}.effects", policy.effects, errors)
-    _validate_reducers(f"{name}.reducers", policy.reducers, errors)
-    _validate_compensation_policy(f"{name}.compensation", policy.compensation, errors)
-    _validate_escalation_policy(f"{name}.escalation", policy.escalation, errors)
+        _validate_ref(f"{name}.fanout.mode", policy.fanout.mode, errors, source_span=source_span)
+        _validate_optional_positive_int(f"{name}.fanout.width", policy.fanout.width, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.fanout.reducer_ref", policy.fanout.reducer_ref, errors, source_span=source_span)
+    _validate_timing_policy(f"{name}.timing", policy.timing, errors, source_span=source_span)
+    _validate_idempotency_policy(f"{name}.idempotency", policy.idempotency, errors, source_span=source_span)
+    _validate_effects(f"{name}.effects", policy.effects, errors, source_span=source_span)
+    _validate_reducers(f"{name}.reducers", policy.reducers, errors, source_span=source_span)
+    _validate_compensation_policy(f"{name}.compensation", policy.compensation, errors, source_span=source_span)
+    _validate_escalation_policy(f"{name}.escalation", policy.escalation, errors, source_span=source_span)
     _validate_control_transitions(
         f"{name}.control_transitions",
         policy.control_transitions,
         errors,
+        source_span=source_span,
     )
-    _validate_topology_overlays(f"{name}.topology_overlays", policy.topology_overlays, errors)
-    _validate_authority_requirements(f"{name}.authority", policy.authority, errors)
+    _validate_topology_overlays(f"{name}.topology_overlays", policy.topology_overlays, errors, source_span=source_span)
+    _validate_authority_requirements(f"{name}.authority", policy.authority, errors, source_span=source_span)
     route_ids: set[str] = set()
     for route in policy.suspension_routes:
-        _validate_suspension_route(f"{name}.suspension_routes", route, route_ids, errors)
+        _validate_suspension_route(f"{name}.suspension_routes", route, route_ids, errors, source_span=source_span)
 
 
 def _validate_suspension_route(
@@ -533,8 +591,10 @@ def _validate_suspension_route(
     route: SuspensionRoute,
     route_ids: set[str],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
-    _validate_ref(f"{name}.route_id", route.route_id, errors)
+    _validate_ref(f"{name}.route_id", route.route_id, errors, source_span=source_span)
     if route.route_id in route_ids:
         _add_generic_issue(
             errors,
@@ -542,53 +602,61 @@ def _validate_suspension_route(
             name=f"{name}.route_id",
             code="duplicate_suspension_route_id",
             details={"route_id": route.route_id},
+            source_span=source_span,
         )
     route_ids.add(route.route_id)
-    _validate_optional_ref(f"{name}.capability_id", route.capability_id, errors)
-    _validate_optional_ref(f"{name}.reentry_id", route.reentry_id, errors)
+    _validate_optional_ref(f"{name}.capability_id", route.capability_id, errors, source_span=source_span)
+    _validate_optional_ref(f"{name}.reentry_id", route.reentry_id, errors, source_span=source_span)
     _validate_optional_hash(
         f"{name}.payload_schema_hash",
         route.payload_schema_hash,
         errors,
+        source_span=source_span,
     )
-    _validate_optional_hash(f"{name}.resume_schema_hash", route.resume_schema_hash, errors)
-    _validate_optional_ref(f"{name}.resume_schema_ref", route.resume_schema_ref, errors)
-    _validate_optional_ref(f"{name}.resume_payload_ref", route.resume_payload_ref, errors)
+    _validate_optional_hash(f"{name}.resume_schema_hash", route.resume_schema_hash, errors, source_span=source_span)
+    _validate_optional_ref(f"{name}.resume_schema_ref", route.resume_schema_ref, errors, source_span=source_span)
+    _validate_optional_ref(f"{name}.resume_payload_ref", route.resume_payload_ref, errors, source_span=source_span)
 
 
 def _validate_timing_policy(
     name: str,
     timing: TimingPolicy | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if timing is None:
         return
-    _validate_optional_positive_number(f"{name}.timeout_seconds", timing.timeout_seconds, errors)
-    _validate_optional_ref(f"{name}.deadline_ref", timing.deadline_ref, errors)
-    _validate_optional_positive_number(f"{name}.ttl_seconds", timing.ttl_seconds, errors)
+    _validate_optional_positive_number(f"{name}.timeout_seconds", timing.timeout_seconds, errors, source_span=source_span)
+    _validate_optional_ref(f"{name}.deadline_ref", timing.deadline_ref, errors, source_span=source_span)
+    _validate_optional_positive_number(f"{name}.ttl_seconds", timing.ttl_seconds, errors, source_span=source_span)
 
 
 def _validate_idempotency_policy(
     name: str,
     idempotency: IdempotencyPolicy | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if idempotency is None:
         return
-    _validate_optional_ref(f"{name}.key_ref", idempotency.key_ref, errors)
-    _validate_optional_ref(f"{name}.key_template", idempotency.key_template, errors)
+    _validate_optional_ref(f"{name}.key_ref", idempotency.key_ref, errors, source_span=source_span)
+    _validate_optional_ref(f"{name}.key_template", idempotency.key_template, errors, source_span=source_span)
     if not isinstance(idempotency.required, bool):
-        _add_generic_issue(errors, f"{name}.required must be a boolean", name=f"{name}.required")
+        _add_generic_issue(errors, f"{name}.required must be a boolean", name=f"{name}.required", source_span=source_span)
 
 
 def _validate_effects(
     name: str,
     effects: Iterable[EffectRef],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     effect_ids: set[str] = set()
     for effect in effects:
-        _validate_effect_ref(name, effect, effect_ids, errors)
+        _validate_effect_ref(name, effect, effect_ids, errors, source_span=source_span)
 
 
 def _validate_effect_ref(
@@ -596,8 +664,10 @@ def _validate_effect_ref(
     effect: EffectRef,
     effect_ids: set[str] | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
-    _validate_ref(f"{name}.effect_id", effect.effect_id, errors)
+    _validate_ref(f"{name}.effect_id", effect.effect_id, errors, source_span=source_span)
     if effect_ids is not None:
         if effect.effect_id in effect_ids:
             _add_generic_issue(
@@ -606,22 +676,25 @@ def _validate_effect_ref(
                 name=f"{name}.effect_id",
                 code="duplicate_effect_id",
                 details={"effect_id": effect.effect_id},
+                source_span=source_span,
             )
         effect_ids.add(effect.effect_id)
-    _validate_ref(f"{name}.route", effect.route, errors)
-    _validate_optional_ref(f"{name}.payload_ref", effect.payload_ref, errors)
-    _validate_optional_hash(f"{name}.payload_schema_hash", effect.payload_schema_hash, errors)
-    _validate_idempotency_policy(f"{name}.idempotency", effect.idempotency, errors)
+    _validate_ref(f"{name}.route", effect.route, errors, source_span=source_span)
+    _validate_optional_ref(f"{name}.payload_ref", effect.payload_ref, errors, source_span=source_span)
+    _validate_optional_hash(f"{name}.payload_schema_hash", effect.payload_schema_hash, errors, source_span=source_span)
+    _validate_idempotency_policy(f"{name}.idempotency", effect.idempotency, errors, source_span=source_span)
 
 
 def _validate_reducers(
     name: str,
     reducers: Iterable[ReducerRef],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     reducer_ids: set[str] = set()
     for reducer in reducers:
-        _validate_ref(f"{name}.reducer_id", reducer.reducer_id, errors)
+        _validate_ref(f"{name}.reducer_id", reducer.reducer_id, errors, source_span=source_span)
         if reducer.reducer_id in reducer_ids:
             _add_generic_issue(
                 errors,
@@ -629,26 +702,29 @@ def _validate_reducers(
                 name=f"{name}.reducer_id",
                 code="duplicate_reducer_id",
                 details={"reducer_id": reducer.reducer_id},
+                source_span=source_span,
             )
         reducer_ids.add(reducer.reducer_id)
-        _validate_optional_ref(f"{name}.input_ref", reducer.input_ref, errors)
-        _validate_optional_ref(f"{name}.output_ref", reducer.output_ref, errors)
+        _validate_optional_ref(f"{name}.input_ref", reducer.input_ref, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.output_ref", reducer.output_ref, errors, source_span=source_span)
 
 
 def _validate_compensation_policy(
     name: str,
     compensation: CompensationPolicy | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if compensation is None:
         return
-    _validate_optional_ref(f"{name}.scope_ref", compensation.scope_ref, errors)
+    _validate_optional_ref(f"{name}.scope_ref", compensation.scope_ref, errors, source_span=source_span)
     for trigger_ref in compensation.trigger_on:
-        _validate_ref(f"{name}.trigger_on", trigger_ref, errors)
+        _validate_ref(f"{name}.trigger_on", trigger_ref, errors, source_span=source_span)
     target_ids: set[str] = set()
     for target in compensation.targets:
-        _validate_compensation_target(f"{name}.targets", target, target_ids, errors)
-    _validate_idempotency_policy(f"{name}.idempotency", compensation.idempotency, errors)
+        _validate_compensation_target(f"{name}.targets", target, target_ids, errors, source_span=source_span)
+    _validate_idempotency_policy(f"{name}.idempotency", compensation.idempotency, errors, source_span=source_span)
 
 
 def _validate_compensation_target(
@@ -656,8 +732,10 @@ def _validate_compensation_target(
     target: CompensationTarget,
     target_ids: set[str],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
-    _validate_ref(f"{name}.target_id", target.target_id, errors)
+    _validate_ref(f"{name}.target_id", target.target_id, errors, source_span=source_span)
     if target.target_id in target_ids:
         _add_generic_issue(
             errors,
@@ -665,41 +743,47 @@ def _validate_compensation_target(
             name=f"{name}.target_id",
             code="duplicate_compensation_target_id",
             details={"target_id": target.target_id},
+            source_span=source_span,
         )
     target_ids.add(target.target_id)
-    _validate_effect_ref(f"{name}.effect", target.effect, None, errors)
-    _validate_optional_ref(f"{name}.condition_ref", target.condition_ref, errors)
-    _validate_idempotency_policy(f"{name}.idempotency", target.idempotency, errors)
+    _validate_effect_ref(f"{name}.effect", target.effect, None, errors, source_span=source_span)
+    _validate_optional_ref(f"{name}.condition_ref", target.condition_ref, errors, source_span=source_span)
+    _validate_idempotency_policy(f"{name}.idempotency", target.idempotency, errors, source_span=source_span)
 
 
 def _validate_escalation_policy(
     name: str,
     escalation: EscalationPolicy | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if escalation is None:
         return
     if not escalation.targets:
-        _add_generic_issue(errors, f"{name}.targets must include at least one target", name=f"{name}.targets")
+        _add_generic_issue(errors, f"{name}.targets must include at least one target", name=f"{name}.targets", source_span=source_span)
     for target_ref in escalation.targets:
-        _validate_ref(f"{name}.targets", target_ref, errors)
+        _validate_ref(f"{name}.targets", target_ref, errors, source_span=source_span)
     _validate_optional_positive_int(
         f"{name}.escalate_after_attempts",
         escalation.escalate_after_attempts,
         errors,
+        source_span=source_span,
     )
-    _validate_optional_ref(f"{name}.policy_ref", escalation.policy_ref, errors)
-    _validate_ref(f"{name}.backoff", escalation.backoff, errors)
+    _validate_optional_ref(f"{name}.policy_ref", escalation.policy_ref, errors, source_span=source_span)
+    _validate_ref(f"{name}.backoff", escalation.backoff, errors, source_span=source_span)
 
 
 def _validate_control_transitions(
     name: str,
     transitions: Iterable[ControlTransitionSlot],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     transition_ids: set[str] = set()
     for transition in transitions:
-        _validate_ref(f"{name}.transition_id", transition.transition_id, errors)
+        _validate_ref(f"{name}.transition_id", transition.transition_id, errors, source_span=source_span)
         if transition.transition_id in transition_ids:
             _add_generic_issue(
                 errors,
@@ -707,24 +791,27 @@ def _validate_control_transitions(
                 name=f"{name}.transition_id",
                 code="duplicate_control_transition_id",
                 details={"transition_id": transition.transition_id},
+                source_span=source_span,
             )
         transition_ids.add(transition.transition_id)
-        _validate_ref(f"{name}.transition_type", transition.transition_type, errors)
-        _validate_optional_ref(f"{name}.trigger_ref", transition.trigger_ref, errors)
-        _validate_optional_ref(f"{name}.target_ref", transition.target_ref, errors)
-        _validate_optional_hash(f"{name}.payload_schema_hash", transition.payload_schema_hash, errors)
-        _validate_optional_ref(f"{name}.policy_ref", transition.policy_ref, errors)
-        _validate_idempotency_policy(f"{name}.idempotency", transition.idempotency, errors)
+        _validate_ref(f"{name}.transition_type", transition.transition_type, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.trigger_ref", transition.trigger_ref, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.target_ref", transition.target_ref, errors, source_span=source_span)
+        _validate_optional_hash(f"{name}.payload_schema_hash", transition.payload_schema_hash, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.policy_ref", transition.policy_ref, errors, source_span=source_span)
+        _validate_idempotency_policy(f"{name}.idempotency", transition.idempotency, errors, source_span=source_span)
 
 
 def _validate_topology_overlays(
     name: str,
     overlays: Iterable[TopologyOverlaySlot],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     overlay_ids: set[str] = set()
     for overlay in overlays:
-        _validate_ref(f"{name}.overlay_id", overlay.overlay_id, errors)
+        _validate_ref(f"{name}.overlay_id", overlay.overlay_id, errors, source_span=source_span)
         if overlay.overlay_id in overlay_ids:
             _add_generic_issue(
                 errors,
@@ -732,25 +819,28 @@ def _validate_topology_overlays(
                 name=f"{name}.overlay_id",
                 code="duplicate_topology_overlay_id",
                 details={"overlay_id": overlay.overlay_id},
+                source_span=source_span,
             )
         overlay_ids.add(overlay.overlay_id)
-        _validate_ref(f"{name}.overlay_type", overlay.overlay_type, errors)
-        _validate_optional_ref(f"{name}.source_ref", overlay.source_ref, errors)
+        _validate_ref(f"{name}.overlay_type", overlay.overlay_type, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.source_ref", overlay.source_ref, errors, source_span=source_span)
         for target_ref in overlay.target_refs:
-            _validate_ref(f"{name}.target_refs", target_ref, errors)
-        _validate_optional_ref(f"{name}.condition_ref", overlay.condition_ref, errors)
-        _validate_optional_hash(f"{name}.payload_schema_hash", overlay.payload_schema_hash, errors)
+            _validate_ref(f"{name}.target_refs", target_ref, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.condition_ref", overlay.condition_ref, errors, source_span=source_span)
+        _validate_optional_hash(f"{name}.payload_schema_hash", overlay.payload_schema_hash, errors, source_span=source_span)
 
 
 def _validate_authority_requirements(
     name: str,
     requirements: Iterable[AuthorityRequirement],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     requirement_ids: set[tuple[str, str]] = set()
     for requirement in requirements:
-        _validate_ref(f"{name}.authority_id", requirement.authority_id, errors)
-        _validate_ref(f"{name}.action", requirement.action, errors)
+        _validate_ref(f"{name}.authority_id", requirement.authority_id, errors, source_span=source_span)
+        _validate_ref(f"{name}.action", requirement.action, errors, source_span=source_span)
         key = (requirement.authority_id, requirement.action)
         if key in requirement_ids:
             _add_generic_issue(
@@ -759,36 +849,49 @@ def _validate_authority_requirements(
                 name=f"{name}.authority_id",
                 code="duplicate_authority_requirement",
                 details={"authority_id": requirement.authority_id, "action": requirement.action},
+                source_span=source_span,
             )
         requirement_ids.add(key)
-        _validate_optional_hash(f"{name}.evidence_schema_hash", requirement.evidence_schema_hash, errors)
-        _validate_optional_ref(f"{name}.capability_id", requirement.capability_id, errors)
+        _validate_optional_hash(f"{name}.evidence_schema_hash", requirement.evidence_schema_hash, errors, source_span=source_span)
+        _validate_optional_ref(f"{name}.capability_id", requirement.capability_id, errors, source_span=source_span)
 
 
 def _validate_optional_hash(
     name: str,
     value: str | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if value is not None:
-        _validate_hash(name, value, errors)
+        _validate_hash(name, value, errors, source_span=source_span)
 
 
 def _validate_optional_positive_int(
     name: str,
     value: int | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if value is None:
         return
     if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-        _add_generic_issue(errors, f"{name} must be a positive integer", name=name, details={"value": value})
+        _add_generic_issue(
+            errors,
+            f"{name} must be a positive integer",
+            name=name,
+            details={"value": value},
+            source_span=source_span,
+        )
 
 
 def _validate_optional_positive_number(
     name: str,
     value: float | None,
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if value is None:
         return
@@ -798,21 +901,41 @@ def _validate_optional_positive_number(
         or not math.isfinite(value)
         or value <= 0
     ):
-        _add_generic_issue(errors, f"{name} must be a positive finite number", name=name, details={"value": value})
+        _add_generic_issue(
+            errors,
+            f"{name} must be a positive finite number",
+            name=name,
+            details={"value": value},
+            source_span=source_span,
+        )
 
 
 def _validate_metadata(
     name: str,
     metadata: Mapping[str, Any],
     errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
 ) -> None:
     if not isinstance(metadata, Mapping):
-        _add_generic_issue(errors, f"{name} must be a mapping", name=name, code="invalid_metadata")
+        _add_generic_issue(
+            errors,
+            f"{name} must be a mapping",
+            name=name,
+            code="invalid_metadata",
+            source_span=source_span,
+        )
         return
-    _validate_json_value(name, metadata, errors)
+    _validate_json_value(name, metadata, errors, source_span=source_span)
 
 
-def _validate_json_value(name: str, value: Any, errors: list[ManifestValidationIssue]) -> None:
+def _validate_json_value(
+    name: str,
+    value: Any,
+    errors: list[ManifestValidationIssue],
+    *,
+    source_span: SourceSpan | None = None,
+) -> None:
     if isinstance(value, Mapping):
         for key, subvalue in value.items():
             if not isinstance(key, str) or not key:
@@ -822,6 +945,7 @@ def _validate_json_value(name: str, value: Any, errors: list[ManifestValidationI
                     name=name,
                     code="invalid_metadata_key",
                     details={"key": key},
+                    source_span=source_span,
                 )
                 continue
             if key in _RESERVED_METADATA_KEYS:
@@ -831,12 +955,13 @@ def _validate_json_value(name: str, value: Any, errors: list[ManifestValidationI
                     name=f"{name}.{key}",
                     code="reserved_metadata_key",
                     details={"key": key},
+                    source_span=source_span,
                 )
-            _validate_json_value(f"{name}.{key}", subvalue, errors)
+            _validate_json_value(f"{name}.{key}", subvalue, errors, source_span=source_span)
         return
     if isinstance(value, list):
         for index, item in enumerate(value):
-            _validate_json_value(f"{name}[{index}]", item, errors)
+            _validate_json_value(f"{name}[{index}]", item, errors, source_span=source_span)
         return
     if value is None or isinstance(value, (str, bool, int)):
         return
@@ -848,7 +973,35 @@ def _validate_json_value(name: str, value: Any, errors: list[ManifestValidationI
         name=name,
         code="metadata_not_json_serializable",
         details={"value_repr": repr(value)},
+        source_span=source_span,
     )
+
+
+def _backfill_issue_spans(
+    errors: list[ManifestValidationIssue],
+    *,
+    node_spans: Mapping[str, SourceSpan | None],
+    edge_spans: Mapping[str, SourceSpan | None],
+) -> None:
+    for index, issue in enumerate(errors):
+        if issue.source_span is not None:
+            continue
+        source_span: SourceSpan | None = None
+        if issue.edge_id is not None:
+            source_span = edge_spans.get(issue.edge_id)
+        elif issue.node_id is not None:
+            source_span = node_spans.get(issue.node_id)
+        if source_span is not None:
+            errors[index] = ManifestValidationIssue(
+                code=issue.code,
+                message=issue.message,
+                field=issue.field,
+                node_id=issue.node_id,
+                edge_id=issue.edge_id,
+                source_span=source_span,
+                severity=issue.severity,
+                details=issue.details,
+            )
 
 
 def _validate_cycles(
@@ -887,6 +1040,7 @@ def _validate_cycles(
                         code="arbitrary_cycle",
                         field="edges[]",
                         edge_id=edge.id,
+                        source_span=edge.source_span,
                         details={"cycle": cycle_nodes},
                     )
             elif edge.target not in visited:

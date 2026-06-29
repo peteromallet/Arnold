@@ -11,8 +11,8 @@ import pytest
 
 from arnold.pipeline.cost_types import CostResult, CostSource, CostStatus
 from arnold.pipeline.executor import DEFAULT_PARALLEL_SAFE, MediaCostAccumulator, run_pipeline, run_pipeline_resume
-from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks, account_media_cost_from_result
-from arnold.pipeline.media_cost import DEFAULT_MEDIA_PRICING, MediaPricingEntry, MediaUsage, compute_media_cost
+from arnold.execution.hooks import ExecutorHooks, NullExecutorHooks, account_media_cost_from_result
+from arnold.agent.costing.media_cost import DEFAULT_MEDIA_PRICING, MediaPricingEntry, MediaUsage, compute_media_cost
 from arnold.pipeline.resume_validation import ResumeReverifyResult
 from arnold.pipeline.routing import RoutingError
 from arnold.pipeline.state import StateDelta

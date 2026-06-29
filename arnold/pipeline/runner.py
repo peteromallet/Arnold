@@ -18,10 +18,10 @@ from arnold.pipeline.executor import (
     ParallelSafePredicate,
     run_pipeline as _executor_run_pipeline,
 )
-from arnold.pipeline.hooks import ExecutorHooks
+from arnold.execution.hooks import ExecutorHooks
 from arnold.pipeline.types import Pipeline, StepContext
 from arnold.runtime.envelope import RuntimeEnvelope
-from arnold.runtime.operations import OperationRegistry
+from arnold.execution.operations import OperationRegistry
 
 __all__ = [
     "run_pipeline",

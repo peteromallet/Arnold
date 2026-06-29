@@ -540,8 +540,8 @@ def test_read_event_journal_paged_importable_from_runtime() -> None:
     assert callable(r)
 
 
-def test_read_event_journal_paged_importable_from_wal_fold() -> None:
-    from arnold.runtime.wal_fold import read_event_journal_paged as r
+def test_read_event_journal_paged_importable_from_kernel_fold() -> None:
+    from arnold.kernel.fold import read_event_journal_paged as r
 
     assert callable(r)
 

@@ -408,7 +408,7 @@ def _resolve_profile_for_run(
     default_profile: str | None,
     megaplan_resolver: Any,
 ) -> dict[str, str]:
-    from arnold.pipeline.profiles import (
+    from arnold_pipelines.megaplan.profiles import (
         ProfileLoadError,
         load_profile_metadata,
         load_profiles,
@@ -464,7 +464,7 @@ def _selected_pipeline_profile_name(
     *,
     pipeline_name: str,
 ) -> str | None:
-    from arnold.pipeline.profiles import ProfileLoadError
+    from arnold_pipelines.megaplan.profiles import ProfileLoadError
 
     if not profile_ref:
         return None
@@ -525,7 +525,7 @@ def _validate_profile_for_run(
     profile_name: str | None,
     vendor: str | None = None,
 ) -> int | None:
-    from arnold.runtime.operations import OperationKind, OperationRequest
+    from arnold.execution.operations import OperationKind, OperationRequest
     from arnold_pipelines.megaplan import preflight as preflight_module
     from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
     from arnold_pipelines.megaplan.registry import (
@@ -592,7 +592,7 @@ def _runtime_identity_block(
     plan_dir: Path,
 ) -> dict[str, Any]:
     from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
-    from arnold.pipeline.discovery.manifest import ManifestError, read_manifest
+    from arnold.workflow.discovery.manifest import ManifestError, read_manifest
     from arnold_pipelines.megaplan.types import CliError
 
     plugin_id = canonical_pipeline_name(pipeline_name)

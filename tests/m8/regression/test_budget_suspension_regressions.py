@@ -26,7 +26,7 @@ from arnold_pipelines.megaplan.model_seam import (
     classify_model_family,
     render_step_message,
 )
-from arnold.pipeline import StepInvocation
+from arnold.execution.step_invocation import StepInvocation
 
 from .helpers import (
     BUDGET_OVERFLOW_PAYLOAD,

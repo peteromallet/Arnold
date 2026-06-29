@@ -7,6 +7,7 @@ from typing import Any
 
 from arnold.pipeline import Pipeline as ArnoldPipeline
 from arnold.pipeline.native import compile_pipeline, decision, phase, pipeline
+from arnold.pipeline.types import Edge, ParallelStage, Stage
 from arnold_pipelines.megaplan.step_types import StepResult
 
 from .steps import (
@@ -105,12 +106,83 @@ def _native_bundle() -> Any:
     return compile_pipeline(writing_panel_strict_native)
 
 
+def _build_graph_pipeline(
+    *,
+    name: str,
+    description: str,
+    default_profile: str,
+    supported_modes: tuple[str, ...],
+) -> ArnoldPipeline:
+    """Return the canonical explicit graph shell for ``writing-panel-strict``."""
+
+    del name, description, default_profile, supported_modes
+
+    reviewers = tuple(
+        (
+            reviewer_id,
+            _make_panel_reviewer_step(reviewer_id, prompt_ref),
+        )
+        for reviewer_id, prompt_ref in _PANEL_REVIEWERS
+    )
+
+    def join(results: dict[str, StepResult]) -> StepResult:
+        outputs = {
+            f"{reviewer_id}.{label}": path
+            for reviewer_id, result in results.items()
+            for label, path in result.outputs.items()
+        }
+        return StepResult(outputs=outputs, next="next")
+
+    stages = {
+        "panel_review": ParallelStage(
+            name="panel_review",
+            steps=reviewers,
+            join=join,
+            edges=(Edge("next", "synth"),),
+            max_workers=None,
+        ),
+        "synth": Stage(
+            name="synth",
+            step=_make_agent_step(
+                "synth",
+                _SYNTH_PROMPT,
+                ("panel_review.*",),
+                _PANEL_REVIEWER_ORDER,
+            ),
+            edges=(Edge("done", "revise"),),
+        ),
+        "revise": Stage(
+            name="revise",
+            step=_make_agent_step(
+                "revise",
+                _REVISE_PROMPT,
+                ("draft", "synth"),
+                _PANEL_REVIEWER_ORDER,
+            ),
+            edges=(Edge("done", "human_decide"),),
+        ),
+        "human_decide": Stage(
+            name="human_decide",
+            step=_make_agent_step("human_decide", "", ("revise",), _PANEL_REVIEWER_ORDER),
+            edges=(Edge("continue", "panel_review"), Edge("stop", "halt"), Edge("done", "halt")),
+        ),
+    }
+    return ArnoldPipeline(stages=stages, entry="panel_review")
+
+
 def build_pipeline() -> ArnoldPipeline:
     """Return the native-backed ``writing-panel-strict`` pipeline."""
 
+    graph = _build_graph_pipeline(
+        name=name,
+        description=description,
+        default_profile=default_profile,
+        supported_modes=supported_modes,
+    )
     return ArnoldPipeline(
-        stages={},
-        entry="panel_review",
+        stages=graph.stages,
+        entry=graph.entry,
+        binding_map=getattr(graph, "binding_map", None),
         resource_bundles=(),
         native_program=_native_bundle(),
     )

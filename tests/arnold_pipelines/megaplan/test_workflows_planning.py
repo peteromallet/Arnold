@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from arnold.workflow import check_workflow_source
 from arnold.workflow.compiler import compile_pipeline
 from arnold.workflow.dsl import Pipeline
 
@@ -20,6 +21,19 @@ FIXTURE_PATH = Path(__file__).parent / "fixtures" / "megaplan_m4_topology.yaml"
 
 
 class TestAuthoredWorkflow:
+    def test_authored_source_has_zero_compiler_diagnostics(self) -> None:
+        result = check_workflow_source(
+            planning.AUTHORING_SOURCE_PATH.read_text(encoding="utf-8"),
+            source_path=planning.AUTHORING_SOURCE_PATH,
+        )
+
+        assert result.ok is True
+        assert result.diagnostics == ()
+
+    def test_authoring_source_path_points_to_committed_workflow(self) -> None:
+        assert planning.AUTHORING_SOURCE_PATH.name == "workflow.py"
+        assert planning.AUTHORING_SOURCE_PATH.is_file()
+
     def test_build_pipeline_returns_m3_pipeline(self) -> None:
         pipeline = planning.build_pipeline()
         assert isinstance(pipeline, Pipeline)
@@ -73,6 +87,20 @@ class TestAuthoredWorkflow:
             ("override", "replan"),
         }
         assert route_labels == expected
+        loop_routes = {
+            route.id: (route.source, route.target, route.label, route.condition_ref)
+            for route in pipeline.routes
+            if route.id in {"revise:critique", "tiebreaker_decide:critique"}
+        }
+        assert loop_routes == {
+            "revise:critique": ("revise", "critique", "default", "revise:loop"),
+            "tiebreaker_decide:critique": (
+                "tiebreaker_decide",
+                "critique",
+                "iterate",
+                "tiebreaker:loop",
+            ),
+        }
 
     def test_facade_delegates_to_workflows_planning(self) -> None:
         assert pipeline_facade.build_pipeline is planning.build_pipeline
@@ -93,6 +121,7 @@ class TestAuthoredWorkflow:
     def test_importing_planning_does_not_load_legacy_package(self) -> None:
         before = set(sys.modules.keys())
         importlib.reload(planning)
+        importlib.reload(pipeline_facade)
         loaded = {m for m in set(sys.modules.keys()) - before if m.startswith("arnold.pipelines.megaplan.")}
         assert loaded == set(), f"planning import loaded legacy modules: {loaded}"
 

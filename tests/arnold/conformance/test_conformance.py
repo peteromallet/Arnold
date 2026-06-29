@@ -563,7 +563,7 @@ class TestRunConformanceSuiteAllGreen:
         from arnold.pipeline.types import (
             ContractResult, ContractStatus, Stage, Pipeline, Edge,
         )
-        from arnold.pipeline.hooks import NullExecutorHooks
+        from arnold.execution.hooks import NullExecutorHooks
 
         class _MinimalStep:
             def __init__(self, name: str = "min") -> None:

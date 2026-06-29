@@ -41,7 +41,7 @@ from __future__ import annotations
 # SANDBOX_CWD is the same Python object whether imported from here or
 # from arnold.runtime.sandbox directly.  This fixes the ContextVar
 # identity split (SD2).
-from arnold.runtime.sandbox import (
+from arnold.agent.tools.sandbox import (
     SANDBOX_CWD,
     SANDBOXED_EXEC_TOOLS,
     SANDBOXED_WRITE_TOOLS,

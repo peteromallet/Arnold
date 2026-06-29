@@ -421,7 +421,7 @@ python_authoring_m3:
       fixture: tests/fixtures/workflow_authoring/m3/valid_m3_policy_refs.py
       canonical_shape: retry
       topology_hash: sha256:c05e1a33c42b70e2e1f5fb25d616c1a528939b4e5bb3ce13e21b6b05ef028650
-      manifest_hash: sha256:eb8a462c4258dda1adcf5055b6855712e40a1a12ce8931e71fca54af011d215e
+      manifest_hash: sha256:54af2a7764012319643080db284186482c50ce7a55ff9a7d07d7f2b4ba35f3b7
       nodes:
         - id: plan
           kind: agent

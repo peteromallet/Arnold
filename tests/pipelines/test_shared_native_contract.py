@@ -43,8 +43,6 @@ ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
         "arnold_pipelines.megaplan.pipelines.select_tournament",
         "select-tournament",
     ),
-    NativeTarget("arnold.pipelines.folder_audit", "folder-audit"),
-    NativeTarget("arnold.pipelines.deliberation", "deliberation"),
 )
 
 _FIRST_CLASS_NATIVE_PREFIXES = (
@@ -156,8 +154,6 @@ def test_contract_target_sets_are_staged_explicitly() -> None:
         "live-supervisor",
         "writing-panel-strict",
         "select-tournament",
-        "folder-audit",
-        "deliberation",
     }
     assert deferred_names == set()
     assert active_names.isdisjoint(deferred_names)

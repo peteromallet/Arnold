@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from arnold.conformance import run_conformance_suite
-from arnold.pipeline.hooks import NullExecutorHooks
+from arnold.execution.hooks import NullExecutorHooks
 from arnold.pipeline.types import Edge, Pipeline, Stage, StepContext, StepResult
 
 

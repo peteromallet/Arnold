@@ -71,8 +71,12 @@ agent = []
 
 [tool.hatch.build]
 exclude = [
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "arnold/pipelines/**",
     "docs/archive/**",
     "tests/archive/**",
+    "tests/arnold/pipelines/megaplan/**",
     ".megaplan/**",
 ]
 
@@ -80,12 +84,17 @@ exclude = [
 packages = ["arnold", "arnold_pipelines", "agentbox"]
 artifacts = [
     "py.typed",
-    "**/pipeline_ids.json",
-    "**/SKILL.md",
+    "arnold/pipelines/evidence_pack/SKILL.md",
+    "arnold/pipelines/evidence_pack/pipeline_ids.json",
+    "arnold_pipelines/**/pipeline_ids.json",
+    "arnold_pipelines/**/SKILL.md",
     "arnold_pipelines/megaplan/skills/**/*.py",
     "agentbox/systemd/*.service",
 ]
 exclude = [
+    "**/__pycache__/**",
+    "**/*.pyc",
+    "arnold/pipelines/**",
     "arnold_pipelines/megaplan/cloud/_reference/**",
     "arnold_pipelines/megaplan/agent/pyproject.toml",
     "docs/archive/**",

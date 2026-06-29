@@ -14,8 +14,8 @@ from arnold.pipeline.types import (
     PortRef,
     Stage,
 )
-from arnold.pipeline.validator import validate, Diagnostics
-from arnold_pipelines.evidence_pack.pipeline import build_pipeline
+from arnold.workflow.validator import validate, Diagnostics
+from arnold.pipelines.evidence_pack.pipeline import build_pipeline
 
 
 EXPECTED_PROJECTED_STAGES = (
@@ -177,7 +177,7 @@ class TestPipelineConstruction:
             assert stage.step.name == name
 
     def test_no_megaplan_imports_in_pipeline_module(self) -> None:
-        from arnold_pipelines.evidence_pack import pipeline as pkg
+        from arnold.pipelines.evidence_pack import pipeline as pkg
 
         source = inspect.getsource(pkg)
         offenders = sorted(

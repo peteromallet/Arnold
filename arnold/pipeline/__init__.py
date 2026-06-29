@@ -40,10 +40,6 @@ Sub-modules:
 * ``types``           — core dataclasses and structural types.
 * ``cost_types``      — ``CostStatus``, ``CostSource``, ``CostResult``,
   ``CanonicalUsage`` (neutral).
-* ``media_cost``      — ``MediaUsage``, ``MediaPricingEntry``, ``compute_media_cost``,
-  ``media_usage_from_hook_metadata`` (neutral).
-* ``token_cost``      — ``PricingEntry``, ``estimate_usage_cost``,
-  ``normalize_usage`` (neutral).
 * ``state``           — ``StateDelta`` (loose multi-patch container) and helpers.
 * ``contracts``       — ContractLedger and legal-coercion table.
 * ``pattern_select``  — tournament selection primitives (top_1, top_k, threshold).
@@ -58,14 +54,13 @@ Sub-modules:
 
 All public names are re-exported here.  Import from ``arnold.pipeline``:
 
-    from arnold.pipeline import Pipeline, Stage, StepContext, StateDelta
+    from arnold.pipeline import Pipeline, StepContext, StateDelta
     from arnold.pipeline import NativeProgram, compile_pipeline, run_native_pipeline
 
 No Megaplan re-exports appear here; this is the neutral surface.
 """
 
 from arnold.pipeline.audit_policy import AuditMode, AuditPolicyHook, select_audit_mode
-from arnold.pipeline.builder import PipelineBuilder
 from arnold.pipeline.content_validation import (
     ContentValidator,
     ContentValidatorRegistry,
@@ -80,37 +75,7 @@ from arnold.pipeline.contract_validation import (
 from arnold.pipeline.contract_reduce import ReducePolicy, reduce_contract_results
 from arnold.pipeline.contracts import ContractLedger, coerce, is_legal_coercion, legal_coercions
 from arnold.pipeline.cost_types import CanonicalUsage, CostResult, CostSource, CostStatus
-from arnold.pipeline.media_cost import (
-    DEFAULT_MEDIA_PRICING,
-    MediaPricingEntry,
-    MediaUsage,
-    UsageExtraction,
-    compute_media_cost,
-    media_usage_from_hook_metadata,
-    normalize_usage_extraction,
-)
 from arnold.pipeline.media_content import register_media_content_validators
-from arnold.pipeline.token_cost import (
-    DEFAULT_PRICING,
-    BillingRoute,
-    PricingEntry,
-    estimate_cost_usd,
-    estimate_usage_cost,
-    get_pricing,
-    get_pricing_entry,
-    has_known_pricing,
-    normalize_usage,
-    resolve_billing_route,
-)
-from arnold.pipeline.discovery import Manifest, ManifestError, TrustGrade, classify, derive_tenant_id, read_manifest
-from arnold.pipeline.executor import (
-    DEFAULT_PARALLEL_SAFE,
-    MediaCostAccumulator,
-    ParallelSafePredicate,
-    run_pipeline,
-    run_pipeline_resume,
-)
-from arnold.pipeline.hooks import ExecutorHooks, NullExecutorHooks, account_media_cost_from_result
 from arnold.pipeline.native import (
     CursorUpgradeError,
     CursorUpgradeResult,
@@ -133,14 +98,6 @@ from arnold.pipeline.native import (
     run_native_pipeline,
     upgrade_graph_cursor_to_native,
 )
-from arnold.pipeline.model_resource_capabilities import (
-    CAPABILITY_ALIASES,
-    MODEL_RESOURCE_CAPABILITIES,
-    CapabilityEvidence,
-    CapabilityProof,
-    prove_invocation_capabilities,
-    prove_stage_required_capabilities,
-)
 from arnold.pipeline.llm_json import parse_llm_json
 from arnold.pipeline.pattern_joins import aggregate_panel_join, majority_vote, weighted_vote
 from arnold.pipeline.pattern_select import select, threshold, top_1, top_k
@@ -154,19 +111,6 @@ from arnold.pipeline.pipeline_id_registry import (
     load_pipeline_id_registries,
     resolve_registry_runtime_identity,
 )
-from arnold.pipeline.profiles import (
-    AgentSpecShape,
-    ProfileLoadError,
-    load_profile_metadata,
-    load_profile_sources,
-    load_profiles,
-    merge_profile_layers,
-    parse_agent_spec_shape,
-    parse_profiles_doc,
-    resolve_default_profile,
-    validate_declared_stage_keys,
-)
-from arnold.pipeline.registry import PipelineRegistry
 from arnold.pipeline.suite_delta import SuiteDelta, SuiteRunProtocol, compute_delta
 from arnold.pipeline.schema_registry import (
     AcceptedVersionRange,
@@ -177,15 +121,6 @@ from arnold.pipeline.schema_registry import (
     canonical_schema_json,
     normalize_schema_version,
     schema_version_for,
-)
-from arnold.pipeline.step_invocation import (
-    ModelAdapterNotImplementedError,
-    StepInvocation,
-    StepInvocationAdapter,
-    StepInvocationAdapterRegistry,
-    StepInvocationResult,
-    get_default_adapter_registry,
-    unwrap_step_invocation_result,
 )
 from arnold.pipeline.step_io_contract import (
     StepIOClassification,
@@ -246,12 +181,10 @@ from arnold.pipeline.types import (
     ContentTypeRegistry,
     ContractResult,
     ContractStatus,
-    Edge,
     EvidenceArtifactRef,
     EvidenceStatus,
     Freshness,
     HumanSuspension,
-    ParallelStage,
     Pipeline,
     PipelineVerdict,
     Port,
@@ -263,7 +196,6 @@ from arnold.pipeline.types import (
     ReduceResult,
     RoutingKey,
     SelectionResult,
-    Stage,
     Step,
     StepContext,
     StepResult,
@@ -276,7 +208,7 @@ from arnold.pipeline.types import (
 # Re-exports from arnold.runtime for downstream consumers
 from arnold.runtime.envelope import RuntimeEnvelope
 from arnold.runtime.resume import ResumeCursorRef
-from arnold.runtime.driver import AdvanceOutcome, CheckpointOutcome
+from arnold.execution.driver import AdvanceOutcome, CheckpointOutcome
 from arnold.pipeline.driver import StepwiseDriver
 
 __all__ = [

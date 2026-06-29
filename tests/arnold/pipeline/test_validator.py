@@ -1,4 +1,4 @@
-"""Tests for prompt/resource validation in ``arnold.pipeline.validator`` (M3c T6).
+"""Tests for prompt/resource validation in ``arnold.workflow.validator`` (M3c T6).
 
 Covers:
 
@@ -21,13 +21,13 @@ from typing import Any
 
 import pytest
 
-from arnold.pipeline.builder import PipelineBuilder
+from arnold.workflow.builder import PipelineBuilder
 from arnold.pipeline.types import Edge, ParallelStage, Pipeline, Port, PortRef, ReadRef, Stage, StepContext, StepResult, WriteRef
-from arnold.pipeline.step_invocation import (
+from arnold.execution.step_invocation import (
     StepInvocation,
     StepInvocationAdapterRegistry,
 )
-from arnold.pipeline.validator import (
+from arnold.workflow.validator import (
     CONTRACT_ERROR_CODE_MAP,
     DECLARATION_DRIFT_CODE,
     DIRECT_NATIVE_DRIVER_CLAIM_CODE,
@@ -1383,7 +1383,7 @@ class TestNonModelAdapterRegistry:
 
     def test_validate_invocation_requirements_direct_call(self) -> None:
         """validate_invocation_requirements directly works with supplied registry."""
-        from arnold.pipeline.validator import validate_invocation_requirements
+        from arnold.workflow.validator import validate_invocation_requirements
 
         registry = StepInvocationAdapterRegistry()
         registry.register("tool", _NullToolAdapter())
@@ -1556,7 +1556,7 @@ class TestNonModelMediaAdapter:
 
     def test_capability_adapter_does_not_touch_model_adapter(self) -> None:
         """The capability step never invokes the model adapter slot."""
-        from arnold.pipeline.step_invocation import ModelAdapterNotImplementedError
+        from arnold.execution.step_invocation import ModelAdapterNotImplementedError
 
         # The _CapabilityStep.run() never references the model adapter.
         # The registry still has the model placeholder, but capability

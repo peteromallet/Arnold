@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from arnold.runtime.event_journal import read_event_journal
-from arnold.runtime.wal_fold import fold_journal, last_state_snapshot_projector
+from arnold.kernel.fold import fold_journal, last_state_snapshot_projector
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@
   "expected_diagnostics": [
     {
       "code": "AWF002_UNSUPPORTED_SYNTAX",
-      "message": "branching is outside the M2 linear workflow subset",
+      "message": "branching is outside the V1 linear workflow subset",
       "source_span": {
         "start_line": 10,
         "start_column": 5,

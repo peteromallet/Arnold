@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from arnold.runtime.process import TmuxSession, detect_orphans
+from arnold_pipelines.megaplan.runtime.process import TmuxSession, detect_orphans
 
 
 @dataclass(frozen=True)

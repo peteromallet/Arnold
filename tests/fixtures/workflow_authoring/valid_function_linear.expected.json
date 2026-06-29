@@ -163,7 +163,8 @@
           }
         ]
       }
-    ]
+    ],
+    "intrinsics": []
   },
   "expected_diagnostics": []
 }

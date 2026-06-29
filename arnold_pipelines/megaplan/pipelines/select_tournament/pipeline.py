@@ -28,7 +28,7 @@ from arnold.pipeline.contracts import (
 )
 from arnold.runtime.envelope import EMPTY_ENVELOPE
 from arnold_pipelines.megaplan.feature_flags import typed_ports_on
-from arnold.pipeline import (
+from arnold.pipeline.types import (
     Edge,
     ParallelStage,
     Port,
