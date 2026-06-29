@@ -1635,7 +1635,12 @@ def _chain_completion_guard(
     is_merged_pr = _completion_record_is_merged_pr(record)
     if is_merged_pr and not implementation_milestone:
         return True, "merged PR milestone accepted without implementation checks"
-    if implementation_milestone and current_state != STATE_DONE:
+    finalized_merged_pr = is_merged_pr and current_state == STATE_FINALIZED
+    if (
+        implementation_milestone
+        and current_state != STATE_DONE
+        and not finalized_merged_pr
+    ):
         return (
             False,
             f"plan {plan_name} current_state={current_state!r} is not terminal-success "
