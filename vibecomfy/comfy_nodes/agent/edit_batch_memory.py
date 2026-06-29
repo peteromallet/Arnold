@@ -538,36 +538,73 @@ def _task_looks_like_parameter_tweak(state: Any) -> bool:
 
 def _existing_parameter_tweak_targets(state: Any, *, max_targets: int = 4) -> list[str]:
     graph = getattr(state, "graph", None)
-    if not isinstance(graph, Mapping):
-        return []
-    nodes = graph.get("nodes")
-    if not isinstance(nodes, Mapping):
+    nodes: Any = None
+    if isinstance(graph, Mapping):
+        nodes = graph.get("nodes")
+        if not isinstance(nodes, (Mapping, list)):
+            nodes = graph.get("compiled_api")
+    else:
+        nodes = getattr(graph, "nodes", None)
+    if isinstance(nodes, Mapping):
+        node_items = list(nodes.items())
+    elif isinstance(nodes, list):
+        node_items = [
+            (
+                str(node.get("id") or index),
+                node,
+            )
+            for index, node in enumerate(nodes)
+            if isinstance(node, Mapping)
+        ]
+    else:
         return []
 
     query_text = (
         f"{getattr(state, 'task', '')} {getattr(state, 'request_payload', {}).get('query', '')}"
     ).casefold()
     ranked_targets: list[tuple[int, str]] = []
-    for node_id, node in nodes.items():
-        if not isinstance(node, Mapping):
-            continue
-        class_type = str(node.get("class_type") or node.get("type") or "").strip()
+    for node_id, node in node_items:
+        if isinstance(node, Mapping):
+            class_type = str(node.get("class_type") or node.get("type") or "").strip()
+            inputs = node.get("inputs")
+            widgets = node.get("widgets")
+            raw_widgets = node.get("raw_widgets")
+        else:
+            class_type = str(
+                getattr(node, "class_type", None) or getattr(node, "type", None) or ""
+            ).strip()
+            inputs = getattr(node, "inputs", None)
+            widgets = getattr(node, "widgets", None)
+            raw_widgets = getattr(node, "raw_widgets", None)
         if not class_type:
             continue
-        inputs = node.get("inputs")
         input_fields = [
             str(name)
             for name, value in (inputs.items() if isinstance(inputs, Mapping) else ())
             if not isinstance(value, (Mapping, list, tuple))
         ]
+        if isinstance(inputs, list):
+            for input_spec in inputs:
+                if not isinstance(input_spec, Mapping):
+                    continue
+                if input_spec.get("link") is not None:
+                    continue
+                name = input_spec.get("name")
+                if isinstance(name, str) and name:
+                    input_fields.append(name)
         widget_fields: list[str] = []
-        widgets = node.get("widgets")
         if isinstance(widgets, Mapping):
             widget_fields = [str(name) for name in sorted(widgets, key=str)]
-        raw_widgets = node.get("raw_widgets")
+        widget_values = node.get("widgets_values") if isinstance(node, Mapping) else None
+        if not widget_fields and isinstance(widget_values, list):
+            widget_fields = [f"widget_{index}" for index in range(min(len(widget_values), 4))]
         raw_widget_count = None
         if isinstance(raw_widgets, Mapping):
             values = raw_widgets.get("values")
+            if isinstance(values, list):
+                raw_widget_count = len(values)
+        elif raw_widgets is not None:
+            values = getattr(raw_widgets, "values", None)
             if isinstance(values, list):
                 raw_widget_count = len(values)
         if not input_fields and not widget_fields and not raw_widget_count:

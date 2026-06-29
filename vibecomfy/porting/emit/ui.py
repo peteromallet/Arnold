@@ -153,6 +153,9 @@ _STATIC_WIDGET_OVERFLOW_TOLERANCE = 4
 _STATIC_RAW_WIDGET_SLACK_CLASSES = frozenset(
     {"CheckpointLoaderSimple", "KSampler", "KSamplerAdvanced"}
 )
+_PRIMITIVE_CONTROL_WIDGET_CLASSES = frozenset(
+    {"PrimitiveBoolean", "PrimitiveFloat", "PrimitiveInt"}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1861,11 +1864,22 @@ def derive_widget_shape_evidence(
                     continue
         if widget_idxs:
             programmatic_widget_count = max(widget_idxs) + 1
+    primitive_control_widget = (
+        node.class_type in _PRIMITIVE_CONTROL_WIDGET_CLASSES
+        and schema_widget_count == 1
+        and candidate_widget_count == 2
+        and programmatic_widget_count == 2
+        and raw_widget_count is None
+        and isinstance(node_widgets, dict)
+        and node_widgets.get("widget_1") in {"fixed", "randomize", "increment", "decrement"}
+    )
     overflow = False
     explicit_widget_overflow = False
     if schema_widget_count is not None and not provenance["schema_less"]:
         if has_dict_rows:
             overflow = largest_observed_count > schema_widget_count
+        elif primitive_control_widget:
+            overflow = False
         elif (
             node.class_type in _STATIC_RAW_WIDGET_SLACK_CLASSES
             and candidate_widget_count <= schema_widget_count + _STATIC_WIDGET_OVERFLOW_TOLERANCE

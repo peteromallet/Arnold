@@ -316,11 +316,16 @@ SOURCE = r'''
             )
         if (
             total_landed == 0
-            and _read_only_discovery_turn_count(state) >= 6
+            and _read_only_discovery_turn_count(state) >= 3
             and not _batch_candidate_graph_changed(state)
         ):
+            read_only_discovery_turns = _read_only_discovery_turn_count(state)
             direct_tweak_feedback = _direct_existing_parameter_tweak_feedback(state)
-            if direct_tweak_feedback and turn_number + 1 < max_batches:
+            if (
+                direct_tweak_feedback
+                and read_only_discovery_turns < 6
+                and turn_number + 1 < max_batches
+            ):
                 last_report = direct_tweak_feedback
                 last_landed_count = 0
                 _emit_agent_edit_turn_event(
@@ -330,6 +335,8 @@ SOURCE = r'''
                     client_id=client_id,
                     status="in_progress",
                 )
+                continue
+            if read_only_discovery_turns < 6:
                 continue
             state.batch_exit_mode = _BATCH_EXIT_PURE_CLARIFY
             state.batch_final_summary = (
