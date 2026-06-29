@@ -1234,7 +1234,12 @@ except Exception:
     raise SystemExit(0)
 
 current_state = state.get("current_state")
-if current_state == "done":
+if str(current_state or "").strip().lower() in {
+    "done",
+    "completed",
+    "reviewed",
+    "abandoned",
+}:
     print(f"{state_path.parent.name}\t{current_state}")
 else:
     print("none")
@@ -2020,23 +2025,33 @@ PY
 
 plan_phase_health_status() {
   local workspace="$1"
-  python3 - "$workspace" <<'PY'
+  local run_kind="${2:-chain}"
+  local plan_name="${3:-}"
+  python3 - "$workspace" "$run_kind" "$plan_name" <<'PY'
 import json
 import pathlib
 import sys
 
 workspace = pathlib.Path(sys.argv[1])
+run_kind = sys.argv[2]
+plan_name = sys.argv[3]
 plans_dir = workspace / ".megaplan" / "plans"
-state_files = sorted(
-    plans_dir.glob("*/state.json"),
-    key=lambda path: path.stat().st_mtime,
-    reverse=True,
-)
+if run_kind == "plan" and plan_name:
+    state_files = [plans_dir / plan_name / "state.json"]
+else:
+    state_files = sorted(
+        plans_dir.glob("*/state.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
 if not state_files:
     print("ok")
     raise SystemExit(0)
 
 state_path = state_files[0]
+if run_kind == "plan" and plan_name and not state_path.exists():
+    print(f"plan_state_missing:{plan_name}")
+    raise SystemExit(0)
 try:
     state = json.loads(state_path.read_text(encoding="utf-8"))
 except Exception as exc:
@@ -2098,7 +2113,9 @@ PY
 
 plan_progress_stall_status() {
   local workspace="$1"
-  python3 - "$workspace" "$MARKER_DIR" <<'PY'
+  local run_kind="${2:-chain}"
+  local plan_name="${3:-}"
+  python3 - "$workspace" "$MARKER_DIR" "$run_kind" "$plan_name" <<'PY'
 import datetime as dt
 import json
 import os
@@ -2107,6 +2124,8 @@ import sys
 
 workspace = pathlib.Path(sys.argv[1])
 marker_dir = pathlib.Path(sys.argv[2])
+run_kind = sys.argv[3]
+plan_name_arg = sys.argv[4]
 
 # Env-tunable thresholds (defaults from the cloud-watchdog progress-stall contract).
 ITER_MAX = int(os.environ.get("CLOUD_WATCHDOG_STALL_ITERATIONS", "8"))
@@ -2115,11 +2134,14 @@ PLAN_GROWTH_MINS = int(os.environ.get("CLOUD_WATCHDOG_STALL_PLANGROWTH_MINS", "1
 EVENTS_MINS = int(os.environ.get("CLOUD_WATCHDOG_STALL_EVENTS_MINS", "10"))
 
 plans_dir = workspace / ".megaplan" / "plans"
-state_files = sorted(
-    plans_dir.glob("*/state.json"),
-    key=lambda path: path.stat().st_mtime,
-    reverse=True,
-)
+if run_kind == "plan" and plan_name_arg:
+    state_files = [plans_dir / plan_name_arg / "state.json"]
+else:
+    state_files = sorted(
+        plans_dir.glob("*/state.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
 if not state_files:
     print("ok")
     raise SystemExit(0)
@@ -2127,6 +2149,9 @@ if not state_files:
 state_path = state_files[0]
 plan_dir = state_path.parent
 plan_name = plan_dir.name
+if run_kind == "plan" and plan_name_arg and not state_path.exists():
+    print(f"plan_state_missing:{plan_name_arg}")
+    raise SystemExit(0)
 try:
     state = json.loads(state_path.read_text(encoding="utf-8"))
 except Exception as exc:
@@ -2312,7 +2337,7 @@ launch_chain_tick() {
       return 1
     fi
   local phase_health
-  phase_health="$(plan_phase_health_status "$workspace")"
+  phase_health="$(plan_phase_health_status "$workspace" "$run_kind" "$plan_name")"
   if [[ "$phase_health" != "ok" ]]; then
       local repair_busy
       repair_busy="$(repair_loop_busy_state "$session")"
@@ -2332,7 +2357,7 @@ launch_chain_tick() {
       return 0
     fi
     local stall_health
-    stall_health="$(plan_progress_stall_status "$workspace")"
+    stall_health="$(plan_progress_stall_status "$workspace" "$run_kind" "$plan_name")"
     if [[ "$stall_health" != "ok" ]]; then
       log "progress stall flagged session=$session detail=$stall_health"
       report_item "$report_items" "$session" "observe" "progress_stall" "$stall_health" "$workspace" "$remote_spec"

@@ -290,7 +290,9 @@ resolve_relaunch_command() {
 collect_failure_context_json() {
   local workspace="$1"
   local session="$2"
-  python3 - "$workspace" "$session" <<'PY'
+  local run_kind="${3:-chain}"
+  local plan_name="${4:-}"
+  python3 - "$workspace" "$session" "$run_kind" "$plan_name" <<'PY'
 import json
 import pathlib
 import re
@@ -298,6 +300,8 @@ import sys
 
 workspace = pathlib.Path(sys.argv[1])
 session = sys.argv[2]
+run_kind = sys.argv[3]
+marker_plan_name = sys.argv[4]
 
 
 def _tail_text(path: pathlib.Path, lines: int = 20) -> str:
@@ -428,6 +432,7 @@ def _resolve_plan_state(root: pathlib.Path, preferred_plan_name: str) -> pathlib
         preferred = [path for path in candidates if path.parent.name == preferred_plan_name]
         if preferred:
             return preferred[0]
+        return None
     return candidates[0] if candidates else None
 
 
@@ -775,18 +780,35 @@ def _classify_failure(signals: list[str], latest_failure: dict[str, object], cha
 
 
 log_candidates = []
-session_log = workspace / ".megaplan" / f"cloud-chain-{session}.log"
-default_log = workspace / ".megaplan" / "cloud-chain.log"
-if session != "megaplan-chain":
-    log_candidates.append(session_log)
-log_candidates.append(default_log)
-if session == "megaplan-chain":
-    log_candidates.append(session_log)
+if run_kind == "plan":
+    plan_log_dir = workspace / ".megaplan" / "cloud-logs"
+    if marker_plan_name:
+        log_candidates.extend(
+            [
+                plan_log_dir / f"{marker_plan_name}.log",
+                plan_log_dir / f"{marker_plan_name}-cloud.log",
+                workspace / ".megaplan" / f"cloud-plan-{marker_plan_name}.log",
+            ]
+        )
+    try:
+        log_candidates.extend(
+            sorted(plan_log_dir.glob("*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+        )
+    except Exception:
+        pass
+else:
+    session_log = workspace / ".megaplan" / f"cloud-chain-{session}.log"
+    default_log = workspace / ".megaplan" / "cloud-chain.log"
+    if session != "megaplan-chain":
+        log_candidates.append(session_log)
+    log_candidates.append(default_log)
+    if session == "megaplan-chain":
+        log_candidates.append(session_log)
 log_path = next((path for path in log_candidates if path.exists()), None)
 chain_log_tail = _tail_text(log_path, lines=20) if log_path is not None else ""
 
 chain_state_summary = {}
-chain_state_path = _latest_chain_state(workspace)
+chain_state_path = _latest_chain_state(workspace) if run_kind == "chain" else None
 if chain_state_path is not None:
     chain_state = _load_json(chain_state_path)
     metadata = chain_state.get("metadata")
@@ -806,7 +828,8 @@ else:
 plan_latest_failure = {}
 stale_state = {"classification": "NO LATEST FAILURE", "summary": "no latest_failure is set"}
 user_action_context = {}
-plan_state_path = _resolve_plan_state(workspace, str(chain_state_summary.get("current_plan_name") or ""))
+preferred_plan_name = marker_plan_name if run_kind == "plan" else str(chain_state_summary.get("current_plan_name") or "")
+plan_state_path = _resolve_plan_state(workspace, preferred_plan_name)
 plan_events_path = None
 plan_events_tail = ""
 if plan_state_path is not None:
@@ -926,11 +949,15 @@ if stale_state.get("classification") == "STALE STATE":
     failure_classification = "stale_state"
 
 payload = {
+    "run_kind": run_kind,
+    "requested_plan_name": marker_plan_name,
     "failure_classification": failure_classification,
     "stale_state": stale_state,
     "raw_failure_signals": raw_failure_signals,
-    "chain_log_tail": chain_log_tail,
-    "chain_log_path": str(log_path) if log_path is not None else "",
+    "chain_log_tail": chain_log_tail if run_kind == "chain" else "",
+    "chain_log_path": str(log_path) if run_kind == "chain" and log_path is not None else "",
+    "run_log_tail": chain_log_tail,
+    "run_log_path": str(log_path) if log_path is not None else "",
     "chain_recent_events": chain_state_summary.get("events") or [],
     "plan_events_tail": plan_events_tail,
     "plan_events_path": str(plan_events_path) if plan_events_path is not None and plan_events_path.exists() else "",
@@ -961,6 +988,7 @@ for entry in reversed(iterations):
     if (
         entry.get("raw_failure_signals")
         or entry.get("chain_log_tail")
+        or entry.get("run_log_tail")
         or entry.get("plan_events_tail")
         or entry.get("mechanical_log_tail")
         or entry.get("plan_latest_failure")
@@ -973,6 +1001,7 @@ if latest_context is None:
 
 plan_failure = latest_context.get("plan_latest_failure") or {}
 chain_state = latest_context.get("chain_state_summary") or {}
+run_kind = (payload.get("run_kind") or latest_context.get("run_kind") or "chain").strip().lower()
 metadata = plan_failure.get("metadata") or {}
 classification = latest_context.get("failure_classification") or "unknown_failure_mode"
 stale_state = latest_context.get("stale_state") or {}
@@ -1047,7 +1076,12 @@ if classification == "unknown_failure_mode":
         classification = "blocked_state_or_recovery_error"
 
 signal_text = "\n\n".join(str(item).strip() for item in signals[:4] if str(item).strip()) or "(none captured)"
-log_tail = latest_context.get("chain_log_tail") or latest_context.get("mechanical_log_tail") or "(none captured)"
+log_tail = (
+    latest_context.get("run_log_tail")
+    or latest_context.get("chain_log_tail")
+    or latest_context.get("mechanical_log_tail")
+    or "(none captured)"
+)
 events_tail = latest_context.get("plan_events_tail") or "(none captured)"
 
 plan_state = (
@@ -1080,6 +1114,15 @@ if chain_missing_base_ref:
 if chain_error:
     chain_notes.append(f"error={chain_error}")
 chain_notes_text = f" ({'; '.join(chain_notes)})" if chain_notes else ""
+if run_kind == "plan":
+    chain_state_line = "- chain state: not applicable for single-plan run"
+    run_narrative_label = "- current run narrative (plan log tail when present):"
+else:
+    chain_state_line = (
+        f"- chain state: last_state={chain_last_state} "
+        f"current_state={chain_current_state} current_plan={chain_plan_name}{chain_notes_text}"
+    )
+    run_narrative_label = "- current chain narrative (last 20 chain-log lines):"
 
 user_action_context = latest_context.get("user_action_context") or {}
 unresolved_user_actions = user_action_context.get("unresolved_user_actions") or []
@@ -1116,7 +1159,7 @@ for label, value in (
     ("plan state", plan_failure.get("state_path")),
     ("plan events", plan_failure.get("events_path") or latest_context.get("plan_events_path")),
     ("chain state", chain_state.get("path")),
-    ("chain log", latest_context.get("chain_log_path") or latest_context.get("mechanical_log_path")),
+    ("run log", latest_context.get("run_log_path") or latest_context.get("chain_log_path") or latest_context.get("mechanical_log_path")),
     ("user actions", user_action_context.get("user_actions_path")),
     ("user action resolutions", user_action_context.get("resolutions_path")),
     ("finalize", user_action_context.get("finalize_path")),
@@ -1127,19 +1170,20 @@ for label, value in (
 summary = "\n".join(
     [
         "## Incident Snapshot",
+        f"- run kind: {run_kind}",
         f"- failure classification: {classification}",
         f"- stale/live classification: {state_classification}",
         f"- stale-state analysis: {stale_summary}",
         f"- recommended repair action: {stale_recommendation or 'use failure classification'}",
         f"- plan state: {plan_state} / phase {phase} / iter {iteration_text}",
-        f"- chain state: last_state={chain_last_state} current_state={chain_current_state} current_plan={chain_plan_name}{chain_notes_text}",
+        chain_state_line,
         f"- latest_failure: kind={kind} recorded_at={recorded_at} exit_code={exit_code_text}",
         f"- latest_failure message: {message}",
         "- primary failure signal(s):",
         "```text",
         signal_text,
         "```",
-        "- current chain narrative (last 20 chain-log lines):",
+        run_narrative_label,
         "```text",
         log_tail,
         "```",
@@ -1181,7 +1225,7 @@ repair_data_init() {
   watchdog_log="$(tail -120 /workspace/watchdog.log 2>/dev/null || true)"
   tmux_info="$(tmux capture-pane -pt "$SESSION" -S -80 2>/dev/null || true)"
   chain_state="$(find "$WORKSPACE/.megaplan" -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | tail -10)"
-  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION")"
+  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$run_kind" "$plan_name")"
   python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
 import json
 import sys
@@ -1227,6 +1271,8 @@ payload = {
         "failure_context": failure_context_payload,
         "chain_log_tail": failure_context_payload.get("chain_log_tail", chain_log),
         "chain_log_path": failure_context_payload.get("chain_log_path", ""),
+        "run_log_tail": failure_context_payload.get("run_log_tail", ""),
+        "run_log_path": failure_context_payload.get("run_log_path", ""),
         "chain_recent_events": failure_context_payload.get("chain_recent_events", []),
         "plan_events_tail": failure_context_payload.get("plan_events_tail", ""),
         "plan_events_path": failure_context_payload.get("plan_events_path", ""),
@@ -1381,7 +1427,7 @@ lines = [
     f"## {now} -- {session} -- dev-fix iteration {iteration}",
     "",
     f"- Workspace: `{workspace}`",
-    f"- Chain spec: `{remote_spec}`",
+    f"- Run input: `{remote_spec}`",
     f"- Arnold source: `{arnold_src}`",
     f"- Repair data: `{data_file}`",
     f"- Dev model: `{dev_model}`",
@@ -1417,7 +1463,7 @@ repair_data_record_mechanical() {
   local status="$2"
   local detail="$3"
   local failure_context
-  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION")"
+  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   python3 - "$DATA_FILE" "$iteration" "$status" "$detail" "$failure_context" <<'PY'
 import json
 import pathlib
@@ -1440,6 +1486,8 @@ entry["stale_state"] = failure_context_payload.get("stale_state", {})
 entry["raw_failure_signals"] = failure_context_payload.get("raw_failure_signals", [])
 entry["chain_log_tail"] = failure_context_payload.get("chain_log_tail", "")
 entry["chain_log_path"] = failure_context_payload.get("chain_log_path", "")
+entry["run_log_tail"] = failure_context_payload.get("run_log_tail", "")
+entry["run_log_path"] = failure_context_payload.get("run_log_path", "")
 entry["chain_recent_events"] = failure_context_payload.get("chain_recent_events", [])
 entry["plan_events_tail"] = failure_context_payload.get("plan_events_tail", "")
 entry["plan_events_path"] = failure_context_payload.get("plan_events_path", "")
@@ -1458,7 +1506,7 @@ repair_data_record_kimi() {
   local report_path="$3"
   local turn_rc="$4"
   local failure_context
-  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION")"
+  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   python3 - "$DATA_FILE" "$iteration" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
 import json
 import pathlib
@@ -1502,6 +1550,8 @@ entry["stale_state"] = failure_context_payload.get("stale_state", entry.get("sta
 entry["raw_failure_signals"] = failure_context_payload.get("raw_failure_signals", entry.get("raw_failure_signals", []))
 entry["chain_log_tail"] = failure_context_payload.get("chain_log_tail", entry.get("chain_log_tail", ""))
 entry["chain_log_path"] = failure_context_payload.get("chain_log_path", entry.get("chain_log_path", ""))
+entry["run_log_tail"] = failure_context_payload.get("run_log_tail", entry.get("run_log_tail", ""))
+entry["run_log_path"] = failure_context_payload.get("run_log_path", entry.get("run_log_path", ""))
 entry["chain_recent_events"] = failure_context_payload.get("chain_recent_events", entry.get("chain_recent_events", []))
 entry["plan_events_tail"] = failure_context_payload.get("plan_events_tail", entry.get("plan_events_tail", ""))
 entry["plan_events_path"] = failure_context_payload.get("plan_events_path", entry.get("plan_events_path", ""))
@@ -1530,7 +1580,7 @@ PY
 
 repair_clear_stale_state_if_needed() {
   local failure_context
-  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION")"
+  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   python3 - "$DATA_FILE" "$failure_context" <<'PY'
 import datetime as dt
 import json
@@ -1734,7 +1784,9 @@ $failure_summary
 
 Session: $SESSION
 Workspace: $WORKSPACE
-Chain spec: $REMOTE_SPEC
+Run kind: $RUN_KIND
+Run input: $REMOTE_SPEC
+Plan name: ${PLAN_NAME:-}
 Editable Arnold source: $ARNOLD_SRC
 Editable source branch: $SYNC_BRANCH
 Repair data file: $DATA_FILE
@@ -1747,7 +1799,9 @@ Task:
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
    Classification guide:
    - LIVE FAILURE: The latest_failure is recent (no success since it was recorded). Fix the root cause in the Arnold source.
-   - STALE STATE: The latest_failure predates a successful run or the current block is a 0ms same-hash replay. CLEAR latest_failure to null in the plan's state.json, clear stale blocks, and re-drive the chain. Do NOT try to fix a source bug; the issue was already addressed.
+   - STALE STATE: The latest_failure predates a successful run or the current block is a 0ms same-hash replay. CLEAR latest_failure to null in the plan's state.json, clear stale blocks, and re-drive the run. Do NOT try to fix a source bug; the issue was already addressed.
+   For run_kind=plan, use the named plan's state.json, events.ndjson, plan log, and user-action artifacts. Missing chain state, chain logs, chain.yaml, milestones, and base refs are expected and not evidence of a bug.
+   For run_kind=chain, use chain state/logs/milestones when present.
 2. If the incident is awaiting_human or the User Action Gate section lists unresolved actions, ATTEMPT to resolve those user actions before treating this as a human stop. Read user_actions.md plus user_action_resolutions.json, inspect the referenced evidence/artifacts/code, make the best defensible judgment call, and record each decision with the CLI instead of hand-writing JSON. Use:
    cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan user-action resolve --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --action-id <ACTION_ID> --resolution <satisfied|accepted_blocked|waived|manual_required|rejected> --reason "..." --instructions "..." --tasks "<TASK_ID,...>"
    Prefer satisfied when the evidence clearly answers the action. Use accepted_blocked or waived only when the action itself permits a fallback. Leave unresolved or mark manual_required only when the decision is genuinely ambiguous, unusually difficult, or requires human-only judgment.
@@ -1756,8 +1810,8 @@ Task:
 5. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
 6. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
 7. If source changes pass validation, commit and push them.
-8. Do not relaunch the chain yourself. The wrapper will do the mechanical launch next.
-9. Use the raw failure signal, chain narrative, and prior-attempt history to avoid repeating failed ideas.
+8. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
+9. Use the raw failure signal, run narrative, and prior-attempt history to avoid repeating failed ideas.
 10. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
 11. Write a concise JSON report to $report_path with keys:
    classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
@@ -1787,7 +1841,9 @@ $failure_summary
 
 Session: $SESSION
 Workspace: $WORKSPACE
-Chain spec: $REMOTE_SPEC
+Run kind: $RUN_KIND
+Run input: $REMOTE_SPEC
+Plan name: ${PLAN_NAME:-}
 Editable Arnold source: $ARNOLD_SRC
 Repair data file: $DATA_FILE
 JSON report path (write this before exiting): $report_path
@@ -1796,8 +1852,9 @@ Relaunch command: $relaunch_command
 Task:
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need more detail.
    Classification guide: LIVE FAILURE means no success since latest_failure was recorded; STALE STATE means latest_failure predates success or the current block is a 0ms same-hash replay and state should be cleared/re-driven instead of source-fixed.
-2. Try to start the chain safely. Prefer the exact relaunch command above if the session is not already up.
-3. If the chain comes up and appears live, stop and write a success report.
+   For run_kind=plan, diagnose from the named plan's state/events/log/user actions; missing chain artifacts are expected.
+2. Try to start the run safely. Prefer the exact relaunch command above if the session is not already up.
+3. If the run comes up and appears live, stop and write a success report.
 4. If it does not come up, diagnose exactly why from the current logs/state and write that diagnosis.
 5. Use the raw failure signal and prior-attempt history to explain the current blocker concretely.
 6. Keep the turn short; launch plus concrete diagnosis only.
@@ -1969,7 +2026,7 @@ for item in iterations:
     )
 payload = {
     "title": "Watchdog repair loop exhausted; needs human",
-    "summary": "The bounded 3-iteration repair loop could not get the chain running.",
+    "summary": "The bounded 3-iteration repair loop could not get the run running.",
     "fields": fields,
     "next_action": f"Read {sys.argv[1]} and intervene manually.",
 }
