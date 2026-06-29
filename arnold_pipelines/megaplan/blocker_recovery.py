@@ -647,6 +647,33 @@ def evaluate_quality_blockers(
     return BlockerRecoveryEvaluation(tuple(details))
 
 
+def _phase_coverage_deviations(plan_dir: Path | None) -> tuple[Deviation, ...]:
+    """Surface latest execution-batch authority failures as quality blockers.
+
+    ``recover-blocked`` previously only inspected ``phase_result.json``. When
+    execute ended blocked because the latest execution batch lacked
+    corroborated/completed task authority, the blocker lived in the execution
+    batch artifact instead, so recovery saw no current blockers and could only
+    fail generically. Import the existing chain-level authority check here and
+    re-express any failure as a recovery deviation.
+    """
+
+    if plan_dir is None:
+        return ()
+
+    from arnold_pipelines.megaplan.chain import _latest_execution_batch_all_tasks_done
+
+    try:
+        all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
+    except Exception:
+        return ()
+    if all_done or not isinstance(reason, str) or not reason:
+        return ()
+    if "no execution_batch" in reason:
+        return ()
+    return (Deviation(kind="phase_coverage", task_id=None, message=reason),)
+
+
 def evaluate_blocker_recovery(
     finalize_data: dict[str, Any],
     state: dict[str, Any],
@@ -661,7 +688,10 @@ def evaluate_blocker_recovery(
         blocked_tasks,
         plan_dir=plan_dir,
     )
-    quality = evaluate_quality_blockers(state, deviations)
+    quality = evaluate_quality_blockers(
+        state,
+        tuple(deviations) + _phase_coverage_deviations(plan_dir),
+    )
     return BlockerRecoveryEvaluation(prereq.blockers + quality.blockers)
 
 

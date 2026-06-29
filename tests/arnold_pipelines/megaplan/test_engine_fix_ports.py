@@ -139,6 +139,39 @@ def test_stale_recorded_test_failure_blocker_drops_when_nodeid_now_passes(
     assert evaluation.can_continue is True
 
 
+def test_phase_coverage_authority_failure_surfaces_as_recovery_blocker(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "execution_batch_14.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T14",
+                        "status": "done",
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    evaluation = evaluate_blocker_recovery(
+        {},
+        {"meta": {}, "config": {}},
+        plan_dir=plan_dir,
+    )
+
+    assert evaluation.can_continue is False
+    assert [blocker.message for blocker in evaluation.blockers] == [
+        "execution_batch_14.json has no corroborated completed task IDs"
+    ]
+    assert evaluation.blockers[0].blocker_kind == "quality"
+
+
 def test_harness_artifact_paths_are_removed_from_execute_claims() -> None:
     payload = _normalize_execute_capture_payload(
         {
