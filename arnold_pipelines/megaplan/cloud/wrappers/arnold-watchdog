@@ -157,7 +157,9 @@ def load_chain_state() -> tuple[dict[str, object], str]:
         digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
         # Prefer the workspace-owned chain state; legacy locations stay fallback-only.
         candidates = (
+            workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
             workspace / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+            spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
             spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
             spec_resolved.with_name("chain_state.json"),
         )
@@ -1258,7 +1260,9 @@ def resolve_chain_state_path() -> Path | None:
             digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
             candidates.extend(
                 [
+                    workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
                     workspace / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+                    spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
                     spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
                     spec_resolved.with_name("chain_state.json"),
                 ]
