@@ -19,7 +19,7 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 VALID_MODES = ("auto", "chain", "idle")
-VALID_PROVIDERS = ("railway", "local", "ssh")
+VALID_PROVIDERS = ("local", "ssh")
 FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
 VALID_CODEX_REASONING = ("minimal", "low", "medium", "high")
@@ -74,14 +74,6 @@ class MegaplanSpec:
 
 
 @dataclass(frozen=True)
-class RailwaySpec:
-    service: str = "agent"
-    session: str = "agent"
-    project: str | None = None
-    environment: str | None = None
-
-
-@dataclass(frozen=True)
 class LocalSpec:
     compose_project: str = "megaplan-cloud"
     workdir: str = "workspace"
@@ -118,7 +110,6 @@ class CloudSpec:
     auto: AutoSpec | None = None
     chain: ChainSubSpec | None = None
     driver: DriverSpec | None = None
-    railway: RailwaySpec | None = None
     local: LocalSpec | None = None
     ssh: SshSpec | None = None
     toolchains: list[ToolchainSpec] | None = None
@@ -369,18 +360,6 @@ def load_spec(path: Path) -> CloudSpec:
         port=_port(resources_raw.get("port")),
     )
 
-    railway_raw = _mapping(raw.get("railway"), "railway")
-    railway = (
-        RailwaySpec(
-            service=_string(railway_raw.get("service"), "railway.service", default="agent"),
-            session=_string(railway_raw.get("session"), "railway.session", default="agent"),
-            project=_optional_string(railway_raw.get("project"), "railway.project"),
-            environment=_optional_string(railway_raw.get("environment"), "railway.environment"),
-        )
-        if railway_raw
-        else None
-    )
-
     local_raw = _mapping(raw.get("local"), "local")
     local = LocalSpec(
         compose_project=_string(
@@ -472,7 +451,6 @@ def load_spec(path: Path) -> CloudSpec:
         auto=auto_spec,
         chain=chain_spec,
         driver=driver,
-        railway=railway,
         local=local,
         ssh=ssh,
         toolchains=_toolchains(raw.get("toolchains")),

@@ -1,8 +1,8 @@
 # Cloud runner spec for `arnold cloud`.
 #
 # provider:
-#   Supported providers: railway, local, ssh. `fly` is reserved for a future release.
-provider: railway
+#   Supported providers: ssh, local. Use ssh for the Hetzner agentbox.
+provider: ssh
 
 # Shared-instance model:
 #   The cloud image is a stable base. Operational logic ships through the
@@ -120,18 +120,6 @@ resources:
   volume: agent-volume
   port: 8080
 
-# railway:
-#   service  Railway service name used by deploy/logs/down.
-#   session  Railway ssh session name used for interactive attaches.
-#   project  Optional Railway project ID/name for `railway link --project ...`.
-#   environment
-#            Optional Railway environment ID/name passed to operational commands.
-railway:
-  service: agent
-  session: agent
-  # project: your-railway-project-id
-  # environment: production
-
 # local:
 #   compose_project  Docker Compose project name used by the local provider.
 #   workdir          Bind-mounted subdirectory inside the persistent deploy dir.
@@ -139,20 +127,14 @@ railway:
 #   compose_project: megaplan-cloud
 #   workdir: workspace
 
-# ssh:
-#   host           Required when provider=ssh.
-#   user           Optional SSH username.
-#   port           SSH port.
-#   identity_file  Optional SSH identity file.
-#   remote_dir     Remote directory that receives the synced deploy context.
-#   container      Remote Docker container/image name.
-# ssh:
-#   host: docker-host.example.com
-#   user: deployer
-#   port: 22
-#   # identity_file: ~/.ssh/id_ed25519
-#   remote_dir: /tmp/megaplan-cloud
-#   container: megaplan-cloud-agent
+ssh:
+  # Fill with the shared Hetzner agentbox address or another Docker host.
+  host: <box-ip>
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
 
 # secrets:
 #   Names of environment variables read locally during `arnold cloud deploy`

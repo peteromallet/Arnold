@@ -13,6 +13,7 @@ from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import (
     _bootstrap_launch_command,
     _chain_anchor_uploads,
+    _chain_project_root,
     _chain_start_command,
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
@@ -22,14 +23,17 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
     _run_bootstrap_wrapper,
+    _status_should_use_chain,
     cloud_chain_status_payload,
 )
 from arnold_pipelines.megaplan.cloud.spec import (
+    ChainSubSpec,
     CloudSpec,
     CodexSpec,
     MegaplanSpec,
     RepoSpec,
     ResourcesSpec,
+    SshSpec,
 )
 from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 
@@ -220,6 +224,56 @@ def test_cloud_preflight_expands_vendor_depth_like_init() -> None:
     assert phase_map["execute"] == "codex"
 
 
+def test_chain_project_root_uses_spec_git_repo_not_caller_root(tmp_path: Path) -> None:
+    app_root = tmp_path / "app"
+    caller_root = tmp_path / "arnold"
+    spec_dir = app_root / "docs" / "chains" / "demo"
+    spec_dir.mkdir(parents=True)
+    caller_root.mkdir()
+    subprocess.run(["git", "init"], cwd=app_root, check=True, capture_output=True, text=True)
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    assert _chain_project_root(spec_path, caller_root) == app_root.resolve()
+
+
+def test_status_auto_uses_chain_for_chain_mode() -> None:
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="chain",
+        chain=ChainSubSpec(spec="/workspace/app/chain.yaml"),
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+        ssh=SshSpec(host="testhost"),
+    )
+
+    assert _status_should_use_chain(Path("/repo"), argparse.Namespace(chain=False, remote_spec=None, cloud_yaml=None), spec)
+
+
+def test_status_auto_uses_chain_for_remote_spec_override() -> None:
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+        ssh=SshSpec(host="testhost"),
+    )
+
+    assert _status_should_use_chain(
+        Path("/repo"),
+        argparse.Namespace(chain=False, remote_spec="/workspace/app/chain.yaml", cloud_yaml=None),
+        spec,
+    )
+
+
 class _ResumeProvider:
     def __init__(self, chain_state: dict) -> None:
         self.chain_state = chain_state
@@ -233,7 +287,7 @@ class _ResumeProvider:
 
 def test_cloud_resume_uses_chain_marker_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
     spec = CloudSpec(
-        provider="railway",
+        provider="ssh",
         repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
         agents={"default": "codex"},
         codex=CodexSpec(),
@@ -241,6 +295,7 @@ def test_cloud_resume_uses_chain_marker_workspace(monkeypatch: pytest.MonkeyPatc
         megaplan=MegaplanSpec(),
         resources=ResourcesSpec(),
         secrets=[],
+        ssh=SshSpec(host="testhost"),
     )
     marker = {
         "workspace": "/workspace/chain-51d959cf/vibecomfy",
@@ -342,7 +397,7 @@ def test_cloud_chain_status_payload_exposes_plan_latest_failure() -> None:
         },
     }
     spec = CloudSpec(
-        provider="railway",
+        provider="ssh",
         repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
         agents={"default": "codex"},
         codex=CodexSpec(),
@@ -350,6 +405,7 @@ def test_cloud_chain_status_payload_exposes_plan_latest_failure() -> None:
         megaplan=MegaplanSpec(),
         resources=ResourcesSpec(),
         secrets=[],
+        ssh=SshSpec(host="testhost"),
     )
 
     payload = cloud_chain_status_payload(

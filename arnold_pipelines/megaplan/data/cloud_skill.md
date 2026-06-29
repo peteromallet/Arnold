@@ -1,11 +1,11 @@
 ---
 name: megaplan-cloud
-description: Run megaplan plans and chains inside a provider-managed container with a persistent workspace volume — either Railway, or a Hetzner agentbox via the ssh provider (the working on-prem path). Use when the run needs to outlast a local terminal session, span multiple repos, or share a long-lived dev box across concurrent chains. Covers `cloud.yaml` fields, `extra_repos[]` + `chain_session` multi-tenancy, the operator loop, the direct-`chain-start` recipe for the ssh box, and the gotchas that wedge fresh runs.
+description: Run megaplan plans and chains on the Hetzner agentbox via the ssh provider, with a persistent workspace volume. Use when the run needs to outlast a local terminal session, span multiple repos, or share a long-lived dev box across concurrent chains. Covers `cloud.yaml` fields, `extra_repos[]` + `chain_session` multi-tenancy, the operator loop, the direct-`chain-start` recipe for the ssh box, and the gotchas that wedge fresh runs.
 ---
 
 # Megaplan Cloud
 
-`megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Two providers are shipped end-to-end: **`railway`** and **`ssh`** (a remote box — typically a Hetzner agentbox — you SSH into, running the megaplan worker in a docker container). `local` is scaffolded. The ssh provider is the working on-prem path; see **SSH provider — Hetzner agentbox** below.
+`megaplan cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. For this environment, use **`provider: ssh`** against the Hetzner agentbox. Do not launch Megaplan work on other cloud providers unless the user explicitly asks for legacy-provider debugging. `local` is scaffolded; the ssh provider is the working path. See **SSH provider — Hetzner agentbox** below.
 
 Reach for cloud mode when at least one of these is true:
 
@@ -93,7 +93,7 @@ See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode 
 
 When Claude phases run on the cloud worker, you want them billed against your Claude **subscription** (Max/Pro), not metered API. The entrypoint supports two auth modes with clear precedence:
 
-1. **`CLAUDE_CODE_REFRESH_TOKEN`** *(preferred — programmatic, no expiry)*. Set this once on the Railway service. On every boot, the entrypoint installs:
+1. **`CLAUDE_CODE_REFRESH_TOKEN`** *(preferred — programmatic, no expiry)*. Set this once on the cloud worker. On every boot, the entrypoint installs:
    - `/usr/local/bin/claude.real` — copy of the actual claude binary.
    - `/usr/local/bin/claude-key-helper` — refreshes the OAuth access token against `https://api.anthropic.com/v1/oauth/token` using the refresh token, caches the result on the volume (`/workspace/.claude-creds/`), and rotates the refresh token per use.
    - `/usr/local/bin/claude` — shim that calls the helper, exports `ANTHROPIC_API_KEY`, and `exec`s the real binary.
@@ -104,7 +104,7 @@ When Claude phases run on the cloud worker, you want them billed against your Cl
    bash scripts/refresh-cloud-claude-key.sh
    ```
 
-   That extracts the refresh token from your macOS Keychain (service `"Claude Code-credentials"`), validates it against the OAuth endpoint, and pushes the (rotated) value to Railway as `CLAUDE_CODE_REFRESH_TOKEN`. No browser, no recurring human action. Re-run only if you `claude /logout` everywhere or the refresh token gets revoked.
+   That extracts the refresh token from your macOS Keychain (service `"Claude Code-credentials"`), validates it against the OAuth endpoint, and writes the rotated value to the worker as `CLAUDE_CODE_REFRESH_TOKEN`. No browser, no recurring human action. Re-run only if you `claude /logout` everywhere or the refresh token gets revoked.
 
    The OAuth client ID is `9d1c250a-e61b-44d9-88ed-5944d1962f5e` (Claude Code's public client, discovered from the binary). Override with `CLAUDE_CODE_OAUTH_CLIENT_ID` on the service if needed.
 
@@ -140,23 +140,23 @@ Two `cloud.yaml` fields let one shared worker host many sibling repos and severa
 
 The dev pattern is one long-lived `mode: idle` cloud service plus a `cloud.<chain>.yaml` per chain. The box stays up; each `megaplan cloud chain` invocation creates its own tmux session and writes plan state under `<workspace>/.megaplan/plans/`. Concurrent chains targeting the same primary repo will collide on the workspace path — give them distinct workspace prefixes (e.g. `/workspace/<chain-name>/<repo>/`) or run them sequentially.
 
-A minimal multi-repo `cloud.yaml`:
+A minimal multi-repo Hetzner `cloud.yaml`:
 
 ```yaml
-provider: railway
+provider: ssh
 
 repo:
   url: https://github.com/org/app.git
   branch: main
-  workspace: /workspace/app
+  workspace: /workspace/my-chain/app
 
 extra_repos:
   - url: https://github.com/org/worker.git
     branch: main
-    workspace: /workspace/worker
+    workspace: /workspace/my-chain/worker
   - url: https://github.com/org/agent.git
     branch: main
-    workspace: /workspace/agent
+    workspace: /workspace/my-chain/agent
 
 chain_session: my-chain    # per-chain tmux session
 
@@ -169,9 +169,13 @@ resources:
   volume: my-volume
   port: 8080
 
-railway:
-  service: megaplan-dev    # the shared service name on Railway
-  session: agent           # interactive attach session — NOT the chain session
+ssh:
+  host: <box-ip>
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent
 
 secrets: []                # leave empty if values are pre-set on the service
 ```
@@ -221,34 +225,34 @@ Recovery path: watchdog fixes hard stops; auditor fixes inefficiency/deadlocks t
 
 4. **`megaplan` CLI may use a separate Python venv** from `pip install --user`. After upgrading megaplan from a branch SHA, run `head -1 $(which megaplan)` to find which interpreter and `python -m pip install` into that one specifically — otherwise local `cloud chain` runs against the old code while the remote pulls the new SHA.
 
-5. **`secrets:` in `cloud.yaml` drives an upload from local env at deploy time.** If you pre-set values directly on the Railway service (e.g. copied from another service), leave `secrets: []` in the `cloud.yaml` — otherwise `megaplan cloud deploy` reads the names from your local env, finds them missing, and either fails the deploy or overwrites the Railway values with empty strings. List the names in a comment for reference.
+5. **`secrets:` in `cloud.yaml` drives an upload from local env at deploy time.** If values are already set on the Hetzner box/container, leave `secrets: []` in the `cloud.yaml` — otherwise `megaplan cloud deploy` reads the names from your local env and may fail or overwrite the worker values with empty strings. List the names in a comment for reference.
 
 6. **Credit-balance failures look like `internal_error`.** When a phase exits as "internal_error" with no useful stderr, read `plan_v<n>_raw.txt` in the plan directory. Anthropic/OpenAI quota errors arrive there as `"text":"Credit balance is too low"` from the agent CLI wrapper. For Claude, the real fix is the refresh-token shim (see "Claude auth" above) — it bills against your subscription, never depletes. For OpenAI, top up the console balance or switch to a profile with credit headroom — **but for a `codex` phase it's usually the API-key fallback, not a real balance issue; see gotcha #9.**
 
-7. **`secrets` get baked into the image-build context, not just runtime env.** `megaplan cloud deploy` runs `railway variables --set NAME=VALUE` for every secret in the local environment that matches a declared name, then `railway up`. Pre-existing values on the service are overwritten when the local env has the same key set. To preserve service-side values, either unset them locally before deploy or empty the `secrets:` list.
+7. **`secrets` can be overwritten by deploy-time sync.** `megaplan cloud deploy` pushes every declared secret found in the local environment. Pre-existing worker values are overwritten when the local env has the same key set. To preserve worker-side values, either unset them locally before deploy or empty the `secrets:` list.
 
-8. **Volume size and disk pressure.** The default Railway volume is 5 GB. A multi-repo chain with `node_modules` and `.venv` directories across sibling repos can fill it quickly; `git clean -fdx` and `npm cache clean --force` on the worker free space, but ultimately bump the volume in the Railway UI if you're routinely seeing disk-pressure errors.
+8. **Volume size and disk pressure.** A multi-repo chain with `node_modules` and `.venv` directories across sibling repos can fill the worker volume quickly; `git clean -fdx` and `npm cache clean --force` on the worker free space, but ultimately expand the Hetzner volume if disk-pressure errors become routine.
 
 9. **Codex `Quota exceeded. Check your plan and billing details.` is the API-key fallback, not a real cap.** megaplan runs codex via `codex exec`, which silently uses **API-key mode** when `OPENAI_API_KEY` is present — so plan/critique/etc. hit `api.openai.com` with that (often dead) key and quota-fail, even though you have a working ChatGPT subscription. This is the codex-specific case of gotcha #6, and "top up the console balance" is the *wrong* fix. Right fix: `megaplan.codex_auth: chatgpt` (the default) forces `preferred_auth_method=chatgpt` so codex uses the subscription OAuth (`chatgpt.com/backend-api/codex`) regardless of `OPENAI_API_KEY`. If you see this error, confirm `/root/.codex/config.toml` has `preferred_auth_method = "chatgpt"` and `~/.codex/auth.json` has `auth_mode: chatgpt`, and that the OAuth seed landed (`/workspace/.creds/codex-auth.json`). See "Codex auth" above.
 
 10. **Stalled `chain_state` makes a relaunch resume a dead plan (session alive, milestone stuck at "none").** An aborted run leaves `.megaplan/plans/.chains/<spec>-<digest>.json` with `last_state: "stalled"`; the next `cloud chain` resumes it and never starts the milestone. `cloud chain` now auto-clears a stalled-with-no-progress state on fresh launch; if you hit it on an older worker, `rm -rf .megaplan/plans/.chains/* .megaplan/plans/<milestone>-*` (only the stalled ones) and relaunch.
 
-## Quick reference: shared dev-box workflow
+## Quick Reference: Hetzner Agentbox Workflow
 
-For users running multiple chains across many repos on one Railway service:
+For users running multiple chains across many repos on the shared Hetzner agentbox:
 
 1. **One-time setup**:
-   - Create the Railway service (`railway add --service megaplan-dev`).
-   - Attach a volume (`railway service megaplan-dev` then `railway volume add -m /workspace`).
-   - Set project-level secrets once (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `FIREWORKS_API_KEY`, `GITHUB_TOKEN`, `MEGAPLAN_TRUSTED_CONTAINER=1`).
+   - Ensure the remote box has the long-lived `megaplan-cloud-agent` container.
+   - Ensure the persistent workspace volume is mounted at `/workspace`.
+   - Set worker secrets once (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY`, `FIREWORKS_API_KEY`, `GITHUB_TOKEN`, `MEGAPLAN_TRUSTED_CONTAINER=1`).
 
 2. **Per chain**:
-   - Write `cloud.<chain>.yaml` with `repo:` + any `extra_repos:` + `chain_session: <chain-name>` + `mode: idle`.
+   - Write `cloud.<chain>.yaml` with `provider: ssh`, `repo:` + any `extra_repos:` + `chain_session: <chain-name>` + `mode: idle`.
    - `megaplan cloud deploy --cloud-yaml cloud.<chain>.yaml` only when adding new repos or bumping `megaplan.ref` (the entrypoint is baked in at build time).
    - `megaplan cloud chain --cloud-yaml cloud.<chain>.yaml <chain.yaml>` to launch.
 
 3. **Observing**:
    - `megaplan cloud status --chain` for the chain summary.
    - `megaplan cloud logs --no-follow` for build / boot logs.
-   - SSH-tail the per-chain log: `railway ssh --service megaplan-dev -- tail -f /workspace/<repo>/.megaplan/cloud-chain-<chain-session>.log`.
-   - List active chains: `railway ssh --service megaplan-dev -- tmux ls` (filter for non-default sessions).
+   - SSH-tail the per-chain log: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tail -f /workspace/<repo>/.megaplan/cloud-chain-<chain-session>.log'`.
+   - List active chains: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tmux ls'`.

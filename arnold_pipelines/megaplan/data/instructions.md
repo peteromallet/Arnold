@@ -178,7 +178,7 @@ Lifecycle:
 - `<launcher> bakeoff resume --exp <id>` — resume unfinished profile runs.
 - `<launcher> bakeoff abandon --exp <id>` — discard worktrees but keep audit data.
 ## Cloud Mode
-`<launcher> cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Suggest it for long-running plans that would outlast a local session, multi-repo work, or when the user wants an isolated persistent sandbox. Sprint 1 ships the `railway` provider only; `ssh` and `local` are planned.
+`<launcher> cloud` runs a plan inside a provider-managed container with a persistent workspace volume, so the run survives the user's terminal session. Suggest it for long-running plans that would outlast a local session, multi-repo work, or when the user wants an isolated persistent sandbox. The supported remote path is `provider: ssh` against the Hetzner agentbox; `provider: local` remains for local iteration and CI smoke tests.
 
 Quick subcommand reference: `init`, `build`, `deploy`, `chain`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`. Typical flow: `<launcher> cloud init` → edit `cloud.yaml` → export secrets → `<launcher> cloud deploy` → `<launcher> cloud chain <chain.yaml>`.
 

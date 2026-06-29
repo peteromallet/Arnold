@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
-# Sync megaplan codex skills from this directory into ~/.claude and ~/.codex.
+# Sync Arnold/Megaplan skills from this repo into agent skill directories.
 #
-# For each top-level bundled skill directory, create a symlink in each target skills directory,
-# ONLY IF nothing exists at that path yet. Never deletes or overwrites existing entries.
+# For each top-level canonical skill directory, create or update a symlink in
+# each target skills directory. Stale links created by older Arnold syncs are
+# replaced; unrelated user skills are left alone.
 #
-# Anything pre-existing that you want replaced must be removed by hand.
+# Canonical source: arnold_pipelines/megaplan/skills
+# Retired source:   arnold_pipelines/megaplan/data/_codex_skills
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE_SKILLS_DIR="$REPO_ROOT/arnold_pipelines/megaplan/skills"
-SRC_DIRS=(
-  "$REPO_ROOT/arnold_pipelines/megaplan/data/_codex_skills"
-  "$SOURCE_SKILLS_DIR"
-)
+STALE_SKILLS_DIR="$REPO_ROOT/arnold_pipelines/megaplan/data/_codex_skills"
 SKILL_TARGETS=(
   "$HOME/.claude/skills"
   "$HOME/.codex/skills"
@@ -24,58 +23,73 @@ SKILL_TARGETS=(
 created=0
 updated=0
 skipped=0
+removed=0
 
-for src_dir in "${SRC_DIRS[@]}"; do
-  [ -d "$src_dir" ] || continue
-  for entry in "$src_dir"/*/; do
-    [ -d "$entry" ] || continue
-    name="$(basename "$entry")"
-    case "$name" in
-      _*) continue ;;
+for target_dir in "${SKILL_TARGETS[@]}"; do
+  mkdir -p "$target_dir"
+  for dest in "$target_dir"/*; do
+    [ -L "$dest" ] || continue
+    current="$(readlink "$dest")"
+    case "$current" in
+      "$STALE_SKILLS_DIR"/*)
+        rm "$dest"
+        printf 'removed stale %s -> %s\n' "$dest" "$current"
+        removed=$((removed + 1))
+        ;;
     esac
-    if [ "$src_dir" != "$SOURCE_SKILLS_DIR" ] && [ -d "$SOURCE_SKILLS_DIR/$name" ]; then
-      continue
-    fi
-    src="$src_dir/$name"
+  done
+done
 
-    for target_dir in "${SKILL_TARGETS[@]}"; do
-      [ -d "$target_dir" ] || continue
-      dest="$target_dir/$name"
+[ -d "$SOURCE_SKILLS_DIR" ] || {
+  printf 'missing source skills dir: %s\n' "$SOURCE_SKILLS_DIR" >&2
+  exit 1
+}
 
-      if [ -L "$dest" ]; then
-        current="$(readlink "$dest")"
-        if [ "$current" != "$src" ]; then
-          case "$current:$name" in
-            "$REPO_ROOT"/*:*|*:cleanup-loose-branches) ;;
-            *)
-              printf 'skip   %s (exists)\n' "$dest"
-              skipped=$((skipped + 1))
-              continue
-              ;;
-          esac
-          rm "$dest"
-          ln -s "$src" "$dest"
-          printf 'updated %s -> %s\n' "$dest" "$src"
-          updated=$((updated + 1))
-        else
-          printf 'skip   %s (exists)\n' "$dest"
-          skipped=$((skipped + 1))
-        fi
-        continue
-      fi
+for entry in "$SOURCE_SKILLS_DIR"/*/; do
+  [ -d "$entry" ] || continue
+  name="$(basename "$entry")"
+  case "$name" in
+    _*) continue ;;
+  esac
+  src="$SOURCE_SKILLS_DIR/$name"
 
-      if [ -e "$dest" ]; then
+  for target_dir in "${SKILL_TARGETS[@]}"; do
+    dest="$target_dir/$name"
+
+    if [ -L "$dest" ]; then
+      current="$(readlink "$dest")"
+      if [ "$current" = "$src" ]; then
         printf 'skip   %s (exists)\n' "$dest"
         skipped=$((skipped + 1))
         continue
       fi
 
-      ln -s "$src" "$dest"
-      printf 'linked %s -> %s\n' "$dest" "$src"
-      created=$((created + 1))
-    done
+      case "$current" in
+        "$REPO_ROOT"/*)
+          rm "$dest"
+          ln -s "$src" "$dest"
+          printf 'updated %s -> %s\n' "$dest" "$src"
+          updated=$((updated + 1))
+          ;;
+        *)
+          printf 'skip   %s (exists)\n' "$dest"
+          skipped=$((skipped + 1))
+          ;;
+      esac
+      continue
+    fi
+
+    if [ -e "$dest" ]; then
+        printf 'skip   %s (exists)\n' "$dest"
+        skipped=$((skipped + 1))
+        continue
+    fi
+
+    ln -s "$src" "$dest"
+    printf 'linked %s -> %s\n' "$dest" "$src"
+    created=$((created + 1))
   done
 done
 
 echo ""
-echo "done: $created created, $updated updated, $skipped skipped"
+echo "done: $created created, $updated updated, $removed stale removed, $skipped skipped"
