@@ -2681,6 +2681,16 @@ def run_chain(
                 state.pr_state = None
             else:
                 pr_state = _pr_state(root, state.pr_number, writer=writer)
+                if pr_state == "closed":
+                    log(f"PR #{state.pr_number} closed while awaiting merge; stopping chain")
+                    return _stop_for_closed_pr(
+                        spec_path=spec_path,
+                        state=state,
+                        events=events,
+                        spec=spec,
+                        milestone_label=milestone.label,
+                        pr_number=state.pr_number,
+                    )
                 state.pr_state = "merged" if pr_state == "merged" else "awaiting_merge"
                 chain_spec.save_chain_state(spec_path, state)
                 if pr_state != "merged":
@@ -3044,6 +3054,16 @@ def run_chain(
             if current_pr_state == "merged":
                 state.pr_state = "merged"
                 chain_spec.save_chain_state(spec_path, state)
+            elif current_pr_state == "closed":
+                log(f"PR #{state.pr_number} closed during milestone completion; stopping chain")
+                return _stop_for_closed_pr(
+                    spec_path=spec_path,
+                    state=state,
+                    events=events,
+                    spec=spec,
+                    milestone_label=milestone.label,
+                    pr_number=state.pr_number,
+                )
             else:
                 _mark_pr_ready(root, state.pr_number, writer=writer)
                 if spec.merge_policy == "review":
@@ -3210,6 +3230,27 @@ def _result(
     if spec is not None:
         result["base_branch"] = spec.base_branch
     return result
+
+
+def _stop_for_closed_pr(
+    *,
+    spec_path: Path,
+    state: ChainState,
+    events: list[dict[str, Any]],
+    spec: ChainSpec,
+    milestone_label: str,
+    pr_number: int,
+) -> dict[str, Any]:
+    state.last_state = "pr_closed"
+    state.pr_state = "closed"
+    chain_spec.save_chain_state(spec_path, state)
+    return _result(
+        "stopped",
+        state,
+        events,
+        spec=spec,
+        reason=f"milestone {milestone_label} PR #{pr_number} is closed",
+    )
 
 
 def format_chain_status(spec: ChainSpec, state: ChainState) -> dict[str, Any]:

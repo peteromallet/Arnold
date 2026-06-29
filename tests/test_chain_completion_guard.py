@@ -287,6 +287,47 @@ def test_run_chain_pr_merge_resume_blocks_non_terminal_plan(tmp_path: Path) -> N
     assert "current_state='gated'" in result["reason"]
 
 
+def test_run_chain_stops_when_resumed_pr_is_closed(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _write_plan(
+        tmp_path,
+        current_state="gated",
+        finalize_tasks=[],
+        execution_batch=False,
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state=STATE_AWAITING_PR_MERGE,
+            pr_number=99,
+            pr_state="awaiting_merge",
+        ),
+    )
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="closed"),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+        )
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "stopped"
+    assert result["reason"] == "milestone m1 PR #99 is closed"
+    assert saved.pr_state == "closed"
+    assert saved.last_state == "pr_closed"
+
+
 def test_latest_execution_batch_all_tasks_done_accepts_execution_window_authority(
     tmp_path: Path,
 ) -> None:
