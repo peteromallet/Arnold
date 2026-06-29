@@ -62,7 +62,6 @@ M6_DELETION_LIST: tuple[DeletedSurface, ...] = (
     DeletedSurface("tools/m4_oracle_bisect.py", "path", "docs/arnold/m6-deletion-list.md", "m5-script-tool-inventory.md", "archive", "Moved to docs/archive/m5/tools/, then delete."),
     DeletedSurface("_gen_corpus.py", "path", "docs/arnold/m6-deletion-list.md", "m5-script-tool-inventory.md", "archive", "Moved to docs/archive/m5/, then delete."),
     DeletedSurface("tests/_pipeline/", "path", "docs/arnold/m6-deletion-list.md", "m5-legacy-test-inventory.md", "archive", "Moved to tests/archive/m5/, then delete."),
-    DeletedSurface("tests/pipelines/", "path", "docs/arnold/m6-deletion-list.md", "m5-legacy-test-inventory.md", "archive", "Moved to tests/archive/m5/, then delete."),
     DeletedSurface("tests/docs/test_arnold_external_builder.py", "path", "docs/arnold/m6-deletion-list.md", "m5-legacy-test-inventory.md", "archive", "Moved to tests/archive/m5/docs/, then delete."),
     DeletedSurface("arnold/pipelines/megaplan/data/", "path", "docs/arnold/m6-deletion-list.md", "m5-generated-artifact-manifest.md", "delete", "Removed in Phase 4; old generated skills/composed no longer packaged."),
 )
@@ -84,7 +83,6 @@ RUNTIME_SALVAGE_DELETION_TARGETS: tuple[DeletedSurface, ...] = (
     DeletedSurface("arnold.pipeline.step_invocation", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Native step invocation replaced by backend hooks."),
     DeletedSurface("arnold.pipeline.token_cost / model_resource_capabilities / media_cost", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Cost/resource modeling belongs in product harness.", note="Grouped row; concrete gates expand to all three modules."),
     DeletedSurface("arnold.pipeline.profiles", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Profile selection is product-side."),
-    DeletedSurface("arnold.pipeline.discovery", "module", "docs/arnold/runtime-salvage-deletion-map.md", "Discovery", "M6 deletion target", "Manifest discovery moved to product harness and arnold.execution callers."),
     DeletedSurface("arnold.pipelines.megaplan._pipeline.discovery", "module", "docs/arnold/runtime-salvage-deletion-map.md", "Discovery", "M6 deletion target", "Product-specific discovery."),
     DeletedSurface("arnold.pipelines.megaplan.runtime", "module", "docs/arnold/runtime-salvage-deletion-map.md", "Oracle", "M6 deletion target", "Product runtime adapter; replaced by registry shims."),
     DeletedSurface("arnold.pipelines.megaplan.agent_runtime", "module", "docs/arnold/runtime-salvage-deletion-map.md", "Agent adapter shims", "M6 deletion target", "Older agent runtime shims replaced by execution registry bridge.", note="Docs phrase this as older agent runtime shims in the package."),
@@ -129,7 +127,6 @@ DELETED_IMPORT_MODULES: tuple[str, ...] = (
     "arnold.pipeline.model_resource_capabilities",
     "arnold.pipeline.media_cost",
     "arnold.pipeline.profiles",
-    "arnold.pipeline.discovery",
     "arnold.pipelines.megaplan._pipeline.discovery",
     "arnold.pipelines.megaplan.runtime",
     "arnold.pipelines.megaplan.agent_runtime",

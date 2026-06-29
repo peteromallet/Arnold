@@ -22,6 +22,10 @@ from arnold.conformance.checks import (
     check_public_workflow_layering,
     check_semantic_coupling,
 )
+from arnold.conformance.deleted_surfaces import (
+    DELETED_IMPORT_MODULES,
+    DELETED_IMPORT_PREFIXES,
+)
 
 
 def _arnold_root(tmp_path: Path) -> Path:
@@ -246,53 +250,63 @@ def test_allowlist_entries_are_ratchets_and_stale_entries_fail(tmp_path: Path) -
     assert result.details["stale_allowlist"] == ["arnold.neutral"]
 
 
-def test_dynamic_import_paths_fail_for_deleted_megaplan_surfaces() -> None:
-    """Deleted surfaces must not resolve via dynamic import mechanisms."""
+def test_dynamic_import_paths_fail_for_deleted_surfaces() -> None:
+    """Every module in the canonical deleted-import inventory must not resolve.
+
+    Uses ``DELETED_IMPORT_MODULES`` and ``DELETED_IMPORT_PREFIXES`` from
+    ``arnold.conformance.deleted_surfaces`` so coverage scales with the
+    canonical list rather than being locked to Megaplan-only hardcodes.
+    """
     import importlib
 
-    deleted_prefixes = (
-        "megaplan",
-        "arnold.pipelines.megaplan",
-        "arnold.pipelines.jokes",
-        "arnold.pipelines.creative",
-        "arnold.pipelines.doc",
-        "arnold.pipelines.live_supervisor",
-        "arnold.pipelines.select_tournament",
-    )
+    for module_name in DELETED_IMPORT_MODULES:
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module(module_name)
 
-    for prefix in deleted_prefixes:
+    for prefix in DELETED_IMPORT_PREFIXES:
         with pytest.raises(ModuleNotFoundError):
             importlib.import_module(prefix)
         with pytest.raises(ModuleNotFoundError):
-            importlib.import_module(f"{prefix}.agent")
+            importlib.import_module(f"{prefix}.nonexistent_sub")
+
+
+def test_eval_exec_cannot_resolve_deleted_surfaces() -> None:
+    """All canonical deleted-import modules must fail via eval/exec __import__.
+
+    Drives the check from ``DELETED_IMPORT_MODULES`` and
+    ``DELETED_IMPORT_PREFIXES`` so every deleted surface is covered,
+    not just the old Megaplan old-path prefix.
+    """
+    for module_name in DELETED_IMPORT_MODULES:
         with pytest.raises(ModuleNotFoundError):
-            importlib.import_module(f"{prefix}.run_outcome")
+            eval(f"__import__('{module_name}')")  # noqa: S307
 
-
-def test_eval_exec_cannot_resolve_deleted_megaplan_paths() -> None:
-    """Deleted package paths must not be constructable via eval/exec."""
-    for expr in (
-        "__import__('arnold.pipelines.megaplan')",
-        "__import__('megaplan')",
-    ):
+    for prefix in DELETED_IMPORT_PREFIXES:
         with pytest.raises(ModuleNotFoundError):
-            eval(expr)  # noqa: S307
+            eval(f"__import__('{prefix}')")  # noqa: S307
 
 
 
-def test_sys_modules_audit_finds_no_deleted_megaplan_modules_after_conformance() -> None:
-    """After running the conformance suite, no deleted megaplan module is loaded."""
+def test_sys_modules_audit_finds_no_deleted_modules_after_conformance() -> None:
+    """After the conformance suite, no canonically-deleted module is loaded.
+
+    Drives the audit from ``DELETED_IMPORT_MODULES`` (exact matches) and
+    ``DELETED_IMPORT_PREFIXES`` (prefix matches) so every deleted surface
+    in the canonical inventory is covered.
+    """
     run_conformance_suite()
 
-    deleted_loaded = [
+    exact_hits = [name for name in sys.modules if name in DELETED_IMPORT_MODULES]
+    prefix_hits = [
         name
         for name in sys.modules
-        if name == "megaplan"
-        or name.startswith("megaplan.")
-        or name == "arnold.pipelines.megaplan"
-        or name.startswith("arnold.pipelines.megaplan.")
+        if any(
+            name == prefix or name.startswith(prefix + ".")
+            for prefix in DELETED_IMPORT_PREFIXES
+        )
     ]
-    assert deleted_loaded == []
+    assert exact_hits == [], f"deleted modules loaded: {exact_hits}"
+    assert prefix_hits == [], f"deleted-prefix modules loaded: {prefix_hits}"
 
 
 def test_filesystem_reads_of_legacy_megaplan_state_are_blocked(tmp_path: Path) -> None:

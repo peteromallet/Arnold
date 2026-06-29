@@ -84,10 +84,8 @@ exclude = [
 packages = ["arnold", "arnold_pipelines", "agentbox"]
 artifacts = [
     "py.typed",
-    "arnold/pipelines/deliberation/SKILL.md",
     "arnold/pipelines/evidence_pack/SKILL.md",
     "arnold/pipelines/evidence_pack/pipeline_ids.json",
-    "arnold/pipelines/folder_audit/SKILL.md",
     "arnold_pipelines/**/pipeline_ids.json",
     "arnold_pipelines/**/SKILL.md",
     "agentbox/systemd/*.service",
