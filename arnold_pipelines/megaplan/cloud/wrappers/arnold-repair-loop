@@ -617,6 +617,25 @@ if plan_state_path is not None:
     except Exception:
         resolutions_raw = {}
     resolutions = resolutions_raw if isinstance(resolutions_raw, dict) else {}
+    meta = plan_state.get("meta") if isinstance(plan_state, dict) else {}
+    meta_resolutions = meta.get("user_action_resolutions") if isinstance(meta, dict) else {}
+    if isinstance(meta_resolutions, dict):
+        for action_id, resolution in meta_resolutions.items():
+            if isinstance(action_id, str) and isinstance(resolution, dict):
+                resolutions.setdefault(action_id, resolution)
+    elif isinstance(meta_resolutions, list):
+        for resolution in meta_resolutions:
+            if not isinstance(resolution, dict):
+                continue
+            action_id = resolution.get("action_id") or resolution.get("id")
+            if not isinstance(action_id, str) or action_id in resolutions:
+                continue
+            state_value = resolution.get("state") or resolution.get("resolution")
+            if not isinstance(state_value, str):
+                continue
+            normalized = dict(resolution)
+            normalized["state"] = state_value
+            resolutions[action_id] = normalized
     resolved_states = {"satisfied", "accepted_blocked", "waived"}
     unresolved_actions = []
     for action in user_actions:
