@@ -1685,7 +1685,7 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
         try:
             proc = _compat()._run_command(
                 root,
-                ["gh", "pr", "view", str(pr_number), "--json", "state"],
+                ["gh", "pr", "view", str(pr_number), "--json", "state,mergedAt"],
                 writer=writer,
                 timeout=120,
                 error_code="gh_pr_view_failed",
@@ -1704,6 +1704,8 @@ def _pr_state(root: Path, pr_number: int, *, writer) -> str:
     except json.JSONDecodeError as exc:
         raise CliError("gh_pr_view_failed", f"gh pr view produced non-JSON output: {exc}") from exc
     value = payload.get("state")
+    if payload.get("mergedAt"):
+        return "merged"
     if not isinstance(value, str):
         raise CliError("gh_pr_view_failed", "gh pr view did not return a string state")
     return value.lower()
