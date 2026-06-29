@@ -556,7 +556,6 @@ CLOUD_SPEC_SYMBOLS = [
     "CodexSpec",
     "LocalSpec",
     "MegaplanSpec",
-    "RailwaySpec",
     "RepoSpec",
     "ResourcesSpec",
     "SshSpec",
@@ -630,14 +629,6 @@ CLOUD_PROVIDERS_BASE_SYMBOLS = [
 
 CLOUD_PROVIDERS_LOCAL_SYMBOLS = [
     "LocalProvider",
-]
-
-# ---------------------------------------------------------------------------
-# megaplan.cloud.providers.railway — de-facto public surface
-# ---------------------------------------------------------------------------
-
-CLOUD_PROVIDERS_RAILWAY_SYMBOLS = [
-    "RailwayProvider",
 ]
 
 # ---------------------------------------------------------------------------
@@ -721,27 +712,6 @@ class TestCloudProvidersLocalImportSurface:
         assert inspect.isclass(LocalProvider), "LocalProvider must be a class"
         assert issubclass(LocalProvider, Provider), (
             "LocalProvider must be a Provider subclass"
-        )
-
-
-class TestCloudProvidersRailwayImportSurface:
-    """De-facto surface: ``RailwayProvider`` must resolve and be a valid
-    ``Provider`` subclass."""
-
-    def test_symbol_resolves(self) -> None:
-        _assert_resolves(
-            "arnold_pipelines.megaplan.cloud.providers.railway", CLOUD_PROVIDERS_RAILWAY_SYMBOLS
-        )
-
-    def test_railway_provider_is_provider_subclass(self) -> None:
-        from arnold_pipelines.megaplan.cloud.providers.base import Provider
-        from arnold_pipelines.megaplan.cloud.providers.railway import RailwayProvider
-
-        assert inspect.isclass(RailwayProvider), (
-            "RailwayProvider must be a class"
-        )
-        assert issubclass(RailwayProvider, Provider), (
-            "RailwayProvider must be a Provider subclass"
         )
 
 

@@ -8,9 +8,8 @@ Examples below use `python -m arnold_pipelines.megaplan ...`; reuse that verifie
 
 | Provider | Use case | Notes |
 |---|---|---|
-| `railway` | Hosted runner with Railway SSH/logs/volume primitives | Good default for shared remote runs. |
 | `local` | Fast local iteration and CI-friendly smoke tests | Uses `docker compose` from a persistent deploy dir under `~/.megaplan/cloud/<compose_project>/`. |
-| `ssh` | Any reachable Docker host over SSH | Syncs the deploy dir to `ssh.remote_dir` with `rsync`, or `scp -r` when `rsync` is unavailable. |
+| `ssh` | Shared remote runner, including the Hetzner agentbox | Syncs the deploy dir to `ssh.remote_dir` with `rsync`, or `scp -r` when `rsync` is unavailable. |
 
 `provider: fly` remains reserved for a future release.
 
@@ -63,7 +62,7 @@ python -m arnold_pipelines.megaplan cloud attach
 
 | Field | Required | Default | Meaning |
 |---|---|---:|---|
-| `provider` | no | `railway` | One of `railway`, `local`, or `ssh`. |
+| `provider` | no | `ssh` | One of `ssh` or `local`. |
 | `mode` | no | `idle` | Runner mode: `auto`, `chain`, or `idle`. |
 | `secrets` | no | `[]` | Local env var names uploaded during `python -m arnold_pipelines.megaplan cloud deploy` and redacted from cloud log output where possible. |
 | `toolchains` | no | `[]` | Extra language toolchains layered into the image. Use aliases `rust`, `go`, `java`, or `{name, install}` mappings. |
@@ -124,15 +123,6 @@ Used only when `mode: chain`.
 | `resources.volume` | no | none | Provider-specific persistent volume name. `destroy` deletes it only when set. |
 | `resources.port` | no | `8080` | Health server port exposed by the container. |
 
-### `railway`
-
-| Field | Required | Default | Meaning |
-|---|---|---:|---|
-| `railway.service` | no | `agent` | Railway service name used by `deploy`, `logs`, and `down`. |
-| `railway.session` | no | `agent` | Railway SSH session name used for interactive attaches. |
-| `railway.project` | no | unset | Optional project passed to Railway commands. |
-| `railway.environment` | no | unset | Optional environment passed to Railway commands. |
-
 ### `local`
 
 | Field | Required when `provider: local` | Default | Meaning |
@@ -192,7 +182,7 @@ After upload + dispatch, cloud writes a provider-independent marker:
 ~/.megaplan/cloud/markers/<sha256(abs_path_of_cloud.yaml)[:16]>/last_chain.json
 ```
 
-That marker survives Railway's ephemeral deploy dir and is used by `cloud status --chain`.
+That marker survives deploy-dir refreshes and is used by `cloud status --chain`.
 
 ### `python -m arnold_pipelines.megaplan cloud status --chain`
 
@@ -382,15 +372,8 @@ This redaction applies to:
 - Prefers `rsync`; falls back to `scp -r` with a warning when `rsync` is unavailable
 - Runs a single long-lived Docker container named `ssh.container`
 
-### `provider: railway`
-
-- Uses Railway SSH/logs/down/volume primitives
-- Markers are stored outside the Railway deploy dir so chain status survives redeploys
-- `--session` remains Railway-only
-
 ## Runtime Requirements
 
-- Railway CLI install docs: https://docs.railway.app/develop/cli
 - Docker install docs: https://docs.docker.com/get-docker/
 - OpenSSH project/docs: https://www.openssh.com/
 - Config & environment map: [docs/configuration.md](configuration.md)

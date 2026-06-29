@@ -148,12 +148,6 @@ class Provider(abc.ABC):
 ProviderFactory = Callable[[CloudSpec], Provider]
 
 
-def _railway_provider(spec: CloudSpec) -> Provider:
-    from arnold_pipelines.megaplan.cloud.providers.railway import RailwayProvider
-
-    return RailwayProvider(spec)
-
-
 def _local_provider(spec: CloudSpec) -> Provider:
     from arnold_pipelines.megaplan.cloud.providers.local import LocalProvider
 
@@ -167,7 +161,6 @@ def _ssh_provider(spec: CloudSpec) -> Provider:
 
 
 _PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
-    "railway": _railway_provider,
     "local": _local_provider,
     "ssh": _ssh_provider,
 }

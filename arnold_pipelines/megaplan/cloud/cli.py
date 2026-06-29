@@ -28,7 +28,7 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
     get_provider,
 )
 from arnold_pipelines.megaplan.cloud.redact import redact
-from arnold_pipelines.megaplan.cloud.spec import CloudSpec, RailwaySpec, apply_repo_overrides, load_spec as load_cloud_spec
+from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
 from arnold_pipelines.megaplan.types import CliError
 
@@ -266,7 +266,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         if action == "status":
             if bool(getattr(args, "all", False)):
                 return _run_cloud_chains(spec, provider)
-            if bool(getattr(args, "chain", False)):
+            if _status_should_use_chain(root, args, spec):
                 return _run_chain_status(root, args, spec, provider)
             payload = cloud_status_payload(args, spec, provider)
             sys.stdout.write(json.dumps(payload, indent=2) + "\n")
@@ -345,18 +345,27 @@ def _load_cloud_spec(root: Path, args: argparse.Namespace) -> CloudSpec:
     )
 
 
+def _status_should_use_chain(root: Path, args: argparse.Namespace, spec: CloudSpec) -> bool:
+    if bool(getattr(args, "chain", False)):
+        return True
+    if getattr(args, "remote_spec", None):
+        return True
+    if spec.mode == "chain" and spec.chain is not None:
+        return True
+    marker_path = _marker_path_no_create(_cloud_yaml_path(root, args)) / "last_chain.json"
+    try:
+        return marker_path.exists()
+    except OSError:
+        return False
+
+
 def _provider_for_action(spec: CloudSpec, args: argparse.Namespace):
     # Gate session overrides on provider capability, not on a provider-name special case.
     base_provider = get_provider(spec.provider, spec)
     session_name = getattr(args, "session", None)
     if not session_name:
         return base_provider
-    supports_session = base_provider.supports_session
-    if not supports_session:
-        raise CliError("invalid_args", "--session is only supported for provider: railway")
-    railway = spec.railway or RailwaySpec()
-    overridden = replace(spec, railway=replace(railway, session=session_name))
-    return get_provider(overridden.provider, overridden)
+    raise CliError("invalid_args", "--session override is not supported by configured providers")
 
 
 def _ensure_repo_command(spec: CloudSpec) -> str:
@@ -530,6 +539,22 @@ def _git_repo_root(path: Path) -> Path | None:
         return None
     top = proc.stdout.strip()
     return Path(top).resolve() if top else None
+
+
+def _chain_project_root(local_spec_path: Path, fallback_root: Path) -> Path:
+    """Return the app/project root that owns a local chain spec.
+
+    Cloud commands are often invoked through an Arnold checkout while the chain
+    spec lives in a different application repository.  Chain idea paths are
+    project-relative, so validation and upload source resolution must use the
+    spec's repository root, not the caller's current working directory.
+    """
+    return _git_repo_root(local_spec_path) or fallback_root.expanduser().resolve()
+
+
+def _arnold_engine_repo_root() -> Path:
+    """Return the Arnold checkout whose code is currently launching cloud."""
+    return _git_repo_root(Path(__file__)) or Path(__file__).resolve().parents[3]
 
 
 def _remote_chain_workspace_path(local_path: Path, *, local_root: Path, target_workspace: str) -> str:
@@ -1078,10 +1103,6 @@ def _get_provider_identity(spec: CloudSpec) -> str | None:
     This is the provider's *service/project identity*, never an SSH attach
     session name or chain tmux session name.
     """
-    if spec.provider == "railway":
-        if spec.railway is not None:
-            return spec.railway.service
-        return None
     if spec.provider == "local":
         if spec.local is not None:
             return spec.local.compose_project
@@ -1094,9 +1115,6 @@ def _get_provider_identity(spec: CloudSpec) -> str | None:
 
 
 def _deploy_log_hint(spec: CloudSpec) -> dict[str, Any]:
-    if spec.provider == "railway":
-        service = spec.railway.service if spec.railway is not None else "agent"
-        return {"command": f"arnold cloud logs --no-follow", "service": service}
     if spec.provider == "local":
         return {"command": "arnold cloud logs --no-follow"}
     if spec.provider == "ssh":
@@ -1667,9 +1685,10 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 
     local_spec_path = Path(args.spec).expanduser().resolve()
+    project_root = _chain_project_root(local_spec_path, root)
     chain_spec = chain_module.load_spec(local_spec_path)
     chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
-    chain_module.chain_spec.validate_paths(chain_spec, root, spec_path=local_spec_path)
+    chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)
     explicit_base_branch = _chain_spec_has_explicit_base_branch(local_spec_path)
     if not explicit_base_branch:
         chain_spec.base_branch = spec.repo.branch
@@ -1678,7 +1697,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
     else:
         editable_install_sync = _sync_launch_head_to_editable_install_branch(
-            root,
+            _arnold_engine_repo_root(),
             branch=_EDITABLE_INSTALL_BRANCH,
         )
         sys.stderr.write(
@@ -1692,7 +1711,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         chain_spec.stall_threshold = spec.driver.max_stall_iterations
         driver_overrides["max_stall_iterations"] = spec.driver.max_stall_iterations
     launch_ctx = _derive_chain_launch_context(
-        root=root,
+        root=project_root,
         spec=spec,
         local_spec_path=local_spec_path,
         chain_spec=chain_spec,
@@ -1704,7 +1723,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     )
     preflight_summary = resolve_cloud_chain_runtime_dependencies(
         chain_spec,
-        project_dir=root,
+        project_dir=project_root,
         cloud_default_agent=spec.agents.get("default"),
     )
     idea_dir = Path(args.idea_dir).expanduser().resolve() if args.idea_dir else local_spec_path.parent.resolve()
@@ -1713,7 +1732,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
 
     for milestone in chain_spec.milestones:
         local_source, tried_paths = _resolve_local_idea_source(
-            root=root,
+            root=project_root,
             idea_dir=idea_dir,
             workspace=spec.repo.workspace,
             remote_path=milestone.idea,
@@ -2368,68 +2387,18 @@ def _provider_consistency_check(
 ) -> dict[str, Any]:
     """Compare provider identity across spec, marker, and resolved context.
 
-    This compares **provider identity** (service name, project, host), NOT
-    SSH attach session names or chain tmux session names.  For Railway the
-    ``railway.session`` (default ``agent``) is an SSH routing name and is
-    explicitly excluded from the comparison.
+    This compares **provider identity** (compose project, host), NOT SSH attach
+    session names or chain tmux session names.
 
     Returns a dict with ``status`` (``consistent``, ``mismatch``,
     ``unknown``, or ``not_applicable``) and metadata about each source.
     """
     provider_name = spec.provider
-    marker_identity = (marker or {}).get("provider_identity")
-    marker_provider = (marker or {}).get("provider")
-
-    # Local / SSH providers have no structured provider identity to compare.
     if provider_name in ("local", "ssh"):
         return {
             "status": "not_applicable",
             "reason": f"provider {provider_name!r} has no comparable provider identity",
             "spec_provider": provider_name,
-        }
-
-    # Railway: compare provider name, service name, and marker identity.
-    if provider_name == "railway":
-        spec_identity = _get_provider_identity(spec)
-
-        # If the marker was written by a different provider, flag mismatch.
-        if marker_provider is not None and marker_provider != provider_name:
-            return {
-                "status": "mismatch",
-                "reason": (
-                    f"marker was written for provider {marker_provider!r} "
-                    f"but spec declares {provider_name!r}"
-                ),
-                "spec_provider": provider_name,
-                "marker_provider": marker_provider,
-                "spec_identity": spec_identity,
-                "marker_identity": marker_identity,
-            }
-
-        # If marker identity differs from spec identity, flag mismatch.
-        if (
-            marker_identity is not None
-            and spec_identity is not None
-            and marker_identity != spec_identity
-        ):
-            return {
-                "status": "mismatch",
-                "reason": (
-                    f"marker provider_identity {marker_identity!r} "
-                    f"does not match spec identity {spec_identity!r}"
-                ),
-                "spec_provider": provider_name,
-                "spec_identity": spec_identity,
-                "marker_identity": marker_identity,
-            }
-
-        # All checks passed or not enough data to flag.
-        return {
-            "status": "consistent",
-            "spec_provider": provider_name,
-            "spec_identity": spec_identity,
-            "marker_provider": marker_provider,
-            "marker_identity": marker_identity,
         }
 
     return {
@@ -2676,18 +2645,12 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
 def _materialized_deploy_dir(spec: CloudSpec):
     class _DeployDirContext:
         def __enter__(self_inner) -> Path:
-            self_inner._tmpdir = None
-            if spec.provider == "railway":
-                self_inner._tmpdir = TemporaryDirectory(prefix="megaplan-cloud-")
-                path = Path(self_inner._tmpdir.name)
-            else:
-                path = _persistent_deploy_dir(spec)
+            path = _persistent_deploy_dir(spec)
             materialize_deploy_dir(spec, path)
             return path
 
         def __exit__(self_inner, exc_type, exc, tb) -> None:
-            if self_inner._tmpdir is not None:
-                self_inner._tmpdir.cleanup()
+            return None
 
     return _DeployDirContext()
 
@@ -2720,8 +2683,6 @@ def _marker_dir(cloud_yaml_path: Path) -> Path:
 
 
 def _clear_persistent_deploy_dir(spec: CloudSpec) -> None:
-    if spec.provider == "railway":
-        return
     deploy_dir = _persistent_deploy_dir(spec)
     if deploy_dir.exists():
         shutil.rmtree(deploy_dir)

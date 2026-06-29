@@ -170,7 +170,7 @@ if ! tmux has-session -t watchdog 2>/dev/null; then
   echo "cloud watchdog running in tmux session 'watchdog'"
 fi
 
-# Tiny health server so Railway keeps container alive
+# Tiny health server so the process supervisor keeps the container alive
 python3 /usr/local/bin/healthserver.py &
 HEALTH_PID=$$!
 echo "healthserver.py running as pid $$HEALTH_PID"
@@ -180,7 +180,7 @@ echo "healthserver.py running as pid $$HEALTH_PID"
 if ! tmux has-session -t agent 2>/dev/null; then
 ${RUNNER_LAUNCH_BLOCK}
 fi
-echo "tmux 'agent' session ready — attach: railway ssh --session agent"
+echo "tmux 'agent' session ready"
 
 echo "=== entrypoint idle ==="
 wait "$$HEALTH_PID"

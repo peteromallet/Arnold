@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tiny HTTP server so Railway considers this service healthy."""
+"""Tiny HTTP server for cloud runner health checks."""
 import http.server
 import os
 import socketserver
