@@ -165,6 +165,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backend", choices=["file", "db"], default=None)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    from arnold_pipelines.megaplan.auto import build_auto_parser
+    from arnold_pipelines.megaplan.chain import build_chain_parser
+    from arnold_pipelines.megaplan.chain.epic_chain import build_epic_chain_parser
+
     setup_parser = subparsers.add_parser("setup")
     setup_parser.add_argument("--local", action="store_true")
     setup_parser.add_argument("--target-dir")
@@ -193,6 +197,10 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
         sub = subparsers.add_parser(command)
         sub.add_argument("--plan", required=False)
+
+    build_auto_parser(subparsers)
+    build_chain_parser(subparsers)
+    build_epic_chain_parser(subparsers)
 
     return parser
 from .status_view import (
