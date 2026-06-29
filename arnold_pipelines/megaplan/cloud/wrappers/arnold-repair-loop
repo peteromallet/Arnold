@@ -529,6 +529,8 @@ def _classify_failure(signals: list[str], latest_failure: dict[str, object], cha
         return "billing_or_quota_error"
     if "timeout" in combined or "stall" in combined or kind == "stalled":
         return "timeout_or_hang"
+    if "awaiting_human" in combined or last_state == "awaiting_human":
+        return "awaiting_human_user_action_gate"
     if "blocked" in combined or phase == "recover-blocked" or kind in {"execution_blocked", "iteration_cap"}:
         return "blocked_state_or_recovery_error"
     if "external_error" in kind:
@@ -568,6 +570,7 @@ else:
     chain_state = {}
 
 plan_latest_failure = {}
+user_action_context = {}
 plan_state_path = _resolve_plan_state(workspace, str(chain_state_summary.get("current_plan_name") or ""))
 plan_events_path = None
 plan_events_tail = ""
@@ -593,6 +596,62 @@ if plan_state_path is not None:
         "suggested_action": latest_failure.get("suggested_action") or "",
         "metadata": _metadata_excerpt(metadata),
     }
+    plan_dir = plan_state_path.parent
+    finalize_path = plan_dir / "finalize.json"
+    user_actions_path = plan_dir / "user_actions.md"
+    resolutions_path = plan_dir / "user_action_resolutions.json"
+    finalize_data = _load_json(finalize_path)
+    user_actions = finalize_data.get("user_actions") if isinstance(finalize_data, dict) else []
+    if not isinstance(user_actions, list):
+        user_actions = []
+    try:
+        resolutions_raw = json.loads(resolutions_path.read_text(encoding="utf-8"))
+    except Exception:
+        resolutions_raw = {}
+    resolutions = resolutions_raw if isinstance(resolutions_raw, dict) else {}
+    resolved_states = {"satisfied", "accepted_blocked", "waived"}
+    unresolved_actions = []
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id")
+        if not isinstance(action_id, str) or not action_id:
+            continue
+        resolution = resolutions.get(action_id)
+        state_value = resolution.get("state") if isinstance(resolution, dict) else ""
+        if state_value not in resolved_states:
+            unresolved_actions.append(
+                {
+                    "id": action_id,
+                    "phase": action.get("phase") or "",
+                    "blocks_task_ids": action.get("blocks_task_ids")
+                    if isinstance(action.get("blocks_task_ids"), list)
+                    else [],
+                    "resolution_state": state_value or "unresolved",
+                    "summary": action.get("summary")
+                    or action.get("description")
+                    or action.get("question")
+                    or "",
+                    "rationale": action.get("rationale") or action.get("reason") or "",
+                }
+            )
+    user_actions_text = ""
+    if user_actions_path.exists():
+        try:
+            user_actions_text = user_actions_path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            user_actions_text = ""
+    user_action_context = {
+        "plan_dir": str(plan_dir),
+        "finalize_path": str(finalize_path) if finalize_path.exists() else "",
+        "user_actions_path": str(user_actions_path) if user_actions_path.exists() else "",
+        "user_actions_md": user_actions_text[:12000],
+        "user_actions_truncated": len(user_actions_text) > 12000,
+        "user_actions": user_actions,
+        "resolutions_path": str(resolutions_path),
+        "resolutions": resolutions,
+        "unresolved_user_actions": unresolved_actions,
+    }
 else:
     latest_failure = {}
 
@@ -601,6 +660,7 @@ raw_failure_signals = _unique_strings(
         *_collect_signal_values(latest_failure, "plan.latest_failure"),
         *_collect_signal_values(chain_state, "chain.state"),
         *_collect_signal_values(chain_state_summary, "chain.summary"),
+        *_collect_signal_values(user_action_context, "user_actions"),
         *_interesting_log_lines(chain_log_tail),
         *_interesting_log_lines(plan_events_tail),
     ]
@@ -618,6 +678,7 @@ payload = {
     "mechanical_log_path": str(log_path) if log_path is not None else "",
     "plan_latest_failure": plan_latest_failure,
     "chain_state_summary": chain_state_summary,
+    "user_action_context": user_action_context,
 }
 print(json.dumps(payload, sort_keys=True))
 PY
@@ -740,6 +801,24 @@ if chain_error:
     chain_notes.append(f"error={chain_error}")
 chain_notes_text = f" ({'; '.join(chain_notes)})" if chain_notes else ""
 
+user_action_context = latest_context.get("user_action_context") or {}
+unresolved_user_actions = user_action_context.get("unresolved_user_actions") or []
+if unresolved_user_actions:
+    user_action_lines = [
+        f"- {item.get('id')}: state={item.get('resolution_state', 'unresolved')} "
+        f"phase={item.get('phase', '')} blocks={', '.join(item.get('blocks_task_ids') or []) or 'unspecified'} "
+        f"summary={item.get('summary') or item.get('rationale') or 'see user_actions.md'}"
+        for item in unresolved_user_actions
+        if isinstance(item, dict)
+    ]
+else:
+    user_action_lines = ["- none detected"]
+user_actions_md = str(user_action_context.get("user_actions_md") or "").strip()
+if user_actions_md:
+    user_actions_md = user_actions_md[:4000]
+else:
+    user_actions_md = "(none captured)"
+
 history_lines = []
 for item in iterations:
     attempted = item.get("dev_summary") or item.get("dev_hypothesis") or "n/a"
@@ -758,6 +837,9 @@ for label, value in (
     ("plan events", plan_failure.get("events_path") or latest_context.get("plan_events_path")),
     ("chain state", chain_state.get("path")),
     ("chain log", latest_context.get("chain_log_path") or latest_context.get("mechanical_log_path")),
+    ("user actions", user_action_context.get("user_actions_path")),
+    ("user action resolutions", user_action_context.get("resolutions_path")),
+    ("finalize", user_action_context.get("finalize_path")),
 ):
     if value:
         detail_paths.append(f"- {label}: {value}")
@@ -781,6 +863,15 @@ summary = "\n".join(
         "- recent plan event journal tail:",
         "```text",
         events_tail,
+        "```",
+        "",
+        "## User Action Gate",
+        f"- plan dir: {user_action_context.get('plan_dir') or '(unknown)'}",
+        "- unresolved action(s):",
+        *user_action_lines,
+        "- user_actions.md excerpt:",
+        "```markdown",
+        user_actions_md,
         "```",
         "",
         "## Prior repair attempts",
@@ -862,6 +953,7 @@ payload = {
         "mechanical_log_path": failure_context_payload.get("mechanical_log_path", ""),
         "plan_latest_failure": failure_context_payload.get("plan_latest_failure", {}),
         "chain_state_summary": failure_context_payload.get("chain_state_summary", {}),
+        "user_action_context": failure_context_payload.get("user_action_context", {}),
         "watchdog_log_tail": watchdog_log,
         "tmux_pane_tail": tmux_info,
         "chain_state_files": chain_state,
@@ -1070,6 +1162,7 @@ entry["mechanical_log_tail"] = failure_context_payload.get("mechanical_log_tail"
 entry["mechanical_log_path"] = failure_context_payload.get("mechanical_log_path", "")
 entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", {})
 entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", {})
+entry["user_action_context"] = failure_context_payload.get("user_action_context", {})
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }
@@ -1128,6 +1221,7 @@ entry["plan_events_tail"] = failure_context_payload.get("plan_events_tail", entr
 entry["plan_events_path"] = failure_context_payload.get("plan_events_path", entry.get("plan_events_path", ""))
 entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", entry.get("plan_latest_failure", {}))
 entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", entry.get("chain_state_summary", {}))
+entry["user_action_context"] = failure_context_payload.get("user_action_context", entry.get("user_action_context", {}))
 entry["kimi_report"] = report
 
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1253,22 +1347,26 @@ Actual dispatch model: $dispatch_model
 
 Task:
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
-2. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
-3. Apply the narrowest safe root-cause fix in $ARNOLD_SRC on branch $SYNC_BRANCH, but prefer a general engine fix over a workflow-specific patch when the evidence supports it.
-4. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
-5. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
-6. If source changes pass validation, commit and push them.
-7. Do not relaunch the chain yourself. The wrapper will do the mechanical launch next.
-8. Use the raw failure signal, chain narrative, and prior-attempt history to avoid repeating failed ideas.
-9. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
-10. Write a concise JSON report to $report_path with keys:
+2. If the incident is awaiting_human or the User Action Gate section lists unresolved actions, ATTEMPT to resolve those user actions before treating this as a human stop. Read user_actions.md plus user_action_resolutions.json, inspect the referenced evidence/artifacts/code, make the best defensible judgment call, and record each decision with the CLI instead of hand-writing JSON. Use:
+   cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan user-action resolve --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --action-id <ACTION_ID> --resolution <satisfied|accepted_blocked|waived|manual_required|rejected> --reason "..." --instructions "..." --tasks "<TASK_ID,...>"
+   Prefer satisfied when the evidence clearly answers the action. Use accepted_blocked or waived only when the action itself permits a fallback. Leave unresolved or mark manual_required only when the decision is genuinely ambiguous, unusually difficult, or requires human-only judgment.
+3. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
+4. Apply the narrowest safe root-cause fix in $ARNOLD_SRC on branch $SYNC_BRANCH, but prefer a general engine fix over a workflow-specific patch when the evidence supports it.
+5. If you spot a structural pattern with other instantiations you cannot fix in this turn, append it to the findings doc at $FINDINGS_DOC so it can be reviewed. Capture what you fixed, the deeper pattern, the other instantiations you could not fix, and a recommendation for what a human should review.
+6. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
+7. If source changes pass validation, commit and push them.
+8. Do not relaunch the chain yourself. The wrapper will do the mechanical launch next.
+9. Use the raw failure signal, chain narrative, and prior-attempt history to avoid repeating failed ideas.
+10. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
+11. Write a concise JSON report to $report_path with keys:
    classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
    structural_pattern, other_instantiations, human_review_recommendation,
    findings_doc_path, findings_doc_appended.
 
 Constraints:
-- Work only in $ARNOLD_SRC for source fixes.
+- Work only in $ARNOLD_SRC for source fixes. You may update the active plan's user_action_resolutions.json and state metadata only through the user-action CLI above.
 - Do not hardcode a workflow-specific workaround when a general engine fix is appropriate.
+- Do not escalate awaiting_human just because a user action exists. Escalate only after you have reviewed the evidence and cannot make a confident decision.
 - If you find a pattern such as flags positioned wrong across multiple dispatch sites or stale recovery logic duplicated in several places, fix what you can now and persist the broader findings in $FINDINGS_DOC.
 - Do not ask for user input.
 - End the turn as soon as you have either a narrow fix or a concrete blocker.
