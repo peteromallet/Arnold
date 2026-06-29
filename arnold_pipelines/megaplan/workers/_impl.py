@@ -2932,7 +2932,7 @@ def _run_codex_step_uncapped(
         prompt_override=prompt_override,
         **(prompt_kwargs or {}),
     )
-    prompt = rendered_prompt.prompt
+    prompt = _normalize_stdin_text(rendered_prompt.prompt) or ""
     timeout_seconds = _codex_timeout_for_step("prep" if read_only else step)
 
     if read_only:
