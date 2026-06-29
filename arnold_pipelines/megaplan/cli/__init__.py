@@ -2347,8 +2347,25 @@ def _normalize_execute_compat_argv(argv: list[str]) -> list[str]:
         "--retry-blocked-tasks",
     }
     if "execute" not in argv:
-        if argv and all(token in recognized for token in argv):
-            return ["execute", *argv]
+        root_option_arity = {
+            "--actor": 1,
+            "--backend": 1,
+        }
+        prefix: list[str] = []
+        index = 0
+        while index < len(argv):
+            token = argv[index]
+            arity = root_option_arity.get(token)
+            if arity is None:
+                break
+            end = index + 1 + arity
+            if end > len(argv):
+                return argv
+            prefix.extend(argv[index:end])
+            index = end
+        execute_tail = argv[index:]
+        if execute_tail and all(token in recognized for token in execute_tail):
+            return [*prefix, "execute", *execute_tail]
         return argv
 
     execute_index = argv.index("execute")

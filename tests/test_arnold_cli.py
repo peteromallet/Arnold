@@ -99,3 +99,26 @@ def test_normalize_execute_compat_argv_infers_missing_execute_for_execute_only_f
         "--user-approved",
         "--retry-blocked-tasks",
     ]
+
+
+def test_normalize_execute_compat_argv_infers_missing_execute_after_root_flags() -> None:
+    assert _normalize_execute_compat_argv(
+        [
+            "--actor",
+            "repair-loop-dev-fix",
+            "--backend",
+            "file",
+            "--confirm-destructive",
+            "--user-approved",
+            "--retry-blocked-tasks",
+        ]
+    ) == [
+        "--actor",
+        "repair-loop-dev-fix",
+        "--backend",
+        "file",
+        "execute",
+        "--confirm-destructive",
+        "--user-approved",
+        "--retry-blocked-tasks",
+    ]
