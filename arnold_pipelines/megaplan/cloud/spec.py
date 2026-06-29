@@ -19,7 +19,7 @@ from arnold_pipelines.megaplan.types import CliError
 
 
 VALID_MODES = ("auto", "chain", "idle")
-VALID_PROVIDERS = ("local", "ssh")
+VALID_PROVIDERS = ("railway", "local", "ssh")
 FUTURE_PROVIDERS = ("fly",)
 KNOWN_TOOLCHAIN_ALIASES = ("rust", "go", "java")
 VALID_CODEX_REASONING = ("minimal", "low", "medium", "high")

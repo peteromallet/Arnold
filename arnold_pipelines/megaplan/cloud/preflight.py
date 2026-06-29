@@ -59,16 +59,15 @@ def _expanded_phase_models(
     vendor: str | None = None,
     depth: str | None = None,
     critic: str | None = None,
+    deepseek_provider: str | None = None,
 ) -> list[str]:
-    if profile is None:
-        return list(phase_model)
-
     args = argparse.Namespace(
         profile=profile,
         phase_model=list(phase_model),
         vendor=vendor,
         critic=critic,
         depth=depth,
+        deepseek_provider=deepseek_provider,
         agent=None,
         hermes=None,
         _profile_applied=False,
@@ -158,6 +157,7 @@ def resolve_cloud_chain_runtime_dependencies(
             vendor=milestone.vendor,
             depth=milestone.depth,
             critic=milestone.critic,
+            deepseek_provider=milestone.deepseek_provider,
         )
         resolved = _resolved_phase_map(expanded_phase_models, fallback_routing)
         milestone_agents: set[str] = set()
