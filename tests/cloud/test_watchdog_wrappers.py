@@ -1223,6 +1223,68 @@ tmux() { echo TMUX >&2; return 1; }
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 
 
+def test_watchdog_awaiting_human_plan_state_reports_needs_human_without_relaunch_or_kimi(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "iteration": 3,
+            "current_state": "awaiting_human",
+            "latest_failure": {
+                "kind": "blocked_by_prereq",
+                "message": "execute reported blocked tasks awaiting user action: T1",
+            },
+        },
+        events_body="{}\n",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tneeds_human\tawaiting_human halt;" in report
+    assert "execute reported blocked tasks awaiting user action: T1" in report
+    assert "\tobserve\tcomplete\t" not in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+
+
 def test_watchdog_nonterminal_plan_state_mechanically_relaunches_before_kimi(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
@@ -1557,6 +1619,102 @@ tmux() { echo TMUX >&2; return 1; }
     assert "gpt-5.4" in report
     assert "DISPATCH" not in result.stderr
     assert "REPAIR" not in result.stderr
+    assert "TMUX" not in result.stderr
+    assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
+
+
+def test_watchdog_awaiting_human_chain_state_reports_needs_human_without_relaunch_or_kimi(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "demo-plan"
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "iteration": 9,
+            "current_state": "finalized",
+        },
+        events_body="{}\n",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "m7-06-runtime-deletion-target-purge",
+                        "description": "Delete runtime targets.",
+                        "status": "blocked",
+                    }
+                ],
+                "user_actions": [
+                    {
+                        "id": "ua-01-reclassify-deletion-targets",
+                        "phase": "before_execute",
+                        "blocks_task_ids": ["m7-06-runtime-deletion-target-purge"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
+        json.dumps(
+            {
+                "current_plan_name": plan_name,
+                "last_state": "awaiting_human",
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tneeds_human\tawaiting_human halt;" in report
+    assert "ua-01-reclassify-deletion-targets" in report
+    assert "m7-06-runtime-deletion-target-purge" in report
+    assert "DISPATCH" not in result.stderr
+    assert "REPAIR" not in result.stderr
+    assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
     assert "needs-human webhook unset" in log_path.read_text(encoding="utf-8")
 

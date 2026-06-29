@@ -213,6 +213,9 @@ resolved_plan_name = plan_name if isinstance(plan_name, str) and plan_name else 
 chain_state, chain_plan_name = load_chain_state()
 if chain_plan_name:
     resolved_plan_name = chain_plan_name
+chain_last_state = chain_state.get("last_state") if isinstance(chain_state, dict) else ""
+if not isinstance(chain_last_state, str):
+    chain_last_state = ""
 
 plans_dir = workspace / ".megaplan" / "plans"
 state_path = None
@@ -278,6 +281,48 @@ if isinstance(latest_failure, dict):
             else:
                 failure_recorded_at = value
 
+awaiting_human_reason = ""
+
+def first_string(*values: object) -> str:
+    for value in values:
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+def user_action_reason() -> str:
+    if state_path is None:
+        return ""
+    try:
+        finalize_path = state_path.parent / "finalize.json"
+        raw_finalize = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    if not isinstance(raw_finalize, dict):
+        return ""
+    user_actions = raw_finalize.get("user_actions")
+    if not isinstance(user_actions, list):
+        return ""
+    action_parts: list[str] = []
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id")
+        if not isinstance(action_id, str) or not action_id:
+            continue
+        blocks = action.get("blocks_task_ids")
+        if isinstance(blocks, list):
+            block_ids = [item for item in blocks if isinstance(item, str) and item]
+        else:
+            block_ids = []
+        if block_ids:
+            action_parts.append(f"{action_id} blocks {', '.join(block_ids)}")
+        else:
+            action_parts.append(action_id)
+    if not action_parts:
+        return ""
+    return "pending user action(s): " + "; ".join(action_parts)
+
 if not current_state and not retry_strategy:
     missing_base_ref, missing_base_ref_message, missing_base_ref_recorded_at, missing_base_ref_phase = (
         missing_base_ref_attention(chain_state)
@@ -291,6 +336,27 @@ if not current_state and not retry_strategy:
             failure_message = missing_base_ref_message
         if missing_base_ref_recorded_at:
             failure_recorded_at = missing_base_ref_recorded_at
+
+if current_state == "awaiting_human" or chain_last_state == "awaiting_human":
+    metadata = chain_state.get("metadata") if isinstance(chain_state, dict) else None
+    metadata_reason = ""
+    if isinstance(metadata, dict):
+        metadata_reason = first_string(
+            metadata.get("awaiting_human_reason"),
+            metadata.get("reason"),
+            metadata.get("message"),
+        )
+    awaiting_human_reason = first_string(
+        failure_message,
+        state.get("reason"),
+        state.get("awaiting_human_reason"),
+        metadata_reason,
+        chain_state.get("reason") if isinstance(chain_state, dict) else "",
+        user_action_reason(),
+        "plan is awaiting human action",
+    )
+    if not current_state:
+        current_state = "awaiting_human"
 
 tiers_tried: list[str] = []
 history = state.get("history")
@@ -343,6 +409,7 @@ for raw in (
     add_unique(pushed_commits, raw if isinstance(raw, str) else None)
 
 manual_review = current_state == "manual_review" or retry_strategy == "manual_review"
+awaiting_human = current_state == "awaiting_human" or chain_last_state == "awaiting_human"
 
 emit("PLAN_STATUS_FOUND", "1" if state else "0")
 emit("PLAN_STATUS_PLAN_NAME", resolved_plan_name)
@@ -355,6 +422,8 @@ emit("PLAN_STATUS_FAILURE_RECORDED_AT", failure_recorded_at)
 emit("PLAN_STATUS_TIERS_TRIED", ", ".join(tiers_tried))
 emit("PLAN_STATUS_PUSHED_COMMITS", ", ".join(pushed_commits))
 emit("PLAN_STATUS_MANUAL_REVIEW", "1" if manual_review else "0")
+emit("PLAN_STATUS_AWAITING_HUMAN", "1" if awaiting_human else "0")
+emit("PLAN_STATUS_AWAITING_HUMAN_REASON", awaiting_human_reason)
 PY
 }
 
@@ -2305,10 +2374,28 @@ launch_chain_tick() {
   PLAN_STATUS_TIERS_TRIED=
   PLAN_STATUS_PUSHED_COMMITS=
   PLAN_STATUS_MANUAL_REVIEW=0
+  PLAN_STATUS_AWAITING_HUMAN=0
+  PLAN_STATUS_AWAITING_HUMAN_REASON=
   # If the helper emits nothing, keep the tick on the default non-attention path.
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
     eval "$plan_status_env"
+  fi
+  if [[ "${PLAN_STATUS_AWAITING_HUMAN:-0}" == "1" ]]; then
+    local human_summary
+    human_summary="awaiting_human halt; state=${PLAN_STATUS_CURRENT_STATE:-unknown}; reason=${PLAN_STATUS_AWAITING_HUMAN_REASON:-plan is awaiting human action}"
+    if [[ -n "${PLAN_STATUS_FAILURE_KIND:-}" ]]; then
+      human_summary="$human_summary; failure=${PLAN_STATUS_FAILURE_KIND}"
+    fi
+    if [[ -n "${PLAN_STATUS_TIERS_TRIED:-}" ]]; then
+      human_summary="$human_summary; tiers=${PLAN_STATUS_TIERS_TRIED}"
+    fi
+    if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
+      human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
+    fi
+    log "session awaits human action session=$session plan=${PLAN_STATUS_PLAN_NAME:-} summary=$human_summary"
+    notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
+    return 0
   fi
   if [[ "${PLAN_STATUS_MANUAL_REVIEW:-0}" == "1" ]]; then
     local human_summary
