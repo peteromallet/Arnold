@@ -888,6 +888,7 @@ class GreenSuiteProvider:
                 collections_parse_ok=bool(
                     record.get("collections_parse_ok", False)
                 ),
+                collection_errors=list(record.get("collection_errors") or []),
             )
         except (KeyError, TypeError, ValueError):
             return None
@@ -1273,6 +1274,8 @@ class GreenSuiteProvider:
         ):
             return result, self._noncomputable_delta(result), flake_retried
         if baseline is None:
+            if result.collection_errors:
+                return result, self._collection_error_delta(result), flake_retried
             return result, None, flake_retried
 
         delta = compute_delta(baseline, result)
@@ -1300,6 +1303,22 @@ class GreenSuiteProvider:
         )
 
     @staticmethod
+    def _collection_error_delta(result: "SuiteRunResult") -> SuiteDelta:
+        collection_errors = tuple(sorted(result.collection_errors or result.failures))
+        return SuiteDelta(
+            computable=True,
+            newly_failing=collection_errors,
+            newly_passing=(),
+            still_red=(),
+            still_green=(),
+            deleted_tests=(),
+            added_tests=tuple(collection_errors),
+            flakes=(),
+            tests_collected=len(result.collected_ids),
+            duration=result.duration,
+        )
+
+    @staticmethod
     def _suite_details(
         ctx: CompletionContext,
         result: "SuiteRunResult",
@@ -1322,6 +1341,7 @@ class GreenSuiteProvider:
             "exit_code": result.exit_code,
             "code_hash": result.code_hash,
             "collections_parse_ok": result.collections_parse_ok,
+            "collection_errors": list(result.collection_errors or []),
             "raw_log_path": str(result.raw_log_path),
             "freshness_cache_hit": cached is not None,
         }
@@ -1515,6 +1535,16 @@ class GreenSuiteProvider:
         cached: "SuiteRunResult | None",
     ) -> EvidenceRef:
         self._emit_telemetry(ctx, result, delta, details, cached)
+        if result.collection_errors:
+            return self._suite_evidence_ref(
+                ctx,
+                EvidenceStatus.unsatisfied,
+                "verification suite has collection/import error(s) "
+                f"({len(result.collection_errors)}); structural suite failures "
+                "are not deferred by baseline status",
+                result,
+                details,
+            )
         if (
             delta is not None
             and delta.computable

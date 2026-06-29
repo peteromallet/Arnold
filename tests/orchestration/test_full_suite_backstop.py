@@ -29,9 +29,12 @@ def _suite_result(
     failures: list[str] | None = None,
     passes: list[str] | None = None,
     collected_ids: list[str] | None = None,
+    collection_errors: list[str] | None = None,
+    exit_code: int | None = None,
 ) -> SuiteRunResult:
     failures = list(failures or [])
     passes = list(passes or [])
+    collection_errors = list(collection_errors or [])
     collected_ids = list(
         collected_ids if collected_ids is not None else failures + passes
     )
@@ -45,10 +48,13 @@ def _suite_result(
         failures=failures,
         passes=passes,
         status=status,  # type: ignore[arg-type]
-        exit_code=0 if status == "passed" else 1,
+        exit_code=(
+            exit_code if exit_code is not None else (0 if status == "passed" else 1)
+        ),
         raw_log_path=tmp_path / "raw.log",
         code_hash="sha256:abc",
         collections_parse_ok=True,
+        collection_errors=collection_errors,
     )
 
 
@@ -171,6 +177,96 @@ def test_uncertainty_blocks_in_enforce_and_not_shadow(
         assert enforce["blocks"] is True
         assert "could not verify" in enforce["reason"]
         assert evaluate_full_suite_backstop(result, "shadow")["blocks"] is False
+
+
+def test_pytest_collection_errors_parse_as_failures() -> None:
+    output = """
+ERROR collecting tests/test_import_bad.py
+ImportError while importing test module 'tests/test_import_bad.py'.
+ModuleNotFoundError: No module named 'missing_package'
+ERROR tests/test_other_bad.py - ImportError: broken import
+!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!
+"""
+
+    parsed = full_suite_backstop.suite_runner._parse_pytest_output(
+        output,
+        exit_code=2,
+    )
+
+    assert parsed["collection_errors"] == [
+        "tests/test_import_bad.py",
+        "tests/test_other_bad.py",
+    ]
+    assert parsed["failures"] == [
+        "tests/test_import_bad.py",
+        "tests/test_other_bad.py",
+    ]
+    assert parsed["parse_ok"] is True
+
+
+def test_missing_finalize_baseline_is_recaptured_and_collection_errors_block(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "baseline_test_failures": None,
+                "baseline_test_command": "pytest tests",
+                "tasks": [],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    baseline_path = tmp_path / "full_suite_baseline.json"
+    collection_errors = ["tests/test_import_bad.py"]
+    runs = iter(
+        [
+            _suite_result(
+                tmp_path,
+                status="failed",
+                failures=collection_errors,
+                collected_ids=collection_errors,
+                collection_errors=collection_errors,
+                exit_code=2,
+            ),
+            _suite_result(
+                tmp_path,
+                status="failed",
+                failures=collection_errors,
+                collected_ids=collection_errors,
+                collection_errors=collection_errors,
+                exit_code=2,
+            ),
+        ]
+    )
+    monkeypatch.setattr(
+        full_suite_backstop.suite_runner,
+        "run_suite",
+        lambda *args, **kwargs: next(runs),
+    )
+
+    result = run_full_suite_backstop(
+        plan_dir,
+        tmp_path,
+        {"test_command": "pytest tests"},
+        baseline=baseline_path,
+    )
+
+    assert result["baseline_recaptured"] is True
+    assert result["status"] == "failed"
+    assert result["collection_errors"] == collection_errors
+    assert result["delta_computed"] is True
+    assert json.loads((plan_dir / "finalize.json").read_text())[
+        "baseline_test_failures"
+    ] == collection_errors
+    assert json.loads(baseline_path.read_text())["failing_tests"] == collection_errors
+    enforce = evaluate_full_suite_backstop(result, "enforce")
+    assert enforce["blocks"] is True
+    assert "collection/import errors" in enforce["reason"]
 
 
 def test_run_full_suite_backstop_passed_copies_config_and_preserves_scoped_command(
