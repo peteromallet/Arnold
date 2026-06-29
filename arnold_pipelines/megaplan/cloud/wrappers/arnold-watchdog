@@ -356,6 +356,12 @@ if isinstance(latest_failure, dict):
         value = latest_failure_metadata.get("manual_review_origin")
         if isinstance(value, str):
             manual_review_origin = value
+if (
+    not manual_review_origin
+    and failure_kind == "stalled"
+    and retry_strategy == "manual_review"
+):
+    manual_review_origin = "auto_stall_legacy"
 
 awaiting_human_reason = ""
 
@@ -3208,7 +3214,7 @@ launch_chain_tick() {
     if [[ -n "${PLAN_STATUS_PUSHED_COMMITS:-}" ]]; then
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
     fi
-    if [[ "$manual_review_origin" == "auto_stall" ]]; then
+    if [[ "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         repair_summary="$(repair_needs_human_summary "$session")"
         log "session auto-stalled into manual_review and repair loop already requested human session=$session summary=$repair_summary"
