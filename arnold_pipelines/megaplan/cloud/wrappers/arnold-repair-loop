@@ -328,6 +328,184 @@ def _load_json(path: pathlib.Path) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _artifact_sort_key(path: pathlib.Path) -> tuple[float, str]:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    return (mtime, path.name)
+
+
+def _newest_artifact(plan_dir: pathlib.Path, pattern: str) -> pathlib.Path | None:
+    candidates = [path for path in plan_dir.glob(pattern) if path.is_file()]
+    if not candidates:
+        return None
+    return sorted(candidates, key=_artifact_sort_key)[-1]
+
+
+def _task_id(task: dict[str, object]) -> str:
+    for key in ("task_id", "id"):
+        value = task.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _task_excerpt(task: dict[str, object]) -> dict[str, object]:
+    excerpt: dict[str, object] = {
+        "task_id": _task_id(task),
+        "status": task.get("status") or "",
+        "executor_notes": _clip_text(task.get("executor_notes") or task.get("executor_note") or "", limit=1200),
+        "reviewer_verdict": task.get("reviewer_verdict") or "",
+    }
+    for key in ("description", "kind", "depends_on"):
+        value = task.get(key)
+        if value not in (None, "", [], {}):
+            excerpt[key] = _clip_text(value, limit=600)
+    return excerpt
+
+
+def _task_status_counts(tasks: list[dict[str, object]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for task in tasks:
+        status = str(task.get("status") or "unknown").strip().lower() or "unknown"
+        if status == "done":
+            status = "completed"
+        counts[status] = counts.get(status, 0) + 1
+    return counts
+
+
+def _task_is_blocked_or_deferred(task: dict[str, object]) -> bool:
+    status = str(task.get("status") or "").strip().lower()
+    verdict = str(task.get("reviewer_verdict") or "").strip().lower()
+    notes = str(task.get("executor_notes") or "").strip().lower()
+    return (
+        status in {"blocked", "skipped", "deferred"}
+        or "blocked" in verdict
+        or "deferred" in verdict
+        or "blocked" in notes
+        or "deferred" in notes
+    )
+
+
+def _extract_task_updates(payload: dict[str, object]) -> list[dict[str, object]]:
+    for key in ("task_updates", "tasks"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _summarize_execute_batch_artifact(path: pathlib.Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    payload = _load_json(path)
+    if not payload:
+        return {"path": str(path), "readable": False}
+    tasks = [_task_excerpt(task) for task in _extract_task_updates(payload)]
+    blocked_tasks = [task for task in tasks if _task_is_blocked_or_deferred(task)]
+    return {
+        "path": str(path),
+        "readable": True,
+        "status": payload.get("status") or payload.get("result") or "",
+        "task_count": len(tasks),
+        "status_counts": _task_status_counts(tasks),
+        "tasks": tasks,
+        "blocked_or_deferred_tasks": blocked_tasks,
+        "output": _clip_text(payload.get("output") or "", limit=2000),
+    }
+
+
+def _summarize_finalize_artifact(path: pathlib.Path) -> dict[str, object]:
+    payload = _load_json(path)
+    if not payload:
+        return {}
+    tasks = [_task_excerpt(task) for task in _extract_task_updates(payload)]
+    skipped_or_deferred = [
+        task
+        for task in tasks
+        if str(task.get("status") or "").strip().lower() in {"skipped", "deferred", "blocked"}
+        or str(task.get("reviewer_verdict") or "").strip()
+    ]
+    return {
+        "path": str(path),
+        "baseline_test_failures": payload.get("baseline_test_failures"),
+        "baseline_test_note": payload.get("baseline_test_note") or "",
+        "baseline_test_collection_errors": payload.get("baseline_test_collection_errors") or [],
+        "baseline_test_command": payload.get("baseline_test_command") or "",
+        "status_counts": _task_status_counts(tasks),
+        "skipped_or_deferred_tasks": skipped_or_deferred,
+        "task_count": len(tasks),
+    }
+
+
+def _summarize_full_suite_backstop(path: pathlib.Path) -> dict[str, object]:
+    payload = _load_json(path)
+    if not payload:
+        return {}
+    return {
+        "path": str(path),
+        "status": payload.get("status") or "",
+        "baseline_failing_count": payload.get("baseline_failing_count"),
+        "current_failing_count": payload.get("current_failing_count") or payload.get("failed"),
+        "failing_tests": payload.get("failing_tests") or [],
+        "collection_errors": payload.get("collection_errors") or [],
+        "note": payload.get("note") or "",
+        "command": payload.get("command") or "",
+    }
+
+
+def _history_tail_summary(plan_state: dict[str, object]) -> dict[str, object]:
+    history = plan_state.get("history")
+    if not isinstance(history, list):
+        return {"last_entries": [], "consecutive_execute_blocked": 0}
+    entries = [item for item in history if isinstance(item, dict)]
+    last_entries = [
+        {
+            "step": item.get("step") or "",
+            "result": item.get("result") or "",
+            "timestamp": item.get("timestamp") or item.get("completed_at") or "",
+            "output_file": item.get("output_file") or "",
+        }
+        for item in entries[-5:]
+    ]
+    consecutive = 0
+    for item in reversed(entries):
+        if (
+            str(item.get("step") or "").strip().lower() == "execute"
+            and str(item.get("result") or "").strip().lower() == "blocked"
+        ):
+            consecutive += 1
+            continue
+        break
+    return {"last_entries": last_entries, "consecutive_execute_blocked": consecutive}
+
+
+def _collect_execute_attempt_context(plan_dir: pathlib.Path, plan_state: dict[str, object]) -> dict[str, object]:
+    output_path = _newest_artifact(plan_dir, "execute_batch_*_output.json")
+    execution_path = _newest_artifact(plan_dir, "execution_batch_*.json")
+    context: dict[str, object] = {
+        "plan_dir": str(plan_dir),
+        "execute_batch_output": _summarize_execute_batch_artifact(output_path),
+        "execution_batch": _summarize_execute_batch_artifact(execution_path),
+        "plan_history": _history_tail_summary(plan_state),
+    }
+    finalize_path = plan_dir / "finalize.json"
+    if finalize_path.exists():
+        context["finalize"] = _summarize_finalize_artifact(finalize_path)
+    full_suite_path = plan_dir / "full_suite_backstop.json"
+    if full_suite_path.exists():
+        context["full_suite_backstop"] = _summarize_full_suite_backstop(full_suite_path)
+    context["has_execute_artifacts"] = bool(
+        context.get("execute_batch_output")
+        or context.get("execution_batch")
+        or context.get("finalize")
+        or context.get("full_suite_backstop")
+        or (context.get("plan_history") or {}).get("last_entries")
+    )
+    return context
+
+
 def _unique_strings(values: list[str]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
@@ -908,6 +1086,7 @@ if plan_state_path is not None:
         "metadata": _metadata_excerpt(metadata),
     }
     plan_dir = plan_state_path.parent
+    execute_attempt_context = _collect_execute_attempt_context(plan_dir, plan_state)
     finalize_path = plan_dir / "finalize.json"
     user_actions_path = plan_dir / "user_actions.md"
     resolutions_path = plan_dir / "user_action_resolutions.json"
@@ -984,6 +1163,7 @@ if plan_state_path is not None:
     }
 else:
     latest_failure = {}
+    execute_attempt_context = {}
 
 state_mismatch = _state_mismatch_analysis(plan_latest_failure, chain_state_summary)
 raw_failure_signals = _unique_strings(
@@ -992,6 +1172,7 @@ raw_failure_signals = _unique_strings(
         *_collect_signal_values(chain_state_summary, "chain.summary"),
         *_collect_signal_values(state_mismatch, "state_mismatch"),
         *_collect_signal_values(user_action_context, "user_actions"),
+        *_collect_signal_values(execute_attempt_context, "execute_attempt"),
         *_interesting_log_lines(chain_log_tail),
         *_interesting_log_lines(plan_events_tail),
     ]
@@ -1022,6 +1203,7 @@ payload = {
     "plan_latest_failure": plan_latest_failure,
     "chain_state_summary": chain_state_summary,
     "user_action_context": user_action_context,
+    "execute_attempt_context": execute_attempt_context,
 }
 print(json.dumps(payload, sort_keys=True))
 PY
@@ -1050,6 +1232,7 @@ for entry in reversed(iterations):
         or entry.get("plan_latest_failure")
         or entry.get("chain_state_summary")
         or entry.get("state_mismatch")
+        or entry.get("execute_attempt_context")
     ):
         latest_context = entry
         break
@@ -1057,6 +1240,8 @@ if latest_context is None:
     latest_context = initial
 
 plan_failure = latest_context.get("plan_latest_failure") or {}
+failure_context = latest_context.get("failure_context") if isinstance(latest_context.get("failure_context"), dict) else {}
+execute_attempt_context = latest_context.get("execute_attempt_context") or failure_context.get("execute_attempt_context") or {}
 chain_state = latest_context.get("chain_state_summary") or {}
 run_kind = (payload.get("run_kind") or latest_context.get("run_kind") or "chain").strip().lower()
 metadata = plan_failure.get("metadata") or {}
@@ -1187,6 +1372,169 @@ else:
     )
     run_narrative_label = "- current chain narrative (last 20 chain-log lines):"
 
+
+def _format_count_summary(counts: object) -> str:
+    if not isinstance(counts, dict) or not counts:
+        return "unknown"
+    ordered_keys = ["completed", "done", "pending", "blocked", "skipped", "deferred", "failed", "error", "unknown"]
+    parts: list[str] = []
+    seen: set[str] = set()
+    for key in ordered_keys + sorted(str(item) for item in counts):
+        if key in seen:
+            continue
+        seen.add(key)
+        value = counts.get(key)
+        if isinstance(value, int) and value:
+            label = "completed" if key == "done" else key
+            parts.append(f"{value} {label}")
+    return ", ".join(parts) if parts else "unknown"
+
+
+def _task_key(task: object) -> str:
+    if not isinstance(task, dict):
+        return ""
+    return str(task.get("task_id") or task.get("id") or "").strip()
+
+
+def _blocked_task_candidates(context: object) -> list[dict[str, object]]:
+    if not isinstance(context, dict):
+        return []
+    candidates: list[dict[str, object]] = []
+    for section_name, key in (
+        ("finalize", "skipped_or_deferred_tasks"),
+        ("execution_batch", "blocked_or_deferred_tasks"),
+        ("execute_batch_output", "blocked_or_deferred_tasks"),
+    ):
+        section = context.get(section_name)
+        if not isinstance(section, dict):
+            continue
+        tasks = section.get(key)
+        if not isinstance(tasks, list):
+            continue
+        for task in tasks:
+            if isinstance(task, dict):
+                merged = dict(task)
+                merged["_source"] = section_name
+                candidates.append(merged)
+    deduped: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for task in candidates:
+        key = _task_key(task) or json.dumps(task, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(task)
+    return deduped
+
+
+def _task_reason(task: dict[str, object]) -> str:
+    verdict = str(task.get("reviewer_verdict") or "").strip()
+    notes = str(task.get("executor_notes") or "").strip()
+    if verdict and notes:
+        return f"{verdict}: {notes}"
+    return verdict or notes or str(task.get("status") or "").strip() or "see artifact"
+
+
+def _render_last_execute_attempt(context: object, plan_failure: dict[str, object]) -> str:
+    lines = ["## LAST EXECUTE ATTEMPT"]
+    if not isinstance(context, dict) or not context.get("has_execute_artifacts"):
+        lines.append("- No execute-level artifacts found; using latest_failure, events, and logs below.")
+    else:
+        source = {}
+        source_label = ""
+        for label in ("finalize", "execution_batch", "execute_batch_output"):
+            candidate = context.get(label)
+            if isinstance(candidate, dict) and candidate.get("status_counts"):
+                source = candidate
+                source_label = label
+                break
+        task_count = source.get("task_count") if isinstance(source, dict) else None
+        source_path = source.get("path") if isinstance(source, dict) else ""
+        task_prefix = f"{task_count} task records" if isinstance(task_count, int) and task_count else "Tasks"
+        lines.append(
+            f"- Tasks: {_format_count_summary(source.get('status_counts') if isinstance(source, dict) else {})}"
+            + (f" ({task_prefix}; source: {source_label} `{source_path}`)" if source_path else "")
+        )
+
+        blocked_tasks = _blocked_task_candidates(context)
+        if blocked_tasks:
+            first = blocked_tasks[0]
+            blocked_ids = ", ".join(_task_key(task) or "(unknown)" for task in blocked_tasks[:5])
+            if len(blocked_tasks) > 5:
+                blocked_ids += f", +{len(blocked_tasks) - 5} more"
+            lines.append(f"- Blocked/deferred task: {blocked_ids}")
+            lines.append(f"- Block reason: {_task_reason(first)}")
+            notes = str(first.get("executor_notes") or "").strip()
+            if notes:
+                lines.append(f"  -> {notes}")
+        else:
+            lines.append("- Blocked/deferred task: none found in execute/finalize artifacts")
+
+        finalize = context.get("finalize")
+        if isinstance(finalize, dict) and finalize:
+            if finalize.get("baseline_test_failures") is None and "baseline_test_failures" in finalize:
+                lines.append("  -> baseline_test_failures is null (baseline never captured)")
+            note = str(finalize.get("baseline_test_note") or "").strip()
+            if note:
+                lines.append(f"  -> baseline capture failed: {note}")
+            collection_errors = finalize.get("baseline_test_collection_errors")
+            if isinstance(collection_errors, list) and collection_errors:
+                lines.append(
+                    f"  -> baseline pytest collection: {len(collection_errors)} errors "
+                    f"(first: {collection_errors[0]})"
+                )
+
+        backstop = context.get("full_suite_backstop")
+        if isinstance(backstop, dict) and backstop:
+            status = backstop.get("status") or "unknown"
+            base = backstop.get("baseline_failing_count")
+            current = backstop.get("current_failing_count")
+            lines.append(f"- Full suite backstop: status={status} baseline_failing_count={base} current_failing_count={current}")
+            failing_tests = backstop.get("failing_tests")
+            if isinstance(failing_tests, list) and failing_tests:
+                lines.append(f"  -> failing_tests: {', '.join(str(item) for item in failing_tests[:5])}")
+            collection_errors = backstop.get("collection_errors")
+            if isinstance(collection_errors, list) and collection_errors:
+                lines.append(
+                    f"  -> pytest collection: {len(collection_errors)} errors "
+                    f"(first: {collection_errors[0]})"
+                )
+
+        history = context.get("plan_history")
+        if isinstance(history, dict):
+            consecutive = history.get("consecutive_execute_blocked") or 0
+            last_entries = history.get("last_entries") if isinstance(history.get("last_entries"), list) else []
+            rendered_tail = ", ".join(
+                f"{entry.get('step') or '?'}={entry.get('result') or '?'}"
+                for entry in last_entries
+                if isinstance(entry, dict)
+            )
+            if consecutive:
+                lines.append(
+                    f"- Plan history: {consecutive} consecutive execute=blocked "
+                    "(not failed - this is a STATE block pattern, not necessarily a code bug)"
+                )
+            elif rendered_tail:
+                lines.append(f"- Plan history last entries: {rendered_tail}")
+
+    kind = plan_failure.get("kind") or "unknown"
+    message = plan_failure.get("message") or "unknown"
+    phase = plan_failure.get("phase") or "unknown"
+    latest_line = f"- latest_failure: {kind}: {phase} {message}".strip()
+    if isinstance(context, dict):
+        history = context.get("plan_history")
+        blocked_tail = isinstance(history, dict) and bool(history.get("consecutive_execute_blocked"))
+        if blocked_tail and str(kind) in {"phase_failed", "internal_error"} or blocked_tail:
+            latest_line += (
+                " (NOTE: this may be STALE - the execute is BLOCKING, not failing. "
+                "Investigate the blocked/deferred task above before chasing latest_failure.)"
+            )
+    lines.append(latest_line)
+    return "\n".join(lines)
+
+
+last_execute_attempt_summary = _render_last_execute_attempt(execute_attempt_context, plan_failure)
+
 mismatch_lines = []
 if state_mismatch.get("detected"):
     mismatch_lines = [
@@ -1249,6 +1597,8 @@ for label, value in (
 
 summary = "\n".join(
     [
+        last_execute_attempt_summary,
+        "",
         "## Incident Snapshot",
         f"- run kind: {run_kind}",
         f"- failure classification: {classification}",
@@ -1366,6 +1716,7 @@ payload = {
         "plan_latest_failure": failure_context_payload.get("plan_latest_failure", {}),
         "chain_state_summary": failure_context_payload.get("chain_state_summary", {}),
         "user_action_context": failure_context_payload.get("user_action_context", {}),
+        "execute_attempt_context": failure_context_payload.get("execute_attempt_context", {}),
         "watchdog_log_tail": watchdog_log,
         "tmux_pane_tail": tmux_info,
         "chain_state_files": chain_state,
@@ -1579,6 +1930,7 @@ entry["mechanical_log_path"] = failure_context_payload.get("mechanical_log_path"
 entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", {})
 entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", {})
 entry["user_action_context"] = failure_context_payload.get("user_action_context", {})
+entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", {})
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }
@@ -1642,6 +1994,7 @@ entry["plan_events_path"] = failure_context_payload.get("plan_events_path", entr
 entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", entry.get("plan_latest_failure", {}))
 entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", entry.get("chain_state_summary", {}))
 entry["user_action_context"] = failure_context_payload.get("user_action_context", entry.get("user_action_context", {}))
+entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", entry.get("execute_attempt_context", {}))
 entry["kimi_report"] = report
 
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -1941,6 +2294,7 @@ Actual dispatch model: $dispatch_model
 
 Task:
 1. Start from the inline incident snapshot above. Read the repair data JSON and pointed files only if you need deeper evidence.
+   Read the LAST EXECUTE ATTEMPT summary first. The root cause might be in the Arnold SOURCE (a code bug) OR in the PLAN STATE (a deferred task, a missing baseline, stale tests for deleted modules). If a task was deferred or blocked rather than failed, investigate the task-level deferral reason; the fix might be to clear or resolve the deferral/state, not to change source code.
    Classification guide:
    - LIVE FAILURE: The latest_failure is recent (no success since it was recorded). Fix the root cause in the Arnold source.
    - STALE STATE: The latest_failure predates a successful run or the current block is a 0ms same-hash replay. CLEAR latest_failure to null in the plan's state.json, clear stale blocks, and re-drive the run. Do NOT try to fix a source bug; the issue was already addressed.
