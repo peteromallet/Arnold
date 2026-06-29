@@ -21,10 +21,11 @@
 #   * write /workspace/audit-reports/<ts>-audit.{json,md}, append one line to
 #     /workspace/audit-report.log
 #
-# MODEL-JUDGED: for each suspicious plan, Codex subjectively decides whether it's
-# a GENUINE non-critical deadlock (stuck looping/retrying) -> root-cause + fix +
-# push to editible-install (the watchdog relaunches the chain), or PASSIVE ->
-# document only. No hardcoded fix-vs-report rule.
+# MODEL-JUDGED: for each suspicious plan, Codex subjectively decides whether
+# the evidence is STALE state to clear, a GENUINE live non-critical deadlock to
+# root-cause + fix + push to editible-install (the watchdog relaunches the
+# chain), an INEFFICIENT cycling pattern, or PASSIVE/document-only. No
+# hardcoded verdict rule.
 set -uo pipefail
 
 CONTAINER="${MEGAPLAN_CLOUD_CONTAINER:-megaplan-cloud-agent}"
@@ -288,6 +289,17 @@ def _recent_iso(ts_str):
         return False
     return when >= cutoff
 
+def _parse_iso(ts_str):
+    if not ts_str:
+        return None
+    try:
+        when = dt.datetime.fromisoformat(str(ts_str).replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return when
+
 def _mtime(path):
     try:
         return path.stat().st_mtime
@@ -360,6 +372,7 @@ def _chain_log_summary(workspace, session, entry):
             "recent_terminal_states": [],
             "recent_stops": [],
             "repetition_summary": [],
+            "one_milestone_stop_cycles": [],
         }
     try:
         lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -369,11 +382,14 @@ def _chain_log_summary(workspace, session, entry):
     terminal_states = []
     stops = []
     signatures = {}
+    cycles = []
+    current_cycle = []
     for idx, line in enumerate(lines, start=1):
         lower = line.lower()
         rendered = f"L{idx}: {line}"
         if "milestone" in lower and "starting" in lower:
             milestone_starts.append(rendered)
+            current_cycle.append((idx, line))
         if "terminal state reached" in lower:
             terminal_states.append(rendered)
         if (
@@ -389,6 +405,21 @@ def _chain_log_summary(workspace, session, entry):
             if signature:
                 bucket = signatures.setdefault(signature, [])
                 bucket.append((idx, line))
+            milestone_lines = [
+                (line_idx, text)
+                for line_idx, text in current_cycle
+                if "milestone" in text.lower() and "starting" in text.lower()
+            ]
+            if len(milestone_lines) == 1:
+                cycles.append(
+                    {
+                        "start_line": milestone_lines[0][0],
+                        "stop_line": idx,
+                        "start": f"L{milestone_lines[0][0]}: {milestone_lines[0][1]}",
+                        "stop": rendered,
+                    }
+                )
+            current_cycle = []
     repetition_summary = []
     for signature, occurrences in sorted(signatures.items()):
         if len(occurrences) < 2:
@@ -411,6 +442,7 @@ def _chain_log_summary(workspace, session, entry):
         "recent_terminal_states": terminal_states[-5:],
         "recent_stops": stops[-8:],
         "repetition_summary": repetition_summary[-8:],
+        "one_milestone_stop_cycles": cycles[-8:],
     }
 
 def _chain_state_paths(workspace):
@@ -621,6 +653,8 @@ def _repair_data_summary(session):
                 "failure_classification": item.get("failure_classification") or "",
                 "chain_last_state": chain_state.get("last_state") or "",
                 "chain_current_plan": chain_state.get("current_plan_name") or "",
+                "chain_current_milestone_index": chain_state.get("current_milestone_index"),
+                "chain_completed_count": chain_state.get("completed_count"),
                 "latest_failure_kind": failure.get("kind") or "",
                 "latest_failure_message": failure.get("message") or "",
                 "latest_failure_stderr": stderr,
@@ -644,6 +678,244 @@ def _repair_data_summary(session):
         "iterations": summarized_iterations,
         "repeated_failure_signatures": repeated[:6],
     }
+
+def _load_events(events_path):
+    events = []
+    try:
+        lines = events_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return events
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+def _event_timestamp(event):
+    for key in ("ts_utc", "timestamp_utc", "timestamp", "recorded_at", "created_at"):
+        when = _parse_iso(event.get(key))
+        if when is not None:
+            return when
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        for key in ("ts_utc", "timestamp_utc", "timestamp", "recorded_at", "created_at"):
+            when = _parse_iso(payload.get(key))
+            if when is not None:
+                return when
+    return None
+
+def _event_seq(event):
+    for key in ("seq", "event_seq", "sequence"):
+        value = event.get(key)
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            pass
+    return None
+
+def _failure_seq(latest_failure):
+    if not isinstance(latest_failure, dict):
+        return None
+    candidates = [
+        latest_failure.get("seq"),
+        latest_failure.get("event_seq"),
+        latest_failure.get("sequence"),
+    ]
+    metadata = latest_failure.get("metadata")
+    if isinstance(metadata, dict):
+        candidates.extend([metadata.get("seq"), metadata.get("event_seq"), metadata.get("sequence")])
+    for value in candidates:
+        try:
+            if value is not None:
+                return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+def _success_value(value):
+    return str(value or "").strip().lower() in {
+        "success",
+        "succeeded",
+        "done",
+        "proceed",
+        "pass",
+        "passed",
+        "ok",
+        "complete",
+        "completed",
+        "finished",
+        "executed",
+        "finalized",
+    }
+
+def _successful_event(event):
+    kind = str(event.get("kind") or event.get("event_type") or "").strip().lower()
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    phase = str(event.get("phase") or payload.get("phase") or "").strip().lower()
+    if kind == "phase_end":
+        return any(
+            _success_value(event.get(key)) or _success_value(payload.get(key))
+            for key in ("exit_kind", "status", "result", "state", "recommendation", "verdict")
+        )
+    if kind == "plan_finished":
+        return True
+    if kind in {"gate", "gate_result", "quality_gate", "phase_end"}:
+        if _success_value(payload.get("recommendation") or event.get("recommendation")):
+            return True
+    if phase == "gate" and _success_value(payload.get("recommendation") or event.get("recommendation")):
+        return True
+    for key in ("exit_kind", "status", "result", "state", "recommendation", "verdict"):
+        if _success_value(event.get(key)) or _success_value(payload.get(key)):
+            return True
+    return False
+
+def _event_excerpt(event):
+    payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+    return {
+        "seq": _event_seq(event),
+        "ts": (_event_timestamp(event).isoformat().replace("+00:00", "Z") if _event_timestamp(event) else ""),
+        "kind": event.get("kind") or event.get("event_type") or "",
+        "phase": event.get("phase") or payload.get("phase") or "",
+        "status": event.get("status") or event.get("result") or payload.get("status") or payload.get("result") or payload.get("exit_kind") or "",
+        "recommendation": event.get("recommendation") or payload.get("recommendation") or "",
+    }
+
+def _latest_failure_staleness(latest_failure, events_path):
+    if not isinstance(latest_failure, dict) or not latest_failure:
+        return {
+            "latest_failure_is_stale": False,
+            "last_success_after_failure": "",
+            "last_success_after_failure_event": {},
+        }
+    failure_ts = _parse_iso(latest_failure.get("recorded_at") or latest_failure.get("timestamp") or latest_failure.get("ts_utc"))
+    failure_event_seq = _failure_seq(latest_failure)
+    last_success = None
+    for event in _load_events(events_path):
+        if not _successful_event(event):
+            continue
+        event_ts = _event_timestamp(event)
+        event_seq = _event_seq(event)
+        after_by_ts = failure_ts is not None and event_ts is not None and event_ts > failure_ts
+        after_by_seq = failure_event_seq is not None and event_seq is not None and event_seq > failure_event_seq
+        if not after_by_ts and not after_by_seq:
+            continue
+        if last_success is None:
+            last_success = event
+            continue
+        last_ts = _event_timestamp(last_success)
+        last_seq = _event_seq(last_success)
+        if event_ts is not None and (last_ts is None or event_ts > last_ts):
+            last_success = event
+        elif event_ts is None and event_seq is not None and (last_seq is None or event_seq > last_seq):
+            last_success = event
+    if last_success is None:
+        return {
+            "latest_failure_is_stale": False,
+            "last_success_after_failure": "",
+            "last_success_after_failure_event": {},
+        }
+    excerpt = _event_excerpt(last_success)
+    return {
+        "latest_failure_is_stale": True,
+        "last_success_after_failure": excerpt.get("ts") or (str(excerpt.get("seq")) if excerpt.get("seq") is not None else ""),
+        "last_success_after_failure_event": excerpt,
+    }
+
+def _blocked_history_entry(item):
+    if not isinstance(item, dict):
+        return False
+    result = str(item.get("result") or item.get("status") or "").strip().lower()
+    if "blocked" not in result:
+        return False
+    try:
+        duration = int(item.get("duration_ms") or 0)
+    except (TypeError, ValueError):
+        return False
+    return duration == 0 and bool(item.get("artifact_hash"))
+
+def _stale_block_replay(history, chain_log, chain_state):
+    by_hash = {}
+    for item in (history if isinstance(history, list) else []):
+        if not _blocked_history_entry(item):
+            continue
+        artifact_hash = str(item.get("artifact_hash") or "")
+        by_hash.setdefault(artifact_hash, []).append(item)
+    repeated = []
+    for artifact_hash, items in sorted(by_hash.items(), key=lambda pair: len(pair[1]), reverse=True):
+        if len(items) < 2:
+            continue
+        repeated.append(
+            {
+                "artifact_hash": artifact_hash,
+                "count": len(items),
+                "timestamps": [
+                    str(item.get("timestamp") or item.get("completed_at") or "")
+                    for item in items[-5:]
+                ],
+                "step": items[-1].get("step") or "",
+                "output_file": items[-1].get("output_file") or "",
+            }
+        )
+    chain_exits = bool((chain_log or {}).get("recent_stops")) or (chain_state or {}).get("last_state") in {
+        "awaiting_human",
+        "blocked",
+        "stopped",
+    }
+    return {
+        "stale_block_replay": bool(repeated and chain_exits),
+        "stale_block_replay_hash": repeated[0]["artifact_hash"] if repeated else "",
+        "stale_block_replay_count": repeated[0]["count"] if repeated else 0,
+        "stale_block_replay_entries": repeated[:3],
+    }
+
+def _between_milestone_cycling(chain_log, chain_state, repair_data):
+    current = chain_state or {}
+    try:
+        completed_count = int(current.get("completed_count") or 0)
+    except (TypeError, ValueError):
+        completed_count = 0
+    cycles = (chain_log or {}).get("one_milestone_stop_cycles") or []
+    repair_iterations = int((repair_data or {}).get("iteration_count") or 0)
+    repair_completed = [
+        item.get("chain_completed_count")
+        for item in ((repair_data or {}).get("iterations") or [])
+        if item.get("chain_completed_count") is not None
+    ]
+    one_step_repair_advances = 0
+    for prev, cur in zip(repair_completed, repair_completed[1:]):
+        try:
+            if int(cur) - int(prev) == 1:
+                one_step_repair_advances += 1
+        except (TypeError, ValueError):
+            continue
+    repeated_relaunch = repair_iterations >= 2 or len((chain_log or {}).get("recent_stops") or []) >= 2
+    cycling = completed_count >= 2 and repeated_relaunch and (len(cycles) >= 2 or one_step_repair_advances >= 1)
+    return {
+        "between_milestone_cycling": cycling,
+        "one_milestone_stop_cycle_count": len(cycles),
+        "one_milestone_stop_cycles": cycles[-4:],
+        "repair_one_milestone_advances": one_step_repair_advances,
+    }
+
+def _stale_state_evidence(plan_latest_failure, latest_failure, events_path, history, chain_log, chain_state, repair_data):
+    evidence = _latest_failure_staleness(latest_failure, events_path)
+    evidence.update(_stale_block_replay(history, chain_log, chain_state))
+    evidence.update(_between_milestone_cycling(chain_log, chain_state, repair_data))
+    clear_actions = []
+    if evidence.get("latest_failure_is_stale"):
+        clear_actions.append(f"set {plan_latest_failure.get('state_path')} latest_failure to null")
+    if evidence.get("stale_block_replay"):
+        clear_actions.append("clear or quarantine stale blocked phase/task artifacts before re-driving")
+    if evidence.get("between_milestone_cycling"):
+        clear_actions.append("fix/re-drive chain so it advances continuously instead of one milestone per relaunch")
+    evidence["recommended_state_clear_actions"] = clear_actions
+    return evidence
 
 def _plan_evidence(entry):
     workspace = entry["workspace"]
@@ -693,6 +965,7 @@ def _plan_evidence(entry):
     chain_log = _chain_log_summary(workspace_path, session, entry)
     chain_state = _chain_state_summary(workspace_path, plan)
     repair_data = _repair_data_summary(session)
+    chain_current = (chain_state or {}).get("current") or {}
     chain_recent = any(
         [
             chain_log.get("path") and chain_log.get("mtime_age_min") is not None and chain_log.get("mtime_age_min") <= window * 60,
@@ -746,6 +1019,15 @@ def _plan_evidence(entry):
         "metadata": _metadata_excerpt(latest_failure_metadata),
     }
     user_action_context = _user_action_context(plan_dir, state)
+    stale_state_evidence = _stale_state_evidence(
+        plan_latest_failure,
+        latest_failure,
+        events_path,
+        history,
+        chain_log,
+        chain_current,
+        repair_data,
+    )
 
     return {
         "plan": plan_dir.name,
@@ -757,6 +1039,11 @@ def _plan_evidence(entry):
         "chain_state_summary": chain_state,
         "repair_data_summary": repair_data,
         "plan_latest_failure": plan_latest_failure,
+        "stale_state_evidence": stale_state_evidence,
+        "latest_failure_is_stale": stale_state_evidence.get("latest_failure_is_stale"),
+        "last_success_after_failure": stale_state_evidence.get("last_success_after_failure"),
+        "stale_block_replay": stale_state_evidence.get("stale_block_replay"),
+        "between_milestone_cycling": stale_state_evidence.get("between_milestone_cycling"),
         "user_action_context": user_action_context,
         "current_state": state.get("current_state"),
         "iteration": state.get("iteration"),
@@ -797,6 +1084,21 @@ for entry in plans:
         reasons.append(f"step on attempt {ev['active_step_attempt']}")
     if ev["latest_failure_kind"] in ("stalled", "phase_failed", "execution_blocked"):
         reasons.append(f"{ev['latest_failure_kind']}: {ev['latest_failure_message']}")
+    stale_state = ev.get("stale_state_evidence") or {}
+    if stale_state.get("latest_failure_is_stale"):
+        reasons.append(
+            f"latest_failure is stale; last success after failure at {stale_state.get('last_success_after_failure')}"
+        )
+    if stale_state.get("stale_block_replay"):
+        reasons.append(
+            "stale block replay "
+            f"{stale_state.get('stale_block_replay_count')}x hash={stale_state.get('stale_block_replay_hash')}"
+        )
+    if stale_state.get("between_milestone_cycling"):
+        reasons.append(
+            "between-milestone cycling "
+            f"{stale_state.get('one_milestone_stop_cycle_count')} one-milestone stop cycles"
+        )
     chain_current = (ev.get("chain_state_summary") or {}).get("current") or {}
     chain_last_state = chain_current.get("last_state")
     if chain_last_state in ("awaiting_human", "pr_closed", "missing_base_ref", "blocked"):
@@ -865,38 +1167,55 @@ dispatch_one() {
 You are auditing a cloud megaplan SESSION, not just one plan. Suspicious
 signals: $reasons. Evidence JSON is above, including session header, chain log
 tail/excerpts/repetition summary, chain state, repair-data history,
-latest_failure.metadata.stderr, and user_actions evidence when present.
+stale_state_evidence, latest_failure.metadata.stderr, and user_actions evidence
+when present.
 
 Return one of:
+- STALE: stale latest_failure or stale block replay detected; clear stale state and re-drive.
 - FIXED <commit-sha>: you found and fixed an Arnold source bug.
 - ESCALATE: no code change made, but operator action or gate reconciliation is required.
 - INEFFICIENT: the chain is progressing but wasting cycles or requiring repeated watchdog relaunches.
-- PASSIVE: no action; the evidence shows legitimate progress, completed work, or a stale non-operative failure.
+- PASSIVE: no action; the evidence shows legitimate progress, completed work, or a genuinely non-operative issue.
 
 Evaluate these questions in order:
 
-1. Chain liveness
+1. Live failure vs stale state
+- Is this failure STALE (predates a success) or LIVE (no success since)? If stale, recommend clearing the state + re-driving, not a source fix.
+- Is latest_failure still live, or does stale_state_evidence.latest_failure_is_stale show a later successful event?
+- If latest_failure predates a later successful event, classify STALE. Recommend clearing latest_failure and re-driving; do not fix source for the stale failure.
+- Is stale_state_evidence.stale_block_replay true because blocked history repeats duration_ms=0 with the same artifact hash and the chain exits immediately?
+- If stale block replay is present, classify STALE or INEFFICIENT and recommend clearing/quarantining the stale block artifact/state before re-driving.
+
+2. Deadlock vs passive for live failures
 - Is the chain process running, stopped, or repeatedly relaunched?
 - Does the chain log show the same milestone start/stop signature repeated?
 - Does the chain advance continuously across milestones, or exit after each milestone/terminal plan state?
 - Cite chain log line numbers and chain state fields.
 
-2. Chain efficiency
+3. Inefficiency / cycling
 - Is progress happening only one milestone per watchdog/repair cycle?
 - Are the same plan, PR, gate, or terminal state repeated?
 - Are repair loops repeatedly dispatched on the same session?
-- If yes, classify as INEFFICIENT even if the chain eventually progresses.
+- Does stale_state_evidence.between_milestone_cycling show repeated one-milestone stop cycles?
+- If yes, classify as INEFFICIENT even if the chain eventually progresses, and recommend the driver/state fix that would make the chain advance continuously.
 
-3. Gate resolvability
+4. Gate resolvability
 - If the chain stopped in awaiting_human, list pending user actions.
 - Are those actions genuinely human-only, or already resolved in state/user_action_resolutions/gate artifacts?
 - Did the executor report missing resolutions while state or disk says they exist?
 - If a gate is agent-resolvable or internally inconsistent, classify ESCALATE or FIXED instead of PASSIVE.
 
-4. Plan-level failure interpretation
+5. Plan-level failure interpretation
 - Is latest_failure recent and operative, or stale compared with chain log/repair data?
 - Does stderr reveal a specific source bug?
 - Did repair-data already fix or exhaust this signature?
+
+If stale state is the right fix: you MAY update the running workspace plan state
+for the audited session. Keep it narrow: set state.json latest_failure to null
+or remove it, clear/quarantine only stale block artifacts identified by the
+evidence, preserve unrelated chain/project state, validate the JSON, and return
+STALE with the exact files/keys cleared. Do not make an Arnold source commit for
+a stale failure unless you also find a live source bug.
 
 If you identify a source bug: root-cause it from the evidence + workspace, FIX
 the root cause in $ARNOLD_SRC on the editible-install branch (Arnold source only
@@ -909,10 +1228,10 @@ of the lack of convergence/inefficiency/gate stop) + a recommendation
 (highest-leverage next action for the operator).
 
 Start with your verdict on its own line — FIXED <commit-sha>, ESCALATE,
-INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (chain log lines, chain
-state path/fields, repair-data iterations, user_action IDs, exact stderr,
-iteration/attempt counts, gate verdicts, whether the milestone is completed,
-plan_v churn). Under 350 words.
+STALE, INEFFICIENT, or PASSIVE — then cite SPECIFIC evidence (chain log lines,
+chain state path/fields, stale_state_evidence flags, repair-data iterations,
+user_action IDs, exact stderr, iteration/attempt counts, gate verdicts, whether
+the milestone is completed, plan_v churn). Under 350 words.
 EOF
 
   } > "$brief"
@@ -1045,6 +1364,19 @@ for f in findings:
         lines.append(f"- user actions: `{user_actions.get('user_actions_path') or 'n/a'}` · unresolved `{ids}`")
     if f.get("latest_failure_message"):
         lines.append(f"- latest_failure: {f.get('latest_failure_kind')} — {f.get('latest_failure_message')}")
+    stale = f.get("stale_state_evidence") or {}
+    stale_bits = []
+    if stale.get("latest_failure_is_stale"):
+        stale_bits.append(f"latest_failure_is_stale last_success_after_failure={stale.get('last_success_after_failure')}")
+    if stale.get("stale_block_replay"):
+        stale_bits.append(f"stale_block_replay count={stale.get('stale_block_replay_count')} hash={stale.get('stale_block_replay_hash')}")
+    if stale.get("between_milestone_cycling"):
+        stale_bits.append(f"between_milestone_cycling cycles={stale.get('one_milestone_stop_cycle_count')}")
+    if stale_bits:
+        lines.append(f"- stale/cycling evidence: {'; '.join(stale_bits)}")
+    clear_actions = stale.get("recommended_state_clear_actions") or []
+    if clear_actions:
+        lines.append(f"- stale-state clear actions: {'; '.join(clear_actions)}")
     stderr = (((f.get("plan_latest_failure") or {}).get("metadata") or {}).get("stderr") or "")
     if stderr:
         stderr_line = " ".join(str(stderr).split())[:260]

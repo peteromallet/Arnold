@@ -191,6 +191,10 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "## Incident Snapshot" in text
     assert "Start from the inline incident snapshot above." in text
     assert "ATTEMPT to resolve those user actions before treating this as a human stop" in text
+    assert "Classification guide:" in text
+    assert "LIVE FAILURE: The latest_failure is recent" in text
+    assert "STALE STATE: The latest_failure predates a successful run" in text
+    assert "repair_clear_stale_state_if_needed()" in text
     assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
     assert "Use the raw failure signal, chain narrative, and prior-attempt history" in text
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
@@ -292,6 +296,150 @@ def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: 
     assert user_action_context["user_actions_path"].endswith("/demo-plan/user_actions.md")
     assert user_action_context["unresolved_user_actions"][0]["id"] == "ua-01-decide-cleanup"
     assert user_action_context["unresolved_user_actions"][0]["blocks_task_ids"] == ["T1"]
+
+
+def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "finalized",
+                "latest_failure": {
+                    "kind": "phase_failed",
+                    "message": "phase 'execute' internal_error",
+                    "phase": "execute",
+                    "recorded_at": "2026-06-29T01:00:00Z",
+                    "metadata": {"stderr": "unrecognized arguments: --retry-blocked-tasks"},
+                },
+                "history": [
+                    {
+                        "step": "execute",
+                        "result": "blocked",
+                        "timestamp": "2026-06-29T02:00:00Z",
+                        "duration_ms": 0,
+                        "artifact_hash": "sha256:repeat",
+                        "output_file": "execution.json",
+                    },
+                    {
+                        "step": "execute",
+                        "result": "blocked",
+                        "timestamp": "2026-06-29T02:01:00Z",
+                        "duration_ms": 0,
+                        "artifact_hash": "sha256:repeat",
+                        "output_file": "execution.json",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        json.dumps(
+            {
+                "seq": 10,
+                "kind": "gate",
+                "phase": "gate",
+                "ts_utc": "2026-06-29T01:30:00Z",
+                "payload": {"recommendation": "PROCEED"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "awaiting_human"}),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "demo")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "stale_state"
+    stale = payload["stale_state"]
+    assert stale["classification"] == "STALE STATE"
+    assert stale["latest_failure_stale"] is True
+    assert stale["latest_success_after_failure"]["timestamp"] == "2026-06-29T01:30:00Z"
+    assert stale["stale_block_replay"]["detected"] is True
+    assert stale["stale_block_replay"]["artifact_hash"] == "sha256:repeat"
+
+
+def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_result(tmp_path: Path) -> None:
+    plan_dir = tmp_path / "workflow" / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "latest_failure": {"kind": "phase_failed", "recorded_at": "2026-06-29T01:00:00Z"},
+                "history": [
+                    {"step": "gate", "result": "success", "timestamp": "2026-06-29T01:30:00Z"},
+                    {
+                        "step": "execute",
+                        "result": "blocked",
+                        "duration_ms": 0,
+                        "artifact_hash": "sha256:repeat",
+                        "timestamp": "2026-06-29T02:00:00Z",
+                    },
+                    {
+                        "step": "execute",
+                        "result": "blocked",
+                        "duration_ms": 0,
+                        "artifact_hash": "sha256:repeat",
+                        "timestamp": "2026-06-29T02:01:00Z",
+                    },
+                ],
+                "meta": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "phase_result.json").write_text(
+        json.dumps({"phase": "execute", "exit_kind": "blocked_by_prereq"}),
+        encoding="utf-8",
+    )
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(json.dumps({"initial_facts": {}, "iterations": []}), encoding="utf-8")
+    failure_context = {
+        "plan_latest_failure": {"state_path": str(state_path)},
+        "stale_state": {
+            "classification": "STALE STATE",
+            "latest_failure_stale": True,
+            "latest_success_after_failure": {"timestamp": "2026-06-29T01:30:00Z"},
+            "stale_block_replay": {
+                "detected": True,
+                "artifact_hash": "sha256:repeat",
+                "duration_ms": 0,
+            },
+        },
+    }
+
+    program = _extract_repair_program(
+        "repair_clear_stale_state_if_needed",
+        "python3 - \"$DATA_FILE\" \"$failure_context\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path), json.dumps(failure_context))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("cleared:")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["latest_failure"] is None
+    assert [item["step"] for item in state["history"]] == ["gate"]
+    assert not (plan_dir / "phase_result.json").exists()
+    assert list(plan_dir.glob("phase_result.stale-*.json"))
+    repair_data = json.loads(data_path.read_text(encoding="utf-8"))
+    assert repair_data["stale_state_actions"][0]["actions"]
 
 
 def test_repair_loop_collects_state_meta_user_action_resolutions(tmp_path: Path) -> None:
@@ -2811,7 +2959,13 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert "recommendation" in text
     assert "You are auditing a cloud megaplan SESSION, not just one plan." in text
     assert "chain log line numbers" in text
+    assert "Live failure vs stale state" in text
     assert "Gate resolvability" in text
+    assert "stale_state_evidence" in text
+    assert "latest_failure_is_stale" in text
+    assert "stale_block_replay" in text
+    assert "between_milestone_cycling" in text
+    assert "STALE" in text
     assert "INEFFICIENT" in text
 
 
@@ -3185,7 +3339,7 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
             "kind": "phase_failed",
             "message": "phase 'execute' internal_error",
             "phase": "execute",
-            "recorded_at": _iso_hours_ago(0.4),
+            "recorded_at": _iso_hours_ago(2.0),
             "metadata": {
                 "exit_code": 2,
                 "stderr": "__main__.py: error: unrecognized arguments: --confirm-destructive --user-approved",
@@ -3200,9 +3354,53 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
                 "ua-02-cleanup-policy": {"state": "satisfied", "decision": "proceed"}
             },
         },
-        "history": [],
+        "history": [
+            {
+                "step": "execute",
+                "result": "blocked",
+                "timestamp": _iso_hours_ago(1.0),
+                "duration_ms": 0,
+                "artifact_hash": "sha256:stale-block",
+                "output_file": "execution.json",
+            },
+            {
+                "step": "execute",
+                "result": "blocked",
+                "timestamp": _iso_hours_ago(0.5),
+                "duration_ms": 0,
+                "artifact_hash": "sha256:stale-block",
+                "output_file": "execution.json",
+            },
+        ],
     }
-    _write_plan(plan_dir, state, plan_v_bodies={"plan_v1.md": "v1"}, events_body="{}\n")
+    _write_plan(
+        plan_dir,
+        state,
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="\n".join(
+            [
+                json.dumps(
+                    {
+                        "seq": 1,
+                        "kind": "phase_end",
+                        "phase": "execute",
+                        "ts_utc": _iso_hours_ago(1.5),
+                        "payload": {"phase": "execute", "exit_kind": "success"},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "seq": 2,
+                        "kind": "gate",
+                        "phase": "gate",
+                        "ts_utc": _iso_hours_ago(1.0),
+                        "payload": {"recommendation": "PROCEED"},
+                    }
+                ),
+            ]
+        )
+        + "\n",
+    )
     (plan_dir / "finalize.json").write_text(
         json.dumps(
             {
@@ -3353,6 +3551,14 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
     assert finding["repair_data_summary"]["iteration_count"] == 2
     assert finding["repair_data_summary"]["repeated_failure_signatures"][0]["count"] == 2
     assert "unrecognized arguments" in finding["plan_latest_failure"]["metadata"]["stderr"]
+    stale = finding["stale_state_evidence"]
+    assert stale["latest_failure_is_stale"] is True
+    assert stale["last_success_after_failure"]
+    assert stale["last_success_after_failure_event"]["kind"] == "gate"
+    assert stale["stale_block_replay"] is True
+    assert stale["stale_block_replay_hash"] == "sha256:stale-block"
+    assert finding["latest_failure_is_stale"] is True
+    assert finding["stale_block_replay"] is True
     user_action_context = finding["user_action_context"]
     assert "ua-01-reclassify-deletion-targets" in user_action_context["user_actions_md"]
     assert [item["id"] for item in user_action_context["unresolved_user_actions"]] == ["ua-01-reclassify-deletion-targets"]
@@ -3361,6 +3567,97 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
     assert "chain log repeats" in reasons
     assert "repair data has 2 repair iterations" in reasons
     assert "awaiting_human with unresolved user actions" in reasons
+    assert "latest_failure is stale" in reasons
+    assert "stale block replay" in reasons
+
+
+def test_auditor_gather_flags_between_milestone_cycling(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "m3-demo"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    _write_plan(
+        plan_dir,
+        {
+            "name": plan_name,
+            "iteration": 3,
+            "current_state": "finalized",
+            "active_step": None,
+            "last_gate": {"recommendation": "PASS"},
+            "meta": {"weighted_scores": [8.0], "plan_deltas": [1.0], "significant_counts": [1]},
+            "history": [],
+        },
+        plan_v_bodies={"plan_v1.md": "v1"},
+        events_body="{}\n",
+    )
+
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 2,
+                "current_plan_name": plan_name,
+                "last_state": "stopped",
+                "completed": [
+                    {"label": "m1", "plan": "m1-demo", "status": "done"},
+                    {"label": "m2", "plan": "m2-demo", "status": "done"},
+                ],
+                "milestones": [{"label": "m1"}, {"label": "m2"}, {"label": "m3"}],
+                "events": [{"msg": "m1 done"}, {"msg": "m2 done"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    log_path = workspace / ".megaplan" / "cloud-chain-demo-session.log"
+    log_path.write_text(
+        "\n".join(
+            [
+                "[chain] milestone m1 starting",
+                "[chain] terminal state reached: done",
+                "[chain] status: stopped reason=completed one milestone: m1",
+                "[chain] milestone m2 starting",
+                "[chain] terminal state reached: done",
+                "[chain] status: stopped reason=completed one milestone: m2",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "chain",
+                "log": str(log_path),
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected between-milestone cycling to produce a finding"
+    finding = findings[0]
+    stale = finding["stale_state_evidence"]
+    assert stale["between_milestone_cycling"] is True
+    assert stale["one_milestone_stop_cycle_count"] == 2
+    assert finding["between_milestone_cycling"] is True
+    assert "between-milestone cycling" in " ".join(finding["reasons"])
 
 
 def test_arnold_progress_auditor_produces_evidence_cited_report_via_mocked_deepseek(tmp_path) -> None:
