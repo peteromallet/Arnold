@@ -242,6 +242,9 @@ def handle_execute(root: Path, args: argparse.Namespace) -> StepResponse:
             response["state"] = STATE_BLOCKED
             response["next_step"] = None
             response.pop("next_step_runtime", None)
+        else:
+            state["latest_failure"] = None
+            state.pop("resume_cursor", None)
         if is_prose_mode(state) and response.get("state") == STATE_EXECUTED:
             from arnold_pipelines.megaplan.runtime.doc_assembly import assemble_doc
             output_path = Path(state["config"]["project_dir"]) / state["config"]["output_path"]

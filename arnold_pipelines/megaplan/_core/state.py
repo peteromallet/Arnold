@@ -40,7 +40,9 @@ from arnold_pipelines.megaplan.types import (
 from arnold_pipelines.megaplan.planning.state import (
     CANONICAL_PLAN_STATES,
     STATE_CRITIQUED,
+    STATE_FINALIZED,
     STATE_INITIALIZED,
+    STATE_AWAITING_HUMAN,
     TERMINAL_STATES,
     validate_plan_current_state,
 )
@@ -186,6 +188,82 @@ def _validate_persisted_phase_models(plan_dir: Path, state: Any) -> None:
             ) from exc
 
 
+def _all_finalize_user_actions_satisfied(plan_dir: Path, state: dict[str, Any]) -> bool:
+    """Return True when every finalize user-action gate has been satisfied."""
+
+    finalize_path = plan_dir / "finalize.json"
+    if not finalize_path.exists():
+        return False
+    try:
+        finalize = read_json(finalize_path)
+    except Exception:
+        return False
+    if not isinstance(finalize, dict):
+        return False
+    user_actions = finalize.get("user_actions")
+    if not isinstance(user_actions, list) or not user_actions:
+        return False
+
+    try:
+        from arnold_pipelines.megaplan.resolutions import effective_user_action_resolutions
+
+        resolutions = effective_user_action_resolutions(plan_dir, state)
+    except Exception:
+        return False
+
+    required_action_ids: list[str] = []
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        action_id = action.get("id") or action.get("action_id")
+        if isinstance(action_id, str) and action_id:
+            required_action_ids.append(action_id)
+    if not required_action_ids:
+        return False
+    for action_id in required_action_ids:
+        resolution = resolutions.get(action_id)
+        if not isinstance(resolution, dict):
+            return False
+        if (resolution.get("state") or resolution.get("resolution")) != "satisfied":
+            return False
+    return True
+
+
+def _reconcile_satisfied_user_action_gate(plan_dir: Path, state: dict[str, Any]) -> dict[str, Any]:
+    """Move stale awaiting-human user-action gates back to finalized."""
+
+    if state.get("current_state") not in {STATE_AWAITING_HUMAN, "awaiting_human"}:
+        return state
+    clarification = state.get("clarification")
+    if isinstance(clarification, dict) and clarification.get("source") == "prep":
+        return state
+    if not _all_finalize_user_actions_satisfied(plan_dir, state):
+        return state
+
+    def _transition(current: dict[str, Any]) -> bool:
+        if current.get("current_state") not in {STATE_AWAITING_HUMAN, "awaiting_human"}:
+            return False
+        if not _all_finalize_user_actions_satisfied(plan_dir, current):
+            return False
+        current["current_state"] = STATE_FINALIZED
+        current["latest_failure"] = None
+        current.pop("active_step", None)
+        current.pop("resume_cursor", None)
+        current.setdefault("meta", {})
+        if isinstance(current["meta"], dict):
+            current["meta"].setdefault("state_reconciliations", []).append(
+                {
+                    "kind": "satisfied_user_action_gate",
+                    "from_state": state.get("current_state"),
+                    "to_state": STATE_FINALIZED,
+                    "timestamp": now_utc(),
+                }
+            )
+        return True
+
+    return write_plan_state(plan_dir, mode="patch-many", patch={}, mutation=_transition)
+
+
 def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
     from arnold_pipelines.megaplan._core.io import read_plan_state_cached
     state = read_plan_state_cached(plan_dir, mode="authority")
@@ -195,6 +273,8 @@ def load_plan_from_dir(plan_dir: Path) -> tuple[Path, PlanState]:
         or "last_gate" not in state
     ):
         state = write_plan_state(plan_dir, mode="legacy-migration")
+    if isinstance(state, dict):
+        state = _reconcile_satisfied_user_action_gate(plan_dir, state)
     _validate_persisted_phase_models(plan_dir, state)
     return plan_dir, state
 

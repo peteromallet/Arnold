@@ -429,6 +429,9 @@ def _finish_step(
     run_id: str | None = None,
 ) -> StepResponse:
     clear_active_step(state, run_id=run_id)
+    if success and result == "success":
+        state["latest_failure"] = None
+        state.pop("resume_cursor", None)
     apply_session_update(
         state,
         step,

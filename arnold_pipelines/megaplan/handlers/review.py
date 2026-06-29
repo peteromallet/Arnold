@@ -1192,6 +1192,9 @@ def _finalize_review_outcome(
             "retry_strategy": "manual_review",
         }
     state["current_state"] = next_state
+    if result != "blocked" and next_state != STATE_BLOCKED:
+        state["latest_failure"] = None
+        state.pop("resume_cursor", None)
 
     clear_active_step(state)
     apply_session_update(state, "review", agent, worker.session_id, mode=mode, refreshed=refreshed)
