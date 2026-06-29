@@ -206,6 +206,30 @@ class TestNormalizeHivemindSource:
         assert out["path"] == "ready_templates/video/ltx2_3_runexx_custom_audio.py"
         assert out["hivemind_id"] == "42"
 
+    def test_workflow_resource_preserves_semantics_and_gates(self) -> None:
+        item = {
+            "kind": "workflow",
+            "title": "LTX I2V",
+            "metadata": {
+                "workflow_semantics": {
+                    "media_type": "video",
+                    "task_type": "image_to_video",
+                    "model_families": ["ltx"],
+                    "promotion_gates": {
+                        "has_workflow_json": True,
+                        "has_compiled_api": True,
+                        "has_python_source": False,
+                        "parseable_workflow": True,
+                    },
+                },
+            },
+        }
+
+        out = _normalize_hivemind_source(item)
+
+        assert out["workflow_semantics"]["task_type"] == "image_to_video"
+        assert out["promotion_gates"]["has_compiled_api"] is True
+
 
 class TestBuildSummary:
     """Compact 1-sentence summary builder."""
@@ -636,6 +660,37 @@ class TestDefaultHivemindClient:
 
         assert any("kind=eq.workflow" in url for url in seen_urls)
         assert result["results"][0]["kind"] == "workflow"
+
+    def test_postgrest_search_adds_semantic_metadata_filters(self) -> None:
+        seen_urls: list[str] = []
+
+        def capture_urlopen(req: Any, *args: Any, **kwargs: Any) -> Any:
+            seen_urls.append(req.full_url)
+            payload = (
+                b'[{"id": 7, "kind": "workflow", "title": "LTX I2V", '
+                b'"body": "Workflow semantics: aliases=ltx, i2v.", '
+                b'"metadata": {"workflow_semantics": {"model_families": ["ltx"], '
+                b'"task_type": "image_to_video", "promotion_gates": {"parseable_workflow": true, '
+                b'"has_compiled_api": true}}}}]'
+            )
+            return type(
+                "MockResponse",
+                (),
+                {
+                    "read": lambda self: payload,
+                    "__enter__": lambda self: self,
+                    "__exit__": lambda self, *a: None,
+                },
+            )()
+
+        with patch("urllib.request.urlopen", side_effect=capture_urlopen):
+            result = _default_hivemind_client("ltx image to video workflow", timeout=1.0)
+
+        decoded_urls = [unquote_plus(url) for url in seen_urls]
+        assert any("metadata=cs." in url for url in decoded_urls)
+        assert any('"workflow_semantics":{"model_families":["ltx"]}' in url for url in decoded_urls)
+        assert any('"workflow_semantics":{"task_type":"image_to_video"}' in url for url in decoded_urls)
+        assert result["results"][0]["id"] == 7
 
     def test_raises_hivemind_error_on_invalid_json(self) -> None:
         mock_response = type(

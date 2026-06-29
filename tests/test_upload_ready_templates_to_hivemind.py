@@ -20,6 +20,9 @@ def test_envelope_includes_optional_description_in_body_metadata_and_payload() -
     assert "Description: Turns a single portrait into a short motion clip." in data["body"]
     assert data["metadata"]["description"] == "Turns a single portrait into a short motion clip."
     assert data["payload"]["description"] == "Turns a single portrait into a short motion clip."
+    assert data["metadata"]["workflow_semantics_version"] == 1
+    assert data["metadata"]["workflow_semantics"]["media_type"] == "video"
+    assert "Workflow semantics" in data["body"]
 
 
 def test_envelope_includes_normalized_graph_identity(monkeypatch) -> None:
@@ -51,6 +54,9 @@ def test_envelope_includes_normalized_graph_identity(monkeypatch) -> None:
     assert identity["source_file_sha256"] == upload._sha256_text("def build():\n    pass\n")
     assert envelope["data"]["metadata"]["canonical_workflow_hash"] == "graph-hash"
     assert envelope["data"]["metadata"]["node_class_multiset"] == {"KSampler": 1, "LoadImage": 2}
+    semantics = envelope["data"]["metadata"]["workflow_semantics"]
+    assert semantics["node_class_multiset"] == {"KSampler": 1, "LoadImage": 2}
+    assert semantics["promotion_gates"]["parseable_workflow"] is True
 
 
 def test_workflow_identity_falls_back_to_source_hash_when_compile_fails(monkeypatch) -> None:

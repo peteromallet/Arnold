@@ -40,6 +40,7 @@ from scripts.upload_ready_templates_to_hivemind import (
     _post,
     _verify_recorded,
 )
+from scripts.hivemind_workflow_semantics import enrich_resource_data
 
 
 DEFAULT_MANIFEST = REPO_ROOT / "external_workflows" / "manifest.json"
@@ -742,19 +743,17 @@ def _envelope(row: dict[str, Any], *, corpus_dir: Path = DEFAULT_CORPUS_DIR) -> 
     if workflow_payload["python_source"]:
         body = body + "\n\nPython scratchpad source:\n" + workflow_payload["python_source"]
 
-    return {
-        "action": "add_resource",
-        "data": {
-            "kind": "workflow",
-            "source": SOURCE,
-            "external_id": external_id,
-            "title": _title(summary, row),
-            "body": body,
-            "url": _url(row, provenance),
-            "metadata": metadata,
-            "payload": payload,
-        },
+    data = {
+        "kind": "workflow",
+        "source": SOURCE,
+        "external_id": external_id,
+        "title": _title(summary, row),
+        "body": body,
+        "url": _url(row, provenance),
+        "metadata": metadata,
+        "payload": payload,
     }
+    return {"action": "add_resource", "data": enrich_resource_data(data)}
 
 
 def _upload_record(result: dict[str, Any], envelope: dict[str, Any] | None = None) -> dict[str, Any]:

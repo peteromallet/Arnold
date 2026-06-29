@@ -26,6 +26,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.hivemind_workflow_semantics import enrich_resource_data
+except ModuleNotFoundError:  # pragma: no cover - direct script execution.
+    from hivemind_workflow_semantics import enrich_resource_data
+
 
 DEFAULT_CONTRIBUTE_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/functions/v1/contribute-resource"
 DEFAULT_HIVEMIND_API_URL = "https://ujlwuvkrxlvoswwkerdf.supabase.co/rest/v1"
@@ -269,26 +274,24 @@ def _envelope(
         "representation": "python",
         **identity,
     }
-    return {
-        "action": "add_resource",
-        "data": {
-            "kind": "workflow",
-            "source": "vibecomfy",
-            "external_id": f"vibecomfy:ready_template:{template_id}",
-            "title": template_id,
-            "body": _body(row, python_source),
-            "url": f"file://{path}",
-            "metadata": metadata,
-            "payload": {
-                "ready_template_id": template_id,
-                "python_path": path,
-                "python_source": python_source,
-                "converted_from_json": row.get("converted_from_json"),
-                "description": description or None,
-                "graph_identity": identity,
-            },
+    data = {
+        "kind": "workflow",
+        "source": "vibecomfy",
+        "external_id": f"vibecomfy:ready_template:{template_id}",
+        "title": template_id,
+        "body": _body(row, python_source),
+        "url": f"file://{path}",
+        "metadata": metadata,
+        "payload": {
+            "ready_template_id": template_id,
+            "python_path": path,
+            "python_source": python_source,
+            "converted_from_json": row.get("converted_from_json"),
+            "description": description or None,
+            "graph_identity": identity,
         },
     }
+    return {"action": "add_resource", "data": enrich_resource_data(data)}
 
 
 def _load_description_map(path: Path) -> dict[str, str]:

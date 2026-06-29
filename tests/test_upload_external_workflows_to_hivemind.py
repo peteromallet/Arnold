@@ -52,6 +52,9 @@ def test_envelope_uses_summary_title_and_description() -> None:
     assert "Tags: test, image-generation." in data["body"]
     assert data["source"] == "vibecomfy-external"
     assert data["external_id"] == "vibecomfy:external_workflow:abcdef1234567890"
+    assert data["metadata"]["workflow_semantics_version"] == 1
+    assert data["metadata"]["workflow_semantics"]["task_type"] == "text_to_image"
+    assert "Workflow semantics" in data["body"]
 
 
 def test_envelope_metadata_and_payload_carry_summary() -> None:
@@ -95,6 +98,8 @@ def test_envelope_carries_workflow_json_compiled_api_and_python(monkeypatch, tmp
     assert metadata["has_workflow_json"] is True
     assert metadata["has_compiled_api"] is True
     assert metadata["has_python_source"] is True
+    assert metadata["workflow_semantics"]["node_class_multiset"] == {"LoadCheckpoint": 1}
+    assert metadata["workflow_semantics"]["promotion_gates"]["has_compiled_api"] is True
     assert payload["workflow_json"] == workflow_json
     assert payload["compiled_api"] == workflow_json["compiled_api"]
     assert payload["python_source"].startswith("# vibecomfy: generated scratchpad")

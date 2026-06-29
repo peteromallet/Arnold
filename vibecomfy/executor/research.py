@@ -215,6 +215,32 @@ _FAMILY_EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
     "sd": ("sdxl", "sd3", "stable diffusion", "stable_diffusion"),
 }
 
+_HIVEMIND_SEMANTIC_FAMILY_TERMS: dict[str, tuple[str, ...]] = {
+    "wan": ("wanvideo", "wan2", "wan_2", "wan 2", "wan2_1", "wan2.1", "wan2_2", "wan2.2"),
+    "ltx": ("ltx", "ltxv", "lightricks"),
+    "hotshot": ("hotshot", "hotshotxl", "hotshot xl"),
+    "animatediff": ("animatediff", "animate diff"),
+    "sdxl": ("sdxl", "sd_xl", "sd xl", "stable diffusion xl"),
+    "sd3": ("sd3", "stable diffusion 3"),
+    "flux": ("flux", "flux1", "flux.1"),
+    "qwen": ("qwen",),
+    "hunyuan": ("hunyuan", "hyvideo", "hunyuanvideo"),
+    "cogvideo": ("cogvideo", "cog video"),
+}
+
+_HIVEMIND_SEMANTIC_TASK_TERMS: dict[str, tuple[str, ...]] = {
+    "image_to_video": ("image_to_video", "image-to-video", "image to video", "img2vid", "i2v"),
+    "text_to_video": ("text_to_video", "text-to-video", "text to video", "txt2vid", "t2v"),
+    "video_to_video": ("video_to_video", "video-to-video", "video to video", "vid2vid", "v2v"),
+    "audio_to_video": ("audio_to_video", "audio-to-video", "audio to video"),
+    "image_to_image": ("image_to_image", "image-to-image", "image to image", "img2img", "i2i"),
+    "text_to_image": ("text_to_image", "text-to-image", "text to image", "txt2img", "t2i"),
+    "controlnet": ("controlnet", "control net"),
+    "compositing": ("composite", "compositing"),
+    "inpainting": ("inpaint", "inpainting"),
+    "upscale": ("upscale", "upscaler", "upscaling"),
+}
+
 _ANCHOR_ROLE_PRIORITY = ("lora", "model", "sampler", "latent", "conditioning", "exit")
 _REGISTRY_QUERY_STOPWORDS = {
     "comfy",
@@ -387,26 +413,36 @@ def _default_hivemind_client(query: str, timeout: float) -> dict[str, Any]:
     caller can convert it to a warning.
     """
     terms = _hivemind_search_terms(query)
-    if not terms:
+    semantic_filters = _hivemind_semantic_filters(query)
+    if not terms and not semantic_filters:
         return {"results": []}
 
     def _search(search_terms: list[str]) -> dict[str, Any]:
+        rows: list[Any] = []
         ilike_query = _hivemind_ilike_query(search_terms)
-        if not ilike_query:
-            return {"results": []}
+        if ilike_query:
+            params = {
+                "select": "*",
+                "or": ilike_query,
+                "kind": "eq.workflow",
+                "limit": str(_DEFAULT_EXTERNAL_LIMIT * 3),
+            }
+            parsed = _hivemind_get(params, timeout=timeout)
+            if isinstance(parsed, dict):
+                return parsed
+            rows.extend(parsed if isinstance(parsed, list) else [])
 
-        params = {
-            "select": "*",
-            "or": ilike_query,
-            "kind": "eq.workflow",
-            "limit": str(_DEFAULT_EXTERNAL_LIMIT * 3),
-        }
-        parsed = _hivemind_get(params, timeout=timeout)
-        if isinstance(parsed, dict):
-            return parsed
-        rows = parsed if isinstance(parsed, list) else []
+        for semantic_filter in semantic_filters:
+            params = {
+                "select": "*",
+                "kind": "eq.workflow",
+                "metadata": f"cs.{json.dumps(semantic_filter, separators=(',', ':'))}",
+                "limit": str(_DEFAULT_EXTERNAL_LIMIT * 2),
+            }
+            parsed = _hivemind_get(params, timeout=timeout)
+            rows.extend(parsed if isinstance(parsed, list) else [])
 
-        return {"results": _rank_hivemind_rows(rows, query)[:_DEFAULT_EXTERNAL_LIMIT]}
+        return {"results": _rank_hivemind_rows(_dedupe_hivemind_rows(rows), query)[:_DEFAULT_EXTERNAL_LIMIT]}
 
     try:
         return _search(terms)
@@ -438,6 +474,20 @@ def _hivemind_get(params: dict[str, str], *, timeout: float) -> Any:
         raise HivemindError(
             f"Hivemind HTTP error {exc.code}: {exc.reason} ({body})"
         ) from exc
+
+
+def _dedupe_hivemind_rows(rows: list[Any]) -> list[Any]:
+    deduped: list[Any] = []
+    seen: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("id") or f"{row.get('source')}:{row.get('external_id')}:{row.get('title')}")
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+    return deduped
 
 
 def _parse_json_response(body: str) -> Any:
@@ -573,6 +623,26 @@ def _hivemind_ilike_query(search_terms: list[str]) -> str | None:
     return "(" + ",".join(patterns[:16]) + ")"
 
 
+def _hivemind_semantic_filters(query: str) -> list[dict[str, Any]]:
+    """Return JSONB containment filters for recognizable workflow semantics."""
+    text = query.casefold()
+    filters: list[dict[str, Any]] = []
+    for family, aliases in _HIVEMIND_SEMANTIC_FAMILY_TERMS.items():
+        if any(_semantic_alias_matches(text, alias) for alias in aliases):
+            filters.append({"workflow_semantics": {"model_families": [family]}})
+    for task, aliases in _HIVEMIND_SEMANTIC_TASK_TERMS.items():
+        if any(_semantic_alias_matches(text, alias) for alias in aliases):
+            filters.append({"workflow_semantics": {"task_type": task}})
+    return filters[:6]
+
+
+def _semantic_alias_matches(text: str, alias: str) -> bool:
+    alias_low = alias.casefold()
+    if re.search(r"[^a-z0-9]", alias_low):
+        return alias_low in text
+    return re.search(rf"(?<![a-z0-9]){re.escape(alias_low)}(?![a-z0-9])", text) is not None
+
+
 def _query_tokens(query: str) -> list[str]:
     return [m.group(0) for m in _QUERY_TOKEN_RE.finditer(query)]
 
@@ -600,7 +670,7 @@ def _rank_hivemind_rows(rows: list[Any], query: str) -> list[dict[str, Any]]:
             continue
         title = _first_text(row, "title", "name", "class_type")
         body = _first_text(row, "body", "description", "content", "text")
-        haystack = f"{title}\n{body}".casefold()
+        haystack = f"{title}\n{body}\n{_workflow_semantics_text(row)}".casefold()
         row_haystacks.append((index, title, haystack, row))
         for term in query_terms:
             needle = term.casefold()
@@ -614,6 +684,16 @@ def _rank_hivemind_rows(rows: list[Any], query: str) -> list[dict[str, Any]]:
         if row.get("kind") == "workflow":
             score += 25
             reasons.append("hivemind:workflow resource")
+        semantics = _workflow_semantics(row)
+        gates = semantics.get("promotion_gates") if isinstance(semantics.get("promotion_gates"), dict) else {}
+        if gates.get("parseable_workflow") is True:
+            score += 40
+            reasons.append("hivemind:parseable workflow")
+        if gates.get("has_compiled_api") is True:
+            score += 30
+            reasons.append("hivemind:compiled api available")
+        if semantics.get("task_type") in _HIVEMIND_SEMANTIC_TASK_TERMS:
+            score += 10
         seen_reasons: set[str] = set()
         url = str(row.get("url") or row.get("source_url") or "").casefold()
         filename = url.rsplit("/", 1)[-1] if "/" in url else url
@@ -664,6 +744,26 @@ def _first_text(item: dict[str, Any], *keys: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()
     return ""
+
+
+def _workflow_semantics(item: dict[str, Any]) -> dict[str, Any]:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    semantics = metadata.get("workflow_semantics")
+    return semantics if isinstance(semantics, dict) else {}
+
+
+def _workflow_semantics_text(item: dict[str, Any]) -> str:
+    semantics = _workflow_semantics(item)
+    values: list[str] = []
+    for key in ("media_type", "task_type"):
+        value = semantics.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    for key in ("model_families", "searchable_aliases", "node_types", "custom_nodes", "models"):
+        value = semantics.get(key)
+        if isinstance(value, list):
+            values.extend(str(item) for item in value if item is not None)
+    return " ".join(values)
 
 
 def _coerce_tasks(value: Any) -> list[str]:
@@ -767,6 +867,12 @@ def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
         pack = item.get("channel", item.get("source_type", item.get("kind"))) or _domain(url)
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     payload = item.get("payload") if isinstance(item.get("payload"), dict) else {}
+    workflow_semantics = metadata.get("workflow_semantics") if isinstance(metadata.get("workflow_semantics"), dict) else {}
+    promotion_gates = (
+        workflow_semantics.get("promotion_gates")
+        if isinstance(workflow_semantics.get("promotion_gates"), dict)
+        else {}
+    )
     ready_id = _first_text(metadata, "ready_template_id") or _first_text(payload, "ready_template_id")
     path = (
         _first_text(item, "path")
@@ -799,6 +905,8 @@ def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
         "url": url,
         "node_types": node_types,
         "workflow_schema": workflow_schema,
+        "workflow_semantics": workflow_semantics or None,
+        "promotion_gates": promotion_gates or None,
     }
 
 
@@ -2457,13 +2565,59 @@ def _graph_node_class_types(graph: dict | None) -> list[str]:
     if not isinstance(graph, dict):
         return []
     api_graph = graph.get("compiled_api") if isinstance(graph.get("compiled_api"), dict) else graph
+    ui_nodes = graph.get("nodes")
     out: list[str] = []
+    if isinstance(ui_nodes, list):
+        for node in ui_nodes:
+            if isinstance(node, Mapping):
+                ct = node.get("class_type") or node.get("type")
+                if isinstance(ct, str) and ct:
+                    out.append(ct)
+        if out:
+            return out
+    if isinstance(ui_nodes, Mapping):
+        for node in ui_nodes.values():
+            if isinstance(node, Mapping):
+                ct = node.get("class_type") or node.get("type")
+                if isinstance(ct, str) and ct:
+                    out.append(ct)
+        if out:
+            return out
     for node in api_graph.values():
         if isinstance(node, Mapping):
-            ct = node.get("class_type")
+            ct = node.get("class_type") or node.get("type")
             if isinstance(ct, str) and ct:
                 out.append(ct)
     return out
+
+
+def _slice_allowed_for_graph_domain(
+    slice_obj: "WorkflowSlice",
+    *,
+    graph_domain: str | None,
+) -> bool:
+    """Return whether *slice_obj* should remain eligible for a target domain."""
+    if graph_domain in (None, "multi"):
+        return True
+    slice_domain = _media_domain_from_node_types(slice_obj.node_types)
+    if slice_domain is None or slice_domain == graph_domain:
+        return True
+    return _slice_is_cross_media_adapter(slice_obj)
+
+
+def _filter_slices_for_graph_domain(
+    graph: dict | None,
+    slices: tuple["WorkflowSlice", ...],
+) -> tuple["WorkflowSlice", ...]:
+    """Apply the media-domain gate to slices for both plans and packets."""
+    graph_domain = _media_domain_from_node_types(_graph_node_class_types(graph))
+    if graph_domain in (None, "multi"):
+        return slices
+    return tuple(
+        slice_obj
+        for slice_obj in slices
+        if _slice_allowed_for_graph_domain(slice_obj, graph_domain=graph_domain)
+    )
 
 
 def _slice_is_cross_media_adapter(
@@ -2550,12 +2704,9 @@ def _build_adaptation_plan(
                 # pure domain gate.  Be permissive on undecided domains (slice
                 # domain None, or graph domain multi/None).
                 if gate_active:
-                    slice_domain = _media_domain_from_node_types(
-                        candidate_slice.node_types
-                    )
-                    if (
-                        slice_domain is not None
-                        and slice_domain != graph_domain
+                    if not _slice_allowed_for_graph_domain(
+                        candidate_slice,
+                        graph_domain=graph_domain,
                     ):
                         continue
                 source_records = _selected_source_records(candidate_slice)
@@ -2606,6 +2757,7 @@ def _build_adaptation_plan(
         if (
             first_domain is not None
             and first_domain != graph_domain
+            and not _slice_is_cross_media_adapter(slices[0])
         ):
             return None
 
@@ -3012,7 +3164,8 @@ def research(
     # Graph is not directly available in research(), so inspection and
     # adaptation plan are left empty.  The executor wires graph inspection
     # Thread the attached target graph into adaptation planning (T14).
-    precedent_slices = _build_precedent_slices(tuple(sources))
+    all_precedent_slices = _build_precedent_slices(tuple(sources))
+    precedent_slices = _filter_slices_for_graph_domain(graph, all_precedent_slices)
     adaptation_plan = _build_adaptation_plan(
         query=query,
         graph=graph,
