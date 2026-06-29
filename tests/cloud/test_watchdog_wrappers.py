@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib.util
 import json
 import os
@@ -3376,6 +3377,10 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
     ws = tmp / "ws"
     marker = tmp / "markers"
     repair_dir = tmp / "repair-data"
+    spec_path = ws / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
     plan_name = "m8-generated-assets-and-merge-20260629-1937"
     _write_plan(
         ws / ".megaplan" / "plans" / plan_name,
@@ -3383,7 +3388,7 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
         events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
     )
     _write_chain_state(
-        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        ws / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
         {
             "current_milestone_index": 7,
             "current_plan_name": plan_name,
@@ -3408,6 +3413,7 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
         ws,
         marker,
         repair_dir,
+        remote_spec_path=str(spec_path),
         env_overrides={"CLOUD_WATCHDOG_CHAIN_CYCLE_REPEATS": "3"},
     )
 
