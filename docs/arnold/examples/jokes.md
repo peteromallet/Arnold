@@ -32,13 +32,16 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = 'jokes'
-description: str = 'Joke pipeline: drafts a joke, tightens the beat, and emits the final artifact through a direct native program.'
+name: str = "jokes"
+description: str = (
+    "Joke pipeline: drafts a joke, tightens the beat, and emits the final artifact "
+    "through a direct native program."
+)
 
-driver: tuple[str, str] = ('native', 'linear')
-entrypoint: str = 'build_pipeline'
-arnold_api_version: str = '1.0'
-capabilities: tuple[str, ...] = ('creative', 'joke')
+driver: tuple[str, str] = ("native", "linear")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ("creative", "joke")
 ```
 
 ## Step Surface
