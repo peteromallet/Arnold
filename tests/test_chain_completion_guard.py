@@ -86,10 +86,13 @@ def _write_plan(
     finalize_tasks: list[dict[str, object]] | None = None,
     execution_batch: bool = True,
     waiver: bool = False,
+    latest_failure: dict[str, object] | None = None,
 ) -> Path:
     plan_dir = root / ".megaplan" / "plans" / "plan-m1"
     plan_dir.mkdir(parents=True, exist_ok=True)
     state: dict[str, object] = {"name": "plan-m1", "current_state": current_state}
+    if latest_failure is not None:
+        state["latest_failure"] = latest_failure
     if base_sha is not None:
         state["meta"] = {"chain_policy": {"milestone_base_sha": base_sha}}
     (plan_dir / "state.json").write_text(json.dumps(state) + "\n", encoding="utf-8")
@@ -904,6 +907,43 @@ def test_merged_pr_completion_allows_finalized_plan_with_published_semantic_diff
         current_state="finalized",
         base_sha=base,
         finalize_tasks=[{"id": "T1"}],
+    )
+
+    ok, reason = _chain_completion_guard(
+        tmp_path,
+        {
+            **_record(),
+            "pr_number": 62,
+            "pr_state": "merged",
+            "pr_merge_sha": published_sha,
+        },
+        implementation_milestone=True,
+    )
+
+    assert ok is True
+    assert "published PR target" in reason
+
+
+def test_merged_pr_completion_allows_authority_block_with_published_semantic_diff(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    local_branch = _git(tmp_path, "branch", "--show-current")
+    published_sha = _commit_published_semantic_change(
+        tmp_path,
+        base,
+        branch="published-authority-block-semantic",
+        return_to=local_branch,
+    )
+    _write_plan(
+        tmp_path,
+        current_state="blocked",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1"}],
+        latest_failure={
+            "kind": "authority_divergence",
+            "message": "execute terminal success lacks corroborated task completion",
+        },
     )
 
     ok, reason = _chain_completion_guard(
