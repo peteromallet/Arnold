@@ -1319,10 +1319,104 @@ def test_watchdog_skips_relaunch_while_review_pr_is_still_open() -> None:
     text = _wrapper("arnold-watchdog")
 
     assert "chain_wait_status()" in text
-    assert 'wait_status="$(chain_wait_status "$workspace")"' in text
+    assert 'wait_status="$(chain_wait_status "$workspace" "$remote_spec")"' in text
     assert 'if [[ "$health" == "awaiting_pr_merge" ]]; then' in text
     assert 'report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge"' in text
-    assert '["gh", "pr", "view", str(int(pr_number)), "--json", "state"]' in text
+    assert '["gh", "pr", "view", str(pr_number), "--json", "state"]' in text
+    assert '["gh", "pr", "merge", str(pr_number), *flags]' in text
+
+
+def test_watchdog_stopped_tmux_reports_awaiting_pr_merge_from_chain_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: review\n", encoding="utf-8")
+    (chain_dir / "demo-chain.json").write_text(
+        json.dumps({"last_state": "awaiting_pr_merge"}),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("chain_wait_status"),
+            _extract_wrapper_function("session_health_status"),
+            """
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  return 0
+}
+""".strip(),
+            f"session_health_status demo-session {str(workspace)!r} {str(spec_path)!r} chain ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "awaiting_pr_merge"
+
+
+def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+    (chain_dir / "demo-chain.json").write_text(
+        json.dumps({"last_state": "awaiting_pr_merge", "pr_number": 42}),
+        encoding="utf-8",
+    )
+
+    gh_log = tmp_path / "gh.log"
+    merged_flag = tmp_path / "merged"
+    gh_path = tmp_path / "gh"
+    gh_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                f"printf '%s\\n' \"$*\" >> {str(gh_log)!r}",
+                "if [[ \"$1 $2 $3\" == \"pr view 42\" ]]; then",
+                f"  if [[ -f {str(merged_flag)!r} ]]; then",
+                "    printf '%s\\n' '{\"state\":\"MERGED\"}'",
+                "  else",
+                "    printf '%s\\n' '{\"state\":\"OPEN\"}'",
+                "  fi",
+                "  exit 0",
+                "fi",
+                "if [[ \"$1 $2 $3\" == \"pr ready 42\" ]]; then",
+                "  exit 0",
+                "fi",
+                "if [[ \"$1 $2 $3\" == \"pr merge 42\" ]]; then",
+                f"  touch {str(merged_flag)!r}",
+                "  exit 0",
+                "fi",
+                "exit 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("chain_wait_status"),
+            f"chain_wait_status {str(workspace)!r} {str(spec_path)!r}",
+        ]
+    )
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "none"
+    gh_calls = gh_log.read_text(encoding="utf-8").splitlines()
+    assert "pr ready 42" in gh_calls
+    assert "pr merge 42 --auto --squash --delete-branch" in gh_calls
 
 
 def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace() -> None:

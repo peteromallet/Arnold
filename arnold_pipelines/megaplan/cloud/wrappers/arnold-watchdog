@@ -1007,7 +1007,7 @@ session_health_status() {
   local wait_status
   if ! tmux has-session -t "$session" 2>/dev/null; then
     if [[ "$run_kind" == "chain" ]]; then
-      wait_status="$(chain_wait_status "$workspace")"
+      wait_status="$(chain_wait_status "$workspace" "$remote_spec")"
       if [[ "$wait_status" != "none" ]]; then
         echo "$wait_status"
         return 0
@@ -1040,7 +1040,7 @@ session_health_status() {
       return 0
     fi
 
-    wait_status="$(chain_wait_status "$workspace")"
+    wait_status="$(chain_wait_status "$workspace" "$remote_spec")"
     if [[ "$wait_status" != "none" ]]; then
       echo "$wait_status"
       return 0
@@ -1987,13 +1987,15 @@ reap_stale_repairs() {
 
 chain_wait_status() {
   local workspace="$1"
-  python3 - "$workspace" <<'PY'
+  local remote_spec="${2:-}"
+  python3 - "$workspace" "$remote_spec" <<'PY'
 import json
 import pathlib
 import subprocess
 import sys
 
 workspace = pathlib.Path(sys.argv[1])
+remote_spec = sys.argv[2]
 plans_dir = workspace / ".megaplan" / "plans"
 chain_paths = sorted(
     {
@@ -2004,6 +2006,83 @@ chain_paths = sorted(
     key=lambda path: path.stat().st_mtime,
     reverse=True,
 )
+
+
+def _spec_path() -> pathlib.Path | None:
+    if not remote_spec:
+        return None
+    path = pathlib.Path(remote_spec)
+    if not path.is_absolute():
+        path = workspace / path
+    return path
+
+
+def _merge_policy() -> str:
+    path = _spec_path()
+    if path is None:
+        return ""
+    try:
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.split("#", 1)[0].strip()
+            if not line.startswith("merge_policy:"):
+                continue
+            value = line.split(":", 1)[1].strip().strip("'\"")
+            if value == "manual":
+                return "review"
+            return value
+    except Exception:
+        return ""
+    return ""
+
+
+def _pr_state(pr_number: int) -> str:
+    proc = subprocess.run(
+        ["gh", "pr", "view", str(pr_number), "--json", "state"],
+        cwd=workspace,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        return ""
+    state = json.loads(proc.stdout or "{}").get("state", "")
+    return state.lower() if isinstance(state, str) else ""
+
+
+def _run_merge_command(pr_number: int, *flags: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["gh", "pr", "merge", str(pr_number), *flags],
+        cwd=workspace,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def _attempt_auto_merge(pr_number: int) -> None:
+    subprocess.run(
+        ["gh", "pr", "ready", str(pr_number)],
+        cwd=workspace,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    proc = _run_merge_command(pr_number, "--auto", "--squash", "--delete-branch")
+    combined = f"{proc.stdout or ''} {proc.stderr or ''}"
+    if proc.returncode == 0:
+        return
+    if "already checked out" in combined:
+        _run_merge_command(pr_number, "--auto", "--squash")
+        return
+    if "Auto merge is not allowed" in combined:
+        proc = _run_merge_command(pr_number, "--squash", "--delete-branch")
+        combined = f"{proc.stdout or ''} {proc.stderr or ''}"
+        if proc.returncode != 0 and "already checked out" in combined:
+            _run_merge_command(pr_number, "--squash")
+
 
 for path in chain_paths:
     try:
@@ -2017,17 +2096,13 @@ for path in chain_paths:
         print("awaiting_pr_merge")
         raise SystemExit(0)
     try:
-        proc = subprocess.run(
-            ["gh", "pr", "view", str(int(pr_number)), "--json", "state"],
-            cwd=workspace,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if proc.returncode == 0:
-            state = json.loads(proc.stdout or "{}").get("state", "")
-            if isinstance(state, str) and state.lower() == "merged":
+        pr_number_int = int(pr_number)
+        if _pr_state(pr_number_int) == "merged":
+            print("none")
+            raise SystemExit(0)
+        if _merge_policy() == "auto":
+            _attempt_auto_merge(pr_number_int)
+            if _pr_state(pr_number_int) == "merged":
                 print("none")
                 raise SystemExit(0)
     except Exception:
