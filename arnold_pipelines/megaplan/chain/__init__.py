@@ -2052,8 +2052,14 @@ def _awaiting_human_can_retry(root: Path, plan: str | None) -> bool:
 
 
 def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None:
+    raw = _plan_state_payload_from_name(root, plan)
+    current_state = raw.get("current_state")
+    return current_state if isinstance(current_state, str) else None
+
+
+def _plan_state_payload_from_name(root: Path, plan: str | None) -> dict[str, Any]:
     if not plan:
-        return None
+        return {}
     try:
         plan_dir = resolve_plan_dir(root, plan)
         raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
@@ -2064,11 +2070,215 @@ def _plan_current_state_from_payload(root: Path, plan: str | None) -> str | None
         OSError,
         UnicodeDecodeError,
     ):
-        return None
+        return {}
     if not isinstance(raw, dict):
+        return {}
+    return raw
+
+
+def _chain_policy_milestone_label(plan_state: dict[str, Any]) -> str | None:
+    meta = plan_state.get("meta")
+    if not isinstance(meta, dict):
         return None
-    current_state = raw.get("current_state")
-    return current_state if isinstance(current_state, str) else None
+    policy = meta.get("chain_policy")
+    if not isinstance(policy, dict):
+        return None
+    label = policy.get("milestone_label")
+    return label if isinstance(label, str) and label else None
+
+
+def _record_pr_number(record: dict[str, Any] | None) -> int | None:
+    if not isinstance(record, dict):
+        return None
+    raw = record.get("pr_number")
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _completed_prefix_index(spec: ChainSpec, completed_labels: set[str]) -> int:
+    for index, milestone in enumerate(spec.milestones):
+        if milestone.label not in completed_labels:
+            return index
+    return len(spec.milestones)
+
+
+def _append_reconciliation_audit(
+    state: ChainState,
+    *,
+    plan_name: str | None,
+    plan_state: dict[str, Any],
+    pr_number: int | None,
+    pr_state: str | None,
+) -> None:
+    current_state = plan_state.get("current_state")
+    if not isinstance(current_state, str):
+        current_state = None
+    state.metadata["ground_truth_reconciliation"] = {
+        "reconciled_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "plan": plan_name,
+        "current_state": current_state,
+        "latest_failure": plan_state.get("latest_failure"),
+        "last_gate": plan_state.get("last_gate"),
+        "active_step": plan_state.get("active_step"),
+        "pr_number": pr_number,
+        "pr_state": pr_state,
+    }
+
+
+def _reconcile_chain_from_ground_truth(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    *,
+    writer,
+    push_enabled: bool = True,
+) -> ChainState:
+    """Derive the chain cursor from plan state.json and live GitHub PR state."""
+
+    labels_to_index = {
+        milestone.label: index for index, milestone in enumerate(spec.milestones)
+    }
+    completed_by_label = _completed_records_by_label(state)
+    reconciled_completed: list[dict[str, Any]] = []
+
+    for milestone in spec.milestones:
+        record = completed_by_label.get(milestone.label)
+        if not isinstance(record, dict):
+            continue
+        record = dict(record)
+        pr_number = _record_pr_number(record)
+        if push_enabled and milestone.branch and pr_number is not None:
+            live_pr_state = _pr_state(root, pr_number, writer=writer)
+            if record.get("pr_state") != live_pr_state:
+                writer(
+                    f"[chain] reconciled completed PR state for {milestone.label} "
+                    f"#{pr_number}: {record.get('pr_state') or 'unknown'} -> "
+                    f"{live_pr_state}\n"
+                )
+            record["pr_state"] = live_pr_state
+            if live_pr_state != "merged":
+                writer(
+                    f"[chain] completed record for {milestone.label} is not "
+                    f"authoritative yet: PR #{pr_number} state={live_pr_state}\n"
+                )
+                continue
+        reconciled_completed.append(record)
+
+    if reconciled_completed != state.completed:
+        state.completed = reconciled_completed
+
+    completed_labels = {
+        record.get("label")
+        for record in state.completed
+        if isinstance(record, dict) and isinstance(record.get("label"), str)
+    }
+    first_incomplete = _completed_prefix_index(spec, completed_labels)
+    if state.current_milestone_index < first_incomplete:
+        writer(
+            f"[chain] reconciled cursor index: {state.current_milestone_index} "
+            f"-> {first_incomplete} from completed milestones\n"
+        )
+        state.current_milestone_index = first_incomplete
+        if first_incomplete >= len(spec.milestones):
+            state.current_plan_name = None
+            state.pr_number = None
+            state.pr_state = None
+            state.last_state = "done"
+
+    plan_name = state.current_plan_name
+    plan_state = _plan_state_payload_from_name(root, plan_name)
+    if plan_state:
+        label = _chain_policy_milestone_label(plan_state)
+        plan_index = labels_to_index.get(label) if label is not None else None
+        if plan_index is not None and state.current_milestone_index != plan_index:
+            writer(
+                f"[chain] reconciled cursor index from plan {plan_name}: "
+                f"{state.current_milestone_index} -> {plan_index}\n"
+            )
+            state.current_milestone_index = plan_index
+        current_state = plan_state.get("current_state")
+        preserve_pr_cursor = (
+            state.last_state in {STATE_AWAITING_PR_MERGE, "pr_closed"}
+            and state.pr_number is not None
+        )
+        if (
+            isinstance(current_state, str)
+            and state.last_state != current_state
+            and not preserve_pr_cursor
+        ):
+            writer(
+                f"[chain] synced last_state for {plan_name}: "
+                f"{state.last_state or 'unknown'} -> {current_state}\n"
+            )
+            state.last_state = current_state
+
+    active_index = state.current_milestone_index
+    active_milestone = (
+        spec.milestones[active_index]
+        if 0 <= active_index < len(spec.milestones)
+        else None
+    )
+    active_uses_pr = bool(
+        push_enabled and active_milestone is not None and active_milestone.branch
+    )
+    live_active_pr_state: str | None = None
+    if (
+        active_uses_pr
+        and state.pr_number is not None
+        and state.last_state != "pr_closed"
+    ):
+        live_active_pr_state = _pr_state(root, state.pr_number, writer=writer)
+        if state.pr_state != live_active_pr_state:
+            writer(
+                f"[chain] reconciled live PR state for "
+                f"{active_milestone.label if active_milestone else 'milestone'} "
+                f"#{state.pr_number}: {state.pr_state or 'unknown'} -> "
+                f"{live_active_pr_state}\n"
+            )
+        state.pr_state = live_active_pr_state
+
+    current_plan_state = plan_state.get("current_state") if plan_state else None
+    if (
+        active_uses_pr
+        and state.pr_number is not None
+        and current_plan_state in {STATE_FINALIZED, STATE_DONE}
+        and live_active_pr_state == "open"
+        and state.last_state != STATE_AWAITING_PR_MERGE
+    ):
+        writer(
+            f"[chain] plan {plan_name} is {current_plan_state} but PR "
+            f"#{state.pr_number} is open; waiting for merge\n"
+        )
+        state.last_state = STATE_AWAITING_PR_MERGE
+
+    if active_milestone is not None and active_milestone.label in completed_labels:
+        next_index = _completed_prefix_index(spec, completed_labels)
+        if next_index != state.current_milestone_index:
+            writer(
+                f"[chain] reconciled cursor past completed milestone "
+                f"{active_milestone.label}: {state.current_milestone_index} "
+                f"-> {next_index}\n"
+            )
+            state.current_milestone_index = next_index
+            if next_index < len(spec.milestones):
+                state.current_plan_name = None
+                state.pr_number = None
+                state.pr_state = None
+
+    _append_reconciliation_audit(
+        state,
+        plan_name=plan_name,
+        plan_state=plan_state,
+        pr_number=state.pr_number,
+        pr_state=state.pr_state,
+    )
+    chain_spec.save_chain_state(spec_path, state)
+    return state
 
 
 def _sync_chain_last_state_from_plan(
@@ -2536,6 +2746,14 @@ def run_chain(
         "yes",
         "YES",
     }
+    state = _reconcile_chain_from_ground_truth(
+        root,
+        spec_path,
+        spec,
+        state,
+        writer=writer,
+        push_enabled=push_enabled,
+    )
 
     events: list[dict[str, Any]] = []
 
@@ -2679,6 +2897,17 @@ def run_chain(
         except CliError as exc:
             log(f"terminal PR reconciliation skipped: {exc.message}")
     while idx < len(spec.milestones):
+        state = _reconcile_chain_from_ground_truth(
+            root,
+            spec_path,
+            spec,
+            state,
+            writer=writer,
+            push_enabled=push_enabled,
+        )
+        idx = max(state.current_milestone_index, 0)
+        if idx >= len(spec.milestones):
+            break
         milestone = spec.milestones[idx]
         log(f"milestone {milestone.label} starting")
         use_pr = push_enabled and bool(milestone.branch)
@@ -2753,8 +2982,60 @@ def run_chain(
                         milestone_label=milestone.label,
                         pr_number=state.pr_number,
                     )
-                state.pr_state = "merged" if pr_state == "merged" else "awaiting_merge"
+                state.pr_state = pr_state
                 chain_spec.save_chain_state(spec_path, state)
+                if pr_state != "merged":
+                    if spec.merge_policy != "review":
+                        _mark_pr_ready(root, state.pr_number, writer=writer)
+                        state.pr_state = _enable_auto_merge(
+                            root, state.pr_number, writer=writer
+                        )
+                        chain_spec.save_chain_state(spec_path, state)
+                        pr_state = _pr_state(root, state.pr_number, writer=writer)
+                        state.pr_state = pr_state
+                        chain_spec.save_chain_state(spec_path, state)
+                        if pr_state == "closed":
+                            log(
+                                f"PR #{state.pr_number} closed while awaiting merge; "
+                                "stopping chain"
+                            )
+                            return _stop_for_closed_pr(
+                                spec_path=spec_path,
+                                state=state,
+                                events=events,
+                                spec=spec,
+                                milestone_label=milestone.label,
+                                pr_number=state.pr_number,
+                            )
+                        if pr_state == "merged":
+                            log(
+                                f"PR #{state.pr_number} merged; advancing past "
+                                f"{milestone.label}"
+                            )
+                        else:
+                            log(
+                                f"PR #{state.pr_number} auto-merge enabled; "
+                                f"state={pr_state}; awaiting merge"
+                            )
+                            return _result(
+                                STATE_AWAITING_PR_MERGE,
+                                state,
+                                events,
+                                spec=spec,
+                                reason=(
+                                    f"milestone {milestone.label} PR "
+                                    f"#{state.pr_number} is {pr_state}"
+                                ),
+                            )
+                    else:
+                        log(f"PR #{state.pr_number} state={pr_state}; awaiting merge")
+                        return _result(
+                            STATE_AWAITING_PR_MERGE,
+                            state,
+                            events,
+                            spec=spec,
+                            reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
+                        )
                 if pr_state != "merged":
                     log(f"PR #{state.pr_number} state={pr_state}; awaiting merge")
                     return _result(
@@ -3141,7 +3422,7 @@ def run_chain(
                 _mark_pr_ready(root, state.pr_number, writer=writer)
                 if spec.merge_policy == "review":
                     state.last_state = STATE_AWAITING_PR_MERGE
-                    state.pr_state = "awaiting_merge"
+                    state.pr_state = current_pr_state
                     chain_spec.save_chain_state(spec_path, state)
                     log(f"PR #{state.pr_number} ready; awaiting manual merge")
                     _capture_sync_state(
@@ -3269,6 +3550,7 @@ def run_chain(
         idx += 1
         state.current_milestone_index = idx
         state.current_plan_name = None
+        state.last_state = "done"
         state.pr_number = None
         state.pr_state = None
         chain_spec.save_chain_state(spec_path, state)
