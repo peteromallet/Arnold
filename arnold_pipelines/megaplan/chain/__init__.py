@@ -2096,6 +2096,21 @@ def _sync_chain_last_state_from_plan(
     return state
 
 
+def _record_chain_last_state_after_plan_run(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    outcome: DriverOutcome,
+    *,
+    writer,
+) -> ChainState:
+    """Persist the chain cursor, then reconcile it from live plan state.json."""
+
+    state.last_state = outcome.status
+    chain_spec.save_chain_state(spec_path, state)
+    return _sync_chain_last_state_from_plan(root, spec_path, state, writer=writer)
+
+
 def _resolve_idea_path(root: Path, idea: str) -> Path:
     idea_path = Path(idea).expanduser()
     if idea_path.is_absolute():
@@ -2541,8 +2556,13 @@ def run_chain(
                 spec,
                 writer=writer,
             )
-            state.last_state = outcome.status
-            chain_spec.save_chain_state(spec_path, state)
+            state = _record_chain_last_state_after_plan_run(
+                root,
+                spec_path,
+                state,
+                outcome,
+                writer=writer,
+            )
             decision = _handle_outcome(outcome, spec=spec, writer=writer, root=root)
             if decision == "authority_blocked":
                 state.last_state = "authority_divergence"
@@ -2570,8 +2590,13 @@ def run_chain(
                     spec,
                     writer=writer,
                 )
-                state.last_state = outcome.status
-                chain_spec.save_chain_state(spec_path, state)
+                state = _record_chain_last_state_after_plan_run(
+                    root,
+                    spec_path,
+                    state,
+                    outcome,
+                    writer=writer,
+                )
                 if outcome.status != "done":
                     return _result(
                         "stopped", state, events, spec=spec, reason="seed retry failed"
@@ -2957,8 +2982,13 @@ def run_chain(
                     f"state.json={reconciled_state}"
                 )
                 outcome.status = "done"
-        state.last_state = outcome.status
-        chain_spec.save_chain_state(spec_path, state)
+        state = _record_chain_last_state_after_plan_run(
+            root,
+            spec_path,
+            state,
+            outcome,
+            writer=writer,
+        )
         decision = _handle_outcome(
             outcome,
             spec=spec,

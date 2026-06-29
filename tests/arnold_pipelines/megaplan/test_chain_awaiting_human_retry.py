@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from arnold_pipelines.megaplan.auto import DriverOutcome
 from arnold_pipelines.megaplan.chain import (
     _handle_outcome,
+    _record_chain_last_state_after_plan_run,
     _sync_chain_last_state_from_plan,
 )
 from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state
@@ -147,6 +148,43 @@ def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path)
         tmp_path,
         spec_path,
         state,
+        writer=messages.append,
+    )
+
+    assert synced.last_state == "finalized"
+    assert load_chain_state(spec_path).last_state == "finalized"
+    assert any("awaiting_human -> finalized" in message for message in messages)
+
+
+def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
+    tmp_path: Path,
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    plan_dir = tmp_path / ".megaplan" / "plans" / "m7-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        '{"name":"m7-plan","current_state":"finalized","latest_failure":null}',
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+    state = ChainState(
+        current_milestone_index=6,
+        current_plan_name="m7-plan",
+        last_state="awaiting_human",
+    )
+
+    synced = _record_chain_last_state_after_plan_run(
+        tmp_path,
+        spec_path,
+        state,
+        DriverOutcome(
+            status="awaiting_human",
+            plan="m7-plan",
+            final_state="awaiting_human",
+            iterations=1,
+            reason="stale chain halt",
+        ),
         writer=messages.append,
     )
 

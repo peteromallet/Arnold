@@ -194,6 +194,8 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "Classification guide:" in text
     assert "LIVE FAILURE: The latest_failure is recent" in text
     assert "STALE STATE: The latest_failure predates a successful run" in text
+    assert "## STATE MISMATCH DETECTED + CLEARED" in text
+    assert "state mismatch detected + cleared" in text
     assert "repair_clear_stale_state_if_needed()" in text
     assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
     assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
@@ -366,6 +368,7 @@ def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["failure_classification"] == "stale_state"
+    assert payload["state_mismatch"]["detected"] is False
     stale = payload["stale_state"]
     assert stale["classification"] == "STALE STATE"
     assert stale["latest_failure_stale"] is True
@@ -496,6 +499,76 @@ def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_resu
     assert list(plan_dir.glob("phase_result.stale-*.json"))
     repair_data = json.loads(data_path.read_text(encoding="utf-8"))
     assert repair_data["stale_state_actions"][0]["actions"]
+
+
+def test_repair_loop_clear_stale_state_syncs_plan_chain_mismatch(tmp_path: Path) -> None:
+    plan_dir = tmp_path / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = tmp_path / ".megaplan" / "briefs" / "demo" / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    state_path = plan_dir / "state.json"
+    chain_path = chain_dir / "chain-demo.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "finalized",
+                "latest_failure": None,
+                "meta": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    chain_path.write_text(
+        json.dumps(
+            {
+                "current_plan_name": "demo-plan",
+                "last_state": "awaiting_human",
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(json.dumps({"initial_facts": {}, "iterations": []}), encoding="utf-8")
+    failure_context = {
+        "plan_latest_failure": {
+            "plan_name": "demo-plan",
+            "state_path": str(state_path),
+            "current_state": "finalized",
+        },
+        "stale_state": {
+            "classification": "NO LATEST FAILURE",
+            "summary": "no latest_failure is set",
+        },
+        "state_mismatch": {
+            "detected": True,
+            "plan_state": "finalized",
+            "chain_last_state": "awaiting_human",
+            "plan_name": "demo-plan",
+            "chain_plan_name": "demo-plan",
+            "plan_state_path": str(state_path),
+            "chain_state_path": str(chain_path),
+        },
+    }
+
+    program = _extract_repair_program(
+        "repair_clear_stale_state_if_needed",
+        "python3 - \"$DATA_FILE\" \"$failure_context\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path), json.dumps(failure_context))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.startswith("cleared:")
+    assert "state mismatch detected + cleared" in result.stdout
+    chain_state = json.loads(chain_path.read_text(encoding="utf-8"))
+    assert chain_state["last_state"] == "finalized"
+    records = chain_state["metadata"]["watchdog_repair_state_mismatch_clears"]
+    assert records[0]["chain_last_state_was"] == "awaiting_human"
+    repair_data = json.loads(data_path.read_text(encoding="utf-8"))
+    action = repair_data["stale_state_actions"][0]
+    assert action["state_mismatch"]["cleared"] is True
+    assert repair_data["initial_facts"]["state_mismatch"]["cleared"] is True
 
 
 def test_repair_loop_collects_state_meta_user_action_resolutions(tmp_path: Path) -> None:
@@ -2121,7 +2194,7 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\trepair\trepair_dispatched\tstate mismatch repair loop dispatched\t" in report
     assert "\tobserve\tneeds_human\t" not in report
     assert "DISPATCH" in result.stderr
     assert "REPAIR" not in result.stderr
@@ -2697,6 +2770,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "repair_data_record_mechanical()" in text
     assert "repair_data_record_kimi()" in text
     assert "collect_failure_context_json()" in text
+    assert "PLAN_STATUS_STATE_MISMATCH" in _wrapper("arnold-watchdog")
     assert "render_failure_summary()" in text
     assert '"failure_context"' in text
     assert '"raw_failure_signals"' in text
