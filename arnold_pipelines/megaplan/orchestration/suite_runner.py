@@ -48,6 +48,7 @@ class SuiteRunResult:
     raw_log_path: Path
     code_hash: str
     collections_parse_ok: bool
+    collection_errors: list[str] | None = None
     # Set only when ``status == "timeout"``: ``"idle"`` (output stalled — suite
     # wedged) vs ``"deadline"`` (hit the absolute runaway ceiling). ``None``
     # otherwise. Lets callers write an accurate, actionable timeout note.
@@ -121,9 +122,47 @@ _NODEID_LINE_RE = re.compile(
     r"^(FAILED|PASSED)\s+(\S+)"
 )
 _SUMMARY_COUNT_RE = re.compile(r"(\d+)\s+(failed|passed)\b")
+_COLLECTION_ERROR_LINE_RE = re.compile(
+    r"^ERROR(?:\s+collecting)?\s+(.+?)(?:\s+-\s+.*)?$"
+)
+_COLLECTION_ERROR_KEYWORDS = (
+    "ImportError",
+    "ModuleNotFoundError",
+    "collection error",
+    "No module named",
+    "Interrupted:",
+    "errors during collection",
+)
 
 
-def _parse_pytest_output(stdout: str) -> dict[str, Any]:
+def _dedupe_preserving_order(items: Iterable[str]) -> list[str]:
+    return list(dict.fromkeys(item for item in items if item))
+
+
+def _collection_errors_from_output(stdout: str, exit_code: int | None) -> list[str]:
+    """Return structural pytest collection/import failures as stable IDs."""
+    has_collection_signal = exit_code == 2 or any(
+        keyword in stdout for keyword in _COLLECTION_ERROR_KEYWORDS
+    )
+    if not has_collection_signal:
+        return []
+
+    errors: list[str] = []
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        match = _COLLECTION_ERROR_LINE_RE.match(stripped)
+        if not match:
+            continue
+        target = match.group(1).strip()
+        if target and not target.startswith(("at ", "(")):
+            errors.append(target)
+
+    if not errors:
+        errors.append("pytest_collection_error")
+    return _dedupe_preserving_order(errors)
+
+
+def _parse_pytest_output(stdout: str, exit_code: int | None = None) -> dict[str, Any]:
     """Extract collected count, failures, passes, and collected ids from
     pytest stdout (assumes ``--tb=no -q --no-header -rA`` flags).
 
@@ -165,12 +204,19 @@ def _parse_pytest_output(stdout: str) -> dict[str, Any]:
         parse_ok = False
 
     collected_ids = list(dict.fromkeys(failures + passes))
+    collection_errors = _collection_errors_from_output(stdout, exit_code)
+    if collection_errors:
+        failures = _dedupe_preserving_order(failures + collection_errors)
+        collected_ids = _dedupe_preserving_order(collected_ids + collection_errors)
+        parse_ok = True
+        collected = max(collected, len(collected_ids))
 
     return {
         "collected": collected,
         "collected_ids": collected_ids,
         "failures": failures,
         "passes": passes,
+        "collection_errors": collection_errors,
         "parse_ok": parse_ok,
     }
 
@@ -393,6 +439,8 @@ def _parsed_collection_state(
 ) -> tuple[list[str], bool, SuiteStatus]:
     collected_ids = parsed["collected_ids"]
     collections_parse_ok = parsed["parse_ok"]
+    if parsed.get("collection_errors"):
+        return collected_ids, True, "failed"
     if not collections_parse_ok and (parsed["passes"] or parsed["failures"]):
         status = "runner_error"
     if not collected_ids and exit_code != 5 and not timed_out and "pytest" in command:
@@ -423,6 +471,7 @@ def _spawn_error_result(
         raw_log_path=raw_log_path,
         code_hash=code_hash,
         collections_parse_ok=False,
+        collection_errors=[],
     )
 
 
@@ -463,7 +512,10 @@ def run_suite(
     )
     duration = time.monotonic() - t0
     log_fh.close()
-    parsed = _parse_pytest_output(raw_log_path.read_text(encoding="utf-8"))
+    parsed = _parse_pytest_output(
+        raw_log_path.read_text(encoding="utf-8"),
+        exit_code=exit_code,
+    )
     status = _status_from_exit(exit_code, timed_out)
     collected_ids, collections_parse_ok, status = _parsed_collection_state(
         project_dir, command, exit_code, timed_out, parsed, status
@@ -475,7 +527,9 @@ def run_suite(
         collected=parsed["collected"], collected_ids=collected_ids,
         failures=parsed["failures"], passes=parsed["passes"], status=status,
         exit_code=exit_code, raw_log_path=raw_log_path, code_hash=code_hash,
-        collections_parse_ok=collections_parse_ok, timeout_reason=timeout_reason,
+        collections_parse_ok=collections_parse_ok,
+        timeout_reason=timeout_reason,
+        collection_errors=parsed.get("collection_errors", []),
     )
 
 

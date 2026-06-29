@@ -680,6 +680,7 @@ _BASELINE_CACHE_KEYS = (
     "baseline_test_failures",
     "baseline_test_command",
     "baseline_test_note",
+    "baseline_test_collection_errors",
 )
 
 
@@ -902,6 +903,7 @@ def _capture_test_baseline(project_dir: Path, config: dict[str, Any]) -> dict[st
     return {
         "baseline_test_failures": result.failures,
         "baseline_test_command": result.command,
+        "baseline_test_collection_errors": list(result.collection_errors or []),
     }
 
 def _normalize_task_complexity(payload: dict[str, Any]) -> None:

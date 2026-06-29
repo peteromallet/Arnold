@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Literal
 
+from arnold_pipelines.megaplan._core.io import atomic_write_json
 from arnold_pipelines.megaplan.orchestration.completion_contract import compute_delta
 from arnold_pipelines.megaplan.orchestration import suite_runner
 from arnold_pipelines.megaplan.orchestration.suite_runner import SuiteRunResult
@@ -49,6 +50,110 @@ def _load_baseline(value: Path | dict[str, Any] | None) -> dict[str, Any] | None
     return value if isinstance(value, dict) else None
 
 
+def _read_finalize(plan_dir: Path) -> dict[str, Any] | None:
+    try:
+        raw = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
+def _baseline_payload_from_finalize(finalize: dict[str, Any]) -> dict[str, Any] | None:
+    failures = finalize.get("baseline_test_failures")
+    if not isinstance(failures, list):
+        return None
+    failing_tests = _sorted_strings(failures)
+    return {
+        "failing_tests": failing_tests,
+        "collected_ids": list(failing_tests),
+        "collection_errors": _sorted_strings(
+            finalize.get("baseline_test_collection_errors")
+        ),
+    }
+
+
+def _write_recaptured_finalize_baseline(
+    plan_dir: Path,
+    finalize: dict[str, Any],
+    captured: dict[str, Any],
+) -> None:
+    merged = dict(finalize)
+    for key in (
+        "baseline_test_failures",
+        "baseline_test_command",
+        "baseline_test_note",
+        "baseline_test_collection_errors",
+    ):
+        if key in captured:
+            merged[key] = captured[key]
+    atomic_write_json(plan_dir / "finalize.json", merged)
+
+
+def _recapture_missing_baseline(
+    plan_dir: Path,
+    project_dir: Path,
+    config: dict[str, Any],
+    baseline: Path | dict[str, Any] | None,
+    writer: Callable[[str], None] | None,
+) -> tuple[dict[str, Any] | None, bool]:
+    finalize = _read_finalize(plan_dir)
+    if isinstance(finalize, dict):
+        baseline_payload = _baseline_payload_from_finalize(finalize)
+        if baseline_payload is not None:
+            return baseline_payload, False
+        if finalize.get("baseline_test_failures") is not None:
+            return None, False
+
+    try:
+        from arnold_pipelines.megaplan.handlers.finalize import (
+            _capture_test_baseline_for_plan,
+        )
+
+        capture_config = dict(config)
+        capture_config["plan_dir"] = str(plan_dir)
+        captured = _capture_test_baseline_for_plan(
+            plan_dir,
+            project_dir,
+            capture_config,
+        )
+    except Exception as exc:
+        if writer is not None:
+            writer(
+                "full_suite_backstop baseline recapture failed: "
+                f"{type(exc).__name__}: {exc}"
+            )
+        return None, False
+
+    if not isinstance(captured.get("baseline_test_failures"), list):
+        return None, False
+
+    if isinstance(finalize, dict):
+        try:
+            _write_recaptured_finalize_baseline(plan_dir, finalize, captured)
+        except OSError:
+            pass
+
+    failures = _sorted_strings(captured.get("baseline_test_failures"))
+    payload = {
+        "failing_tests": failures,
+        "collected_ids": list(failures),
+        "collection_errors": _sorted_strings(
+            captured.get("baseline_test_collection_errors")
+        ),
+    }
+    if isinstance(baseline, Path):
+        try:
+            atomic_write_json(baseline, payload)
+        except OSError:
+            pass
+    if writer is not None:
+        writer(
+            "full_suite_backstop recaptured missing baseline "
+            f"({len(failures)} failure(s))"
+        )
+    return payload, True
+
+
 def _collected_ids_from_result(result: SuiteRunResult) -> list[str]:
     collected = _sorted_strings(result.collected_ids)
     if collected:
@@ -82,6 +187,7 @@ def _suite_result_from_backstop_dict(
         raw_log_path=Path(str(data.get("raw_log_path") or "")),
         code_hash=str(data.get("captured_at_sha") or data.get("code_hash") or ""),
         collections_parse_ok=True,
+        collection_errors=_sorted_strings(data.get("collection_errors")),
     )
 
 
@@ -105,6 +211,9 @@ def build_full_suite_baseline(
         "captured_at_sha": captured_at_sha,
         "milestone": milestone,
     }
+    collection_errors = _sorted_strings(result.get("collection_errors"))
+    if collection_errors:
+        baseline["collection_errors"] = collection_errors
     if captured_at is not None:
         baseline["captured_at"] = captured_at
     return baseline
@@ -126,7 +235,6 @@ def run_full_suite_backstop(
     does not invoke pytest; it must never silently fall back to a bare full
     suite.
     """
-    del writer
     full_config = dict(config)
     full_config["test_selection"] = full_config.get("test_selection") or "recorded"
     full_config["plan_dir"] = str(plan_dir)
@@ -147,6 +255,15 @@ def run_full_suite_backstop(
         idle_timeout = None
 
     baseline_payload = _load_baseline(baseline)
+    baseline_recaptured = False
+    if baseline_payload is None:
+        baseline_payload, baseline_recaptured = _recapture_missing_baseline(
+            plan_dir,
+            project_dir,
+            full_config,
+            baseline,
+            writer,
+        )
     baseline_failures = (
         _sorted_strings(baseline_payload.get("failing_tests"))
         if isinstance(baseline_payload, dict)
@@ -178,6 +295,7 @@ def run_full_suite_backstop(
             "duration_s": None,
             "ran": False,
             "note": f"{type(exc).__name__}: {exc}",
+            "baseline_recaptured": baseline_recaptured,
             **delta_defaults,
         }
 
@@ -199,6 +317,8 @@ def run_full_suite_backstop(
         "duration_s": float(result.duration),
         "ran": True,
         "note": "" if status == "passed" else f"suite status={result.status}",
+        "collection_errors": list(result.collection_errors or []),
+        "baseline_recaptured": baseline_recaptured,
         **{
             **delta_defaults,
             "current_failing_count": len(failures),
@@ -213,6 +333,16 @@ def run_full_suite_backstop(
         else None
     )
     if baseline_result is None:
+        if result.collection_errors:
+            summary.update(
+                {
+                    "newly_failing": list(result.collection_errors),
+                    "deleted_tests": [],
+                    "baseline_failing_count": 0,
+                    "current_failing_count": len(failures),
+                    "delta_computed": True,
+                }
+            )
         return summary
 
     try:
@@ -286,6 +416,16 @@ def evaluate_full_suite_backstop(result: dict[str, Any], mode: str) -> dict[str,
         return {
             "blocks": False,
             "reason": "full_suite_backstop_mode=shadow: recorded only",
+            "mode": normalized,
+        }
+    collection_errors = _sorted_strings(result.get("collection_errors"))
+    if collection_errors:
+        return {
+            "blocks": True,
+            "reason": (
+                "full_suite_backstop_mode=enforce: full suite has "
+                "collection/import errors"
+            ),
             "mode": normalized,
         }
     if not isinstance(result, dict) or result.get("delta_computed") is not True:

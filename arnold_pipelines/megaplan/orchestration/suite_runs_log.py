@@ -46,6 +46,7 @@ def append_suite_run(plan_dir: Path, result: SuiteRunResult) -> None:
         "status": result.status,
         "raw_log_path": str(result.raw_log_path),
         "collections_parse_ok": result.collections_parse_ok,
+        "collection_errors": list(result.collection_errors or []),
         "ts": _now(),
     }
     path = ver_dir / "suite_runs.ndjson"
@@ -87,6 +88,7 @@ def _record_to_result(record: dict[str, Any]) -> SuiteRunResult:
         exit_code=record.get("exit_code"),
         raw_log_path=Path(raw_log_path) if raw_log_path else Path(),
         collections_parse_ok=bool(record.get("collections_parse_ok", False)),
+        collection_errors=list(record.get("collection_errors") or []),
     )
 
 
