@@ -1628,7 +1628,7 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
     },
     # ── add_note_force_proceed ──────────────────────────────────────────
     #
-    # max_add_note_attempts=0 → add_note_failures(0) >= 0 fires on first
+    # max_add_note_attempts=0 → add_note_attempts(0) >= 0 fires on first
     # occurrence of next_step="override add-note".  Driver runs override
     # force-proceed (code=0) → continue → next status returns done.
     {
@@ -1658,6 +1658,61 @@ _GOLDEN_RECIPES: list[dict[str, Any]] = [
         ],
         "run_side_effects": [
             # override force-proceed succeeds
+            {"code": 0, "stdout": "", "stderr": "", "write_phase_result": None},
+        ],
+    },
+    # ── add_note_force_proceed_after_repeats ───────────────────────────
+    #
+    # Repeated successful `override add-note` dispatches that leave the plan
+    # on the same override path should also escalate once the retry budget is
+    # exhausted. This mirrors critique loops where note injection succeeds but
+    # does not move the state machine forward.
+    {
+        "name": "add_note_force_proceed_after_repeats",
+        "branch_ref": "done",
+        "mode": "stateful_run",
+        "drive_kwargs": {"max_add_note_attempts": 2},
+        "status_sequence": [
+            {
+                "success": True,
+                "step": "status",
+                "state": "critiqued",
+                "iteration": 1,
+                "summary": "Plan is in state 'critiqued' with add-note pending.",
+                "next_step": "override add-note",
+                "valid_next": ["override add-note", "override force-proceed"],
+            },
+            {
+                "success": True,
+                "step": "status",
+                "state": "critiqued",
+                "iteration": 2,
+                "summary": "Plan is in state 'critiqued' with add-note pending.",
+                "next_step": "override add-note",
+                "valid_next": ["override add-note", "override force-proceed"],
+            },
+            {
+                "success": True,
+                "step": "status",
+                "state": "critiqued",
+                "iteration": 3,
+                "summary": "Plan is in state 'critiqued' with add-note pending.",
+                "next_step": "override add-note",
+                "valid_next": ["override add-note", "override force-proceed"],
+            },
+            {
+                "success": True,
+                "step": "status",
+                "state": "done",
+                "iteration": 4,
+                "summary": "Plan is in state 'done'.",
+                "next_step": None,
+                "valid_next": [],
+            },
+        ],
+        "run_side_effects": [
+            {"code": 0, "stdout": "", "stderr": "", "write_phase_result": None},
+            {"code": 0, "stdout": "", "stderr": "", "write_phase_result": None},
             {"code": 0, "stdout": "", "stderr": "", "write_phase_result": None},
         ],
     },

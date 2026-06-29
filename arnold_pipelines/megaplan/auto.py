@@ -2474,10 +2474,11 @@ def drive(
     external_retry_count = 0
     external_retry_counts_by_phase: dict[str, int] = {}
     blocked_retry_count = 0
-    # Consecutive `override add-note` dispatches that failed (non-zero exit).
-    # Reset on any successful add-note OR when the next_step changes — only a
-    # repeating add-note→fail loop should trip the escalation.
-    add_note_failures = 0
+    # Consecutive `override add-note` dispatches on the same critique fork.
+    # Reset when the next_step changes. A repeated successful add-note that
+    # leaves the plan on the same override path is still a no-progress loop
+    # and should eventually escalate to `override force-proceed`.
+    add_note_attempts = 0
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -3394,19 +3395,19 @@ def drive(
         # Special-case `override add-note`: the CLI requires a non-empty
         # ``--note`` argument, so we synthesize one from the latest gate
         # signals / critique flags. After ``max_add_note_attempts``
-        # consecutive failed dispatches, fall through to ``override
-        # force-proceed`` — that's the safety-net escape valve when
-        # human intervention isn't available (Track B fallback).
+        # consecutive dispatches on the same override path, fall through to
+        # ``override force-proceed`` — that's the safety-net escape valve
+        # when human intervention isn't available (Track B fallback).
         if next_step == "override add-note":
             if (
                 max_add_note_attempts >= 0
-                and add_note_failures >= max_add_note_attempts
+                and add_note_attempts >= max_add_note_attempts
                 and _has_valid_next(status, "override force-proceed")
             ):
                 log(
-                    f"override add-note failed {add_note_failures} times — "
+                    f"override add-note repeated {add_note_attempts} times — "
                     "escalating to override force-proceed",
-                    add_note_failures=add_note_failures,
+                    add_note_attempts=add_note_attempts,
                     max_add_note_attempts=max_add_note_attempts,
                 )
                 cmd = [
@@ -3416,24 +3417,23 @@ def drive(
                     plan,
                     "--reason",
                     (
-                        f"megaplan auto: {add_note_failures} add-note retries "
-                        "failed, forcing proceed"
+                        f"megaplan auto: {add_note_attempts} add-note retries "
+                        "exhausted, forcing proceed"
                     ),
                 ]
                 last_phase = "override force-proceed"
-                add_note_failures = 0
+                add_note_attempts = 0
             else:
                 cmd = _build_override_add_note_command(
                     plan,
                     plan_dir,
                     iteration=iteration,
-                    attempt=add_note_failures + 1,
+                    attempt=add_note_attempts + 1,
                 )
                 last_phase = next_step
         else:
-            # Any non-add-note dispatch resets the add-note failure counter —
-            # only a repeating add-note→fail loop should trigger escalation.
-            add_note_failures = 0
+            # Any non-add-note dispatch resets the add-note attempt counter.
+            add_note_attempts = 0
             cmd = _phase_command(next_step) + ["--plan", plan]
             last_phase = next_step
             # Apply an active execute-tier escalation pin. The pin overrides
@@ -3462,10 +3462,7 @@ def drive(
                 )
         code, out, err, result = _run_phase(cmd, next_step)
         if next_step == "override add-note" and last_phase == "override add-note":
-            if code != 0:
-                add_note_failures += 1
-            else:
-                add_note_failures = 0
+            add_note_attempts += 1
         # Context-exhaustion retry loop: detect via PhaseResult.exit_kind,
         # not by string-matching captured stdout.
         #

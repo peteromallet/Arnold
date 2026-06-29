@@ -11,12 +11,12 @@
       ]
     },
     {
-      "add_note_failures": 0,
+      "add_note_attempts": 0,
       "max_add_note_attempts": 0,
-      "msg": "override add-note failed 0 times \u2014 escalating to override force-proceed"
+      "msg": "override add-note repeated 0 times \u2014 escalating to override force-proceed"
     },
     {
-      "msg": "running: megaplan override force-proceed --plan add-note-force-proceed --reason megaplan auto: 0 add-note retries failed, forcing proceed",
+      "msg": "running: megaplan override force-proceed --plan add-note-force-proceed --reason megaplan auto: 0 add-note retries exhausted, forcing proceed",
       "phase": "override add-note",
       "timeout": 3600
     },
@@ -31,7 +31,7 @@
       "msg": "terminal state reached: done"
     },
     {
-      "msg": "completion verdict (shadow): accepted subject=plan:add-note-force-proceed failures=[none] providers=[phase_coverage,landed_diff,worker_did_work,green_suite,review_disposition,declared_noop] legacy_evidence=0 unknown_evidence=3"
+      "msg": "completion verdict (shadow): accepted subject=plan:add-note-force-proceed failures=[none] providers=[phase_coverage,landed_diff,worker_did_work,green_suite,execution_acceptance_contract,review_disposition,declared_noop] legacy_evidence=0 unknown_evidence=3"
     }
   ],
   "exit_code": 0,
