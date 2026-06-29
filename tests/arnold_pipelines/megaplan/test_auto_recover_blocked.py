@@ -146,3 +146,72 @@ def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_bloc
         "phase": "execute",
         "retry_strategy": "manual_review",
     }
+
+
+def test_drive_stall_marks_manual_review_origin_auto_stall(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "executing",
+                "resume_cursor": {
+                    "phase": "execute",
+                    "retry_strategy": "rerun_phase",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured_failures: list[dict[str, object]] = []
+    statuses = [
+        {
+            "state": "executing",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        }
+        for _ in range(6)
+    ]
+    status_iter = iter(statuses)
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return next(status_iter)
+
+    def fake_run_planning_phase(args, **kwargs):
+        assert args[0] == "execute"
+        assert "--plan" in args
+        assert args[args.index("--plan") + 1] == "demo"
+        return (0, "", "")
+
+    def fake_record_failure(**kwargs):
+        captured_failures.append(dict(kwargs))
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", fake_record_failure)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, stall_threshold=5, max_iterations=10)
+
+    assert outcome.status == "stalled"
+    assert outcome.final_state == "executing"
+    assert captured_failures
+    failure = captured_failures[-1]
+    assert failure["kind"] == "stalled"
+    assert failure["resume_cursor"] == {
+        "phase": "execute",
+        "retry_strategy": "manual_review",
+    }
+    assert failure["metadata"] == {
+        "stall_count": 5,
+        "iteration": 6,
+        "manual_review_origin": "auto_stall",
+    }
