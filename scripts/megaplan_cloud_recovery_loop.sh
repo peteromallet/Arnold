@@ -3,6 +3,7 @@ set -euo pipefail
 
 WORKSPACE="${MEGAPLAN_CLOUD_WORKSPACE:-/workspace/vibecomfy-readable-ready-templates}"
 CHAIN_SESSION="${MEGAPLAN_CHAIN_SESSION:-megaplan-chain}"
+ARNOLD_ENGINE_DIR="${ARNOLD_ENGINE_DIR:-/workspace/arnold}"
 SPEC="${1:-$WORKSPACE/docs/megaplan_chains/readable_ready_templates/chain.yaml}"
 BRANCH="${2:-main}"
 INTERVAL_SECONDS="${RECOVERY_INTERVAL_SECONDS:-3600}"
@@ -18,8 +19,16 @@ log() {
   printf '[%s] %s\n' "$(date -Is)" "$*" | tee -a "$LOG"
 }
 
+run_megaplan() {
+  (
+    cd "$WORKSPACE"
+    PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_ENGINE_DIR:${PYTHONPATH:-}" \
+      python -P -m arnold_pipelines.megaplan "$@"
+  )
+}
+
 chain_status_json() {
-  megaplan chain status --spec "$SPEC" 2>/dev/null | awk '
+  run_megaplan chain status --spec "$SPEC" 2>/dev/null | awk '
     BEGIN {json=0}
     /^\{/ {json=1}
     {if (json) print}
@@ -96,7 +105,7 @@ ensure_chain_running() {
   }
   log "$CHAIN_SESSION tmux session is not running; starting chain"
   tmux new-session -d -s "$CHAIN_SESSION" -c "$WORKSPACE" \
-    "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec '$SPEC' --no-push >> '$CHAIN_LOG' 2>&1"
+    "cd '$WORKSPACE' && PYTHONSAFEPATH=1 PYTHONPATH='$ARNOLD_ENGINE_DIR':\${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec '$SPEC' --project-dir '$WORKSPACE' --no-push >> '$CHAIN_LOG' 2>&1"
 }
 
 mark_current_milestone_done() {
@@ -200,7 +209,7 @@ Rules:
 - If a product/architecture decision is truly ambiguous, stop and write a clear blocker summary to .megaplan/recovery-prompts/latest-blocker.md.
 
 Useful status commands:
-- megaplan chain status --spec "$SPEC"
+- python -P -m arnold_pipelines.megaplan chain status --spec "$SPEC"
 - tail -n 160 "$CHAIN_LOG"
 - git status --short
 - PYENV_VERSION=3.11.11 python -m pytest <focused tests> -q
