@@ -211,6 +211,68 @@ def test_run_command_reads_prompt_file_path_as_file_contents(
     assert captured["stdin"] != str(prompt_path)
 
 
+def test_run_codex_step_normalizes_prompt_file_path_before_dispatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
+
+    root = tmp_path / "root"
+    root.mkdir()
+    ensure_runtime_layout(root)
+    plan_dir = root / ".megaplan" / "plans" / "oneshot"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    output_path = plan_dir / "out.json"
+    prompt_path = tmp_path / "gate-prompt.txt"
+    prompt_path.write_text("Stage: gate\nUse the actual prompt text.\n", encoding="utf-8")
+    state = {
+        "name": "normalize-prompt-path",
+        "idea": "x",
+        "current_state": "critiqued",
+        "iteration": 0,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {},
+    }
+    captured: dict[str, str] = {}
+
+    def fake_run_command(command, **kwargs):
+        captured["stdin_text"] = kwargs["stdin_text"]
+        output_path.write_text('{"checks":[],"flags":[]}', encoding="utf-8")
+        return _impl.CommandResult(
+            command=list(command),
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=5,
+        )
+
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        _impl, "_codex_step_cost", lambda *args, **kwargs: (0.0, 0, 0, "gpt-5.5", None)
+    )
+
+    result = _impl.run_codex_step(
+        "critique",
+        state,
+        plan_dir,
+        root=root,
+        persistent=False,
+        fresh=True,
+        read_only=True,
+        output_path=output_path,
+        prompt_override=str(prompt_path),
+    )
+
+    expected = prompt_path.read_text(encoding="utf-8")
+    assert captured["stdin_text"] == expected
+    assert result.rendered_prompt == expected
+
+
 def test_run_codex_step_read_only_trusted_container_bypasses_inner_sandbox(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
