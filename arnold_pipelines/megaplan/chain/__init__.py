@@ -1599,13 +1599,15 @@ def _published_pr_semantic_diff_nonempty_from_base(
     *,
     chain_state: ChainState | None = None,
 ) -> tuple[bool | None, str]:
-    target, source = _published_pr_target_from_record(record, chain_state)
+    target, source = _published_pr_target_from_record(record)
     if target is None:
         pr_number = record.get("pr_number")
         if isinstance(pr_number, int):
             target, source = _published_pr_target_from_gh(root, pr_number)
         elif isinstance(pr_number, str) and pr_number.strip().isdigit():
             target, source = _published_pr_target_from_gh(root, int(pr_number.strip()))
+    if target is None and chain_state is not None:
+        target, source = _published_pr_target_from_record(record, chain_state)
     if target is None:
         return None, f"published PR target unavailable: {source}"
     return _semantic_diff_nonempty_between_refs(
