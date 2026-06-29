@@ -2737,6 +2737,7 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
 
     # In-container: iterates active markers, 5h window, deepseek dispatch.
     assert 'MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"' in text
+    assert 'REPAIR_DATA_DIR="${MEGAPLAN_AUDIT_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"' in text
     assert 'DISCOVER_BIN="${MEGAPLAN_AUDIT_DISCOVER_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"' in text
     assert 'AUDIT_WINDOW_HOURS="${MEGAPLAN_AUDIT_WINDOW_HOURS:-6}"' in text
     assert 'DEEPSEEK_MODEL="${MEGAPLAN_AUDIT_MODEL:-deepseek:deepseek-v4-pro}"' in text
@@ -2751,6 +2752,10 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     # Evidence-citing required output shape.
     assert "hypothesis" in text
     assert "recommendation" in text
+    assert "You are auditing a cloud megaplan SESSION, not just one plan." in text
+    assert "chain log line numbers" in text
+    assert "Gate resolvability" in text
+    assert "INEFFICIENT" in text
 
 
 def _extract_auditor_worklist_program() -> str:
@@ -2759,6 +2764,15 @@ def _extract_auditor_worklist_program() -> str:
         "python3 - \"$MARKER_DIR\" \"$WORKLIST\" \"$AUDIT_WINDOW_HOURS\" "
         "\"$DISCOVER_BIN\" \"/workspace\" \"$ARNOLD_SRC\" <<'PY'"
     )
+    start = text.index(marker)
+    start = text.index("\n", start) + 1
+    end = text.index("\nPY\n", start)
+    return text[start:end]
+
+
+def _extract_auditor_gather_program() -> str:
+    text = _wrapper("arnold-progress-auditor")
+    marker = "python3 - \"$WORKLIST\" \"$GATHER_DIR\" \"$AUDIT_WINDOW_HOURS\" \"$ARNOLD_SRC\" \"$stall_summary\" <<'PY'"
     start = text.index(marker)
     start = text.index("\n", start) + 1
     end = text.index("\nPY\n", start)
@@ -2895,12 +2909,7 @@ def _run_auditor_with_mocked_deepseek(tmp_path: Path) -> dict:
     }) + "\n", encoding="utf-8")
 
     wrapper_text = _wrapper("arnold-progress-auditor")
-    # Extract the gather python (first heredoc after WORKLIST setup).
-    g_marker = "python3 - \"$WORKLIST\" \"$GATHER_DIR\" \"$AUDIT_WINDOW_HOURS\" \"$ARNOLD_SRC\" \"$stall_summary\" <<'PY'"
-    g_start = wrapper_text.index(g_marker)
-    g_start = wrapper_text.index("\n", g_start) + 1
-    g_end = wrapper_text.index("\nPY\n", g_start)
-    gather_prog = wrapper_text[g_start:g_end]
+    gather_prog = _extract_auditor_gather_program()
     (gather_dir / "gather.py").write_text(gather_prog, encoding="utf-8")
 
     env = dict(os.environ)
@@ -3080,12 +3089,7 @@ def test_auditor_gather_includes_done_plan_with_recent_events_mtime(tmp_path: Pa
         encoding="utf-8",
     )
 
-    wrapper_text = _wrapper("arnold-progress-auditor")
-    g_marker = "python3 - \"$WORKLIST\" \"$GATHER_DIR\" \"$AUDIT_WINDOW_HOURS\" \"$ARNOLD_SRC\" \"$stall_summary\" <<'PY'"
-    g_start = wrapper_text.index(g_marker)
-    g_start = wrapper_text.index("\n", g_start) + 1
-    g_end = wrapper_text.index("\nPY\n", g_start)
-    gather_prog = wrapper_text[g_start:g_end]
+    gather_prog = _extract_auditor_gather_program()
     gather_path = gather_dir / "gather.py"
     gather_path.write_text(gather_prog, encoding="utf-8")
 
@@ -3109,6 +3113,197 @@ def test_auditor_gather_includes_done_plan_with_recent_events_mtime(tmp_path: Pa
     assert findings[0]["plan"] == "m6-done"
     assert findings[0]["session"] == "done-session"
     assert findings[0]["sources"] == ["workspace_activity"]
+
+
+def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    plan_name = "m7-demo"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    state = {
+        "name": plan_name,
+        "iteration": 21,
+        "current_state": "finalized",
+        "active_step": {"phase": "execute", "attempt": 2},
+        "latest_failure": {
+            "kind": "phase_failed",
+            "message": "phase 'execute' internal_error",
+            "phase": "execute",
+            "recorded_at": _iso_hours_ago(0.4),
+            "metadata": {
+                "exit_code": 2,
+                "stderr": "__main__.py: error: unrecognized arguments: --confirm-destructive --user-approved",
+            },
+        },
+        "last_gate": {"recommendation": "PASS"},
+        "meta": {
+            "weighted_scores": [8.0],
+            "plan_deltas": [1.0],
+            "significant_counts": [1],
+            "user_action_resolutions": {
+                "ua-02-cleanup-policy": {"state": "satisfied", "decision": "proceed"}
+            },
+        },
+        "history": [],
+    }
+    _write_plan(plan_dir, state, plan_v_bodies={"plan_v1.md": "v1"}, events_body="{}\n")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "user_actions": [
+                    {
+                        "id": "ua-01-reclassify-deletion-targets",
+                        "phase": "before_execute",
+                        "blocks_task_ids": ["m7-06-runtime-deletion-target-purge"],
+                        "rationale": "Maintainer must confirm authoritative deletion targets.",
+                    },
+                    {
+                        "id": "ua-02-cleanup-policy",
+                        "phase": "before_execute",
+                        "blocks_task_ids": ["m7-07-pipeline-deletion-target-purge"],
+                        "rationale": "Cleanup policy choice.",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "user_actions.md").write_text(
+        "# User Actions\n\n"
+        "- **ua-01-reclassify-deletion-targets**: Confirm deletion targets.\n"
+        "- **ua-02-cleanup-policy**: Cleanup policy.\n",
+        encoding="utf-8",
+    )
+
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps(
+            {
+                "current_milestone_index": 6,
+                "current_plan_name": plan_name,
+                "last_state": "awaiting_human",
+                "pr_number": 122,
+                "pr_state": "open",
+                "completed": [
+                    {
+                        "label": "m6-installed-artifacts",
+                        "plan": "m6-demo",
+                        "status": "done",
+                        "pr_number": 121,
+                        "pr_state": "merged",
+                        "full_suite_backstop": {
+                            "status": "failed",
+                            "blocks": False,
+                            "failed": 3,
+                            "delta_computed": True,
+                        },
+                    }
+                ],
+                "events": [{"msg": "milestone m7 starting"}, {"msg": "awaiting_human"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo-session.log").write_text(
+        "\n".join(
+            [
+                "[chain] milestone m7 starting",
+                "[chain] terminal state reached: done",
+                "[chain] status: stopped reason=milestone m7 ended awaiting_human",
+                "[chain] milestone m7 starting",
+                "[chain] terminal state reached: done",
+                "[chain] status: stopped reason=milestone m7 ended awaiting_human",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    repair_data_dir = tmp_path / "repair-data"
+    repair_data_dir.mkdir()
+    (repair_data_dir / "demo-session.repair-data.json").write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "outcome": "repairing",
+                "iterations": [
+                    {
+                        "i": 1,
+                        "mechanical_launch": "failed:awaiting_human",
+                        "chain_state_summary": {"current_plan_name": plan_name, "last_state": "awaiting_human"},
+                        "plan_latest_failure": {
+                            "kind": "phase_failed",
+                            "message": "phase 'execute' internal_error",
+                            "metadata": {"stderr": "__main__.py: error: unrecognized arguments: --confirm-destructive"},
+                        },
+                    },
+                    {
+                        "i": 2,
+                        "mechanical_launch": "failed:awaiting_human",
+                        "chain_state_summary": {"current_plan_name": plan_name, "last_state": "awaiting_human"},
+                        "plan_latest_failure": {
+                            "kind": "phase_failed",
+                            "message": "phase 'execute' internal_error",
+                            "metadata": {"stderr": "__main__.py: error: unrecognized arguments: --confirm-destructive"},
+                        },
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir()
+    worklist = tmp_path / "worklist.jsonl"
+    worklist.write_text(
+        json.dumps(
+            {
+                "workspace": str(workspace),
+                "plan": plan_name,
+                "session": "demo-session",
+                "kind": "chain",
+                "remote_spec": str(workspace / ".megaplan" / "briefs" / "demo" / "chain.yaml"),
+                "launch_command": "python3 -P -m arnold_pipelines.megaplan chain start --spec demo",
+                "log": str(workspace / ".megaplan" / "cloud-chain-demo-session.log"),
+                "sources": ["marker"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    gather_path = gather_dir / "gather.py"
+    gather_path.write_text(_extract_auditor_gather_program(), encoding="utf-8")
+    env = dict(os.environ)
+    env["MEGAPLAN_AUDIT_REPAIR_DATA_DIR"] = str(repair_data_dir)
+    result = subprocess.run(
+        [sys.executable, str(gather_path), str(worklist), str(gather_dir), "6", str(tmp_path), "none"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    findings = json.loads((gather_dir / "findings.json").read_text(encoding="utf-8"))["findings"]
+    assert findings, "expected chain-level signals to produce a suspicious finding"
+    finding = findings[0]
+    assert finding["session_header"]["kind"] == "chain"
+    assert finding["chain_log"]["path"].endswith("cloud-chain-demo-session.log")
+    assert "L6: [chain] status: stopped" in finding["chain_log"]["tail"]
+    assert any(item["signature"] == "awaiting_human" and item["count"] == 2 for item in finding["chain_log"]["repetition_summary"])
+    assert finding["chain_state_summary"]["current"]["last_state"] == "awaiting_human"
+    assert finding["chain_state_summary"]["current"]["completed_count"] == 1
+    assert finding["repair_data_summary"]["iteration_count"] == 2
+    assert finding["repair_data_summary"]["repeated_failure_signatures"][0]["count"] == 2
+    assert "unrecognized arguments" in finding["plan_latest_failure"]["metadata"]["stderr"]
+    user_action_context = finding["user_action_context"]
+    assert "ua-01-reclassify-deletion-targets" in user_action_context["user_actions_md"]
+    assert [item["id"] for item in user_action_context["unresolved_user_actions"]] == ["ua-01-reclassify-deletion-targets"]
+    reasons = " ".join(finding["reasons"])
+    assert "chain last_state=awaiting_human" in reasons
+    assert "chain log repeats" in reasons
+    assert "repair data has 2 repair iterations" in reasons
+    assert "awaiting_human with unresolved user actions" in reasons
 
 
 def test_arnold_progress_auditor_produces_evidence_cited_report_via_mocked_deepseek(tmp_path) -> None:
