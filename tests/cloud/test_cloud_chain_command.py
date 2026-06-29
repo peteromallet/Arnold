@@ -1,18 +1,37 @@
 from __future__ import annotations
 
 import argparse
-from types import SimpleNamespace
+import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
+import yaml
+
+from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import (
     _bootstrap_launch_command,
-    _derive_bootstrap_session_name,
-    _run_bootstrap_wrapper,
+    _chain_anchor_uploads,
     _chain_start_command,
+    _derive_bootstrap_session_name,
+    _latest_failure_from_plan_status,
+    _normalized_chain_upload_spec,
+    _phase_model_by_label_from_preflight,
     _remote_chain_upload_path,
     _remote_chain_workspace_path,
+    _resolve_resume_workspace,
+    _run_bootstrap_wrapper,
+    cloud_chain_status_payload,
 )
+from arnold_pipelines.megaplan.cloud.spec import (
+    CloudSpec,
+    CodexSpec,
+    MegaplanSpec,
+    RepoSpec,
+    ResourcesSpec,
+)
+from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 
 
 def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
@@ -100,3 +119,250 @@ def test_run_bootstrap_wrapper_writes_marker_using_repo_named_session(tmp_path: 
     assert uploads == [(idea_file.resolve(), "/workspace/vibecomfy-per-workflow-window-chat-20260628/idea.txt")]
     assert len(commands) == 1
     assert "/workspace/.megaplan/cloud-sessions/vibecomfy-per-workflow-window-chat.json" in commands[0]
+
+
+def test_chain_anchor_uploads_follow_chain_spec_directory(tmp_path: Path) -> None:
+    spec_dir = tmp_path / ".megaplan" / "briefs" / "demo"
+    spec_dir.mkdir(parents=True)
+    (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    (spec_dir / "m1-northstar.md").write_text("milestone star\n", encoding="utf-8")
+    (spec_dir / "idea.md").write_text("idea\n", encoding="utf-8")
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: idea.md\n"
+        "    anchors:\n"
+        "      north_star: m1-northstar.md\n",
+        encoding="utf-8",
+    )
+
+    chain_spec = chain_module.load_spec(spec_path)
+    uploads = _chain_anchor_uploads(
+        spec_path,
+        "/workspace/chain-123/app/.megaplan/briefs/demo/chain.yaml",
+        chain_spec,
+    )
+
+    assert uploads == [
+        (spec_dir / "NORTHSTAR.md", "/workspace/chain-123/app/.megaplan/briefs/demo/NORTHSTAR.md"),
+        (spec_dir / "m1-northstar.md", "/workspace/chain-123/app/.megaplan/briefs/demo/m1-northstar.md"),
+    ]
+
+
+def test_normalized_chain_upload_spec_materializes_preflight_phase_map(tmp_path: Path) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/briefs/demo/m1.md\n",
+        encoding="utf-8",
+    )
+    preflight = {
+        "milestones": [
+            {
+                "label": "m1",
+                "resolved_phase_map": {
+                    "plan": "codex",
+                    "revise": "codex",
+                    "execute": "codex",
+                },
+            }
+        ]
+    }
+
+    upload_path = _normalized_chain_upload_spec(
+        spec_path,
+        base_branch="main",
+        source_workspace="/workspace/app",
+        target_workspace="/workspace/chain-123/app",
+        phase_model_by_label=_phase_model_by_label_from_preflight(preflight),
+    )
+    try:
+        normalized = yaml.safe_load(upload_path.read_text(encoding="utf-8"))
+    finally:
+        upload_path.unlink(missing_ok=True)
+
+    milestone = normalized["milestones"][0]
+    assert milestone["idea"] == ".megaplan/briefs/demo/m1.md"
+    assert milestone["phase_model"] == [
+        "plan=codex",
+        "revise=codex",
+        "execute=codex",
+    ]
+
+
+def test_cloud_preflight_expands_vendor_depth_like_init() -> None:
+    chain_spec = chain_module.ChainSpec.from_dict(
+        {
+            "milestones": [
+                {
+                    "label": "m1",
+                    "idea": "idea.md",
+                    "vendor": "codex",
+                    "depth": "high",
+                }
+            ]
+        }
+    )
+
+    summary = resolve_cloud_chain_runtime_dependencies(
+        chain_spec,
+        project_dir=None,
+        cloud_default_agent="codex",
+    )
+
+    phase_map = summary["milestones"][0]["resolved_phase_map"]
+    assert phase_map["plan"] == "codex:high"
+    assert phase_map["revise"] == "codex:high"
+    assert phase_map["execute"] == "codex"
+
+
+class _ResumeProvider:
+    def __init__(self, chain_state: dict) -> None:
+        self.chain_state = chain_state
+
+    def read_remote_file(self, _path: str) -> str:
+        return json.dumps(self.chain_state)
+
+    def ssh_exec(self, _command: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess([], 1, "", "")
+
+
+def test_cloud_resume_uses_chain_marker_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    spec = CloudSpec(
+        provider="railway",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+    marker = {
+        "workspace": "/workspace/chain-51d959cf/vibecomfy",
+        "remote_spec": "/workspace/chain-51d959cf/vibecomfy/.megaplan/briefs/demo/chain.yaml",
+    }
+    chain_state = chain_module.ChainState(
+        current_plan_name="milestone-demo",
+        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+    ).to_dict()
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._load_marker", lambda *_args: marker)
+
+    workspace = _resolve_resume_workspace(
+        Path("/repo"),
+        argparse.Namespace(plan="milestone-demo"),
+        spec,
+        _ResumeProvider(chain_state),
+    )
+
+    assert workspace == "/workspace/chain-51d959cf/vibecomfy"
+
+
+def test_latest_failure_summary_bubbles_plan_state_message() -> None:
+    summary = _latest_failure_from_plan_status(
+        {
+            "status": "stalled",
+            "latest_failure": {
+                "kind": "agent_deps_missing",
+                "phase": "plan",
+                "message": "Claude routes through Shannon, but bun is missing",
+                "metadata": {"ignored": True},
+            },
+        }
+    )
+
+    assert summary == {
+        "kind": "agent_deps_missing",
+        "phase": "plan",
+        "message": "Claude routes through Shannon, but bun is missing",
+        "raw": {
+            "kind": "agent_deps_missing",
+            "phase": "plan",
+            "message": "Claude routes through Shannon, but bun is missing",
+            "metadata": {"ignored": True},
+        },
+    }
+
+
+class _StatusProvider:
+    def __init__(self, *, remote_spec: str, chain_yaml: str, chain_state: dict, plan_status: dict) -> None:
+        self.remote_spec = remote_spec
+        self.state_path = str(chain_module._state_path_for(Path(remote_spec)))
+        self.chain_yaml = chain_yaml
+        self.chain_state = chain_state
+        self.plan_status = plan_status
+
+    def read_remote_file(self, path: str) -> str:
+        if path == self.remote_spec:
+            return self.chain_yaml
+        if path == self.state_path:
+            return json.dumps(self.chain_state)
+        raise OSError(f"unexpected remote file: {path}")
+
+    def status_payload(self, *, plan: str | None, workspace: str) -> dict:
+        assert plan == "milestone-demo"
+        assert workspace == "/workspace/chain-51d959cf/vibecomfy"
+        return dict(self.plan_status)
+
+    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        if "tmux has-session" in command:
+            return subprocess.CompletedProcess([], 0, "dead\n", "")
+        if command.startswith("stat "):
+            return subprocess.CompletedProcess([], 0, "unavailable\n", "")
+        if "verify-human" in command:
+            return subprocess.CompletedProcess([], 0, "{}", "")
+        return subprocess.CompletedProcess([], 1, "", "unexpected command")
+
+
+def test_cloud_chain_status_payload_exposes_plan_latest_failure() -> None:
+    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/briefs/demo/chain.yaml"
+    chain_yaml = (
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: idea.md\n"
+    )
+    chain_state = chain_module.ChainState(
+        current_milestone_index=0,
+        current_plan_name="milestone-demo",
+        last_state="prepped",
+        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+        chain_session="megaplan-chain-demo",
+    ).to_dict()
+    plan_status = {
+        "status": "stalled",
+        "latest_failure": {
+            "kind": "agent_deps_missing",
+            "message": "Claude routes through Shannon, but bun is missing",
+            "phase": "plan",
+        },
+    }
+    spec = CloudSpec(
+        provider="railway",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+    )
+
+    payload = cloud_chain_status_payload(
+        Path("/repo"),
+        argparse.Namespace(remote_spec=remote_spec, cloud_yaml=None),
+        spec,
+        _StatusProvider(
+            remote_spec=remote_spec,
+            chain_yaml=chain_yaml,
+            chain_state=chain_state,
+            plan_status=plan_status,
+        ),
+    )
+
+    assert payload["latest_failure"]["message"] == "Claude routes through Shannon, but bun is missing"
+    assert payload["plan_status"] == plan_status

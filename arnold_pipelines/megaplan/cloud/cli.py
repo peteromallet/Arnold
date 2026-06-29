@@ -16,7 +16,7 @@ from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path, PurePosixPath
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -287,9 +287,10 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             return 0
 
         if action == "resume":
+            resume_workspace = _resolve_resume_workspace(root, args, spec, provider)
             payload = provider.status_payload(
                 plan=getattr(args, "plan", None),
-                workspace=spec.repo.workspace,
+                workspace=resume_workspace,
             )
             next_step = payload.get("next_step")
             if not isinstance(next_step, str) or not next_step:
@@ -299,7 +300,7 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             argv = list(_phase_command(next_step, substrate=cloud_substrate))
             if getattr(args, "plan", None):
                 argv.extend(["--plan", args.plan])
-            command = f"cd {shlex.quote(spec.repo.workspace)} && arnold {shlex.join(argv)}"
+            command = f"cd {shlex.quote(resume_workspace)} && arnold {shlex.join(argv)}"
             result = provider.ssh_exec(command)
             _relay_output(result, secret_names=spec.secrets, env=os.environ)
             return 0
@@ -476,6 +477,41 @@ def _remote_chain_upload_path(remote_path: str, *, source_workspace: str, target
     return str(PurePosixPath(target_workspace) / path)
 
 
+def _remote_chain_anchor_upload_path(anchor_path: str, *, remote_spec_path: str) -> str:
+    path = PurePosixPath(anchor_path)
+    if path.is_absolute():
+        return str(path)
+    return str(PurePosixPath(remote_spec_path).parent / path)
+
+
+def _append_unique_upload(uploads: list[tuple[Path, str]], local_source: Path, remote_path: str) -> None:
+    item = (local_source, remote_path)
+    if item not in uploads:
+        uploads.append(item)
+
+
+def _chain_anchor_uploads(local_spec_path: Path, remote_spec_path: str, chain_spec: Any) -> list[tuple[Path, str]]:
+    from arnold_pipelines.megaplan.anchors import resolve_anchor_path
+
+    uploads: list[tuple[Path, str]] = []
+    top_anchor = getattr(getattr(chain_spec, "anchors", None), "north_star", None)
+    if isinstance(top_anchor, str) and top_anchor:
+        _append_unique_upload(
+            uploads,
+            resolve_anchor_path(local_spec_path, top_anchor),
+            _remote_chain_anchor_upload_path(top_anchor, remote_spec_path=remote_spec_path),
+        )
+    for milestone in getattr(chain_spec, "milestones", []):
+        milestone_anchor = getattr(getattr(milestone, "anchors", None), "north_star", None)
+        if isinstance(milestone_anchor, str) and milestone_anchor:
+            _append_unique_upload(
+                uploads,
+                resolve_anchor_path(local_spec_path, milestone_anchor),
+                _remote_chain_anchor_upload_path(milestone_anchor, remote_spec_path=remote_spec_path),
+            )
+    return uploads
+
+
 def _git_repo_root(path: Path) -> Path | None:
     """Best-effort git toplevel for the repo containing ``path``."""
     import subprocess
@@ -529,6 +565,7 @@ def _normalized_chain_upload_spec(
     source_workspace: str | None = None,
     target_workspace: str | None = None,
     driver_overrides: dict[str, Any] | None = None,
+    phase_model_by_label: dict[str, list[str]] | None = None,
 ) -> Path:
     raw = _read_chain_yaml(local_spec_path)
     workspace_changed = (
@@ -536,7 +573,12 @@ def _normalized_chain_upload_spec(
         and bool(target_workspace)
         and source_workspace != target_workspace
     )
-    if "base_branch" in raw and not workspace_changed and not driver_overrides:
+    if (
+        "base_branch" in raw
+        and not workspace_changed
+        and not driver_overrides
+        and not phase_model_by_label
+    ):
         return local_spec_path
     normalized = dict(raw)
     if "base_branch" not in normalized:
@@ -546,16 +588,21 @@ def _normalized_chain_upload_spec(
         driver_mapping = dict(driver) if isinstance(driver, dict) else {}
         driver_mapping.update(driver_overrides)
         normalized["driver"] = driver_mapping
-    if workspace_changed and isinstance(normalized.get("milestones"), list):
+    if (workspace_changed or phase_model_by_label) and isinstance(normalized.get("milestones"), list):
         rewritten: list[Any] = []
         for item in normalized["milestones"]:
-            if isinstance(item, dict) and isinstance(item.get("idea"), str):
+            if isinstance(item, dict):
                 copied = dict(item)
-                copied["idea"] = _rewrite_remote_workspace_path(
-                    copied["idea"],
-                    source_workspace=source_workspace or "",
-                    target_workspace=target_workspace or "",
-                )
+                if workspace_changed and isinstance(copied.get("idea"), str):
+                    copied["idea"] = _rewrite_remote_workspace_path(
+                        copied["idea"],
+                        source_workspace=source_workspace or "",
+                        target_workspace=target_workspace or "",
+                    )
+                if phase_model_by_label and isinstance(copied.get("label"), str):
+                    phase_models = phase_model_by_label.get(copied["label"])
+                    if phase_models:
+                        copied["phase_model"] = list(phase_models)
                 rewritten.append(copied)
             else:
                 rewritten.append(item)
@@ -590,6 +637,31 @@ def _run_remote_dependency_check(provider, commands: list[str]) -> list[str]:
     return sorted({part for part in result.stdout.split() if part})
 
 
+def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Return full per-milestone phase pins from cloud preflight resolution.
+
+    Cloud chain launch may resolve routing from cloud-only defaults such as
+    ``agents.default``. The remote ``chain start`` process only sees the
+    uploaded chain YAML, so the resolved routing must be materialized into that
+    temporary upload spec or init can fall back to a different local default.
+    """
+    phase_model_by_label: dict[str, list[str]] = {}
+    for milestone in preflight_summary.get("milestones", []):
+        if not isinstance(milestone, Mapping):
+            continue
+        label = milestone.get("label")
+        resolved = milestone.get("resolved_phase_map")
+        if not isinstance(label, str) or not isinstance(resolved, Mapping):
+            continue
+        phase_models: list[str] = []
+        for phase, spec in resolved.items():
+            if isinstance(phase, str) and isinstance(spec, str) and phase and spec:
+                phase_models.append(f"{phase}={spec}")
+        if phase_models:
+            phase_model_by_label[label] = phase_models
+    return phase_model_by_label
+
+
 def _remote_repo_head(provider, workspace: str) -> dict[str, str | None]:
     command = (
         f"git -C {shlex.quote(workspace)} rev-parse --abbrev-ref HEAD 2>/dev/null && "
@@ -603,6 +675,70 @@ def _remote_repo_head(provider, workspace: str) -> dict[str, str | None]:
         "branch": lines[0] if len(lines) >= 1 else None,
         "head": lines[1] if len(lines) >= 2 else None,
     }
+
+
+def _remote_chain_sessions(provider) -> list[dict[str, Any]]:
+    result = provider.ssh_exec(_cloud_chains_command())
+    if result.returncode != 0:
+        return []
+    try:
+        payload = json.loads((result.stdout or "").strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        return []
+    sessions = payload.get("sessions") if isinstance(payload, dict) else None
+    return [item for item in sessions if isinstance(item, dict)] if isinstance(sessions, list) else []
+
+
+def _chain_state_for_remote_spec(provider, remote_spec: str):
+    from arnold_pipelines.megaplan import chain as chain_module
+
+    state_path = chain_module._state_path_for(Path(remote_spec))
+    return chain_module.ChainState.from_dict(json.loads(provider.read_remote_file(str(state_path))))
+
+
+def _workspace_from_chain_marker(
+    spec: CloudSpec,
+    marker: Mapping[str, Any],
+    provider,
+    *,
+    plan: str | None,
+) -> str | None:
+    remote_spec = marker.get("remote_spec")
+    workspace = marker.get("workspace")
+    if not isinstance(remote_spec, str) or not remote_spec:
+        return workspace if isinstance(workspace, str) and workspace.strip() else None
+    try:
+        chain_state = _chain_state_for_remote_spec(provider, remote_spec)
+    except Exception:
+        return workspace if isinstance(workspace, str) and workspace.strip() else None
+    if plan and chain_state.current_plan_name != plan:
+        return None
+    ctx = _resolve_chain_execution_context(spec, chain_state, dict(marker), remote_spec)
+    resolved = ctx.get("workspace")
+    return resolved if isinstance(resolved, str) and resolved.strip() else None
+
+
+def _resolve_resume_workspace(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> str:
+    """Resolve the workspace for ``cloud resume``.
+
+    Chain launches can derive a per-chain workspace even when cloud.yaml keeps
+    the default ``repo.workspace``. Prefer the local last-chain marker, then
+    remote chain session markers, and fall back to the static spec workspace.
+    """
+    plan = getattr(args, "plan", None)
+    marker = _load_marker(root, args)
+    if marker:
+        workspace = _workspace_from_chain_marker(spec, marker, provider, plan=plan)
+        if workspace:
+            return workspace
+
+    if plan:
+        for session in _remote_chain_sessions(provider):
+            workspace = _workspace_from_chain_marker(spec, session, provider, plan=plan)
+            if workspace:
+                return workspace
+
+    return spec.repo.workspace
 
 
 def _git_run(
@@ -1606,6 +1742,8 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 ),
             )
         )
+    for local_anchor, remote_anchor in _chain_anchor_uploads(local_spec_path, remote_spec_path, chain_spec):
+        _append_unique_upload(uploads, local_anchor, remote_anchor)
 
     missing_env = _missing_configured_secrets(spec, os.environ)
     if missing_env:
@@ -1643,6 +1781,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         source_workspace=spec.repo.workspace,
         target_workspace=launch_ctx.workspace,
         driver_overrides=driver_overrides or None,
+        phase_model_by_label=_phase_model_by_label_from_preflight(preflight_summary),
     )
     try:
         provider.upload_file(upload_spec_path, remote_spec_path)
@@ -2077,6 +2216,28 @@ def _classify_effective_status(
     return "running"
 
 
+def _latest_failure_from_plan_status(plan_status: Mapping[str, Any]) -> dict[str, Any] | None:
+    failure = plan_status.get("latest_failure")
+    if not isinstance(failure, Mapping):
+        nested_state = plan_status.get("state")
+        if isinstance(nested_state, Mapping):
+            failure = nested_state.get("latest_failure")
+    if not isinstance(failure, Mapping):
+        return None
+
+    metadata = failure.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    message = failure.get("message") or failure.get("reason") or metadata.get("message")
+    summary: dict[str, Any] = {
+        "kind": failure.get("kind"),
+        "message": message,
+        "phase": failure.get("phase") or metadata.get("phase"),
+        "raw": dict(failure),
+    }
+    return {key: value for key, value in summary.items() if value is not None}
+
+
 def _resolve_chain_execution_context(
     spec: CloudSpec,
     chain_state,
@@ -2407,6 +2568,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         )
     else:
         plan_status = {"status": "missing", "reason": "no current plan"}
+    latest_failure = _latest_failure_from_plan_status(plan_status)
 
     # Runner / heartbeat info via optional ssh_exec probe.
     runner: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
@@ -2499,6 +2661,7 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         "policy": policy,
         "sync": sync,
         "plan_status": plan_status,
+        "latest_failure": latest_failure,
         "runner": runner,
         "logs": logs,
         "pr": pr,
