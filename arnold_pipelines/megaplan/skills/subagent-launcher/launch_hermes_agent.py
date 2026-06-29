@@ -175,6 +175,7 @@ def _add_fallback_megaplan_paths() -> None:
         if (
             (root / "megaplan" / "agent" / "__init__.py").exists()
             or (root / "arnold" / "pipelines" / "megaplan" / "agent" / "__init__.py").exists()
+            or (root / "arnold" / "agent" / "run_agent.py").exists()
         ):
             root_str = str(root)
             if root_str not in sys.path:
@@ -194,7 +195,17 @@ def _import_runtime():
     except ModuleNotFoundError as legacy_exc:
         if legacy_exc.name not in {"megaplan", "run_agent", "hermes_state"}:
             raise
-    # Try 2: arnold.pipelines.megaplan (old vendored layout)
+    # Try 2: current Arnold editable-install layout.
+    try:
+        from arnold.agent.run_agent import AIAgent
+        from arnold.agent.hermes_state import SessionDB
+        from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
+        return AIAgent, SessionDB, resolve_model
+    except ModuleNotFoundError as current_exc:
+        if current_exc.name not in {"arnold", "arnold.agent", "arnold.agent.run_agent", "arnold.agent.hermes_state"}:
+            raise
+        pass
+    # Try 3: arnold.pipelines.megaplan (old vendored layout)
     try:
         vendored_agent = Path.cwd() / "arnold" / "pipelines" / "megaplan" / "agent"
         if vendored_agent.exists():
@@ -205,9 +216,11 @@ def _import_runtime():
         from arnold.pipelines.megaplan.agent.hermes_state import SessionDB
         from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
         return AIAgent, SessionDB, resolve_model
-    except ModuleNotFoundError:
+    except ModuleNotFoundError as vendored_exc:
+        if vendored_exc.name not in {"arnold.pipelines", "arnold.pipelines.megaplan"}:
+            raise
         pass
-    # Try 3: arnold_pipelines.megaplan (current editable-install layout)
+    # Try 4: historical product-local layout.
     from arnold_pipelines.megaplan.agent.run_agent import AIAgent
     from arnold_pipelines.megaplan.agent.hermes_state import SessionDB
     from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
