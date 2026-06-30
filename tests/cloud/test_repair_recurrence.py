@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from pathlib import Path
+from subprocess import CompletedProcess
+
 from arnold_pipelines.megaplan.cloud import repair_recurrence
 
 
@@ -18,6 +21,7 @@ def _failure_context(
     completed_count: int = 2,
 ) -> dict[str, object]:
     return {
+        "workspace": "",
         "failure_classification": "blocked_state_or_recovery_error",
         "plan_latest_failure": {
             "kind": failure_kind,
@@ -156,3 +160,162 @@ def test_recurrence_verdict_handles_layer1_layer2_and_false_cases() -> None:
     assert false_case["detected"] is False
     assert false_case["layer1"]["detected"] is False
     assert false_case["layer2"]["detected"] is False
+
+
+def test_live_merged_pr_overrides_stale_state_file_and_resets_no_advance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    def fake_run(args, **kwargs):
+        if args[:3] == ["gh", "pr", "view"]:
+            return CompletedProcess(
+                args,
+                0,
+                '{"state":"MERGED","mergedAt":"2026-06-30T00:15:00Z"}',
+                "",
+            )
+        if args == ["git", "rev-parse", "--is-inside-work-tree"]:
+            return CompletedProcess(args, 1, "", "not a git worktree")
+        raise AssertionError(f"unexpected command: {args}")
+
+    monkeypatch.setattr(repair_recurrence.subprocess, "run", fake_run)
+
+    previous = repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain")
+    current_context = _failure_context()
+    current_context["workspace"] = str(tmp_path)
+    current_context["chain_state_summary"] = {
+        **current_context["chain_state_summary"],
+        "pr_number": 123,
+        "pr_state": "open",
+    }
+    current = repair_recurrence.build_advancement_snapshot(current_context, run_kind="chain")
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        {
+            "last_dispatch_snapshot": previous,
+            "no_advance_dispatches": [
+                "2026-06-30T00:00:00+00:00",
+                "2026-06-30T00:05:00+00:00",
+            ],
+        },
+        current,
+        dispatched_at="2026-06-30T00:10:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert current["external_checks"]["pr"]["merged"] is True
+    assert updated["advancement_since_last_dispatch"] is True
+    assert updated["layer2_recurrence"] is False
+    assert updated["no_advance_count"] == 1
+
+
+def test_phase_churn_without_milestone_progress_counts_as_no_advance() -> None:
+    first_snapshot = repair_recurrence.build_advancement_snapshot(_failure_context(phase="execute"), run_kind="chain")
+    second_snapshot = repair_recurrence.build_advancement_snapshot(_failure_context(phase="finalize"), run_kind="chain")
+    third_snapshot = repair_recurrence.build_advancement_snapshot(_failure_context(phase="execute"), run_kind="chain")
+
+    first = repair_recurrence.update_session_repair_snapshot(
+        None,
+        first_snapshot,
+        dispatched_at="2026-06-30T00:00:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+    second = repair_recurrence.update_session_repair_snapshot(
+        first,
+        second_snapshot,
+        dispatched_at="2026-06-30T00:05:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+    third = repair_recurrence.update_session_repair_snapshot(
+        second,
+        third_snapshot,
+        dispatched_at="2026-06-30T00:10:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert second["advancement_since_last_dispatch"] is False
+    assert third["layer2_recurrence"] is True
+    assert third["no_advance_count"] == 3
+
+
+def test_external_unavailable_falls_back_to_state_milestone_progress_with_log() -> None:
+    logs: list[str] = []
+    previous = repair_recurrence.build_advancement_snapshot(
+        _failure_context(completed_count=2, current_milestone_index=7),
+        run_kind="chain",
+        logger=logs.append,
+    )
+    current = repair_recurrence.build_advancement_snapshot(
+        _failure_context(completed_count=3, current_milestone_index=8),
+        run_kind="chain",
+        logger=logs.append,
+    )
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        {"last_dispatch_snapshot": previous, "no_advance_dispatches": ["2026-06-30T00:00:00+00:00"]},
+        current,
+        dispatched_at="2026-06-30T00:05:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert current["external_checks"]["state_fallback"]["used"] is True
+    assert any("falling back to state-file milestone counters" in item for item in logs)
+    assert updated["advancement_since_last_dispatch"] is True
+    assert updated["layer2_recurrence"] is False
+
+
+def test_git_branch_advancement_resets_no_advance_without_state_counter_change() -> None:
+    previous = {
+        **repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain"),
+        "external_checks": {
+            "pr": {"available": False, "reason": "no_pr_number"},
+            "git": {"available": True, "head": "aaa", "base_ref": "origin/main", "ahead_count": 1},
+            "state_fallback": {"used": False, "reason": ""},
+        },
+    }
+    current = {
+        **repair_recurrence.build_advancement_snapshot(_failure_context(), run_kind="chain"),
+        "external_checks": {
+            "pr": {"available": False, "reason": "no_pr_number"},
+            "git": {"available": True, "head": "bbb", "base_ref": "origin/main", "ahead_count": 2},
+            "state_fallback": {"used": False, "reason": ""},
+        },
+    }
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        {
+            "last_dispatch_snapshot": previous,
+            "no_advance_dispatches": [
+                "2026-06-30T00:00:00+00:00",
+                "2026-06-30T00:05:00+00:00",
+            ],
+        },
+        current,
+        dispatched_at="2026-06-30T00:10:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert updated["advancement_since_last_dispatch"] is True
+    assert updated["layer2_recurrence"] is False
+
+
+def test_completed_session_state_is_progress_when_external_checks_unavailable() -> None:
+    previous = repair_recurrence.build_advancement_snapshot(_failure_context(current_state="blocked"), run_kind="chain")
+    current = repair_recurrence.build_advancement_snapshot(_failure_context(current_state="done"), run_kind="chain")
+
+    updated = repair_recurrence.update_session_repair_snapshot(
+        {"last_dispatch_snapshot": previous, "no_advance_dispatches": ["2026-06-30T00:00:00+00:00"]},
+        current,
+        dispatched_at="2026-06-30T00:05:00+00:00",
+        min_dispatches=3,
+        window_seconds=3600,
+    )
+
+    assert updated["advancement_since_last_dispatch"] is True
+    assert updated["layer2_recurrence"] is False

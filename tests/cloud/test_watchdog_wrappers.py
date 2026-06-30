@@ -200,7 +200,7 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
 
     assert "## Incident Snapshot" in text
     assert "## RECURRENCE EVIDENCE" in text
-    assert "Recurrence means the prior attempts treated symptoms, not the cause." in text
+    assert "Recurrence means the prior attempts may have treated symptoms, not the cause." in text
     assert "Start from the inline incident snapshot above." in text
     assert "ATTEMPT to resolve those user actions before treating this as a human stop" in text
     assert "Classification guide:" in text
@@ -973,9 +973,9 @@ def test_repair_loop_renders_recurrence_block_from_controlled_signature_history(
     assert result.returncode == 0, result.stderr
     block = result.stdout
     assert "## RECURRENCE EVIDENCE" in block
-    assert "This is attempt 3 for the SAME problem (recurrence detected)." in block
+    assert "This is attempt 3 for the same controlled-field symptom (recurrence detected)." in block
     assert "The symptom came back despite these prior fixes:" in block
-    assert "Recurrence means the prior attempts treated symptoms, not the cause." in block
+    assert "Recurrence means the prior attempts may have treated symptoms, not the cause." in block
     assert "Layer 1 fired" in block
     assert "Layer 2 fired" in block
     assert "authority_divergence" in block
@@ -3530,6 +3530,14 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert '"mechanical_log_tail"' in text
     assert '"plan_latest_failure"' in text
     assert '"chain_state_summary"' in text
+    assert '"pr_number": chain_state.get("pr_number")' in text
+    assert '"target_base_ref": chain_state.get("target_base_ref")' in text
+    assert '"workspace": str(workspace)' in text
+    assert "workspace=str(payload.get(\"workspace\") or failure_context.get(\"workspace\") or \"\")" in text
+    assert 'logger=lambda message: print(f"repair_recurrence: {message}", file=sys.stderr)' in text
+    assert "repair_recurrence.atomic_write_json(data_path, payload)" in text
+    assert "repair_recurrence.atomic_write_json(progress_path, session_snapshot)" in text
+    assert "os.replace(tmp_name, target_path)" in text
     assert '"plan_runtime_state"' in text
     assert '"last_gate"' in text
     assert "for iteration in 1 2 3; do" in text
@@ -3545,7 +3553,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "## Incident Snapshot" in text
     assert "## RECURRENCE EVIDENCE" in text
     assert "This is attempt " in text
-    assert "for the SAME problem (recurrence detected)." in text
+    assert "for the same controlled-field symptom (recurrence detected)." in text
     assert "The symptom came back despite these prior fixes:" in text
     assert "primary failure signal(s)" in text
     assert "current run narrative (plan log tail when present)" in text
