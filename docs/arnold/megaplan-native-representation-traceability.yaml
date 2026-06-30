@@ -43,6 +43,8 @@ final_conformance_gate:
     schema: arnold.megaplan_native_representation.conformance.v1
     validator: scripts/validate_native_representation_conformance.py
     row_status_values: [implemented, deferred]
+    implemented_semantic_carriers: [canonical_source, declared_policy, audited_pure_phase_body]
+    deferred_semantic_carriers: [explicit_deferral]
     required_row_fields: [id, status, semantic_carrier, proof_artifacts]
     deferred_required_row_fields: [downstream_owner, blocking_proof, reason]
   required_report_sections:
