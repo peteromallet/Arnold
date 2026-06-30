@@ -225,6 +225,74 @@ def _write_chain_spec(root: Path) -> Path:
     return spec_path
 
 
+def _write_base_branch_chain_spec(root: Path) -> Path:
+    idea = root / "idea.md"
+    idea.write_text("ship milestone on base\n", encoding="utf-8")
+    north_star = root / "NORTHSTAR.md"
+    north_star.write_text("north star\n", encoding="utf-8")
+    spec_path = root / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {idea}\n",
+        encoding="utf-8",
+    )
+    return spec_path
+
+
+def test_run_chain_commits_base_branch_milestone_without_pr_branch(tmp_path: Path) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_base_branch_chain_spec(tmp_path)
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+
+    def execute_produces_work(*_args, **_kwargs):
+        (tmp_path / "src" / "app.py").write_text("print('execute output')\n", encoding="utf-8")
+        return chain_module.DriverOutcome(
+            status="done",
+            plan="plan-m1",
+            final_state="done",
+            iterations=1,
+            reason="ok",
+        )
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._refresh_base_branch", lambda *args, **kwargs: None),
+        patch("arnold_pipelines.megaplan.chain._init_plan", return_value="plan-m1"),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            side_effect=execute_produces_work,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._plan_terminal_completion_is_authoritative",
+            return_value=(True, "ok"),
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._shadow_milestone_completion_verdict",
+            return_value=False,
+        ),
+        patch("arnold_pipelines.megaplan.chain._commit_and_push_phase") as commit_and_push,
+    ):
+        result = run_chain(spec_path, tmp_path, writer=lambda _msg: None, mode="execute")
+
+    head = _git(tmp_path, "rev-parse", "HEAD")
+    assert result["status"] == "done"
+    assert head != base
+    assert int(_git(tmp_path, "rev-list", "--count", f"{base}..HEAD")) == 1
+    assert "src/app.py" not in _git(tmp_path, "status", "--porcelain")
+    assert "src/app.py" in _git(tmp_path, "diff", "--name-only", f"{base}..HEAD")
+    saved = load_chain_state(spec_path)
+    assert saved.completed[-1]["local_commit_sha"] == head
+    commit_and_push.assert_not_called()
+
+
 def test_non_terminal_gated_plan_cannot_complete_from_pr_merge_alone(
     tmp_path: Path,
 ) -> None:
