@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -119,6 +120,12 @@ class FailurePolicy:
                 "invalid_spec",
                 f"`{section}` must be a string or a mapping of retry/escalate/abort",
             )
+        unknown = sorted(set(value) - {"retry", "escalate", "abort"})
+        if unknown:
+            raise CliError(
+                "invalid_spec",
+                f"`{section}` only supports retry/escalate/abort; unknown key `{unknown[0]}`",
+            )
 
         def _check(key: str, fallback: str | None) -> str | None:
             raw = value.get(key, fallback)
@@ -166,6 +173,152 @@ class AnchorSpec:
         if not isinstance(north_star, str) or not north_star.strip():
             raise CliError("invalid_spec", f"`{section}.north_star` must be a non-empty string")
         return cls(north_star=north_star.strip())
+
+
+@dataclass(frozen=True)
+class LaunchPreconditionSpec:
+    name: str
+    kind: str = "artifact"
+    path: str | None = None
+    chain: str | None = None
+    check: str = "exists"
+    text: str | None = None
+
+    @classmethod
+    def from_yaml(cls, value: Any, index: int) -> "LaunchPreconditionSpec":
+        if not isinstance(value, dict):
+            raise CliError("invalid_spec", f"launch_preconditions[{index}] must be a mapping")
+        allowed = {"name", "kind", "path", "chain", "check", "text"}
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            raise CliError(
+                "invalid_spec",
+                f"launch_preconditions[{index}] unknown key `{unknown[0]}`",
+            )
+        name = value.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise CliError("invalid_spec", f"launch_preconditions[{index}].name is required")
+        kind = value.get("kind", "artifact")
+        if not isinstance(kind, str) or not kind.strip():
+            raise CliError("invalid_spec", f"launch_preconditions[{index}].kind must be a string")
+        kind = kind.strip()
+        if kind not in {"artifact", "chain_completed", "git_tracked"}:
+            raise CliError(
+                "invalid_spec",
+                f"launch_preconditions[{index}].kind must be `artifact`, `chain_completed`, or `git_tracked`; got {kind!r}",
+            )
+        chain = value.get("chain")
+        path = value.get("path")
+        if kind == "chain_completed":
+            if not isinstance(chain, str) or not chain.strip():
+                raise CliError("invalid_spec", f"launch_preconditions[{index}].chain is required")
+            if path is not None or value.get("text") is not None:
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] chain_completed does not support `path` or `text`",
+                )
+            check = value.get("check")
+            if check not in (None, "chain_completed"):
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] chain_completed does not support check {check!r}",
+                )
+            return cls(
+                name=name.strip(),
+                kind=kind,
+                chain=chain.strip(),
+                check="chain_completed",
+            )
+
+        if kind == "git_tracked":
+            if chain is not None or value.get("text") is not None:
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] git_tracked does not support `chain` or `text`",
+                )
+            if not isinstance(path, str) or not path.strip():
+                raise CliError("invalid_spec", f"launch_preconditions[{index}].path is required")
+            check = value.get("check")
+            if check not in (None, "git_tracked"):
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}] git_tracked does not support check {check!r}",
+                )
+            return cls(
+                name=name.strip(),
+                kind=kind,
+                path=path.strip(),
+                check="git_tracked",
+            )
+
+        if chain is not None:
+            raise CliError(
+                "invalid_spec",
+                f"launch_preconditions[{index}] artifact precondition does not support `chain`",
+            )
+        if not isinstance(path, str) or not path.strip():
+            raise CliError("invalid_spec", f"launch_preconditions[{index}].path is required")
+        check = value.get("check", "exists")
+        text: str | None = None
+        if isinstance(check, dict):
+            check_unknown = sorted(set(check) - {"kind", "text"})
+            if check_unknown:
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}].check unknown key `{check_unknown[0]}`",
+                )
+            kind = check.get("kind")
+            if not isinstance(kind, str) or not kind.strip():
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}].check.kind is required",
+                )
+            check_name = kind.strip()
+            text_raw = check.get("text")
+            if text_raw is not None:
+                if not isinstance(text_raw, str) or not text_raw:
+                    raise CliError(
+                        "invalid_spec",
+                        f"launch_preconditions[{index}].check.text must be a non-empty string",
+                    )
+                text = text_raw
+        elif isinstance(check, str):
+            check_name = check.strip()
+            text_raw = value.get("text")
+            if text_raw is not None:
+                if not isinstance(text_raw, str) or not text_raw:
+                    raise CliError(
+                        "invalid_spec",
+                        f"launch_preconditions[{index}].text must be a non-empty string",
+                    )
+                text = text_raw
+        else:
+            raise CliError(
+                "invalid_spec",
+                f"launch_preconditions[{index}].check must be a string or mapping",
+            )
+        if check_name not in {"exists", "contains_text"}:
+            raise CliError(
+                "invalid_spec",
+                f"launch_preconditions[{index}].check must be `exists` or `contains_text`; got {check_name!r}",
+            )
+        if check_name == "contains_text" and not text:
+            raise CliError(
+                "invalid_spec",
+                f"launch_preconditions[{index}] contains_text check requires `text`",
+            )
+        if check_name == "exists" and text is not None:
+            raise CliError(
+                "invalid_spec",
+                f"launch_preconditions[{index}] exists check does not support `text`",
+            )
+        return cls(
+            name=name.strip(),
+            kind=kind,
+            path=path.strip(),
+            check=check_name,
+            text=text,
+        )
 
 
 def _warn_chain_fallback(
@@ -347,6 +500,7 @@ class MilestoneSpec:
 class ChainSpec:
     milestones: list[MilestoneSpec]
     anchors: AnchorSpec = field(default_factory=AnchorSpec)
+    launch_preconditions: list[LaunchPreconditionSpec] = field(default_factory=list)
     seed_plan: str | None = None
     base_branch: str = "main"
     on_failure: str = "stop_chain"
@@ -379,6 +533,7 @@ class ChainSpec:
             "anchors",
             "base_branch",
             "driver",
+            "launch_preconditions",
             "merge_policy",
             "milestones",
             "on_escalate",
@@ -398,6 +553,13 @@ class ChainSpec:
             raise CliError("invalid_spec", "`base_branch` must be a non-empty string")
         base_branch = base_branch.strip()
         anchors = AnchorSpec.from_yaml(raw.get("anchors"), "anchors")
+        preconditions_raw = raw.get("launch_preconditions") or []
+        if not isinstance(preconditions_raw, list):
+            raise CliError("invalid_spec", "`launch_preconditions` must be a list")
+        launch_preconditions = [
+            LaunchPreconditionSpec.from_yaml(item, i)
+            for i, item in enumerate(preconditions_raw)
+        ]
         milestones_raw = raw.get("milestones") or []
         if not isinstance(milestones_raw, list):
             raise CliError("invalid_spec", "`milestones` must be a list")
@@ -517,6 +679,7 @@ class ChainSpec:
         return cls(
             milestones=milestones,
             anchors=anchors,
+            launch_preconditions=launch_preconditions,
             seed_plan=seed_plan,
             base_branch=base_branch,
             on_failure=on_failure,
@@ -740,6 +903,14 @@ def load_chain_state(spec_path: Path) -> ChainState:
 def save_chain_state(spec_path: Path, state: ChainState) -> None:
     state_path = _state_path_for(spec_path)
     state_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_resolved = spec_path.resolve(strict=False)
+    metadata = dict(state.metadata)
+    metadata["chain_spec_path"] = str(spec_resolved)
+    if spec_resolved.exists():
+        metadata["chain_spec_sha256"] = hashlib.sha256(
+            spec_resolved.read_bytes()
+        ).hexdigest()
+    state.metadata = metadata
     tmp = state_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(state.to_dict(), indent=2) + "\n", encoding="utf-8")
     tmp.replace(state_path)
@@ -904,6 +1075,322 @@ def warn_undeclared_north_star(spec: ChainSpec, spec_path: Path) -> str | None:
     return None
 
 
+def _resolve_launch_precondition_path(raw_path: str, root: Path) -> Path:
+    target = Path(raw_path).expanduser()
+    if not target.is_absolute():
+        target = root / target
+    return target.resolve(strict=False)
+
+
+def _require_inside_root(target: Path, root: Path, label: str) -> None:
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} points outside project root {root}: {target}",
+        ) from exc
+
+
+def _pathspec_for_git(target: Path, root: Path) -> str:
+    return target.relative_to(root).as_posix()
+
+
+def _git_lines(root: Path, args: list[str]) -> list[str]:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"unable to run git while validating launch preconditions: {exc}",
+        ) from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        raise CliError(
+            "launch_precondition_failed",
+            f"git command failed while validating launch preconditions: git {' '.join(args)}; {detail}",
+        )
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _git_status_porcelain(root: Path, rel: str) -> list[str]:
+    try:
+        proc = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=all", "--", rel],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"unable to run git while validating launch preconditions: {exc}",
+        ) from exc
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip()
+        raise CliError(
+            "launch_precondition_failed",
+            f"git command failed while validating launch preconditions: git status --porcelain --untracked-files=all -- {rel}; {detail}",
+        )
+    return [line.rstrip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def _tracked_paths_in_head(root: Path, rel: str) -> set[str]:
+    try:
+        return set(_git_lines(root, ["ls-tree", "-r", "--name-only", "HEAD", "--", rel]))
+    except CliError as exc:
+        if "Not a valid object name HEAD" in exc.message:
+            raise CliError(
+                "launch_precondition_failed",
+                f"required git path is not committed in HEAD: {rel}",
+            ) from exc
+        raise
+
+
+def _validate_git_tracked_precondition(
+    precondition: LaunchPreconditionSpec,
+    root: Path,
+    spec_path: Path,
+    *,
+    index: int,
+) -> None:
+    label = f"launch_preconditions[{index}] {precondition.name!r}"
+    if precondition.path is None:
+        raise CliError("invalid_spec", f"{label} missing artifact path")
+    target = _resolve_launch_precondition_path(precondition.path, root)
+    _require_inside_root(target, root, label)
+    if not target.exists():
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: required tracked path missing at {target}",
+        )
+    rel = _pathspec_for_git(target, root)
+    tracked = _git_lines(root, ["ls-files", "--", rel])
+    head_tracked = _tracked_paths_in_head(root, rel)
+    status_lines = _git_status_porcelain(root, rel)
+    if target.is_file():
+        if rel not in set(tracked) or rel not in head_tracked:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: required file is not committed in HEAD: {rel}",
+            )
+        if status_lines:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: required file has uncommitted changes: {rel}",
+            )
+        return
+    if not tracked:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: required directory has no tracked files: {rel}",
+        )
+    if not head_tracked:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: required directory has no files committed in HEAD: {rel}",
+        )
+    if status_lines:
+        sample = ", ".join(status_lines[:8])
+        suffix = "" if len(status_lines) <= 8 else f", ... +{len(status_lines) - 8} more"
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: required directory has uncommitted changes under {rel}: {sample}{suffix}",
+        )
+
+
+def _completed_milestone_labels(state: ChainState) -> set[str]:
+    labels: set[str] = set()
+    for record in state.completed:
+        if not isinstance(record, dict):
+            continue
+        label = record.get("label")
+        status = record.get("status")
+        if isinstance(label, str) and status == "done":
+            labels.add(label)
+    return labels
+
+
+def _completion_record_by_label(state: ChainState) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    duplicate_labels: set[str] = set()
+    for record in state.completed:
+        if not isinstance(record, dict):
+            continue
+        label = record.get("label")
+        if not isinstance(label, str) or not label:
+            continue
+        if label in records:
+            duplicate_labels.add(label)
+        records[label] = record
+    if duplicate_labels:
+        raise CliError(
+            "launch_precondition_failed",
+            f"prerequisite chain state has duplicate completed records for {sorted(duplicate_labels)}",
+        )
+    return records
+
+
+def _validate_completed_record_evidence(
+    record: dict[str, Any],
+    *,
+    label: str,
+    prerequisite_spec: ChainSpec,
+    precondition_label: str,
+    dependent_spec_path: Path,
+) -> None:
+    status = record.get("status")
+    if status != "done":
+        raise CliError(
+            "launch_precondition_failed",
+            f"{precondition_label} failed for {dependent_spec_path}: prerequisite milestone {label!r} status must be 'done'; got {status!r}",
+        )
+    plan = record.get("plan")
+    if not isinstance(plan, str) or not plan.strip():
+        raise CliError(
+            "launch_precondition_failed",
+            f"{precondition_label} failed for {dependent_spec_path}: prerequisite milestone {label!r} has no plan name",
+        )
+    if prerequisite_spec.merge_policy == "review":
+        pr_number = record.get("pr_number")
+        pr_state = record.get("pr_state")
+        if not isinstance(pr_number, int) or pr_state != "merged":
+            raise CliError(
+                "launch_precondition_failed",
+                f"{precondition_label} failed for {dependent_spec_path}: prerequisite milestone {label!r} requires merged PR evidence",
+            )
+
+
+def _validate_chain_completed_precondition(
+    precondition: LaunchPreconditionSpec,
+    root: Path,
+    spec_path: Path,
+    *,
+    index: int,
+) -> None:
+    label = f"launch_preconditions[{index}] {precondition.name!r}"
+    raw_chain = precondition.chain
+    if not raw_chain:
+        raise CliError("invalid_spec", f"{label} missing chain path")
+    chain_path = _resolve_launch_precondition_path(raw_chain, root)
+    _require_inside_root(chain_path, root, label)
+    if not chain_path.is_file():
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite chain not found at {chain_path}",
+        )
+    prereq_spec = load_spec(chain_path)
+    canonical_state_path = _state_path_for(chain_path)
+    legacy_state_path = _legacy_state_path_for(chain_path)
+    if not canonical_state_path.exists():
+        if legacy_state_path.exists():
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: prerequisite chain state is legacy/ambiguous at {legacy_state_path}; rerun or refresh {chain_path}",
+            )
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite chain state missing at {canonical_state_path}",
+        )
+    prereq_state = load_chain_state(chain_path)
+    metadata = prereq_state.metadata
+    expected_path = str(chain_path.resolve(strict=False))
+    actual_path = metadata.get("chain_spec_path")
+    if actual_path != expected_path:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite chain state path metadata is stale or missing; expected {expected_path}, got {actual_path!r}",
+        )
+    expected_hash = hashlib.sha256(chain_path.read_bytes()).hexdigest()
+    actual_hash = metadata.get("chain_spec_sha256")
+    if actual_hash != expected_hash:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite chain state hash is stale for {chain_path}",
+        )
+    if prereq_state.current_plan_name is not None:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite chain {chain_path} still has active plan {prereq_state.current_plan_name!r}",
+        )
+    if prereq_state.current_milestone_index < len(prereq_spec.milestones):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite chain {chain_path} has not advanced past all milestones",
+        )
+    required_labels = [milestone.label for milestone in prereq_spec.milestones]
+    records_by_label = _completion_record_by_label(prereq_state)
+    completed = _completed_milestone_labels(prereq_state)
+    missing = [label for label in required_labels if label not in completed]
+    if missing:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite chain {chain_path} incomplete; missing milestones {missing}",
+        )
+    for required_label in required_labels:
+        _validate_completed_record_evidence(
+            records_by_label[required_label],
+            label=required_label,
+            prerequisite_spec=prereq_spec,
+            precondition_label=label,
+            dependent_spec_path=spec_path,
+        )
+
+
+def validate_launch_preconditions(spec: ChainSpec, root: Path, spec_path: Path) -> None:
+    root = Path(root).expanduser().resolve()
+    for index, precondition in enumerate(spec.launch_preconditions):
+        label = f"launch_preconditions[{index}] {precondition.name!r}"
+        if precondition.kind == "chain_completed":
+            _validate_chain_completed_precondition(
+                precondition,
+                root,
+                spec_path,
+                index=index,
+            )
+            continue
+        if precondition.kind == "git_tracked":
+            _validate_git_tracked_precondition(
+                precondition,
+                root,
+                spec_path,
+                index=index,
+            )
+            continue
+        if precondition.path is None:
+            raise CliError("invalid_spec", f"{label} missing artifact path")
+        target = _resolve_launch_precondition_path(precondition.path, root)
+        _require_inside_root(target, root, label)
+        if not target.exists():
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: required artifact missing at {target}",
+            )
+        if precondition.check == "contains_text":
+            try:
+                contents = target.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                raise CliError(
+                    "launch_precondition_failed",
+                    f"{label} failed for {spec_path}: artifact is not UTF-8 text at {target}",
+                ) from exc
+            expected = precondition.text or ""
+            if expected not in contents:
+                raise CliError(
+                    "launch_precondition_failed",
+                    f"{label} failed for {spec_path}: artifact {target} does not contain required text {expected!r}",
+                )
+
+
 def validate_paths(spec: ChainSpec, root: Path, spec_path: Path | None = None) -> None:
     root = Path(root).expanduser().resolve()
     for milestone in spec.milestones:
@@ -926,3 +1413,4 @@ def validate_paths(spec: ChainSpec, root: Path, spec_path: Path | None = None) -
             ) from exc
     if spec_path is not None:
         validate_anchor_paths(spec, spec_path)
+        validate_launch_preconditions(spec, root, spec_path)

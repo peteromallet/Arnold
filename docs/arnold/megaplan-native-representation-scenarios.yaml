@@ -1,0 +1,96 @@
+schema: arnold.megaplan_native_representation.scenarios.v1
+target_report: docs/arnold/megaplan-native-representation-report.md
+alignment_plan: docs/arnold/megaplan-native-representation-alignment-plan.md
+traceability: docs/arnold/megaplan-native-representation-traceability.yaml
+regeneration_rule: Golden traces generated from these scenarios must not be rebaselined without semantic diff review and reviewer approval.
+scenarios:
+  - id: D1-prep-plan
+    slice: Prep/Plan
+    rows: [prep-clarification-gate, plan-artifact-version-metadata, human-decision-suspension]
+    required_cases: [blocking_questions_suspend, resume_clarify, no_pre_resume_plan_artifact, imported_criteria_declared_outputs]
+    topology_requirements: [prep_branch_visible, human_resume_coordinate_visible]
+    false_pass_guard: Prep handler cannot set awaiting-human state without a visible suspension route.
+  - id: D2-critique
+    slice: Critique
+    rows: [critique-bare-skip, critique-evaluator-retry, critique-parallel-lenses, dynamic-parallel-map]
+    required_cases: [bare_skip, evaluator_retry_success, evaluator_retry_exhaustion, selected_lens_parallel_fanout, sequential_fallback]
+    topology_requirements: [robustness_policy_visible, selected_lens_map_visible, reducer_visible]
+    false_pass_guard: A single critique handler node is not sufficient even if child traces exist.
+  - id: D3-gate-preflight
+    slice: Gate Preflight
+    rows: [gate-preflight-normalization, gate-flag-debt-fallback]
+    required_cases: [malformed_payload_recovery, empty_payload_recovery, unavailable_agent_route, high_complexity_downgrade]
+    topology_requirements: [preflight_route_visible, payload_recovery_policy_visible]
+    false_pass_guard: Bad payload fallback cannot remain only in handle_gate.
+  - id: D4-gate-revise
+    slice: Gate/Revise
+    rows: [critique-gate-revise-loop, gate-signal-reprompt, gate-flag-debt-fallback, typed-loop-outcomes]
+    required_cases: [flag_resolution_success, unresolved_flag_reprompt, debt_acceptance, iterate_to_revise, cap_no_progress_block, cosmetic_force_proceed]
+    topology_requirements: [bounded_loop_visible, typed_outcomes_visible, severity_termination_visible]
+    false_pass_guard: State mutation to critique/revise cannot be the only loop expression.
+  - id: D5-tiebreaker
+    slice: Tiebreaker
+    rows: [tiebreaker-subworkflow, path-addressed-checkpoints, human-decision-suspension]
+    required_cases: [researcher_branch, challenger_branch, pick_promotes_decision, escalate_to_human, replan_route]
+    topology_requirements: [subworkflow_visible, child_paths_stable, parent_promotion_visible]
+    false_pass_guard: One tiebreaker_run handler node does not satisfy this scenario.
+  - id: D6-finalize
+    slice: Finalize
+    rows: [finalize-fallback-routes, plan-artifact-version-metadata]
+    required_cases: [task_generation, scoped_baseline_selection, full_baseline_selection, missing_scoped_baseline_fallback, user_actions_declared, finalize_failure_to_revise, before_execute_gate]
+    topology_requirements: [finalize_failure_route_visible, artifact_contract_visible]
+    false_pass_guard: Finalize errors cannot be swallowed into artifact flags.
+  - id: D7-execute-dag
+    slice: Execute DAG
+    rows: [execute-dependency-batches, dynamic-parallel-map, model-routing-policy, path-addressed-checkpoints]
+    required_cases: [dependency_ordering, runtime_task_batch_map, partial_failure_resume, task_complexity_model_route]
+    topology_requirements: [execute_subworkflow_or_dag_visible, task_paths_stable, dependency_edges_visible]
+    false_pass_guard: Execute cannot remain one handler-backed stage with richer logs.
+  - id: D8-execute-gates
+    slice: Execute Gates
+    rows: [execute-approval-gates, human-decision-suspension, override-action-surface]
+    required_cases: [approval_approve, approval_deny, approval_cancel, approval_resume, no_review_to_done, deferred_human_verify, protected_action_gate]
+    topology_requirements: [protected_action_gate_visible, no_review_route_visible, deferred_human_route_visible]
+    false_pass_guard: Approval hidden in state meta or user_approved_gate is insufficient.
+  - id: D9-review-fanout
+    slice: Review Fanout
+    rows: [review-parallel-fanin, dynamic-parallel-map]
+    required_cases: [selected_review_checks_parallel, reducer_ordering, infra_retry]
+    topology_requirements: [review_check_children_visible, reducer_visible, ordering_deterministic]
+    false_pass_guard: Parallel checks running inside review handler is insufficient.
+  - id: D10-review-caps
+    slice: Review Caps
+    rows: [execute-review-rework-loop, review-retry-cap-outcomes, typed-loop-outcomes]
+    required_cases: [approve, request_rework, block, recoverable_block_escalation, repeated_failure_cap, force_proceed_distinction]
+    topology_requirements: [review_rework_loop_visible, cap_outcome_visible, recoverable_block_route_visible]
+    false_pass_guard: Cap-exhausted blockers cannot be represented only by STATE_BLOCKED/resume_cursor/current_state/next_step mutation.
+  - id: D11-human-control
+    slice: Human/Control
+    rows: [override-action-surface, human-decision-suspension, model-routing-policy]
+    required_cases: [add_note, abort, force_proceed, replan, recover_blocked, resume_clarify, set_robustness, set_profile, set_model, set_vendor]
+    topology_requirements: [override_action_matrix_complete, neutral_runtime_dispatch_only]
+    false_pass_guard: Override action strings cannot hide product route decisions inside one handler.
+  - id: D12-runtime-trace
+    slice: Runtime/Trace
+    rows: [path-addressed-checkpoints, autodrive-event-liveness, golden-trace-regeneration]
+    required_cases: [tree_trace_snapshot, replay_consistency, resume_from_path, process_death_resume, unreviewed_golden_rebaseline_rejected]
+    topology_requirements: [stable_path_template, event_control_overlay_visible, trace_semantic_diff_required]
+    false_pass_guard: Flattened traces or overwritten goldens cannot prove conformance.
+  - id: D13-policy-platform
+    slice: Policy/Platform
+    rows: [timeout-deadline-policy, model-routing-policy, execute-approval-gates, autodrive-event-liveness]
+    required_cases: [timeout_retry, timeout_escalation, phase_model_route, task_complexity_route, credential_policy_gate, worker_lease_cancel]
+    topology_requirements: [rendered_policy_view, policy_objects_attached_to_compiled_workflow]
+    false_pass_guard: Exported constants alone do not satisfy policy conformance.
+  - id: D14-compiler-authoring
+    slice: Compiler/Authoring
+    rows: [runtime-list-iteration, dynamic-parallel-map, typed-loop-outcomes, tiebreaker-subworkflow, shadow-topology, source-readability]
+    required_cases: [runtime_list_parallel_map_acceptance, nested_workflow_invocation_acceptance, typed_loop_outcome_acceptance, direct_manifest_authoring_rejection, megaplan_only_helper_rejection, single_handler_wrapper_rejection, shadow_topology_review]
+    topology_requirements: [v2_authoring_contract_enforced, source_and_lowered_manifest_evidence, accepted_shadow_topology_before_migration]
+    false_pass_guard: A readable wrapper around an opaque handler cannot close report-owned rows.
+  - id: D15-handler-extraction
+    slice: Handler Extraction
+    rows: [handler-purity-audit, source-path-reconciliation, source-readability, behavior-parity]
+    required_cases: [handler_inventory_complete, source_path_inventory_matches_installed_package, stale_path_negative_check, purity_scan_current_state_next_step, mutation_hides_branch_fails, mutation_hides_fanout_fails, mutation_hides_suspension_fails]
+    topology_requirements: [semantic_carrier_table_complete, canonical_source_paths_verified, retained_handlers_audited_pure]
+    false_pass_guard: Handler refs wrapped in native nodes cannot retain routing, loop exits, fanout, suspension, override, or state transitions.
