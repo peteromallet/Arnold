@@ -139,6 +139,16 @@ Default is `stop_chain` for both — failures should halt unless you've delibera
 
 Use `launch_preconditions` when a chain must not start until a prerequisite file, source path, or chain completion proof exists. For ordinary dependent chains, `kind: chain_completed` verifies the prerequisite chain state, current `chain.yaml` hash, completed milestone labels, plan names, and merged PR evidence for review-merge chains.
 
+For review-gated launch evidence, use an artifact check with `kind: review_log_clean` instead of only checking that a review log contains a marker string. It fails launch if the log contains an explicit `BLOCK` verdict or a `PASS WITH EDIT` section without an applied-edits note:
+
+```yaml
+launch_preconditions:
+  - name: review log has no unaddressed blockers
+    path: docs/arnold/my-review-log.md
+    check:
+      kind: review_log_clean
+```
+
 For high-confidence handoffs, add `require_manifest: true` to the `chain_completed` precondition:
 
 ```yaml
