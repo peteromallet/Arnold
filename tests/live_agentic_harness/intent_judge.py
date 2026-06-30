@@ -94,6 +94,148 @@ def _schema_context_from_payload(payload: Mapping[str, Any] | None) -> dict[str,
     return context
 
 
+def _ui_nodes_by_id(ui: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    nodes = ui.get("nodes")
+    if not isinstance(nodes, list):
+        return {}
+    result: dict[str, Mapping[str, Any]] = {}
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        node_id = node.get("id")
+        if node_id is not None:
+            result[str(node_id)] = node
+    return result
+
+
+def _ui_links_by_id(ui: Mapping[str, Any]) -> dict[Any, Any]:
+    links = ui.get("links")
+    if not isinstance(links, list):
+        return {}
+    result: dict[Any, Any] = {}
+    for link in links:
+        if isinstance(link, list) and link:
+            result[link[0]] = link
+        elif isinstance(link, Mapping) and "id" in link:
+            result[link.get("id")] = link
+    return result
+
+
+def _link_source(link: Any) -> dict[str, Any] | None:
+    if isinstance(link, list) and len(link) >= 3:
+        return {"node_id": str(link[1]), "slot": link[2]}
+    if isinstance(link, Mapping):
+        source_id = link.get("origin_id", link.get("source_id", link.get("from_node")))
+        source_slot = link.get("origin_slot", link.get("source_slot", link.get("from_slot")))
+        if source_id is not None:
+            return {"node_id": str(source_id), "slot": source_slot}
+    return None
+
+
+def _linked_inputs_for_node(
+    node: Mapping[str, Any],
+    *,
+    links_by_id: Mapping[Any, Any],
+    nodes_by_id: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    inputs = node.get("inputs")
+    if not isinstance(inputs, list):
+        return []
+    linked_inputs: list[dict[str, Any]] = []
+    for index, input_item in enumerate(inputs):
+        if not isinstance(input_item, Mapping):
+            continue
+        link_id = input_item.get("link")
+        if link_id is None:
+            continue
+        source = _link_source(links_by_id.get(link_id))
+        source_node = nodes_by_id.get(source["node_id"]) if source is not None else None
+        linked_inputs.append(
+            {
+                "input_index": index,
+                "name": input_item.get("name"),
+                "type": input_item.get("type"),
+                "link": link_id,
+                "source": {
+                    **(source or {}),
+                    "class_type": source_node.get("type") if isinstance(source_node, Mapping) else None,
+                },
+            }
+        )
+    return linked_inputs
+
+
+def _static_widget_dataflow_context(
+    pre_ir: Mapping[str, Any],
+    post_ir: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    pre_nodes = _ui_nodes_by_id(pre_ir)
+    post_nodes = _ui_nodes_by_id(post_ir)
+    pre_links = _ui_links_by_id(pre_ir)
+    post_links = _ui_links_by_id(post_ir)
+    widget_deltas: list[dict[str, Any]] = []
+    static_removals_with_preserved_dynamic_inputs: list[dict[str, Any]] = []
+
+    for node_id, pre_node in sorted(pre_nodes.items()):
+        post_node = post_nodes.get(node_id)
+        if post_node is None:
+            continue
+        pre_widgets = pre_node.get("widgets_values")
+        post_widgets = post_node.get("widgets_values")
+        if not isinstance(pre_widgets, list) or not isinstance(post_widgets, list):
+            continue
+        linked_inputs_pre = _linked_inputs_for_node(
+            pre_node,
+            links_by_id=pre_links,
+            nodes_by_id=pre_nodes,
+        )
+        linked_inputs_post = _linked_inputs_for_node(
+            post_node,
+            links_by_id=post_links,
+            nodes_by_id=post_nodes,
+        )
+        linked_signature_pre = {
+            (item.get("name"), item.get("link"), item.get("source", {}).get("node_id"))
+            for item in linked_inputs_pre
+        }
+        linked_signature_post = {
+            (item.get("name"), item.get("link"), item.get("source", {}).get("node_id"))
+            for item in linked_inputs_post
+        }
+        preserved_dynamic_inputs = bool(linked_signature_pre & linked_signature_post)
+        for index in range(max(len(pre_widgets), len(post_widgets))):
+            old = pre_widgets[index] if index < len(pre_widgets) else None
+            new = post_widgets[index] if index < len(post_widgets) else None
+            if old == new:
+                continue
+            delta = {
+                "node_id": node_id,
+                "class_type": post_node.get("type") or pre_node.get("type"),
+                "widget_index": index,
+                "old": old,
+                "new": new,
+                "kind": "static_widget_delta",
+                "linked_inputs_pre": linked_inputs_pre,
+                "linked_inputs_post": linked_inputs_post,
+                "preserved_dynamic_inputs": preserved_dynamic_inputs,
+            }
+            widget_deltas.append(delta)
+            if isinstance(old, str) and old.strip() and (new is None or (isinstance(new, str) and not new.strip())):
+                if preserved_dynamic_inputs:
+                    static_removals_with_preserved_dynamic_inputs.append(delta)
+
+    if not widget_deltas:
+        return None
+    return {
+        "widget_deltas": widget_deltas,
+        "static_widget_removals_with_preserved_dynamic_inputs": static_removals_with_preserved_dynamic_inputs,
+        "note": (
+            "widgets_values are static node configuration. Linked inputs are dynamic dataflow. "
+            "A static text widget removal can be correct when linked dynamic inputs remain connected."
+        ),
+    }
+
+
 def judge_edit_intent(
     output_dir: Path | str,
     scenario: Mapping[str, Any],
@@ -148,15 +290,21 @@ def judge_edit_intent(
 
     system_prompt = _load_prompt()
     implementation_payload = _load_implementation_payload(output_dir)
-    schema_context = _schema_context_from_payload(implementation_payload)
+    schema_context = _schema_context_from_payload(implementation_payload) or {}
+    dataflow_context = _static_widget_dataflow_context(pre_ir, post_ir)
+    if dataflow_context:
+        schema_context["dataflow_context"] = dataflow_context
     if schema_context:
         system_prompt = (
             system_prompt.rstrip()
             + "\n\n## Schema and widget evidence\n"
             "When schema_context is provided, use it to map opaque widget_N fields "
             "to semantic input names. Treat literal widget values as static node "
-            "configuration, and linked inputs/edges as dataflow. Do not guess a "
-            "widget's meaning from index order when compiled_api names are available."
+            "configuration, and linked inputs/edges as dynamic dataflow. Do not guess a "
+            "widget's meaning from index order when compiled_api names are available. "
+            "If a static widget containing stale or fabricated text is removed while "
+            "the relevant linked dynamic input path remains connected, do not treat "
+            "that removal as deleting the dynamic dataflow."
         )
     # Optional non-prescriptive "desired outcome" rubric from the scenario. When
     # present, it grounds the judge on what a GOOD result achieves (the outcome +

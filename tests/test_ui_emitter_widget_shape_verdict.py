@@ -380,6 +380,44 @@ def test_schema_known_generated_node_uses_schema_defaults_and_marks_recovery() -
     assert entry["widget_shape_recovery"] == "schema_default_regenerate"
 
 
+def test_schema_default_regeneration_preserves_ingested_positional_widget_values() -> None:
+    from vibecomfy.ingest.normalize import convert_to_vibe_format
+
+    provider = _Provider(
+        {
+            "EmptyLatentImage": NodeSchema(
+                class_type="EmptyLatentImage",
+                pack=None,
+                inputs={
+                    "width": InputSpec("INT", default=512),
+                    "height": InputSpec("INT", default=512),
+                    "batch_size": InputSpec("INT", default=1),
+                },
+                outputs=[OutputSpec("LATENT", "LATENT")],
+                source_provider="object_info_index",
+                confidence=1.0,
+            )
+        }
+    )
+    wf = convert_to_vibe_format(
+        {
+            "9": {
+                "class_type": "EmptyLatentImage",
+                "inputs": {"widget_0": 512, "widget_1": 512, "widget_2": 16},
+            }
+        }
+    )
+
+    report: list[dict[str, Any]] = []
+    ui = emit_ui_json(wf, schema_provider=provider, recovery_report=report)
+
+    node = next(item for item in ui["nodes"] if item["type"] == "EmptyLatentImage")
+    assert node["widgets_values"] == [512, 512, 16]
+    entry = next(item for item in report if item.get("node_id") == "9")
+    assert entry["widget_shape_verdict"] == "safe_to_regenerate"
+    assert entry["widget_shape_recovery"] == "schema_default_regenerate"
+
+
 def test_schema_known_generated_explicit_overflow_uses_schema_defaults_and_marks_recovery() -> None:
     wf = _wf()
     wf.nodes["1"] = VibeNode(

@@ -2809,6 +2809,105 @@ def test_queue_stage_tolerates_preexisting_schema_less_nodes_after_recovery_enri
     assert enriched_result.issues == ()
 
 
+def test_queue_recovery_allows_schema_less_transitive_reroute_with_schema_less_intermediate() -> None:
+    original = {
+        "nodes": [
+            {
+                "id": 4,
+                "type": "SVDSimpleImg2Vid",
+                "outputs": [{"name": "IMAGE", "type": "IMAGE", "slot_index": 0, "links": [1, 2]}],
+            },
+            {
+                "id": 9,
+                "type": "SaveAnimatedWEBP",
+                "inputs": [{"name": "images", "type": "IMAGE", "link": 1}],
+                "outputs": [],
+            },
+            {
+                "id": 10,
+                "type": "SaveImage",
+                "inputs": [{"name": "images", "type": "IMAGE", "link": 2}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [1, 4, 0, 9, 0, "IMAGE"],
+            [2, 4, 0, 10, 0, "IMAGE"],
+        ],
+    }
+    candidate = {
+        "nodes": [
+            {
+                "id": 4,
+                "type": "SVDSimpleImg2Vid",
+                "outputs": [{"name": "IMAGE", "type": "IMAGE", "slot_index": 0, "links": [1, 4]}],
+            },
+            {
+                "id": 9,
+                "type": "SaveAnimatedWEBP",
+                "inputs": [{"name": "images", "type": "IMAGE", "link": 1}],
+                "outputs": [],
+            },
+            {
+                "id": 14,
+                "type": "UnknownFrameExtractor",
+                "inputs": [{"name": "image", "type": "IMAGE", "link": 4}],
+                "outputs": [{"name": "IMAGE", "type": "IMAGE", "slot_index": 0, "links": [5]}],
+            },
+            {
+                "id": 10,
+                "type": "SaveImage",
+                "inputs": [{"name": "images", "type": "IMAGE", "link": 5}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [1, 4, 0, 9, 0, "IMAGE"],
+            [4, 4, 0, 14, 0, "IMAGE"],
+            [5, 14, 0, 10, 0, "IMAGE"],
+        ],
+    }
+    emit_recovery = [
+        {
+            "node_id": "4",
+            "class_type": "SVDSimpleImg2Vid",
+            "provider": None,
+            "confidence": None,
+            "schema_less": True,
+            "diagnostic": "schema-less: emitting best-effort slots from link appearance order",
+        },
+        {
+            "node_id": "14",
+            "class_type": "UnknownFrameExtractor",
+            "provider": None,
+            "confidence": None,
+            "schema_less": True,
+            "diagnostic": "schema-less: emitting best-effort slots from link appearance order",
+        },
+    ]
+    provider = _Provider(
+        {
+            "SaveAnimatedWEBP": _schema("SaveAnimatedWEBP"),
+            "SaveImage": _schema("SaveImage"),
+        }
+    )
+
+    enriched = _queue_recovery_report_for_candidate(
+        ui_payload=candidate,
+        schema_provider=provider,
+        original_ui_payload=original,
+        existing_recovery_report=emit_recovery,
+    )
+
+    source_entry = next(item for item in enriched if item.get("node_id") == "4")
+    intermediate_entry = next(item for item in enriched if item.get("node_id") == "14")
+    assert source_entry["schema_less_queue_safe"] is True
+    assert source_entry["schema_less_safety"] == "transitive_output_destinations_safe"
+    assert intermediate_entry["schema_less_queue_safe"] is True
+    assert intermediate_entry["schema_less_safety"] == "transitive_reroute_intermediate"
+    assert queue_stage_result(recovery_report=enriched, change_report={}).ok is True
+
+
 def test_queue_diagnostics_detect_intent_nodes_before_generic_schema_confidence_checks() -> None:
     diagnostics = queue_stage_diagnostics(
         recovery_report=[

@@ -77,6 +77,48 @@ def _has_successful_candidate(response: Mapping[str, Any]) -> bool:
     )
 
 
+def _queue_validate_skipped_for_successful_candidate(response: Mapping[str, Any]) -> bool:
+    """Return true when queue validation is absent, not failed.
+
+    ``queue_validate_ok`` is fail-closed in the agent-edit gate map.  Some live
+    batch paths can return a real changed candidate without running the queue
+    stage at all; that missing stage should not be scored the same as a
+    concrete queue blocker.
+    """
+    if not _has_successful_candidate(response):
+        return False
+    gates = response.get("gates")
+    if not isinstance(gates, Mapping) or gates.get("queue_validate_ok") is not False:
+        return False
+    debug = response.get("debug")
+    if not isinstance(debug, Mapping):
+        return False
+    stage_snapshots = debug.get("stage_snapshots")
+    if not isinstance(stage_snapshots, list):
+        return False
+    stage_names = {
+        str(item.get("stage"))
+        for item in stage_snapshots
+        if isinstance(item, Mapping) and item.get("stage") is not None
+    }
+    if "queue_validate" in stage_names:
+        return False
+
+    def _has_queue_blockers(value: Any) -> bool:
+        if isinstance(value, list):
+            return bool(value)
+        if isinstance(value, tuple):
+            return bool(value)
+        return False
+
+    report = response.get("report")
+    if isinstance(report, Mapping) and _has_queue_blockers(report.get("queue_blockers")):
+        return False
+    if _has_queue_blockers(debug.get("queue_blockers")):
+        return False
+    return True
+
+
 def _batch_turn_failed(turn: Mapping[str, Any]) -> bool:
     """Return true for exploratory batch turns that did not contribute edits."""
     if turn.get("batch_ok") is False:
@@ -418,6 +460,19 @@ def assess_live_output_dir(
 
             gates = response.get("gates") or {}
             false_gates = [name for name, value in gates.items() if value is False]
+            queue_validate_skipped = _queue_validate_skipped_for_successful_candidate(response)
+            if queue_validate_skipped and "queue_validate_ok" in false_gates:
+                issues.append(
+                    {
+                        "check": "queue_validate_skipped",
+                        "severity": "warning",
+                        "detail": (
+                            "queue_validate_ok was false, but the response contains a changed "
+                            "candidate and no queue_validate stage ran; treating this as missing "
+                            "queue evidence rather than a concrete queue blocker."
+                        ),
+                    }
+                )
             if false_gates and not safe_refusal_accepted:
                 issues.append(
                     {

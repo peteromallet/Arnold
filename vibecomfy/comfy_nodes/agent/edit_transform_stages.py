@@ -530,6 +530,55 @@ def _recovery_report_from_ui_payload(
                 destinations[destination] = link_id
         return destinations
 
+    def _node_output_link_ids(node: Mapping[str, Any]) -> set[Any]:
+        outputs = node.get("outputs")
+        if not isinstance(outputs, list):
+            return set()
+        link_ids: set[Any] = set()
+        for output in outputs:
+            if not isinstance(output, Mapping):
+                continue
+            links = output.get("links")
+            if isinstance(links, list):
+                link_ids.update(links)
+        return link_ids
+
+    def _transitive_path_nodes_to_destination(
+        *,
+        start_links: set[Any],
+        destination: tuple[str, Any],
+        candidate_links_by_id: Mapping[Any, Any],
+        candidate_nodes_by_id: Mapping[str, Mapping[str, Any]],
+    ) -> tuple[str, ...] | None:
+        queue: list[tuple[Any, tuple[str, ...]]] = [
+            (link_id, ()) for link_id in sorted(start_links, key=lambda value: str(value))
+        ]
+        visited_links: set[Any] = set()
+        while queue:
+            link_id, path_nodes = queue.pop(0)
+            if link_id in visited_links:
+                continue
+            visited_links.add(link_id)
+            link = candidate_links_by_id.get(link_id)
+            if link is None:
+                continue
+            current_destination = _link_destination(link)
+            if current_destination is None:
+                continue
+            destination_node_id, _destination_slot = current_destination
+            next_path = (*path_nodes, destination_node_id)
+            if current_destination == destination:
+                return next_path
+            if destination_node_id in path_nodes:
+                continue
+            next_node = candidate_nodes_by_id.get(destination_node_id)
+            if next_node is None:
+                continue
+            for next_link_id in sorted(_node_output_link_ids(next_node), key=lambda value: str(value)):
+                if next_link_id not in visited_links:
+                    queue.append((next_link_id, next_path))
+        return None
+
     def _preexisting_schema_less_queue_safe(
         *,
         original_node: Mapping[str, Any] | None,
@@ -537,8 +586,13 @@ def _recovery_report_from_ui_payload(
         original_links_by_id: Mapping[Any, Any],
         candidate_links_by_id: Mapping[Any, Any],
         candidate_node_ids: set[str],
+        candidate_nodes_by_id: Mapping[str, Mapping[str, Any]],
+        schema_less_transitive_intermediates: set[str],
     ) -> tuple[bool, str]:
         if original_node is None:
+            candidate_node_id = str(candidate_node.get("id", ""))
+            if candidate_node_id in schema_less_transitive_intermediates:
+                return (True, "transitive_reroute_intermediate")
             return (False, "new_schema_less_node")
         if _connection_signature(original_node) == _connection_signature(candidate_node):
             return (True, "connection_shape_unchanged")
@@ -561,8 +615,67 @@ def _recovery_report_from_ui_payload(
             for destination in set(original_destinations) - set(candidate_destinations):
                 destination_node_id, _ = destination
                 if destination_node_id in candidate_node_ids:
+                    path_nodes = _transitive_path_nodes_to_destination(
+                        start_links=candidate_links,
+                        destination=destination,
+                        candidate_links_by_id=candidate_links_by_id,
+                        candidate_nodes_by_id=candidate_nodes_by_id,
+                    )
+                    if path_nodes is not None:
+                        continue
                     return (False, "schema_less_existing_output_links_removed")
+        for key, original_links in original_slots.items():
+            candidate_links = candidate_slots.get(key, set())
+            original_destinations = _output_destinations(
+                original_links,
+                original_links_by_id,
+            )
+            candidate_destinations = _output_destinations(
+                candidate_links,
+                candidate_links_by_id,
+            )
+            if set(original_destinations) - set(candidate_destinations):
+                return (True, "transitive_output_destinations_safe")
         return (True, "preexisting_output_destinations_safe")
+
+    def _schema_less_transitive_reroute_intermediates() -> set[str]:
+        intermediates: set[str] = set()
+        for node_id, original_node in original_nodes_by_id.items():
+            candidate_node = candidate_nodes_by_id.get(node_id)
+            if candidate_node is None:
+                continue
+            if str(original_node.get("type", "")) != str(candidate_node.get("type", "")):
+                continue
+            original_slots = _node_output_slots(original_node)
+            candidate_slots = _node_output_slots(candidate_node)
+            if set(original_slots) != set(candidate_slots):
+                continue
+            for key, original_links in original_slots.items():
+                candidate_links = candidate_slots.get(key, set())
+                original_destinations = _output_destinations(
+                    original_links,
+                    original_links_by_id,
+                )
+                candidate_destinations = _output_destinations(
+                    candidate_links,
+                    candidate_links_by_id,
+                )
+                for destination in set(original_destinations) - set(candidate_destinations):
+                    path_nodes = _transitive_path_nodes_to_destination(
+                        start_links=candidate_links,
+                        destination=destination,
+                        candidate_links_by_id=candidate_links_by_id,
+                        candidate_nodes_by_id=candidate_nodes_by_id,
+                    )
+                    if path_nodes is None:
+                        continue
+                    destination_node_id, _ = destination
+                    intermediates.update(
+                        path_node
+                        for path_node in path_nodes
+                        if path_node not in {node_id, destination_node_id}
+                    )
+        return intermediates
 
     def _local_node_schema_evidence(class_type: str) -> dict[str, Any] | None:
         try:
@@ -589,6 +702,7 @@ def _recovery_report_from_ui_payload(
     original_node_classes: dict[str, str] = {}
     original_node_connections: dict[str, tuple[Any, ...]] = {}
     original_nodes_by_id: dict[str, Mapping[str, Any]] = {}
+    candidate_nodes_by_id: dict[str, Mapping[str, Any]] = {}
     original_links_by_id = _ui_links_by_id(original_ui_payload)
     candidate_links_by_id = _ui_links_by_id(ui_payload)
     candidate_node_ids: set[str] = set()
@@ -614,6 +728,8 @@ def _recovery_report_from_ui_payload(
             candidate_node_id = str(candidate_node.get("id", ""))
             if candidate_node_id:
                 candidate_node_ids.add(candidate_node_id)
+                candidate_nodes_by_id[candidate_node_id] = candidate_node
+    schema_less_transitive_intermediates = _schema_less_transitive_reroute_intermediates()
 
     for node in nodes:
         if not isinstance(node, Mapping):
@@ -651,6 +767,8 @@ def _recovery_report_from_ui_payload(
                 original_links_by_id=original_links_by_id,
                 candidate_links_by_id=candidate_links_by_id,
                 candidate_node_ids=candidate_node_ids,
+                candidate_nodes_by_id=candidate_nodes_by_id,
+                schema_less_transitive_intermediates=schema_less_transitive_intermediates,
             )
             recovery.append(
                 {

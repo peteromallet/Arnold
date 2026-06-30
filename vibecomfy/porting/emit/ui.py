@@ -957,6 +957,10 @@ def _build_widget_values(
         raw_widget_values = getattr(raw_widget_payload, "values", None)
         raw_widgets = list(raw_widget_values) if isinstance(raw_widget_values, list) else []
 
+    preserve_observed_widget_carriers = _preserve_observed_widget_carriers(
+        node,
+        raw_widgets=raw_widgets,
+    )
     has_seed_control_slot = any(
         isinstance(name, str) and name in _SEED_INPUT_NAMES
         for name in widget_names
@@ -972,6 +976,12 @@ def _build_widget_values(
         name = widget_names[idx] if idx < len(widget_names) else None
         if isinstance(name, str) and name in pool:
             values.append(pool[name])
+        elif (
+            use_schema_defaults
+            and preserve_observed_widget_carriers
+            and f"widget_{idx}" in pool
+        ):
+            values.append(pool[f"widget_{idx}"])
         elif not use_schema_defaults and f"widget_{idx}" in pool:
             values.append(pool[f"widget_{idx}"])
         elif isinstance(name, str) and name in defaults:
@@ -988,6 +998,26 @@ def _build_widget_values(
     while values and values[-1] is None:
         values.pop()
     return values
+
+
+def _preserve_observed_widget_carriers(
+    node: Any,
+    *,
+    raw_widgets: list[Any],
+) -> bool:
+    if raw_widgets:
+        return True
+    raw_widget_payload = getattr(node, "raw_widgets", None)
+    raw_widget_values = getattr(raw_widget_payload, "values", None)
+    if isinstance(raw_widget_values, list) and raw_widget_values:
+        return True
+    metadata = getattr(node, "metadata", {})
+    if not isinstance(metadata, Mapping):
+        return False
+    raw_ui = metadata.get("_ui")
+    if isinstance(raw_ui, Mapping) and isinstance(raw_ui.get("widgets_values"), list):
+        return True
+    return bool(metadata.get("provenance"))
 
 
 def _schema_outputs_for_unwired_node(schema: Any | None) -> list[dict[str, Any]]:
