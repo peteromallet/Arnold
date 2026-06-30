@@ -3329,7 +3329,11 @@ for iteration in 1 2 3; do
       ;;
   esac
 
-  IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"
+  if ! IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"; then
+    log "failed to prepare recurrence context; continuing in shallow mode iteration=$iteration"
+    CURRENT_ATTEMPT_ID="0"
+    CURRENT_RECURRING="0"
+  fi
   run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
 
