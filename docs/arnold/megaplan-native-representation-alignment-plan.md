@@ -307,8 +307,10 @@ The launch path must therefore satisfy these invariants:
   `docs/arnold/megaplan-composition-conformance-report.md`, which composition
   M6 must produce before platform starts.
 - final report conformance requires the platform M6 closeout artifact
-  `docs/arnold/megaplan-native-representation-conformance-report.md`, plus the
-  final platform `proof-map.json` and generated
+  `docs/arnold/megaplan-native-representation-conformance-report.md`, the
+  machine-readable row ledger
+  `docs/arnold/megaplan-native-representation-conformance.yaml`, plus the final
+  platform `proof-map.json` and generated
   `.megaplan/initiatives/native-platform-followup/completion-manifest.json`;
   this is the terminal evidence ledger for the three-chain sequence and must
   map every traceability row to implemented or explicitly deferred with proof.
@@ -396,9 +398,10 @@ The alignment work is done only when:
   tests, handler-purity inventory, mutation tests, installed artifact checks,
   and post-platform preservation checks;
 - platform M6 has written
-  `docs/arnold/megaplan-native-representation-conformance-report.md`, final
+  `docs/arnold/megaplan-native-representation-conformance-report.md`,
+  `docs/arnold/megaplan-native-representation-conformance.yaml`, final
   `proof-map.json`, and the final platform `completion-manifest.json`, and the
-  conformance report proves every row in
+  conformance report plus YAML row ledger prove every row in
   `docs/arnold/megaplan-native-representation-traceability.yaml` is
   implemented or explicitly deferred with downstream owner and blocking proof.
 

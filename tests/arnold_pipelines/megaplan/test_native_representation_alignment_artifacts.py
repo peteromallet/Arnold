@@ -173,6 +173,16 @@ def test_final_conformance_gate_is_closeout_owned() -> None:
     }
     for deliverable in gate["closeout_deliverables"]:
         assert deliverable in closeout_text, deliverable
+    machine_report = gate["machine_readable_report"]
+    assert isinstance(machine_report, dict)
+    assert machine_report["path"] in gate["closeout_deliverables"]
+    assert machine_report["path"] in closeout_text
+    assert machine_report["schema"] in closeout_text
+    assert machine_report["row_status_values"] == ["implemented", "deferred"]
+    for field in machine_report["required_row_fields"]:
+        assert field in closeout_text, field
+    for field in machine_report["deferred_required_row_fields"]:
+        assert field in closeout_text, field
     for section in gate["required_report_sections"]:
         assert section in closeout_text, section
     assert "megaplan chain manifest" in closeout_text
