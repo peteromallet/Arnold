@@ -1666,7 +1666,7 @@ def _fetch_external_workflow_json_source(
     )
     try:
         with urllib.request.urlopen(req, timeout=max(1.0, min(timeout, 5.0))) as resp:
-            raw_body = resp.read(_MAX_EXTERNAL_JSON_BYTES + 1)
+            raw_body = _read_response_bounded(resp, _MAX_EXTERNAL_JSON_BYTES + 1)
         if len(raw_body) > _MAX_EXTERNAL_JSON_BYTES:
             return None, f"workflow JSON fetch exceeded {_MAX_EXTERNAL_JSON_BYTES} bytes for {url}"
         body = raw_body.decode("utf-8", errors="replace")
@@ -1684,6 +1684,16 @@ def _fetch_external_workflow_json_source(
         source_type=source_type,
     )
     return source, warning
+
+
+def _read_response_bounded(resp: Any, limit: int) -> bytes:
+    try:
+        raw = resp.read(limit)
+    except TypeError:
+        raw = resp.read()
+    if isinstance(raw, str):
+        return raw.encode("utf-8")
+    return raw
 
 
 def _normalize_fetched_workflow(
@@ -2520,6 +2530,29 @@ def _is_workflow_precedent_source(source: Mapping[str, Any]) -> bool:
     ) or isinstance(source_workflow_path, str)
 
 
+def _first_blocking_unparseable_source(
+    sources: tuple[dict[str, Any], ...],
+) -> dict[str, Any] | None:
+    local_kinds = {"ready_template", "source_workflow", "curated", "custom_node_examples"}
+    candidates = [
+        source
+        for source in sources
+        if str(source.get("source") or "") in local_kinds
+        and source.get("source_workflow_available") is True
+        and source.get("source_workflow_parseable") is False
+        and source.get("strong_relevance_match") is True
+    ]
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda source: (
+            -int(source.get("relevance_score") or source.get("score") or 0),
+            str(source.get("class_type") or source.get("title") or "").casefold(),
+        )
+    )
+    return candidates[0]
+
+
 def _filter_sources_for_precedent_semantics(
     sources: tuple[dict[str, Any], ...],
     *,
@@ -3159,10 +3192,15 @@ def _build_adaptation_plan(
     structural_validation = "not_evaluated"
     candidate_graph: dict[str, Any] | None = None
     bound = False  # True iff a gate-passing slice yielded a candidate graph
+    selected_slice_unparseable = any(
+        isinstance(warning, Mapping)
+        and warning.get("code") == "source_workflow_unparseable"
+        for warning in selected_slice.warnings
+    )
 
     if target_load is not None:
         structural_validation = "fail"
-        if target_load.ok:
+        if target_load.ok and not selected_slice_unparseable:
             for candidate_slice in slices:
                 # Media-domain gate: skip ANY slice whose domain is DEFINED
                 # and differs from the graph's.  No adapter pass-through — the
@@ -3859,7 +3897,35 @@ def research(
         for source in candidate_sources
         if isinstance(source, dict) and _is_workflow_precedent_source(source)
     )
-    all_precedent_slices = _build_precedent_slices(workflow_precedent_sources)
+    local_workflow_source_kinds = {"ready_template", "source_workflow", "curated", "custom_node_examples"}
+    ordered_workflow_sources = sorted(
+        enumerate(workflow_precedent_sources),
+        key=lambda item: (
+            0 if str(item[1].get("source") or "") in local_workflow_source_kinds else 1,
+            item[0],
+        ),
+    )
+    workflow_precedent_sources = tuple(source for _index, source in ordered_workflow_sources)
+    blocked_source = _first_blocking_unparseable_source(workflow_precedent_sources)
+    if blocked_source is not None:
+        blocked_path = str(blocked_source.get("source_workflow_path") or blocked_source.get("path") or "")
+        all_precedent_slices = (
+            WorkflowSlice(
+                source_class_type=str(blocked_source.get("class_type") or ""),
+                source_workflow_path=blocked_path or None,
+                python_path=str(blocked_source.get("path") or "") or None,
+                warnings=(
+                    {
+                        "code": "source_workflow_unparseable",
+                        "severity": "error",
+                        "source_path": blocked_path,
+                        "message": "Source workflow exists but could not be parsed.",
+                    },
+                ),
+            ),
+        )
+    else:
+        all_precedent_slices = _build_precedent_slices(workflow_precedent_sources)
     precedent_slices = _filter_slices_for_graph_domain(graph, all_precedent_slices)
     slice_class_types = {slice_obj.source_class_type for slice_obj in precedent_slices}
     slice_paths = {
