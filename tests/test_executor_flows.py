@@ -62,6 +62,76 @@ effort = "low"
 """
 
 
+def test_terminal_no_candidate_response_does_not_promote_rollback_graph() -> None:
+    request = ExecutorRequest(
+        query="add unsupported node",
+        graph={"nodes": [{"id": 1, "type": "CheckpointLoaderSimple"}], "links": []},
+        profile="default",
+    )
+    plan = ClassifyDecision(
+        route="adapt",
+        implement=True,
+        intent="edit",
+        task="edit_graph",
+    )
+    stale_candidate = {"nodes": [{"id": 999, "type": "Stale"}], "links": []}
+
+    with mock.patch(
+        "vibecomfy.executor.core.handle_agent_edit",
+        return_value={
+            "ok": True,
+            "message": "No safe edit found.",
+            "graph": stale_candidate,
+            "graph_unchanged": True,
+            "no_candidate_reason": "no_changes",
+            "outcome": {"kind": "noop"},
+            "apply_eligibility": {"applyable": False},
+        },
+    ):
+        result = executor_core._run_implement(
+            request,
+            AgentSpecShape(agent="codex", model="gpt-5.4", effort="high"),
+            plan=plan,
+        )
+
+    assert result.graph is None
+    assert result.durable_response["graph"]["nodes"][0]["id"] == stale_candidate["nodes"][0]["id"]
+
+
+def test_terminal_no_candidate_response_allows_real_changed_candidate() -> None:
+    request = ExecutorRequest(
+        query="add image save",
+        graph={"nodes": [{"id": 1, "type": "VAEDecode"}], "links": []},
+        profile="default",
+    )
+    plan = ClassifyDecision(
+        route="adapt",
+        implement=True,
+        intent="edit",
+        task="edit_graph",
+    )
+    candidate = {"nodes": [{"id": 1, "type": "VAEDecode"}, {"id": 2, "type": "SaveImage"}], "links": []}
+
+    with mock.patch(
+        "vibecomfy.executor.core.handle_agent_edit",
+        return_value={
+            "ok": True,
+            "message": "Candidate ready.",
+            "graph": candidate,
+            "graph_unchanged": False,
+            "outcome": {"kind": "candidate"},
+            "apply_eligibility": {"applyable": True},
+        },
+    ):
+        result = executor_core._run_implement(
+            request,
+            AgentSpecShape(agent="codex", model="gpt-5.4", effort="high"),
+            plan=plan,
+        )
+
+    assert result.graph == candidate
+
+
 def _write_toml(dir_path: Path, name: str, content: str) -> Path:
     """Write a TOML profile file into *dir_path* and return its path."""
     file_path = dir_path / f"{name}.toml"

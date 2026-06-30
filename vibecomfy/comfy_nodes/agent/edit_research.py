@@ -807,6 +807,10 @@ def _runtime_code_additive_request(state: AgentEditState) -> bool:
         f"{state.task} {state.request_payload.get('query') or ''} "
         f"{classification_text}"
     ).lower()
+    explicit_frame_extraction = (
+        ("extract" in task and "frame" in task)
+        or ("first frame" in task and ("save" in task or "png" in task or "image" in task))
+    )
     return (
         (
             "code node" in task
@@ -814,6 +818,7 @@ def _runtime_code_additive_request(state: AgentEditState) -> bool:
             or "vibecomfy.exec" in task
             or "imagecode" in task
             or ("pil" in task and "transformation" in task)
+            or explicit_frame_extraction
         )
         and ("pil" in task or "image" in task or "frame" in task or "process" in task)
     )

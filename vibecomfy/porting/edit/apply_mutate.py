@@ -253,7 +253,8 @@ def _apply_add_node(
     diagnostics: list[PortIssue] = list(group_issues)
     for input_name in sorted(spec.resolved_inputs):
         source = spec.resolved_inputs[input_name]
-        target_type = _normalize_type(getattr(spec.schema_inputs.get(input_name), "type", None))
+        input_spec = spec.resolved_input_specs.get(input_name) or spec.schema_inputs.get(input_name)
+        target_type = _normalize_type(getattr(input_spec, "type", None))
         target_slot = _ensure_input_slot(node, input_name, target_type)
         link_id = ledger.mint_link_id(scope_path)
         link = _new_link_for_scope(

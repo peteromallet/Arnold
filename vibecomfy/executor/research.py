@@ -75,6 +75,11 @@ _ALLOWED_EXTERNAL_WORKFLOW_HOSTS = frozenset({
     "runcomfy.com",
     "www.runcomfy.com",
 })
+_ALLOWED_DIRECT_WORKFLOW_JSON_HOSTS = frozenset({
+    "cdn.discordapp.com",
+    "media.discordapp.net",
+    "raw.githubusercontent.com",
+})
 
 WORKFLOW_RESEARCH_GUIDANCE = (
     "Workflow/template exploration: use `vibecomfy workflows list --ready` to see ready templates; "
@@ -939,6 +944,49 @@ def _normalize_hivemind_source(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_URL_RE = re.compile(r"https?://[^\s\"'<>),]+")
+
+
+def _workflow_url_maybe_fetchable(url: str) -> bool:
+    if _direct_workflow_json_url(url) is not None:
+        return True
+    return urlparse(url).netloc.casefold() in _ALLOWED_EXTERNAL_WORKFLOW_HOSTS
+
+
+def _hivemind_workflow_url_candidates(item: Mapping[str, Any], *, max_urls: int = 3) -> list[str]:
+    values: list[str] = []
+    for key in ("url", "source_url", "permalink", "link", "description", "body", "content", "text"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value)
+    for nested_key in ("metadata", "payload"):
+        nested = item.get(nested_key)
+        if not isinstance(nested, Mapping):
+            continue
+        for key in ("url", "source_url", "workflow_url", "raw_url", "body", "description"):
+            value = nested.get(key)
+            if isinstance(value, str) and value.strip():
+                values.append(value)
+
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        direct = value.strip()
+        urls = [direct] if direct.startswith(("http://", "https://")) else []
+        urls.extend(match.group(0).rstrip(".,;") for match in _URL_RE.finditer(value))
+        for url in urls:
+            if not _workflow_url_maybe_fetchable(url):
+                continue
+            key = url.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(url)
+            if len(candidates) >= max_urls:
+                return candidates
+    return candidates
+
+
 def _run_hivemind_research(
     query: str,
     *,
@@ -954,11 +1002,34 @@ def _run_hivemind_research(
     items = response.get("results", response.get("sources", []))
     if not isinstance(items, list):
         items = []
-    return tuple(
-        _normalize_hivemind_source(item)
-        for item in items
-        if isinstance(item, dict)
-    )
+    sources: list[dict[str, Any]] = []
+    seen_promoted_urls: set[str] = set()
+    promoted_count = 0
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        for url in _hivemind_workflow_url_candidates(item):
+            if promoted_count >= 5:
+                break
+            key = url.casefold()
+            if key in seen_promoted_urls:
+                continue
+            seen_promoted_urls.add(key)
+            enriched_item = dict(item)
+            enriched_item["url"] = url
+            promoted, _warning = _fetch_external_workflow_json_source(
+                enriched_item,
+                index=index,
+                timeout=timeout,
+            )
+            if promoted is None:
+                continue
+            promoted["source"] = "hivemind_workflow"
+            promoted["hivemind_promoted_workflow"] = True
+            sources.append(promoted)
+            promoted_count += 1
+        sources.append(_normalize_hivemind_source(item))
+    return tuple(sources)
 
 
 # ── Web fallback ─────────────────────────────────────────────────────────────
@@ -1536,6 +1607,21 @@ def _github_blob_raw_url(url: str) -> str | None:
     return f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
 
 
+def _direct_workflow_json_url(url: str) -> str | None:
+    raw_github = _github_blob_raw_url(url)
+    if raw_github is not None:
+        return raw_github
+    parsed = urlparse(url)
+    host = parsed.netloc.casefold()
+    if host not in _ALLOWED_DIRECT_WORKFLOW_JSON_HOSTS:
+        return None
+    if not parsed.path.casefold().endswith((".json", ".workflow")):
+        return None
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    return url
+
+
 def _fetch_external_workflow_json_source(
     item: dict[str, Any],
     *,
@@ -1563,8 +1649,8 @@ def _fetch_external_workflow_json_source(
                 return source, warning
         return None, f"domain extraction for {url} produced no usable workflow JSON"
 
-    # Fall back to raw GitHub blob URLs.
-    raw_url = _github_blob_raw_url(url)
+    # Fall back to exact JSON/workflow URLs on explicitly allowed hosts.
+    raw_url = _direct_workflow_json_url(url)
     if raw_url is None:
         return None, None
     req = urllib.request.Request(
@@ -1580,18 +1666,22 @@ def _fetch_external_workflow_json_source(
     )
     try:
         with urllib.request.urlopen(req, timeout=max(1.0, min(timeout, 5.0))) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
+            raw_body = resp.read(_MAX_EXTERNAL_JSON_BYTES + 1)
+        if len(raw_body) > _MAX_EXTERNAL_JSON_BYTES:
+            return None, f"workflow JSON fetch exceeded {_MAX_EXTERNAL_JSON_BYTES} bytes for {url}"
+        body = raw_body.decode("utf-8", errors="replace")
         payload = json.loads(body)
     except Exception as exc:  # noqa: BLE001 - enrichment is best-effort
-        return None, f"github workflow fetch failed for {url}: {type(exc).__name__}: {exc}"
+        return None, f"workflow JSON fetch failed for {url}: {type(exc).__name__}: {exc}"
 
+    source_type = "github_workflow_json" if "githubusercontent.com" in urlparse(raw_url).netloc.casefold() else "direct_workflow_json"
     source, warning = _normalize_fetched_workflow(
         item=item,
         url=url,
         raw_url=raw_url,
         payload=payload,
         index=index,
-        source_type="github_workflow_json",
+        source_type=source_type,
     )
     return source, warning
 
@@ -1990,6 +2080,143 @@ def _registry_anchor_terms(query: str) -> list[str]:
         deduped.append(term)
         seen.add(term)
     return deduped
+
+
+def _source_query_relevance_score(source: Mapping[str, Any], query: str) -> int:
+    anchors, matched_anchors = _source_relevance_matches(source, query)
+    score = int(source.get("score") or 0)
+    if not anchors:
+        return score
+    title_text = str(source.get("title") or source.get("class_type") or "").casefold().replace("-", "").replace("_", "")
+    url_text = str(source.get("url") or "").casefold().replace("-", "").replace("_", "")
+    for anchor in matched_anchors:
+        score += 100 + len(anchor)
+        if anchor in title_text:
+            score += 200
+        if anchor in url_text:
+            score += 150
+    if not matched_anchors:
+        return 0
+    if source.get("source_workflow_parseable") is True:
+        score += 120
+    if source.get("hivemind_promoted_workflow") is True:
+        score += 160
+    return score
+
+
+_STRONG_RELEVANCE_FAMILY_ANCHORS = frozenset({
+    "acestep",
+    "animatediff",
+    "controlnet",
+    "deforum",
+    "detaildaemon",
+    "flux",
+    "hunyuan",
+    "ipadapter",
+    "ltx",
+    "melbandroformer",
+    "qwen",
+    "sd3",
+    "sdxl",
+    "svd",
+    "wan",
+    "wan22",
+})
+
+
+def _source_relevance_matches(source: Mapping[str, Any], query: str) -> tuple[list[str], list[str]]:
+    anchors = _source_relevance_anchor_terms(query)
+    if not anchors:
+        return anchors, []
+    rankable = {
+        "class_type": source.get("class_type"),
+        "title": source.get("title"),
+        "description": source.get("description"),
+        "url": source.get("url"),
+        "node_types": source.get("node_types"),
+        "workflow_schema_classes": source.get("workflow_schema_classes"),
+        "tasks": source.get("tasks"),
+    }
+    text = json.dumps(rankable, sort_keys=True, default=str).casefold().replace("-", "").replace("_", "")
+    matched = [anchor for anchor in anchors if anchor in text]
+    return anchors, matched
+
+
+def _source_is_strong_relevance_match(source: Mapping[str, Any], query: str) -> bool:
+    _anchors, matched = _source_relevance_matches(source, query)
+    if len(matched) < 2:
+        return False
+    if not any(anchor in _STRONG_RELEVANCE_FAMILY_ANCHORS for anchor in matched):
+        return False
+    source_kind = str(source.get("source") or "")
+    if source_kind in {"hivemind_workflow", "external_workflow", "source_workflow", "ready_template"}:
+        return True
+    return source.get("source_workflow_parseable") is True
+
+
+def _source_relevance_anchor_terms(query: str) -> list[str]:
+    stop = _SEARCH_STOPWORDS | _HIVEMIND_FALLBACK_STOPWORDS | {
+        "as",
+        "base",
+        "before",
+        "branch",
+        "branches",
+        "driven",
+        "entire",
+        "effectively",
+        "first",
+        "instead",
+        "keep",
+        "keeping",
+        "merge",
+        "merging",
+        "output",
+        "outputs",
+        "pipeline",
+        "preserve",
+        "preserving",
+        "preview",
+        "region",
+        "restructure",
+        "save",
+        "saves",
+        "saving",
+        "same",
+        "stage",
+        "stages",
+        "step",
+        "tradeoff",
+        "tradeoffs",
+        "then",
+        "two",
+        "walk",
+        "while",
+    }
+    terms: list[str] = []
+    for token in _query_tokens(query):
+        raw = token.casefold()
+        clean = re.sub(r"[^a-z0-9]", "", raw)
+        if not clean or clean in stop or len(clean) < 3:
+            continue
+        if "controlnet" in clean:
+            clean = "controlnet"
+        elif clean in {"animate", "animatediff"}:
+            clean = "animatediff"
+        elif clean in {"inpainted", "inpainting"}:
+            clean = "inpaint"
+        elif clean in {"ipadapter", "ipadapterplus"}:
+            clean = "ipadapter"
+        elif clean in {"svd", "stablevideodiffusion"}:
+            clean = "svd"
+        terms.append(clean)
+    compact = "".join(re.sub(r"[^a-z0-9]", "", token.casefold()) for token in _query_tokens(query))
+    if "stablevideodiffusion" in compact and "svd" not in terms:
+        terms.append("svd")
+    if "melbandroformer" in compact and "melbandroformer" not in terms:
+        terms.append("melbandroformer")
+    if "detaildaemon" in compact and "detaildaemon" not in terms:
+        terms.append("detaildaemon")
+    return list(dict.fromkeys(terms[:12]))
 
 
 # ── Structured precedent helpers (SD2) ────────────────────────────────────────
@@ -3580,7 +3807,10 @@ def research(
             for ws in web_sources:
                 sources.append(ws)
 
-    # Re-sort: local results first, then Hivemind, then web, each by score.
+    # Re-sort by a strict relevance gate first, then stable source tier. This
+    # keeps every evidence source but lets exact external/Hivemind workflow hits
+    # rise above weaker local precedents only when there is multi-anchor
+    # model/workflow-family evidence.
     source_order = {
         "hivemind_workflow": 1,
         "hivemind": 2,
@@ -3589,8 +3819,27 @@ def research(
         "git": 4,
         "web": 5,
     }
+    for source in sources:
+        anchors, matched_anchors = _source_relevance_matches(source, query)
+        relevance_score = _source_query_relevance_score(source, query)
+        strong_match = _source_is_strong_relevance_match(source, query)
+        source["relevance_matched_anchors"] = matched_anchors
+        source["relevance_anchor_count"] = len(anchors)
+        source["relevance_score"] = relevance_score
+        source["strong_relevance_match"] = strong_match
     sources.sort(
-        key=lambda s: (source_order.get(str(s.get("source")), 0), -s.get("score", 0))
+        key=lambda s: (
+            0 if s.get("strong_relevance_match") is True else 1,
+            -int(s.get("relevance_score") or 0)
+            if s.get("strong_relevance_match") is True
+            else 0,
+            source_order.get(str(s.get("source")), 0),
+            -int(s.get("relevance_score") or 0)
+            if s.get("strong_relevance_match") is not True
+            else 0,
+            -int(s.get("score") or 0),
+            str(s.get("class_type") or s.get("title") or "").casefold(),
+        )
     )
 
     # Rebuild summary with merged results.

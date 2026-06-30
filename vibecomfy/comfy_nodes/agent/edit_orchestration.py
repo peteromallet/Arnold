@@ -216,6 +216,7 @@ def _run_batch_repl_product_path(
         state.revision_evidence is not None
         and not state.revision_evidence.safe_candidate_possible
         and not _can_attempt_local_additive_revise(state)
+        and not _can_attempt_direct_existing_parameter_tweak(state)
     ):
         _run_stage(
             "agent_batch",

@@ -103,6 +103,7 @@ class ResolvedAddNodeSpec:
     schema: Any
     schema_inputs: Mapping[str, InputSpec]
     resolved_inputs: Mapping[str, ResolvedLinkEndpoint]
+    resolved_input_specs: Mapping[str, InputSpec]
     anchor_near: ResolvedNodeRef | None = None
     anchor_between: tuple[ResolvedNodeRef, ResolvedNodeRef] | None = None
     anchor_group_index: int | None = None

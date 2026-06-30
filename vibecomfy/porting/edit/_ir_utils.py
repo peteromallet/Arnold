@@ -66,6 +66,12 @@ _KNOWN_CORE_INPUT_SOCKET_TYPES: dict[tuple[str, str], str] = {
     ("SaveImageWebsocket", "images"): "IMAGE",
 }
 
+_KNOWN_CORE_INPUT_SOCKET_TYPES: dict[tuple[str, str], str] = {
+    ("PreviewImage", "images"): "IMAGE",
+    ("SaveImage", "images"): "IMAGE",
+    ("SaveImageWebsocket", "images"): "IMAGE",
+}
+
 
 def _canonical_schema_input_name(schema_inputs: Mapping[str, Any], field_name: str) -> str:
     """Map a Pythonic field alias back to the raw Comfy schema input name."""

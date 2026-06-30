@@ -43,6 +43,34 @@ def _focus_types_from_research_brief(brief: Mapping[str, Any] | None) -> set[str
     return candidates
 
 
+def _focus_types_from_research_sources(sources: Any) -> set[str]:
+    """Seed local schema lookup from high-confidence workflow research hits."""
+    if not isinstance(sources, (list, tuple)):
+        return set()
+    candidates: set[str] = set()
+    for index, source in enumerate(sources[:8]):
+        if not isinstance(source, Mapping):
+            continue
+        strong = source.get("strong_relevance_match") is True
+        source_kind = str(source.get("source") or "")
+        if not strong and source_kind not in {"ready_template", "source_workflow"}:
+            continue
+        if index >= 3 and not strong:
+            continue
+        class_type = source.get("class_type")
+        if isinstance(class_type, str) and class_type and class_type.isascii():
+            candidates.add(class_type)
+        node_types = source.get("node_types")
+        if isinstance(node_types, (list, tuple)):
+            for node_type in node_types[:80]:
+                if not isinstance(node_type, str):
+                    continue
+                text = node_type.strip()
+                if text and text.isascii() and len(text) <= 80:
+                    candidates.add(text)
+    return candidates
+
+
 def _can_attempt_local_additive_revise(state: AgentEditState) -> bool:
     evidence = state.revision_evidence
     if evidence is None:
@@ -66,6 +94,30 @@ def _can_attempt_local_additive_revise(state: AgentEditState) -> bool:
         or topology.missing_required_inputs
         or readiness.missing_models
         or readiness.missing_node_packs
+    )
+
+
+def _can_attempt_direct_existing_parameter_tweak(state: AgentEditState) -> bool:
+    """Allow concrete local parameter edits despite unrelated readiness blockers."""
+    evidence = state.revision_evidence
+    if evidence is None:
+        return False
+    if not _task_looks_like_parameter_tweak(state):
+        return False
+    if not _existing_parameter_tweak_targets(state, max_targets=1):
+        return False
+    topology = evidence.topology
+    readiness = evidence.readiness
+    if topology.missing_graph or topology.dangling_links or topology.absent_endpoint_nodes:
+        return False
+    if readiness.no_gpu_detected or readiness.validation_errors or readiness.readiness_blockers:
+        return False
+    return bool(
+        topology.unknown_class_types
+        or topology.missing_required_inputs
+        or readiness.missing_models
+        or readiness.missing_node_packs
+        or not evidence.safe_candidate_possible
     )
 
 
@@ -95,7 +147,11 @@ def _localized_additive_scoped_evidence(
     TopologyFindings | None,
     ReadinessReport | None,
 ]:
-    if not _can_attempt_local_additive_revise(state) or state.revision_evidence is None:
+    scoped_local_edit = (
+        _can_attempt_local_additive_revise(state)
+        or _can_attempt_direct_existing_parameter_tweak(state)
+    )
+    if not scoped_local_edit or state.revision_evidence is None:
         return None, None, None, None
     topology = state.revision_evidence.topology
     readiness = state.revision_evidence.readiness

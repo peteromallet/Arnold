@@ -302,8 +302,12 @@ SOURCE = r'''
             if turn_is_read_only
             else ""
         )
-        if direct_tweak_feedback:
-            report_text = f"{report_text}\n{direct_tweak_feedback}"
+        hardening_feedback = _targeted_edit_hardening_feedback(state) if turn_is_read_only else ""
+        extra_feedback = "\n\n".join(
+            note for note in (direct_tweak_feedback, hardening_feedback) if note
+        )
+        if extra_feedback:
+            report_text = f"{report_text}\n{extra_feedback}"
         report_json = _format_batch_report_json(
             batch_result,
             consecutive_errors=consecutive_errors,

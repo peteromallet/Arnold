@@ -534,11 +534,78 @@ class TestHivemindMerge:
             assert max(local_indices) < min(hm_indices)
 
     @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_exact_hivemind_workflow_can_rank_above_weak_local_match(self, mock_corpus) -> None:
+        mock_corpus.return_value = [
+            _make_entry(
+                "IP Adapter AnimateDiff Control Net LCM",
+                source="external_workflow",
+                description="AnimateDiff control net IP adapter workflow",
+            ),
+        ]
+
+        def client(_query: str, _timeout: float) -> dict[str, Any]:
+            return {
+                "results": [
+                    {
+                        "kind": "workflow",
+                        "title": "Flux Image Inpainting and Compositing with ControlNet",
+                        "score": 300,
+                        "body": "Exact Flux ControlNet inpainting workflow.",
+                    }
+                ]
+            }
+
+        result = research(
+            "Flux image inpainting compositing ControlNet workflow",
+            hivemind_client=client,
+            web_search_client=None,
+            registry_resolver=None,
+        )
+
+        assert result.sources[0]["class_type"] == "Flux Image Inpainting and Compositing with ControlNet"
+        assert any(s["class_type"] == "IP Adapter AnimateDiff Control Net LCM" for s in result.sources)
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_weak_hivemind_workflow_does_not_rank_above_local_source(self, mock_corpus) -> None:
+        mock_corpus.return_value = [
+            _make_entry(
+                "IndexTTSEmotionOptionsNode",
+                source="object_info",
+                description="IndexTTS emotion options for narration style",
+            )
+        ]
+
+        def client(_query: str, _timeout: float) -> dict[str, Any]:
+            return {
+                "results": [
+                    {
+                        "kind": "workflow",
+                        "title": "AnimateDiff Video Generation with IPAdapter and ControlNet",
+                        "score": 500,
+                        "body": "Workflow with options, style, and control settings.",
+                    }
+                ]
+            }
+
+        result = research(
+            "IndexTTS emotion options for narration style",
+            hivemind_client=client,
+            web_search_client=None,
+            registry_resolver=None,
+        )
+
+        assert result.sources[0]["class_type"] == "IndexTTSEmotionOptionsNode"
+        weak = next(s for s in result.sources if s["source"] == "hivemind_workflow")
+        assert weak["strong_relevance_match"] is False
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
     def test_duplicate_class_type_keeps_both_tiers(self, mock_corpus) -> None:
         mock_corpus.return_value = [_make_entry("KSampler", source="object_info")]
         result = research(
             "KSampler",
             hivemind_client=self._duplicate_client,
+            web_search_client=None,
+            registry_resolver=None,
         )
         # Cross-tier duplicates are intentionally preserved so the agent can see
         # what each source tier produced. KSampler therefore appears from both
@@ -548,6 +615,61 @@ class TestHivemindMerge:
         assert any(s["source"] != "hivemind" for s in ksampler_sources)
         assert any(s["source"] == "hivemind" for s in ksampler_sources)
 
+    def test_hivemind_promotes_direct_discord_workflow_json(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        import importlib
+
+        research_module = importlib.import_module("vibecomfy.executor.research")
+        monkeypatch.setattr(research_module, "_DEFAULT_WEB_CACHE_ROOT", tmp_path)
+
+        workflow_json = json.dumps(
+            {
+                "1": {
+                    "class_type": "FluxInpaintModel",
+                    "inputs": {"image": ["2", 0]},
+                    "outputs": [{"name": "IMAGE", "type": "IMAGE"}],
+                },
+                "2": {"class_type": "ControlNetApply", "inputs": {}},
+            }
+        ).encode()
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, *_args, **_kwargs) -> bytes:
+                return workflow_json
+
+        monkeypatch.setattr(research_module.urllib.request, "urlopen", lambda *args, **kwargs: _Response())
+
+        sources = research_module._run_hivemind_research(
+            "Flux ControlNet inpainting",
+            client=lambda _query, _timeout: {
+                "results": [
+                    {
+                        "kind": "workflow",
+                        "title": "Flux Image Inpainting and Compositing with ControlNet",
+                        "url": "https://cdn.discordapp.com/attachments/1/2/Inpainting_at_full_resolutions_flux.json?ex=1",
+                        "body": "Flux workflow JSON",
+                    }
+                ]
+            },
+            timeout=1,
+        )
+
+        promoted = sources[0]
+        assert promoted["source"] == "hivemind_workflow"
+        assert promoted["source_type"] == "direct_workflow_json"
+        assert promoted["hivemind_promoted_workflow"] is True
+        assert promoted["source_workflow_available"] is True
+        assert "FluxInpaintModel" in promoted["node_types"]
+
     @patch("vibecomfy.executor.research.build_search_corpus")
     def test_hivemind_with_no_results_is_handled(self, mock_corpus) -> None:
         mock_corpus.return_value = [_make_entry("KSampler")]
@@ -555,7 +677,12 @@ class TestHivemindMerge:
         def empty_client(q: str, t: float) -> dict[str, Any]:
             return {"results": []}
 
-        result = research("KSampler", hivemind_client=empty_client)
+        result = research(
+            "KSampler",
+            hivemind_client=empty_client,
+            web_search_client=None,
+            registry_resolver=None,
+        )
         ks_count = sum(1 for s in result.sources if s["class_type"] == "KSampler")
         assert ks_count == 1
 

@@ -12316,6 +12316,172 @@ def test_handle_agent_edit_revise_ignores_preexisting_assets_and_unknown_nodes_f
     ]
 
 
+def test_handle_agent_edit_revise_parameter_tweak_reaches_provider_despite_missing_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "CheckpointLoaderSimple": NodeSchema(
+                class_type="CheckpointLoaderSimple",
+                pack=None,
+                inputs={
+                    "ckpt_name": InputSpec(
+                        "CHOICE",
+                        required=False,
+                        choices=["present.safetensors"],
+                    )
+                },
+                outputs=[OutputSpec("MODEL", "MODEL")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "ACN_AdvancedControlNetApply": NodeSchema(
+                class_type="ACN_AdvancedControlNetApply",
+                pack=None,
+                inputs={"strength": InputSpec("FLOAT", required=False)},
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    graph = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "CheckpointLoaderSimple",
+                "widgets": [{"name": "ckpt_name"}],
+                "widgets_values": ["missing.safetensors"],
+            },
+            {
+                "id": 56,
+                "type": "ACN_AdvancedControlNetApply",
+                "widgets": [{"name": "strength"}],
+                "widgets_values": [0.5],
+            },
+        ],
+        "links": [],
+    }
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    captured_messages: list[list[dict[str, str]]] = []
+
+    def _provider(messages):
+        captured_messages.append(messages)
+        return {
+            "batch": "done()",
+            "message": "No concrete graph change was emitted.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": graph,
+            "task": "increase the ControlNet conditioning strength",
+            "query": "increase the ControlNet conditioning strength",
+            "route": "revise",
+            "executor_route": "revise",
+            "provider_route": "codex",
+            "executor_classification": {"route": "revise", "task": "edit_graph"},
+            "session_id": "revise-parameter-tweak-missing-model",
+            "max_batches": 1,
+        },
+        schema_provider=provider,
+        deepseek_client=_provider,
+        session_root=tmp_path,
+    )
+
+    assert captured_messages, "concrete existing-node tweaks should reach provider"
+    prompt = captured_messages[0][1]["content"]
+    assert "Direct existing-node tweak fallback applies here" in prompt
+    assert "No-op proof requirement" in prompt
+    assert result["ok"] is True
+    turn_dir = turn_dir_for(tmp_path, "revise-parameter-tweak-missing-model", str(result["turn_id"]))
+    assert (turn_dir / "model_request.json").exists()
+
+
+def test_handle_agent_edit_revise_parameter_tweak_candidate_ignores_preexisting_missing_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _Provider(
+        {
+            "CheckpointLoaderSimple": NodeSchema(
+                class_type="CheckpointLoaderSimple",
+                pack=None,
+                inputs={
+                    "ckpt_name": InputSpec(
+                        "CHOICE",
+                        required=False,
+                        choices=["present.safetensors"],
+                    )
+                },
+                outputs=[OutputSpec("MODEL", "MODEL")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "ACN_AdvancedControlNetApply": NodeSchema(
+                class_type="ACN_AdvancedControlNetApply",
+                pack=None,
+                inputs={"strength": InputSpec("FLOAT", required=False)},
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    graph = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "CheckpointLoaderSimple",
+                "widgets": [{"name": "ckpt_name"}],
+                "widgets_values": ["missing.safetensors"],
+            },
+            {
+                "id": 56,
+                "type": "ACN_AdvancedControlNetApply",
+                "widgets": [{"name": "strength"}],
+                "widgets_values": [0.5],
+            },
+        ],
+        "links": [],
+    }
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    responses = iter(
+        [
+            {
+                "batch": "acn_advancedcontrolnetapply.widget_0 = 0.85",
+                "message": "Increased ControlNet strength.",
+            },
+            {"batch": "done()", "message": "Ready."},
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": graph,
+            "task": "increase the ControlNet conditioning strength",
+            "query": "increase the ControlNet conditioning strength",
+            "route": "revise",
+            "executor_route": "revise",
+            "provider_route": "codex",
+            "executor_classification": {"route": "revise", "task": "edit_graph"},
+            "session_id": "revise-parameter-tweak-candidate-missing-model",
+            "max_batches": 3,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "candidate"
+    evidence = result["report"]["revision_evidence"]
+    assert evidence["candidate_eligible"] is True
+    assert evidence["readiness"]["missing_models"] == ["missing.safetensors"]
+    assert evidence["scoped_diff"]["eligibility_blockers"] == []
+
+
 def test_handle_agent_edit_you_decide_pil_code_node_uses_classifier_summary_to_attempt_provider(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
