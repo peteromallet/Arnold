@@ -1548,6 +1548,36 @@ def completion_guard_advancement(base_sha: str, previous_snapshot: dict[str, obj
     }
 
 
+def working_tree_status() -> dict[str, object]:
+    status = run_git(["status", "--porcelain"])
+    if status is None:
+        return {"available": False, "reason": "git_status_unavailable"}
+    if status.returncode != 0:
+        return {
+            "available": False,
+            "reason": "git_status_failed",
+            "stderr": (status.stderr or "").strip()[-500:],
+        }
+    lines = [line for line in (status.stdout or "").splitlines() if line.strip()]
+    non_megaplan_lines: list[str] = []
+    for line in lines:
+        path = line[3:] if len(line) >= 4 else line
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[-1]
+        path = path.strip().strip('"')
+        if path == ".megaplan" or path.startswith(".megaplan/"):
+            continue
+        non_megaplan_lines.append(line)
+    return {
+        "available": True,
+        "dirty": bool(non_megaplan_lines),
+        "uncommitted_file_count": len(non_megaplan_lines),
+        "sample": non_megaplan_lines[:12],
+        "raw_uncommitted_file_count": len(lines),
+        "command": "git status --porcelain",
+    }
+
+
 def state_fallback_zero_advancement(previous_snapshot: dict[str, object]) -> dict[str, object]:
     if not previous_snapshot:
         return {
@@ -1691,6 +1721,7 @@ status = "ok"
 issue_kind = ""
 summary = ""
 recurring_lines: list[str] = []
+evidence_extra_lines: list[str] = []
 completion_guard = {
     "milestone": "",
     "reason": "",
@@ -1753,6 +1784,7 @@ if status in {"chain_cycle", "chain_completion_guard_rejections"}:
     guard_repeat_count = int(completion_guard.get("repeat_count") or 0)
     base_sha = milestone_base_sha_from_state_or_reason(plan_state, guard_reason)
     advancement_check = completion_guard_advancement(base_sha, previous)
+    worktree_check = working_tree_status()
     fallback_check: dict[str, object] = {"used": False}
     zero_advancement = False
     if advancement_check.get("available") is True:
@@ -1768,20 +1800,44 @@ if status in {"chain_cycle", "chain_completion_guard_rejections"}:
     details = {
         **details,
         "completion_guard_advancement": advancement_check,
+        "completion_guard_worktree": worktree_check,
         "completion_guard_state_fallback": fallback_check,
     }
     if zero_advancement:
-        status = "needs_human"
-        issue_kind = "plan_noop_completion_guard"
         base_label = base_sha or "unknown"
-        summary = (
-            f"milestone {guard_milestone or 'unknown'} produces NO code changes vs base {base_label} "
-            f"across {guard_repeat_count} attempts "
-            "(git rev-list base..HEAD == 0); completion guard correctly blocks; "
-            "this is a PLAN decision: rework the milestone so its execute lands work, OR grant a typed no-op "
-            "completion waiver. Not auto-repairable."
-        )
-        details["plan_level_diagnosis"] = summary
+        if worktree_check.get("available") is True and worktree_check.get("dirty") is True:
+            uncommitted_count = int(worktree_check.get("uncommitted_file_count") or 0)
+            status = "chain_uncommitted_execute_output"
+            issue_kind = "chain_uncommitted_execute_output"
+            summary = (
+                f"milestone {guard_milestone or 'unknown'} has 0 committed changes vs base {base_label} "
+                f"but the working tree has {uncommitted_count} uncommitted files; execute output was not "
+                "committed, so this is a CHAIN-DRIVER commit-step bug, not a plan no-op waiver case"
+            )
+            chain_health_log_message = (
+                "CHAIN HEALTH EVIDENCE: working tree has "
+                f"{uncommitted_count} uncommitted files vs committed HEAD; execute output was not "
+                "committed -> commit step skipped; investigate "
+                "arnold_pipelines/megaplan/chain commit-and-push gating"
+            )
+            evidence_extra_lines.append(
+                "- Working tree evidence: "
+                f"{uncommitted_count} uncommitted files vs committed HEAD; execute output was not "
+                "committed -> commit step skipped; investigate "
+                "arnold_pipelines/megaplan/chain commit-and-push gating."
+            )
+            details["chain_driver_diagnosis"] = summary
+        else:
+            status = "needs_human"
+            issue_kind = "plan_noop_completion_guard"
+            summary = (
+                f"milestone {guard_milestone or 'unknown'} produces NO code changes vs base {base_label} "
+                f"across {guard_repeat_count} attempts "
+                "(git rev-list base..HEAD == 0 and working tree is clean); completion guard correctly blocks; "
+                "this is a PLAN decision: rework the milestone so its execute lands work, OR grant a typed no-op "
+                "completion waiver. Not auto-repairable."
+            )
+            details["plan_level_diagnosis"] = summary
     elif advancement_check.get("available") is True:
         # Code landed after the milestone base, so this is a repair-eligible
         # completion-guard edge case (for example a stale base SHA), not a
@@ -1846,28 +1902,28 @@ else:
     rendered_lines = [line for line in recurring_lines if line]
     if not rendered_lines:
         rendered_lines = log_lines[-5:]
-    evidence_markdown = "\n".join(
-        [
-            "## CHAIN HEALTH EVIDENCE",
-            f"- Issue: {issue_kind or status}",
-            (
-                "- Chain state summary: "
-                f"last_state={last_state or 'unknown'} "
-                f"pr_state={pr_state or 'unknown'} "
-                f"current_milestone_index={current_index} "
-                f"completed_count={completed_count}"
-            ),
-            "- Recurring chain-log lines:",
-            *[f"> {line}" for line in rendered_lines[:6]],
-            (
-                "- Completion guard verdict: "
-                f"{completion_guard['milestone'] or 'n/a'} -> "
-                f"{completion_guard['reason'] or 'n/a'}"
-            ),
-            f"- Why this is chain-layer: {why_chain_layer}",
-            "- Investigate: arnold_pipelines/megaplan/chain/__init__.py and arnold_pipelines/megaplan/chain/status.py",
-        ]
-    )
+    evidence_lines = [
+        "## CHAIN HEALTH EVIDENCE",
+        f"- Issue: {issue_kind or status}",
+        (
+            "- Chain state summary: "
+            f"last_state={last_state or 'unknown'} "
+            f"pr_state={pr_state or 'unknown'} "
+            f"current_milestone_index={current_index} "
+            f"completed_count={completed_count}"
+        ),
+        "- Recurring chain-log lines:",
+        *[f"> {line}" for line in rendered_lines[:6]],
+        (
+            "- Completion guard verdict: "
+            f"{completion_guard['milestone'] or 'n/a'} -> "
+            f"{completion_guard['reason'] or 'n/a'}"
+        ),
+        *evidence_extra_lines,
+        f"- Why this is chain-layer: {why_chain_layer}",
+        "- Investigate: arnold_pipelines/megaplan/chain/__init__.py and arnold_pipelines/megaplan/chain/status.py",
+    ]
+    evidence_markdown = "\n".join(evidence_lines)
     artifact = {
         "session": session,
         "workspace": str(workspace),
@@ -3271,6 +3327,33 @@ launch_chain_tick() {
     chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
     if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
       log "${CHAIN_HEALTH_LOG_MESSAGE}"
+    fi
+    if [[ "${CHAIN_HEALTH_STATUS:-ok}" == "chain_uncommitted_execute_output" ]]; then
+      local chain_health_message repair_busy
+      chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain execute output is uncommitted}"
+      if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
+        chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
+      fi
+      repair_busy="$(repair_loop_busy_state "$session")"
+      if [[ "$repair_busy" == "same_session" ]]; then
+        log "chain uncommitted execute output detected; repair already running session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
+        report_item "$report_items" "$session" "repair" "repair_running" "uncommitted execute output repair already running" "$workspace" "$remote_spec"
+      elif [[ "$repair_busy" == "other_session" ]]; then
+        log "chain uncommitted execute output detected; another repair loop already running session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
+        report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+      elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+          log "chain uncommitted execute output detected; another repair loop already running session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
+          report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
+        else
+          log "chain uncommitted execute output detected: background-dispatched repair loop session=$session summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
+          report_item "$report_items" "$session" "repair" "repair_dispatched" "$chain_health_message" "$workspace" "$remote_spec"
+        fi
+      else
+        log "chain uncommitted execute output detected but repair loop is unavailable session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
+        report_item "$report_items" "$session" "repair" "repair_unavailable" "$chain_health_message" "$workspace" "$remote_spec"
+      fi
+      return 0
     fi
     if [[ "${CHAIN_HEALTH_STATUS:-ok}" != "ok" ]]; then
       local chain_health_message

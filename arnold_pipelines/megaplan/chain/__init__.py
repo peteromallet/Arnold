@@ -4393,7 +4393,6 @@ def run_chain(
             decision == "advance"
             and outcome.status == "done"
             and not use_pr
-            and not push_enabled
             and mode != "plan"
         ):
             local_commit_sha = _commit_phase(
