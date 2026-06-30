@@ -3178,13 +3178,29 @@ def run_chain(
                     writer=writer,
                 )
                 if not appended:
-                    chain_spec.save_chain_state(spec_path, state)
-                    return _result(
-                        "blocked",
-                        state,
-                        events,
+                    authoritative, _authority_reason = _plan_terminal_completion_is_authoritative(
+                        root, state.current_plan_name
+                    )
+                    if not authoritative:
+                        chain_spec.save_chain_state(spec_path, state)
+                        return _result(
+                            "blocked",
+                            state,
+                            events,
+                            spec=spec,
+                            reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                        )
+                    return _handle_completion_guard_failure(
+                        root=root,
+                        spec_path=spec_path,
                         spec=spec,
-                        reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                        state=state,
+                        milestone=milestone,
+                        plan_name=state.current_plan_name or "",
+                        outcome_status="done",
+                        reason=reason,
+                        events=events,
+                        writer=writer,
                     )
                 if state.current_plan_name:
                     _mark_plan_completed_by_chain(
@@ -3302,13 +3318,29 @@ def run_chain(
                 writer=writer,
             )
             if not appended:
-                chain_spec.save_chain_state(spec_path, state)
-                return _result(
-                    "blocked",
-                    state,
-                    events,
+                authoritative, _authority_reason = _plan_terminal_completion_is_authoritative(
+                    root, state.current_plan_name
+                )
+                if not authoritative:
+                    chain_spec.save_chain_state(spec_path, state)
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                    )
+                return _handle_completion_guard_failure(
+                    root=root,
+                    spec_path=spec_path,
                     spec=spec,
-                    reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                    state=state,
+                    milestone=milestone,
+                    plan_name=state.current_plan_name or "",
+                    outcome_status="done",
+                    reason=reason,
+                    events=events,
+                    writer=writer,
                 )
             if state.current_plan_name:
                 _mark_plan_completed_by_chain(
