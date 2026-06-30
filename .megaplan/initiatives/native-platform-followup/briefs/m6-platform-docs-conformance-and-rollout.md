@@ -65,6 +65,9 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
   `canonical_source`, `declared_policy`, or `audited_pure_phase_body`.
   Implemented rows must also include `carrier_evidence` paths pointing to the
   source, declared policy, or audited pure phase body that carries the semantic.
+  `canonical_source` and `audited_pure_phase_body` carrier evidence must point
+  to `.py` files. `declared_policy` carrier evidence may point to `.py`,
+  `.yaml`, `.yml`, `.json`, or `.md` policy artifacts.
   Deferred rows must use `semantic_carrier: explicit_deferral`. Any
   `deferred` row must include `downstream_owner`, `blocking_proof`,
   and `reason`. Validate the YAML ledger with

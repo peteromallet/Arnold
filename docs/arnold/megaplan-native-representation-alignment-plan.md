@@ -410,7 +410,9 @@ The alignment work is done only when:
   `semantic_carrier: explicit_deferral`;
 - every implemented row includes `carrier_evidence` paths pointing at the
   source, declared policy, or audited pure phase body that carries the
-  semantic, and the validator confirms those paths exist;
+  semantic, and the validator confirms those paths exist; `canonical_source`
+  and `audited_pure_phase_body` carrier evidence must be `.py` files, while
+  `declared_policy` evidence may be `.py`, `.yaml`, `.yml`, `.json`, or `.md`;
 - `python scripts/validate_native_representation_conformance.py --conformance
   docs/arnold/megaplan-native-representation-conformance.yaml` passes against
   the final YAML ledger.
