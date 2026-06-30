@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -331,3 +332,107 @@ def test_run_codex_step_read_only_trusted_container_bypasses_inner_sandbox(
 
     assert "--dangerously-bypass-approvals-and-sandbox" in captured["command"]
     assert "sandbox_mode='read-only'" not in captured["command"]
+
+
+def test_codex_progress_liveness_uses_rollout_and_cpu_signals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan.workers import _impl
+
+    output_path = tmp_path / "execute.json"
+    output_path.write_text("", encoding="utf-8")
+    rollout_path = tmp_path / "rollout.jsonl"
+    rollout_path.write_text('{"type":"thread.started"}\n', encoding="utf-8")
+
+    liveness = _impl.CodexProgressLiveness(output_path=output_path)
+    liveness.activity_guard(
+        "stdout",
+        '{"type":"thread.started","thread_id":"thread-123"}\n',
+    )
+    probe = liveness.bind_process(SimpleNamespace(pid=321, poll=lambda: None))
+
+    monkeypatch.setattr(
+        _impl,
+        "_codex_session_jsonl_path",
+        lambda session_id: rollout_path if session_id == "thread-123" else None,
+    )
+
+    cpu_samples = iter([10.0, 10.0, 15.0])
+    monkeypatch.setattr(_impl, "_subtree_cputime_sample", lambda _roots: next(cpu_samples))
+
+    assert probe() == "alive_only"
+
+    rollout_path.write_text(
+        '{"type":"thread.started"}\n{"type":"item.started"}\n',
+        encoding="utf-8",
+    )
+    assert probe() == "progressing"
+    assert probe() == "progressing"
+
+
+def test_run_codex_step_execute_wires_progress_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
+
+    root = tmp_path / "root"
+    root.mkdir()
+    ensure_runtime_layout(root)
+    plan_dir = root / ".megaplan" / "plans" / "oneshot"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    output_path = plan_dir / "out.json"
+    output_path.write_text(
+        '{"output":"","files_changed":[],"commands_run":[],"deviations":[],"task_updates":[],"sense_check_acknowledgments":[]}',
+        encoding="utf-8",
+    )
+    state = {
+        "name": "execute-liveness",
+        "idea": "x",
+        "current_state": "finalized",
+        "iteration": 0,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {},
+    }
+    captured: dict[str, object] = {}
+
+    def fake_run_command(command, **kwargs):
+        captured["command"] = list(command)
+        captured["activity_guard"] = kwargs.get("activity_guard")
+        captured["progress_liveness_factory"] = kwargs.get("progress_liveness_factory")
+        captured["progress_liveness_grace_timeout"] = kwargs.get(
+            "progress_liveness_grace_timeout"
+        )
+        return _impl.CommandResult(
+            command=list(command),
+            cwd=tmp_path,
+            returncode=0,
+            stdout='{"type":"thread.started","thread_id":"thread-123"}\n',
+            stderr="",
+            duration_ms=5,
+        )
+
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        _impl, "_codex_step_cost", lambda *args, **kwargs: (0.0, 0, 0, "gpt-5.5", None)
+    )
+
+    _impl.run_codex_step(
+        "execute",
+        state,
+        plan_dir,
+        root=root,
+        persistent=False,
+        fresh=True,
+        read_only=False,
+        output_path=output_path,
+        prompt_override="Return a valid execute payload.",
+    )
+
+    assert callable(captured["activity_guard"])
+    assert callable(captured["progress_liveness_factory"])
+    assert captured["progress_liveness_grace_timeout"] == pytest.approx(600.0)

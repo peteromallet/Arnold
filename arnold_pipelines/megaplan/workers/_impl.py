@@ -402,6 +402,229 @@ def build_three_channel_liveness_probe(
     return _probe
 
 
+def _ps_children(pid: str) -> list[str]:
+    """Return the direct child PIDs of *pid* via ``ps`` (portable; macOS+Linux)."""
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "pid=,ppid="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return []
+    if result.returncode != 0:
+        return []
+    children: list[str] = []
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        child, parent = parts
+        if parent == pid:
+            children.append(child)
+    return children
+
+
+def _process_tree_pids(roots: list[str], *, max_pids: int = 256) -> list[str]:
+    """BFS the process subtree rooted at each pid in *roots* (descendants too)."""
+    seen: list[str] = []
+    seen_set: set[str] = set()
+    frontier = [pid for pid in roots if pid]
+    while frontier and len(seen) < max_pids:
+        pid = frontier.pop()
+        if pid in seen_set:
+            continue
+        seen_set.add(pid)
+        seen.append(pid)
+        frontier.extend(_ps_children(pid))
+    return seen
+
+
+def _cputime_to_seconds(raw: str) -> float | None:
+    """Parse a ``ps`` ``cputime`` field (``[[DD-]HH:]MM:SS[.ss]``) to seconds."""
+    raw = raw.strip()
+    if not raw or raw == "-":
+        return None
+    days = 0
+    if "-" in raw:
+        day_str, _, raw = raw.partition("-")
+        try:
+            days = int(day_str)
+        except ValueError:
+            days = 0
+    parts = raw.split(":")
+    try:
+        nums = [float(part) for part in parts]
+    except ValueError:
+        return None
+    seconds = 0.0
+    for value in nums:
+        seconds = seconds * 60 + value
+    return seconds + days * 86400.0
+
+
+def _subtree_cputime_sample(roots: list[str]) -> float | None:
+    """Return cumulative CPU time (seconds) consumed by the subtree of *roots*."""
+    pids = _process_tree_pids(roots)
+    if not pids:
+        return None
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "pid=,cputime="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    pid_set = set(pids)
+    total = 0.0
+    saw_any = False
+    for line in result.stdout.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, cputime = parts
+        if pid not in pid_set:
+            continue
+        seconds = _cputime_to_seconds(cputime)
+        if seconds is None:
+            continue
+        saw_any = True
+        total += seconds
+    return total if saw_any else None
+
+
+def _path_progress_signal(path: Path | None) -> tuple[int, int] | None:
+    """Return a monotone-comparable progress signal for *path* when readable."""
+    if path is None:
+        return None
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (max(int(stat.st_mtime_ns), 0), int(stat.st_size))
+
+
+@dataclass
+class CodexProgressLiveness:
+    """Progress classifier for Codex turns that go silent during tool work.
+
+    Execute turns often enter a long foreground tool call (`pytest`, build,
+    shell script) after Codex has already emitted the JSON trace row that
+    started the tool. During that window the Codex parent process can remain
+    stdout-silent for many minutes even though the subprocess tree is actively
+    working. Without a secondary progress signal the idle-output watchdog turns
+    into a false total-turn cap.
+
+    We treat the turn as `progressing` when any of these cheap local signals
+    advances since the last probe:
+
+    - the structured output file grows;
+    - the Codex rollout JSONL grows (after `thread.started` reveals the session);
+    - the Codex subprocess tree accumulates CPU time.
+
+    A live child with readable but flat signals is only `alive_only` so
+    `run_command` applies its grace cap. A dead child is `stalled`.
+    """
+
+    output_path: Path
+
+    session_id: str | None = None
+    _stdout_buffer: str = ""
+    _child_pid: str | None = None
+    _child_alive: Callable[[], bool] | None = None
+    _last_output_signal: tuple[int, int] | None = None
+    _last_rollout_signal: tuple[int, int] | None = None
+    _last_cpu_signal: float | None = None
+
+    def bind_process(self, process: Any) -> Callable[[], ProgressLivenessState]:
+        try:
+            pid = getattr(process, "pid", None)
+        except Exception:
+            pid = None
+        self._child_pid = str(pid) if pid is not None else None
+        self._child_alive = lambda: process.poll() is None
+        return self.probe
+
+    def activity_guard(self, kind: str, text: str) -> None:
+        """Observe stdout JSONL so the probe can discover the Codex session id."""
+        if kind != "stdout" or not text:
+            return
+        self._stdout_buffer += text
+        lines = self._stdout_buffer.splitlines(keepends=True)
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            self._stdout_buffer = lines.pop()
+        else:
+            self._stdout_buffer = ""
+        for line in lines:
+            stripped = line.strip()
+            if not stripped.startswith("{"):
+                continue
+            try:
+                payload = json.loads(stripped)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("thread_id"):
+                self.session_id = str(payload["thread_id"])
+
+    def _sample_rollout_signal(self) -> tuple[int, int] | None:
+        if not self.session_id:
+            return None
+        return _path_progress_signal(_codex_session_jsonl_path(self.session_id))
+
+    def _sample_cpu_signal(self) -> float | None:
+        if not self._child_pid:
+            return None
+        return _subtree_cputime_sample([self._child_pid])
+
+    def _observe(
+        self,
+        current: Any | None,
+        attr_name: str,
+    ) -> tuple[bool, bool]:
+        if current is None:
+            return False, False
+        previous = getattr(self, attr_name)
+        if previous is None:
+            setattr(self, attr_name, current)
+            return True, False
+        if current > previous:
+            setattr(self, attr_name, current)
+            return True, True
+        return True, False
+
+    def probe(self) -> ProgressLivenessState:
+        readable = False
+        progressing = False
+
+        for current, attr_name in (
+            (_path_progress_signal(self.output_path), "_last_output_signal"),
+            (self._sample_rollout_signal(), "_last_rollout_signal"),
+            (self._sample_cpu_signal(), "_last_cpu_signal"),
+        ):
+            signal_readable, signal_progressing = self._observe(current, attr_name)
+            readable = readable or signal_readable
+            progressing = progressing or signal_progressing
+
+        if progressing:
+            return "progressing"
+
+        if self._child_alive is not None:
+            try:
+                if not bool(self._child_alive()):
+                    return "stalled"
+            except Exception:
+                return "unknown"
+
+        if readable:
+            return "alive_only"
+        return "unknown"
+
+
 def _codex_executor_session_headroom_tokens() -> int:
     raw = os.getenv(CODEX_EXECUTOR_SESSION_HEADROOM_ENV)
     if raw is None:
@@ -722,6 +945,8 @@ def run_command(
     pre_first_byte_timeout: float | None = None,
     liveness_probe: Callable[[], bool] | None = None,
     progress_liveness_probe: Callable[[], ProgressLivenessState] | None = None,
+    progress_liveness_factory: Callable[[Any], Callable[[], ProgressLivenessState] | None]
+    | None = None,
     progress_liveness_grace_timeout: float | None = None,
     tmux_session: TmuxSession | None = None,
 ) -> CommandResult:
@@ -820,6 +1045,11 @@ def run_command(
                 stderr=subprocess.PIPE,
                 env=env,
             )
+            if progress_liveness_probe is None and progress_liveness_factory is not None:
+                try:
+                    progress_liveness_probe = progress_liveness_factory(process)
+                except Exception:
+                    progress_liveness_probe = None
             stdout_parts: list[bytes] = []
             stderr_parts: list[bytes] = []
 
@@ -3059,6 +3289,7 @@ def _run_codex_step_uncapped(
                 prompt=prompt,
                 json_trace=json_trace,
             )
+        liveness = CodexProgressLiveness(output_path=output_path)
         result = run_command(
             command,
             cwd=work_dir,
@@ -3066,8 +3297,11 @@ def _run_codex_step_uncapped(
             env=_codex_child_env(turn_id=f'plan_worker_{state["name"]}'),
             timeout=timeout_seconds,
             activity_callback=_activity_callback_for_state(state, plan_dir),
+            activity_guard=liveness.activity_guard,
             pre_first_byte_timeout=pre_first_byte_s if pre_first_byte_s > 0 else None,
             idle_timeout=codex_idle_s if codex_idle_s > 0 else None,
+            progress_liveness_factory=liveness.bind_process,
+            progress_liveness_grace_timeout=codex_idle_s if codex_idle_s > 0 else None,
         )
         if not read_only:
             _verify_engine_after_mutating_worker(step, state, root, execution_env)
