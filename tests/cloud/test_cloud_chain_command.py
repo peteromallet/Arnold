@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import tarfile
 from pathlib import Path
@@ -20,12 +21,14 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _durable_megaplan_uploads,
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
+    _materialize_canonical_epic_input,
     _normalized_chain_upload_spec,
     _phase_model_by_label_from_preflight,
     _remote_chain_upload_path,
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
     _run_sync_megaplan,
+    _run_launch_epic_wrapper,
     _run_bootstrap_wrapper,
     _status_should_use_chain,
     _validate_chain_spec_location,
@@ -44,6 +47,20 @@ from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtim
 from arnold_pipelines.megaplan.types import CliError
 
 
+def _cloud_spec() -> CloudSpec:
+    return CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", branch="main"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+        ssh=SshSpec(host="testhost"),
+    )
+
+
 def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     command = _chain_start_command(
         "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
@@ -54,6 +71,153 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert "if [ -f /workspace/.cloud-hot-env ]; then set -a; . /workspace/.cloud-hot-env; set +a; fi;" in command
     assert "cd /workspace/arnold &&" in command
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
+
+
+def test_launch_epic_rejects_missing_north_star(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    brief_dir = app / ".megaplan" / "initiatives" / "demo"
+    brief_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=app, check=True, capture_output=True, text=True)
+    (brief_dir / "m1.md").write_text("M1\n", encoding="utf-8")
+
+    with pytest.raises(Exception) as excinfo:
+        _materialize_canonical_epic_input(
+            root=tmp_path,
+            spec=_cloud_spec(),
+            spec_or_dir=str(brief_dir),
+        )
+
+    assert getattr(excinfo.value, "code", "") == "missing_north_star"
+    assert "NORTHSTAR.md" in getattr(excinfo.value, "message", str(excinfo.value))
+
+
+def test_launch_epic_materializes_canonical_layout_from_brief_dir(tmp_path: Path) -> None:
+    app = tmp_path / "app"
+    brief_dir = app / "incoming" / "research-plan-execute-epic"
+    brief_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=app, check=True, capture_output=True, text=True)
+    (brief_dir / "NORTHSTAR.md").write_text("North star\n", encoding="utf-8")
+    (brief_dir / "m1-contracts.md").write_text("M1\n", encoding="utf-8")
+    (brief_dir / "m2-routing.md").write_text("M2\n", encoding="utf-8")
+
+    materialized = _materialize_canonical_epic_input(
+        root=tmp_path,
+        spec=_cloud_spec(),
+        spec_or_dir=str(brief_dir),
+    )
+
+    assert materialized.generated_chain is True
+    assert materialized.slug == "research-plan-execute-epic"
+    assert materialized.spec_path == app / ".megaplan" / "initiatives" / "research-plan-execute-epic" / "chain.yaml"
+    raw = yaml.safe_load(materialized.spec_path.read_text(encoding="utf-8"))
+    assert raw["anchors"] == {"north_star": "NORTHSTAR.md"}
+    assert raw["milestones"][0]["idea"] == ".megaplan/initiatives/research-plan-execute-epic/briefs/m1-contracts.md"
+    assert (materialized.brief_dir / "NORTHSTAR.md").is_file()
+    assert (materialized.brief_dir / "briefs" / "m2-routing.md").is_file()
+
+
+class _LaunchEpicProvider:
+    def __init__(self) -> None:
+        self.uploads: list[tuple[Path, str]] = []
+        self.remote_files: set[str] = set()
+        self.markers: dict[str, dict] = {}
+
+    def upload_file(self, src: Path, dest: str) -> None:
+        self.uploads.append((src, dest))
+        self.remote_files.add(dest)
+
+    def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+        if "MEGAPLAN_RESET" in command:
+            return subprocess.CompletedProcess([], 0, "", "")
+        if "MEGAPLAN_WATCHDOG_TRACKING" in command:
+            marker = re.search(r"marker_path = pathlib\.Path\('([^']+)'\)", command).group(1)
+            workspace = re.search(r"workspace = pathlib\.Path\('([^']+)'\)", command).group(1)
+            remote_spec = re.search(r"remote_spec = pathlib\.Path\('([^']+)'\)", command).group(1)
+            payload = self.markers.get(marker, {})
+            errors = []
+            if not payload:
+                errors.append("marker missing")
+            if remote_spec not in self.remote_files:
+                errors.append("remote_spec missing")
+            if payload.get("workspace") != workspace:
+                errors.append("workspace mismatch")
+            if payload.get("remote_spec") != remote_spec:
+                errors.append("remote_spec mismatch")
+            result = {
+                "tracked": not errors,
+                "errors": errors,
+                "marker_path": marker,
+                "workspace": workspace,
+                "remote_spec": remote_spec,
+                "session": payload.get("session"),
+            }
+            return subprocess.CompletedProcess([], 0 if result["tracked"] else 1, json.dumps(result) + "\n", "")
+        if "MEGAPLAN_VERIFY" in command:
+            result = {
+                "session_alive": True,
+                "advanced_past_init": True,
+                "chain_log": "/workspace/log",
+                "state_present": True,
+                "plan_dirs": ["m1"],
+            }
+            return subprocess.CompletedProcess([], 0, json.dumps(result) + "\n", "")
+        if "tmux new-session" in command or "session already running for this chain" in command:
+            marker_match = re.search(r"printf %s ('(?:[^']|'\"'\"')*') > ([^;]+);", command)
+            assert marker_match, command
+            marker_payload = json.loads(shlex_split_one(marker_match.group(1)))
+            marker_path = shlex_split_one(marker_match.group(2))
+            self.markers[marker_path] = marker_payload
+            return subprocess.CompletedProcess([], 0, "started session\n", "")
+        return subprocess.CompletedProcess([], 0, "", "")
+
+
+def shlex_split_one(value: str) -> str:
+    import shlex
+
+    parsed = shlex.split(value)
+    assert len(parsed) == 1
+    return parsed[0]
+
+
+def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = tmp_path / "app"
+    brief_dir = app / ".megaplan" / "initiatives" / "demo"
+    brief_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=app, check=True, capture_output=True, text=True)
+    (brief_dir / "NORTHSTAR.md").write_text("North star\n", encoding="utf-8")
+    (brief_dir / "m1.md").write_text("M1\n", encoding="utf-8")
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._sync_launch_head_to_editable_install_branch", lambda *_a, **_k: {"status": "skipped"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._ensure_repo_checkout", lambda *_a, **_k: None)
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._run_remote_dependency_check", lambda *_a, **_k: [])
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.seed_codex_oauth", lambda *_a, **_k: {"status": "skipped"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._remote_repo_head", lambda *_a, **_k: {"branch": "main", "head": "abc123"})
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._relay_output", lambda *_a, **_k: None)
+
+    provider = _LaunchEpicProvider()
+    rc = _run_launch_epic_wrapper(
+        tmp_path,
+        argparse.Namespace(
+            spec_or_dir=str(brief_dir),
+            slug=None,
+            fresh=True,
+            no_git_refresh=True,
+            no_editable_install_sync=True,
+            cloud_yaml=None,
+        ),
+        _cloud_spec(),
+        provider,
+    )
+
+    assert rc == 0
+    uploaded_remote_paths = {remote for _local, remote in provider.uploads}
+    remote_spec = next(path for path in uploaded_remote_paths if path.endswith("/.megaplan/initiatives/demo/chain.yaml"))
+    assert "/workspace/demo-" in remote_spec
+    assert any(marker["remote_spec"] == remote_spec for marker in provider.markers.values())
+    assert remote_spec in provider.remote_files
 
 
 def test_remote_chain_upload_path_anchors_relative_initiatives_to_workspace() -> None:
