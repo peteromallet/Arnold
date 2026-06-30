@@ -190,6 +190,21 @@ def validate_conformance_ledger(
             "deferred_semantic_carriers",
             fallback=DEFERRED_SEMANTIC_CARRIERS,
         )
+        required_row_fields = _string_set_from_contract(
+            machine_report,
+            "required_row_fields",
+            fallback=REQUIRED_ROW_FIELDS,
+        )
+        implemented_required_row_fields = _string_set_from_contract(
+            machine_report,
+            "implemented_required_row_fields",
+            fallback=IMPLEMENTED_REQUIRED_ROW_FIELDS,
+        )
+        deferred_required_row_fields = _string_set_from_contract(
+            machine_report,
+            "deferred_required_row_fields",
+            fallback=DEFERRED_REQUIRED_ROW_FIELDS,
+        )
         carrier_suffixes = _suffix_contract(machine_report)
     except ValueError as exc:
         return [str(exc)]
@@ -245,7 +260,7 @@ def validate_conformance_ledger(
             errors.append(f"duplicate row id {row_id!r}")
         seen_ids.add(row_id)
 
-        missing = sorted(REQUIRED_ROW_FIELDS - set(row))
+        missing = sorted(required_row_fields - set(row))
         if missing:
             errors.append(f"row {row_id!r} missing required fields: {', '.join(missing)}")
 
@@ -300,7 +315,7 @@ def validate_conformance_ledger(
             errors.append(str(exc))
 
         if status == "deferred":
-            missing_deferred = sorted(DEFERRED_REQUIRED_ROW_FIELDS - set(row))
+            missing_deferred = sorted(deferred_required_row_fields - set(row))
             if missing_deferred:
                 errors.append(
                     f"row {row_id!r} missing deferred fields: {', '.join(missing_deferred)}"
@@ -324,7 +339,7 @@ def validate_conformance_ledger(
             except ValueError as exc:
                 errors.append(str(exc))
         elif status == "implemented":
-            missing_implemented = sorted(IMPLEMENTED_REQUIRED_ROW_FIELDS - set(row))
+            missing_implemented = sorted(implemented_required_row_fields - set(row))
             if missing_implemented:
                 errors.append(
                     f"row {row_id!r} missing implemented fields: {', '.join(missing_implemented)}"

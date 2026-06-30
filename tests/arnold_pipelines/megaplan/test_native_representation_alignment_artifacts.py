@@ -41,6 +41,19 @@ def _write_conformance_traceability_fixture(path: Path, row_ids: list[str]) -> N
                             "audited_pure_phase_body": [".py"],
                             "declared_policy": [".py", ".yaml", ".yml", ".json", ".md"],
                         },
+                        "required_row_fields": [
+                            "id",
+                            "status",
+                            "semantic_carrier",
+                            "proof_categories",
+                            "proof_artifacts",
+                        ],
+                        "implemented_required_row_fields": ["carrier_evidence"],
+                        "deferred_required_row_fields": [
+                            "downstream_owner",
+                            "blocking_proof",
+                            "reason",
+                        ],
                     }
                 },
                 "rows": [
@@ -612,6 +625,108 @@ def test_final_conformance_yaml_validator_rejects_unknown_proof_categories(
         "proof_categories contains unknown labels: typoed_label" in error
         for error in errors
     )
+
+
+def test_final_conformance_yaml_validator_uses_required_row_field_contract(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
+    traceability["final_conformance_gate"]["machine_readable_report"][
+        "required_row_fields"
+    ].append("reviewer_signoff")
+    traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.py"],
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+    )
+
+    assert any("missing required fields: reviewer_signoff" in error for error in errors)
+
+
+def test_final_conformance_yaml_validator_uses_status_specific_field_contract(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof-one.md").write_text("# Proof one\n", encoding="utf-8")
+    (tmp_path / "carrier-one.py").write_text("# carrier one\n", encoding="utf-8")
+    (tmp_path / "proof-two.md").write_text("# Proof two\n", encoding="utf-8")
+    (tmp_path / "blocking-proof.md").write_text("# Blocking proof\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
+    traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
+    machine_report = traceability["final_conformance_gate"]["machine_readable_report"]
+    machine_report["implemented_required_row_fields"].append("implementation_notes")
+    machine_report["deferred_required_row_fields"].append("deferral_review")
+    traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier-one.py"],
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof-one.md"],
+                    },
+                    {
+                        "id": "row-two",
+                        "status": "deferred",
+                        "semantic_carrier": "explicit_deferral",
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof-two.md"],
+                        "downstream_owner": "future-platform-hardening",
+                        "blocking_proof": ["blocking-proof.md"],
+                        "reason": "operator prerequisite",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+    )
+
+    assert any(
+        "missing implemented fields: implementation_notes" in error
+        for error in errors
+    )
+    assert any("missing deferred fields: deferral_review" in error for error in errors)
 
 
 def test_final_conformance_yaml_validator_uses_traceability_suffix_contract(
