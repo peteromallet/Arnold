@@ -129,6 +129,53 @@ def _classify_stage_failure(
     return failure
 
 
+def _batch_repl_candidate_needs_queue_validate(state: AgentEditState) -> bool:
+    if state.batch_exit_mode not in {_BATCH_EXIT_DONE, _BATCH_EXIT_EDIT_CLARIFY}:
+        return False
+    if not isinstance(state.ui_payload, Mapping):
+        return False
+    if not _batch_candidate_graph_changed(state):
+        return False
+    return _total_landed_edit_count(state) > 0
+
+
+def _stage_batch_repl_queue_validate(
+    state: AgentEditState,
+    _context: TurnContext,
+) -> StageResult:
+    recovery_report = _queue_recovery_report_for_candidate(
+        ui_payload=state.ui_payload,
+        schema_provider=state.schema_provider,
+        original_ui_payload=state.graph,
+        existing_recovery_report=(state.report or {}).get("recovery"),
+    )
+    if state.report is None:
+        state.report = {}
+    state.report["recovery"] = recovery_report
+    return queue_stage_result(
+        recovery_report=recovery_report,
+        change_report=(state.report or {}).get("change"),
+    )
+
+
+def _run_batch_repl_queue_validate_if_needed(
+    state: AgentEditState,
+    context: TurnContext,
+) -> None:
+    if not _batch_repl_candidate_needs_queue_validate(state):
+        return
+    queue_result = _run_stage(
+        "queue_validate",
+        state,
+        context,
+        _stage_batch_repl_queue_validate,
+    )
+    derive_gates(context, queue_blockers=queue_result.issues)
+    if state.report is None:
+        state.report = {}
+    state.report["queue_blockers"] = [dict(issue) for issue in queue_result.issues]
+
+
 def _run_batch_repl_product_path(
     state: AgentEditState,
     context: TurnContext,
@@ -190,6 +237,7 @@ def _run_batch_repl_product_path(
         client_id=client_id,
         conversation_messages=conversation_messages,
     )
+    _run_batch_repl_queue_validate_if_needed(state, context)
     return state
 
 

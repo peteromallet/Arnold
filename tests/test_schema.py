@@ -23,11 +23,13 @@ from vibecomfy.schema import (
     NodeSchema,
     ObjectInfoSchemaProvider,
     OutputSpec,
+    ProvisionalRegistrySchemaProvider,
     RuntimeSchemaProvider,
     SchemaIndexError,
     SourceSchemaProvider,
     get_authoring_schema_provider,
     get_schema_provider,
+    is_workflow_stub_schema,
     schema_for,
     schema_registry_empty,
     schemas_for,
@@ -43,7 +45,7 @@ from vibecomfy.schema.cache import (
     validate_object_info_cache,
     write_object_info_cache,
 )
-from vibecomfy.porting.emitter import emit_available_node_signatures
+from vibecomfy.porting.emitter import emit_available_node_signatures, format_signature_rows
 from vibecomfy.workflow import ValidationIssue, VibeEdge, VibeNode, VibeWorkflow, WorkflowSource
 
 
@@ -156,6 +158,149 @@ def test_authoring_schema_provider_prefers_committed_object_info_when_node_index
     assert provider.get_schema("SaveImage").source_provider == "object_info_index"
 
 
+def test_workflow_stub_schemas_are_not_emitted_as_local_node_signatures() -> None:
+    provider = get_authoring_schema_provider()
+
+    assert provider.get_schema("ADE_AnimateDiffLoaderWithContext") is None
+
+    rows = emit_available_node_signatures(
+        provider,
+        focus_types=["ADE_AnimateDiffLoaderWithContext"],
+    )
+
+    assert rows == []
+
+
+def test_workflow_stub_index_rows_are_not_in_authoring_schema() -> None:
+    provider = get_authoring_schema_provider()
+
+    assert provider.get_schema("Hotshot") is None
+    assert provider.get_schema("HotshotXL") is None
+    assert provider.get_schema("ADE_UseEvolvedSampling") is None
+
+
+def test_github_code_search_class_only_candidates_are_not_authoring_schemas() -> None:
+    provider = ProvisionalRegistrySchemaProvider(
+        [
+            {
+                "pack": {
+                    "slug": "ComfyUIWorkflowSuite",
+                    "source": "github",
+                    "url": "https://github.com/Limbicnation/ComfyUIWorkflowSuite",
+                },
+                "expected_classes": [
+                    "Limbicnation",
+                    "ComfyUIWorkflowSuite",
+                    "Txt2Vid",
+                    "HotshotXL",
+                    "User",
+                ],
+                "validation_mode": "class_validatable",
+                "provisional_schema": {},
+            }
+        ]
+    )
+
+    assert provider.get_schema("HotshotXL") is None
+    assert emit_available_node_signatures(provider, focus_types=["HotshotXL"]) == []
+
+
+def test_manager_class_map_candidates_create_schema_placeholder_schemas() -> None:
+    provider = ProvisionalRegistrySchemaProvider(
+        [
+            {
+                "pack": {
+                    "slug": "ComfyUI-AnimateDiff-Evolved",
+                    "source": "comfy-manager",
+                    "url": "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved",
+                },
+                "expected_classes": [
+                    "ADE_AnimateDiffLoaderWithContext",
+                    "ADE_UseEvolvedSampling",
+                ],
+                "validation_mode": "class_validatable",
+                "provisional_schema": {},
+                "evidence": [
+                    {
+                        "tier": "comfy-manager",
+                        "source": "custom-node-map",
+                        "matched_classes": [
+                            "ADE_AnimateDiffLoaderWithContext",
+                            "ADE_UseEvolvedSampling",
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+
+    schema = provider.get_schema("ADE_AnimateDiffLoaderWithContext")
+
+    assert schema is not None
+    assert schema.source_provider == "comfy_registry_class_map"
+    assert schema.ignored_evidence == (
+        "class_only",
+        "schema_backed_resolution_required",
+        "not_runtime_validated",
+    )
+
+    rows = emit_available_node_signatures(
+        provider,
+        focus_types=["ADE_AnimateDiffLoaderWithContext"],
+    )
+    assert rows[0].status == "schema_placeholder"
+    assert rows[0].pack == "ComfyUI-AnimateDiff-Evolved"
+    rendered = format_signature_rows(rows)
+    assert "# status: schema_placeholder" in rendered
+    assert "def ADE_AnimateDiffLoaderWithContext() -> None:" in rendered
+
+
+def test_workflow_json_candidates_create_provisional_authoring_schemas() -> None:
+    provider = ProvisionalRegistrySchemaProvider(
+        [
+            {
+                "pack": {
+                    "slug": "workflow_json",
+                    "source": "hivemind_workflow",
+                    "url": "https://example.test/hotshot-workflow.json",
+                },
+                "expected_classes": ["ADE_AnimateDiffLoaderWithContext"],
+                "validation_mode": "workflow_json_provisional",
+                "provisional_schema": {
+                    "version": "workflow-json",
+                    "runnable": False,
+                    "schema": {
+                        "nodes": {
+                            "ADE_AnimateDiffLoaderWithContext": {
+                                "input": {
+                                    "required": {
+                                        "model": {"type": "MODEL"},
+                                        "context_options": {"type": "CONTEXT_OPTIONS"},
+                                    },
+                                    "optional": {},
+                                },
+                                "outputs": [{"name": "MODEL", "type": "MODEL"}],
+                            }
+                        }
+                    },
+                },
+            }
+        ]
+    )
+
+    schema = provider.get_schema("ADE_AnimateDiffLoaderWithContext")
+
+    assert schema is not None
+    assert schema.source_provider == "workflow_json_provisional"
+    assert schema.ignored_evidence == ("not_installed", "not_runtime_validated")
+    rows = emit_available_node_signatures(
+        provider,
+        focus_types=["ADE_AnimateDiffLoaderWithContext"],
+    )
+    assert rows[0].status == "provisional_schema"
+    assert "def ADE_AnimateDiffLoaderWithContext" in format_signature_rows(rows)
+
+
 def test_authoring_schema_provider_prefers_committed_object_info_when_node_index_stale(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "node_index.json").write_text(
@@ -195,6 +340,9 @@ def test_socket_types_compatible_public_helper_preserves_validation_semantics() 
     assert socket_types_compatible("ANY", "IMAGE") is True
     assert socket_types_compatible("*", "IMAGE") is True
     assert socket_types_compatible(None, "IMAGE") is True
+    assert socket_types_compatible("IMAGE", "UNKNOWN") is True
+    assert socket_types_compatible("UNKNOWN", "LATENT") is True
+    assert socket_types_compatible("UNKNOWN", "UNKNOWN") is True
     assert socket_types_compatible("IMAGE", "LATENT") is False
 
 

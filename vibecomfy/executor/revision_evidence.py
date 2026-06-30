@@ -13,6 +13,7 @@ and testable without network or model dependencies.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import logging
 from typing import Any
 
@@ -425,13 +426,56 @@ def _ui_input_slot_name_and_type(inputs: list[dict], slot_index: int) -> tuple[s
     return name, slot_type
 
 
-def _has_non_repairable_topology_blockers(topology: TopologyFindings) -> bool:
+def _topology_blocker_identity(value: Any) -> str:
+    import json
+
+    def _plain(item: Any) -> Any:
+        if isinstance(item, Mapping):
+            return {str(key): _plain(item[key]) for key in sorted(item, key=str)}
+        if isinstance(item, (list, tuple)):
+            return [_plain(child) for child in item]
+        return item
+
+    try:
+        return json.dumps(_plain(value), sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _has_new_topology_blockers(
+    candidate_topology: TopologyFindings,
+    original_topology: TopologyFindings | None,
+) -> bool:
+    if candidate_topology.missing_graph and not (
+        original_topology is not None and original_topology.missing_graph
+    ):
+        return True
+
+    def _has_added(current: tuple[Any, ...], original: tuple[Any, ...]) -> bool:
+        original_keys = {_topology_blocker_identity(item) for item in original}
+        return any(_topology_blocker_identity(item) not in original_keys for item in current)
+
     return bool(
-        topology.missing_graph
-        or topology.dangling_links
-        or topology.absent_endpoint_nodes
-        or topology.unknown_class_types
-        or topology.missing_required_inputs
+        _has_added(
+            candidate_topology.dangling_links,
+            original_topology.dangling_links if original_topology is not None else (),
+        )
+        or _has_added(
+            candidate_topology.absent_endpoint_nodes,
+            original_topology.absent_endpoint_nodes if original_topology is not None else (),
+        )
+        or _has_added(
+            candidate_topology.socket_type_mismatches,
+            original_topology.socket_type_mismatches if original_topology is not None else (),
+        )
+        or _has_added(
+            candidate_topology.unknown_class_types,
+            original_topology.unknown_class_types if original_topology is not None else (),
+        )
+        or _has_added(
+            candidate_topology.missing_required_inputs,
+            original_topology.missing_required_inputs if original_topology is not None else (),
+        )
     )
 
 
@@ -856,14 +900,12 @@ def compute_scoped_diff(
         diff_paths.append(f"links.changed.{lid}")
 
     # ── 6. Candidate eligibility blockers ───────────────────────────────
-    has_topology_blockers = (
-        topology is not None and _has_non_repairable_topology_blockers(topology)
-    )
     has_readiness_blockers = (
         readiness is not None and readiness.has_blockers
     )
     has_candidate_topology_blockers = (
-        candidate_topology is not None and candidate_topology.has_blockers
+        candidate_topology is not None
+        and _has_new_topology_blockers(candidate_topology, topology)
     )
     has_candidate_readiness_blockers = (
         candidate_readiness is not None and candidate_readiness.has_blockers
@@ -872,8 +914,6 @@ def compute_scoped_diff(
         topology is not None and topology.schema_available is False
     )
 
-    if has_topology_blockers:
-        eligibility_blockers.append("unresolved_topology_blockers")
     if has_readiness_blockers:
         eligibility_blockers.append("unresolved_readiness_blockers")
     if has_candidate_topology_blockers:

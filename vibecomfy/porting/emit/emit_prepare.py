@@ -17,7 +17,7 @@ from typing import Any, Mapping
 
 from vibecomfy.errors import ConversionParityError
 from vibecomfy._compile._helpers import RESOLVABLE_HELPER_CLASS_TYPES
-from vibecomfy.porting.widgets.aliases import resolve_widget_key_with_provenance
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 from vibecomfy.porting.emit.emit_constants import (
     UI_ONLY_CLASS_TYPES,
     _AGENT_EDIT_STRING_ELIDE_THRESHOLD,
@@ -354,10 +354,14 @@ def _emit_agent_edit_lines(prepared: dict[str, Any]) -> list[str]:
                 continue
             resolved_key = raw_key
             if raw_key.startswith("widget_"):
-                aliases = getattr(node, "metadata", {}).get("input_aliases") or _ui_widget_aliases(node)
-                resolved = resolve_widget_key_with_provenance(str(node.class_type), raw_key, input_aliases=aliases)
-                if resolved.name is not None:
-                    resolved_key = resolved.name
+                try:
+                    index = int(raw_key.split("_", 1)[1])
+                except ValueError:
+                    index = -1
+                if index >= 0:
+                    names = compact_widget_names_for_node(node, str(node.class_type)).names
+                    if index < len(names) and names[index] is not None:
+                        resolved_key = str(names[index])
             alias = input_aliases.get(raw_key) or input_aliases.get(resolved_key) or to_python_identifier(resolved_key)
             kwargs.append((alias, _format_value(value, elide_strings_over=_AGENT_EDIT_STRING_ELIDE_THRESHOLD), resolved_key))
 

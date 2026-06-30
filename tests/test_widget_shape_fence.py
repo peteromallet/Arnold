@@ -112,6 +112,61 @@ def test_overflow_without_raw_payload_refuses() -> None:
     assert WidgetShapeReason.MISSING_LAYOUT_ENTRY in verdict.reasons
 
 
+def test_static_overflow_matching_observed_widgets_recovers_by_regeneration() -> None:
+    evidence = _evidence(
+        overflow=True,
+        raw_widget_count=3,
+        candidate_widget_count=3,
+        schema_widget_count=2,
+    )
+
+    verdict = decide_widget_shape(
+        evidence,
+        raw_widget_payloads={"7": _raw_widgets(length=3)},
+        field_deltas={"7": {"widgets_values": ("old", "new")}},
+    )
+
+    assert verdict.decision is WidgetShapeDecision.SAFE_TO_REGENERATE
+    assert verdict.recovery == "observed_widget_shape_regenerate"
+    assert WidgetShapeReason.OVERFLOW in verdict.reasons
+
+
+def test_static_overflow_observed_shape_recovery_refuses_link_changes() -> None:
+    evidence = _evidence(
+        overflow=True,
+        raw_widget_count=3,
+        candidate_widget_count=3,
+        schema_widget_count=2,
+    )
+
+    verdict = decide_widget_shape(
+        evidence,
+        raw_widget_payloads={"7": _raw_widgets(length=3)},
+        link_deltas={"7": {"incoming_edge_sig": ("old", "new")}},
+    )
+
+    assert verdict.decision is WidgetShapeDecision.REFUSE
+    assert WidgetShapeReason.LINK_DELTA in verdict.reasons
+
+
+def test_static_overflow_observed_shape_recovery_does_not_apply_to_new_nodes() -> None:
+    evidence = _evidence(
+        overflow=True,
+        raw_widget_count=3,
+        candidate_widget_count=3,
+        schema_widget_count=2,
+    )
+
+    verdict = decide_widget_shape(
+        evidence,
+        raw_widget_payloads={"7": _raw_widgets(length=3)},
+        is_new_node=True,
+    )
+
+    assert verdict.decision is WidgetShapeDecision.REFUSE
+    assert WidgetShapeReason.OVERFLOW in verdict.reasons
+
+
 def test_dynamic_node_with_unchanged_full_raw_payload_pins_opaque() -> None:
     evidence = _evidence(has_dict_rows=True)
 
@@ -146,6 +201,17 @@ def test_dynamic_node_without_raw_payload_refuses() -> None:
     assert WidgetShapeReason.SCHEMA_LESS in verdict.reasons
     assert WidgetShapeReason.MISSING_RAW_UI_PAYLOAD in verdict.reasons
     assert WidgetShapeReason.MISSING_RAW_WIDGET_PAYLOAD in verdict.reasons
+
+
+def test_dynamic_node_matching_observed_widgets_recovers_by_regeneration() -> None:
+    verdict = decide_widget_shape(
+        _evidence(has_dict_rows=True),
+        raw_widget_payloads={"7": _raw_widgets()},
+    )
+
+    assert verdict.decision is WidgetShapeDecision.SAFE_TO_REGENERATE
+    assert verdict.recovery == "observed_dynamic_widgets_regenerate"
+    assert WidgetShapeReason.DICT_ROW_DYNAMIC_WIDGETS in verdict.reasons
 
 
 def test_identity_matched_node_carries_forward_raw_ui_without_other_payloads() -> None:
@@ -270,6 +336,6 @@ def test_prior_store_only_layout_match_does_not_make_dynamic_node_pin_capable() 
         link_deltas={},
     )
 
-    assert verdict.decision is WidgetShapeDecision.REFUSE
+    assert verdict.decision is WidgetShapeDecision.SAFE_TO_REGENERATE
+    assert verdict.recovery == "observed_dynamic_widgets_regenerate"
     assert WidgetShapeReason.DICT_ROW_DYNAMIC_WIDGETS in verdict.reasons
-    assert WidgetShapeReason.MISSING_RAW_UI_PAYLOAD in verdict.reasons

@@ -42,6 +42,7 @@ from vibecomfy.porting.edit._ir_utils import (
     _MISSING_WIDGET_VALUE,
     _canonical_input_name_for_class,
     _input_spec_for_field,
+    _known_core_input_socket_type,
     _link_origin,
     _normalize_ir_type,
     _output_slot_name,
@@ -385,12 +386,12 @@ def _research_followup_guidance(query: str, sources: tuple[str, ...], result: An
         notes.append(
             "Research-order check: registry evidence was requested in the same call as workflow evidence. "
             "Do not use registry results as a substitute for workflow context; after an insufficient internal "
-            "workflow search, make a separate external workflow/examples call before relying on registry/schema."
+            "workflow search, make a separate external workflow/examples call before using registry evidence."
         )
     if "web" in source_set and _has_url_only_web_leads(result) and not _has_concrete_workflow_pattern(result):
         notes.append(
             "External workflow check: these web results are URL/title leads, not yet a workflow pattern. "
-            "Before registry/schema lookup, search externally for a workflow JSON, repo example, or page result "
+            "Before concluding there is no usable precedent, search externally for a workflow JSON, repo example, or page result "
             "that exposes concrete node types and wiring for the named target."
         )
     if "web" in source_set and _has_concrete_workflow_pattern(result):
@@ -398,8 +399,8 @@ def _research_followup_guidance(query: str, sources: tuple[str, ...], result: An
         node_hint = f" Concrete workflow node types found: {', '.join(node_types)}." if node_types else ""
         notes.append(
             "Concrete workflow pattern found: treat this workflow/example as the pattern evidence now."
-            f"{node_hint} Next, either apply the workflow pattern to the current graph, or if schemas are missing, "
-            "query registry/schema using exact node classes or the concrete pack/family from that workflow. "
+            f"{node_hint} Next, apply the smallest defensible adaptation of this pattern to the current graph, "
+            "using only authoring signatures exposed in this edit session. "
             "The listed source_workflow_path/path is evidence for the fetched workflow; python() only shows the "
             "current graph. Do not run another research(...) call for the same workflow JSON, switch back to generic "
             "local workflow searches, or use broad custom-node queries such as only the model name."
@@ -939,10 +940,11 @@ class _ResolveMixin:
             exact_focus = ", ".join(str(item) for item in focus_types if str(item).strip())
             output_text += (
                 "\nThis local schema miss does not prove the named external workflow "
-                "or model family is unavailable. If this class came from workflow/example "
-                "evidence, the next discovery step is registry/schema lookup for the exact "
-                f"class name(s): {exact_focus}. Do not repeat local workflow search, broaden "
-                "to only the model name, or expand the miss into guessed loader/sampler names."
+                f"or model family is unavailable. Missing class name(s): {exact_focus}. "
+                "Do not broaden this into guessed branded constructors. Use workflow "
+                "precedent as pattern evidence, but only instantiate classes that appear "
+                "in the current signature catalog or another authoring surface exposed "
+                "by this edit session."
             )
 
         return StatementResult(
@@ -1439,6 +1441,8 @@ class _ResolveMixin:
         )
         if socket_type is None and widget_value is not _MISSING_WIDGET_VALUE:
             socket_type = _socket_type_from_widget_value(widget_value)
+        if socket_type is None or socket_type == "UNKNOWN":
+            socket_type = _known_core_input_socket_type(node_ref.class_type, field_name) or socket_type
         return _ResolvedTargetField(node=node_ref, field_name=field_name, socket_type=socket_type), []
 
     def _resolve_rhs_endpoint(

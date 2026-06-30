@@ -85,6 +85,7 @@ class NodeSignatureRow:
     outputs: list[OutputSignatureField]
     source_confidence: float = 1.0
     pack: str | None = None
+    status: str = "installed"
 
 def emit_available_node_signatures(
     schema_provider: Any,
@@ -121,7 +122,7 @@ def emit_available_node_signatures(
 
     Rows are always sorted by ``class_type`` for determinism.
     """
-    from vibecomfy.schema import schema_for, schemas_for
+    from vibecomfy.schema import is_workflow_stub_schema, schema_for, schemas_for
     from vibecomfy.schema.validate import socket_types_compatible
 
     schemas_map: dict[str, Any] = {}
@@ -143,10 +144,21 @@ def emit_available_node_signatures(
     rows: list[NodeSignatureRow] = []
     for class_type in sorted(schemas_map):
         schema = schemas_map[class_type]
+        if is_workflow_stub_schema(schema):
+            continue
         inputs = _build_input_signature_fields(schema)
         outputs = _build_output_signature_fields(schema)
         confidence = float(getattr(schema, "confidence", 1.0) or 1.0)
         pack = getattr(schema, "pack", None) or None
+        source_provider = str(getattr(schema, "source_provider", "") or "")
+        ignored = {str(item) for item in (getattr(schema, "ignored_evidence", ()) or ())}
+        status = (
+            "schema_placeholder"
+            if source_provider == "comfy_registry_class_map" or "schema_backed_resolution_required" in ignored
+            else "provisional_schema"
+            if "not_runtime_validated" in ignored
+            else "installed"
+        )
 
         # Compatibility filtering
         if compatible_input_type is not None:
@@ -170,6 +182,7 @@ def emit_available_node_signatures(
                 outputs=outputs,
                 source_confidence=confidence,
                 pack=pack,
+                status=status,
             )
         )
 
@@ -249,7 +262,7 @@ def format_signature_rows(
 
     Each row is rendered as a Python-like function signature::
 
-        def CheckpointLoaderSimple(ckpt_name: COMBO = ...) -> MODEL, CLIP, VAE:
+        def CheckpointLoaderSimple(ckpt_name: COMBO = ...) -> model:MODEL, clip:CLIP, vae:VAE:
 
     The output is sorted by ``class_type``.
 
@@ -264,6 +277,8 @@ def format_signature_rows(
         prefix_parts: list[str] = []
         if show_pack and row.pack:
             prefix_parts.append(f"# pack: {row.pack}")
+        if row.status != "installed":
+            prefix_parts.append(f"# status: {row.status}")
         suffix_parts: list[str] = []
         if show_confidence and row.source_confidence < 1.0:
             suffix_parts.append(f"confidence: {row.source_confidence:.2f}")
@@ -291,12 +306,12 @@ def format_signature_rows(
         for output in row.outputs:
             out_name = output.name
             out_type = output.type
-            if out_name and out_type and out_name != out_type:
-                return_parts.append(f"{out_name}:{out_type}")
+            if out_name and out_type:
+                return_parts.append(f"{to_python_identifier(out_name)}:{out_type}")
             elif out_type:
                 return_parts.append(out_type)
             elif out_name:
-                return_parts.append(out_name)
+                return_parts.append(to_python_identifier(out_name))
             else:
                 return_parts.append("Any")
 

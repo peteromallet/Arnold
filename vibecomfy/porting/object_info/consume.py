@@ -468,10 +468,44 @@ def object_info_widget_order(class_type: str) -> list[str | None]:
     entry = _resolve_class_type(class_type)
     if entry is None:
         return list(_CURATED_WIDGET_ORDERS.get(class_type, []))
-    order = list(entry.get("object_info_widget_order", []))
+    order = reconciled_object_info_widget_order(entry)
     if class_type in _CURATED_WIDGET_ORDERS and "apply_to_all" not in order:
         return list(_CURATED_WIDGET_ORDERS[class_type])
     return order
+
+
+def reconciled_object_info_widget_order(entry: dict[str, Any]) -> list[str | None]:
+    """Return object_info widget order with metadata-backed UI slots included.
+
+    Comfy object_info stores controls such as ``control_after_generate`` as
+    metadata on an input spec, while LiteGraph serializes that control as an
+    extra positional ``widgets_values`` slot.  Reconcile that here so emitters
+    reason about actual UI serialization, not just formal API inputs.
+    """
+    raw_order = entry.get("object_info_widget_order")
+    if not isinstance(raw_order, list):
+        return []
+    raw: list[str | None] = [name if isinstance(name, str) else None for name in raw_order]
+    input_specs = {name: spec for name, spec in _iter_input_specs(entry)}
+    out: list[str | None] = []
+    for index, name in enumerate(raw):
+        out.append(name)
+        if not isinstance(name, str) or not name:
+            continue
+        if not _input_spec_has_control_after_generate(input_specs.get(name)):
+            continue
+        next_item_exists = index + 1 < len(raw)
+        if not next_item_exists or raw[index + 1] is not None:
+            out.append(None)
+    return out
+
+
+def _input_spec_has_control_after_generate(spec: list[Any] | None) -> bool:
+    if not spec:
+        return False
+    if len(spec) > 1 and isinstance(spec[1], dict):
+        return "control_after_generate" in spec[1]
+    return False
 
 
 def object_info_widget_value_order(class_type: str) -> list[str]:

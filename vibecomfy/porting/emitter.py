@@ -58,7 +58,10 @@ from vibecomfy.porting.emit.emit_constants import (
     _ui_widget_aliases,
 )
 from vibecomfy.porting.emit.emit_kwargs import *  # noqa: F403
+from vibecomfy.porting.emit.emit_kwargs import _node_kwargs
 from vibecomfy.porting.emit.emit_subgraph import _safe_kwarg_name
+from vibecomfy.porting.emit.emit_subgraph import _ui_widget_values_by_name
+from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 from vibecomfy.porting.emit.emit_prepare import (
     _VIRTUAL_WIRE_EMITTER_CLASS_TYPES,
     _agent_edit_comment,

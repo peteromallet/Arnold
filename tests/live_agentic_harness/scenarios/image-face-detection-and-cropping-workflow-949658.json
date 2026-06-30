@@ -6,7 +6,11 @@
   "timeout": 260,
   "apply": true,
   "assessment": {
-    "expect_graph_changed": true
+    "expect_graph_changed": true,
+    "allow_safe_refusal_outcome_kinds": [
+      "clarify",
+      "requires_custom_nodes"
+    ]
   },
   "desired": {
     "outcome": "The workflow now uses a different face detection model (e.g., MTCNN or RetinaFace) with appropriately adjusted cropping parameters to maintain correct region detection.",

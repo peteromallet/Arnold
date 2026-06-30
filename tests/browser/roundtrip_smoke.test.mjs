@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 
 import { createBrowserHarness, createMockCanvasContext } from "./harness.mjs";
-import { drawPreviewOverlay as drawPanelOverlayPreviewOverlay } from "../../vibecomfy/comfy_nodes/web/panel_overlay.js";
+import {
+  drawPreviewOverlay as drawPanelOverlayPreviewOverlay,
+  syncPreviewDomOverlay,
+} from "../../vibecomfy/comfy_nodes/web/panel_overlay.js";
 import {
   adaptLegacyAgentEditResponse,
   normalizeCanonicalAgentEditResponse,
@@ -7746,6 +7749,94 @@ test("VibeComfy link rewire promotion ignores identical LiteGraph link re-emissi
   }
 });
 
+test("VibeComfy preview widget value chips render in a fixed DOM overlay above Comfy DOM widgets", async () => {
+  const graph = {
+    nodes: [
+      {
+        id: 1,
+        type: "CLIPTextEncode",
+        pos: [100, 200],
+        size: [320, 160],
+        properties: { vibecomfy_uid: "prompt" },
+        inputs: [],
+        outputs: [],
+        widgets: [{ name: "text" }],
+        widgets_values: ["old prompt"],
+      },
+    ],
+    links: [],
+  };
+  const harness = await createBrowserHarness({
+    graph,
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+
+  try {
+    const liveNode = harness.getLiveNodes()[0];
+    liveNode.widgets = [{
+      name: "text",
+      last_y: 32,
+      computeSize() {
+        return [320, 72];
+      },
+    }];
+    harness.app.canvas.canvas = {
+      ownerDocument: harness.document,
+      width: 1000,
+      height: 800,
+      clientWidth: 1000,
+      clientHeight: 800,
+      getBoundingClientRect() {
+        return { left: 10, top: 20, width: 1000, height: 800 };
+      },
+    };
+    harness.app.canvas.ds = { scale: 1, offset: [0, 0] };
+
+    const ctx = createMockCanvasContext();
+    syncPreviewDomOverlay(
+      harness.app,
+      ctx,
+      {
+        edited: [{ uid: "prompt", class_type: "CLIPTextEncode", changedWidgetIndices: [0] }],
+        edited_fields: [{ uid: "prompt", field_path: "widgets_values.0", new_value: "new prompt visible above textarea" }],
+        added: [],
+        removed: [],
+        removed_named: [],
+        added_links: [],
+        removed_links: [],
+      },
+      graph,
+      {
+        captureLiveCanvasRevision: () => 1,
+        getLiveGraph: () => harness.app.canvas.graph,
+        getLiveGraphNodes: () => harness.getLiveNodes(),
+        getUid: (node) => node?.properties?.vibecomfy_uid || null,
+        graphNodeCount: (nextGraph) => nextGraph?.nodes?.length || 0,
+        readNodePos: (node) => ({ x: node.pos[0], y: node.pos[1] }),
+        readNodeSize: (node) => ({ w: node.size[0], h: node.size[1] }),
+        readWidgetValues: (node) => node.widgets_values || [],
+        widgetValuePreviewText: (value) => String(value || ""),
+      },
+    );
+
+    const root = harness.document.getElementById("vibecomfy-preview-dom-overlay");
+    assert.ok(root, "preview DOM overlay root should be created");
+    assert.equal(root.style.position, "fixed");
+    assert.equal(root.style.zIndex, "2147483647");
+    const chips = root.querySelectorAll((node) => node.dataset?.vibecomfyPreviewChip === "1");
+    assert.equal(chips.length, 1);
+    assert.equal(chips[0].textContent, "new prompt visible above textarea");
+    assert.equal(chips[0].style.position, "fixed");
+    assert.equal(chips[0].style.zIndex, "2147483647");
+    assert.notEqual(chips[0].style.left, "");
+    assert.notEqual(chips[0].style.top, "");
+  } finally {
+    await harness.dispose();
+  }
+});
+
 test("VibeComfy removed-node overlay fills the full node box and keeps the removed badge", async () => {
   const TITLE_H = 30;
   const NODE_POS = [70, 180];
@@ -14959,6 +15050,60 @@ test("diagnostic report rebuilds turn history from explicit rehydrate diagnostic
     );
     assert.ok(report.includes("Render errors:"), "issue report must include render error count");
     assert.ok(report.includes("Last turns:"), "issue report must include the Last turns section");
+  } finally {
+    await harness.dispose();
+  }
+});
+
+test("diagnostic report recovers structured batch turns from durable chat messages", async () => {
+  const harness = await createBrowserHarness({
+    responses: {
+      "/system_stats": { status: 200, body: { system: { comfyui_frontend_package: "1.39.19" } } },
+    },
+  });
+  try {
+    const mod = await harness.loadExtension();
+    const panel = {
+      state: {
+        sessionId: "sess-chat",
+        phase: "CLARIFY",
+        turnId: "0001",
+        turns: [],
+        executionEvents: [],
+        chatMessages: [
+          { role: "user", turn_id: "0001", text: "Switch this to generate 8 frames of video using HotShotXL" },
+          {
+            role: "agent",
+            turn_id: "0001",
+            text: "I could not find a schema-backed HotShotXL implementation.",
+            outcome: { kind: "clarify", reason: "The graph is unchanged." },
+            change_details: {
+              batch_turns: [
+                {
+                  turn_number: 0,
+                  batch_ok: true,
+                  message: "I will search for HotShotXL node schemas.",
+                  batch: "search(focus_types=[\"HotShotXL\"])",
+                  diagnostics: [
+                    {
+                      code: "schema_miss",
+                      message: "No local signature found.",
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    };
+
+    const report = mod.buildIssueReport(panel);
+
+    assert.equal(report.includes("No recent turn records"), false);
+    assert.ok(report.includes("Switch this to generate 8 frames of video using HotShotXL"));
+    assert.ok(report.includes("I will search for HotShotXL node schemas."));
+    assert.ok(report.includes("schema_miss"));
   } finally {
     await harness.dispose();
   }

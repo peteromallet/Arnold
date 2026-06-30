@@ -27,6 +27,7 @@ from vibecomfy.porting.emit.emit_kwargs import (
 )
 from vibecomfy.porting._provenance_utils import _normalize_provenance_paths
 from vibecomfy.porting.widgets.aliases import resolve_widget_key_with_provenance
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 
 logger = logging.getLogger(__name__)
@@ -690,8 +691,7 @@ def _hoist_constants(
     for nid, node in workflow_nodes.items():
         cls = node.class_type
         schema = [name for name in WIDGET_SCHEMA.get(cls, []) if name is not None]
-        node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
-        input_aliases: list[str | None] | None = node_metadata.get("input_aliases") or _ui_widget_aliases(node)
+        input_aliases = _compact_input_aliases_for_node(node)
 
         for key, value in node.inputs.items():
             if _is_link(value):
@@ -778,8 +778,7 @@ def _hoist_constants(
     all_values: Counter[tuple[str, Any]] = Counter()
     for nid, node in workflow_nodes.items():
         cls = node.class_type
-        node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
-        input_aliases: list[str | None] | None = node_metadata.get("input_aliases") or _ui_widget_aliases(node)
+        input_aliases = _compact_input_aliases_for_node(node)
         for key, value in {**node.inputs, **node.widgets}.items():
             if _is_link(value):
                 continue
@@ -871,6 +870,11 @@ def _translate_widget_for_key(
         key,
         input_aliases=input_aliases,
     ).name
+
+
+def _compact_input_aliases_for_node(node: Any) -> list[str | None] | None:
+    names = compact_widget_names_for_node(node, str(getattr(node, "class_type", ""))).names
+    return list(names) if names else None
 
 
 def _drop_output_prefix_constants(
@@ -1063,6 +1067,20 @@ def _ui_widget_aliases(node: Any) -> list[str | None] | None:
     ui = getattr(node, "metadata", {}).get("_ui")
     if not isinstance(ui, dict):
         return None
+    widget_names = ui.get("widget_names")
+    if isinstance(widget_names, list):
+        aliases = [str(name) if isinstance(name, str) and name else None for name in widget_names]
+        return aliases if aliases and _aliases_cover_widget_indices(node, aliases) else None
+    widgets = ui.get("widgets")
+    if isinstance(widgets, list):
+        aliases = []
+        for item in widgets:
+            if isinstance(item, dict):
+                name = item.get("name")
+            else:
+                name = item
+            aliases.append(str(name) if isinstance(name, str) and name else None)
+        return aliases if aliases and _aliases_cover_widget_indices(node, aliases) else None
     inputs = ui.get("inputs")
     if not isinstance(inputs, list):
         return None
@@ -1087,3 +1105,16 @@ def _ui_widget_aliases(node: Any) -> list[str | None] | None:
     if widget_indices and len(aliases) <= max(widget_indices):
         return None
     return aliases or None
+
+
+def _aliases_cover_widget_indices(node: Any, aliases: list[str | None]) -> bool:
+    widget_indices: list[int] = []
+    for key in getattr(node, "widgets", {}):
+        key_str = str(key)
+        if not key_str.startswith("widget_"):
+            continue
+        try:
+            widget_indices.append(int(key_str.split("_", 1)[1]))
+        except ValueError:
+            continue
+    return not widget_indices or len(aliases) > max(widget_indices)

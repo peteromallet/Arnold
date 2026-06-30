@@ -1,6 +1,7 @@
 """Ready-template Python emission package."""
 from __future__ import annotations
 
+from vibecomfy.porting import emitter
 from vibecomfy.porting.emit.entrypoints import (
     emit_agent_edit_python,
     emit_ready_template_python,
@@ -96,4 +97,5 @@ __all__ = [
     "offline_emitter_normalizer_self_consistency_check",
     "structural_validate",
     "default_output_path",
+    "emitter",
 ]

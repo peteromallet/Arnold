@@ -31,7 +31,7 @@ from vibecomfy.executor.contracts import (
 from vibecomfy.executor import core as executor_core
 from vibecomfy.executor.core import run_executor
 from vibecomfy.executor.prompts import build_classify_messages
-from vibecomfy.executor.profiles import set_profile_override_dir
+from vibecomfy.executor.profiles import AgentSpecShape, set_profile_override_dir
 
 
 # ── Profile fixture helpers ─────────────────────────────────────────────────
@@ -99,6 +99,32 @@ def profile_dir() -> Generator[Path, None, None]:
     yield from _setup_profile_dir()
 
 
+def test_terminal_no_candidate_response_does_not_promote_rollback_graph() -> None:
+    response = {
+        "graph": {"nodes": [{"id": 1, "type": "SaveImage"}]},
+        "message": "Applied changes successfully.",
+        "outcome": {"kind": "noop"},
+        "graph_unchanged": True,
+        "no_candidate_reason": "no_changes",
+        "apply_eligible": True,
+    }
+
+    assert executor_core._implementation_response_is_terminal_no_candidate(response) is True
+
+
+def test_terminal_no_candidate_response_allows_real_changed_candidate() -> None:
+    response = {
+        "graph": {"nodes": [{"id": 1, "type": "SaveImage"}]},
+        "message": "Applied changes successfully.",
+        "outcome": {"kind": "edit"},
+        "graph_unchanged": False,
+        "no_candidate_reason": "no_changes",
+        "apply_eligible": True,
+    }
+
+    assert executor_core._implementation_response_is_terminal_no_candidate(response) is False
+
+
 # ── Fake model backend helpers ───────────────────────────────────────────────
 
 
@@ -141,7 +167,7 @@ def _fake_classify_research_only(
             "AnimateDiff speed settings such as context length, sampler, steps, and frame count",
             "ComfyUI workflow examples that trade quality for faster generation",
         ),
-        source_preferences=("workflows", "messages", "web", "registry"),
+        source_preferences=("workflows", "messages", "web"),
         avoid=(
             "generic searches for the raw sentence",
             "stopword-only searches such as there way run",
@@ -225,6 +251,37 @@ def _fake_reply_hotshot(
 ) -> str:
     """Return a fake reply referencing Hotshot XL research."""
     return "Hotshot XL is an SDXL-based text-to-video model. You can insert it before SVD-XT as a frame generator."
+
+
+def test_iter_graph_nodes_uses_dict_form_nodes_mapping() -> None:
+    """Dict-form VibeComfy graphs should iterate the nested nodes mapping."""
+    graph = {
+        "nodes": {
+            "27": {"id": "27", "class_type": "SaveVideo", "inputs": {}},
+            "34": {"id": "34", "class_type": "MoonvalleyImg2VideoNode", "inputs": {}},
+        },
+        "links": [],
+        "extra": {"note": "top-level metadata should not be treated as a node"},
+    }
+
+    assert executor_core._iter_graph_nodes(graph) == [
+        ("27", {"id": "27", "class_type": "SaveVideo", "inputs": {}}),
+        ("34", {"id": "34", "class_type": "MoonvalleyImg2VideoNode", "inputs": {}}),
+    ]
+
+
+def test_iter_graph_nodes_preserves_top_level_mapping_fallback() -> None:
+    """Legacy top-level graph mappings should still be supported."""
+    graph = {
+        "27": {"id": "27", "class_type": "SaveVideo", "inputs": {}},
+        "34": {"id": "34", "class_type": "MoonvalleyImg2VideoNode", "inputs": {}},
+        "meta": {"note": "not a node"},
+    }
+
+    assert executor_core._iter_graph_nodes(graph) == [
+        ("27", {"id": "27", "class_type": "SaveVideo", "inputs": {}}),
+        ("34", {"id": "34", "class_type": "MoonvalleyImg2VideoNode", "inputs": {}}),
+    ]
 
 
 def _fake_reply_edit(
@@ -322,7 +379,7 @@ def _fake_handle_agent_edit_research(payload: dict, **kwargs: Any) -> dict:
             "AnimateDiff speed settings such as context length, sampler, steps, and frame count",
             "ComfyUI workflow examples that trade quality for faster generation",
         ],
-        "source_preferences": ["workflows", "messages", "web", "registry"],
+        "source_preferences": ["workflows", "messages", "web"],
         "avoid": [
             "generic searches for the raw sentence",
             "stopword-only searches such as there way run",
@@ -1664,6 +1721,31 @@ def _fake_classify_adapt(
         route="adapt",
         task="research_precedent",
     )
+
+
+def test_adapt_implementation_fails_closed_when_research_has_no_evidence() -> None:
+    plan = _fake_classify_adapt("Switch to Hotshot")
+    request = ExecutorRequest(
+        query="Switch to Hotshot",
+        graph={"nodes": [{"id": 1, "type": "KSampler"}], "links": []},
+    )
+    research = ResearchResult(
+        summary="Research skipped due to an internal error.",
+        warnings=("research phase failed: RuntimeError",),
+    )
+
+    result = executor_core._run_implement(
+        request,
+        AgentSpecShape(agent="hermes", model="test"),
+        plan=plan,
+        research_result=research,
+    )
+
+    assert result.graph is None
+    assert result.durable_response is not None
+    assert result.durable_response["apply_eligible"] is False
+    assert result.durable_response["no_candidate_reason"] == "implementation_skipped"
+    assert "research failed" in result.message
 
 
 def _fake_reply_route_gate(
@@ -4431,6 +4513,195 @@ class TestAdaptPrefetchAndResearchContextScoping:
         assert "context_note" in packet, (
             "research_context_packet must contain 'context_note' key"
         )
+        notes = payload.get("execution_protocol_notes")
+        assert isinstance(notes, dict)
+        selected = notes.get("selected_precedent")
+        assert isinstance(selected, dict)
+        assert selected.get("name") == "LTXImageToVideo"
+        assert selected.get("source") == "ready_template"
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn")
+    @mock.patch("vibecomfy.executor.core.run_reply_turn",
+                side_effect=_fake_reply_route_gate)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit",
+                side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    @mock.patch("vibecomfy.executor.research._default_web_search_client",
+                side_effect=_empty_web_search_client)
+    @mock.patch("vibecomfy.executor.core._default_hivemind_client",
+                side_effect=_empty_hivemind_client)
+    def test_selected_precedent_suppresses_classifier_avoid_in_research_brief(
+        self,
+        mock_hivemind: mock.MagicMock,
+        mock_web: mock.MagicMock,
+        mock_corpus: mock.MagicMock,
+        mock_edit: mock.MagicMock,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """adapt: stale classifier avoid guidance must not contradict a
+        selected workflow's implementation ecosystem."""
+        from vibecomfy.search.index import SearchEntry
+
+        mock_classify.return_value = ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            effort="high",
+            plan_summary="research precedent workflow then edit",
+            intent="edit",
+            route="adapt",
+            task="research_precedent",
+            research_goal="Find the LTX workflow wiring.",
+            search_directions=(
+                "LTX image-to-video workflow nodes",
+                "LTX frame count conditioning",
+            ),
+            source_preferences=("workflows", "messages"),
+            avoid=("LTX or other video frameworks",),
+        )
+        mock_corpus.return_value = [
+            SearchEntry(
+                class_type="LTXImageToVideo",
+                description="LTX image-to-video ready template with frame count controls.",
+                pack="ltxvideo",
+                source="ready_template",
+                path="/templates/ltx_i2v.py",
+                model_families=("ltx",),
+                tags=("ltx", "video-generation"),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+        ]
+
+        request = ExecutorRequest(
+            query="Switch this to instead generate 8 frames of video using LTX",
+            graph={"nodes": [{"id": 1, "type": "LoadImage"}]},
+            profile="default",
+        )
+        result = run_executor(request)
+
+        assert result.ok is True
+        payload = self._capture_edit_payload(mock_edit)
+        notes = payload.get("execution_protocol_notes")
+        assert isinstance(notes, dict)
+        assert isinstance(notes.get("selected_precedent"), dict)
+        assert "avoid" not in payload.get("research_brief", {})
+
+    @mock.patch("vibecomfy.executor.core.run_classify_turn")
+    @mock.patch("vibecomfy.executor.core.run_reply_turn",
+                side_effect=_fake_reply_route_gate)
+    @mock.patch("vibecomfy.executor.core.handle_agent_edit",
+                side_effect=_fake_handle_agent_edit)
+    @mock.patch("vibecomfy.executor.research.build_search_corpus")
+    @mock.patch("vibecomfy.executor.research._default_web_search_client",
+                side_effect=_empty_web_search_client)
+    @mock.patch("vibecomfy.executor.core._default_hivemind_client",
+                side_effect=_empty_hivemind_client)
+    def test_install_search_directions_are_rewritten_for_precedent_research(
+        self,
+        mock_hivemind: mock.MagicMock,
+        mock_web: mock.MagicMock,
+        mock_corpus: mock.MagicMock,
+        mock_edit: mock.MagicMock,
+        mock_reply: mock.MagicMock,
+        mock_classify: mock.MagicMock,
+        profile_dir: Path,
+    ) -> None:
+        """Classifier guesses about installs must not steer normal adapt research."""
+        from vibecomfy.search.index import SearchEntry
+
+        captured_research_queries: list[str] = []
+
+        def _fake_research(query: str, **kwargs: Any) -> ResearchResult:
+            captured_research_queries.append(query)
+            return ResearchResult(
+                summary="Found HotShotXL workflow precedent.",
+                sources=(
+                    {
+                        "source": "hivemind_workflow",
+                        "class_type": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                        "source_workflow_path": (
+                            "https://github.com/fictions-ai/sharing-is-caring/blob/main/"
+                            "workflow-vid2vid-hotshotXL-ipadapterplusface-ipadapter.json"
+                        ),
+                        "workflow_schema_classes": [
+                            "ADE_AnimateDiffLoaderWithContext",
+                            "ADE_AnimateDiffUniformContextOptions",
+                            "VHS_VideoCombine",
+                        ],
+                        "model_families": ("hotshot", "animatediff", "sdxl"),
+                    },
+                ),
+            )
+
+        mock_classify.return_value = ClassifyDecision(
+            research=True,
+            implement=True,
+            reply=True,
+            effort="high",
+            plan_summary="research HotShotXL precedent workflow then edit",
+            intent="edit",
+            route="adapt",
+            task="research_precedent",
+            research_goal=(
+                "Find ComfyUI workflow examples, node pack details, and wiring "
+                "patterns for HotShotXL video generation."
+            ),
+            search_directions=(
+                "HotShotXL ComfyUI workflow example",
+                "HotShotXL node pack installation and usage",
+                "HotShotXL frame count parameter",
+            ),
+            source_preferences=("workflows", "registry", "messages"),
+        )
+        mock_corpus.return_value = [
+            SearchEntry(
+                class_type="AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                description="HotShotXL workflow precedent using AnimateDiff and VHS output.",
+                pack="workflow",
+                source="hivemind_workflow",
+                path="workflow-vid2vid-hotshotXL-ipadapterplusface-ipadapter.json",
+                model_families=("hotshot", "animatediff", "sdxl"),
+                tags=("hotshot", "video-generation"),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+        ]
+
+        with mock.patch("vibecomfy.executor.core.run_research_phase", side_effect=_fake_research):
+            request = ExecutorRequest(
+                query="Switch this to instead generate 8 frames of video using HotShotXL",
+                graph={"nodes": [{"id": 1, "type": "LoadImage"}]},
+                profile="default",
+            )
+            result = run_executor(request)
+
+        assert result.ok is True
+        assert captured_research_queries == [
+            (
+                "HotShotXL ComfyUI workflow example; "
+                "HotShotXL workflow precedent and usage; "
+                "HotShotXL frame count parameter"
+            )
+        ]
+        payload = self._capture_edit_payload(mock_edit)
+        brief = payload.get("research_brief")
+        assert isinstance(brief, dict)
+        brief_text = json.dumps(brief)
+        assert "install" not in brief_text.casefold()
+        assert "node pack" not in brief_text.casefold()
+        assert brief["research_goal"] == (
+            "Find ComfyUI workflow examples and wiring "
+            "patterns for HotShotXL video generation"
+        )
+        assert brief["search_directions"] == [
+            "HotShotXL ComfyUI workflow example",
+            "HotShotXL workflow precedent and usage",
+            "HotShotXL frame count parameter",
+        ]
+        assert brief["source_preferences"] == ["workflows", "messages"]
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn",
                 side_effect=_fake_classify_adapt)

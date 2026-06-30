@@ -44,7 +44,9 @@ from vibecomfy.comfy_nodes.agent.diagnostics import (
 from vibecomfy.comfy_nodes.agent.edit import (
     AgentEditState,
     _failure_response,
+    _queue_recovery_report_for_candidate,
     _stale_rebaseline_recovery_issue,
+    _workflow_class_types_from_research_context,
 )
 from vibecomfy.comfy_nodes.agent.gates import (
     EXPLICIT_QUEUE_BLOCKER_CODES,
@@ -125,6 +127,43 @@ def _schema(class_type: str, *, required_inputs: tuple[str, ...] = ()) -> NodeSc
         outputs=[],
         source_provider="test",
         confidence=1.0,
+    )
+
+
+def test_workflow_class_types_can_include_known_schema_for_prompt_focus() -> None:
+    provider = _Provider(
+        {
+            "ADE_AnimateDiffLoaderWithContext": _schema("ADE_AnimateDiffLoaderWithContext"),
+            "KSamplerAdvanced": _schema("KSamplerAdvanced"),
+        }
+    )
+    state = SimpleNamespace(
+        schema_provider=provider,
+        executor_research_sources=(),
+        execution_protocol_notes={
+            "research_sources": [
+                {
+                    "source": "hivemind_workflow",
+                    "workflow_schema": {
+                        "ADE_AnimateDiffLoaderWithContext": {},
+                        "KSamplerAdvanced": {},
+                        "PlainWeakAlias": {},
+                        "VHS_VideoCombine": {},
+                    },
+                }
+            ]
+        },
+    )
+
+    assert _workflow_class_types_from_research_context(state) == ("VHS_VideoCombine",)
+    assert _workflow_class_types_from_research_context(
+        state,
+        missing_only=False,
+        custom_only=False,
+    ) == (
+        "ADE_AnimateDiffLoaderWithContext",
+        "KSamplerAdvanced",
+        "VHS_VideoCombine",
     )
 
 
@@ -2543,6 +2582,192 @@ def test_queue_stage_diagnostics_derive_queue_only_blockers_from_emit_evidence()
     assert result.gate_updates["queue_validate_ok"] is False
 
 
+def test_queue_recovery_report_enriches_emit_schema_less_entries_for_preexisting_safe_nodes() -> None:
+    original = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "AudioLoader",
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [1]}],
+            },
+            {
+                "id": 2,
+                "type": "AudioSeparation",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 1}],
+                "outputs": [{"name": "vocals", "type": "AUDIO", "slot_index": 0, "links": [2]}],
+            },
+            {
+                "id": 3,
+                "type": "SaveAudio",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 2}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [1, 1, 0, 2, 0, "AUDIO"],
+            [2, 2, 0, 3, 0, "AUDIO"],
+        ],
+    }
+    candidate = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "AudioLoader",
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [3]}],
+            },
+            {
+                "id": 4,
+                "type": "NoiseReduce",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 3}],
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [4]}],
+            },
+            {
+                "id": 2,
+                "type": "AudioSeparation",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 4}],
+                "outputs": [{"name": "vocals", "type": "AUDIO", "slot_index": 0, "links": [2]}],
+            },
+            {
+                "id": 3,
+                "type": "SaveAudio",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 2}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [2, 2, 0, 3, 0, "AUDIO"],
+            [3, 1, 0, 4, 0, "AUDIO"],
+            [4, 4, 0, 2, 0, "AUDIO"],
+        ],
+    }
+    emit_recovery = [
+        {
+            "node_id": "2",
+            "class_type": "AudioSeparation",
+            "provider": None,
+            "confidence": None,
+            "schema_less": True,
+            "diagnostic": "schema-less: emitting best-effort slots from link appearance order",
+            "widget_shape_verdict": "schema_less",
+        }
+    ]
+    provider = _Provider(
+        {
+            "AudioLoader": _schema("AudioLoader"),
+            "NoiseReduce": _schema("NoiseReduce"),
+            "SaveAudio": _schema("SaveAudio"),
+        }
+    )
+
+    enriched = _queue_recovery_report_for_candidate(
+        ui_payload=candidate,
+        schema_provider=provider,
+        original_ui_payload=original,
+        existing_recovery_report=emit_recovery,
+    )
+
+    entry = next(item for item in enriched if item.get("node_id") == "2")
+    assert entry["diagnostic"] == emit_recovery[0]["diagnostic"]
+    assert entry["widget_shape_verdict"] == "schema_less"
+    assert entry["preexisting_ui_node"] is True
+    assert entry["ui_connection_shape_unchanged"] is False
+    assert entry["schema_less_queue_safe"] is True
+    assert entry["schema_less_safety"] == "preexisting_output_destinations_safe"
+
+
+def test_queue_stage_tolerates_preexisting_schema_less_nodes_after_recovery_enrichment() -> None:
+    original = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "AudioLoader",
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [1]}],
+            },
+            {
+                "id": 2,
+                "type": "AudioSeparation",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 1}],
+                "outputs": [{"name": "vocals", "type": "AUDIO", "slot_index": 0, "links": [2]}],
+            },
+            {
+                "id": 3,
+                "type": "SaveAudio",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 2}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [1, 1, 0, 2, 0, "AUDIO"],
+            [2, 2, 0, 3, 0, "AUDIO"],
+        ],
+    }
+    candidate = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "AudioLoader",
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [3]}],
+            },
+            {
+                "id": 4,
+                "type": "NoiseReduce",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 3}],
+                "outputs": [{"name": "AUDIO", "type": "AUDIO", "slot_index": 0, "links": [4]}],
+            },
+            {
+                "id": 2,
+                "type": "AudioSeparation",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 4}],
+                "outputs": [{"name": "vocals", "type": "AUDIO", "slot_index": 0, "links": [2]}],
+            },
+            {
+                "id": 3,
+                "type": "SaveAudio",
+                "inputs": [{"name": "audio", "type": "AUDIO", "link": 2}],
+                "outputs": [],
+            },
+        ],
+        "links": [
+            [2, 2, 0, 3, 0, "AUDIO"],
+            [3, 1, 0, 4, 0, "AUDIO"],
+            [4, 4, 0, 2, 0, "AUDIO"],
+        ],
+    }
+    emit_recovery = [
+        {
+            "node_id": "2",
+            "class_type": "AudioSeparation",
+            "provider": None,
+            "confidence": None,
+            "schema_less": True,
+            "diagnostic": "schema-less: emitting best-effort slots from link appearance order",
+        }
+    ]
+    provider = _Provider(
+        {
+            "AudioLoader": _schema("AudioLoader"),
+            "NoiseReduce": _schema("NoiseReduce"),
+            "SaveAudio": _schema("SaveAudio"),
+        }
+    )
+
+    raw_result = queue_stage_result(recovery_report=emit_recovery, change_report={})
+    enriched_result = queue_stage_result(
+        recovery_report=_queue_recovery_report_for_candidate(
+            ui_payload=candidate,
+            schema_provider=provider,
+            original_ui_payload=original,
+            existing_recovery_report=emit_recovery,
+        ),
+        change_report={},
+    )
+
+    assert raw_result.ok is False
+    assert {issue["code"] for issue in raw_result.issues} == {"schema_less_queue_blocker"}
+    assert enriched_result.ok is True
+    assert enriched_result.issues == ()
+
+
 def test_queue_diagnostics_detect_intent_nodes_before_generic_schema_confidence_checks() -> None:
     diagnostics = queue_stage_diagnostics(
         recovery_report=[
@@ -4377,6 +4602,49 @@ def test_run_agent_turn_batch_empty_content_is_malformed(monkeypatch) -> None:
     assert "previous reply was empty or unparseable" in calls[1]["messages"][-1]["content"]  # type: ignore[index]
     assert calls[2]["messages"][-1]["role"] == "system"  # type: ignore[index]
     assert "previous reply was empty or unparseable" in calls[2]["messages"][-1]["content"]  # type: ignore[index]
+
+
+def test_batch_protocol_retry_nudge_includes_clarify_escape_hatch() -> None:
+    """Malformed prose-only responses are corrected toward the batch transport."""
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit
+
+    malformed = agent_provider.MalformedModelJSON(
+        "Agent response does not contain a ```batch fenced block.",
+        raw_response="I need a concrete HotShotXL schema before editing.",
+        parse_reason="missing_batch_fence",
+    )
+
+    retry_messages = agent_edit._batch_protocol_retry_messages(
+        [{"role": "user", "content": "Switch to HotShotXL"}],
+        malformed,
+    )
+
+    retry_prompt = retry_messages[-1]["content"]
+    assert 'clarify("...")' in retry_prompt
+    assert "Previous response preview" in retry_prompt
+    assert "HotShotXL schema" in retry_prompt
+
+
+def test_batch_protocol_failure_detail_includes_raw_response_preview() -> None:
+    """Protocol failures keep the bad model text available for turn artifacts."""
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit
+
+    exc = agent_provider.MalformedModelJSON(
+        "Agent response does not contain a ```batch fenced block.",
+        raw_response="I need a concrete HotShotXL schema before editing.",
+        parse_reason="missing_batch_fence",
+    )
+
+    # Exercise the same detail helpers used by the orchestration failure path
+    # without constructing a full ComfyUI edit state.
+    detail = agent_edit._malformed_model_json_detail(exc)
+    parse_reason = agent_edit._batch_protocol_parse_reason(exc)
+
+    assert parse_reason == "missing_batch_fence"
+    assert detail == {
+        "parse_reason": "missing_batch_fence",
+        "raw_response_preview": "I need a concrete HotShotXL schema before editing.",
+    }
 
 
 def test_run_agent_turn_batch_retries_empty_content_once_then_succeeds(monkeypatch) -> None:
@@ -9321,6 +9589,11 @@ def test_executor_noop_turn_durability_artifacts_written(
     assert request_path.is_file()
     assert (turn_dir / "response.json").is_file()
     assert chat_path.is_file()
+    state = read_state(root / "s1")
+    turn_record = state["turns"][turn_id]
+    assert turn_record["state"] == "no_candidate"
+    assert turn_record["candidate_graph_hash"] is None
+    assert turn_record["candidate_structural_graph_hash"] is None
 
 
 def test_executor_clarify_turn_durability_artifacts_written(

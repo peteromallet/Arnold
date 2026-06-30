@@ -836,10 +836,10 @@ def _lint_add_node(
 
     # Schema-aware validation (only when a provider is supplied)
     if schema_provider is not None:
-        from vibecomfy.schema import schema_for as _schema_for
+        from vibecomfy.schema import is_workflow_stub_schema, schema_for as _schema_for
 
         schema = _schema_for(schema_provider, op.class_type.strip())
-        if schema is None:
+        if schema is None or is_workflow_stub_schema(schema):
             return None, _make_issue(
                 "unknown_class_type",
                 f"'{op.class_type.strip()}' is not a known node class.",

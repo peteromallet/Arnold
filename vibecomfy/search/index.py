@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -37,6 +38,9 @@ class SearchEntry:
     source_workflow_available: bool = False
     source_workflow_parseable: bool = False
     adapt_pattern_keys: tuple[str, ...] = field(default_factory=tuple)
+    media_type: str | None = None
+    task_type: str | None = None
+    model_families: tuple[str, ...] = field(default_factory=tuple)
 
 
 @dataclass(frozen=True)
@@ -224,6 +228,9 @@ def _curated_entries(path: Path) -> list[SearchEntry]:
                 tasks=tuple(_unique_strings([task, *_infer_tasks(workflow_id, tags, description)])),
                 source="curated",
                 path=path_value,
+                media_type=media,
+                task_type=task,
+                model_families=tuple(_unique_strings([model_family])),
             )
         )
     return entries
@@ -245,8 +252,12 @@ def _ready_template_entries(path: Path) -> list[SearchEntry]:
         path_value = _first_string(row, "path", "ready_template_path", "template_path")
         if not _is_python_path(path_value):
             continue
+        coverage = _coverage_for_template(row, template_id, coverage_rows)
         source_workflow = _source_workflow_for_template(row, template_id, coverage_rows)
-        capability = _first_string(row, "capability", "media_type", "media", "task")
+        capability = _first_string(row, "capability", "media_type", "media", "task") or _first_string(coverage, "capability", "media_type", "media", "task")
+        task_type = _first_string(row, "task", "task_type") or _first_string(coverage, "task", "task_type")
+        media_type = _first_string(row, "media", "media_type") or _first_string(coverage, "media", "media_type")
+        model_families = _model_families_from_row(row) or _model_families_from_row(coverage)
         coverage_tier = _first_string(row, "coverage_tier")
         readiness = _first_string(row, "readiness_class", "readiness")
         public_inputs = _named_items(row.get("public_inputs"))
@@ -279,6 +290,9 @@ def _ready_template_entries(path: Path) -> list[SearchEntry]:
             Path(path_value).stem if path_value else None,
             Path(source_workflow).stem if source_workflow else None,
             capability,
+            task_type,
+            media_type,
+            *model_families,
             coverage_tier,
             readiness,
             *adapt_pattern_keys,
@@ -291,6 +305,9 @@ def _ready_template_entries(path: Path) -> list[SearchEntry]:
             for part in [
                 f"{template_id} ready template workflow",
                 f"capability {capability}" if capability else "",
+                f"task {task_type}" if task_type else "",
+                f"media {media_type}" if media_type else "",
+                f"model families {', '.join(model_families)}" if model_families else "",
                 f"inputs {', '.join(public_inputs[:6])}" if public_inputs else "",
                 f"outputs {', '.join(public_outputs[:4])}" if public_outputs else "",
                 f"custom nodes {', '.join(str(node) for node in custom_nodes[:5])}" if custom_nodes else "",
@@ -319,6 +336,9 @@ def _ready_template_entries(path: Path) -> list[SearchEntry]:
                 source_workflow_available=source_available,
                 source_workflow_parseable=source_parseable,
                 adapt_pattern_keys=tuple(adapt_pattern_keys),
+                media_type=media_type or capability,
+                task_type=task_type,
+                model_families=tuple(model_families),
             )
         )
     return entries
@@ -335,6 +355,7 @@ def _workflow_index_entries(path: Path, *, source_label: Literal["source_workflo
             continue
         path_value = _first_string(row, "path", "file", "workflow_path", "source_workflow", "source_json")
         media_type = _first_string(row, "media_type", "media", "capability", "task")
+        task_type = _first_string(row, "task", "task_type")
         package = _first_string(row, "package", "pack", "source_package")
         source = _first_string(row, "source")
         public_inputs = _named_items(row.get("public_inputs"))
@@ -368,6 +389,14 @@ def _workflow_index_entries(path: Path, *, source_label: Literal["source_workflo
             ]
             if part
         )
+        model_families = _model_families_from_row(row) or _infer_model_families(
+            workflow_id,
+            path_value,
+            package,
+            source,
+            description,
+            *[str(tag) for tag in tags],
+        )
         entries.append(
             SearchEntry(
                 class_type=workflow_id,
@@ -377,6 +406,9 @@ def _workflow_index_entries(path: Path, *, source_label: Literal["source_workflo
                 tasks=tuple(_infer_tasks(workflow_id, tags, description)),
                 source=source_label,
                 path=path_value,
+                media_type=media_type,
+                task_type=task_type,
+                model_families=tuple(model_families),
             )
         )
     return entries
@@ -474,6 +506,27 @@ def _source_workflow_for_template(
     return None
 
 
+def _coverage_for_template(
+    row: dict[str, Any],
+    template_id: str,
+    coverage_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    short_id = template_id.rsplit("/", 1)[-1]
+    for coverage in coverage_rows:
+        candidates = {
+            str(coverage.get("id") or ""),
+            str(coverage.get("ready_template") or ""),
+            str(coverage.get("template_id") or ""),
+        }
+        media = coverage.get("media")
+        workflow_id = coverage.get("id")
+        if isinstance(media, str) and isinstance(workflow_id, str):
+            candidates.add(f"{media}/{workflow_id}")
+        if template_id in candidates or short_id in candidates:
+            return coverage
+    return {}
+
+
 def _path_exists(path: str | None) -> bool:
     return bool(path) and Path(path).exists()
 
@@ -513,6 +566,58 @@ def _first_string(row: dict[str, Any], *keys: str) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+_MODEL_FAMILY_TERMS: dict[str, tuple[str, ...]] = {
+    "ltx": ("ltx", "ltxv", "ltx-video", "ltx video", "lightricks"),
+    "wan": ("wan", "wanvideo", "wan2", "wan 2", "wan_2", "wan2.1", "wan2_1", "wan2.2", "wan2_2"),
+    "hotshot": ("hotshot", "hotshotxl", "hotshot xl"),
+    "animatediff": ("animatediff", "animate diff"),
+    "sdxl": ("sdxl", "sd_xl", "sd xl", "stable diffusion xl"),
+    "sd3": ("sd3", "stable diffusion 3"),
+    "flux": ("flux", "flux1", "flux.1"),
+    "qwen": ("qwen",),
+    "hunyuan": ("hunyuan", "hyvideo", "hunyuanvideo"),
+    "cogvideo": ("cogvideo", "cog video"),
+    "controlnet": ("controlnet", "control net"),
+}
+
+
+def _model_families_from_row(row: dict[str, Any]) -> list[str]:
+    raw = row.get("model_families")
+    if raw is None:
+        raw = row.get("model_family")
+    values = _clean_items(_flatten(raw))
+    if not values:
+        return []
+    inferred: list[str] = []
+    for value in values:
+        value_text = str(value).strip()
+        if value_text in _MODEL_FAMILY_TERMS:
+            inferred.append(value_text)
+        else:
+            inferred.extend(_infer_model_families(value_text))
+    return _unique_strings(inferred)
+
+
+def _infer_model_families(*values: str | None) -> list[str]:
+    text = " ".join(str(value) for value in values if value).casefold().replace("-", "_")
+    families: list[str] = []
+    for family, aliases in _MODEL_FAMILY_TERMS.items():
+        for alias in aliases:
+            alias_low = alias.casefold().replace("-", "_")
+            if re_search_word(alias_low, text):
+                families.append(family)
+                break
+    return _unique_strings(families)
+
+
+def re_search_word(needle: str, haystack: str) -> bool:
+    if not needle:
+        return False
+    if any(ch for ch in needle if not ch.isalnum() and ch != "_"):
+        return needle in haystack
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(needle)}(?![a-z0-9])", haystack))
 
 
 def _flatten(value: Any) -> list[Any]:

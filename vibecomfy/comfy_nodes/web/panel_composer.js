@@ -405,6 +405,10 @@ export function renderComposerActions(panel, deps = {}) {
   panel.buttons.undo.title = undoLabel;
   if (typeof panel.buttons.undo.setAttribute === "function") {
     panel.buttons.undo.setAttribute("aria-label", undoLabel);
+    panel.buttons.undo.setAttribute("data-tooltip", undoLabel);
+  }
+  if (typeof panel.buttons.undo._vibecomfyRefreshTooltip === "function") {
+    panel.buttons.undo._vibecomfyRefreshTooltip();
   }
   if (panel.buttons.newConversation) {
     // Disabled while a turn is processing; the in-flight escape hatch is Stop.

@@ -360,14 +360,21 @@ def _stage_apply_delta(state: AgentEditState, _context: TurnContext) -> StageRes
 
 def _stage_summarize(state: AgentEditState, context: TurnContext) -> StageResult:
     start = time.monotonic()
+    recovery_report = _queue_recovery_report_for_candidate(
+        ui_payload=state.ui_payload,
+        schema_provider=state.schema_provider,
+        original_ui_payload=state.graph,
+        existing_recovery_report=(state.report or {}).get("recovery"),
+    )
+    if state.report is None:
+        state.report = {}
+    state.report["recovery"] = recovery_report
     queue_result = queue_stage_result(
-        recovery_report=(state.report or {}).get("recovery"),
+        recovery_report=recovery_report,
         change_report=(state.report or {}).get("change"),
     )
     _record(context, queue_result)
     derive_gates(context, queue_blockers=queue_result.issues)
-    if state.report is None:
-        state.report = {}
     state.report["queue_blockers"] = [dict(issue) for issue in queue_result.issues]
     state.messages_path.open("a", encoding="utf-8").write(
         json.dumps({"task": state.task, "message": state.user_message}, sort_keys=True) + "\n"
@@ -700,23 +707,89 @@ def _recovery_report_from_ui_payload(
     return recovery
 
 
+def _queue_recovery_report_for_candidate(
+    *,
+    ui_payload: Mapping[str, Any] | None,
+    schema_provider: Any,
+    original_ui_payload: Mapping[str, Any] | None = None,
+    existing_recovery_report: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+) -> list[dict[str, Any]]:
+    resolved_recovery = _recovery_report_from_ui_payload(
+        ui_payload,
+        schema_provider,
+        original_ui_payload=original_ui_payload,
+    )
+    if not resolved_recovery:
+        return list(existing_recovery_report or ())
+    if not existing_recovery_report:
+        return resolved_recovery
+
+    resolved_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    for entry in resolved_recovery:
+        if not isinstance(entry, Mapping):
+            continue
+        node_id = entry.get("node_id")
+        class_type = entry.get("class_type")
+        if node_id is None or class_type is None:
+            continue
+        resolved_by_key[(str(node_id), str(class_type))] = dict(entry)
+
+    queue_fields = (
+        "provider",
+        "confidence",
+        "schema_less",
+        "preexisting_ui_node",
+        "ui_connection_shape_unchanged",
+        "schema_less_queue_safe",
+        "schema_less_safety",
+        "schema_less_queue_schema",
+    )
+    merged: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for existing in existing_recovery_report:
+        if not isinstance(existing, Mapping):
+            continue
+        merged_entry = dict(existing)
+        node_id = merged_entry.get("node_id")
+        class_type = merged_entry.get("class_type")
+        if node_id is None or class_type is None:
+            merged.append(merged_entry)
+            continue
+        key = (str(node_id), str(class_type))
+        seen.add(key)
+        overlay = resolved_by_key.get(key)
+        if overlay is not None:
+            for field in queue_fields:
+                if field in overlay:
+                    merged_entry[field] = overlay[field]
+            if merged_entry.get("diagnostic") is None and overlay.get("diagnostic") is not None:
+                merged_entry["diagnostic"] = overlay["diagnostic"]
+        merged.append(merged_entry)
+
+    for key, overlay in resolved_by_key.items():
+        if key in seen:
+            continue
+        merged.append(dict(overlay))
+    return merged
+
+
 def _stage_summarize_v2(state: AgentEditState, context: TurnContext) -> StageResult:
     start = time.monotonic()
-    recovery_report = (state.report or {}).get("recovery")
-    if not recovery_report and state.ui_payload is not None:
-        recovery_report = _recovery_report_from_ui_payload(
-            state.ui_payload,
-            state.schema_provider,
-            original_ui_payload=state.graph,
-        )
+    recovery_report = _queue_recovery_report_for_candidate(
+        ui_payload=state.ui_payload,
+        schema_provider=state.schema_provider,
+        original_ui_payload=state.graph,
+        existing_recovery_report=(state.report or {}).get("recovery"),
+    )
+    if state.report is None:
+        state.report = {}
+    state.report["recovery"] = recovery_report
     queue_result = queue_stage_result(
         recovery_report=recovery_report,
         change_report=(state.report or {}).get("change"),
     )
     _record(context, queue_result)
     derive_gates(context, queue_blockers=queue_result.issues)
-    if state.report is None:
-        state.report = {}
     state.report["queue_blockers"] = [dict(issue) for issue in queue_result.issues]
     state.messages_path.open("a", encoding="utf-8").write(
         json.dumps({"task": state.task, "message": state.user_message}, sort_keys=True) + "\n"

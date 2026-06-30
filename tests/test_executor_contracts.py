@@ -2347,6 +2347,17 @@ class TestClassifierDecisionTable:
         assert "Switch to generating 16 frames with Hotshot" in system
         assert "Do not clarify just because a named external technology has variants" in system
 
+    def test_search_directions_are_tentative_retrieval_hints(self) -> None:
+        msgs = build_classify_messages("Switch to generating 16 frames with Hotshot")
+        system = msgs[0]["content"]
+
+        assert "tentative retrieval hints" in system
+        assert "not findings, implementation instructions, validation tasks" in system
+        assert "workflow patterns, concrete node combinations" in system
+        assert "Do not include installation, provider-pack, registry, or local-addability directions" in system
+        assert "unless the user explicitly asks how to install" in system
+        assert "model families, node packs, workflow patterns" not in system
+
     def test_decision_table_maps_research_route_to_research_true_implement_false(self) -> None:
         msgs = build_classify_messages("look up LTX audio workflows")
         system = msgs[0]["content"]

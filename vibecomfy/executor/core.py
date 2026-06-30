@@ -12,6 +12,7 @@ contracts module) — raw exceptions never leak out of this module.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import MappingProxyType
@@ -63,11 +64,114 @@ from .research import _default_hivemind_client, research as run_research_phase
 
 LOGGER = logging.getLogger(__name__)
 
+_INSTALL_RESEARCH_TERMS = (
+    "install",
+    "installation",
+    "provider pack",
+    "provider-pack",
+    "which pack",
+    "node pack",
+    "custom node pack",
+    "registry",
+    "local addability",
+    "locally addable",
+)
+
+_INSTALL_REQUEST_TERMS = (
+    "install",
+    "installation",
+    "which pack",
+    "what pack",
+    "provider pack",
+    "provides",
+    "registry",
+    "comfyui-manager",
+)
+
 
 def _spec_fields(spec: AgentSpecShape | None) -> dict[str, Any]:
     if spec is None:
         return {}
     return {"route": spec.agent, "model": spec.model}
+
+
+def _allows_install_or_provider_research(query: str) -> bool:
+    query_l = str(query or "").casefold()
+    return any(term in query_l for term in _INSTALL_REQUEST_TERMS)
+
+
+def _sanitize_research_hint_text(text: str, *, query: str = "") -> str | None:
+    """Keep classifier hints pointed at precedent unless install info was asked for."""
+
+    stripped = str(text or "").strip()
+    if not stripped:
+        return None
+    text_l = stripped.casefold()
+    if (
+        _allows_install_or_provider_research(query)
+        or not any(term in text_l for term in _INSTALL_RESEARCH_TERMS)
+    ):
+        return stripped
+
+    replacements = (
+        (r"\bnode[- ]pack installation and usage\b", "workflow precedent and usage"),
+        (r"\bnode[- ]pack installation\b", "workflow precedent"),
+        (r"\bnode[- ]pack details\b", "workflow examples"),
+        (r"\bcustom[- ]node[- ]pack\b", "workflow"),
+        (r"\bprovider[- ]pack\b", "workflow"),
+        (r"\blocal addability\b", "workflow authoring pattern"),
+        (r"\blocally addable\b", "workflow-backed"),
+        (r"\binstallation and usage\b", "workflow usage"),
+        (r"\binstallation\b", "workflow precedent"),
+        (r"\binstall\b", "use"),
+        (r"\bregistry\b", "workflow"),
+        (r"\bnode[- ]pack\b", "workflow"),
+    )
+    sanitized = stripped
+    for pattern, replacement in replacements:
+        sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r"\s+", " ", sanitized).strip(" ;,.")
+    sanitized = re.sub(
+        r"\bworkflow examples,\s*workflow examples\b",
+        "workflow examples",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(r"\bworkflow examples,\s+and\b", "workflow examples and", sanitized, flags=re.IGNORECASE)
+    return sanitized or None
+
+
+def _sanitize_search_directions(
+    directions: tuple[str, ...] | list[str],
+    *,
+    query: str = "",
+) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for direction in directions:
+        sanitized = _sanitize_research_hint_text(str(direction), query=query)
+        if not sanitized:
+            continue
+        key = sanitized.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(sanitized)
+    return tuple(result)
+
+
+def _sanitize_source_preferences(
+    source_preferences: tuple[str, ...] | list[str],
+    *,
+    query: str = "",
+) -> tuple[str, ...]:
+    if _allows_install_or_provider_research(query):
+        return tuple(str(source) for source in source_preferences if str(source).strip())
+    return tuple(
+        str(source)
+        for source in source_preferences
+        if str(source).strip() and str(source).casefold() != "registry"
+    )
 
 # ── route-aware behavior helpers (SD2) ───────────────────────────────────────
 
@@ -114,7 +218,7 @@ _ROUTE_BEHAVIORS = MappingProxyType({
     "research": RouteBehavior(
         route="research",
         needs_research=True,
-        needs_implement=False,
+        needs_implement=True,
         plan_summary="Research workflows, nodes, or techniques, then answer without editing.",
         clears_result_graph=True,
         reply_uses_graph_inspection=False,
@@ -124,7 +228,7 @@ _ROUTE_BEHAVIORS = MappingProxyType({
         route="requires_custom_nodes",
         needs_research=False,
         needs_implement=False,
-        plan_summary="Report the custom node packs required before editing can continue.",
+        plan_summary="Report that the requested edit cannot be safely authored from the current evidence.",
         clears_result_graph=True,
         reply_uses_graph_inspection=False,
         can_produce_candidate=False,
@@ -189,7 +293,7 @@ def _should_prefetch_research(plan: ClassifyDecision) -> bool:
     Revise route: never prefetches research.
     """
     route = _canonical_route_for_plan(plan)
-    if route in {"research", "adapt"}:
+    if route == "adapt":
         return _route_behavior(plan).needs_research
     return False
 
@@ -235,6 +339,14 @@ def _iter_graph_nodes(graph: dict[str, Any] | None) -> list[tuple[str, dict[str,
                 continue
             nid = node.get("id")
             result.append((str(nid) if nid is not None else str(index), node))
+        return result
+    if isinstance(nodes, dict):
+        result = []
+        for node_id, node in nodes.items():
+            if isinstance(node, dict) and (
+                "class_type" in node or "type" in node or "inputs" in node
+            ):
+                result.append((str(node_id), node))
         return result
     result = []
     for node_id, node in graph.items():
@@ -741,14 +853,23 @@ def _run_research(
             # Prefer focused classifier search_directions; they contain the named
             # targets (e.g. ``Hotshot``) without the verbose explanatory glue
             # that drowns out rare terms in Hivemind keyword search.
-            if plan.search_directions:
-                query = "; ".join(str(d) for d in plan.search_directions)
+            search_directions = _sanitize_search_directions(
+                plan.search_directions,
+                query=request.query,
+            )
+            if search_directions:
+                query = "; ".join(search_directions)
             else:
                 # Build a scoped research query from classifier-derived fields
                 # so the adapt prefetch does not inject raw-query results.
                 scoped_parts: list[str] = []
                 if plan.research_goal:
-                    scoped_parts.append(f"Research goal: {plan.research_goal}")
+                    research_goal = _sanitize_research_hint_text(
+                        plan.research_goal,
+                        query=request.query,
+                    )
+                    if research_goal:
+                        scoped_parts.append(f"Research goal: {research_goal}")
                 if plan.pattern_category:
                     scoped_parts.append(f"Pattern category: {plan.pattern_category}")
                 if plan.change_goal:
@@ -774,6 +895,9 @@ def _run_research(
                 precedent_slices=result.precedent_slices,
                 adaptation_plan=result.adaptation_plan,
                 precedent_packet=result.precedent_packet,
+                precedent_sources=result.precedent_sources,
+                workflow_precedent_status=result.workflow_precedent_status,
+                selected_precedent=result.selected_precedent,
             )
         return result
     except Exception as exc:
@@ -814,7 +938,35 @@ def _run_implement(
         return ImplementationResult(
             message="No graph attached; implementation skipped.",
         )
-
+    if executor_route == "adapt" and _adapt_research_failed_closed(research_result):
+        message = (
+            "I could not safely adapt this workflow because the required workflow "
+            "research failed before finding any precedent evidence. The graph is unchanged."
+        )
+        return ImplementationResult(
+            message=message,
+            durable_response={
+                "ok": True,
+                "message": message,
+                "graph_unchanged": True,
+                "no_candidate_reason": "implementation_skipped",
+                "apply_eligible": False,
+                "apply_allowed": False,
+                "canvas_apply_allowed": False,
+                "apply_eligibility": {
+                    "applyable": False,
+                    "reason": "no_candidate",
+                    "message": "No candidate is available to apply.",
+                    "warnings": ["research_failed"],
+                },
+                "outcome": {
+                    "kind": "noop",
+                    "message": message,
+                    "graph_unchanged": True,
+                },
+            },
+            diagnostics={"research_failed": True},
+        )
     classification = plan.to_dict()
     classification["route"] = executor_route
     effective_task = plan.effective_task
@@ -849,19 +1001,45 @@ def _run_implement(
                 protocol_notes["change_goal"] = plan.change_goal
             if plan.model_families:
                 protocol_notes["model_families"] = list(plan.model_families)
+            if research_result.workflow_precedent_status:
+                protocol_notes["workflow_precedent_status"] = (
+                    research_result.workflow_precedent_status
+                )
+            if research_result.selected_precedent is not None:
+                protocol_notes["selected_precedent"] = (
+                    research_result.selected_precedent.to_dict()
+                )
             # Research summary as contextual note (not directive).
             if research_result.summary:
                 protocol_notes["research_summary"] = research_result.summary
-            if protocol_notes:
-                protocol_notes["_discardability"] = (
-                    "This research context is provided as evidence only. "
-                    "It is NOT authoritative guidance or a required implementation. "
-                    "Discard any packet that is empty, irrelevant, or contradicts "
-                    "the user's explicit request."
+            if research_result.precedent_sources:
+                protocol_notes["research_sources"] = list(
+                    research_result.precedent_sources
                 )
+            if research_result.warnings:
+                protocol_notes["research_warnings"] = list(research_result.warnings)
+            if protocol_notes:
+                if research_result.selected_precedent is not None:
+                    protocol_notes["_discardability"] = (
+                        "This research context is provided as evidence. "
+                        "Use selected_precedent as the grounding workflow "
+                        "interpretation unless it contradicts the user's "
+                        "explicit request. Other packets remain supporting "
+                        "context."
+                    )
+                else:
+                    protocol_notes["_discardability"] = (
+                        "This research context is provided as evidence only. "
+                        "It is NOT authoritative guidance or a required "
+                        "implementation. Discard any packet that is empty, "
+                        "irrelevant, or contradicts the user's explicit request."
+                    )
                 payload["execution_protocol_notes"] = protocol_notes
             # Include precedent packet as discardable research context.
-            if research_result.precedent_packet is not None:
+            if (
+                research_result.workflow_precedent_status == "compatible_workflow_found"
+                and research_result.precedent_packet is not None
+            ):
                 payload["research_context_packet"] = (
                     research_result.precedent_packet.to_dict()
                 )
@@ -881,7 +1059,16 @@ def _run_implement(
                 ]
             if research_result.adaptation_plan is not None:
                 payload["adaptation_plan"] = research_result.adaptation_plan.to_dict()
-    research_brief = _research_brief_from_plan(plan)
+    suppress_research_avoid = (
+        executor_route == "adapt"
+        and research_result is not None
+        and research_result.selected_precedent is not None
+    )
+    research_brief = _research_brief_from_plan(
+        plan,
+        query=request.query,
+        suppress_avoid=suppress_research_avoid,
+    )
     if research_brief:
         payload["research_brief"] = research_brief
     if request.session_id:
@@ -978,12 +1165,28 @@ def _run_implement(
     )
 
 
+def _adapt_research_failed_closed(research_result: ResearchResult | None) -> bool:
+    """Adapt needs precedent evidence; total research failure must not edit."""
+    if research_result is None:
+        return True
+    has_precedent = bool(
+        research_result.precedent_packet
+        or research_result.adaptation_plan
+        or research_result.precedent_slices
+        or research_result.precedent_sources
+        or research_result.selected_precedent
+    )
+    if has_precedent:
+        return False
+    summary = str(research_result.summary or "").lower()
+    warnings = " ".join(str(warning) for warning in (research_result.warnings or ())).lower()
+    return "research skipped" in summary or "research phase failed" in warnings
+
+
 def _implementation_response_is_terminal_no_candidate(result: dict[str, Any]) -> bool:
     """Return true when agent-edit succeeded by declining an applyable candidate."""
     outcome = result.get("outcome")
     outcome_kind = outcome.get("kind") if isinstance(outcome, dict) else None
-    if outcome_kind in {"clarify", "requires_custom_nodes"}:
-        return True
     apply_eligible = result.get("apply_eligible")
     if not isinstance(apply_eligible, bool):
         eligibility = result.get("apply_eligibility")
@@ -993,10 +1196,30 @@ def _implementation_response_is_terminal_no_candidate(result: dict[str, Any]) ->
                 if "applyable" in eligibility
                 else eligibility.get("apply_eligible")
             )
-    return result.get("graph_unchanged") is True and apply_eligible is False
+
+    no_candidate_reason = result.get("no_candidate_reason")
+    if no_candidate_reason in {
+        "route_not_applyable",
+        "no_graph",
+        "implementation_skipped",
+        "implementation_failed",
+        "no_changes",
+        "unknown_route",
+    }:
+        return result.get("graph_unchanged") is not False
+    if outcome_kind in {"clarify", "requires_custom_nodes"}:
+        return True
+    if outcome_kind == "noop":
+        return result.get("graph_unchanged") is not False
+    return result.get("graph_unchanged") is True and apply_eligible is not True
 
 
-def _research_brief_from_plan(plan: ClassifyDecision) -> dict[str, Any]:
+def _research_brief_from_plan(
+    plan: ClassifyDecision,
+    *,
+    query: str = "",
+    suppress_avoid: bool = False,
+) -> dict[str, Any]:
     """Return classifier-authored search direction for the research agent.
 
     This is intentionally directional. It tells the batch REPL what evidence to
@@ -1004,12 +1227,18 @@ def _research_brief_from_plan(plan: ClassifyDecision) -> dict[str, Any]:
     """
     brief: dict[str, Any] = {}
     if plan.research_goal:
-        brief["research_goal"] = plan.research_goal
+        research_goal = _sanitize_research_hint_text(plan.research_goal, query=query)
+        if research_goal:
+            brief["research_goal"] = research_goal
     if plan.search_directions:
-        brief["search_directions"] = list(plan.search_directions)
+        search_directions = _sanitize_search_directions(plan.search_directions, query=query)
+        if search_directions:
+            brief["search_directions"] = list(search_directions)
     if plan.source_preferences:
-        brief["source_preferences"] = list(plan.source_preferences)
-    if plan.avoid:
+        source_preferences = _sanitize_source_preferences(plan.source_preferences, query=query)
+        if source_preferences:
+            brief["source_preferences"] = list(source_preferences)
+    if plan.avoid and not suppress_avoid:
         brief["avoid"] = list(plan.avoid)
     if plan.known_graph_context:
         brief["known_graph_context"] = plan.known_graph_context
@@ -1019,6 +1248,25 @@ def _research_brief_from_plan(plan: ClassifyDecision) -> dict[str, Any]:
         brief["pattern_category"] = plan.pattern_category
     if plan.change_goal:
         brief["change_goal"] = plan.change_goal
+    if not brief and _canonical_route_for_plan(plan) == "research":
+        query_l = query.casefold()
+        if "distilled" in query_l or "faster" in query_l:
+            brief = {
+                "research_goal": "Find distilled or faster ways to run the current ComfyUI video workflow.",
+                "search_directions": [
+                    "distilled or lightning video/motion models compatible with AnimateDiff-style workflows",
+                    "AnimateDiff speed settings such as context length, sampler, steps, and frame count",
+                    "ComfyUI workflow examples that trade quality for faster generation",
+                ],
+                "source_preferences": ["workflows", "messages", "web"],
+                "avoid": [
+                    "generic searches for the raw sentence",
+                    "stopword-only searches such as there way run",
+                    "treating Discord snippets as authoritative without workflow evidence",
+                ],
+                "known_graph_context": plan.known_graph_context
+                or "Attached graph may be absent; infer only broad workflow family from the request.",
+            }
     return brief
 
 
@@ -1070,9 +1318,12 @@ def _run_reply(
         and implementation_result is not None
         and implementation_result.graph is not None
     )
-    research_sources: tuple[dict[str, Any], ...] | None = (
-        research_result.sources if research_result and research_result.sources else None
-    )
+    research_sources: tuple[dict[str, Any], ...] | None = None
+    if research_result is not None:
+        if effective_route == "adapt" and research_result.precedent_sources:
+            research_sources = research_result.precedent_sources
+        elif research_result.sources:
+            research_sources = research_result.sources
     research_warnings: tuple[str, ...] | None = (
         research_result.warnings if research_result and research_result.warnings else None
     )

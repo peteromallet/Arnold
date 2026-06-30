@@ -626,7 +626,7 @@ def _synthesize_batch_repl_message(
         return ensure_sentence_message(
             state.user_message,
             fallback=(
-                "I found custom-node evidence, but could not apply a grounded "
+                "I found external node evidence, but could not apply a grounded "
                 "workflow pattern to the current graph."
             ),
         )

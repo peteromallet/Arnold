@@ -5,7 +5,11 @@ from typing import Any, Mapping
 
 from .ledger import EditLedger, ScopeState
 from .ops import LinkSourceRef, LinkTargetRef, NodeFieldTarget, NodeTarget, RemoveLinkOp, SetNodeFieldOp, UpsertLinkOp
-from vibecomfy.porting.edit._ir_utils import _canonical_input_name_for_class, _input_spec_for_field
+from vibecomfy.porting.edit._ir_utils import (
+    _canonical_input_name_for_class,
+    _input_spec_for_field,
+    _known_core_input_socket_type,
+)
 from vibecomfy.porting.edit.apply_links import _build_rewires, _build_rewires_for_setnode_gets, _collect_links_for_origin, _collect_links_for_target, _link_id, _link_ids, _resolve_getnode_source, _resolve_passthrough_source, _schema_output_type
 from vibecomfy.porting.edit.apply_slots import _find_named_slot_index, _widget_index_for_field, _widget_index_from_input_stubs, _widget_name_for_input
 from vibecomfy.porting.edit.apply_types import ResolvedFieldRef, ResolvedLinkEndpoint, ResolvedNodeRef, ResolvedOp, ResolvedRemoveLinkRef, ResolvedRemoveNodePlan, _ctx, _endpoint_port_issues, _issue
@@ -200,7 +204,7 @@ def _resolve_set_node_field(
         if isinstance(raw_input.get("link"), int):
             automatic_link_removal = raw_input["link"]
 
-    widget_index = _widget_index_for_field(class_type, field_path)
+    widget_index = _widget_index_for_field(node, field_path, schema_provider=schema_provider)
     widget_stub_name = _widget_name_for_input(raw_input)
     used_schema_less_widget_recovery = False
     if widget_index is None and widget_stub_name == field_path:
@@ -471,6 +475,9 @@ def _resolve_target_endpoint(
     if result.value is None:
         return None, _endpoint_port_issues(result)
     ep = result.value
+    socket_type = ep.socket_type
+    if socket_type is None or socket_type == "UNKNOWN":
+        socket_type = _known_core_input_socket_type(ep.class_type, ep.slot_name) or socket_type
     return (
         ResolvedLinkEndpoint(
             ref=ref,
@@ -479,7 +486,7 @@ def _resolve_target_endpoint(
             node_id=ep.node_id,
             slot_index=ep.slot_index,
             slot_name=ep.slot_name,
-            socket_type=ep.socket_type,
+            socket_type=socket_type,
         ),
         [],
     )

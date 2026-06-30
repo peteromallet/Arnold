@@ -402,10 +402,22 @@ def test_schema_known_generated_explicit_overflow_uses_schema_defaults_and_marks
 
 
 def test_single_slot_object_info_generated_overflow_still_refuses() -> None:
+    provider = _Provider(
+        {
+            "SingleSlotGenerated": NodeSchema(
+                class_type="SingleSlotGenerated",
+                pack=None,
+                inputs={"value": InputSpec("INT")},
+                outputs=[],
+                source_provider="object_info_index",
+                confidence=1.0,
+            ),
+        }
+    )
     wf = _wf()
     wf.nodes["1"] = VibeNode(
         "1",
-        "PrimitiveInt",
+        "SingleSlotGenerated",
         widgets={"widget_0": 7, "widget_1": 9},
     )
 
@@ -413,12 +425,74 @@ def test_single_slot_object_info_generated_overflow_still_refuses() -> None:
     with pytest.raises(RefusedEmit):
         emit_ui_json(
             wf,
-            schema_provider=_provider_object_info_generated(),
+            schema_provider=provider,
             recovery_report=report,
         )
 
     entry = next(item for item in report if item.get("node_id") == "1")
     assert entry["widget_shape_verdict"] == "refuse"
+
+
+def test_existing_static_overflow_recovers_by_preserving_observed_raw_widget_slot() -> None:
+    provider = _Provider(
+        {
+            "ObservedUndercounted": NodeSchema(
+                class_type="ObservedUndercounted",
+                pack=None,
+                inputs={"value": InputSpec("INT")},
+                outputs=[],
+                source_provider="object_info_index",
+                confidence=1.0,
+            ),
+        }
+    )
+    wf = _wf()
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "ObservedUndercounted",
+        widgets={"widget_0": 11},
+        raw_widgets=RawWidgetPayload(
+            values=[7, "fixed"],
+            shape="list",
+            source="ui.widgets_values",
+            has_dict_rows=False,
+            length=2,
+        ),
+    )
+
+    report: list[dict[str, Any]] = []
+    ui = emit_ui_json(
+        wf,
+        schema_provider=provider,
+        recovery_report=report,
+    )
+
+    assert ui["nodes"][0]["widgets_values"] == [11, "fixed"]
+    entry = next(item for item in report if item.get("node_id") == "1")
+    assert entry["widget_shape_verdict"] == "safe_to_regenerate"
+    assert entry["widget_shape_recovery"] == "observed_widget_shape_regenerate"
+
+
+def test_primitive_int_control_after_generate_metadata_emits_second_ui_slot() -> None:
+    from vibecomfy.schema import get_schema_provider
+
+    wf = _wf()
+    wf.nodes["1"] = VibeNode(
+        "1",
+        "PrimitiveInt",
+        widgets={"widget_0": 11, "widget_1": "fixed"},
+    )
+
+    report: list[dict[str, Any]] = []
+    ui = emit_ui_json(
+        wf,
+        schema_provider=get_schema_provider(),
+        recovery_report=report,
+    )
+
+    assert ui["nodes"][0]["widgets_values"] == [11, "fixed"]
+    entry = next(item for item in report if item.get("node_id") == "1")
+    assert entry["widget_shape_verdict"] == "safe_to_regenerate"
 
 
 def test_object_info_generated_without_raw_widget_order_uses_schema_defaults() -> None:

@@ -102,35 +102,6 @@ def _build_stubs() -> dict[str, dict[str, object]]:
             }
             schemas[class_type] = info
 
-    # Also add a simple named Hotshot node so `search(focus_types=["Hotshot"])` succeeds.
-    if "Hotshot" not in index and "Hotshot" not in schemas:
-        schemas["Hotshot"] = {
-            "category": "hotshot/stub",
-            "description": "Stub Hotshot video generation node.",
-            "display_name": "Hotshot",
-            "evidence_identity": "hotshot-workflow-stub",
-            "function": "Hotshot",
-            "input_order": {"required": ["model", "positive", "negative", "latent_image", "frames"]},
-            "input_order_all": ["model", "positive", "negative", "latent_image", "frames"],
-            "inputs": {
-                "required": {
-                    "model": ["MODEL", {}],
-                    "positive": ["CONDITIONING", {}],
-                    "negative": ["CONDITIONING", {}],
-                    "latent_image": ["LATENT", {}],
-                    "frames": ["INT", {"default": 16, "min": 1, "max": 128}],
-                }
-            },
-            "name": "Hotshot",
-            "object_info_widget_order": ["model", "positive", "negative", "latent_image", "frames"],
-            "outputs": [{"name": "LATENT", "type": "LATENT"}],
-            "pack": "ComfyUI-Hotshot",
-            "pack_slug": "ComfyUI-Hotshot",
-            "pack_version": "stub",
-            "python_module": "custom_nodes.hotshot_stub",
-            "source_kind": "workflow_json_stub",
-        }
-
     return schemas
 
 

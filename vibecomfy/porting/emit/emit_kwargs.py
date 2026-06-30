@@ -20,6 +20,7 @@ from vibecomfy.porting.object_info import (
     class_output_count,
 )
 from vibecomfy.porting.widgets.aliases import resolve_widget_key_with_provenance
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 
 if TYPE_CHECKING:
@@ -1147,9 +1148,12 @@ def _node_kwargs(
     # convert_to_vibe_format.  Prefer this over the static WIDGET_SCHEMA so
     # that schema-source evidence wins - the static table is only a fallback.
     node_metadata: dict[str, Any] = getattr(node, "metadata", None) or {}
-    input_aliases: list[str | None] | None = node_metadata.get("input_aliases") or (
-        _ui_widget_aliases(node) if use_ui_widget_aliases else None
-    )
+    input_aliases: list[str | None] | None = None
+    compact_names = compact_widget_names_for_node(node, cls).names
+    if compact_names:
+        input_aliases = list(compact_names)
+    elif use_ui_widget_aliases:
+        input_aliases = _ui_widget_aliases(node)
 
     if constant_map is None:
         constant_map = {}

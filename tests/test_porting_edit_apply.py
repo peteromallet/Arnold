@@ -307,6 +307,30 @@ def test_resolve_delta_rejects_known_incompatible_link_without_mutating_original
     assert original == before
 
 
+def test_resolve_delta_allows_unknown_target_socket_as_wildcard() -> None:
+    original = _fixture()
+    for node in original["nodes"]:
+        if node.get("id") == 7:
+            node["inputs"][0]["type"] = "UNKNOWN"
+            break
+    provider = _SchemaProvider()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "upsert_link",
+                "from": ["", "6", "IMAGE"],
+                "to": ["", "7", "images"],
+            }
+        ]
+    )
+
+    result = resolve_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is True
+    assert not any(issue.code == "incompatible_socket_types" for issue in result.diagnostics)
+    assert len(result.resolved_ops) == 1
+
+
 def test_resolve_delta_rejects_unknown_add_node_class_before_any_mutation() -> None:
     original = _fixture()
     before = copy.deepcopy(original)

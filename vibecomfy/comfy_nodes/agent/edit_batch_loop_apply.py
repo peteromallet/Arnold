@@ -180,10 +180,7 @@ SOURCE = r'''
         _enrich_schema_provider_from_resolver_candidates(
             state,
             session,
-            [
-                *_workflow_schema_candidates_from_batch_result(batch_result),
-                *_resolver_candidates_from_batch_result(batch_result),
-            ],
+            _resolver_candidates_from_batch_result(batch_result),
         )
         next_render = session.render()
         state.python_after = next_render
@@ -360,6 +357,13 @@ SOURCE = r'''
             "remaining_consecutive_errors": max(0, max_consecutive_errors - consecutive_errors),
             "consecutive_errors": consecutive_errors,
         }
+        selected_precedent_unknown_class_feedback = (
+            _selected_precedent_unknown_class_feedback(state, batch_result)
+        )
+        if selected_precedent_unknown_class_feedback and not _batch_candidate_graph_changed(state):
+            turn_record["clarification_required"] = True
+            turn_record["clarification_message"] = selected_precedent_unknown_class_feedback
+            turn_record["authoring_blocker"] = "selected_precedent_unknown_class"
 
         response_log[-1] = {
             "turn_number": turn_number,
@@ -367,17 +371,68 @@ SOURCE = r'''
             "batch_result": turn_record,
         }
         write_json_artifact(state.model_response_path, {"turns": response_log})
+        message_record = {
+            "turn_number": turn_number,
+            "task": state.task,
+            "message": turn_result.message,
+            "batch": turn_result.batch,
+            "report": report_text,
+        }
+        if selected_precedent_unknown_class_feedback and not _batch_candidate_graph_changed(state):
+            message_record["authoring_blocker"] = "selected_precedent_unknown_class"
+            message_record["clarification_required"] = selected_precedent_unknown_class_feedback
         state.messages_path.open("a", encoding="utf-8").write(
-            json.dumps(
-                {
-                    "turn_number": turn_number,
-                    "task": state.task,
-                    "message": turn_result.message,
-                    "batch": turn_result.batch,
-                    "report": report_text,
-                },
-                sort_keys=True,
-            )
+            json.dumps(message_record, sort_keys=True)
             + "\n"
         )
+        if selected_precedent_unknown_class_feedback and not _batch_candidate_graph_changed(state):
+            state.batch_exit_mode = _BATCH_EXIT_PURE_CLARIFY
+            state.batch_final_summary = (
+                f"Clarification requested after {state.batch_turn_count} batch turn(s)."
+            )
+            state.user_message = selected_precedent_unknown_class_feedback
+            state.report = {
+                "clarification_required": True,
+                "graph_unchanged": True,
+                "queue_blockers": [],
+                "authoring_blocker": {
+                    "reason": "selected_precedent_unknown_class",
+                    "message": selected_precedent_unknown_class_feedback,
+                },
+            }
+            response_log[-1] = {
+                "turn_number": turn_number,
+                "response": turn_result.to_dict(),
+                "batch_result": turn_record,
+                "clarification": {
+                    "message": selected_precedent_unknown_class_feedback,
+                    "reason": "selected_precedent_unknown_class",
+                },
+            }
+            write_json_artifact(state.model_response_path, {"turns": response_log})
+            _emit_agent_edit_turn_event(
+                state,
+                _context,
+                turn_record,
+                client_id=client_id,
+                status="clarify",
+            )
+            return StageResult(
+                stage="agent_batch",
+                ok=True,
+                blocking=False,
+                duration_ms=_duration_ms(start),
+                artifacts=(
+                    _artifact(state.after_py_path),
+                    _artifact(state.model_request_path),
+                    _artifact(state.model_response_path),
+                    _artifact(state.candidate_ui_path),
+                    _artifact(state.messages_path),
+                ),
+                value={
+                    "mode": "authoring_blocker",
+                    "graph_unchanged": True,
+                    "reason": "selected_precedent_unknown_class",
+                },
+            )
 '''

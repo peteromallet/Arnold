@@ -8,7 +8,7 @@ from typing import Any
 from vibecomfy._compile._graph import is_api_link
 from .formatting import format_value
 from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
-from vibecomfy.porting.widgets.aliases import resolve_widget_name
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 
 
 def node_kwargs(node: Any, edges_in: dict, var_names: dict[str, str]) -> list[tuple[str, str]]:
@@ -37,7 +37,10 @@ def node_kwargs(node: Any, edges_in: dict, var_names: dict[str, str]) -> list[tu
             idx = int(key.split("_", 1)[1])
         except ValueError:
             return key
-        return resolve_widget_name(cls, idx)
+        names = compact_widget_names_for_node(node, cls).names
+        if 0 <= idx < len(names):
+            return names[idx]
+        return key
 
     # Two-phase: collect raw keys and values, then optionally translate
     # widget_X keys to canonical names ONLY when the canonical isn't already

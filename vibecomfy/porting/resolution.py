@@ -249,7 +249,7 @@ def _normalize_type(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip().upper()
-    if not text or text == "*":
+    if not text or text in {"*", "UNKNOWN"}:
         return None
     return text
 

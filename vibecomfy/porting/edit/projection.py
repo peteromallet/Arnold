@@ -7,8 +7,8 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .ledger import EditLedger, ScopeState
 from .ops import NodeTarget
-from vibecomfy.porting.widgets.schema import ui_widget_value_names_for_class
-from vibecomfy.schema import schema_for
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
+from vibecomfy.schema import is_workflow_stub_schema, schema_for
 
 
 USER_STRING_FENCE = "VIBECOMFY_USER_STRING_JSON"
@@ -88,9 +88,10 @@ def render_edit_projection(
     if catalog:
         text = (
             f"{text}\n\n## Available node class_types for add_node\n"
-            "Use EXACTLY one of these names for any add_node `class_type`. Never invent a "
-            "class name. If the node you want is not listed, do not add it — instead explain "
-            "the limitation in `message`.\n"
+            "Use EXACTLY one of these names for any add_node `class_type`. This catalog may include "
+            "low-confidence provisional workflow/registry classes for reviewable candidates. Never "
+            "invent a class name; if an exact precedent-backed class is missing from this list, "
+            "explain the limitation in `message`.\n"
             f"{', '.join(catalog)}\n"
         )
         estimate = estimate_tokens(text)
@@ -114,7 +115,11 @@ def _available_class_names(schema_provider: Any) -> list[str]:
             try:
                 data = fn()
                 if isinstance(data, dict) and data:
-                    return sorted(str(k) for k in data.keys())
+                    return sorted(
+                        str(k)
+                        for k, schema in data.items()
+                        if not is_workflow_stub_schema(schema)
+                    )
             except Exception:
                 pass
     return []
@@ -210,14 +215,14 @@ def _render_node(
         # (e.g. "seed" for RandomNoise, whose real widget is "noise_seed"), which
         # apply_delta then rejects as unknown_node_field. Listing the names — capped to
         # bound tokens — lets set_node_field target the exact field even on summary nodes.
-        field_names = [row[0] for row in _field_rows(node, class_type)]
+        field_names = [row[0] for row in _field_rows(node, class_type, schema_provider=schema_provider)]
         shown = field_names[:14]
         suffix = "" if len(field_names) <= 14 else f", +{len(field_names) - 14} more"
         fields_repr = f"[{', '.join(shown)}{suffix}]" if field_names else "[]"
         lines.append(f"  summary: inputs={input_count} outputs={output_count} fields={fields_repr}")
         return lines
 
-    fields = _field_rows(node, class_type)
+    fields = _field_rows(node, class_type, schema_provider=schema_provider)
     if fields:
         lines.append("  fields:")
         for name, value, source in fields:
@@ -239,15 +244,21 @@ def _render_node(
     return lines
 
 
-def _field_rows(node: Mapping[str, Any], class_type: str) -> list[tuple[str, Any, str]]:
+def _field_rows(
+    node: Mapping[str, Any],
+    class_type: str,
+    *,
+    schema_provider: Any = None,
+) -> list[tuple[str, Any, str]]:
     rows: list[tuple[str, Any, str]] = []
     widgets = node.get("widgets_values")
     if isinstance(widgets, list):
-        names = list(ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True))
-        if len(names) < len(widgets):
-            recovered = _widget_names_from_inputs(node.get("inputs"))
-            if len(recovered) >= len(widgets):
-                names = recovered
+        names = compact_widget_names_for_node(
+            node,
+            class_type,
+            value_count=len(widgets),
+            schema_provider=schema_provider,
+        ).names
         for index, value in enumerate(widgets):
             name = names[index] if index < len(names) and names[index] else f"widget_{index}"
             rows.append((str(name), value, f"widgets_values[{index}]"))

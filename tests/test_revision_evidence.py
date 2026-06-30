@@ -23,6 +23,10 @@ from vibecomfy.executor.contracts import (
     TopologyFindings,
 )
 from vibecomfy.executor.revision_evidence import collect_graph_facts
+from vibecomfy.executor.revision_evidence import (
+    collect_topology_evidence,
+    compute_scoped_diff,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -144,6 +148,77 @@ def _graph_with_terminal_socket_types() -> dict[str, Any]:
             [2, 0, 3, 1, "MASK"],
         ],
     )
+
+
+def test_scoped_diff_tolerates_preexisting_topology_blockers_for_parameter_edit() -> None:
+    original = _make_simple_graph(
+        nodes=[
+            {"id": 1, "class_type": "LoadImage", "widgets_values": ["input.png"]},
+            {"id": 2, "class_type": "SaveImage", "widgets_values": ["before"]},
+        ],
+        links=[[77, 999, 0, 2, 0, "IMAGE"]],
+    )
+    candidate = json.loads(json.dumps(original))
+    candidate["nodes"][1]["widgets_values"] = ["after"]
+    original_topology = collect_topology_evidence(original, schema_available=True)
+    candidate_topology = collect_topology_evidence(candidate, schema_available=True)
+
+    scoped = compute_scoped_diff(
+        original,
+        candidate,
+        topology=original_topology,
+        readiness=ReadinessReport(),
+        candidate_topology=candidate_topology,
+        candidate_readiness=ReadinessReport(),
+    )
+
+    assert original_topology.has_blockers is True
+    assert candidate_topology.has_blockers is True
+    assert scoped.changed_nodes == ("2",)
+    assert scoped.candidate_eligible is True
+    assert "candidate_topology_blockers" not in scoped.eligibility_blockers
+    assert "unresolved_topology_blockers" not in scoped.eligibility_blockers
+
+
+def test_scoped_diff_blocks_new_topology_damage_from_removed_load_bearing_node() -> None:
+    original = _make_simple_graph(
+        nodes=[
+            {"id": 1, "class_type": "LoadImage", "outputs": [{"name": "IMAGE", "type": "IMAGE"}]},
+            {
+                "id": 2,
+                "class_type": "SaveImage",
+                "inputs": [{"name": "images", "type": "IMAGE", "link": 77}],
+            },
+        ],
+        links=[[77, 1, 0, 2, 0, "IMAGE"]],
+    )
+    candidate = _make_simple_graph(
+        nodes=[
+            {
+                "id": 2,
+                "class_type": "SaveImage",
+                "inputs": [{"name": "images", "type": "IMAGE", "link": 77}],
+            },
+        ],
+        links=[[77, 1, 0, 2, 0, "IMAGE"]],
+    )
+    original_topology = collect_topology_evidence(original, schema_available=True)
+    candidate_topology = collect_topology_evidence(candidate, schema_available=True)
+
+    scoped = compute_scoped_diff(
+        original,
+        candidate,
+        topology=original_topology,
+        readiness=ReadinessReport(),
+        candidate_topology=candidate_topology,
+        candidate_readiness=ReadinessReport(),
+    )
+
+    assert original_topology.has_blockers is False
+    assert candidate_topology.has_blockers is True
+    assert scoped.removed_nodes == ("1",)
+    assert scoped.candidate_eligible is False
+    assert "candidate_topology_blockers" in scoped.eligibility_blockers
 
 
 # ══════════════════════════════════════════════════════════════════════════════

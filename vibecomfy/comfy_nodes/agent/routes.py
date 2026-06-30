@@ -1487,7 +1487,9 @@ def register_agent_edit_routes(app) -> None:
 if os.environ.get("VIBECOMFY_HEADLESS") != "1":
     try:
         from aiohttp import web as _web  # noqa: PLC0415
-        from server import PromptServer as _PromptServer  # noqa: PLC0415
+        from .._server_compat import import_prompt_server
+
+        _PromptServer = import_prompt_server()
 
         @_PromptServer.instance.routes.post("/vibecomfy/roundtrip")
         async def roundtrip_route(request):  # type: ignore[no-untyped-def]

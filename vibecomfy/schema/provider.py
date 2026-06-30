@@ -95,6 +95,22 @@ class NodeSchema:
     ignored_evidence: tuple[str, ...] = ()
 
 
+def is_workflow_stub_schema(schema: object | None) -> bool:
+    """Return true for static stub schemas that are not authoring proof.
+
+    Static ``@stub.json`` cache rows are broad placeholders and should not enter
+    the baseline authoring catalog. Per-turn workflow/registry provisional
+    schemas are different: they are exact evidence for a candidate graph, but
+    still carry ``not_runtime_validated`` so queue/runtime validation can block
+    execution until the missing pack is installed.
+    """
+    if schema is None:
+        return False
+    source_version = str(getattr(schema, "source_version", "") or "").lower()
+    cache_path = str(getattr(schema, "source_cache_path", "") or "").lower()
+    return source_version == "stub" or cache_path.endswith("@stub.json")
+
+
 class SchemaIndexError(ValueError):
     def __init__(self, path: Path, cause: Exception) -> None:
         super().__init__(f"{path} could not be read: {type(cause).__name__}: {cause}")
@@ -423,6 +439,7 @@ class ObjectInfoIndexSchemaProvider:
                 str(key): str(value)
                 for key, value in data.items()
                 if isinstance(key, str) and isinstance(value, str)
+                and not str(value).lower().endswith("@stub.json")
             }
         return self._index
 
@@ -443,10 +460,12 @@ class ObjectInfoIndexSchemaProvider:
         info = data.get(class_type)
         if not isinstance(info, dict):
             return None
-        raw_order = info.get("object_info_widget_order")
-        if isinstance(raw_order, list):
-            return [name if isinstance(name, str) else None for name in raw_order]
-        return None
+        from vibecomfy.porting.object_info.consume import (  # noqa: PLC0415
+            reconciled_object_info_widget_order,
+        )
+
+        raw_order = reconciled_object_info_widget_order(info)
+        return raw_order if raw_order else None
 
     def _load_schema(self, class_type: str) -> NodeSchema | None:
         filename = self._load_index().get(class_type)
@@ -468,6 +487,9 @@ class ObjectInfoIndexSchemaProvider:
             source_provider="object_info_index",
             source_cache_path=str(self.root / filename),
             source_package=schema.pack,
+            source_version=str(info.get("pack_version"))
+            if isinstance(info.get("pack_version"), str)
+            else None,
         )
 
 
@@ -499,7 +521,10 @@ class ProvisionalRegistrySchemaProvider:
 
     These schemas are not runtime proof that a node is installed. They only let
     the editor represent a missing custom node class in a candidate graph when a
-    registry/manager lookup supplied concrete evidence for that class.
+    registry/manager lookup supplied either a concrete object_info-like schema
+    or trusted class-map evidence for that exact class. Weak class-name
+    extraction from GitHub/web search remains install guidance, not an
+    authoring schema.
     """
 
     def __init__(self, candidates: list[dict[str, Any]] | tuple[dict[str, Any], ...]) -> None:
@@ -1060,33 +1085,65 @@ def _provisional_schemas_from_candidates(
                 if not isinstance(class_type, str) or not isinstance(info, dict):
                     continue
                 schema = _schema_from_object_info(class_type, info)
+                source_provider = (
+                    "workflow_json_provisional"
+                    if candidate.get("validation_mode") == "workflow_json_provisional"
+                    else "comfy_registry_provisional"
+                )
                 schemas[class_type] = NodeSchema(
                     class_type=schema.class_type,
                     pack=schema.pack or pack_name,
                     inputs=schema.inputs,
                     outputs=schema.outputs,
-                    source_provider="comfy_registry_provisional",
+                    source_provider=source_provider,
                     source_package=pack_name,
                     source_version=_first_string(schema_payload, "version") if isinstance(schema_payload, dict) else None,
                     confidence=0.55,
                     ignored_evidence=("not_installed", "not_runtime_validated"),
                 )
-        expected = candidate.get("expected_classes")
-        if isinstance(expected, (list, tuple)):
-            for raw_class_type in expected:
-                class_type = str(raw_class_type).strip()
-                if class_type and class_type not in schemas:
-                    schemas[class_type] = NodeSchema(
-                        class_type=class_type,
-                        pack=pack_name,
-                        inputs={},
-                        outputs=[],
-                        source_provider="comfy_registry_provisional",
-                        source_package=pack_name,
-                        confidence=0.35,
-                        ignored_evidence=("class_only", "not_installed", "not_runtime_validated"),
-                    )
+        if _candidate_supports_class_only_placeholder(candidate):
+            expected = candidate.get("expected_classes")
+            if isinstance(expected, (list, tuple)):
+                for raw_class_type in expected:
+                    class_type = str(raw_class_type).strip()
+                    if class_type and class_type not in schemas:
+                        schemas[class_type] = NodeSchema(
+                            class_type=class_type,
+                            pack=pack_name,
+                            inputs={},
+                            outputs=[],
+                            source_provider="comfy_registry_class_map",
+                            source_package=pack_name,
+                            confidence=0.4,
+                            ignored_evidence=(
+                                "class_only",
+                                "schema_backed_resolution_required",
+                                "not_runtime_validated",
+                            ),
+                        )
     return schemas
+
+
+def _candidate_supports_class_only_placeholder(candidate: dict[str, Any]) -> bool:
+    """Return true for registry evidence strong enough to place a draft node.
+
+    ComfyUI-Manager's custom-node-map is an exact class -> pack mapping, so it
+    can back a low-confidence schema placeholder. GitHub code/repository search
+    only proves that words appeared near a repo and must not create constructors.
+    """
+    if str(candidate.get("validation_mode") or "") != "class_validatable":
+        return False
+    evidence = candidate.get("evidence")
+    if not isinstance(evidence, list):
+        return False
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source") or "")
+        tier = str(item.get("tier") or "")
+        if source == "custom-node-map" or tier == "comfy-manager":
+            return True
+    return False
 
 
 def _order_object_info_inputs(inputs: dict[str, InputSpec], info: dict[str, Any]) -> dict[str, InputSpec]:

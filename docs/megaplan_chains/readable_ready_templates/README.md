@@ -33,14 +33,12 @@ failing tests.
 ## Cloud Setup
 
 `cloud.yaml` in this directory is configured for the shared branch and a
-Railway runner.
+Hetzner ssh runner.
 
-Before cloud deploy/status works, link this checkout to the intended Railway
-project or fill in `railway.project` / `railway.environment` in this
-directory's `cloud.yaml`:
+Before cloud deploy/status works, confirm `ssh.host` and `ssh.container` in this directory's `cloud.yaml` point at the intended Hetzner agentbox:
 
 ```bash
-railway link
+python -m megaplan cloud status --cloud-yaml docs/megaplan_chains/readable_ready_templates/cloud.yaml
 ```
 
 Required cloud secrets before deploy/start:
@@ -56,13 +54,13 @@ The chain spec currently uses `profile: all-codex` and `vendor: codex` for every
 milestone. The explicit vendor is required because Megaplan's default vendor is
 Claude and can otherwise rewrite premium Codex slots back to Claude during
 profile expansion. This is an operator override from the earlier `all-claude`
-routing: Claude Code v2.1.143 opens successfully in the Railway root container,
+routing: Claude Code v2.1.143 opens successfully in the Hetzner ssh root container,
 but the Shannon tmux bridge does not reliably submit the initial prompt into
 Claude's transcript. Keep the profile and vendor consistent across new
 milestones unless the operator explicitly changes the chain routing again after
 validating the runner.
 
-The Railway container runs as root, so Claude Code rejects
+The Hetzner ssh container runs as root, so Claude Code rejects
 `--dangerously-skip-permissions`. The operator and recovery loops run
 `scripts/patch_shannon_unattended_root.sh` before launching the chain; this
 keeps Shannon's long-turn fixes, strips root-rejected dangerous flags, maps
@@ -89,9 +87,9 @@ Launch the chain on the cloud runner from an SSH session. Use `--no-push`
 because the operator loop owns same-branch commits/pushes:
 
 ```bash
-railway ssh --environment production --service agent -- \
-  'cd /workspace/app && tmux new-session -d -s megaplan-chain \
-  "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml --no-push >> /workspace/app/.megaplan/cloud-chain.log 2>&1"'
+ssh root@159.69.51.216 -- docker exec megaplan-cloud-agent bash -lc \
+  'cd /workspace/vibecomfy-readable-ready-templates && tmux new-session -d -s megaplan-chain \
+  "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec /workspace/vibecomfy-readable-ready-templates/docs/megaplan_chains/readable_ready_templates/chain.yaml --no-push >> /workspace/vibecomfy-readable-ready-templates/.megaplan/cloud-chain.log 2>&1"'
 ```
 
 The higher-level `cloud chain` wrapper is convenient, but confirm its resolved
@@ -109,8 +107,8 @@ Start the lightweight operator loop in a second tmux session after the chain
 launches. This loop handles process restarts and push-after-completed-sprint:
 
 ```bash
-railway ssh --environment production --service agent -- \
-  "cd /workspace/app && tmux new-session -d -s megaplan-operator './scripts/megaplan_cloud_operator_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml main'"
+ssh root@159.69.51.216 -- docker exec megaplan-cloud-agent bash -lc \
+  "cd /workspace/vibecomfy-readable-ready-templates && tmux new-session -d -s megaplan-operator './scripts/megaplan_cloud_operator_loop.sh /workspace/vibecomfy-readable-ready-templates/docs/megaplan_chains/readable_ready_templates/chain.yaml main'"
 ```
 
 For unattended end-to-end execution, also start the recovery loop. It wakes
@@ -120,8 +118,8 @@ commits/pushes a recovery commit to the same branch, advances the chain state
 when the branch moves, and restarts the chain:
 
 ```bash
-railway ssh --environment production --service agent -- \
-  "cd /workspace/app && tmux new-session -d -s megaplan-recovery './scripts/megaplan_cloud_recovery_loop.sh /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml main'"
+ssh root@159.69.51.216 -- docker exec megaplan-cloud-agent bash -lc \
+  "cd /workspace/vibecomfy-readable-ready-templates && tmux new-session -d -s megaplan-recovery './scripts/megaplan_cloud_recovery_loop.sh /workspace/vibecomfy-readable-ready-templates/docs/megaplan_chains/readable_ready_templates/chain.yaml main'"
 ```
 
 Optional tuning:
@@ -135,22 +133,22 @@ RECOVERY_MAX_REPAIR_SECONDS=3300
 Observe:
 
 ```bash
-railway ssh --environment production --service agent -- \
-  'cd /workspace/app && tmux ls && megaplan chain status --spec /workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml'
+ssh root@159.69.51.216 -- docker exec megaplan-cloud-agent bash -lc \
+  'cd /workspace/vibecomfy-readable-ready-templates && tmux ls && megaplan chain status --spec /workspace/vibecomfy-readable-ready-templates/docs/megaplan_chains/readable_ready_templates/chain.yaml'
 
-railway ssh --environment production --service agent -- \
-  'cd /workspace/app && tail -n 120 .megaplan/cloud-chain.log && tail -n 80 .megaplan/cloud-operator-loop.log'
+ssh root@159.69.51.216 -- docker exec megaplan-cloud-agent bash -lc \
+  'cd /workspace/vibecomfy-readable-ready-templates && tail -n 120 .megaplan/cloud-chain.log && tail -n 80 .megaplan/cloud-operator-loop.log'
 
-railway ssh --environment production --service agent -- \
-  'cd /workspace/app && tail -n 120 .megaplan/cloud-recovery-loop.log && tail -n 120 .megaplan/recovery-prompts/recovery-agent.log'
+ssh root@159.69.51.216 -- docker exec megaplan-cloud-agent bash -lc \
+  'cd /workspace/vibecomfy-readable-ready-templates && tail -n 120 .megaplan/cloud-recovery-loop.log && tail -n 120 .megaplan/recovery-prompts/recovery-agent.log'
 ```
 
 For an active milestone, the freshest progress is usually in the plan state
 file rather than the chain log:
 
 ```bash
-railway ssh --environment production --service agent -- \
-  'cd /workspace/app && python - <<'"'"'PY'"'"'
+ssh root@159.69.51.216 -- docker exec megaplan-cloud-agent bash -lc \
+  'cd /workspace/vibecomfy-readable-ready-templates && python - <<'"'"'PY'"'"'
 import json
 from pathlib import Path
 

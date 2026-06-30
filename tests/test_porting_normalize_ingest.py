@@ -77,6 +77,115 @@ def test_control_after_generate_fixed_from_ui_widgets() -> None:
     assert wf.nodes["1"].metadata.get("control_after_generate") == "fixed"
 
 
+def test_public_raw_widgets_alias_is_preserved_as_raw_widget_payload() -> None:
+    wf = _workflow_from_node(
+        {
+            "class_type": "PrimitiveInt",
+            "inputs": {"widget_0": 7, "widget_1": "fixed"},
+            "raw_widgets": {
+                "values": [7, "fixed"],
+                "shape": "list",
+                "source": "ui.widgets_values",
+                "has_dict_rows": False,
+                "length": 2,
+            },
+        }
+    )
+
+    node = wf.nodes["1"]
+    assert node.raw_widgets is not None
+    assert node.raw_widgets.values == [7, "fixed"]
+    assert node.raw_widgets.length == 2
+    assert "raw_widgets" not in node.metadata
+
+
+def test_vibe_shape_merges_rich_node_raw_widgets_into_compiled_api() -> None:
+    wf = convert_to_vibe_format(
+        {
+            "vibecomfy_format_version": "1.0",
+            "compiled_api": {
+                "1": {
+                    "class_type": "PrimitiveInt",
+                    "inputs": {"widget_0": 7, "widget_1": "fixed"},
+                }
+            },
+            "nodes": {
+                "1": {
+                    "id": "1",
+                    "class_type": "PrimitiveInt",
+                    "raw_widgets": {
+                        "values": [7, "fixed"],
+                        "shape": "list",
+                        "source": "ui.widgets_values",
+                        "has_dict_rows": False,
+                        "length": 2,
+                    },
+                    "metadata": {
+                        "_ui": {
+                            "id": 1,
+                            "type": "PrimitiveInt",
+                            "widgets_values": [7, "fixed"],
+                        }
+                    },
+                }
+            },
+        }
+    )
+
+    node = wf.nodes["1"]
+    assert node.raw_widgets is not None
+    assert node.raw_widgets.values == [7, "fixed"]
+    assert "_ui" not in node.metadata
+
+
+def test_vibe_shape_carries_dynamic_dict_raw_ui_for_widget_pin() -> None:
+    wf = convert_to_vibe_format(
+        {
+            "vibecomfy_format_version": "1.0",
+            "compiled_api": {
+                "81": {
+                    "class_type": "VHS_SplitImages",
+                    "inputs": {"images": ["105", 0], "split_index": 24},
+                }
+            },
+            "nodes": {
+                "81": {
+                    "id": "81",
+                    "class_type": "VHS_SplitImages",
+                    "raw_widgets": {
+                        "values": {"split_index": 24},
+                        "shape": "dict",
+                        "source": "ui.widgets_values",
+                        "has_dict_rows": True,
+                        "length": 1,
+                    },
+                    "metadata": {
+                        "_ui": {
+                            "id": 81,
+                            "type": "VHS_SplitImages",
+                            "pos": [1075, 1136],
+                            "size": [315, 118],
+                            "flags": {},
+                            "order": 28,
+                            "mode": 0,
+                            "inputs": [{"name": "images", "type": "IMAGE", "link": 198}],
+                            "outputs": [{"name": "IMAGE_A", "type": "IMAGE", "links": []}],
+                            "properties": {"Node name for S&R": "VHS_SplitImages"},
+                            "widgets_values": {"split_index": 24},
+                        }
+                    },
+                }
+            },
+        }
+    )
+
+    node = wf.nodes["81"]
+    assert node.raw_widgets is not None
+    assert node.raw_widgets.values == {"split_index": 24}
+    assert node.metadata["_ui"]["widgets_values"] == {"split_index": 24}
+    assert node.metadata["_ui"]["inputs"][0]["link"] == 198
+
+
 # ── Case 3: absent → metadata key unset (never guessed) ──────────────────────
 
 

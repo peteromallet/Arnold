@@ -1,23 +1,34 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SPEC="${1:-/workspace/app/docs/megaplan_chains/readable_ready_templates/chain.yaml}"
+WORKSPACE="${MEGAPLAN_CLOUD_WORKSPACE:-/workspace/vibecomfy-readable-ready-templates}"
+CHAIN_SESSION="${MEGAPLAN_CHAIN_SESSION:-megaplan-chain}"
+ARNOLD_ENGINE_DIR="${ARNOLD_ENGINE_DIR:-/workspace/arnold}"
+SPEC="${1:-$WORKSPACE/docs/megaplan_chains/readable_ready_templates/chain.yaml}"
 BRANCH="${2:-main}"
 INTERVAL_SECONDS="${RECOVERY_INTERVAL_SECONDS:-3600}"
-LOG="${RECOVERY_LOG:-/workspace/app/.megaplan/cloud-recovery-loop.log}"
-CHAIN_LOG="${CHAIN_LOG:-/workspace/app/.megaplan/cloud-chain.log}"
+LOG="${RECOVERY_LOG:-$WORKSPACE/.megaplan/cloud-recovery-loop.log}"
+CHAIN_LOG="${CHAIN_LOG:-$WORKSPACE/.megaplan/cloud-chain.log}"
 MODEL="${RECOVERY_CODEX_MODEL:-gpt-5.5}"
 MAX_REPAIR_SECONDS="${RECOVERY_MAX_REPAIR_SECONDS:-3300}"
 
-cd /workspace/app
+cd "$WORKSPACE"
 mkdir -p "$(dirname "$LOG")" .megaplan/manual-backups .megaplan/recovery-prompts
 
 log() {
   printf '[%s] %s\n' "$(date -Is)" "$*" | tee -a "$LOG"
 }
 
+run_megaplan() {
+  (
+    cd "$WORKSPACE"
+    PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_ENGINE_DIR:${PYTHONPATH:-}" \
+      python -P -m arnold_pipelines.megaplan "$@"
+  )
+}
+
 chain_status_json() {
-  megaplan chain status --spec "$SPEC" 2>/dev/null | awk '
+  run_megaplan chain status --spec "$SPEC" 2>/dev/null | awk '
     BEGIN {json=0}
     /^\{/ {json=1}
     {if (json) print}
@@ -85,16 +96,16 @@ ensure_clean_latest_branch() {
 }
 
 ensure_chain_running() {
-  if tmux has-session -t megaplan-chain 2>/dev/null; then
+  if tmux has-session -t "$CHAIN_SESSION" 2>/dev/null; then
     return 0
   fi
   ./scripts/patch_shannon_unattended_root.sh >> "$LOG" 2>&1 || {
     log "failed to patch Shannon for unattended root execution"
     return 1
   }
-  log "megaplan-chain tmux session is not running; starting chain"
-  tmux new-session -d -s megaplan-chain -c /workspace/app \
-    "MEGAPLAN_TRUSTED_CONTAINER=1 megaplan chain start --spec '$SPEC' --no-push >> '$CHAIN_LOG' 2>&1"
+  log "$CHAIN_SESSION tmux session is not running; starting chain"
+  tmux new-session -d -s "$CHAIN_SESSION" -c "$WORKSPACE" \
+    "cd '$WORKSPACE' && PYTHONSAFEPATH=1 PYTHONPATH='$ARNOLD_ENGINE_DIR':\${PYTHONPATH:-} MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start --spec '$SPEC' --project-dir '$WORKSPACE' --no-push >> '$CHAIN_LOG' 2>&1"
 }
 
 mark_current_milestone_done() {
@@ -173,7 +184,7 @@ write_recovery_prompt() {
   cat > "$prompt_path" <<PROMPT
 You are running unattended on the VibeComfy cloud worker to keep a megaplan chain moving end to end.
 
-Repository: /workspace/app
+Repository: $WORKSPACE
 Branch: $BRANCH
 Current milestone: $label
 Current plan: $plan
@@ -193,12 +204,12 @@ Rules:
 - It is acceptable to note unrelated existing branch-level test failures, but do not chase unrelated failures indefinitely.
 - Commit and push a clear recovery commit to origin/$BRANCH when repaired.
 - If the milestone is genuinely repaired, update the chain state so this milestone is completed and the next milestone can start.
-- Restart or leave the megaplan-chain tmux session running so progress continues.
+- Restart or leave the $CHAIN_SESSION tmux session running so progress continues.
 - If the failure is an infrastructure/auth/process failure rather than a code-quality failure, fix the runner environment, reset only the failed current plan/milestone state, and restart the chain.
 - If a product/architecture decision is truly ambiguous, stop and write a clear blocker summary to .megaplan/recovery-prompts/latest-blocker.md.
 
 Useful status commands:
-- megaplan chain status --spec "$SPEC"
+- python -P -m arnold_pipelines.megaplan chain status --spec "$SPEC"
 - tail -n 160 "$CHAIN_LOG"
 - git status --short
 - PYENV_VERSION=3.11.11 python -m pytest <focused tests> -q
@@ -215,10 +226,10 @@ run_recovery_agent() {
   ln -sf "$(basename "$prompt_path")" .megaplan/recovery-prompts/latest.md
   log "starting Codex recovery agent for label=$label plan=$plan prompt=$prompt_path"
   if command -v timeout >/dev/null 2>&1; then
-    timeout "$MAX_REPAIR_SECONDS" codex exec --dangerously-bypass-approvals-and-sandbox -m "$MODEL" -C /workspace/app - < "$prompt_path" \
+    timeout "$MAX_REPAIR_SECONDS" codex exec --dangerously-bypass-approvals-and-sandbox -m "$MODEL" -C "$WORKSPACE" - < "$prompt_path" \
       >> .megaplan/recovery-prompts/recovery-agent.log 2>&1 || return $?
   else
-    codex exec --dangerously-bypass-approvals-and-sandbox -m "$MODEL" -C /workspace/app - < "$prompt_path" \
+    codex exec --dangerously-bypass-approvals-and-sandbox -m "$MODEL" -C "$WORKSPACE" - < "$prompt_path" \
       >> .megaplan/recovery-prompts/recovery-agent.log 2>&1 || return $?
   fi
 }
@@ -259,7 +270,7 @@ recover_if_needed() {
   else
     log "branch did not advance during recovery for $label; not marking complete"
   fi
-  tmux kill-session -t megaplan-chain 2>/dev/null || true
+  tmux kill-session -t "$CHAIN_SESSION" 2>/dev/null || true
   ensure_chain_running
 }
 

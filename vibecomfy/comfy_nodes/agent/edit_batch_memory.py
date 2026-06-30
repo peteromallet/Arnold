@@ -116,6 +116,7 @@ def _format_available_node_names(
     *,
     max_line_chars: int = 96,
     max_names: int = 80,
+    include_provisional: bool = False,
 ) -> str:
     """Format NodeSignatureRow-like objects as a bounded deterministic name list.
 
@@ -130,6 +131,10 @@ def _format_available_node_names(
             for row in rows or []
             if isinstance((class_type := getattr(row, "class_type", None)), str)
             and class_type
+            and (
+                include_provisional
+                or str(getattr(row, "status", "") or "installed") == "installed"
+            )
         }
     )
     if not names:
@@ -150,7 +155,7 @@ def _format_available_node_names(
     if total_count > len(names):
         lines.append(
             f"... [{total_count - len(names)} more node type names omitted; "
-            "use search(...) for exact local schema lookup before adding an omitted type]"
+            "use search(...) for exact authoring-schema lookup before adding an omitted type]"
         )
     return "\n".join(lines)
 
@@ -210,7 +215,6 @@ def _batch_research_memory_summary(state: Any, *, max_items: int = 3) -> str:
                     "github_workflow_json",
                     "source_workflow_path",
                     "No node signature found",
-                    "registry/schema lookup",
                     "Registry check",
                 )
             ) or bool(detail.get("resolver_candidates"))
@@ -290,56 +294,99 @@ def _premature_missing_custom_node_clarify_feedback(
     state: Any,
     clarify_message: str,
 ) -> str:
-    """Reject missing-custom-node stops that skipped required registry evidence."""
+    """Return feedback for missing custom-node clarifies.
+
+    Missing local signatures are handled by the edit/apply validation path.
+    Do not force the batch model to perform registry research before it may
+    stop cleanly; precedent research and authoring validation are separate
+    responsibilities.
+    """
     message_text = str(clarify_message or "").casefold()
-    if not any(term in message_text for term in ("missing", "not installed", "install", "custom node")):
+    if not any(
+        term in message_text
+        for term in (
+            "missing",
+            "not installed",
+            "install",
+            "custom node",
+            "schema-backed",
+            "authoring evidence",
+            "authoring path",
+            "not authorable",
+            "no schema",
+        )
+    ):
         return ""
+    return ""
 
-    concrete_workflow_seen = False
-    last_missing_turn = -1
-    missing_classes: list[str] = []
-    registry_after_missing = False
-    for turn in getattr(state, "batch_turns", ()) or ():
-        if not isinstance(turn, Mapping):
+
+def _class_names_from_text(text: str) -> list[str]:
+    names: list[str] = []
+    for match in re.findall(r"\b[A-Z][A-Za-z0-9_]*(?:_[A-Za-z0-9]+)+\b", text):
+        if match not in names:
+            names.append(match)
+    return names
+
+
+def _resolver_candidate_is_authoring_capability(candidate: Mapping[str, Any]) -> bool:
+    schema_payload = candidate.get("provisional_schema")
+    if isinstance(schema_payload, Mapping):
+        raw_schema = schema_payload.get("schema")
+        if isinstance(raw_schema, Mapping):
+            nodes = raw_schema.get("nodes") or raw_schema.get("object_info") or raw_schema
+            if isinstance(nodes, Mapping) and nodes:
+                return True
+    evidence = candidate.get("evidence")
+    if not isinstance(evidence, list):
+        return False
+    for item in evidence:
+        if not isinstance(item, Mapping):
             continue
-        raw_turn_number = turn.get("turn_number")
-        turn_number = raw_turn_number if isinstance(raw_turn_number, int) else -1
-        statements = turn.get("statements")
-        if not isinstance(statements, list):
-            continue
-        for statement in statements:
-            if not isinstance(statement, Mapping):
-                continue
-            detail = statement.get("detail")
-            if not isinstance(detail, Mapping):
-                continue
-            query_output = str(detail.get("query_output") or "")
-            if "Concrete workflow pattern found" in query_output or "github_workflow_json" in query_output:
-                concrete_workflow_seen = True
-            if (
-                detail.get("query") == "research"
-                and "registry" in tuple(detail.get("requested_research_sources") or ())
-                and turn_number > last_missing_turn >= 0
-            ):
-                registry_after_missing = True
-            if "No node signature found for exact class type(s):" in query_output:
-                last_missing_turn = turn_number
-                registry_after_missing = False
-                for match in re.findall(r"'([^']+)'", query_output):
-                    if match and match not in missing_classes:
-                        missing_classes.append(match)
+        source = str(item.get("source") or "")
+        tier = str(item.get("tier") or "")
+        if source == "custom-node-map" or tier == "comfy-manager":
+            return True
+    return False
 
-    if not concrete_workflow_seen or last_missing_turn < 0 or registry_after_missing:
-        return ""
 
-    class_text = ", ".join(missing_classes[:8]) if missing_classes else "the exact missing workflow classes"
-    return (
-        "Premature missing-custom-node clarification rejected: workflow/example evidence has named "
-        f"missing exact class(es) ({class_text}), but no registry/schema research turn has verified "
-        "the owning custom-node pack after that local schema miss. Next turn must run "
-        "`research(\"<exact missing class names or concrete pack/family>\", sources=[\"registry\"])` "
-        "using the workflow-sourced class names, then either apply with grounded schemas/provisional "
-        "custom-node evidence or clarify with the registry-backed missing pack."
+def _workflow_schema_classes_from_context(state: Any) -> list[str]:
+    classes: list[str] = []
+
+    def collect_from_source(source: Any) -> None:
+        if not isinstance(source, Mapping):
+            return
+        workflow_schema = source.get("workflow_schema")
+        if isinstance(workflow_schema, Mapping):
+            for class_type in workflow_schema:
+                text = str(class_type or "").strip()
+                if text and text not in classes:
+                    classes.append(text)
+        value = source.get("workflow_schema_classes")
+        if isinstance(value, list):
+            for class_type in value:
+                text = str(class_type or "").strip()
+                if text and text not in classes:
+                    classes.append(text)
+
+    for source in getattr(state, "executor_research_sources", ()) or ():
+        collect_from_source(source)
+
+    notes = getattr(state, "execution_protocol_notes", None)
+    if isinstance(notes, Mapping):
+        for source in notes.get("research_sources") or ():
+            collect_from_source(source)
+
+    return classes
+
+
+def _workflow_schema_relevant_clarify(clarify_message: str) -> bool:
+    text = str(clarify_message or "").casefold()
+    if not text:
+        return False
+    schema_terms = ("schema", "signature", "input", "output", "wire", "construct", "missing")
+    capability_terms = ("cannot", "couldn't", "unable", "need", "required", "lack", "not present", "not found")
+    return any(term in text for term in schema_terms) and any(
+        term in text for term in capability_terms
     )
 
 
@@ -347,53 +394,100 @@ def _premature_workflow_schema_clarify_feedback(
     state: Any,
     clarify_message: str,
 ) -> str:
-    """Reject stops that ignore concrete workflow-derived constructor schemas."""
-    message_text = str(clarify_message or "").casefold()
-    if not any(term in message_text for term in ("not found", "lacks", "missing", "cannot", "without knowing")):
+    """Reject stops that ignore parseable workflow schema already in context."""
+    if not _workflow_schema_relevant_clarify(clarify_message):
         return ""
 
-    schema_classes: list[str] = []
-    last_schema_turn = -1
-    landed_after_schema = False
-    for turn in getattr(state, "batch_turns", ()) or ():
-        if not isinstance(turn, Mapping):
-            continue
-        raw_turn_number = turn.get("turn_number")
-        turn_number = raw_turn_number if isinstance(raw_turn_number, int) else -1
-        landed_count = turn.get("landed_op_count")
-        if isinstance(landed_count, int) and landed_count > 0 and turn_number > last_schema_turn >= 0:
-            landed_after_schema = True
-        statements = turn.get("statements")
-        if not isinstance(statements, list):
-            continue
-        for statement in statements:
-            if not isinstance(statement, Mapping):
-                continue
-            detail = statement.get("detail")
-            if not isinstance(detail, Mapping):
-                continue
-            query_output = str(detail.get("query_output") or "")
-            matches = [
-                *re.findall(r"workflow_schema\s+([A-Za-z_][A-Za-z0-9_]*)\s*:", query_output),
-                *re.findall(r"def\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(", query_output),
-            ]
-            if not matches:
-                continue
-            last_schema_turn = max(last_schema_turn, turn_number)
-            landed_after_schema = False
-            for class_type in matches:
-                if class_type not in schema_classes:
-                    schema_classes.append(class_type)
-
-    if not schema_classes or landed_after_schema:
+    class_names = _class_names_from_text(str(clarify_message or ""))
+    workflow_schema_classes = _workflow_schema_classes_from_context(state)
+    if not workflow_schema_classes:
         return ""
-    class_text = ", ".join(schema_classes[:8])
+
+    mentioned_available = [
+        class_type for class_type in class_names if class_type in workflow_schema_classes
+    ]
+    if class_names and not mentioned_available:
+        return ""
+
+    class_text = ", ".join((mentioned_available or workflow_schema_classes)[:8])
     return (
-        "Premature clarification rejected: workflow-derived constructor schemas are already available "
-        f"for {class_text}. The current graph lacking those nodes is not a reason to stop; it is the "
-        "reason to add the workflow-sourced provisional nodes. Next turn must land the smallest "
-        "evidence-backed workflow-pattern edit using those constructors, or run a strictly necessary "
-        "additional schema/registry lookup for a named class that is still actually missing."
+        "Premature workflow-schema clarification rejected: parseable workflow precedent "
+        f"already provides provisional authoring evidence for ({class_text}). Do not ask "
+        "the user for signatures that are already in "
+        "execution_protocol_notes.research_sources[].workflow_schema."
+    )
+
+
+def _selected_precedent_unknown_class_feedback(
+    state: Any,
+    batch_result: Any,
+) -> str:
+    """Return a terminal authoring blocker for unknown classes after precedent use."""
+    notes = getattr(state, "execution_protocol_notes", None)
+    if not isinstance(notes, Mapping):
+        return ""
+    selected = notes.get("selected_precedent")
+    if not isinstance(selected, Mapping):
+        return ""
+
+    unknown_classes: list[str] = []
+    for statement in getattr(batch_result, "statements", ()) or ():
+        if getattr(statement, "ok", True):
+            continue
+        diagnostics = getattr(statement, "diagnostics", ()) or ()
+        for diagnostic in diagnostics:
+            code = str(getattr(diagnostic, "code", "") or "")
+            message = str(getattr(diagnostic, "message", "") or "")
+            if code != "unknown_add_node_class_type":
+                continue
+            for match in re.findall(r"Unknown class_type '([^']+)'", message):
+                if match not in unknown_classes:
+                    unknown_classes.append(match)
+        source = str(getattr(statement, "source", "") or "")
+        match = re.search(r"=\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(", source)
+        if match:
+            class_type = match.group(1)
+            if class_type and class_type not in unknown_classes:
+                unknown_classes.append(class_type)
+
+    if not unknown_classes:
+        return ""
+
+    precedent_classes: list[str] = []
+    for key in ("minimal_spine", "terminal_output_path"):
+        value = selected.get(key)
+        if isinstance(value, list):
+            for item in value:
+                text = str(item or "").strip()
+                if text and text not in precedent_classes:
+                    precedent_classes.append(text)
+    for class_type in _workflow_schema_classes_from_context(state):
+        if class_type not in precedent_classes:
+            precedent_classes.append(class_type)
+
+    invented_classes = [
+        class_type for class_type in unknown_classes if class_type not in precedent_classes
+    ]
+    key_missing = [
+        class_type
+        for class_type in precedent_classes
+        if class_type.startswith(("ADE_", "VHS_", "IPAdapter", "ControlNet"))
+    ][:6]
+    if not key_missing:
+        key_missing = precedent_classes[:6]
+    missing_text = ", ".join(key_missing) if key_missing else "the selected workflow classes"
+
+    if invented_classes:
+        invented_text = ", ".join(invented_classes[:4])
+        return (
+            "I found a HotShotXL workflow precedent, but this edit session cannot author the "
+            f"required workflow classes ({missing_text}). I also rejected invented replacement "
+            f"class names ({invented_text}) because they were not present in the selected "
+            "precedent or the current authoring schema. The graph is unchanged."
+        )
+    return (
+        "I found a HotShotXL workflow precedent, but this edit session cannot author the "
+        f"required workflow classes ({missing_text}). The graph is unchanged."
     )
 
 

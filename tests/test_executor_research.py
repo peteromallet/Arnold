@@ -21,6 +21,7 @@ from vibecomfy.executor.contracts import (
     PrecedentOption,
     PrecedentPacket,
     ResearchResult,
+    SelectedPrecedent,
     WorkflowSlice,
 )
 from vibecomfy.executor.research import (
@@ -29,8 +30,12 @@ from vibecomfy.executor.research import (
     _build_adaptation_plan,
     _build_inspection_summary,
     _build_precedent_packet,
+    _build_selected_precedent,
     _build_precedent_slices,
     _build_summary,
+    _media_domain_from_node_types,
+    _requested_model_families,
+    _requested_media_domain,
     _normalize_hivemind_source,
     _normalize_source,
     _run_hivemind_research,
@@ -67,6 +72,9 @@ def _make_entry(
     source_workflow_available: bool = False,
     source_workflow_parseable: bool = False,
     adapt_pattern_keys: tuple[str, ...] = (),
+    media_type: str | None = None,
+    task_type: str | None = None,
+    model_families: tuple[str, ...] = (),
 ) -> SearchEntry:
     return SearchEntry(
         class_type=class_type,
@@ -81,6 +89,9 @@ def _make_entry(
         source_workflow_available=source_workflow_available,
         source_workflow_parseable=source_workflow_parseable,
         adapt_pattern_keys=adapt_pattern_keys,
+        media_type=media_type,
+        task_type=task_type,
+        model_families=model_families,
     )
 
 
@@ -117,6 +128,9 @@ class TestNormalizeSource:
             "source_workflow_available",
             "source_workflow_parseable",
             "adapt_pattern_keys",
+            "media_type",
+            "task_type",
+            "model_families",
         ]
         assert source["class_type"] == "KSampler"
         assert source["score"] == 10
@@ -153,6 +167,19 @@ class TestNormalizeSource:
         assert source["template_id"] == "video/ltx2_3_t2v"
         assert source["source_workflow_parseable"] is True
         assert source["adapt_pattern_keys"] == ["two_pass_refinement"]
+
+    def test_workflow_semantics_are_serialized(self) -> None:
+        result = _make_result(
+            "video/hotshot_i2v",
+            source="ready_template",
+            media_type="video",
+            task_type="image_to_video",
+            model_families=("hotshot", "animatediff"),
+        )
+        source = _normalize_source(result)
+        assert source["media_type"] == "video"
+        assert source["task_type"] == "image_to_video"
+        assert source["model_families"] == ["hotshot", "animatediff"]
 
 
 class TestNormalizeHivemindSource:
@@ -1443,6 +1470,63 @@ class TestResearchIntegration:
         assert schema["object_info_widget_order"] == ["widget_0", "widget_1"]
         assert schema["outputs"] == [{"name": "MODEL", "type": "MODEL"}]
 
+    def test_hivemind_corpus_workflow_schema_preserves_positional_widgets(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path,
+    ) -> None:
+        import importlib
+
+        research_module = importlib.import_module("vibecomfy.executor.research")
+        workflow_path = tmp_path / "corpus" / "hotshot.json"
+        workflow_path.parent.mkdir()
+        workflow_path.write_text(
+            json.dumps(
+                {
+                    "nodes": [
+                        {
+                            "id": 93,
+                            "type": "ADE_AnimateDiffLoaderWithContext",
+                            "inputs": [
+                                {"name": "model", "type": "MODEL", "link": 1},
+                                {"name": "context_options", "type": "CONTEXT_OPTIONS", "link": 2},
+                            ],
+                            "outputs": [{"name": "MODEL", "type": "MODEL"}],
+                            "widgets_values": [
+                                "hotshotxl_mm_v1.pth",
+                                "linear (HotshotXL/default)",
+                            ],
+                        },
+                        {
+                            "id": 134,
+                            "type": "VHS_VideoCombine",
+                            "inputs": [{"name": "images", "type": "IMAGE", "link": 3}],
+                            "outputs": [{"name": "GIF", "type": "GIF"}],
+                            "widgets_values": [24, 0, "Video", "video/h264-mp4"],
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        import vibecomfy.utils
+
+        monkeypatch.setattr(vibecomfy.utils, "find_repo_root", lambda: tmp_path)
+
+        node_types, workflow_schema = research_module._load_corpus_workflow_schema(
+            "corpus/hotshot.json"
+        )
+
+        assert node_types == ["ADE_AnimateDiffLoaderWithContext", "VHS_VideoCombine"]
+        loader = workflow_schema["ADE_AnimateDiffLoaderWithContext"]
+        assert loader["input"]["required"]["model"]["type"] == "MODEL"
+        assert loader["input"]["optional"]["widget_0"]["default"] == "hotshotxl_mm_v1.pth"
+        assert loader["object_info_widget_order"] == ["widget_0", "widget_1"]
+        video = workflow_schema["VHS_VideoCombine"]
+        assert video["input"]["optional"]["widget_0"]["default"] == 24
+        assert video["input"]["optional"]["widget_3"]["default"] == "video/h264-mp4"
+        assert video["object_info_widget_order"] == ["widget_0", "widget_1", "widget_2", "widget_3"]
+
     def test_default_web_client_uses_cache_when_live_search_returns_nothing(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -2582,7 +2666,7 @@ class TestBuildAdaptationPlan:
         assert plan.structural_validation == "pass"
         assert plan.to_dict().get("candidate_graph") is plan.candidate_graph
 
-    def test_family_mismatch_does_not_block_anchor_bindings(self) -> None:
+    def test_family_mismatch_blocks_anchor_bindings(self) -> None:
         plan = _build_adaptation_plan(
             query="add Wan LoRA chain",
             graph=self._ltx_target_graph_with_matching_anchor_shapes(),
@@ -2591,9 +2675,9 @@ class TestBuildAdaptationPlan:
         )
 
         assert plan is not None
-        assert plan.structural_validation == "pass"
-        assert plan.anchor_bindings
-        assert plan.candidate_graph is not None
+        assert plan.structural_validation == "fail"
+        assert plan.anchor_bindings == ()
+        assert plan.candidate_graph is None
 
     def test_missing_target_graph_does_not_bind_or_build_candidate(self) -> None:
         plan = _build_adaptation_plan(
@@ -2947,6 +3031,111 @@ class TestBuildPrecedentPacket:
         rr = ResearchResult()
         d = rr.to_dict()
         assert "precedent_packet" not in d
+
+    def test_research_result_includes_selected_precedent(self) -> None:
+        selected = SelectedPrecedent(
+            name="HotShot workflow",
+            source="hivemind_workflow",
+            requested_terms=("hotshot", "video"),
+            implementation_ecosystems=("animatediff",),
+            minimal_spine=("CheckpointLoaderSimple", "ADE_AnimateDiffLoaderWithContext", "VHS_VideoCombine"),
+        )
+        rr = ResearchResult(selected_precedent=selected)
+        d = rr.to_dict()
+        assert d["selected_precedent"]["name"] == "HotShot workflow"
+        assert d["selected_precedent"]["implementation_ecosystems"] == ["animatediff"]
+        assert d["selected_precedent"]["minimal_spine"][-1] == "VHS_VideoCombine"
+
+    def test_selected_precedent_distinguishes_request_from_ecosystem(self) -> None:
+        source = {
+            "class_type": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+            "source": "hivemind_workflow",
+            "url": "https://example.test/workflow-vid2vid-hotshotXL.json",
+            "reasons": (
+                "hivemind:workflow resource",
+                "hivemind:parseable workflow",
+                "hivemind:compiled api available",
+                "hivemind:filename matched 'HotShotXL'",
+            ),
+            "promotion_gates": {
+                "has_workflow_json": True,
+                "parseable_workflow": True,
+                "has_compiled_api": True,
+            },
+            "workflow_semantics": {
+                "model_families": ["hotshot", "animatediff", "sdxl"],
+                "models": ["hotshotxl_mm_v1.pth", "sd_xl_base_1.0.safetensors"],
+                "node_types": [
+                    "CheckpointLoaderSimple",
+                    "ADE_AnimateDiffUniformContextOptions",
+                    "ADE_AnimateDiffLoaderWithContext",
+                    "KSamplerAdvanced",
+                    "VAEDecode",
+                    "VHS_VideoCombine",
+                ],
+            },
+        }
+
+        selected = _build_selected_precedent(
+            query="Switch this to generate 8 frames of video using HotShotXL",
+            precedent_sources=(source,),
+        )
+
+        assert selected is not None
+        payload = selected.to_dict()
+        assert payload["requested_terms"][:2] == ["hotshot", "video"]
+        assert "animatediff" in payload["implementation_ecosystems"]
+        assert "hotshotxl_mm_v1.pth" in payload["models"]
+        assert payload["minimal_spine"] == [
+            "CheckpointLoaderSimple",
+            "ADE_AnimateDiffUniformContextOptions",
+            "ADE_AnimateDiffLoaderWithContext",
+            "KSamplerAdvanced",
+            "VAEDecode",
+            "VHS_VideoCombine",
+        ]
+        assert any("literal 'hotshot'" in item for item in payload["avoid_searches"])
+        assert any("grounding precedent" in item for item in payload["interpretation_notes"])
+
+    def test_selected_precedent_spine_keeps_late_custom_motion_nodes(self) -> None:
+        source = {
+            "class_type": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+            "source": "hivemind_workflow",
+            "url": "https://example.test/workflow-vid2vid-hotshotXL.json",
+            "reasons": ("hivemind:filename matched 'HotShotXL'",),
+            "workflow_semantics": {
+                "model_families": ["hotshot", "animatediff", "sdxl"],
+                "node_types": [
+                    "VAEDecode",
+                    "CLIPTextEncodeSDXL",
+                    "KSamplerAdvanced",
+                    "CheckpointLoaderSimple",
+                    "SaveImage",
+                    "ControlNetApplyAdvanced",
+                    "ControlNetLoaderAdvanced",
+                    "VHS_LoadImagesPath",
+                    "ImageScale",
+                    "PreviewImage",
+                    "VHS_VideoCombine",
+                    "VAEEncode",
+                    "IPAdapterModelLoader",
+                    "CLIPVisionLoader",
+                    "VAELoader",
+                    "ADE_AnimateDiffLoaderWithContext",
+                    "ADE_AnimateDiffUniformContextOptions",
+                ],
+            },
+        }
+
+        selected = _build_selected_precedent(
+            query="Switch this to generate 8 frames of video using HotShotXL",
+            precedent_sources=(source,),
+        )
+
+        assert selected is not None
+        spine = selected.to_dict()["minimal_spine"]
+        assert "ADE_AnimateDiffLoaderWithContext" in spine
+        assert "ADE_AnimateDiffUniformContextOptions" in spine
 
     # ── T8: internal precedent first, stable ordering, non-failure, evidence/context ─
 
@@ -3335,6 +3524,210 @@ class TestResearchPrecedentOutput:
         assert "adaptation_plan" not in d
 
     @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_explicit_model_family_gates_execute_precedents(self, mock_corpus) -> None:
+        """Wrong-family workflow hits remain sources but not execute candidates."""
+        mock_corpus.return_value = [
+            _make_entry(
+                class_type="video/ltx_wrong_hotshot_text_hit",
+                description="Hotshot video workflow text match but actually LTX",
+                source="ready_template",
+                path="ready_templates/video/ltx_wrong.py",
+                model_families=("ltx",),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+            _make_entry(
+                class_type="video/hotshot_i2v",
+                description="Hotshot image to video workflow",
+                source="ready_template",
+                path="ready_templates/video/hotshot_i2v.py",
+                model_families=("hotshot",),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+        ]
+
+        result = research(
+            "add Hotshot image to video support",
+            hivemind_client=None,
+            registry_resolver=None,
+            web_search_client=None,
+        )
+
+        assert any(s["class_type"] == "video/ltx_wrong_hotshot_text_hit" for s in result.sources)
+        assert [s.source_class_type for s in result.precedent_slices] == ["video/hotshot_i2v"]
+        assert result.precedent_packet is not None
+        assert [o.source_class_type for o in result.precedent_packet.options] == ["video/hotshot_i2v"]
+        assert [s["class_type"] for s in result.to_dict()["precedent_sources"]] == ["video/hotshot_i2v"]
+        assert result.selected_precedent is not None
+        assert result.to_dict()["selected_precedent"]["name"] == "video/hotshot_i2v"
+        assert "hotshot" in result.to_dict()["selected_precedent"]["requested_terms"]
+        assert result.workflow_precedent_status == "compatible_workflow_found"
+        assert any("precedent semantic gate: excluded video/ltx_wrong_hotshot_text_hit" in w for w in result.warnings)
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_bare_wan_query_gates_ltx_precedents(self, mock_corpus) -> None:
+        """Bare 'Wan' is a hard family signal, not just WanVideo/Wan2.x."""
+        mock_corpus.return_value = [
+            _make_entry(
+                class_type="video/ltx_wrong_wan_text_hit",
+                description="Wan VACE text match but actually LTX",
+                source="ready_template",
+                path="ready_templates/video/ltx_wrong_wan.py",
+                model_families=("ltx",),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+            _make_entry(
+                class_type="video/wan_vace_i2v",
+                description="Wan VACE image to video workflow",
+                source="ready_template",
+                path="ready_templates/video/wan_vace_i2v.py",
+                model_families=("wan",),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+        ]
+
+        result = research(
+            "add Wan VACE identity preservation",
+            hivemind_client=None,
+            registry_resolver=None,
+            web_search_client=None,
+        )
+
+        assert any(s["class_type"] == "video/ltx_wrong_wan_text_hit" for s in result.sources)
+        assert [s.source_class_type for s in result.precedent_slices] == ["video/wan_vace_i2v"]
+        assert [s["class_type"] for s in result.precedent_sources] == ["video/wan_vace_i2v"]
+        assert result.workflow_precedent_status == "compatible_workflow_found"
+        assert any("precedent semantic gate: excluded video/ltx_wrong_wan_text_hit" in w for w in result.warnings)
+
+    def test_wan_family_detection_uses_word_boundaries(self) -> None:
+        assert _requested_model_families("I want image blending help") == set()
+        assert _requested_model_families("Add Wan VACE identity preservation") == {"wan"}
+
+    def test_img2video_and_videocombine_query_terms_target_video_domain(self) -> None:
+        image_graph = {"1": {"class_type": "SaveImage", "inputs": {}}}
+
+        assert _requested_media_domain(
+            "HotShotXL img2video workflow node list; VideoCombine output node",
+            image_graph,
+        ) == "video"
+        assert _requested_media_domain(
+            "Switch to generating 16 frames with Hotshot",
+            image_graph,
+        ) == "video"
+
+    def test_animatediff_combine_counts_as_video_domain(self) -> None:
+        assert _media_domain_from_node_types(
+            ["ADE_AnimateDiffLoaderWithContext", "ADE_AnimateDiffCombine", "SaveImage"]
+        ) == "multi"
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_img2video_query_overrides_current_image_graph_domain(self, mock_corpus) -> None:
+        mock_corpus.return_value = [
+            _make_entry(
+                class_type="image/hotshot_text_hit_wrong_domain",
+                description="Hotshot text hit in an image workflow",
+                source="ready_template",
+                path="ready_templates/image/hotshot_wrong.py",
+                model_families=("hotshot",),
+                media_type="image",
+            ),
+            _make_entry(
+                class_type="video/hotshot_img2video",
+                description="Hotshot img2video workflow",
+                source="ready_template",
+                path="ready_templates/video/hotshot_img2video.py",
+                model_families=("hotshot",),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+        ]
+        image_graph = {"1": {"class_type": "SaveImage", "inputs": {}}}
+
+        result = research(
+            "HotShotXL img2video workflow node list; VideoCombine output node",
+            graph=image_graph,
+            hivemind_client=None,
+            registry_resolver=None,
+            web_search_client=None,
+        )
+
+        assert [s.source_class_type for s in result.precedent_slices] == ["video/hotshot_img2video"]
+        assert result.workflow_precedent_status == "compatible_workflow_found"
+        assert any("media domain 'image' does not match requested 'video'" in w for w in result.warnings)
+        assert not any("media domain 'video' does not match requested 'image'" in w for w in result.warnings)
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_graph_media_domain_gates_execute_precedents(self, mock_corpus) -> None:
+        mock_corpus.return_value = [
+            _make_entry(
+                class_type="video/rodin_text_hit_wrong_domain",
+                description="Rodin Fusion text match but video workflow",
+                source="ready_template",
+                path="ready_templates/video/rodin_wrong.py",
+                media_type="video",
+            ),
+            _make_entry(
+                class_type="3d/rodin_fusion",
+                description="Rodin Fusion 3D workflow",
+                source="ready_template",
+                path="ready_templates/3d/rodin_fusion.py",
+                media_type="3d",
+            ),
+        ]
+        graph = {"1": {"class_type": "Rodin3D_Regular", "inputs": {}}}
+
+        result = research(
+            "set Rodin Fusion model",
+            graph=graph,
+            hivemind_client=None,
+            registry_resolver=None,
+            web_search_client=None,
+        )
+
+        assert any(s["class_type"] == "video/rodin_text_hit_wrong_domain" for s in result.sources)
+        assert [s.source_class_type for s in result.precedent_slices] == ["3d/rodin_fusion"]
+        assert [s["class_type"] for s in result.precedent_sources] == ["3d/rodin_fusion"]
+        assert result.workflow_precedent_status == "compatible_workflow_found"
+        assert any("media domain 'video' does not match requested '3d'" in w for w in result.warnings)
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
+    def test_no_compatible_workflow_does_not_create_execute_packet(self, mock_corpus) -> None:
+        mock_corpus.return_value = [
+            _make_entry(
+                class_type="video/ltx_wrong_hotshot_text_hit",
+                description="Hotshot text hit but actually LTX",
+                source="ready_template",
+                path="ready_templates/video/ltx_wrong.py",
+                model_families=("ltx",),
+                media_type="video",
+                task_type="image_to_video",
+            ),
+            _make_entry(
+                class_type="HotshotLoader",
+                description="Hotshot node registry docs",
+                source="object_info",
+            ),
+        ]
+
+        result = research(
+            "add Hotshot image to video support",
+            hivemind_client=None,
+            registry_resolver=None,
+            web_search_client=None,
+        )
+
+        assert any(s["class_type"] == "video/ltx_wrong_hotshot_text_hit" for s in result.sources)
+        assert any(s["class_type"] == "HotshotLoader" for s in result.sources)
+        assert result.precedent_sources == ()
+        assert result.precedent_slices == ()
+        assert result.precedent_packet is None
+        assert result.workflow_precedent_status == "no_compatible_workflow_found"
+        assert "precedent_sources" not in result.to_dict()
+
+    @patch("vibecomfy.executor.research.build_search_corpus")
     def test_multiple_workflow_sources_all_in_slices(self, mock_corpus) -> None:
         """Multiple workflow sources → multiple slices, plan selects first."""
         mock_corpus.return_value = [
@@ -3418,35 +3811,26 @@ class TestResearchPrecedentOutput:
 
     @patch("vibecomfy.executor.research.build_search_corpus")
     def test_precedent_packet_with_no_workflow_sources(self, mock_corpus) -> None:
-        """research() with no workflow sources: packet may still carry supplemental."""
+        """research() with no workflow sources does not create execute precedent."""
         mock_corpus.return_value = [
             _make_entry("KSampler", source="object_info", description="Sampler node"),
             _make_entry("VAEDecode", source="object_info", description="VAE decode node"),
         ]
         result = research("sampler", hivemind_client=None)
-        # No slices, no adaptation plan
         assert result.precedent_slices == ()
         assert result.adaptation_plan is None
-        # Packet may still carry supplemental options from non-workflow sources
-        # (KSampler, VAEDecode have descriptions, so they qualify as supplemental)
-        if result.precedent_packet is not None:
-            for opt in result.precedent_packet.options:
-                forbidden = {
-                    "winner", "best", "selected", "score", "rank", "primary",
-                    "preferred", "chosen", "pick", "choice", "top", "recommended",
-                }
-                opt_dict = opt.to_dict()
-                overlap = set(opt_dict.keys()) & forbidden
-                assert not overlap
+        assert result.precedent_sources == ()
+        assert result.precedent_packet is None
+        assert result.workflow_precedent_status == "no_compatible_workflow_found"
 
     @patch("vibecomfy.executor.research.build_search_corpus")
     def test_precedent_packet_ordering_local_first(self, mock_corpus) -> None:
         """Packet options order local (ready_template) before external (hivemind_workflow)."""
         mock_corpus.return_value = [
-            _make_entry("local_wf", source="ready_template", path="local.py", description="Local"),
-            _make_entry("ext_wf", source="hivemind_workflow", path="ext.py", description="Ext"),
+            _make_entry("local_workflow", source="ready_template", path="local.py", description="Local workflow"),
+            _make_entry("external_workflow", source="hivemind_workflow", path="ext.py", description="External workflow"),
         ]
-        result = research("wf", hivemind_client=None)
+        result = research("workflow", hivemind_client=None)
         assert result.precedent_packet is not None
         # Local (ready_template) should come before external (hivemind_workflow)
         local_indices = [

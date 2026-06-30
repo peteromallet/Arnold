@@ -342,6 +342,7 @@ SOURCE = r'''
             break
 
     failure_kind = _batch_budget_failure_kind(state.batch_turns)
+    artifixer_report = _batch_budget_artifixer_report(state, failure_kind)
     state.batch_exit_mode = _BATCH_EXIT_BUDGET
     state.batch_final_summary = (
         f"Stopped after {state.batch_turn_count} turn(s); "
@@ -378,6 +379,7 @@ SOURCE = r'''
                     "turn_count": state.batch_turn_count,
                     "budget_state": dict(state.batch_budget_state),
                     "budget_classification": failure_kind.value,
+                    "artifixer": artifixer_report,
                 },
             },
         ),
@@ -386,6 +388,14 @@ SOURCE = r'''
             "turn_count": state.batch_turn_count,
             "budget_state": dict(state.batch_budget_state),
             "budget_classification": failure_kind.value,
+            "diagnostics": (
+                {
+                    "code": "artifixer_not_attempted",
+                    "severity": "info",
+                    "message": "Artifact repair was not attempted for this terminal batch stop.",
+                    "detail": artifixer_report,
+                },
+            ),
         },
     )
 

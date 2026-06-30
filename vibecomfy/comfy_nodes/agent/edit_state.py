@@ -350,8 +350,8 @@ def _read_only_discovery_turn_count(state: AgentEditState) -> int:
 
 def _discovery_stop_message(state: AgentEditState) -> str:
     return (
-        "I could not find a workflow precedent or installed/provisional node schema "
-        "specific enough to safely switch this graph to the requested workflow. "
+        "I could not produce a safe graph edit from the available workflow precedent "
+        "and current authoring surface. "
         "The graph is unchanged."
     )
 

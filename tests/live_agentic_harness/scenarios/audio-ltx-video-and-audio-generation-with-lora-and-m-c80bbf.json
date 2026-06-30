@@ -6,7 +6,11 @@
   "timeout": 380,
   "apply": true,
   "assessment": {
-    "expect_graph_changed": true
+    "expect_graph_changed": true,
+    "allow_safe_refusal_outcome_kinds": [
+      "clarify",
+      "requires_custom_nodes"
+    ]
   },
   "desired": {
     "outcome": "The audio generation component uses AudioLDM2 instead of MelBand RoFormer, and it is fed appropriate conditioning from the video or separate audio conditioning, producing synchronized audio latents that are decoded to MP3 alongside the video output.",

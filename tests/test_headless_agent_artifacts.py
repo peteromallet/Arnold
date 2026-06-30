@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from vibecomfy.agent.artifacts import synthesize_headless_artifacts
+from vibecomfy.agent.artifacts import _execute_research_sources, synthesize_headless_artifacts
 from vibecomfy.executor.contracts import (
     ClassifyDecision,
     ExecutorResult,
@@ -39,7 +39,12 @@ def test_headless_artifacts_redact_metadata_and_write_phase_payloads(tmp_path: P
             ),
             research=ResearchResult(
                 summary="Found precedent.",
-                sources=({"url": "https://example.test", "api_key": "source-secret"},),
+                sources=(
+                    {"class_type": "wrong_ltx", "api_key": "source-secret"},
+                    {"class_type": "right_hotshot"},
+                ),
+                precedent_sources=({"class_type": "right_hotshot"},),
+                workflow_precedent_status="compatible_workflow_found",
             ),
             implementation=ImplementationResult(
                 graph={"nodes": [{"id": 2}]},
@@ -82,7 +87,9 @@ def test_headless_artifacts_redact_metadata_and_write_phase_payloads(tmp_path: P
     )
     assert _read_json(output_dir / "flow_metadata.json")["readiness"]["api_key"] == "<redacted>"
     assert _read_json(output_dir / "response.json")["debug"]["provider_token"] == "<redacted>"
-    assert _read_json(output_dir / "research.json")["sources"][0]["api_key"] == "<redacted>"
+    research_json = _read_json(output_dir / "research.json")
+    assert research_json["sources"][0]["api_key"] == "<redacted>"
+    assert [s["class_type"] for s in research_json["sources"]] == ["wrong_ltx", "right_hotshot"]
 
     implementation_payload = _read_json(output_dir / "implementation_payload.json")
     assert implementation_payload["route"] == "adapt"
@@ -95,7 +102,75 @@ def test_headless_artifacts_redact_metadata_and_write_phase_payloads(tmp_path: P
     assert implementation_payload["execution_protocol_notes"]["research_summary"] == (
         "Found precedent."
     )
+    assert implementation_payload["execution_protocol_notes"]["research_sources"] == [
+        {"class_type": "right_hotshot"}
+    ]
+    assert (
+        implementation_payload["execution_protocol_notes"]["workflow_precedent_status"]
+        == "compatible_workflow_found"
+    )
     assert _read_json(output_dir / "implementation_result.json")["message"] == "Applied edit."
+
+
+def test_execute_research_sources_derive_from_packet_without_full_fallback() -> None:
+    research = {
+        "sources": [
+            {"class_type": "wrong_ltx", "source": "ready_template"},
+            {"class_type": "right_hotshot", "source": "hivemind_workflow"},
+        ],
+        "precedent_packet": {
+            "options": [
+                {"source_class_type": "right_hotshot"},
+            ],
+        },
+        "precedent_slices": [
+            {"source_class_type": "right_hotshot"},
+        ],
+    }
+
+    assert _execute_research_sources(research) == [
+        {"class_type": "right_hotshot", "source": "hivemind_workflow"}
+    ]
+
+
+def test_adapt_artifacts_do_not_emit_packet_without_compatible_workflow(tmp_path: Path) -> None:
+    output_dir = tmp_path / "out"
+    request = {
+        "query": "adapt this graph",
+        "graph": {"nodes": [{"id": 1, "class_type": "LoadImage"}]},
+    }
+    result = ExecutorResult.success(
+        report=Report(
+            plan=ClassifyDecision(
+                research=True,
+                implement=True,
+                route="adapt",
+                research_goal="Find precedent.",
+            ),
+            research=ResearchResult(
+                summary="Found supplemental docs only.",
+                sources=({"class_type": "wrong_ltx", "source": "object_info"},),
+                workflow_precedent_status="no_compatible_workflow_found",
+            ),
+            implementation=ImplementationResult(message="No compatible precedent."),
+        ),
+        graph=request["graph"],
+        reply="Done.",
+    )
+
+    synthesize_headless_artifacts(
+        request=request,
+        result=result,
+        response={"ok": True, "route": "adapt"},
+        output_dir=output_dir,
+        status="success",
+    )
+
+    implementation_payload = _read_json(output_dir / "implementation_payload.json")
+    assert "research_context_packet" not in implementation_payload
+    notes = implementation_payload["execution_protocol_notes"]
+    assert notes["workflow_precedent_status"] == "no_compatible_workflow_found"
+    assert "research_sources" not in notes
 
 
 def test_headless_artifacts_copy_only_real_durable_turn_files(tmp_path: Path) -> None:

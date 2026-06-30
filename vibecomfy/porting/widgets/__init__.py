@@ -14,6 +14,13 @@ from .aliases import (
     widget_names_for_class,
     widget_names_from_schema,
 )
+from .compact_resolver import (
+    WidgetNameResolution,
+    compact_widget_names_for_node,
+    missing_widget_value_sentinel,
+    widget_index_for_field,
+    widget_value_for_field,
+)
 from .schema import (
     WIDGET_SCHEMA,
     WIDGET_SEMANTIC_NAMES,
@@ -31,9 +38,14 @@ __all__ = [
     "resolve_widget_name_with_provenance",
     "widget_alias_analysis",
     "WidgetResolution",
+    "WidgetNameResolution",
+    "compact_widget_names_for_node",
+    "missing_widget_value_sentinel",
     "unresolved_widget_aliases",
+    "widget_index_for_field",
     "widget_names_for_class",
     "widget_names_from_schema",
+    "widget_value_for_field",
     # .schema
     "WIDGET_SCHEMA",
     "WIDGET_SEMANTIC_NAMES",

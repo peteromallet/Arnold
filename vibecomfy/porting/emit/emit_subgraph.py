@@ -43,6 +43,7 @@ from vibecomfy.porting.emit.emit_kwargs import (
     _topological_node_order,
     _ui_output_names,
 )
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 from vibecomfy.porting.widgets.schema import WIDGET_SCHEMA
 
 if TYPE_CHECKING:
@@ -806,7 +807,8 @@ def _subgraph_instance_port_candidate_names(node: Any, subgraph: _SubgraphDef) -
     return out
 def _subgraph_instance_widget_values(node: Any) -> dict[str, Any]:
     values: dict[str, Any] = {}
-    aliases = getattr(node, "metadata", {}).get("input_aliases") or _ui_widget_aliases(node)
+    compact_names = compact_widget_names_for_node(node, str(getattr(node, "class_type", ""))).names
+    aliases = list(compact_names) if compact_names else _ui_widget_aliases(node)
     for key, value in {**getattr(node, "inputs", {}), **getattr(node, "widgets", {})}.items():
         if _is_link(value):
             continue
@@ -892,13 +894,14 @@ def _positional_ui_widget_names(ui_node: Mapping[str, Any], value_count: int) ->
             else:
                 set_name(index, name)
 
-    try:
-        from vibecomfy.porting.object_info.consume import object_info_widget_order
-
-        object_info_names = object_info_widget_order(class_type)
-    except Exception:
-        object_info_names = []
-    for index, name in enumerate(object_info_names):
+    resolved_names = compact_widget_names_for_node(
+        ui_node,
+        class_type,
+        value_count=value_count,
+    ).names
+    for index, name in enumerate(resolved_names):
+        if name == f"widget_{index}":
+            continue
         set_name(index, name)
 
     input_items = [item for item in ui_node.get("inputs") or () if isinstance(item, Mapping)]

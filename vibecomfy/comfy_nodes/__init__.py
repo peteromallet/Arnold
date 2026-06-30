@@ -105,7 +105,9 @@ if os.environ.get("VIBECOMFY_HEADLESS", "0") != "1":
     _ensure_comfyui_root_on_path()
 
     try:
-        from server import PromptServer
+        from ._server_compat import import_prompt_server
+
+        PromptServer = import_prompt_server()
 
         # Guard against double registration. ComfyUI can import this module via
         # multiple paths (e.g. the custom_nodes symlink and the package itself),

@@ -90,9 +90,11 @@ def _format_batch_report(
             "do not search again unless the last query failed to identify a usable path. "
             "If a workflow-derived class has a usable signature, use that exact class as the "
             "workflow pattern even when its name is generic; do not invent or search for a "
-            "branded variant that did not appear in the workflow evidence. "
-            "After an exact local schema miss for a workflow-sourced class, use registry/schema "
-            "lookup for that exact class instead of repeating workflow search."
+            "branded variant that did not appear in the workflow evidence. Treat weak "
+            "external mentions as evidence only; they do not make a node authorable. "
+            "If an exact local schema lookup missed, stop using local lookup as research "
+            "and either adapt with available authorable classes or clarify with the "
+            "specific missing authoring surface."
         )
     lines = [summary, *statement_lines, query_only_note, *diagnostic_lines]
     return "\n".join(line for line in lines if line)
@@ -304,6 +306,94 @@ def _batch_has_landed_edits(state: "AgentEditState") -> bool:
     )
 
 
+_BATCH_UNREPRESENTABLE_DIAGNOSTIC_CODES = {
+    "statement_not_allowed",
+    "call_not_allowed",
+    "nested_call_not_allowed",
+    "raw_coordinate_kwarg_not_allowed",
+    "intent_class_construction_not_allowed",
+    "cross_scope_add_node_unsupported",
+    "scope_escape_not_allowed",
+    "original_virtual_node_immutable",
+    "kwargs_unpack_not_allowed",
+    "dict_unpack_not_allowed",
+    "lambda_not_allowed",
+    "comprehension_not_allowed",
+    "f_string_not_allowed",
+    "for_else_not_allowed",
+    "import_not_allowed",
+}
+
+
+def _batch_turn_diagnostics(turns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    diagnostics: list[dict[str, Any]] = []
+    for turn in turns:
+        if not isinstance(turn, Mapping):
+            continue
+        for diagnostic in turn.get("diagnostics") or []:
+            if isinstance(diagnostic, Mapping):
+                diagnostics.append(dict(diagnostic))
+        for statement in turn.get("statements") or []:
+            if not isinstance(statement, Mapping):
+                continue
+            for diagnostic in statement.get("diagnostics") or []:
+                if isinstance(diagnostic, Mapping):
+                    diagnostics.append(dict(diagnostic))
+    return diagnostics
+
+
+def _batch_budget_artifixer_report(
+    state: "AgentEditState",
+    failure_kind: FailureKind,
+) -> dict[str, Any]:
+    """Classify a terminal batch stop for a future repair pass without mutating it."""
+    diagnostics = _batch_turn_diagnostics(state.batch_turns)
+    diagnostic_codes = sorted(
+        {
+            str(diagnostic.get("code"))
+            for diagnostic in diagnostics
+            if diagnostic.get("code") is not None
+        }
+    )
+    hard_codes = sorted(
+        set(diagnostic_codes).intersection(_BATCH_UNREPRESENTABLE_DIAGNOSTIC_CODES)
+    )
+    try:
+        candidate_graph_changed = bool(_batch_candidate_graph_changed(state))
+    except Exception:
+        candidate_graph_changed = False
+    landed_edits = _batch_has_landed_edits(state)
+    hard_refusal = bool(hard_codes) or failure_kind is FailureKind.UNREPRESENTABLE
+    if hard_refusal:
+        outcome = "hard_refusal"
+        reason = "unrepresentable_edit_surface"
+    elif not candidate_graph_changed:
+        outcome = "not_attempted"
+        reason = "no_candidate_graph_change"
+    elif not landed_edits:
+        outcome = "not_attempted"
+        reason = "no_landed_edits"
+    else:
+        outcome = "candidate_available"
+        reason = "diagnostics_only"
+    return {
+        "stage": "artifixer",
+        "version": 1,
+        "policy": "diagnostics_only",
+        "attempted": False,
+        "outcome": outcome,
+        "reason": reason,
+        "failure_kind": failure_kind.value,
+        "hard_refusal": hard_refusal,
+        "candidate_graph_changed": candidate_graph_changed,
+        "landed_edits": landed_edits,
+        "turn_count": state.batch_turn_count,
+        "budget_state": dict(state.batch_budget_state),
+        "diagnostic_codes": diagnostic_codes,
+        "hard_refusal_codes": hard_codes,
+    }
+
+
 def _batch_budget_failure_kind(turns: list[dict[str, Any]]) -> FailureKind:
     schema_gap_markers = (
         "schema",
@@ -312,23 +402,6 @@ def _batch_budget_failure_kind(turns: list[dict[str, Any]]) -> FailureKind:
         "compatible output",
         "confidence",
     )
-    unrepresentable_codes = {
-        "statement_not_allowed",
-        "call_not_allowed",
-        "nested_call_not_allowed",
-        "raw_coordinate_kwarg_not_allowed",
-        "intent_class_construction_not_allowed",
-        "cross_scope_add_node_unsupported",
-        "scope_escape_not_allowed",
-        "original_virtual_node_immutable",
-        "kwargs_unpack_not_allowed",
-        "dict_unpack_not_allowed",
-        "lambda_not_allowed",
-        "comprehension_not_allowed",
-        "f_string_not_allowed",
-        "for_else_not_allowed",
-        "import_not_allowed",
-    }
     category_turn_hits = {
         FailureKind.MODEL_MISTAKE: 0,
         FailureKind.UNREPRESENTABLE: 0,
@@ -336,9 +409,7 @@ def _batch_budget_failure_kind(turns: list[dict[str, Any]]) -> FailureKind:
     }
     for turn in turns:
         turn_categories: set[FailureKind] = set()
-        diagnostics = list(turn.get("diagnostics") or [])
-        for statement in turn.get("statements") or []:
-            diagnostics.extend(statement.get("diagnostics") or [])
+        diagnostics = _batch_turn_diagnostics([turn])
         for diagnostic in diagnostics:
             code = str(diagnostic.get("code", "")).lower()
             message = str(diagnostic.get("message", "")).lower()
@@ -347,7 +418,7 @@ def _batch_budget_failure_kind(turns: list[dict[str, Any]]) -> FailureKind:
             if any(marker in haystack for marker in schema_gap_markers):
                 turn_categories.add(FailureKind.SCHEMA_GAP)
                 continue
-            if code in unrepresentable_codes or "not allowed" in haystack or "immutable" in haystack:
+            if code in _BATCH_UNREPRESENTABLE_DIAGNOSTIC_CODES or "not allowed" in haystack or "immutable" in haystack:
                 turn_categories.add(FailureKind.UNREPRESENTABLE)
                 continue
             turn_categories.add(FailureKind.MODEL_MISTAKE)

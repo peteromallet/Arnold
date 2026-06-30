@@ -33,6 +33,276 @@ function safePreviewOverlayText(text, fallback = "") {
     : value;
 }
 
+const PREVIEW_DOM_OVERLAY_ID = "vibecomfy-preview-dom-overlay";
+
+function clearPreviewDomOverlay(doc = (typeof document !== "undefined" ? document : null)) {
+  const root = doc?.getElementById?.(PREVIEW_DOM_OVERLAY_ID);
+  if (root) {
+    root.remove();
+  }
+}
+
+function ensurePreviewDomOverlayRoot(doc = (typeof document !== "undefined" ? document : null)) {
+  if (!doc?.body) {
+    return null;
+  }
+  let root = doc.getElementById?.(PREVIEW_DOM_OVERLAY_ID);
+  if (!root) {
+    root = doc.createElement("div");
+    root.id = PREVIEW_DOM_OVERLAY_ID;
+    root.dataset.vibecomfyPreviewDomOverlay = "1";
+    Object.assign(root.style, {
+      position: "fixed",
+      inset: "0",
+      pointerEvents: "none",
+      zIndex: "2147483647",
+    });
+    doc.body.appendChild(root);
+  }
+  root.textContent = "";
+  return root;
+}
+
+function liveCanvasElement(app) {
+  const canvas = app?.canvas;
+  return canvas?.canvas || canvas?.canvasEl || canvas?.el || null;
+}
+
+function canvasRect(app) {
+  const el = liveCanvasElement(app);
+  if (el && typeof el.getBoundingClientRect === "function") {
+    const rect = el.getBoundingClientRect();
+    if (rect && Number.isFinite(rect.left) && Number.isFinite(rect.top)) {
+      return {
+        left: rect.left,
+        top: rect.top,
+        width: Number.isFinite(rect.width) && rect.width > 0 ? rect.width : (el.clientWidth || el.width || 1),
+        height: Number.isFinite(rect.height) && rect.height > 0 ? rect.height : (el.clientHeight || el.height || 1),
+        backingWidth: Number.isFinite(el.width) && el.width > 0 ? el.width : null,
+        backingHeight: Number.isFinite(el.height) && el.height > 0 ? el.height : null,
+      };
+    }
+  }
+  return null;
+}
+
+function graphPointToCanvasPoint(point, app) {
+  const canvas = app?.canvas;
+  if (canvas && typeof canvas.convertOffsetToCanvas === "function") {
+    try {
+      const converted = canvas.convertOffsetToCanvas([point.x, point.y]);
+      if (converted && Number.isFinite(converted[0]) && Number.isFinite(converted[1])) {
+        return { x: converted[0], y: converted[1] };
+      }
+    } catch (_ignored) {}
+  }
+  const ds = canvas?.ds || {};
+  const scale = Number.isFinite(ds.scale) && ds.scale > 0 ? ds.scale : 1;
+  const offset = Array.isArray(ds.offset) ? ds.offset : [0, 0];
+  const ox = Number.isFinite(offset[0]) ? offset[0] : 0;
+  const oy = Number.isFinite(offset[1]) ? offset[1] : 0;
+  return {
+    x: (point.x + ox) * scale,
+    y: (point.y + oy) * scale,
+  };
+}
+
+function graphBoundsToViewport(bounds, app) {
+  const rect = canvasRect(app);
+  if (!rect) {
+    return null;
+  }
+  const topLeft = graphPointToCanvasPoint({ x: bounds.x, y: bounds.y }, app);
+  const bottomRight = graphPointToCanvasPoint({ x: bounds.x + bounds.w, y: bounds.y + bounds.h }, app);
+  const scaleX = rect.backingWidth ? rect.width / rect.backingWidth : 1;
+  const scaleY = rect.backingHeight ? rect.height / rect.backingHeight : 1;
+  return {
+    left: rect.left + Math.min(topLeft.x, bottomRight.x) * scaleX,
+    top: rect.top + Math.min(topLeft.y, bottomRight.y) * scaleY,
+    width: Math.abs(bottomRight.x - topLeft.x) * scaleX,
+    height: Math.abs(bottomRight.y - topLeft.y) * scaleY,
+  };
+}
+
+function previewChipGeometry(bounds, labelText) {
+  let labelReserve = 56;
+  if (typeof labelText === "string" && labelText) {
+    labelReserve = Math.max(labelReserve, Math.min(labelText.length * 7 + 34, bounds.w - 24));
+  }
+  const rightPad = 8;
+  let overlayW = Math.max(48, bounds.w - rightPad - labelReserve);
+  overlayW = Math.min(overlayW, bounds.w - 12);
+  if (!Number.isFinite(overlayW) || overlayW <= 0) {
+    return null;
+  }
+  return {
+    x: bounds.x + bounds.w - rightPad - overlayW,
+    y: bounds.y + 2,
+    w: overlayW,
+    h: Math.max(bounds.h - 4, 12),
+  };
+}
+
+function appendPreviewDomChip(root, app, bounds, valueText) {
+  const viewport = graphBoundsToViewport(bounds, app);
+  if (!viewport || viewport.width <= 0 || viewport.height <= 0) {
+    return;
+  }
+  const chip = root.ownerDocument.createElement("div");
+  chip.dataset.vibecomfyPreviewChip = "1";
+  chip.textContent = String(valueText || "");
+  Object.assign(chip.style, {
+    position: "fixed",
+    left: `${viewport.left}px`,
+    top: `${viewport.top}px`,
+    width: `${viewport.width}px`,
+    height: `${viewport.height}px`,
+    boxSizing: "border-box",
+    overflow: "hidden",
+    whiteSpace: "nowrap",
+    textOverflow: "ellipsis",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    padding: "0 7px",
+    border: "1px solid rgba(255,193,7,0.95)",
+    borderRadius: "5px",
+    background: "rgba(20,18,8,0.96)",
+    color: "rgba(255,193,7,0.98)",
+    font: "11px Arial, sans-serif",
+    lineHeight: "1",
+    pointerEvents: "none",
+    zIndex: "2147483647",
+  });
+  root.appendChild(chip);
+}
+
+export function syncPreviewDomOverlay(app, ctx, diff, candidateGraph, deps = {}) {
+  const {
+    getLiveGraph,
+    getLiveGraphNodes,
+    getUid,
+    graphNodeCount,
+    readNodePos,
+    readNodeSize,
+    readWidgetValues,
+    widgetValuePreviewText,
+    captureLiveCanvasRevision,
+  } = deps;
+  const doc = liveCanvasElement(app)?.ownerDocument || (typeof document !== "undefined" ? document : null);
+  if (!doc?.body || !diff) {
+    clearPreviewDomOverlay(doc);
+    return;
+  }
+  const root = ensurePreviewDomOverlayRoot(doc);
+  if (!root) {
+    return;
+  }
+  const drawModel = buildOverlayDrawModel(ctx, diff, candidateGraph, {
+    captureLiveCanvasRevision,
+    getLiveGraph,
+    getLiveGraphNodes,
+    getUid,
+    graphNodeCount,
+    readNodeSize,
+    readWidgetValues,
+    widgetValuePreviewText,
+  });
+  const liveByUid = drawModel.liveByUid;
+  const SLOT_H = (window.LiteGraph && window.LiteGraph.NODE_SLOT_HEIGHT) || 20;
+  const WIDGET_H = (window.LiteGraph && window.LiteGraph.NODE_WIDGET_HEIGHT) || 20;
+  const widgetIndexFromFieldPath = function (fieldPath) {
+    const path = String(fieldPath || "");
+    const direct = /(?:^|\.)(?:widgets_values|widgets)\.(\d+)(?:\.|$)/.exec(path);
+    if (direct) return Number(direct[1]);
+    const widgetKey = /^widget_(\d+)$/.exec(path);
+    return widgetKey ? Number(widgetKey[1]) : null;
+  };
+  const fieldNameCandidates = function (fieldPath) {
+    const path = String(fieldPath || "");
+    if (!path) return [];
+    const normalized = path.replace(/\[(\d+)\]/g, ".$1");
+    const parts = normalized.split(".").filter(Boolean);
+    const last = parts.length ? parts[parts.length - 1] : normalized;
+    return [normalized, last];
+  };
+  const resolveWidgetFieldIndex = function (field, node) {
+    const directIndex = widgetIndexFromFieldPath(field?.field_path);
+    if (directIndex != null && Number.isFinite(directIndex)) {
+      return directIndex;
+    }
+    const widgetsForNode = Array.isArray(node?.widgets) ? node.widgets : [];
+    const candidates = fieldNameCandidates(field?.field_path);
+    for (const candidateName of candidates) {
+      for (let wi = 0; wi < widgetsForNode.length; wi += 1) {
+        const widget = widgetsForNode[wi];
+        if ([widget?.name, widget?.label].filter(Boolean).some((name) => String(name) === candidateName)) {
+          return wi;
+        }
+      }
+    }
+    return null;
+  };
+  let chipCount = 0;
+  const fieldsByUid = new Map();
+  for (const field of Array.isArray(diff.edited_fields) ? diff.edited_fields : []) {
+    if (!field?.uid) continue;
+    if (!fieldsByUid.has(field.uid)) fieldsByUid.set(field.uid, []);
+    fieldsByUid.get(field.uid).push(field);
+  }
+  for (const [uid, fields] of fieldsByUid) {
+    const node = liveByUid.get(uid);
+    if (!node?.pos || node.flags?.collapsed) continue;
+    const pos = readNodePos(node);
+    const size = readNodeSize(node);
+    const widgets = Array.isArray(node.widgets) ? node.widgets : [];
+    const slotRows = Math.max(
+      Array.isArray(node.inputs) ? node.inputs.length : 0,
+      Array.isArray(node.outputs) ? node.outputs.length : 0,
+    );
+    const computedRowsTop = pos.y + slotRows * SLOT_H;
+    const rowBoundsForWidgetIndex = function (widx) {
+      const widget = widgets[widx];
+      let rowTop = computedRowsTop + widx * WIDGET_H;
+      let rowH = WIDGET_H;
+      if (widget && typeof widget.last_y === "number") {
+        rowTop = pos.y + widget.last_y;
+        if (typeof widget.computeSize === "function") {
+          try {
+            const computed = widget.computeSize(size.w);
+            if (computed && typeof computed[1] === "number" && computed[1] > 0) {
+              rowH = computed[1];
+            }
+          } catch (_ignored) {}
+        }
+      }
+      return { x: pos.x, y: rowTop, w: size.w, h: rowH };
+    };
+    const drawn = new Set();
+    for (const field of fields) {
+      const index = resolveWidgetFieldIndex(field, node);
+      if (index == null || !Number.isFinite(index) || index < 0 || drawn.has(index)) {
+        continue;
+      }
+      drawn.add(index);
+      const valueText = safePreviewOverlayText(field.new_value, "");
+      if (!valueText) {
+        continue;
+      }
+      const labelText = typeof widgets[index]?.name === "string" ? widgets[index].name : "";
+      const chipBounds = previewChipGeometry(rowBoundsForWidgetIndex(index), labelText);
+      if (!chipBounds) {
+        continue;
+      }
+      appendPreviewDomChip(root, app, chipBounds, valueText);
+      chipCount += 1;
+    }
+  }
+  if (chipCount === 0) {
+    clearPreviewDomOverlay(doc);
+  }
+}
+
 function computeGhostDimensions(cn, ctx, deps = {}) {
   const { readWidgetValues, widgetValuePreviewText } = deps;
   var TITLE_H = (window.LiteGraph && window.LiteGraph.NODE_TITLE_HEIGHT) || 30;
@@ -160,6 +430,7 @@ export function installAgentPreviewOverlay(app, deps = {}) {
   const overlayDraw = app.__vibecomfyAgentPreviewOverlayDraw || function (ctx) {
     const panel = currentAgentPanel();
     if (!panel || panel.state.phase !== PANEL_STATE.AWAITING_REVIEW || !panel.state.candidateGraph) {
+      clearPreviewDomOverlay(liveCanvasElement(app)?.ownerDocument);
       return;
     }
     // ── T4/T5: Scope check — do not draw candidate overlay if the candidate
@@ -172,14 +443,19 @@ export function installAgentPreviewOverlay(app, deps = {}) {
       && panel.state.chatScopeId != null
       && panel.state.candidateScopeId !== panel.state.chatScopeId
     ) {
+      clearPreviewDomOverlay(liveCanvasElement(app)?.ownerDocument);
       return;
     }
     try {
       const diff = getOrBuildPreviewDiff();
       if (diff) {
         drawPreviewOverlay(ctx, diff);
+        syncPreviewDomOverlay(app, ctx, diff, diff._candidateGraph || panel.state.candidateGraph, deps);
+      } else {
+        clearPreviewDomOverlay(liveCanvasElement(app)?.ownerDocument);
       }
     } catch (e) {
+      clearPreviewDomOverlay(liveCanvasElement(app)?.ownerDocument);
       console.warn("[vibecomfy] drawPreviewOverlay threw:", e);
     }
   };

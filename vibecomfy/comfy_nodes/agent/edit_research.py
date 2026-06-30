@@ -528,6 +528,201 @@ def _resolver_candidate_supports_class(
     return False
 
 
+def _iter_research_precedent_sources(state: AgentEditState) -> tuple[Mapping[str, Any], ...]:
+    sources: list[Mapping[str, Any]] = []
+    for source in getattr(state, "executor_research_sources", ()) or ():
+        if isinstance(source, Mapping):
+            sources.append(source)
+    notes = getattr(state, "execution_protocol_notes", None)
+    if isinstance(notes, Mapping):
+        raw_sources = notes.get("research_sources")
+        if isinstance(raw_sources, list):
+            sources.extend(source for source in raw_sources if isinstance(source, Mapping))
+    return tuple(sources)
+
+
+def _workflow_class_types_from_research_context(
+    state: AgentEditState,
+    *,
+    max_classes: int = 16,
+    missing_only: bool = True,
+    custom_only: bool = True,
+) -> tuple[str, ...]:
+    classes: list[str] = []
+    for source in _iter_research_precedent_sources(state):
+        source_kind = str(source.get("source") or "")
+        pack = str(source.get("pack") or "")
+        if "workflow" not in source_kind and pack != "workflow":
+            continue
+        candidates: list[Any] = []
+        for key in ("workflow_schema_classes", "node_types"):
+            value = source.get(key)
+            if isinstance(value, list):
+                candidates.extend(value)
+        workflow_schema = source.get("workflow_schema")
+        if isinstance(workflow_schema, Mapping):
+            candidates.extend(workflow_schema.keys())
+        for raw_class_type in candidates:
+            class_type = str(raw_class_type or "").strip()
+            if (
+                not class_type
+                or class_type in classes
+                or (
+                    missing_only
+                    and state.schema_provider.get_schema(class_type) is not None
+                )
+            ):
+                continue
+            if custom_only:
+                # Workflow precedents include many core/local classes. Resolve the
+                # custom-looking misses that can plausibly require installation.
+                if not (
+                    "_" in class_type
+                    or class_type.startswith(("ADE", "VHS", "IPAdapter", "ACN"))
+                    or " " in class_type
+                ):
+                    continue
+            elif state.schema_provider.get_schema(class_type) is None and not (
+                "_" in class_type
+                or class_type.startswith(("ADE", "VHS", "IPAdapter", "ACN"))
+                or " " in class_type
+            ):
+                # For prompt focus we want already-known core classes too, but
+                # unknown plain names from workflow metadata are usually labels
+                # or weak aliases rather than authorable node types.
+                continue
+            classes.append(class_type)
+            if len(classes) >= max_classes:
+                return tuple(classes)
+    return tuple(classes)
+
+
+def _workflow_schema_candidates_from_research_context(
+    state: AgentEditState,
+) -> tuple[dict[str, Any], ...]:
+    candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source in _iter_research_precedent_sources(state):
+        workflow_schema = source.get("workflow_schema")
+        if not isinstance(workflow_schema, Mapping) or not workflow_schema:
+            continue
+        source_kind = str(source.get("source") or "")
+        pack = str(source.get("pack") or "")
+        if "workflow" not in source_kind and pack != "workflow":
+            continue
+        key = json.dumps(
+            {
+                "url": source.get("url") or source.get("source_workflow_path") or "",
+                "classes": sorted(str(class_type) for class_type in workflow_schema),
+            },
+            sort_keys=True,
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(
+            {
+                "pack": {
+                    "name": source.get("class_type") or source.get("name") or "workflow_json",
+                    "slug": source.get("pack") or "workflow_json",
+                    "source": source.get("source") or "external_workflow",
+                    "url": source.get("url") or source.get("source_workflow_path") or "",
+                },
+                "provisional_schema": {
+                    "version": "workflow-json",
+                    "schema": {"nodes": workflow_schema},
+                    "runnable": False,
+                },
+                "expected_classes": sorted(str(class_type) for class_type in workflow_schema),
+                "validation_mode": "workflow_json_provisional",
+                "warnings": [
+                    "Schema derived from workflow JSON; runtime node pack may need installation."
+                ],
+                "stable_install_hash": f"workflow-json:{key}",
+            }
+        )
+    return tuple(candidates)
+
+
+def _hydrate_research_precedent_node_schemas(state: AgentEditState) -> tuple[dict[str, Any], ...]:
+    """Compile workflow-observed missing node classes into authoring capabilities.
+
+    Adapt-route prefetch provides workflow evidence before the batch agent runs.
+    Exact workflow JSON schemas are allowed as provisional authoring schemas;
+    registry/Manager resolution is an additional source of stronger evidence,
+    not a prerequisite for placing a reviewable candidate node.
+    """
+    missing_classes = _workflow_class_types_from_research_context(state)
+    workflow_candidates = _workflow_schema_candidates_from_research_context(state)
+    if workflow_candidates:
+        try:
+            from vibecomfy.schema import CompositeSchemaProvider, ProvisionalRegistrySchemaProvider
+
+            provisional = ProvisionalRegistrySchemaProvider(workflow_candidates)
+            if provisional.schemas():
+                state.provisional_registry_candidate_hashes = frozenset(
+                    {
+                        *state.provisional_registry_candidate_hashes,
+                        *(_candidate_stable_key(candidate) for candidate in workflow_candidates),
+                    }
+                )
+                state.schema_provider = CompositeSchemaProvider(provisional, state.schema_provider)
+        except Exception as exc:  # noqa: BLE001 - keep registry fallback below available
+            LOGGER.debug("workflow schema provisional hydration unavailable: %s", exc)
+
+    if not missing_classes:
+        return workflow_candidates
+
+    unresolved_missing_classes = tuple(
+        class_type
+        for class_type in missing_classes
+        if state.schema_provider.get_schema(class_type) is None
+    )
+    if not unresolved_missing_classes:
+        return workflow_candidates
+
+    try:
+        from vibecomfy.registry.pack_resolver import resolve_missing_nodes
+        from vibecomfy.schema import CompositeSchemaProvider, ProvisionalRegistrySchemaProvider
+    except Exception as exc:  # noqa: BLE001 - registry hydration is best-effort
+        LOGGER.debug("research precedent schema hydration unavailable: %s", exc)
+        return workflow_candidates
+
+    candidates: list[dict[str, Any]] = []
+    for class_type in unresolved_missing_classes:
+        try:
+            resolution = resolve_missing_nodes(class_type, query_intent="class_name")
+        except Exception as exc:  # noqa: BLE001 - keep context-only behavior on lookup failure
+            LOGGER.debug("research precedent schema hydration failed for %s: %s", class_type, exc)
+            continue
+        for raw_candidate in getattr(resolution, "candidates", ()) or ():
+            candidate = _candidate_dict(raw_candidate)
+            if candidate is None:
+                continue
+            if not _resolver_candidate_supports_class(candidate, class_type):
+                continue
+            candidates.append(candidate)
+
+    new_candidates = [
+        candidate
+        for candidate in candidates
+        if _candidate_stable_key(candidate) not in state.provisional_registry_candidate_hashes
+    ]
+    if not new_candidates:
+        return workflow_candidates
+    provisional = ProvisionalRegistrySchemaProvider(new_candidates)
+    if not provisional.schemas():
+        return ()
+    state.provisional_registry_candidate_hashes = frozenset(
+        {
+            *state.provisional_registry_candidate_hashes,
+            *(_candidate_stable_key(candidate) for candidate in new_candidates),
+        }
+    )
+    state.schema_provider = CompositeSchemaProvider(provisional, state.schema_provider)
+    return (*workflow_candidates, *new_candidates)
+
+
 def _hydrate_current_graph_unknown_node_schemas(state: AgentEditState) -> tuple[dict[str, Any], ...]:
     missing_classes = _graph_class_types_missing_from_schema(state.graph, state.schema_provider)
     if not missing_classes:

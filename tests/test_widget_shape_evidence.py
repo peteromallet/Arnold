@@ -148,6 +148,55 @@ def test_programmatic_widget_overflow_uses_candidate_count_without_raw_payload()
     assert evidence.overflow is True
 
 
+def test_showtext_pysssss_two_widget_shape_is_committed_schema_backed() -> None:
+    node = VibeNode(
+        "180",
+        "ShowText|pysssss",
+        inputs={"text": ["179", 0]},
+        widgets={"widget_1": ""},
+    )
+    provider = _Provider(
+        {
+            "ShowText|pysssss": _schema(
+                "ShowText|pysssss",
+                {"text": InputSpec("STRING")},
+            )
+        }
+    )
+
+    evidence = _evidence(node, provider)
+
+    assert evidence.schema_less is False
+    assert evidence.raw_widget_count is None
+    assert evidence.candidate_widget_count == 2
+    assert evidence.schema_widget_count == 2
+    assert evidence.compacted_widget_names == ("text",)
+    assert evidence.overflow is False
+
+
+def test_primitive_int_control_after_generate_metadata_adds_ui_slot() -> None:
+    from vibecomfy.porting.object_info.consume import object_info_widget_order
+    from vibecomfy.porting.object_info.consume import CACHE_DIR
+    from vibecomfy.schema.provider import ObjectInfoIndexSchemaProvider
+
+    assert object_info_widget_order("PrimitiveInt") == ["value", None]
+
+    node = VibeNode(
+        "5186",
+        "PrimitiveInt",
+        widgets={"widget_0": 448, "widget_1": "fixed"},
+    )
+    provider = ObjectInfoIndexSchemaProvider(CACHE_DIR)
+
+    evidence = _evidence(node, provider)
+
+    assert evidence.schema_less is False
+    assert evidence.raw_widget_count is None
+    assert evidence.candidate_widget_count == 2
+    assert evidence.schema_widget_count == 2
+    assert evidence.overflow is False
+
+
 def test_raw_scalar_widget_overflow_is_not_hidden_by_compacted_candidate_count() -> None:
     node = VibeNode(
         "12",

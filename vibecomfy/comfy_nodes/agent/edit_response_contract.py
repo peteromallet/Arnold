@@ -157,21 +157,22 @@ def _resolver_candidates_from_batch_turns(state: AgentEditState) -> list[dict[st
             detail = statement.get("detail")
             if not isinstance(detail, Mapping):
                 continue
-            raw_candidates = detail.get("resolver_candidates")
-            if not isinstance(raw_candidates, list):
-                continue
-            for raw_candidate in raw_candidates:
-                if not isinstance(raw_candidate, Mapping):
+            for key_name in ("resolver_candidates", "workflow_schema_candidates"):
+                raw_candidates = detail.get(key_name)
+                if not isinstance(raw_candidates, list):
                     continue
-                candidate = dict(raw_candidate)
-                key = (
-                    str(candidate.get("stable_install_hash") or "")
-                    or json.dumps(candidate, sort_keys=True, default=str)
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                candidates.append(candidate)
+                for raw_candidate in raw_candidates:
+                    if not isinstance(raw_candidate, Mapping):
+                        continue
+                    candidate = dict(raw_candidate)
+                    key = (
+                        str(candidate.get("stable_install_hash") or "")
+                        or json.dumps(candidate, sort_keys=True, default=str)
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    candidates.append(candidate)
     return candidates
 
 
@@ -181,12 +182,13 @@ def _resolver_candidates_from_batch_result(batch_result: Any) -> list[dict[str, 
         detail = getattr(statement, "detail", None)
         if not isinstance(detail, Mapping):
             continue
-        raw_candidates = detail.get("resolver_candidates")
-        if not isinstance(raw_candidates, list):
-            continue
-        for raw_candidate in raw_candidates:
-            if isinstance(raw_candidate, Mapping):
-                candidates.append(dict(raw_candidate))
+        for key_name in ("resolver_candidates", "workflow_schema_candidates"):
+            raw_candidates = detail.get(key_name)
+            if not isinstance(raw_candidates, list):
+                continue
+            for raw_candidate in raw_candidates:
+                if isinstance(raw_candidate, Mapping):
+                    candidates.append(dict(raw_candidate))
     return candidates
 
 
@@ -388,20 +390,20 @@ def _build_batch_repl_response(
         turn_identity=turn_identity,
     )
     resolver_candidates = _resolver_candidates_from_batch_turns(state)
-    # A run that landed an edit AND still flagged missing custom nodes
-    # (resolver_candidates) is not a success: the edit cannot satisfy the
-    # request without those nodes. Treat edit_clarify the same as pure_clarify
-    # here so the agent cannot smuggle a fabricated edit through by appending a
-    # clarifying question (the Moonvalley widget-guess path). The
-    # `bool(resolver_candidates)` conjunct is load-bearing: legitimate
-    # edit_clarify runs (real edit + genuine follow-up question, no missing
-    # nodes) have empty resolver_candidates and stay on the candidate path.
-    missing_custom_nodes_terminal = (
+    # A run that landed an edit AND still flagged unresolved schema-backed
+    # external evidence is not a success: the edit cannot satisfy the request
+    # with only the partial graph change. Weak registry/code-search leads are
+    # not authoring capability and should not force a special product route.
+    unresolved_schema_terminal = (
         state.batch_exit_mode in (_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY)
-        and bool(resolver_candidates)
+        and any(
+            _resolver_candidate_is_authoring_capability(candidate)
+            for candidate in resolver_candidates
+            if isinstance(candidate, Mapping)
+        )
     )
-    if missing_custom_nodes_terminal:
-        internal_outcome = TurnOutcome.noop(reason=state.user_message or None)
+    if unresolved_schema_terminal:
+        internal_outcome = TurnOutcome.clarify(question=state.user_message or None)
     elif route_blocks_apply and canonical_route != "clarify":
         internal_outcome = TurnOutcome.noop(reason=state.user_message or None)
     elif state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY:
@@ -420,17 +422,10 @@ def _build_batch_repl_response(
         internal_outcome = TurnOutcome.noop(
             reason=state.batch_done_summary or state.user_message or None
         )
-    if missing_custom_nodes_terminal:
-        public_outcome = {
-            "kind": "requires_custom_nodes",
-            "candidates": resolver_candidates,
-            "warnings": [],
-        }
-    else:
-        public_outcome = public_outcome_from_turn_outcome(
-            internal_outcome,
-            response={"candidate": candidate_payload},
-        )
+    public_outcome = public_outcome_from_turn_outcome(
+        internal_outcome,
+        response={"candidate": candidate_payload},
+    )
     if internal_outcome.kind == "edit":
         message = ensure_sentence_message(
             state.user_message,
@@ -470,10 +465,11 @@ def _build_batch_repl_response(
     if canonical_route == "research":
         response["graph_unchanged"] = True
         response["no_candidate_reason"] = "route_not_applyable"
-    if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY} and not missing_custom_nodes_terminal:
+    if state.batch_exit_mode in {_BATCH_EXIT_PURE_CLARIFY, _BATCH_EXIT_EDIT_CLARIFY} and not unresolved_schema_terminal:
         response["clarification_required"] = True
         response["graph_unchanged"] = state.batch_exit_mode == _BATCH_EXIT_PURE_CLARIFY
-    elif missing_custom_nodes_terminal:
+    elif unresolved_schema_terminal:
+        response["clarification_required"] = True
         response["graph_unchanged"] = True
         response["no_candidate_reason"] = "route_not_applyable"
     elif state.batch_exit_mode == _BATCH_EXIT_NOOP:
@@ -499,7 +495,7 @@ def _build_batch_repl_response(
             "queue_allowed": context.queue_allowed if has_candidate else False,
         }
     )
-    if missing_custom_nodes_terminal:
+    if unresolved_schema_terminal:
         return _strip_clarify_forbidden_response_fields(built_response)
     return _sanitize_pure_clarify_response(built_response)
 

@@ -46,6 +46,7 @@ from .contracts import (
     PrecedentOption,
     PrecedentPacket,
     ResearchResult,
+    SelectedPrecedent,
     WorkflowSlice,
     warning_detail_from_exception,
 )
@@ -207,16 +208,20 @@ _PATTERN_REQUIRED_TERMS: dict[str, tuple[str, ...]] = {
 }
 
 _FAMILY_EVIDENCE_TERMS: dict[str, tuple[str, ...]] = {
-    "wan": ("wanvideo", "wan2", "wan_2", "wan 2", "wan2_1", "wan2.1", "wan2_2", "wan2.2"),
+    "wan": ("wan", "wanvideo", "wan2", "wan_2", "wan 2", "wan2_1", "wan2.1", "wan2_2", "wan2.2"),
     "ltx": ("ltx", "ltxv", "lightricks"),
+    "hotshot": ("hotshot", "hotshotxl", "hotshot xl"),
+    "animatediff": ("animatediff", "animate diff"),
+    "sdxl": ("sdxl", "sd_xl", "sd xl", "stable diffusion xl"),
+    "sd3": ("sd3", "stable diffusion 3"),
     "flux": ("flux", "flux1", "flux2"),
     "qwen": ("qwen",),
     "hunyuan": ("hunyuan", "hyvideo"),
-    "sd": ("sdxl", "sd3", "stable diffusion", "stable_diffusion"),
+    "cogvideo": ("cogvideo", "cog video"),
 }
 
 _HIVEMIND_SEMANTIC_FAMILY_TERMS: dict[str, tuple[str, ...]] = {
-    "wan": ("wanvideo", "wan2", "wan_2", "wan 2", "wan2_1", "wan2.1", "wan2_2", "wan2.2"),
+    "wan": ("wan", "wanvideo", "wan2", "wan_2", "wan 2", "wan2_1", "wan2.1", "wan2_2", "wan2.2"),
     "ltx": ("ltx", "ltxv", "lightricks"),
     "hotshot": ("hotshot", "hotshotxl", "hotshot xl"),
     "animatediff": ("animatediff", "animate diff"),
@@ -330,6 +335,9 @@ def _normalize_source(result: SearchResult) -> dict[str, Any]:
         "source_workflow_available": entry.source_workflow_available,
         "source_workflow_parseable": entry.source_workflow_parseable,
         "adapt_pattern_keys": list(entry.adapt_pattern_keys),
+        "media_type": entry.media_type,
+        "task_type": entry.task_type,
+        "model_families": list(entry.model_families),
     }
 
 
@@ -812,24 +820,30 @@ def _load_corpus_workflow_schema(corpus_path: str) -> tuple[list[str], dict[str,
         return None
     if not isinstance(data, dict):
         return None
-    nodes = data.get("nodes")
-    if not isinstance(nodes, dict):
+    raw_nodes = data.get("nodes")
+    if isinstance(raw_nodes, Mapping):
+        nodes = [node for node in raw_nodes.values() if isinstance(node, Mapping)]
+    elif isinstance(raw_nodes, list):
+        nodes = [node for node in raw_nodes if isinstance(node, Mapping)]
+    else:
         return None
 
     node_types: list[str] = []
     workflow_schema: dict[str, Any] = {}
-    for node in nodes.values():
-        if not isinstance(node, dict):
-            continue
-        class_type = node.get("class_type")
+    for node in nodes:
+        class_type = node.get("class_type") or node.get("type")
         if not isinstance(class_type, str) or not class_type:
             continue
         node_types.append(class_type)
         if class_type in workflow_schema:
             continue
         ui = (node.get("metadata") or {}).get("_ui") or {}
-        inputs: list[dict[str, Any]] = ui.get("inputs") or []
-        outputs: list[dict[str, Any]] = ui.get("outputs") or []
+        inputs: list[dict[str, Any]] = (
+            ui.get("inputs") if isinstance(ui.get("inputs"), list) else node.get("inputs") or []
+        )
+        outputs: list[dict[str, Any]] = (
+            ui.get("outputs") if isinstance(ui.get("outputs"), list) else node.get("outputs") or []
+        )
         input_schema: dict[str, Any] = {"required": {}, "optional": {}}
         for inp in inputs:
             if not isinstance(inp, dict):
@@ -841,15 +855,30 @@ def _load_corpus_workflow_schema(corpus_path: str) -> tuple[list[str], dict[str,
             # as optional schema hints.
             target = "required" if inp.get("link") is not None else "optional"
             input_schema[target][name] = {"type": inp.get("type") or "*"}
+        widget_order: list[str] = []
+        widgets = ui.get("widgets_values")
+        if not isinstance(widgets, list):
+            widgets = node.get("widgets_values")
+        if isinstance(widgets, list):
+            for index, value in enumerate(widgets):
+                name = f"widget_{index}"
+                input_schema["optional"].setdefault(
+                    name,
+                    {"type": _workflow_widget_type(value), "default": value},
+                )
+                widget_order.append(name)
         output_schema = [
             {"name": out.get("name") or out.get("type") or f"out_{i}", "type": out.get("type") or "*"}
             for i, out in enumerate(outputs)
             if isinstance(out, dict)
         ]
-        workflow_schema[class_type] = {
+        schema_entry = {
             "input": input_schema,
             "outputs": output_schema,
         }
+        if widget_order:
+            schema_entry["object_info_widget_order"] = widget_order
+        workflow_schema[class_type] = schema_entry
     return node_types, workflow_schema
 
 
@@ -2115,6 +2144,206 @@ def _build_precedent_slices(
     return tuple(slices)
 
 
+_PRECEDENT_WORKFLOW_SOURCE_KINDS: frozenset[str] = frozenset({
+    "ready_template",
+    "source_workflow",
+    "external_workflow",
+    "hivemind_workflow",
+})
+
+
+def _requested_model_families(query: str, graph: dict | None = None) -> set[str]:
+    """Return explicit model-family signals from the user request/graph.
+
+    Query text is treated as the hard signal. Graph-derived families are only
+    included when the query has none, so a request like "switch this LTX graph
+    to Hotshot" gates to Hotshot rather than preserving the current LTX family.
+    """
+    families = _family_evidence_from_text(query)
+    if families:
+        return families
+    graph_text = " ".join(_graph_node_class_types(graph))
+    return _family_evidence_from_text(graph_text)
+
+
+def _requested_media_domain(query: str, graph: dict | None = None) -> str | None:
+    query_media = _media_domain_from_text(query)
+    if query_media is not None:
+        return query_media
+    return _media_domain_from_node_types(_graph_node_class_types(graph))
+
+
+def _media_domain_from_text(text: str) -> str | None:
+    haystack = text.casefold().replace("-", "_")
+    # Prefer explicit output/domain words over generic input words. A request
+    # like "image to video" should target video precedents, not image.
+    ordered = (
+        (
+            "video",
+            (
+                "video",
+                "i2v",
+                "t2v",
+                "v2v",
+                "img2video",
+                "image2video",
+                "txt2video",
+                "text2video",
+                "image_to_video",
+                "text_to_video",
+                "audio_to_video",
+                "video_combine",
+                "videocombine",
+                "frame",
+                "frames",
+                "frame_count",
+            ),
+        ),
+        ("3d", ("3d", "3_d", "model_to_3d", "image_to_3d", "text_to_3d", "mesh", "glb", "obj")),
+        ("audio", ("text_to_audio", "audio_to_audio", "audio_generation", "speech", "music", "sound")),
+        ("image", ("image", "t2i", "i2i", "text_to_image", "image_to_image", "inpaint", "outpaint")),
+    )
+    for domain, aliases in ordered:
+        if any(_semantic_alias_in_text(alias, haystack) for alias in aliases):
+            return domain
+    return None
+
+
+def _source_model_families(source: Mapping[str, Any]) -> set[str]:
+    explicit = _coerce_tasks(source.get("model_families"))
+    semantics = source.get("workflow_semantics")
+    if isinstance(semantics, Mapping):
+        explicit.extend(_coerce_tasks(semantics.get("model_families")))
+
+    families: set[str] = set()
+    for family in explicit:
+        if not isinstance(family, str) or not family.strip():
+            continue
+        canonical = family.casefold().strip().replace("-", "_")
+        if canonical in {"controlnet", "control_net"}:
+            continue
+        if canonical in _FAMILY_EVIDENCE_TERMS:
+            families.add(canonical)
+            continue
+        inferred = _family_evidence_from_text(canonical)
+        if inferred:
+            families.update(inferred)
+        else:
+            families.add(canonical)
+    if families:
+        return families
+
+    text_parts: list[str] = []
+    for key in (
+        "class_type",
+        "pack",
+        "description",
+        "path",
+        "template_id",
+        "source_workflow_path",
+        "task_type",
+        "media_type",
+    ):
+        value = source.get(key)
+        if isinstance(value, str):
+            text_parts.append(value)
+    for key in ("tasks", "adapt_pattern_keys", "node_types"):
+        value = source.get(key)
+        if isinstance(value, (list, tuple)):
+            text_parts.extend(str(item) for item in value if item is not None)
+    if isinstance(semantics, Mapping):
+        text_parts.append(_workflow_semantics_text({"metadata": {"workflow_semantics": dict(semantics)}}))
+    return _family_evidence_from_text(" ".join(text_parts))
+
+
+def _source_media_domain(source: Mapping[str, Any]) -> str | None:
+    semantics = source.get("workflow_semantics")
+    candidates: list[str] = []
+    for key in ("media_type", "task_type", "class_type", "description", "path", "template_id", "source_workflow_path"):
+        value = source.get(key)
+        if isinstance(value, str):
+            candidates.append(value)
+    if isinstance(semantics, Mapping):
+        for key in ("media_type", "task_type"):
+            value = semantics.get(key)
+            if isinstance(value, str):
+                candidates.append(value)
+        node_types = semantics.get("node_types")
+        if isinstance(node_types, list):
+            domain = _media_domain_from_node_types(node_types)
+            if domain not in (None, "multi"):
+                return domain
+    node_types = source.get("node_types")
+    if isinstance(node_types, (list, tuple)):
+        domain = _media_domain_from_node_types(node_types)
+        if domain not in (None, "multi"):
+            return domain
+    return _media_domain_from_text(" ".join(candidates))
+
+
+def _is_workflow_precedent_source(source: Mapping[str, Any]) -> bool:
+    source_kind = str(source.get("source", ""))
+    if source_kind in _PRECEDENT_WORKFLOW_SOURCE_KINDS:
+        return True
+    path = source.get("path")
+    source_workflow_path = source.get("source_workflow_path")
+    return (
+        isinstance(path, str)
+        and (path.endswith(".py") or path.endswith(".json"))
+    ) or isinstance(source_workflow_path, str)
+
+
+def _filter_sources_for_precedent_semantics(
+    sources: tuple[dict[str, Any], ...],
+    *,
+    query: str,
+    graph: dict | None,
+) -> tuple[tuple[dict[str, Any], ...], tuple[str, ...]]:
+    """Filter execute-facing precedent candidates by explicit family intent.
+
+    The full research source list remains intact for evidence. This gate only
+    trims workflow/template candidates before `WorkflowSlice`, packet, and plan
+    construction. Unknown-family sources pass; known wrong-family sources are
+    blocked when the query explicitly names a target/current model family.
+    """
+    requested = _requested_model_families(query, graph)
+    requested_media = _requested_media_domain(query, graph)
+    if not requested and requested_media in (None, "multi"):
+        return sources, ()
+
+    filtered: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    for source in sources:
+        if not isinstance(source, dict) or not _is_workflow_precedent_source(source):
+            filtered.append(source)
+            continue
+        source_families = _source_model_families(source)
+        if requested and source_families and not source_families & requested:
+            class_type = str(source.get("class_type") or "<unknown>")
+            warnings.append(
+                "precedent semantic gate: excluded "
+                f"{class_type} because model families {sorted(source_families)} "
+                f"do not match requested {sorted(requested)}"
+            )
+            continue
+        source_media = _source_media_domain(source)
+        if (
+            requested_media not in (None, "multi")
+            and source_media not in (None, "multi")
+            and source_media != requested_media
+        ):
+            class_type = str(source.get("class_type") or "<unknown>")
+            warnings.append(
+                "precedent semantic gate: excluded "
+                f"{class_type} because media domain {source_media!r} "
+                f"does not match requested {requested_media!r}"
+            )
+            continue
+        filtered.append(source)
+        continue
+    return tuple(filtered), tuple(warnings)
+
+
 def _source_pattern_key(source: dict[str, Any]) -> str | None:
     keys = source.get("adapt_pattern_keys")
     if isinstance(keys, list | tuple):
@@ -2213,9 +2442,18 @@ def _family_evidence_from_text(text: str) -> set[str]:
     haystack = text.lower().replace("-", "_").replace("\\", "/")
     families: set[str] = set()
     for family, terms in _FAMILY_EVIDENCE_TERMS.items():
-        if any(term in haystack for term in terms):
+        if any(_semantic_alias_in_text(term, haystack) for term in terms):
             families.add(family)
     return families
+
+
+def _semantic_alias_in_text(alias: str, text: str) -> bool:
+    alias_low = alias.casefold().replace("-", "_")
+    if not alias_low:
+        return False
+    if re.search(r"[^a-z0-9_]", alias_low):
+        return alias_low in text
+    return re.search(rf"(?<![a-z0-9]){re.escape(alias_low)}(?![a-z0-9])", text) is not None
 
 
 def _detect_record_families(records: tuple[WorkflowNodeRecord, ...], *extra_text: str | None) -> set[str]:
@@ -2445,7 +2683,7 @@ def _build_candidate_graph(
 _MEDIA_DOMAIN_VIDEO_TYPES: frozenset[str] = frozenset({
     "VHS_VideoCombine", "SaveVideo", "SaveAnimatedWEBP",
     "SaveAnimatedPNG", "SaveAnimatedGIF", "SaveWEBM",
-    "VideoCombine", "WanVideoDecode", "WanVideoSampler",
+    "VideoCombine", "ADE_AnimateDiffCombine", "WanVideoDecode", "WanVideoSampler",
 })
 _MEDIA_DOMAIN_AUDIO_TYPES: frozenset[str] = frozenset({
     "SaveAudio", "SaveAudioMP3", "VHS_LoadAudio",
@@ -2712,6 +2950,15 @@ def _build_adaptation_plan(
                 source_records = _selected_source_records(candidate_slice)
                 if not source_records:
                     continue
+                source_families = _detect_record_families(
+                    source_records,
+                    candidate_slice.source_class_type,
+                    candidate_slice.source_workflow_path,
+                    candidate_slice.python_path,
+                )
+                target_families = _detect_record_families(target_load.nodes)
+                if source_families and target_families and not source_families & target_families:
+                    continue
                 candidate_anchor_bindings = _build_anchor_bindings(
                     selected_slice=candidate_slice,
                     source_records=source_records,
@@ -2948,6 +3195,195 @@ def _build_precedent_packet(
     )
 
 
+_SPINE_KEYWORDS: tuple[str, ...] = (
+    "loader",
+    "context",
+    "encode",
+    "sampler",
+    "sample",
+    "decode",
+    "combine",
+    "save",
+    "preview",
+    "output",
+)
+
+
+def _unique_strings(values: Any, *, limit: int | None = None) -> tuple[str, ...]:
+    result: list[str] = []
+    seen: set[str] = set()
+    if not isinstance(values, (list, tuple, set)):
+        return ()
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        text = value.strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+        if limit is not None and len(result) >= limit:
+            break
+    return tuple(result)
+
+
+def _source_semantics(source: Mapping[str, Any]) -> Mapping[str, Any]:
+    semantics = source.get("workflow_semantics")
+    return semantics if isinstance(semantics, Mapping) else {}
+
+
+def _source_node_types(source: Mapping[str, Any]) -> tuple[str, ...]:
+    node_types = _unique_strings(source.get("node_types"))
+    if node_types:
+        return node_types
+    semantics = _source_semantics(source)
+    node_types = _unique_strings(semantics.get("node_types"))
+    if node_types:
+        return node_types
+    return ()
+
+
+def _source_models(source: Mapping[str, Any]) -> tuple[str, ...]:
+    semantics = _source_semantics(source)
+    models = _unique_strings(semantics.get("models"), limit=12)
+    if models:
+        return models
+    return _unique_strings(source.get("models"), limit=12)
+
+
+def _minimal_spine_from_source(source: Mapping[str, Any]) -> tuple[str, ...]:
+    node_types = _source_node_types(source)
+    if not node_types:
+        workflow_schema = source.get("workflow_schema")
+        if isinstance(workflow_schema, Mapping):
+            node_types = tuple(str(k) for k in workflow_schema.keys() if str(k).strip())
+    spine: list[str] = []
+    seen: set[str] = set()
+    for class_type in node_types:
+        normalized = class_type.casefold().replace("-", "_")
+        if not any(keyword in normalized for keyword in _SPINE_KEYWORDS):
+            continue
+        if class_type in seen:
+            continue
+        seen.add(class_type)
+        spine.append(class_type)
+    critical = [
+        class_type
+        for class_type in spine
+        if (
+            class_type.startswith(("ADE", "ACN", "IPAdapter", "WanVideo"))
+            or "_" in class_type
+            or " " in class_type
+        )
+    ]
+    if len(spine) > 12:
+        spine = list(_unique_strings((*spine[:12], *critical), limit=16))
+        seen = set(spine)
+    for class_type in _terminal_output_path_from_source(source):
+        if class_type not in seen:
+            seen.add(class_type)
+            spine.append(class_type)
+    if spine:
+        return tuple(spine)
+    return tuple(node_types[:12])
+
+
+def _terminal_output_path_from_source(source: Mapping[str, Any]) -> tuple[str, ...]:
+    node_types = _source_node_types(source)
+    terminal: list[str] = []
+    for class_type in node_types:
+        normalized = class_type.casefold().replace("-", "_")
+        if any(term in normalized for term in ("videocombine", "video_combine", "save", "preview", "output")):
+            if class_type not in terminal:
+                terminal.append(class_type)
+    return tuple(terminal[-4:])
+
+
+def _requested_terms_for_selected_precedent(query: str, source: Mapping[str, Any]) -> tuple[str, ...]:
+    terms: list[str] = []
+    terms.extend(sorted(_requested_model_families(query)))
+    media = _requested_media_domain(query)
+    if media:
+        terms.append(media)
+    for reason in _unique_strings(source.get("reasons")):
+        match = re.search(r"matched '([^']+)'", reason)
+        if match:
+            terms.append(match.group(1))
+    return _unique_strings(tuple(terms), limit=12)
+
+
+def _build_selected_precedent(
+    *,
+    query: str,
+    precedent_sources: tuple[dict[str, Any], ...],
+) -> SelectedPrecedent | None:
+    """Build a directive workflow interpretation from compatible research sources."""
+    if not precedent_sources:
+        return None
+    source = precedent_sources[0]
+    if not isinstance(source, Mapping):
+        return None
+
+    name = str(source.get("class_type") or "").strip()
+    if not name:
+        return None
+
+    semantics = _source_semantics(source)
+    requested_terms = _requested_terms_for_selected_precedent(query, source)
+    model_families = tuple(sorted(_source_model_families(source)))
+    requested_families = set(_requested_model_families(query))
+    implementation_ecosystems = tuple(
+        family for family in model_families
+        if family not in requested_families
+    )
+
+    notes: list[str] = [
+        "Treat this workflow as the grounding precedent for the requested edit.",
+        "Local installed schema checks belong to later authoring/resolution and do not reinterpret this workflow pattern.",
+    ]
+    if requested_families and implementation_ecosystems:
+        notes.append(
+            "The requested model/product/task term is linked by the workflow to a differently named implementation ecosystem."
+        )
+
+    node_types = set(_source_node_types(source))
+    avoid_searches: list[str] = []
+    for term in requested_terms:
+        if len(term) < 3:
+            continue
+        if not any(term.casefold().replace(" ", "") in node.casefold().replace("_", "").replace("-", "").replace(" ", "") for node in node_types):
+            avoid_searches.append(
+                f"Do not search for a literal {term!r} node unless a selected workflow contains one."
+            )
+            break
+
+    source_workflow_path = source.get("source_workflow_path") or source.get("path") or source.get("url")
+    if not isinstance(source_workflow_path, str):
+        source_workflow_path = None
+
+    promotion_gates = source.get("promotion_gates")
+    if not isinstance(promotion_gates, Mapping):
+        promotion_gates = semantics.get("promotion_gates")
+    if not isinstance(promotion_gates, Mapping):
+        promotion_gates = {}
+
+    return SelectedPrecedent(
+        name=name,
+        source=str(source.get("source") or "").strip(),
+        source_workflow_path=source_workflow_path,
+        match_reasons=_unique_strings(source.get("reasons"), limit=12),
+        requested_terms=requested_terms,
+        model_families=model_families,
+        implementation_ecosystems=implementation_ecosystems,
+        models=_source_models(source),
+        minimal_spine=_minimal_spine_from_source(source),
+        terminal_output_path=_terminal_output_path_from_source(source),
+        promotion_gates=dict(promotion_gates),
+        interpretation_notes=tuple(notes),
+        avoid_searches=tuple(avoid_searches),
+    )
+
+
 def _slice_description(
     sl: WorkflowSlice,
     matched_source: dict | None,
@@ -3164,8 +3600,32 @@ def research(
     # Graph is not directly available in research(), so inspection and
     # adaptation plan are left empty.  The executor wires graph inspection
     # Thread the attached target graph into adaptation planning (T14).
-    all_precedent_slices = _build_precedent_slices(tuple(sources))
+    candidate_sources, semantic_gate_warnings = _filter_sources_for_precedent_semantics(
+        tuple(sources),
+        query=query,
+        graph=graph,
+    )
+    workflow_precedent_sources = tuple(
+        source
+        for source in candidate_sources
+        if isinstance(source, dict) and _is_workflow_precedent_source(source)
+    )
+    all_precedent_slices = _build_precedent_slices(workflow_precedent_sources)
     precedent_slices = _filter_slices_for_graph_domain(graph, all_precedent_slices)
+    slice_class_types = {slice_obj.source_class_type for slice_obj in precedent_slices}
+    slice_paths = {
+        slice_obj.source_workflow_path
+        for slice_obj in precedent_slices
+        if slice_obj.source_workflow_path
+    }
+    precedent_sources = tuple(
+        source
+        for source in workflow_precedent_sources
+        if (
+            str(source.get("class_type") or "") in slice_class_types
+            or str(source.get("source_workflow_path") or source.get("path") or "") in slice_paths
+        )
+    )
     adaptation_plan = _build_adaptation_plan(
         query=query,
         graph=graph,
@@ -3177,9 +3637,18 @@ def research(
     # selection.  An absent packet (None) is non-failure.
     precedent_packet = _build_precedent_packet(
         slices=precedent_slices,
-        sources=tuple(sources),
+        sources=precedent_sources,
     )
-    precedent_warnings: list[str] = []
+    selected_precedent = _build_selected_precedent(
+        query=query,
+        precedent_sources=precedent_sources,
+    )
+    precedent_warnings: list[str] = list(semantic_gate_warnings)
+    workflow_precedent_status = (
+        "compatible_workflow_found"
+        if precedent_slices
+        else ("research_unavailable" if not sources else "no_compatible_workflow_found")
+    )
     if not precedent_slices:
         precedent_warnings.append(
             "precedent research: no workflow/template precedents found in "
@@ -3194,6 +3663,9 @@ def research(
         precedent_slices=precedent_slices,
         adaptation_plan=adaptation_plan,
         precedent_packet=precedent_packet,
+        precedent_sources=precedent_sources,
+        workflow_precedent_status=workflow_precedent_status,
+        selected_precedent=selected_precedent,
     )
 
 
@@ -3205,6 +3677,7 @@ __all__ = [
     "_build_adaptation_plan",
     "_build_inspection_summary",
     "_build_precedent_packet",
+    "_build_selected_precedent",
     "_build_precedent_slices",
     "_default_hivemind_client",
     "_default_web_search_client",

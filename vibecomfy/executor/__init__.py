@@ -24,6 +24,7 @@ _EXPORT_MODULES = {
     "run_classify_turn": ".agent_backend",
     "run_executor": ".core",
     "run_local_research": ".research",
+    "SelectedPrecedent": ".contracts",
     "run_reply_turn": ".agent_backend",
     "_default_hivemind_client": ".research",
 }

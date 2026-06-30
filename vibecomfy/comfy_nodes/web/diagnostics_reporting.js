@@ -332,6 +332,67 @@ function explicitDiagnosticTurnsFromState(panel) {
   return turns;
 }
 
+function entryBatchTurns(entry) {
+  const changeDetails =
+    entry?.change_details
+    || entry?.changeDetails
+    || null;
+  if (changeDetails && typeof changeDetails === "object") {
+    if (Array.isArray(changeDetails.batch_turns)) {
+      return changeDetails.batch_turns;
+    }
+    if (Array.isArray(changeDetails.batchTurns)) {
+      return changeDetails.batchTurns;
+    }
+  }
+  if (Array.isArray(entry?.batch_turns)) {
+    return entry.batch_turns;
+  }
+  if (Array.isArray(entry?.batchTurns)) {
+    return entry.batchTurns;
+  }
+  return [];
+}
+
+function transcriptDiagnosticTurnsFromState(panel) {
+  const state = panel?.state || {};
+  const rawMessages = [];
+  if (Array.isArray(state.chatMessages)) {
+    rawMessages.push(...state.chatMessages);
+  }
+  if (Array.isArray(state.transcriptMessages)) {
+    rawMessages.push(...state.transcriptMessages);
+  }
+  if (!rawMessages.length) {
+    return [];
+  }
+  const turns = [];
+  let lastUserTask = panel?.state?.lastSubmit?.task || null;
+  for (const message of rawMessages) {
+    if (!message || typeof message !== "object") {
+      continue;
+    }
+    const role = typeof message.role === "string" ? message.role.toLowerCase() : "";
+    const text = compactReportText(message.text || message.message || message.reply || null);
+    if (role === "user" && text) {
+      lastUserTask = text;
+      continue;
+    }
+    if (!entryBatchTurns(message).length) {
+      continue;
+    }
+    turns.push({
+      ...message,
+      turn_id: message.turn_id || message.turnId || message.turn_identity?.turn_id || message.turnIdentity?.turnId || null,
+      session_id: message.session_id || message.sessionId || message.turn_identity?.session_id || message.turnIdentity?.sessionId || panel?.state?.sessionId || null,
+      task: message.task || lastUserTask || null,
+      status: message.status || message.phase || message.outcome?.kind || "unknown",
+      message: message.message || message.text || message.reply || null,
+    });
+  }
+  return turns;
+}
+
 function collectRecentTurnSummaries(panel, limit = ISSUE_REPORT_TURN_LIMIT) {
   let turns = explicitDiagnosticTurnsFromState(panel);
   if (turns.length === 0) {
@@ -339,6 +400,13 @@ function collectRecentTurnSummaries(panel, limit = ISSUE_REPORT_TURN_LIMIT) {
     // execution events, but older tests and already-open panels can still seed it
     // directly. Do not use normal transcript messages for diagnostics here.
     turns = Array.isArray(panel?.state?.turns) ? panel.state.turns : [];
+  }
+  if (turns.length === 0) {
+    // Durable chat rehydration can retain the authoritative batch trace under
+    // message.change_details.batch_turns even when the explicit diagnostics
+    // compartment was not populated. Promote only those structured transcript
+    // entries; never scrape ordinary chat text as a diagnostic event.
+    turns = transcriptDiagnosticTurnsFromState(panel);
   }
   return turns.slice(0, limit).map((entry, index) => ({
     label: entry?.turn_id || (Number.isFinite(entry?.turn_number) ? `turn ${entry.turn_number}` : `entry ${index + 1}`),

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-import re
 from typing import TYPE_CHECKING, Any, Mapping
 
 from vibecomfy.porting.edit.ops import (
@@ -15,7 +14,10 @@ from vibecomfy.porting.edit.ops import (
 )
 from vibecomfy.identity.codec import to_raw_name
 from vibecomfy.porting.resolution import _find_named_slot
-from vibecomfy.porting.widgets.schema import ui_widget_value_names_for_class
+from vibecomfy.porting.widgets.compact_resolver import (
+    missing_widget_value_sentinel,
+    widget_value_for_field,
+)
 from vibecomfy.schema import schema_for
 
 if TYPE_CHECKING:
@@ -56,7 +58,13 @@ def _output_slot_name(node: Mapping[str, Any], slot_index: int, schema_provider:
     return None
 
 
-_MISSING_WIDGET_VALUE = object()
+_MISSING_WIDGET_VALUE = missing_widget_value_sentinel()
+
+_KNOWN_CORE_INPUT_SOCKET_TYPES: dict[tuple[str, str], str] = {
+    ("PreviewImage", "images"): "IMAGE",
+    ("SaveImage", "images"): "IMAGE",
+    ("SaveImageWebsocket", "images"): "IMAGE",
+}
 
 
 def _canonical_schema_input_name(schema_inputs: Mapping[str, Any], field_name: str) -> str:
@@ -104,21 +112,12 @@ def _input_spec_for_field(schema_inputs: Mapping[str, Any], field_name: str) -> 
     return schema_inputs.get(canonical)
 
 
+def _known_core_input_socket_type(class_type: str, field_name: str) -> str | None:
+    return _KNOWN_CORE_INPUT_SOCKET_TYPES.get((class_type, field_name))
+
+
 def _widget_value_for_field(node: Mapping[str, Any], class_type: str, field_name: str) -> Any:
-    widgets_values = node.get("widgets_values")
-    if isinstance(widgets_values, Mapping):
-        return widgets_values[field_name] if field_name in widgets_values else _MISSING_WIDGET_VALUE
-    if isinstance(widgets_values, list):
-        widget_names = ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True)
-        for index, name in enumerate(widget_names):
-            if name == field_name and index < len(widgets_values):
-                return widgets_values[index]
-        match = re.fullmatch(r"widget_(\d+)", field_name)
-        if match is not None:
-            index = int(match.group(1))
-            if 0 <= index < len(widgets_values):
-                return widgets_values[index]
-    return _MISSING_WIDGET_VALUE
+    return widget_value_for_field(node, field_name)
 
 
 def _socket_type_from_widget_value(value: Any) -> str | None:

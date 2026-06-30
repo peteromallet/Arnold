@@ -112,3 +112,231 @@ def test_agentic_guard_catches_unchanged_graph_and_upstream_errors(tmp_path: Pat
     assert "upstream_failure" in checks
     assert "implementation_result" in checks
     assert "gates" in checks
+
+
+def test_agentic_guard_allows_explicit_safe_refusal_scenarios(tmp_path: Path) -> None:
+    output_dir = tmp_path / "safe-refusal"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    (output_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "graph_unchanged": True,
+                "no_candidate_reason": "no_changes",
+                "outcome": {"kind": "clarify"},
+                "gates": {
+                    "ir_validate_ok": False,
+                    "lower_ok": False,
+                    "python_load_ok": False,
+                    "queue_validate_ok": False,
+                    "state_match_ok": True,
+                    "ui_emit_ok": False,
+                    "ui_fidelity_ok": False,
+                    "ui_load_safe_ok": False,
+                },
+                "message": "No validated replacement node was found.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "implementation_result.json").write_text(
+        json.dumps({"message": "No validated replacement node was found."}),
+        encoding="utf-8",
+    )
+
+    scenario = {
+        "id": "safe-refusal",
+        "assessment": {
+            "expect_graph_changed": False,
+            "expected_outcome_kinds": ["clarify", "requires_custom_nodes"],
+        },
+    }
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["live_agentic_success"] is True
+    assessment = verdict["assessment"]
+    assert assessment["passed"] is True
+    assert assessment["expect_graph_changed"] is False
+    assert assessment["expected_outcome_kinds"] == ["clarify", "requires_custom_nodes"]
+
+
+def test_agentic_guard_rejects_unexpected_noop_for_safe_refusal_scenarios(tmp_path: Path) -> None:
+    output_dir = tmp_path / "wrong-refusal"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    (output_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "graph_unchanged": True,
+                "no_candidate_reason": "no_changes",
+                "outcome": {"kind": "noop"},
+                "message": "No changes.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    scenario = {
+        "id": "wrong-refusal",
+        "assessment": {
+            "expect_graph_changed": False,
+            "expected_outcome_kind": "clarify",
+        },
+    }
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["live_agentic_success"] is False
+    assessment = verdict["assessment"]
+    assert assessment["passed"] is False
+    assert {issue["check"] for issue in assessment["issues"]} == {"outcome_kind"}
+
+
+def test_agentic_guard_allows_safe_refusal_as_alternative_to_expected_edit(tmp_path: Path) -> None:
+    output_dir = tmp_path / "edit-or-refuse"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    (output_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "graph_unchanged": True,
+                "no_candidate_reason": "no_changes",
+                "outcome": {"kind": "requires_custom_nodes"},
+                "gates": {
+                    "ir_validate_ok": False,
+                    "lower_ok": False,
+                    "python_load_ok": False,
+                    "queue_validate_ok": False,
+                    "state_match_ok": True,
+                    "ui_emit_ok": False,
+                    "ui_fidelity_ok": False,
+                    "ui_load_safe_ok": False,
+                },
+                "message": "No schema-backed replacement node was found.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "implementation_result.json").write_text(
+        json.dumps({"message": "The graph is unchanged."}),
+        encoding="utf-8",
+    )
+
+    scenario = {
+        "id": "edit-or-refuse",
+        "assessment": {
+            "expect_graph_changed": True,
+            "allow_safe_refusal_outcome_kinds": ["clarify", "requires_custom_nodes"],
+        },
+    }
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["live_agentic_success"] is True
+    assessment = verdict["assessment"]
+    assert assessment["passed"] is True
+    assert assessment["expect_graph_changed"] is True
+    assert assessment["allow_safe_refusal_outcome_kinds"] == ["clarify", "requires_custom_nodes"]
+    assert {issue["check"] for issue in assessment["issues"]} == {"safe_refusal"}
+
+
+def test_agentic_guard_rejects_unallowed_noop_when_edit_or_refuse_expected(tmp_path: Path) -> None:
+    output_dir = tmp_path / "edit-or-refuse-noop"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    (output_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "graph_unchanged": True,
+                "no_candidate_reason": "no_changes",
+                "outcome": {"kind": "noop"},
+                "message": "No changes.",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    scenario = {
+        "id": "edit-or-refuse-noop",
+        "assessment": {
+            "expect_graph_changed": True,
+            "allow_safe_refusal_outcome_kinds": ["clarify", "requires_custom_nodes"],
+        },
+    }
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["live_agentic_success"] is False
+    checks = {issue["check"] for issue in verdict["assessment"]["issues"] if issue["severity"] == "error"}
+    assert "graph_changed" in checks
+    assert "no_candidate_reason" in checks
+
+
+def test_agentic_guard_rejects_oversized_model_request(tmp_path: Path) -> None:
+    output_dir = tmp_path / "oversized-model-request"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    (output_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "graph_unchanged": False,
+                "outcome": {"kind": "candidate"},
+                "candidate": {"nodes": [{"id": 1}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "model_request.json").write_text("x" * 101, encoding="utf-8")
+
+    scenario = {
+        "id": "oversized-model-request",
+        "assessment": {
+            "expect_graph_changed": True,
+            "skip_intent_judge": True,
+            "max_model_request_bytes": 100,
+        },
+    }
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["live_agentic_success"] is False
+    issues = verdict["assessment"]["issues"]
+    assert {
+        issue["check"]
+        for issue in issues
+        if issue["severity"] == "error"
+    } == {"model_request_size"}
+
+
+def test_agentic_guard_rejects_forbidden_model_request_substrings(tmp_path: Path) -> None:
+    output_dir = tmp_path / "forbidden-model-request"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    (output_dir / "response.json").write_text(
+        json.dumps(
+            {
+                "ok": True,
+                "graph_unchanged": False,
+                "outcome": {"kind": "candidate"},
+                "candidate": {"nodes": [{"id": 1}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (output_dir / "model_request.json").write_text(
+        '{"turns":[{"messages":[{"content":"raw \\"workflow_schema\\" leaked"}]}]}',
+        encoding="utf-8",
+    )
+
+    scenario = {
+        "id": "forbidden-model-request",
+        "assessment": {
+            "expect_graph_changed": True,
+            "skip_intent_judge": True,
+            "forbid_model_request_substrings": ["\"workflow_schema\""],
+        },
+    }
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["live_agentic_success"] is False
+    issues = verdict["assessment"]["issues"]
+    assert {
+        issue["check"]
+        for issue in issues
+        if issue["severity"] == "error"
+    } == {"model_request_forbidden_substring"}

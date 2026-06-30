@@ -1,15 +1,14 @@
-provider: railway
+provider: ssh
 mode: idle
 
 repo:
   url: https://github.com/peteromallet/VibeComfy.git
   branch: main
-  workspace: /workspace/app
+  workspace: /workspace/vibecomfy-readable-ready-templates
 
 secrets:
   - OPENAI_API_KEY
   - GITHUB_TOKEN
-  - ANTHROPIC_API_KEY
   - DEEPSEEK_API_KEY
 
 agents:
@@ -34,8 +33,10 @@ resources:
   volume: vibecomfy-readable-ready-templates
   port: 8080
 
-railway:
-  project: reigh-megaplan-dev
-  environment: production
-  service: agent
-  session: agent
+ssh:
+  host: 159.69.51.216
+  user: root
+  port: 22
+  remote_dir: /opt/megaplan-cloud/deploy
+  workspace_dir: /opt/megaplan-cloud/workspace
+  container: megaplan-cloud-agent

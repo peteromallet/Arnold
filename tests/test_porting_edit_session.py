@@ -1380,7 +1380,7 @@ class TestAvailableNodeSignatures:
         ]
 
         text = format_signature_rows(rows)
-        assert "def KSampler(model: MODEL, seed: INT = ...) -> LATENT:" in text
+        assert "def KSampler(model: MODEL, seed: INT = ...) -> latent:LATENT:" in text
 
     def test_format_signature_rows_no_outputs(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1641,7 +1641,7 @@ class TestAvailableNodeSignatures:
         text = format_signature_rows(rows)
         assert "def SamplerCustomAdvanced() -> output:LATENT, denoised_output:LATENT:" in text
 
-    def test_output_name_equals_type_renders_type_only(self) -> None:
+    def test_output_name_equals_type_renders_addressable_name(self) -> None:
         from vibecomfy.porting.emitter import (
             InputSignatureField,
             NodeSignatureRow,
@@ -1660,7 +1660,7 @@ class TestAvailableNodeSignatures:
             ),
         ]
         text = format_signature_rows(rows)
-        assert "def VAEDecode(samples: LATENT, vae: VAE) -> IMAGE:" in text
+        assert "def VAEDecode(samples: LATENT, vae: VAE) -> image:IMAGE:" in text
         assert "-> IMAGE:IMAGE:" not in text
 
 
@@ -2034,6 +2034,56 @@ class TestEditSessionResolution:
 
         assert result.ok is True
         assert result.statements[0].ok is True
+        assert result.statements[0].op_kind == "upsert_link"
+
+    def test_apply_batch_uses_core_sink_type_when_schema_and_raw_input_are_unknown(self) -> None:
+        from vibecomfy.porting import EditSession
+        from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
+
+        class _Provider:
+            def get_schema(self, class_type: str):
+                if class_type == "SourceOne":
+                    return NodeSchema(
+                        class_type="SourceOne",
+                        pack=None,
+                        inputs={},
+                        outputs=[OutputSpec(type="IMAGE", name="IMAGE")],
+                    )
+                if class_type == "SaveImage":
+                    return NodeSchema(
+                        class_type="SaveImage",
+                        pack=None,
+                        inputs={"images": InputSpec(type=None, required=True)},
+                        outputs=[],
+                    )
+                return None
+
+        raw = {
+            "last_node_id": 2,
+            "last_link_id": 0,
+            "nodes": [
+                {
+                    "id": 1,
+                    "type": "SourceOne",
+                    "outputs": [{"name": "IMAGE", "type": "IMAGE"}],
+                    "properties": {"vibecomfy_uid": "src"},
+                },
+                {
+                    "id": 2,
+                    "type": "SaveImage",
+                    "inputs": [{"name": "images", "type": "UNKNOWN"}],
+                    "properties": {"vibecomfy_uid": "save"},
+                },
+            ],
+            "links": [],
+        }
+        session = EditSession(raw, schema_provider=_Provider())
+        session.uid_by_name.update({"src": "src", "save": "save"})
+        session.name_by_uid.update({"src": "src", "save": "save"})
+
+        result = session.apply_batch("save.images = src.image\n")
+
+        assert result.ok is True
         assert result.statements[0].op_kind == "upsert_link"
 
     def test_apply_batch_rejects_ambiguous_bare_rhs(self) -> None:

@@ -19,37 +19,27 @@ def _seed_focus_types_for_authoring(state: AgentEditState) -> set[str]:
 
 
 def _focus_types_from_research_brief(brief: Mapping[str, Any] | None) -> set[str]:
-    """Pull likely node/class names out of the executor research brief.
+    """Return exact authoring focus types from structured classifier fields only.
 
-    The classifier often emits search directions like
-    ``"Hotshot ComfyUI custom nodes"``.  Surfacing those capitalized tokens in
-    the turn-0 signature catalog lets the agent discover a local schema hit
-    (e.g. the ``Hotshot`` stub) before falling back to noisy web/registry
-    research.
+    Search directions are retrieval hints, not class-name evidence. Pulling
+    capitalized prose tokens from them creates bogus local schema misses such as
+    ``Adapting``, ``ComfyUI``, or ``SDXL`` in the first implement prompt.
+    Workflow/adapt routes get exact class names from selected workflow evidence
+    instead, so this helper intentionally avoids free-text extraction.
     """
     if not brief:
         return set()
     candidates: set[str] = set()
-    for key in ("search_directions", "model_families"):
+    for key in ("focus_types", "class_types", "node_types"):
         values = brief.get(key)
         if not isinstance(values, (list, tuple)):
             continue
         for value in values:
             if not isinstance(value, str):
                 continue
-            for token in value.split():
-                token = token.strip(".,;:\"'")
-                if (
-                    token
-                    and token[0].isupper()
-                    and len(token) >= 2
-                    and token.isascii()
-                ):
-                    candidates.add(token)
-            # Also keep the leading phrase word as a likely brand/class name.
-            parts = value.split()
-            if parts and parts[0] and parts[0][0].isupper():
-                candidates.add(parts[0].strip(".,;:\"'"))
+            cleaned = value.strip(".,;:\"'")
+            if cleaned:
+                candidates.add(cleaned)
     return candidates
 
 

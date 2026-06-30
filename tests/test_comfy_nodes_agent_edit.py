@@ -1932,9 +1932,12 @@ def test_agent_edit_batch_empty_model_response_retries_once_then_commits(
     response_turns = json.loads(
         Path(audit["artifacts"]["model_response"]["path"]).read_text(encoding="utf-8")
     )["turns"]
-    provider_metadata = response_turns[0]["batch_result"]["provider_metadata"]
-    assert provider_metadata["batch_repl_retry"]["count"] == 1
-    assert "batch_repl response was empty" in provider_metadata["batch_repl_retry"]["reason"]
+    assert response_turns[0]["error"]["retrying"] is True
+    assert response_turns[0]["error"]["parse_reason"] == "empty"
+    provider_metadata = response_turns[1]["batch_result"]["provider_metadata"]
+    assert provider_metadata["batch_repl_protocol_retry"]["count"] == 1
+    assert provider_metadata["batch_repl_protocol_retry"]["parse_reason"] == "empty"
+    assert "batch_repl response was empty" in provider_metadata["batch_repl_protocol_retry"]["reason"]
 
 
 def test_handle_agent_edit_dev_delta_classifies_malformed_delta_as_closed_failure_envelope(
@@ -2459,20 +2462,23 @@ def test_handle_agent_edit_batch_repl_turn0_catalog_is_scoped_and_search_first(
     assert "ImageScaleBy" in names
     assert "do NOT search for them" in system
     assert "Search first" in system
-    assert "local installed-node schema lookup" in system
+    assert "current authoring-schema lookup" in system
     assert "Reference EXISTING nodes by EXACT names" in system
     assert "Bare ambiguous refs are rejected." in system
     assert "for a NEW node TYPE you want to ADD" in system
-    assert "Local schema lookup" in system
+    assert "schema lookup" in system
     assert 'research("query words", sources=["workflows", "registry", "messages", "web"])' in system
     assert "if sources are omitted it searches internal workflows/templates only" in system
-    assert "factual local ComfyUI schema lookup" in system
+    assert "factual current authoring-schema lookup" in system
     assert 'sources=["web"]' in system
     assert "workflow context is mandatory" in system
     assert "smallest named artifact" in system
-    assert "Use separate evidence-tier calls" in system
-    assert "First look internally for a workflow/template precedent" in system
-    assert "Do not combine internal workflow search with web or registry" in system
+    assert "research workflow precedents and community knowledge" in system
+    assert "use `workflows` first" in system
+    assert "Use `registry` only when the user explicitly asks" in system
+    assert "tentative retrieval hints, not findings, implementation instructions, or validation tasks" in system
+    assert "Do not research installation, provider packs, registry, or local addability" in system
+    assert "reinterpret such a hint as a request to find workflow precedents" in system
     assert "URL/title is a lead, not yet workflow context" in system
     assert "Only after workflow/example context identifies a pack" in system
     assert 'sources=["workflows"]' in system
@@ -2535,9 +2541,9 @@ def test_batch_repl_search_exact_miss_explains_local_schema_lookup() -> None:
     query_output = result.statements[0].detail["query_output"]
     assert "No node signature found for exact class type(s): 'HotshotXL'." in query_output
     assert "not an internet or precedent search" in query_output
-    assert "registry/schema lookup for the exact class name(s): HotshotXL" in query_output
-    assert "Do not repeat local workflow search" in query_output
-    assert "expand the miss into guessed loader/sampler names" in query_output
+    assert "Missing class name(s): HotshotXL" in query_output
+    assert "Do not broaden this into guessed branded constructors" in query_output
+    assert "Use workflow precedent as pattern evidence" in query_output
     assert "No available local class names contain the requested terms." in report
 
 
@@ -2571,7 +2577,7 @@ def test_batch_repl_search_partial_exact_miss_reports_missing_classes() -> None:
         "No node signature found for exact class type(s): "
         "'ADE_AnimateDiffLoaderWithContext', 'ADE_AnimateDiffUniformContextOptions'."
     ) in query_output
-    assert "registry/schema lookup for the exact class name(s)" in query_output
+    assert "Use workflow precedent as pattern evidence" in query_output
     assert "ADE_AnimateDiffLoaderWithContext" in report
 
 
@@ -2706,7 +2712,6 @@ def test_batch_repl_web_workflow_json_prompts_exact_schema_followup(
     assert "ADE_AnimateDiffUniformContextOptions" in query_output
     assert "VHS_LoadImagesPath" in query_output
     assert "/tmp/workflow-vid2vid-hotshotXL.json" in query_output
-    assert "query registry/schema using exact node classes" in query_output
     assert "python() only shows the current graph" in query_output
     assert "broad custom-node queries such as only the model name" in query_output
 
@@ -2747,8 +2752,7 @@ def test_batch_repl_research_memory_keeps_workflow_evidence_across_turns() -> No
                             "query_output": (
                                 "No node signature found for exact class type(s): "
                                 "'ADE_AnimateDiffUniformContextOptions'. "
-                                "registry/schema lookup for the exact class name(s): "
-                                "ADE_AnimateDiffUniformContextOptions."
+                                "Use workflow precedent as pattern evidence."
                             ),
                         },
                     }
@@ -2763,7 +2767,7 @@ def test_batch_repl_research_memory_keeps_workflow_evidence_across_turns() -> No
     assert "ADE_AnimateDiffUniformContextOptions" in memory
     assert "VHS_LoadImagesPath" in memory
     assert "No node signature found" in memory
-    assert "registry/schema lookup" in memory
+    assert "Use workflow precedent as pattern evidence" in memory
 
 
 # ── T16: cross-turn memory compactness, no full-packet reserialization,
@@ -3104,7 +3108,7 @@ def test_batch_repl_memory_packet_absent_falls_back_to_marker_path() -> None:
                                 "Concrete workflow pattern found: NodeX.\n"
                                 "github_workflow_json evidence.\n"
                                 "No node signature found for exact class type(s): 'NodeY'.\n"
-                                "registry/schema lookup completed."
+                                "Use workflow precedent as pattern evidence."
                             ),
                         },
                     }
@@ -3119,7 +3123,7 @@ def test_batch_repl_memory_packet_absent_falls_back_to_marker_path() -> None:
     assert "NodeX" in memory
     assert "NodeY" in memory
     assert "github_workflow_json" in memory
-    assert "registry/schema lookup" in memory
+    assert "Use workflow precedent as pattern evidence" in memory
 
     # Packet-aware header absent
     assert "precedent option(s)" not in memory
@@ -3292,7 +3296,7 @@ def test_batch_repl_memory_turn_number_in_output() -> None:
     assert "PacketNode" in memory_packet
 
 
-def test_missing_custom_node_clarify_requires_registry_after_schema_miss() -> None:
+def test_missing_custom_node_clarify_does_not_force_registry_after_schema_miss() -> None:
     from types import SimpleNamespace
 
     from vibecomfy.comfy_nodes.agent.edit import _premature_missing_custom_node_clarify_feedback
@@ -3338,9 +3342,7 @@ def test_missing_custom_node_clarify_requires_registry_after_schema_miss() -> No
         "The required custom nodes are not installed.",
     )
 
-    assert "Premature missing-custom-node clarification rejected" in feedback
-    assert "ADE_LoadAnimateDiffModel" in feedback
-    assert 'sources=["registry"]' in feedback
+    assert feedback == ""
 
     state.batch_turns.append(
         {
@@ -3357,16 +3359,13 @@ def test_missing_custom_node_clarify_requires_registry_after_schema_miss() -> No
         }
     )
 
-    assert (
-        _premature_missing_custom_node_clarify_feedback(
-            state,
-            "The required custom nodes are not installed.",
-        )
-        == ""
-    )
+    assert _premature_missing_custom_node_clarify_feedback(
+        state,
+        "The required custom nodes are not installed.",
+    ) == ""
 
 
-def test_workflow_schema_clarify_must_apply_provisional_nodes() -> None:
+def test_workflow_schema_clarify_does_not_force_uninstalled_provisional_nodes() -> None:
     from types import SimpleNamespace
 
     from vibecomfy.comfy_nodes.agent.edit import _premature_workflow_schema_clarify_feedback
@@ -3419,18 +3418,233 @@ def test_workflow_schema_clarify_must_apply_provisional_nodes() -> None:
         "The current graph lacks the required AnimateDiff nodes, so I cannot build this.",
     )
 
-    assert "Premature clarification rejected" in feedback
-    assert "ADE_AnimateDiffLoaderWithContext" in feedback
-    assert "add the workflow-sourced provisional nodes" in feedback
+    assert feedback == ""
 
-    state.batch_turns.append({"turn_number": 3, "landed_op_count": 1, "statements": []})
-    assert (
-        _premature_workflow_schema_clarify_feedback(
-            state,
-            "The current graph lacks the required AnimateDiff nodes.",
-        )
-        == ""
+
+def test_workflow_schema_clarify_rejects_asking_for_present_workflow_signatures() -> None:
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent.edit import _premature_workflow_schema_clarify_feedback
+
+    state = SimpleNamespace(
+        execution_protocol_notes={
+            "selected_precedent": {
+                "name": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                "minimal_spine": [
+                    "ADE_AnimateDiffLoaderWithContext",
+                    "ADE_AnimateDiffUniformContextOptions",
+                    "VHS_VideoCombine",
+                ],
+            },
+            "research_sources": [
+                {
+                    "source": "hivemind_workflow",
+                    "pack": "workflow",
+                    "workflow_schema": {
+                        "ADE_AnimateDiffLoaderWithContext": {
+                            "input": {
+                                "required": {
+                                    "model": {"type": "MODEL"},
+                                    "context_options": {"type": "CONTEXT_OPTIONS"},
+                                },
+                                "optional": {},
+                            },
+                            "outputs": [{"name": "MODEL", "type": "MODEL"}],
+                        },
+                        "ADE_AnimateDiffUniformContextOptions": {
+                            "input": {"required": {}, "optional": {}},
+                            "outputs": [
+                                {"name": "CONTEXT_OPTIONS", "type": "CONTEXT_OPTIONS"}
+                            ],
+                        },
+                    },
+                }
+            ],
+        },
+        executor_research_sources=(),
     )
+
+    feedback = _premature_workflow_schema_clarify_feedback(
+        state,
+        (
+            "I need to look up the exact schemas for "
+            "ADE_AnimateDiffLoaderWithContext and "
+            "ADE_AnimateDiffUniformContextOptions to wire this."
+        ),
+    )
+
+    assert "Premature workflow-schema clarification rejected" in feedback
+    assert "ADE_AnimateDiffLoaderWithContext" in feedback
+    assert "execution_protocol_notes.research_sources[].workflow_schema" in feedback
+
+
+def test_selected_precedent_unknown_constructor_stops_as_authoring_blocker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    calls = 0
+
+    def client(_messages):
+        nonlocal calls
+        calls += 1
+        return {
+            "batch": (
+                "positive = HotshotXLCLIPTextEncode()\n"
+                "negative = HotshotXLPAGTextEncode()\n"
+                "done()"
+            ),
+            "message": "I'll use HotShotXL-specific constructors.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "execution_protocol_notes": {
+                "workflow_precedent_status": "compatible_workflow_found",
+                "selected_precedent": {
+                    "name": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                    "minimal_spine": [
+                        "KSamplerAdvanced",
+                        "VHS_VideoCombine",
+                        "ADE_AnimateDiffLoaderWithContext",
+                        "ADE_AnimateDiffUniformContextOptions",
+                    ],
+                    "terminal_output_path": ["SaveImage", "VHS_VideoCombine"],
+                },
+                "research_sources": [
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "workflow_schema": {
+                            "ADE_AnimateDiffLoaderWithContext": {
+                                "input": {
+                                    "required": {
+                                        "model": {"type": "MODEL"},
+                                        "context_options": {"type": "CONTEXT_OPTIONS"},
+                                    },
+                                    "optional": {},
+                                },
+                                "outputs": [{"name": "MODEL", "type": "MODEL"}],
+                            },
+                            "ADE_AnimateDiffUniformContextOptions": {
+                                "input": {"required": {}, "optional": {}},
+                                "outputs": [
+                                    {"name": "CONTEXT_OPTIONS", "type": "CONTEXT_OPTIONS"}
+                                ],
+                            },
+                        },
+                    }
+                ],
+            },
+            "session_id": "hotshot-invented-constructor-blocker",
+            "max_batches": 4,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=client,
+        session_root=tmp_path,
+    )
+
+    assert calls == 1
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "clarify"
+    assert result["graph_unchanged"] is True
+    assert "cannot author the required workflow classes" in result["message"]
+    assert "HotshotXLCLIPTextEncode" in result["message"]
+    messages_path = (
+        tmp_path
+        / "hotshot-invented-constructor-blocker"
+        / "turns"
+        / "0001"
+        / "messages.jsonl"
+    )
+    turns = [
+        json.loads(line)
+        for line in messages_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert turns[0]["authoring_blocker"] == "selected_precedent_unknown_class"
+
+
+def test_selected_precedent_workflow_schema_class_is_authorable_provisionally(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "execution_protocol_notes": {
+                "workflow_precedent_status": "compatible_workflow_found",
+                "selected_precedent": {
+                    "name": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                    "minimal_spine": [
+                        "ADE_AnimateDiffLoaderWithContext",
+                        "ADE_AnimateDiffUniformContextOptions",
+                        "VHS_VideoCombine",
+                    ],
+                },
+                "research_sources": [
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "workflow_schema": {
+                            "ADE_AnimateDiffLoaderWithContext": {
+                                "input": {
+                                    "required": {
+                                        "model": {"type": "MODEL"},
+                                        "context_options": {"type": "CONTEXT_OPTIONS"},
+                                    },
+                                    "optional": {},
+                                },
+                                "outputs": [{"name": "MODEL", "type": "MODEL"}],
+                            },
+                            "ADE_AnimateDiffUniformContextOptions": {
+                                "input": {"required": {}, "optional": {}},
+                                "outputs": [
+                                    {"name": "CONTEXT_OPTIONS", "type": "CONTEXT_OPTIONS"}
+                                ],
+                            },
+                        },
+                    }
+                ],
+            },
+            "session_id": "hotshot-workflow-schema-provisional-node",
+            "max_batches": 2,
+            "max_consecutive_errors": 1,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: {
+            "batch": "motion = ADE_AnimateDiffLoaderWithContext(near=saveimage)\ndone()",
+            "message": "Added the exact AnimateDiff node from the HotShotXL workflow precedent.",
+        },
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert any(
+        node.get("type") == "ADE_AnimateDiffLoaderWithContext"
+        for node in result["graph"].get("nodes", [])
+        if isinstance(node, dict)
+    )
+    model_request = json.loads(
+        (
+            tmp_path
+            / "hotshot-workflow-schema-provisional-node"
+            / "turns"
+            / "0001"
+            / "model_request.json"
+        ).read_text(encoding="utf-8")
+    )
+    request_text = json.dumps(model_request)
+    assert "def ADE_AnimateDiffLoaderWithContext" in request_text
+    assert "provisional_schema" in request_text
 
 
 def test_rejected_terminal_clarify_is_durable_budget_failure(
@@ -3742,12 +3956,130 @@ def test_handle_agent_edit_batch_repl_adds_workflow_json_provisional_node(
 
     assert result["ok"] is True
     assert result["apply_allowed"] is True
-    node = next(
-        node
+    assert result["canvas_apply_allowed"] is True
+    assert any(
+        node.get("type") == "ADE_AnimateDiffUniformContextOptions"
         for node in result["graph"].get("nodes", [])
-        if isinstance(node, dict) and node.get("type") == "ADE_AnimateDiffUniformContextOptions"
+        if isinstance(node, dict)
     )
-    assert node["widgets_values"] == [16, 1, 3, "uniform", False]
+
+
+def test_workflow_json_research_does_not_hydrate_local_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.executor.research import ResearchResult
+    from vibecomfy.porting.edit.session import EditSession
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary=f"Concrete workflow evidence for {query}.",
+            sources=(
+                {
+                    "source": "external_workflow",
+                    "source_type": "github_workflow_json",
+                    "class_type": "workflow vid2vid hotshotXL ipadapterplusface ipadapter.json",
+                    "pack": "github.com",
+                    "url": "https://github.com/fictions-ai/sharing-is-caring/blob/main/workflow-vid2vid-hotshotXL-ipadapterplusface-ipadapter.json",
+                    "workflow_schema_classes": ["ADE_AnimateDiffUniformContextOptions"],
+                    "workflow_schema": {
+                        "ADE_AnimateDiffUniformContextOptions": {
+                            "input": {
+                                "required": {},
+                                "optional": {"widget_0": {"type": "INT", "default": 8}},
+                            },
+                            "outputs": [{"name": "CONTEXT_OPTIONS", "type": "CONTEXT_OPTIONS"}],
+                            "object_info_widget_order": ["widget_0"],
+                        }
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    session = EditSession(_ui_graph(), schema_provider=_batch_repl_provider())
+
+    session.apply_batch('research("Hotshot XL ComfyUI workflow", sources=["web"])')
+    result = session.apply_batch(
+        'search(focus_types=["ADE_AnimateDiffUniformContextOptions"])'
+    )
+    query_output = result.statements[0].detail["query_output"]
+
+    assert "No node signature found for exact class type(s)" in query_output
+    assert "def ADE_AnimateDiffUniformContextOptions" not in query_output
+
+
+def test_registry_class_only_research_does_not_hydrate_local_search(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.executor.research import ResearchResult
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        return ResearchResult(
+            summary=f"Registry evidence for {query}.",
+            sources=(
+                {
+                    "source": "github",
+                    "class_type": "ComfyUIWorkflowSuite",
+                    "pack": "ComfyUIWorkflowSuite",
+                    "description": "Expected classes: Limbicnation, ComfyUIWorkflowSuite, HotshotXL, User",
+                    "resolver_candidate": {
+                        "pack": {
+                            "slug": "ComfyUIWorkflowSuite",
+                            "source": "github",
+                            "url": "https://github.com/Limbicnation/ComfyUIWorkflowSuite",
+                        },
+                        "expected_classes": [
+                            "Limbicnation",
+                            "ComfyUIWorkflowSuite",
+                            "Txt2Vid",
+                            "HotshotXL",
+                            "User",
+                        ],
+                        "validation_mode": "class_validatable",
+                        "provisional_schema": {},
+                        "runnable": False,
+                        "stable_install_hash": "workflow-suite-class-only",
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    responses = iter(
+        [
+            {
+                "batch": 'research("HotShotXL Hotshot video generation 8 frames", sources=["registry"])',
+                "message": "Found class-only registry evidence.",
+            },
+            {
+                "batch": 'search(focus_types=["HotshotXL"])\ndone()',
+                "message": "Checking whether the registry class is authorable.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch to generating 8 frames with Hotshot",
+            "session_id": "hotshot-class-only-registry",
+            "max_batches": 2,
+            "max_consecutive_errors": 2,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    search_turn = result["batch_turns"][1]
+    query_output = search_turn["statements"][0]["detail"]["query_output"]
+
+    assert result["graph_unchanged"] is True
+    assert "No node signature found for exact class type(s): 'HotshotXL'." in query_output
+    assert "def HotshotXL" not in query_output
 
 
 def test_handle_agent_edit_batch_repl_adds_registry_provisional_missing_node(
@@ -3831,6 +4163,500 @@ def test_handle_agent_edit_batch_repl_adds_registry_provisional_missing_node(
         for node in result["graph"].get("nodes", [])
         if isinstance(node, dict)
     )
+
+
+def test_research_required_unresolved_capability_clarify_does_not_force_registry_before_stopping(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        raise AssertionError(f"unexpected forced research call: {query!r} {kwargs!r}")
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    responses = iter(
+        [
+            {
+                "batch": (
+                    'clarify("HotShotXL needs an authorable AnimateDiff path '
+                    '(ADE_LoadAnimateDiffModel, ADE_ApplyAnimateDiffModel) plus '
+                    'VHS_VideoCombine before I can safely author that workflow pattern.")'
+                ),
+                "message": "I found the HotShotXL workflow shape but not an authorable adaptation.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "executor_classification": {
+                "route": "adapt",
+                "task": "edit_graph",
+                "implement": True,
+                "research": True,
+                "known_graph_context": "HotShotXL is not authorable from local schema.",
+                "research_goal": "Find canonical HotShotXL workflow precedent.",
+            },
+            "executor_research_brief": {
+                "research_goal": "Find canonical HotShotXL workflow.",
+                "source_preferences": ["workflows", "messages"],
+            },
+            "session_id": "hotshot-preloaded-context-clarify",
+            "max_batches": 4,
+            "max_consecutive_errors": 2,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "clarify"
+    assert result["clarification_required"] is True
+    assert result["graph_unchanged"] is True
+    assert len(result["batch_turns"]) == 1
+
+
+def test_adapt_prefetch_compiles_workflow_classes_into_schema_backed_capabilities(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_resolve_missing_nodes(query: str, *, query_intent: str | None = None, **_kwargs: object) -> object:
+        if query != "ADE_LoadAnimateDiffModel":
+            return types.SimpleNamespace(candidates=())
+        assert query_intent == "class_name"
+        candidate = {
+            "pack": {
+                "slug": "ComfyUI-AnimateDiff-Evolved",
+                "source": "comfyui-manager",
+                "url": "https://github.com/Kosinkadink/ComfyUI-AnimateDiff-Evolved",
+            },
+            "expected_classes": ["ADE_LoadAnimateDiffModel"],
+            "validation_mode": "class_validatable",
+            "evidence": [
+                {
+                    "source": "custom-node-map",
+                    "tier": "comfy-manager",
+                    "class_type": "ADE_LoadAnimateDiffModel",
+                }
+            ],
+            "provisional_schema": {},
+            "runnable": False,
+            "stable_install_hash": "ade-prefetch-class-map",
+        }
+        return types.SimpleNamespace(candidates=(candidate,))
+
+    monkeypatch.setattr(
+        "vibecomfy.registry.pack_resolver.resolve_missing_nodes",
+        fake_resolve_missing_nodes,
+    )
+    responses = iter(
+        [
+            {
+                "batch": "ade_model = ADE_LoadAnimateDiffModel(near=saveimage)\ndone()",
+                "message": "Placed the schema-backed AnimateDiff model loader from precompiled precedent capabilities.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "executor_classification": {
+                "route": "adapt",
+                "task": "edit_graph",
+                "implement": True,
+                "research": True,
+                "research_goal": "Find canonical HotShotXL workflow wiring.",
+            },
+            "execution_protocol_notes": {
+                "workflow_precedent_status": "compatible_workflow_found",
+                "research_sources": [
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "node_types": [
+                            "CheckpointLoaderSimple",
+                            "ADE_LoadAnimateDiffModel",
+                            "SaveImage",
+                        ],
+                        "reasons": ["hivemind:body matched 'HotShotXL'"],
+                    }
+                ],
+            },
+            "session_id": "hotshot-prefetch-capabilities",
+            "max_batches": 2,
+            "max_consecutive_errors": 1,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["apply_allowed"] is True
+    assert result["queue_allowed"] is False
+    assert any(
+        node.get("type") == "ADE_LoadAnimateDiffModel"
+        for node in result["graph"].get("nodes", [])
+        if isinstance(node, dict)
+    )
+    model_request = json.loads(
+        (tmp_path / "hotshot-prefetch-capabilities" / "turns" / "0001" / "model_request.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    request_text = json.dumps(model_request)
+    assert "def ADE_LoadAnimateDiffModel" in request_text
+    assert "schema_placeholder" in request_text
+
+
+def test_adapt_prompt_uses_execution_protocol_discardability_header(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "execution_protocol_notes": {
+                "_discardability": (
+                    "This research context is provided as evidence. Use selected_precedent "
+                    "as the grounding workflow interpretation unless it contradicts the "
+                    "user's explicit request."
+                ),
+                "selected_precedent": {
+                    "name": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                    "minimal_spine": [
+                        "ADE_AnimateDiffLoaderWithContext",
+                        "ADE_AnimateDiffUniformContextOptions",
+                        "VHS_VideoCombine",
+                    ],
+                },
+                "research_sources": [
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "workflow_schema": {
+                            "ADE_AnimateDiffLoaderWithContext": {
+                                "input": {
+                                    "required": {
+                                        "model": {"type": "MODEL"},
+                                        "context_options": {"type": "CONTEXT_OPTIONS"},
+                                    },
+                                    "optional": {},
+                                },
+                                "outputs": [{"name": "MODEL", "type": "MODEL"}],
+                            }
+                        },
+                    }
+                ],
+            },
+            "session_id": "selected-precedent-header",
+            "max_batches": 1,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: {
+            "batch": "done()",
+            "message": "No edit in this prompt-header regression.",
+        },
+        session_root=tmp_path,
+    )
+
+    assert "artifacts" in result
+    model_request = json.loads(
+        (tmp_path / "selected-precedent-header" / "turns" / "0001" / "model_request.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    request_text = json.dumps(model_request)
+    assert "Use selected_precedent as the grounding workflow interpretation" in request_text
+    assert "This is contextual evidence, NOT authoritative guidance" not in request_text
+
+
+def test_adapt_prompt_compacts_large_execution_protocol_notes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    huge_schema = {
+        f"ADE_HugeWorkflowNode_{index}": {
+            "input": {
+                "required": {
+                    f"field_{field_index}": {"type": "STRING", "default": "x" * 200}
+                    for field_index in range(20)
+                },
+                "optional": {},
+            },
+            "outputs": [{"name": "MODEL", "type": "MODEL"}],
+        }
+        for index in range(40)
+    }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "execution_protocol_notes": {
+                "_discardability": (
+                    "This research context is provided as evidence. Use selected_precedent "
+                    "as the grounding workflow interpretation unless it contradicts the "
+                    "user's explicit request."
+                ),
+                "workflow_precedent_status": "compatible_workflow_found",
+                "research_goal": "Investigate HotShotXL workflow wiring.",
+                "selected_precedent": {
+                    "name": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                    "minimal_spine": [
+                        "ADE_AnimateDiffLoaderWithContext",
+                        "ADE_AnimateDiffUniformContextOptions",
+                        "VHS_VideoCombine",
+                    ],
+                    "terminal_output_path": ["VHS_VideoCombine"],
+                },
+                "research_sources": [
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "description": "Detailed external workflow evidence. " * 500,
+                        "node_types": [f"NodeType_{index}" for index in range(80)],
+                        "workflow_schema": huge_schema,
+                    },
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "description": "Secondary source. " * 500,
+                        "workflow_schema": huge_schema,
+                    },
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "description": "Tertiary source. " * 500,
+                        "workflow_schema": huge_schema,
+                    },
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "description": "Omitted source. " * 500,
+                        "workflow_schema": huge_schema,
+                    },
+                ],
+            },
+            "session_id": "selected-precedent-large-context",
+            "max_batches": 1,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: {
+            "batch": "done()",
+            "message": "No edit in this large-context regression.",
+        },
+        session_root=tmp_path,
+    )
+
+    assert "artifacts" in result
+    model_request_path = (
+        tmp_path
+        / "selected-precedent-large-context"
+        / "turns"
+        / "0001"
+        / "model_request.json"
+    )
+    model_request = json.loads(model_request_path.read_text(encoding="utf-8"))
+    request_text = json.dumps(model_request)
+    assert model_request_path.stat().st_size < 80_000
+    assert "selected_precedent" in request_text
+    assert "ADE_AnimateDiffLoaderWithContext" in request_text
+    assert "workflow_schema_omitted" in request_text
+    assert "field_19" not in request_text
+    assert "ADE_HugeWorkflowNode_39" not in request_text
+    assert "research_sources_omitted" in request_text
+
+
+def test_adapt_prompt_marks_unhydrated_workflow_schema_classes_observed_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "execution_protocol_notes": {
+                "_discardability": (
+                    "This research context is provided as evidence. Use selected_precedent "
+                    "as the grounding workflow interpretation unless it contradicts the "
+                    "user's explicit request."
+                ),
+                "selected_precedent": {
+                    "name": "AnimateDiff Video Generation with ControlNet and IP-Adapter",
+                    "minimal_spine": [
+                        "ADE_AnimateDiffLoaderWithContext",
+                        "ADE_AnimateDiffUniformContextOptions",
+                        "VHS_VideoCombine",
+                    ],
+                },
+                "research_sources": [
+                    {
+                        "source": "hivemind_workflow",
+                        "pack": "workflow",
+                        "node_types": [
+                            "ADE_AnimateDiffLoaderWithContext",
+                            "ADE_AnimateDiffUniformContextOptions",
+                            "VHS_VideoCombine",
+                        ],
+                        "workflow_schema": {
+                            "ADE_AnimateDiffLoaderWithContext": {
+                                "input": {
+                                    "required": {
+                                        "model": {"type": "MODEL"},
+                                        "context_options": {"type": "CONTEXT_OPTIONS"},
+                                    },
+                                    "optional": {},
+                                },
+                                "outputs": [{"name": "MODEL", "type": "MODEL"}],
+                            },
+                            "ADE_AnimateDiffUniformContextOptions": {
+                                "input": {"required": {}, "optional": {}},
+                                "outputs": [{"name": "CONTEXT_OPTIONS", "type": "CONTEXT_OPTIONS"}],
+                            },
+                        },
+                    }
+                ],
+            },
+            "session_id": "selected-precedent-research-context",
+            "max_batches": 1,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: {
+            "batch": "done()",
+            "message": "No edit in this workflow authoring status regression.",
+        },
+        session_root=tmp_path,
+    )
+
+    assert "artifacts" in result
+    model_request = json.loads(
+        (
+            tmp_path
+            / "selected-precedent-research-context"
+            / "turns"
+            / "0001"
+            / "model_request.json"
+        ).read_text(encoding="utf-8")
+    )
+    request_text = json.dumps(model_request)
+    assert "ADE_AnimateDiffLoaderWithContext" in request_text
+    assert "selected_precedent" in request_text
+    assert "Workflow Authoring Status" not in request_text
+    assert "Workflow-observed only, not addable yet" not in request_text
+    assert "exact-class registry/schema research" not in request_text
+
+
+def test_weak_registry_code_search_allows_install_blocker_clarify_without_authoring(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    def fake_research(query: str, **kwargs: object) -> ResearchResult:
+        assert kwargs.get("registry_resolver") is not None
+        return ResearchResult(
+            summary="Found 1 research result(s): ComfyUIWorkflowSuite",
+            sources=(
+                {
+                    "source": "github",
+                    "class_type": "ComfyUIWorkflowSuite",
+                    "pack": "ComfyUIWorkflowSuite",
+                    "description": "Expected classes: Limbicnation, ComfyUIWorkflowSuite, HotshotXL, User",
+                    "resolver_candidate": {
+                        "pack": {
+                            "slug": "ComfyUIWorkflowSuite",
+                            "source": "github",
+                            "url": "https://github.com/Limbicnation/ComfyUIWorkflowSuite",
+                        },
+                        "expected_classes": ["HotshotXL", "ComfyUIWorkflowSuite", "User"],
+                        "validation_mode": "class_validatable",
+                        "evidence": [
+                            {"source": "code-search", "tier": "github"},
+                        ],
+                        "provisional_schema": {},
+                        "runnable": False,
+                        "stable_install_hash": "weak-hotshot-code-search",
+                    },
+                },
+            ),
+        )
+
+    research_module = importlib.import_module("vibecomfy.executor.research")
+    monkeypatch.setattr(research_module, "research", fake_research)
+    responses = iter(
+        [
+            {
+                "batch": 'research("HotShotXL", sources=["registry"])',
+                "message": "Found a weak GitHub code-search lead.",
+            },
+            {
+                "batch": 'clarify("I could not find an authorable HotShotXL workflow adaptation from the available evidence.")',
+                "message": "I could not find an authorable HotShotXL workflow adaptation from the available evidence.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Switch this to instead generate 8 frames of video using HotShotXL",
+            "route": "adapt",
+            "executor_classification": {
+                "route": "adapt",
+                "task": "edit_graph",
+                "implement": True,
+                "research": True,
+                "research_goal": "Find canonical HotShotXL workflow wiring.",
+            },
+            "executor_research_brief": {
+                "research_goal": "Find canonical HotShotXL workflow wiring.",
+                "source_preferences": ["workflows", "messages"],
+            },
+            "session_id": "hotshot-weak-registry-clarify",
+            "max_batches": 2,
+            "max_consecutive_errors": 2,
+        },
+        schema_provider=_batch_repl_provider(),
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "clarify"
+    assert result["clarification_required"] is True
+    assert result["graph_unchanged"] is True
+    assert "could not find an authorable HotShotXL workflow adaptation" in result["message"]
+    assert "apply_allowed" not in result
+    assert "queue_allowed" not in result
+    messages_path = tmp_path / "hotshot-weak-registry-clarify" / "turns" / "0001" / "messages.jsonl"
+    turns = [
+        json.loads(line)
+        for line in messages_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert turns[1]["batch"] == 'clarify("I could not find an authorable HotShotXL workflow adaptation from the available evidence.")'
+    assert turns[1]["clarification_required"] == "I could not find an authorable HotShotXL workflow adaptation from the available evidence."
 
 
 def test_revise_hydrates_existing_unknown_node_from_registry_before_readonly_gate(
@@ -4170,6 +4996,96 @@ def test_batch_budget_failure_kind_prefers_schema_gap_then_unrepresentable_then_
     )
 
 
+def test_batch_budget_artifixer_report_hard_refuses_unrepresentable_surface() -> None:
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    graph = {"nodes": [{"id": 1, "type": "LoadImage"}], "links": []}
+    state = SimpleNamespace(
+        graph=graph,
+        ui_payload=graph,
+        batch_field_changes=(),
+        batch_turn_count=1,
+        batch_budget_state={"remaining_batches": 49, "consecutive_errors": 1},
+        batch_turns=[
+            {
+                "landed_op_count": 0,
+                "diagnostics": [
+                    {
+                        "code": "cross_scope_add_node_unsupported",
+                        "message": "cross-scope add node unsupported",
+                    }
+                ],
+                "statements": [],
+            }
+        ],
+    )
+
+    report = agent_edit_module._batch_budget_artifixer_report(
+        state,
+        FailureKind.UNREPRESENTABLE,
+    )
+
+    assert report["policy"] == "diagnostics_only"
+    assert report["attempted"] is False
+    assert report["outcome"] == "hard_refusal"
+    assert report["reason"] == "unrepresentable_edit_surface"
+    assert report["hard_refusal"] is True
+    assert report["hard_refusal_codes"] == ["cross_scope_add_node_unsupported"]
+    assert report["candidate_graph_changed"] is False
+
+
+def test_batch_budget_artifixer_report_marks_changed_candidate_for_later_repair_study() -> None:
+    from types import SimpleNamespace
+
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    state = SimpleNamespace(
+        graph={
+            "nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["before"]}],
+            "links": [],
+        },
+        ui_payload={
+            "nodes": [{"id": 1, "type": "SaveImage", "widgets_values": ["after"]}],
+            "links": [],
+        },
+        batch_field_changes=(),
+        batch_turn_count=1,
+        batch_budget_state={"remaining_batches": 49, "consecutive_errors": 1},
+        batch_turns=[
+            {
+                "landed_op_count": 1,
+                "diagnostics": [],
+                "statements": [
+                    {
+                        "diagnostics": [
+                            {
+                                "code": "unknown_target_field",
+                                "message": "unknown field on follow-up edit",
+                            }
+                        ]
+                    }
+                ],
+            }
+        ],
+    )
+
+    report = agent_edit_module._batch_budget_artifixer_report(
+        state,
+        FailureKind.MODEL_MISTAKE,
+    )
+
+    assert report["policy"] == "diagnostics_only"
+    assert report["attempted"] is False
+    assert report["outcome"] == "candidate_available"
+    assert report["reason"] == "diagnostics_only"
+    assert report["hard_refusal"] is False
+    assert report["candidate_graph_changed"] is True
+    assert report["landed_edits"] is True
+    assert report["diagnostic_codes"] == ["unknown_target_field"]
+
+
 def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_cause_and_budget_stop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -4226,6 +5142,13 @@ def test_handle_agent_edit_batch_repl_reports_partial_success_hints_dependency_c
     )
     issue = result["agent_failure_context"]["issues"][0]
     assert issue["code"] == "batch_budget_exhausted"
+    assert issue["detail"]["artifixer"]["policy"] == "diagnostics_only"
+    assert issue["detail"]["artifixer"]["attempted"] is False
+    assert issue["detail"]["artifixer"]["outcome"] == "not_attempted"
+    assert issue["detail"]["artifixer"]["reason"] == "no_candidate_graph_change"
+    diagnostics = result["agent_failure_context"]["diagnostics"]
+    assert diagnostics[0]["code"] == "artifixer_not_attempted"
+    assert diagnostics[0]["detail"]["failure_kind"] == FailureKind.MODEL_MISTAKE.value
     assert result["message"] == "I ran out of turn budget before completing the remaining changes."
     assert issue["detail"]["turn_count"] == 1
     assert issue["detail"]["budget_state"]["consecutive_errors"] == 1
@@ -4604,7 +5527,9 @@ def test_handle_agent_edit_research_route_writes_agentic_messages_and_blocks_app
     assert "Do not edit the graph" in system_prompt
     assert "When a Research brief appears" in system_prompt
     assert "Do not search the raw user sentence" in system_prompt
-    assert "Research brief from triage" in user_prompt
+    assert "Research brief from triage (tentative retrieval hints; not findings)" in user_prompt
+    assert "Use these hints to seed focused research" in user_prompt
+    assert "prefer evidence that matches the user goal and current graph" in user_prompt
     assert "distilled or lightning video/motion models" in user_prompt
     assert "stopword-only searches such as there way run" in user_prompt
     assert "Research evidence/context" not in user_prompt
@@ -4682,7 +5607,7 @@ def test_handle_agent_edit_batch_repl_stops_repeated_discovery_only_turns(
         nonlocal calls
         calls += 1
         return {
-            "batch": 'research("Hotshot XL ComfyUI workflow", sources=["workflows", "registry", "web"])',
+            "batch": 'research("Hotshot XL ComfyUI workflow", sources=["workflows"])',
             "message": "Looking for the Hotshot XL workflow pattern.",
         }
 
@@ -4703,7 +5628,7 @@ def test_handle_agent_edit_batch_repl_stops_repeated_discovery_only_turns(
     assert result["graph_unchanged"] is True
     assert result["debug"]["batch_repl"]["exit_mode"] == "pure_clarify"
     assert result["debug"]["batch_repl"]["turn_count"] == 6
-    assert "could not find a workflow precedent" in result["message"].lower()
+    assert "could not produce a safe graph edit" in result["message"].lower()
     assert calls == 6
     assert len(result["batch_turns"]) == 6
     for turn in result["batch_turns"]:
@@ -4711,7 +5636,7 @@ def test_handle_agent_edit_batch_repl_stops_repeated_discovery_only_turns(
         assert [statement["op_kind"] for statement in turn["statements"]] == ["query"]
 
 
-def test_handle_agent_edit_batch_repl_missing_custom_nodes_does_not_emit_noop_message(
+def test_handle_agent_edit_batch_repl_unresolved_schema_capability_does_not_emit_noop_message(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4720,7 +5645,7 @@ def test_handle_agent_edit_batch_repl_missing_custom_nodes_does_not_emit_noop_me
 
     def fake_research(query: str, **kwargs: object) -> ResearchResult:
         return ResearchResult(
-            summary="Found registry-backed Hotshot custom-node evidence.",
+            summary="Found registry-backed Hotshot schema evidence.",
             sources=(
                 {
                     "source": "comfy-registry",
@@ -4730,6 +5655,7 @@ def test_handle_agent_edit_batch_repl_missing_custom_nodes_does_not_emit_noop_me
                     "resolver_candidate": {
                         "pack": {"slug": "ComfyUI-AnimateDiff-Evolved"},
                         "expected_classes": ["ADE_AnimateDiffLoaderWithContext"],
+                        "evidence": [{"source": "custom-node-map", "tier": "comfy-manager"}],
                     },
                 },
             ),
@@ -4742,11 +5668,11 @@ def test_handle_agent_edit_batch_repl_missing_custom_nodes_does_not_emit_noop_me
         [
             {
                 "batch": 'research("Hotshot XL ComfyUI nodes", sources=["registry"])',
-                "message": "Looking for the Hotshot custom-node pack.",
+                "message": "Looking for Hotshot workflow precedent.",
             },
             {
-                "batch": 'clarify("Hotshot custom nodes are required before I can safely apply the workflow pattern.")',
-                "message": "Hotshot custom nodes are required before I can safely apply the workflow pattern.",
+                "batch": 'clarify("I could not find an authorable Hotshot workflow adaptation from the available evidence.")',
+                "message": "I could not find an authorable Hotshot workflow adaptation from the available evidence.",
             },
         ]
     )
@@ -4764,9 +5690,10 @@ def test_handle_agent_edit_batch_repl_missing_custom_nodes_does_not_emit_noop_me
     )
 
     assert result["ok"] is True
-    assert result["outcome"]["kind"] == "requires_custom_nodes"
+    assert result["outcome"]["kind"] == "clarify"
+    assert result["clarification_required"] is True
     assert result["graph_unchanged"] is True
-    assert result["message"] == "Hotshot custom nodes are required before I can safely apply the workflow pattern."
+    assert result["message"] == "I could not find an authorable Hotshot workflow adaptation from the available evidence."
     assert result["message"] != "No graph changes were needed."
 
 
@@ -4867,7 +5794,12 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert result["ok"] is True
     assert result["contract_version"] == AGENT_EDIT_TURN_CONTRACT_VERSION
     assert result["apply_allowed"] is True
-    assert result["queue_allowed"] is False
+    assert result["queue_allowed"] is True
+    assert result["gates"]["queue_validate_ok"] is True
+    assert any(
+        stage["stage"] == "queue_validate" and stage["ok"] is True
+        for stage in result["debug"]["stage_snapshots"]
+    )
     assert result["candidate"]["state"] == "candidate"
     assert result["candidate"]["graph"] == result["graph"]
     assert result["candidate"]["graph_hash"] == result["candidate_graph_hash"]
@@ -4987,6 +5919,71 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert events[1][1]["turn_number"] == 1
     assert events[1][1]["exit_mode"] == "done"
     assert events[1][1]["done_summary"] == result["done_summary"]
+
+
+def test_handle_agent_edit_batch_repl_queue_blocker_keeps_canvas_apply_true_but_queue_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+
+    from vibecomfy.comfy_nodes.agent.contracts import StageResult
+
+    queue_issue = {
+        "code": "schema_less_queue_blocker",
+        "severity": "error",
+        "failure_kind": FailureKind.SCHEMA_LESS_QUEUE_BLOCKER.value,
+        "detail": {"node_id": "42"},
+        "message": "schema-less queue blocker",
+    }
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent.edit.queue_stage_result",
+        lambda **_kwargs: StageResult(
+            stage="queue_validate",
+            ok=False,
+            blocking=False,
+            issues=(queue_issue,),
+            gate_updates={"queue_validate_ok": False},
+        ),
+    )
+    responses = iter(
+        [
+            {
+                "batch": 'saveimage.filename_prefix = "after"',
+                "message": "Adjusted the save prefix.",
+            },
+            {
+                "batch": "done()",
+                "message": "Ready to commit the candidate.",
+            },
+        ]
+    )
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix to after and finish",
+            "session_id": "batch-queue-blocker",
+            "max_batches": 4,
+            "max_consecutive_errors": 2,
+        },
+        schema_provider=provider,
+        deepseek_client=lambda _messages: next(responses),
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["canvas_apply_allowed"] is True
+    assert result["apply_allowed"] is True
+    assert result["queue_allowed"] is False
+    assert result["apply_eligibility"]["reason"] == "queue_blocked_warning"
+    assert result["apply_eligibility"]["warnings"] == ["queue_blocked"]
+    assert result["gates"]["queue_validate_ok"] is False
+    assert result["report"]["queue_blockers"] == [queue_issue]
+    assert any(
+        stage["stage"] == "queue_validate" and stage["ok"] is False
+        for stage in result["debug"]["stage_snapshots"]
+    )
 
 
 def test_handle_agent_edit_research_route_writes_batch_artifacts_but_no_candidate(
@@ -5146,23 +6143,23 @@ def test_handle_agent_edit_batch_repl_clarify_after_edit_returns_edit_and_clarif
     assert audit["metadata"]["batch_repl"]["exit_mode"] == "edit_clarify"
 
 
-def test_handle_agent_edit_batch_repl_edit_clarify_with_missing_custom_nodes_downgrades(
+def test_handle_agent_edit_batch_repl_edit_clarify_with_unresolved_schema_capability_downgrades(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Regression guard for the requires_custom_nodes trigger being broadened to
+    # Regression guard for the unresolved schema-capability trigger being broadened to
     # edit_clarify (the Moonvalley widget-guess path: agent lands an edit, then
-    # appends a clarifying question, while missing custom nodes were surfaced).
-    # Such a run must downgrade to requires_custom_nodes and drop the landed
+    # appends a clarifying question, while unresolved schema evidence was surfaced).
+    # Such a run must downgrade to a clarification and drop the landed
     # edit, NOT report it as a successful candidate. The `bool(resolver_candidates)`
     # conjunct is what keeps the plain edit_clarify case above (real edit + a
-    # genuine follow-up question, no missing nodes) on the candidate path.
+    # genuine follow-up question, no unresolved schema evidence) on the candidate path.
     provider = _batch_repl_provider()
     monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
 
     def fake_research(query: str, **kwargs: object) -> ResearchResult:
         return ResearchResult(
-            summary="Found registry-backed Hotshot custom-node evidence.",
+            summary="Found registry-backed Hotshot schema evidence.",
             sources=(
                 {
                     "source": "comfy-registry",
@@ -5172,6 +6169,7 @@ def test_handle_agent_edit_batch_repl_edit_clarify_with_missing_custom_nodes_dow
                     "resolver_candidate": {
                         "pack": {"slug": "ComfyUI-AnimateDiff-Evolved"},
                         "expected_classes": ["ADE_AnimateDiffLoaderWithContext"],
+                        "evidence": [{"source": "custom-node-map", "tier": "comfy-manager"}],
                     },
                 },
             ),
@@ -5184,15 +6182,15 @@ def test_handle_agent_edit_batch_repl_edit_clarify_with_missing_custom_nodes_dow
         [
             {
                 "batch": 'research("Hotshot XL ComfyUI nodes", sources=["registry"])',
-                "message": "Looking for the Hotshot custom-node pack.",
+                "message": "Looking for Hotshot workflow precedent.",
             },
             {
                 "batch": 'saveimage.filename_prefix = "after"',
                 "message": "Adjusted the save prefix.",
             },
             {
-                "batch": 'clarify("Hotshot custom nodes are required before I can safely apply the workflow pattern.")',
-                "message": "Hotshot custom nodes are required before I can safely apply the workflow pattern.",
+                "batch": 'clarify("I could not find an authorable Hotshot workflow adaptation from the available evidence.")',
+                "message": "I could not find an authorable Hotshot workflow adaptation from the available evidence.",
             },
         ]
     )
@@ -5210,11 +6208,12 @@ def test_handle_agent_edit_batch_repl_edit_clarify_with_missing_custom_nodes_dow
     )
 
     # The landed save-prefix edit must be dropped: the request cannot be
-    # satisfied without the missing custom nodes, so this is not a candidate.
+    # satisfied without the unresolved schema capability, so this is not a candidate.
     assert result["ok"] is True
-    assert result["outcome"]["kind"] == "requires_custom_nodes"
+    assert result["outcome"]["kind"] == "clarify"
+    assert result["clarification_required"] is True
     assert result["graph_unchanged"] is True
-    assert result["message"] == "Hotshot custom nodes are required before I can safely apply the workflow pattern."
+    assert result["message"] == "I could not find an authorable Hotshot workflow adaptation from the available evidence."
 
 
 def test_handle_agent_edit_batch_repl_inline_edit_then_clarify_applies_edit_and_keeps_candidate(
@@ -5673,7 +6672,8 @@ def test_handle_agent_edit_batch_repl_scripted_transcript_commits_structurally_c
 
     assert result["ok"] is True
     assert result["apply_allowed"] is True
-    assert result["queue_allowed"] is False
+    assert result["queue_allowed"] is True
+    assert result["gates"]["queue_validate_ok"] is True
     assert result["done_summary"].startswith("Gate A passed:")
     assert "Rewired saveimage.images" in result["done_summary"]
     assert "saveimage.filename_prefix" in result["done_summary"]
@@ -7757,7 +8757,7 @@ def test_agent_executor_route_sanitizes_nonapplyable_adapt_outcome_candidate_lea
             return {
                 "ok": True,
                 "route": "adapt",
-                "reply": "Hotshot custom-node evidence was not grounded.",
+                "reply": "Hotshot schema evidence was not grounded.",
                 "outcome": {
                     "kind": "requires_custom_nodes",
                     "candidates": [
@@ -10242,7 +11242,7 @@ def test_handle_agent_edit_revise_strips_confirmed_noop_candidate(
     assert "no_diff" in scoped["eligibility_blockers"]
 
 
-def test_handle_agent_edit_revise_readiness_blockers_skip_provider_and_emit_evidence(
+def test_handle_agent_edit_revise_ignores_preexisting_assets_and_unknown_nodes_for_local_edit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -10263,53 +11263,76 @@ def test_handle_agent_edit_revise_readiness_blockers_skip_provider_and_emit_evid
                 confidence=1.0,
             ),
             "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "image")]),
+            "SaveImage": NodeSchema(
+                class_type="SaveImage",
+                pack=None,
+                inputs={
+                    "images": InputSpec("IMAGE", required=True),
+                    "filename_prefix": InputSpec("STRING"),
+                },
+                outputs=[],
+                source_provider="test",
+                confidence=1.0,
+            ),
         }
     )
     graph = {
         "nodes": [
+            *(_ui_graph()["nodes"]),
             {
-                "id": 1,
+                "id": 3,
                 "type": "CheckpointLoaderSimple",
                 "widgets": [{"name": "ckpt_name"}],
                 "widgets_values": ["missing.safetensors"],
             },
-            {"id": 2, "type": "MissingPackNode", "widgets_values": []},
+            {"id": 4, "type": "MissingPackNode", "widgets_values": []},
         ],
-        "links": [],
+        "links": list(_ui_graph()["links"]),
     }
     monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
-
-    def _provider_must_not_run(_messages):
-        raise AssertionError("provider should not run for readiness-blocked revise")
+    responses = iter(
+        [
+            {
+                "batch": 'saveimage.filename_prefix = "after"',
+                "message": "Adjusted the save prefix.",
+            },
+            {
+                "batch": "done()",
+                "message": "Ready.",
+            },
+        ]
+    )
 
     result = handle_agent_edit(
         {
             "graph": graph,
-            "task": "make this workflow ready",
+            "task": "change the save prefix to after",
             "route": "revise",
             "executor_route": "revise",
             "provider_route": "codex",
             "executor_classification": {"route": "revise", "task": "edit_graph"},
             "session_id": "revise-readiness-blocked",
-            "max_batches": 1,
+            "max_batches": 2,
         },
         schema_provider=provider,
-        deepseek_client=_provider_must_not_run,
+        deepseek_client=lambda _messages: next(responses),
         session_root=tmp_path,
     )
 
     assert result["ok"] is True
-    assert result["outcome"]["kind"] == "noop"
-    assert result["candidate"] is None
-    assert result["apply_allowed"] is False
-    assert result["report"]["read_only"] is True
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["candidate"] is not None
+    assert result["apply_allowed"] is True
     readiness = result["report"]["revision_evidence"]["readiness"]
-    assert readiness["has_blockers"] is True
+    assert readiness["has_blockers"] is False
     assert readiness["missing_models"] == ["missing.safetensors"]
     assert readiness["missing_node_packs"] == ["MissingPackNode"]
     turn_dir = turn_dir_for(tmp_path, "revise-readiness-blocked", str(result["turn_id"]))
-    assert not (turn_dir / "model_request.json").exists()
+    assert (turn_dir / "model_request.json").exists()
     artifact = json.loads((turn_dir / "revision_evidence.json").read_text(encoding="utf-8"))
+    assert artifact["revision_evidence"]["safe_candidate_possible"] is True
+    assert artifact["revision_evidence"]["candidate_eligible"] is True
+    assert artifact["revision_evidence"]["scoped_diff"]["changed_nodes"] == ["2"]
     assert artifact["revision_evidence"]["readiness"]["missing_models"] == [
         "missing.safetensors"
     ]
@@ -12883,11 +13906,12 @@ class TestBuildBatchMessagesResearchToolExposure:
         )
         system = messages[0]["content"]
         # Key bounded guidance phrases
-        assert "Use separate evidence-tier calls" in system
-        assert 'sources=["workflows"]' in system
-        assert 'sources=["web"]' in system
-        assert 'sources=["registry"]' in system
-        assert "Do not combine internal workflow search with web or registry" in system
+        assert "tentative retrieval hints" in system
+        assert "research workflow precedents and community knowledge" in system
+        assert "use `workflows` first" in system
+        assert "then `messages` or `web`" in system
+        assert "Use `registry` only when the user explicitly asks" in system
+        assert "Do not research installation, provider packs, registry, or local addability" in system
 
     def test_research_block_uses_evidence_context_label_turn0(self) -> None:
         """Research block on turn 0 uses 'Research evidence/context' as the section

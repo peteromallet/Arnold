@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import dataclasses
 import json
 import logging
 import os
@@ -38,6 +39,12 @@ _WORKFLOW_RESEARCH_GUIDANCE = (
     "templates with `vibecomfy workflows list --ready`, copy one with "
     "`vibecomfy copy-to-recipe <template_id> --out <file.py> --strip-markers`, "
     "and work from the ready template `.py` representation."
+)
+_BATCH_REPL_PARSE_RETRY_PROMPT = (
+    "Your previous reply was empty or unparseable for VibeComfy's batch_repl "
+    "transport. Reply with one short user-facing sentence followed by exactly "
+    "one ```batch fenced block. If you cannot safely edit, put "
+    'clarify("...") inside the batch block. Do not include any other markdown.'
 )
 
 
@@ -91,7 +98,17 @@ class AuthError(ProviderError):
 
 
 class MalformedModelJSON(ProviderError, ValueError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        raw_response: str | None = None,
+        parse_reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.raw_response = raw_response
+        self.raw_response_preview = _preview_raw_model_response(raw_response)
+        self.parse_reason = parse_reason
 
 
 class MissingRequiredField(ProviderError, ValueError):
@@ -170,11 +187,17 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
 
 _BATCH_FENCE_RE = re.compile(r"```batch\s*\n(.*?)```", re.DOTALL)
-_BATCH_RETRY_NUDGE = (
-    "Your previous reply was empty or unparseable. Reply with user-facing prose "
-    "(one sentence telling the user what you are doing) followed by exactly "
-    "one ```batch fenced block containing your edit statements."
-)
+
+
+def _preview_raw_model_response(text: str | None, *, limit: int = 1200) -> str | None:
+    if not isinstance(text, str):
+        return None
+    normalized = " ".join(text.strip().split())
+    if not normalized:
+        return None
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 1].rstrip() + "…"
 
 
 def normalize_user_message(message: str | None) -> str:
@@ -211,18 +234,24 @@ def extract_batch_fence(text: str) -> tuple[str, str]:
     """
     if not text.strip():
         raise MalformedModelJSON(
-            "Agent batch_repl response was empty. Expected exactly one ```batch fenced block."
+            "Agent batch_repl response was empty. Expected exactly one ```batch fenced block.",
+            raw_response=text,
+            parse_reason="empty",
         )
     matches = _BATCH_FENCE_RE.findall(text)
     if len(matches) == 0:
         raise MalformedModelJSON(
             "Agent response does not contain a ```batch fenced block. "
-            "Include exactly one ```batch code block with your edit statements."
+            "Include exactly one ```batch code block with your edit statements.",
+            raw_response=text,
+            parse_reason="missing_batch_fence",
         )
     if len(matches) > 1:
         raise MalformedModelJSON(
             "Agent response contains multiple ```batch fenced blocks. "
-            "Include exactly one ```batch code block per turn."
+            "Include exactly one ```batch code block per turn.",
+            raw_response=text,
+            parse_reason="multiple_batch_fences",
         )
     batch_code = matches[0].strip()
     # Extract prose: everything outside the fence, with the fence text removed.
@@ -288,7 +317,7 @@ def build_batch_messages(
         "Privileged calls:\n"
         "- `del x`\n"
         "- `node.mode = \"bypassed\" | \"muted\" | \"enabled\"` (bypass does NOT pass input through)\n"
-        "- `search(focus_types=[\"ClassName\"])` — exact local ComfyUI schema lookup only; no internet/precedent search and no edit lands\n"
+        "- `search(focus_types=[\"ClassName\"])` — exact current authoring-schema lookup only; no internet/precedent search and no edit lands\n"
         "- `research(\"query words\", sources=[\"workflows\", \"registry\", \"messages\", \"web\"])` — choose evidence tiers; `workflows` searches internal templates plus Hivemind external workflows; if sources are omitted it searches internal workflows/templates only; no edit lands\n"
         "- `python()` — view current workflow Python\n"
         "- `done()` — commit landed edits\n\n"
@@ -298,7 +327,7 @@ def build_batch_messages(
         "- No list sockets/reorder/group/cross-subgraph edits\n\n"
         "Question / explanation mode: if Research/Graph inspection appears and the user only asked a question, answer from it and `done()`.\n\n"
         "Research cap: after 4 consecutive turns that only search/research/report and land 0 edits, stop researching. "
-        "Either apply the best schema-backed local edit supported by evidence, or call `clarify()` / `done()` with no candidate if no defensible edit exists.\n\n"
+        "Either apply the best edit supported by precedent and current authoring signatures, or call `clarify()` / `done()` with no candidate if no defensible edit exists.\n\n"
         "Code node rule:\n"
         "For code-node, Python, PIL, or custom image-processing requests, use exactly "
         "`vibecomfy.exec` — never `vibecomfy.code`, `ImageCode`, `PythonCode`, or a guessed class. "
@@ -309,11 +338,13 @@ def build_batch_messages(
         "Wire with physical slot names (`in_0`, `out_0`) and reference the semantic input name inside `source`. "
         "Example: `pil = vibecomfy.exec(source='import torch; return {\"image\": image[0]}', io={'inputs': {'image': 'IMAGE'}, 'outputs': {'image': 'IMAGE'}}, in_0=decode.IMAGE)` "
         "then `save.images = pil.out_0`.\n\n"
-        "Use local installed-node schema lookup only when needed: existing nodes are shown above, so do NOT search for them. "
+        "Use current authoring-schema lookup only when needed: existing nodes are shown above, so do NOT search for them. "
         "Reference EXISTING nodes by EXACT names from the rendered Python. Bare ambiguous refs are rejected. "
         "Exception: if Revision evidence or the Research brief says an existing custom/provisional class has an unknown schema and that exact class is the edit target, search that exact class to hydrate its schema before editing. "
-        "Search first: use Local schema lookup for a NEW node TYPE you want to ADD; only `search(focus_types=[\"X\"])` for a NEW exact node TYPE you intend to add. "
-        "`search(...)` is factual local ComfyUI schema lookup, not workflow/web research, and never justifies substituting a merely similar installed node for the user's named target.\n\n"
+        "Search first: use schema lookup for a NEW node TYPE you want to ADD; only `search(focus_types=[\"X\"])` for a NEW exact node TYPE you intend to add. "
+        "`search(...)` is factual current authoring-schema lookup, not workflow/web research, and never justifies substituting a merely similar node for the user's named target. "
+        "A local miss is not a product-level failure: use workflow precedent and visible graph evidence to choose the smallest defensible edit, then let the edit/apply path validate whether it is authorable. "
+        "Do not tell the user to install nodes.\n\n"
         "For generic save/export/view/output requests, start from the graph's actual terminal output type. "
         "If the graph ends in `IMAGE`, search local consumers with `search(compatible_output_type=\"IMAGE\")`; "
         "if you need an mp4-style video sink, search both the image-to-video step and video sink, e.g. "
@@ -321,28 +352,41 @@ def build_batch_messages(
         "Do this before guessing branded output-node class names. Use exact `focus_types` only after a class name appears in those compatibility results or other evidence. "
         "For seed-variation grids, contact sheets, preview montages, format/export changes, or other graph-local output/composition edits, preserve the existing generation/custom-node core and add or rewire only deterministic local consumer/composition nodes after the visible terminal outputs. "
         "Prefer local `search(compatible_output_type=...)` or exact visible sink/compositor schema over workflow precedent; do not replace a working custom model stack just to make a layout/export edit.\n\n"
-        "Research strategy (bounded guidance): A Research brief is search direction, not an "
-        "answer. Use separate evidence-tier calls — `research(\"...\", sources=[...])`, one tier "
-        "per call (`workflows`, `registry`, `messages`, `web`); never mix internal workflow "
-        "search with web/registry in one call. For edit-by-precedent: `workflows` → `messages` → "
-        "`registry` → `web`; for knowledge questions: `messages` then `workflows`. Anchor each "
+        "Research strategy (bounded guidance): A Research brief contains tentative retrieval "
+        "hints, not findings, implementation instructions, or validation tasks. For "
+        "edit-by-precedent, research workflow precedents and community knowledge: use "
+        "`workflows` first, then `messages` or `web` when more context is needed. "
+        "Do not research installation, provider packs, registry, or local addability unless "
+        "the user explicitly asks for installation/provider information; reinterpret such a "
+        "hint as a request to find workflow precedents for the named technology. Use `registry` "
+        "only when the user explicitly asks which node pack provides a class. Anchor each "
         "query on the smallest named class/field/socket visible in the graph — never search the "
         "raw user sentence or guess class names (no `search(focus_types=[...])` for guessed "
         "names); workflow context is mandatory for named external requests. Before editing, "
         "extract a concrete node-combination reference (class types, input/output roles, "
         "terminal consumer, visible params); if none is defensible, keep researching or "
         "`clarify()` instead of splicing, and apply the smallest evidence-supported edit. "
-        "Hydrate an exact target class with `search(focus_types=[\"X\"])` or "
-        "`research(\"X field\", sources=[\"registry\", \"workflows\"])` before editing a custom "
-        "node, then land only the requested change. Never write a field/socket not visible in "
+        "When execution_protocol_notes includes `selected_precedent`, treat it as the "
+        "grounding workflow interpretation. Use its minimal_spine and terminal_output_path "
+        "as the pattern to adapt; do not reinterpret that pattern because a local schema "
+        "lookup misses. Local schema checks are implementation evidence only, not research goals. "
+        "If you need to add a new node type, use `search(focus_types=[\"X\"])` only for an exact "
+        "class named by the selected precedent or visible graph; do not broaden to a literal "
+        "branded node name unless selected_precedent says that class exists. "
+        "Exact workflow_schema classes from selected workflow precedent are provisional constructor permission "
+        "when they appear in the signature catalog; they may be authored as reviewable candidate nodes even "
+        "when not runtime-installed yet. Do not invent replacement classes. Supported node setup is automatic; "
+        "do not request installation. Never write a field/socket not visible in "
         "the render, catalog, `search(...)`, or exact-class schema — pick a visible nearby field "
-        "or keep researching. Opaque `widget_N` needs a corroborating `search()`/schema hit or a "
-        "self-evident current value, else `clarify()`. Use `clarify()` only after exact-class "
-        "research still cannot identify the target.\n\n"
+        "or keep researching. For provisional workflow schemas, copy visible `widget_N` defaults "
+        "or change a `widget_N` only when the requested edit clearly maps to that positional "
+        "workflow value; do not translate positional widgets into guessed friendly field names. "
+        "Opaque `widget_N` needs a corroborating `search()`/schema hit or a self-evident current "
+        "value, else `clarify()`.\n\n"
         "Placement: optional `near=anchor_var`; never set coordinates.\n\n"
         "Envelope: start with one user-facing prose sentence, then exactly one ```batch fence. "
         "Never respond with only a fenced block. `clarify(\"...\")` is terminal and creates no candidate. "
-        "Use it only when no defensible edit is possible after graph, context, precedent research, and schema/search. "
+        "Use it only when no defensible edit is possible after graph context, precedent research, and authoring-signature checks. "
         "Prefer one valid default over asking. No extra fenced blocks before the required ```batch fence.\n\n"
         f"Budget: {budget_remaining} turn(s) remaining out of {max_batches}.\n\n"
         "Worked example (PLACEHOLDER names):\n"
@@ -434,10 +478,15 @@ def build_batch_messages(
         research_brief_block = ""
         if research_brief:
             research_brief_block = (
-                "\n\nResearch brief from triage (directional; not findings):\n"
+                "\n\nResearch brief from triage (tentative retrieval hints; not findings):\n"
                 f"{research_brief}\n"
-                "Use these directions to form focused research(...) calls. "
-                "If results are weak or generic, refine the query and try a different evidence tier."
+                "Use these hints to seed focused research(...) calls, but prefer evidence that "
+                "matches the user goal and current graph. For edit-by-precedent, prioritize "
+                "workflow examples and community usage reports showing concrete graph patterns. "
+                "If a hint points at installation, provider packs, registry, or local addability "
+                "for a normal workflow edit, reinterpret it as workflow-precedent research for "
+                "the named technology. If results are weak or generic, refine the query and try "
+                "a different evidence tier."
             )
         research_block = ""
         if research_summary:
@@ -500,10 +549,15 @@ def build_batch_messages(
         research_brief_block = ""
         if research_brief:
             research_brief_block = (
-                "\n\nResearch brief from triage (directional; not findings):\n"
+                "\n\nResearch brief from triage (tentative retrieval hints; not findings):\n"
                 f"{research_brief}\n"
-                "Use these directions to form focused research(...) calls. "
-                "If results are weak or generic, refine the query and try a different evidence tier."
+                "Use these hints to seed focused research(...) calls, but prefer evidence that "
+                "matches the user goal and current graph. For edit-by-precedent, prioritize "
+                "workflow examples and community usage reports showing concrete graph patterns. "
+                "If a hint points at installation, provider packs, registry, or local addability "
+                "for a normal workflow edit, reinterpret it as workflow-precedent research for "
+                "the named technology. If results are weak or generic, refine the query and try "
+                "a different evidence tier."
             )
         previous_message_block = ""
         if previous_model_message:
@@ -1172,6 +1226,21 @@ def _call_batch_runtime(
     )
 
 
+def _batch_retry_messages(
+    messages: list[dict[str, str]],
+    exc: BaseException,
+) -> list[dict[str, str]]:
+    prompt = _BATCH_REPL_PARSE_RETRY_PROMPT
+    raw_preview = getattr(exc, "raw_response_preview", None)
+    if isinstance(raw_preview, str) and raw_preview.strip():
+        prompt = (
+            f"{prompt}\n\n"
+            "Previous response preview, for correction only:\n"
+            f"{raw_preview.strip()}"
+        )
+    return [*messages, {"role": "system", "content": prompt}]
+
+
 def run_agent_turn_batch(
     task: str,
     messages: list[dict[str, str]],
@@ -1210,55 +1279,60 @@ def run_agent_turn_batch(
         "credential_presence": _credential_presence(),
         "response_contract": "batch_repl",
     }
-    last_malformed: MalformedModelJSON | None = None
-    # 1 initial + 2 retries: DeepSeek intermittently returns an empty / no-fence
-    # response that parses as MalformedModelJSON; the same prompt usually succeeds
-    # on a later attempt.
-    for attempt in range(3):
-        attempt_messages = messages if attempt == 0 else [*messages, {"role": "system", "content": _BATCH_RETRY_NUDGE}]
-        try:
+    try:
+        attempts = 3
+        retry_count = 0
+        last_exc: MalformedModelJSON | MissingRequiredField | None = None
+        current_messages = messages
+        for attempt_index in range(attempts):
+            if attempt_index > 0 and last_exc is not None:
+                current_messages = _batch_retry_messages(messages, last_exc)
             response = _call_batch_runtime(
                 runtime,
                 task=task,
-                messages=attempt_messages,
+                messages=current_messages,
                 route=dispatch_route,
                 model=selected_model,
             )
-            metadata = dict(audit_metadata)
-            if attempt:
-                metadata["batch_repl_retry"] = {
-                    "count": attempt,
-                    "reason": str(last_malformed) if last_malformed else "malformed batch response",
-                }
-            return _normalize_batch_response(
-                response,
-                route=dispatch_route,
-                model=selected_model,
-                audit_metadata=metadata,
-            )
-        except PermissionError as exc:
-            raise AuthError(str(exc)) from exc
-        except TimeoutError:
-            raise
-        except MalformedModelJSON as exc:
-            if attempt < 2:
-                last_malformed = exc
-                LOGGER.warning(
-                    "Retrying batch_repl agent turn after malformed model response: %s",
-                    exc,
+            try:
+                result = _normalize_batch_response(
+                    response,
+                    route=dispatch_route,
+                    model=selected_model,
+                    audit_metadata=audit_metadata,
                 )
+            except (MalformedModelJSON, MissingRequiredField) as exc:
+                last_exc = exc
+                if attempt_index >= attempts - 1:
+                    raise
+                retry_count += 1
                 continue
-            raise
-        except ImportError:
-            # The agent runtime could not be loaded — a setup fault, not a
-            # transient provider outage.  Preserve the type so it is classified
-            # as a non-retryable AGENT_RUNTIME_UNAVAILABLE failure.
-            raise
-        except (ProviderError, MissingRequiredField):
-            raise
-        except Exception as exc:
-            raise ProviderError(str(exc)) from exc
-    raise last_malformed or MalformedModelJSON("Agent batch_repl response was malformed.")
+            if retry_count:
+                metadata = dict(result.audit_metadata or {})
+                metadata["batch_repl_retry"] = {
+                    "count": retry_count,
+                    "reason": str(last_exc) if last_exc is not None else "",
+                    "parse_reason": getattr(last_exc, "parse_reason", None),
+                    "raw_response_preview": getattr(last_exc, "raw_response_preview", None),
+                }
+                result = dataclasses.replace(result, audit_metadata=metadata)
+            return result
+        if last_exc is not None:
+            raise last_exc
+        raise ProviderError("Agent batch_repl provider exited without a response.")
+    except PermissionError as exc:
+        raise AuthError(str(exc)) from exc
+    except TimeoutError:
+        raise
+    except ImportError:
+        # The agent runtime could not be loaded — a setup fault, not a
+        # transient provider outage.  Preserve the type so it is classified
+        # as a non-retryable AGENT_RUNTIME_UNAVAILABLE failure.
+        raise
+    except (ProviderError, MalformedModelJSON, MissingRequiredField):
+        raise
+    except Exception as exc:
+        raise ProviderError(str(exc)) from exc
 
 
 def run_model_turn(

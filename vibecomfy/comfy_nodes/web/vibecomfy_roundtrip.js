@@ -2094,8 +2094,17 @@ function installGraphConfigureIntentFallback() {
 function installAgentPreviewOverlay() {
   installAgentPreviewOverlayImpl(app, {
     PANEL_STATE,
+    captureLiveCanvasRevision,
     drawPreviewOverlay,
+    getLiveGraph,
+    getLiveGraphNodes,
+    getUid,
     getOrBuildPreviewDiff,
+    graphNodeCount: _graphNodeCount,
+    readNodePos,
+    readNodeSize,
+    readWidgetValues,
+    widgetValuePreviewText,
   });
 }
 
@@ -3359,8 +3368,10 @@ function createAgentPanelShell() {
   undoBtn.id = PANEL_IDS.undo;
   undoBtn.dataset.vibecomfyAction = "undo";
   undoBtn.title = "Undo Last Apply";
+  undoBtn.setAttribute("data-tooltip", "Undo Last Apply");
   undoBtn.setAttribute("aria-label", "Undo Last Apply");
   undoBtn.appendChild(makeUndoIcon());
+  attachInstantTooltip(undoBtn);
   const newConvBtn = button("New conversation", () => newAgentConversation(currentAgentPanel()));
   newConvBtn.id = "vibecomfy-agent-panel-new-conversation";
   submitBtn.dataset.vibecomfyAction = "submit";
@@ -3392,10 +3403,12 @@ function createAgentPanelShell() {
   composerButtons.appendChild(newConvBtn);
   const havingIssuesBtn = button("?", () => showIssueModal(currentAgentPanel()));
   havingIssuesBtn.id = PANEL_IDS.havingIssues;
-  havingIssuesBtn.title = "Having issues?";
+  havingIssuesBtn.title = "Having issues? Open the help dialog.";
+  havingIssuesBtn.setAttribute("data-tooltip", "Having issues? Open the help dialog.");
   if (typeof havingIssuesBtn.setAttribute === "function") {
-    havingIssuesBtn.setAttribute("aria-label", "Having issues?");
+    havingIssuesBtn.setAttribute("aria-label", "Having issues? Open the help dialog.");
   }
+  attachInstantTooltip(havingIssuesBtn);
   setButtonEmphasis(havingIssuesBtn, true, "neutral");
   Object.assign(havingIssuesBtn.style, {
     flex: "0 0 28px",
@@ -9106,12 +9119,12 @@ function handleRequiresCustomNodesSubmitResponse(panel, context = {}) {
     resultTurnId,
     resultBaselineTurnId,
   } = context;
-  const customNodeMessage =
-    (typeof result.message === "string" && result.message.trim())
-      ? result.message.trim()
-      : (typeof result.reply === "string" && result.reply.trim())
-        ? result.reply.trim()
-        : "Custom nodes are required before this edit can be applied.";
+	  const customNodeMessage =
+	    (typeof result.message === "string" && result.message.trim())
+	      ? result.message.trim()
+	      : (typeof result.reply === "string" && result.reply.trim())
+	        ? result.reply.trim()
+	        : "VibeComfy could not confirm automatic installation for this edit.";
   const customNodeResolution = readCustomNodeResolution(result, { endpoint: "submit:custom-nodes" });
   const obligations = transition(panel, "REQUIRES_CUSTOM_NODES_RESPONSE", {
     result: result.raw || result,
@@ -10988,6 +11001,72 @@ function button(label, onClick) {
   return node;
 }
 
+/**
+ * Attach an immediate hover tooltip to a button.
+ *
+ * Reads tooltip text from the element's `data-tooltip` attribute (preferred) or
+ * `title` attribute (fallback). The browser's native `title` tooltip has a
+ * multi-second delay; this helper shows the text instantly on mouseenter/focus
+ * and removes it on mouseleave/blur.
+ */
+function attachInstantTooltip(element) {
+  let tooltip = null;
+
+  function tooltipText() {
+    return element.getAttribute("data-tooltip")
+      || element.getAttribute("title")
+      || "";
+  }
+
+  function show() {
+    const text = tooltipText();
+    if (!text) return;
+    hide();
+    tooltip = el("div", text);
+    Object.assign(tooltip.style, {
+      position: "fixed",
+      zIndex: "100000",
+      background: "#171a20",
+      color: "#edf2f7",
+      border: "1px solid #414855",
+      borderRadius: "6px",
+      padding: "5px 8px",
+      fontSize: "11px",
+      fontFamily: "monospace",
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+    });
+    document.body.appendChild(tooltip);
+    const rect = element.getBoundingClientRect();
+    const tipRect = tooltip.getBoundingClientRect();
+    let top = rect.top - tipRect.height - 6;
+    let left = rect.left + rect.width / 2 - tipRect.width / 2;
+    left = Math.max(6, Math.min(left, window.innerWidth - tipRect.width - 6));
+    top = Math.max(6, top);
+    tooltip.style.top = `${top}px`;
+    tooltip.style.left = `${left}px`;
+  }
+
+  function hide() {
+    if (tooltip && tooltip.parentNode) {
+      tooltip.parentNode.removeChild(tooltip);
+    }
+    tooltip = null;
+  }
+
+  function refresh() {
+    if (tooltip) tooltip.textContent = tooltipText();
+  }
+
+  element.addEventListener("mouseenter", show);
+  element.addEventListener("mouseleave", hide);
+  element.addEventListener("focus", show);
+  element.addEventListener("blur", hide);
+
+  element._vibecomfyRefreshTooltip = refresh;
+}
+
 function makeUndoIcon() {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
@@ -11000,10 +11079,12 @@ function makeUndoIcon() {
     flex: "0 0 auto",
   });
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", "M9 7H5v4M5.5 10.5A7 7 0 1 0 8 5.3");
+  // Simple, open left-pointing arrow. Avoids the tight arc of the old undo
+  // icon, which collapsed into a circle at 16x16.
+  path.setAttribute("d", "M20 12H4M4 12l5-5M4 12l5 5");
   path.setAttribute("fill", "none");
   path.setAttribute("stroke", "currentColor");
-  path.setAttribute("stroke-width", "2");
+  path.setAttribute("stroke-width", "2.5");
   path.setAttribute("stroke-linecap", "round");
   path.setAttribute("stroke-linejoin", "round");
   svg.appendChild(path);

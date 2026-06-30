@@ -137,6 +137,7 @@ WIDGET_SEMANTIC_NAMES: dict[str, dict[str, str]] = {
 }
 
 WIDGET_SCHEMA: dict[str, list[str | None]] = {
+    "ACN_AdvancedControlNetApply": ["strength", "start_percent", "end_percent"],
     "BasicScheduler": ["scheduler", "steps", "denoise"],
     "CFGGuider": ["cfg"],
     "CheckpointLoaderSimple": ["ckpt_name"],
@@ -238,6 +239,9 @@ WIDGET_SCHEMA: dict[str, list[str | None]] = {
     "PrimitiveInt": ["value"],
     "PrimitiveString": ["value"],
     "PrimitiveStringMultiline": ["value"],
+    # ComfyUI-Custom-Scripts ShowText stores the linked text field plus a
+    # second UI value in LiteGraph. The object_info stub only exposes ``text``.
+    "ShowText|pysssss": ["text", None],
     "PathchSageAttentionKJ": ["sage_attention", "allow_compile"],
     "Power Lora Loader (rgthree)": [None, None, None, None],
     "RandomNoise": ["noise_seed", "control_after_generate"],

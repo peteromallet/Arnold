@@ -125,7 +125,7 @@ _ROUTE_DESCRIPTIONS: dict[str, str] = {
     "respond": "answer directly from existing context without research or editing.",
     "inspect": "explain or analyze the current graph without outside research or editing.",
     "research": "research workflows, nodes, or techniques, then answer without editing.",
-    "requires_custom_nodes": "return missing custom-node resolver evidence and install intent without applying graph changes.",
+    "requires_custom_nodes": "return that the requested edit cannot be safely authored from current evidence without applying graph changes.",
     "revise": "edit the current graph using local context only.",
     "adapt": "research precedent or workflow patterns, then edit the graph.",
 }
@@ -841,6 +841,110 @@ class PrecedentPacket:
         return payload
 
 
+@dataclass(frozen=True)
+class SelectedPrecedent:
+    """Research-grounded workflow interpretation for edit-by-precedent.
+
+    Unlike :class:`PrecedentPacket`, this is intentionally directive: it records
+    the workflow pattern research found to be compatible enough to ground the
+    later authoring/resolution step.  It is still evidence, not an applied edit.
+    """
+
+    name: str = ""
+    source: str = ""
+    source_workflow_path: str | None = None
+    match_reasons: tuple[str, ...] = ()
+    requested_terms: tuple[str, ...] = ()
+    model_families: tuple[str, ...] = ()
+    implementation_ecosystems: tuple[str, ...] = ()
+    models: tuple[str, ...] = ()
+    minimal_spine: tuple[str, ...] = ()
+    terminal_output_path: tuple[str, ...] = ()
+    promotion_gates: Mapping[str, Any] = field(default_factory=dict)
+    interpretation_notes: tuple[str, ...] = ()
+    avoid_searches: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "match_reasons",
+            tuple(str(v) for v in self.match_reasons if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "requested_terms",
+            tuple(str(v) for v in self.requested_terms if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "model_families",
+            tuple(str(v) for v in self.model_families if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "implementation_ecosystems",
+            tuple(str(v) for v in self.implementation_ecosystems if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "models",
+            tuple(str(v) for v in self.models if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "minimal_spine",
+            tuple(str(v) for v in self.minimal_spine if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "terminal_output_path",
+            tuple(str(v) for v in self.terminal_output_path if str(v).strip()),
+        )
+        object.__setattr__(self, "promotion_gates", MappingProxyType({
+            str(k): _freeze_jsonish(v)
+            for k, v in self.promotion_gates.items()
+        }))
+        object.__setattr__(
+            self,
+            "interpretation_notes",
+            tuple(str(v) for v in self.interpretation_notes if str(v).strip()),
+        )
+        object.__setattr__(
+            self,
+            "avoid_searches",
+            tuple(str(v) for v in self.avoid_searches if str(v).strip()),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "source": self.source,
+        }
+        if self.source_workflow_path:
+            payload["source_workflow_path"] = self.source_workflow_path
+        if self.match_reasons:
+            payload["match_reasons"] = list(self.match_reasons)
+        if self.requested_terms:
+            payload["requested_terms"] = list(self.requested_terms)
+        if self.model_families:
+            payload["model_families"] = list(self.model_families)
+        if self.implementation_ecosystems:
+            payload["implementation_ecosystems"] = list(self.implementation_ecosystems)
+        if self.models:
+            payload["models"] = list(self.models)
+        if self.minimal_spine:
+            payload["minimal_spine"] = list(self.minimal_spine)
+        if self.terminal_output_path:
+            payload["terminal_output_path"] = list(self.terminal_output_path)
+        if self.promotion_gates:
+            payload["promotion_gates"] = _thaw_jsonish(self.promotion_gates)
+        if self.interpretation_notes:
+            payload["interpretation_notes"] = list(self.interpretation_notes)
+        if self.avoid_searches:
+            payload["avoid_searches"] = list(self.avoid_searches)
+        return payload
+
+
 # ── revision evidence contracts (M3) ──────────────────────────────────────────
 
 
@@ -938,14 +1042,17 @@ class ReadinessReport:
     def has_blockers(self) -> bool:
         """True when any readiness/runtime problem was found.
 
-        Missing models and node packs are blockers for readiness-gated routes
-        such as revise, where running the provider against an unready graph would
-        produce a candidate the runtime cannot honestly queue.
+        ``missing_models`` and ``missing_node_packs`` are still recorded and
+        reported (advisory) but are deliberately NOT blockers. A graph is edited
+        as a spec, and the assets it references are often not installed on the
+        editing machine (downloaded workflows, or a user asking the agent to
+        swap in a different model/custom node). Asset availability is a runtime
+        concern, not an edit-correctness concern, so it must not prevent
+        producing or applying an edit candidate. ``validation_errors``,
+        ``no_gpu_detected`` and explicit ``readiness_blockers`` remain blockers.
         """
         return bool(
-            self.missing_models
-            or self.missing_node_packs
-            or self.validation_errors
+            self.validation_errors
             or self.no_gpu_detected
             or self.readiness_blockers
         )
@@ -1084,7 +1191,6 @@ class RevisionEvidence:
                 self.topology.missing_graph
                 or self.topology.dangling_links
                 or self.topology.absent_endpoint_nodes
-                or self.topology.unknown_class_types
                 or self.topology.missing_required_inputs
             )
             and self.topology.schema_available is not False
@@ -1240,6 +1346,11 @@ class ResearchResult:
     # SD1: neutral precedent packet carrying all discovered options without
     # ranking or winner selection.
     precedent_packet: PrecedentPacket | None = None
+    # Execute-facing source subset after precedent compatibility gates. The
+    # full `sources` tuple remains the audit trail.
+    precedent_sources: tuple[dict[str, Any], ...] = ()
+    workflow_precedent_status: str = ""
+    selected_precedent: SelectedPrecedent | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "sources", tuple(self.sources))
@@ -1254,6 +1365,7 @@ class ResearchResult:
             if isinstance(detail, Mapping)
         ))
         object.__setattr__(self, "precedent_slices", tuple(self.precedent_slices))
+        object.__setattr__(self, "precedent_sources", tuple(self.precedent_sources))
 
     def to_dict(self) -> dict[str, Any]:
         result = {
@@ -1269,6 +1381,12 @@ class ResearchResult:
             result["adaptation_plan"] = self.adaptation_plan.to_dict()
         if self.precedent_packet is not None:
             result["precedent_packet"] = self.precedent_packet.to_dict()
+        if self.precedent_sources:
+            result["precedent_sources"] = _thaw_jsonish(self.precedent_sources)
+        if self.workflow_precedent_status:
+            result["workflow_precedent_status"] = self.workflow_precedent_status
+        if self.selected_precedent is not None:
+            result["selected_precedent"] = self.selected_precedent.to_dict()
         return result
 
 
@@ -1730,6 +1848,7 @@ __all__ = [
     "ResearchResult",
     "RevisionEvidence",
     "ScopedDiff",
+    "SelectedPrecedent",
     "TopologyFindings",
     "WorkflowSlice",
     "warning_detail_from_exception",

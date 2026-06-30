@@ -156,6 +156,43 @@ def decide_widget_shape(
             use_schema_defaults=True,
         )
 
+    if _observed_static_overflow_recoverable(
+        evidence,
+        raw_widget_payload=raw_widget_payload,
+        raw_ui_node=raw_ui_node,
+        has_link_delta=has_link_delta,
+        is_new_node=is_new_node,
+    ):
+        return _verdict(
+            evidence,
+            WidgetShapeDecision.SAFE_TO_REGENERATE,
+            (WidgetShapeReason.OVERFLOW,),
+            raw_ui_node=raw_ui_node,
+            layout_entry=layout_entry,
+            field_delta=field_delta,
+            link_delta=link_delta,
+            recovery="observed_widget_shape_regenerate",
+        )
+
+    if _observed_dynamic_widgets_recoverable(
+        evidence,
+        raw_widget_payload=raw_widget_payload,
+        raw_ui_node=raw_ui_node,
+        has_widget_delta=has_widget_delta,
+        has_link_delta=has_link_delta,
+        is_new_node=is_new_node,
+    ):
+        return _verdict(
+            evidence,
+            WidgetShapeDecision.SAFE_TO_REGENERATE,
+            (WidgetShapeReason.DICT_ROW_DYNAMIC_WIDGETS,),
+            raw_ui_node=raw_ui_node,
+            layout_entry=layout_entry,
+            field_delta=field_delta,
+            link_delta=link_delta,
+            recovery="observed_dynamic_widgets_regenerate",
+        )
+
     if evidence.explicit_widget_overflow:
         refuse_reasons = list(static_reasons)
         if not static_reasons and evidence.explicit_widget_overflow:
@@ -261,6 +298,66 @@ def _schema_default_safe_static_reasons(
     reasons: tuple[WidgetShapeReason, ...],
 ) -> bool:
     return not reasons or set(reasons) == {WidgetShapeReason.OVERFLOW}
+
+
+def _observed_static_overflow_recoverable(
+    evidence: WidgetShapeEvidence,
+    *,
+    raw_widget_payload: Any,
+    raw_ui_node: Mapping[str, Any] | None,
+    has_link_delta: bool,
+    is_new_node: bool,
+) -> bool:
+    """Allow existing static nodes to preserve observed opaque widget slots.
+
+    This is deliberately narrower than pinning: dynamic dict-row widgets still
+    require full raw UI payloads, and new nodes cannot use observed-shape
+    recovery because there is no prior serialized widget vector to preserve.
+    """
+    if is_new_node or has_link_delta:
+        return False
+    if _has_full_raw_ui_payload(raw_ui_node):
+        return False
+    if not evidence.overflow or evidence.explicit_widget_overflow:
+        return False
+    if evidence.has_dict_rows or evidence.schema_less:
+        return False
+    if evidence.raw_widget_count is None:
+        return False
+    if int(evidence.raw_widget_count) != int(evidence.candidate_widget_count):
+        return False
+    if not _has_raw_widget_payload(raw_widget_payload, evidence):
+        return False
+    return True
+
+
+def _observed_dynamic_widgets_recoverable(
+    evidence: WidgetShapeEvidence,
+    *,
+    raw_widget_payload: Any,
+    raw_ui_node: Mapping[str, Any] | None,
+    has_widget_delta: bool,
+    has_link_delta: bool,
+    is_new_node: bool,
+) -> bool:
+    if is_new_node or has_widget_delta or has_link_delta:
+        return False
+    if _has_full_raw_ui_payload(raw_ui_node):
+        return False
+    if not evidence.has_dict_rows or evidence.overflow or evidence.schema_less:
+        return False
+    if evidence.raw_widget_count is None:
+        return False
+    if int(evidence.raw_widget_count) != int(evidence.candidate_widget_count):
+        return False
+    if (
+        evidence.schema_widget_count is not None
+        and int(evidence.schema_widget_count) != int(evidence.candidate_widget_count)
+    ):
+        return False
+    if not _has_raw_widget_payload(raw_widget_payload, evidence):
+        return False
+    return True
 
 
 def _has_full_raw_ui_payload(raw_ui_node: Mapping[str, Any] | None) -> bool:

@@ -13,7 +13,7 @@ from vibecomfy.porting.edit.apply_types import ResolvedAddNodeSpec, ResolvedLink
 from vibecomfy.porting.edit.apply_values import _validate_literal_value
 from vibecomfy.porting.report import PortIssue
 from vibecomfy.porting.resolution import _normalize_type
-from vibecomfy.schema import InputSpec, schema_for, socket_types_compatible
+from vibecomfy.schema import InputSpec, is_workflow_stub_schema, schema_for, socket_types_compatible
 
 
 _IMAGE_CONCAT_MULTI_INPUT_RE = re.compile(r"^image_(\d+)$")
@@ -31,7 +31,7 @@ def _resolve_add_node(
     assert scope is not None
 
     schema = schema_for(schema_provider, op.class_type)
-    if schema is None:
+    if schema is None or is_workflow_stub_schema(schema):
         return None, [
             _issue(
                 "unknown_add_node_class_type",
@@ -209,6 +209,8 @@ def _dynamic_add_node_input_spec(
 ) -> InputSpec | None:
     """Return a narrow schema spec for runtime-expanded add_node inputs."""
 
+    if class_type in {"PreviewImage", "SaveImage", "SaveImageWebsocket"} and input_name == "images":
+        return InputSpec(type="IMAGE", required=True)
     if class_type != "ImageConcatMulti":
         return None
     match = _IMAGE_CONCAT_MULTI_INPUT_RE.match(input_name)

@@ -41,7 +41,7 @@ def _process_alive(pid: int) -> bool:
 
 
 OperationScope = Literal["edit", "accept", "reject", "rebaseline"]
-TurnState = Literal["candidate", "accepted", "rejected", "unknown"]
+TurnState = Literal["candidate", "accepted", "rejected", "unknown", "no_candidate"]
 BaselineSource = Literal["none", "turn", "rebaseline", "legacy"]
 RebaselineReason = Literal["undo", "stale_state_recovery", "continue_from_canvas"]
 REBASELINE_REASONS: tuple[RebaselineReason, ...] = (
@@ -1011,6 +1011,10 @@ def _mapping_graph_structural_hash(payload: Any, *, field: str = "graph") -> str
     return structural_graph_hash(payload.get(field))
 
 
+def _recorded_turn_state_for_response(*, candidate_graph_hash: str | None) -> TurnState:
+    return "candidate" if candidate_graph_hash is not None else "no_candidate"
+
+
 def _client_graph_hash(payload: Any) -> str | None:
     if not isinstance(payload, Mapping):
         return None
@@ -1394,6 +1398,9 @@ def record_idempotent_response(
                 state = read_state(session_dir)
                 turn_record = state["turns"].get(turn_id)
                 if isinstance(turn_record, dict):
+                    turn_record["state"] = _recorded_turn_state_for_response(
+                        candidate_graph_hash=candidate_graph_hash
+                    )
                     turn_record["candidate_graph_hash"] = candidate_graph_hash
                     turn_record["candidate_structural_graph_hash"] = candidate_structural_graph_hash
                     turn_record[
@@ -1421,6 +1428,9 @@ def record_idempotent_response(
         if scope == "edit" and turn_id is not None:
             turn_record = state["turns"].get(turn_id)
             if isinstance(turn_record, dict):
+                turn_record["state"] = _recorded_turn_state_for_response(
+                    candidate_graph_hash=candidate_graph_hash
+                )
                 turn_record["candidate_graph_hash"] = candidate_graph_hash
                 turn_record["candidate_structural_graph_hash"] = candidate_structural_graph_hash
                 turn_record[

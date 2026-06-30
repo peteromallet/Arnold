@@ -67,7 +67,8 @@ def normalize_to_api(
         _enforce_exec_source_limits(api, surface="api")
         return api
     if shape == "vibe":
-        api = raw["compiled_api"]
+        api = deepcopy(raw["compiled_api"])
+        _merge_vibe_node_widget_evidence(raw, api)
         _enforce_exec_source_limits(api, surface="vibe.compiled_api")
         return api
     if shape != "ui":
@@ -190,6 +191,44 @@ def _raw_widget_payload_dict(values: Any, *, source: str) -> dict[str, Any]:
         "has_dict_rows": has_dict_rows,
         "length": length,
     }
+
+
+def _merge_vibe_node_widget_evidence(raw: dict[str, Any], api: dict[str, Any]) -> None:
+    """Carry rich Vibe node widget evidence into the compiled API graph.
+
+    Serialized Vibe workflows store executable data under ``compiled_api`` and
+    preserve editor evidence under the sibling ``nodes`` map.  The compiled API
+    is what Comfy executes, but widget-shape recovery needs the observed
+    LiteGraph widget vector from ``nodes``.
+    """
+    nodes = raw.get("nodes")
+    if not isinstance(nodes, dict):
+        return
+    for node_id, rich_node in nodes.items():
+        if not isinstance(rich_node, dict):
+            continue
+        api_node = api.get(str(node_id))
+        if not isinstance(api_node, dict):
+            continue
+        raw_widgets = rich_node.get("raw_widgets") or rich_node.get("_raw_widgets")
+        if isinstance(raw_widgets, dict):
+            api_node.setdefault("_raw_widgets", deepcopy(raw_widgets))
+        metadata = rich_node.get("metadata")
+        raw_ui = metadata.get("_ui") if isinstance(metadata, dict) else rich_node.get("_ui")
+        if (
+            isinstance(raw_widgets, dict)
+            and bool(raw_widgets.get("has_dict_rows"))
+            and isinstance(raw_ui, dict)
+            and "widgets_values" in raw_ui
+        ):
+            api_node.setdefault("_ui", deepcopy(raw_ui))
+        if "_raw_widgets" in api_node:
+            continue
+        if isinstance(raw_ui, dict) and "widgets_values" in raw_ui:
+            api_node["_raw_widgets"] = _raw_widget_payload_dict(
+                raw_ui["widgets_values"],
+                source="ui.widgets_values",
+            )
 
 
 def _coerce_raw_widget_payload(raw: Any) -> RawWidgetPayload | None:
@@ -360,14 +399,20 @@ def _convert_to_vibe_format_impl(
                 widgets[key] = value
             else:
                 inputs[key] = value
-        raw_widgets = _coerce_raw_widget_payload(node.get("_raw_widgets"))
+        raw_widgets = _coerce_raw_widget_payload(
+            node.get("_raw_widgets", node.get("raw_widgets"))
+        )
         if raw_widgets is None:
             raw_ui = node.get("_ui")
             if isinstance(raw_ui, dict) and "widgets_values" in raw_ui:
                 raw_widgets = _coerce_raw_widget_payload(
                     _raw_widget_payload_dict(raw_ui["widgets_values"], source="ui.widgets_values")
                 )
-        metadata = {key: value for key, value in node.items() if key not in {"class_type", "inputs", "_raw_widgets"}}
+        metadata = {
+            key: value
+            for key, value in node.items()
+            if key not in {"class_type", "inputs", "_raw_widgets", "raw_widgets"}
+        }
         # ── retain control_after_generate (UI-only) into metadata ──
         # Captured here, before the compile-time `_is_ui_only_prompt_input` filter
         # (workflow.py:471) drops it from the compiled API dict, so the emitter can

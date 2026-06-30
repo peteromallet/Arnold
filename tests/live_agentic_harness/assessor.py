@@ -191,6 +191,131 @@ def _expects_graph_changed(
     return False
 
 
+def _expected_outcome_kinds(scenario: Mapping[str, Any] | None) -> set[str]:
+    """Return explicitly accepted public outcome kinds for this scenario."""
+    if scenario is None:
+        return set()
+    assessment = scenario.get("assessment")
+    if not isinstance(assessment, Mapping):
+        return set()
+    raw = assessment.get("expected_outcome_kinds")
+    if raw is None:
+        raw = assessment.get("expected_outcome_kind")
+    if isinstance(raw, str):
+        return {raw}
+    if isinstance(raw, list):
+        return {item for item in raw if isinstance(item, str)}
+    return set()
+
+
+def _allowed_safe_refusal_outcome_kinds(scenario: Mapping[str, Any] | None) -> set[str]:
+    """Return no-edit outcome kinds accepted as safe refusals for edit scenarios."""
+    if scenario is None:
+        return set()
+    assessment = scenario.get("assessment")
+    if not isinstance(assessment, Mapping):
+        return set()
+    raw = assessment.get("allow_safe_refusal_outcome_kinds")
+    if raw is None:
+        raw = assessment.get("allow_safe_refusal_outcome_kind")
+    if isinstance(raw, str):
+        return {raw}
+    if isinstance(raw, list):
+        return {item for item in raw if isinstance(item, str)}
+    return set()
+
+
+def _assessment_config(scenario: Mapping[str, Any] | None) -> Mapping[str, Any]:
+    """Return the scenario assessment config, if present."""
+    if scenario is None:
+        return {}
+    assessment = scenario.get("assessment")
+    return assessment if isinstance(assessment, Mapping) else {}
+
+
+def _model_request_text(output_dir: Path) -> str | None:
+    """Return copied model_request.json text when the headless run produced it."""
+    path = output_dir / "model_request.json"
+    if not path.is_file():
+        return None
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _assess_model_request_artifact(
+    output_dir: Path,
+    scenario: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Apply optional prompt-size/content guardrails from scenario assessment.
+
+    Supported scenario fields:
+
+    * ``assessment.max_model_request_bytes`` — fail when copied
+      ``model_request.json`` is larger than this many bytes.
+    * ``assessment.forbid_model_request_substrings`` — fail when any listed
+      substring appears in copied ``model_request.json``.
+    """
+    assessment = _assessment_config(scenario)
+    max_bytes = assessment.get("max_model_request_bytes")
+    forbidden_raw = assessment.get("forbid_model_request_substrings")
+    has_size_check = isinstance(max_bytes, int) and not isinstance(max_bytes, bool)
+    forbidden = [item for item in forbidden_raw or [] if isinstance(item, str)]
+    if not has_size_check and not forbidden:
+        return []
+
+    path = output_dir / "model_request.json"
+    if not path.is_file():
+        return [
+            {
+                "check": "model_request_artifact",
+                "severity": "error",
+                "detail": "Scenario requires model_request.json checks, but the artifact is missing.",
+            }
+        ]
+
+    issues: list[dict[str, Any]] = []
+    if has_size_check:
+        actual_size = path.stat().st_size
+        if actual_size > max_bytes:
+            issues.append(
+                {
+                    "check": "model_request_size",
+                    "severity": "error",
+                    "detail": (
+                        f"model_request.json is {actual_size} bytes; "
+                        f"limit is {max_bytes} bytes."
+                    ),
+                }
+            )
+
+    if forbidden:
+        text = _model_request_text(output_dir)
+        if text is None:
+            issues.append(
+                {
+                    "check": "model_request_artifact",
+                    "severity": "error",
+                    "detail": "model_request.json could not be read.",
+                }
+            )
+        else:
+            for substring in forbidden:
+                if substring in text:
+                    issues.append(
+                        {
+                            "check": "model_request_forbidden_substring",
+                            "severity": "error",
+                            "detail": (
+                                "model_request.json contains forbidden substring "
+                                f"{substring!r}."
+                            ),
+                        }
+                    )
+    return issues
+
+
 def assess_live_output_dir(
     output_dir: Path | str,
     scenario: Mapping[str, Any] | None = None,
@@ -210,8 +335,20 @@ def assess_live_output_dir(
 
     issues: list[dict[str, Any]] = []
     expect_graph_changed = _expects_graph_changed(scenario, response)
+    expected_outcome_kinds = _expected_outcome_kinds(scenario)
+    allowed_safe_refusal_outcome_kinds = _allowed_safe_refusal_outcome_kinds(scenario)
+    safe_refusal_accepted = False
 
     if response is not None:
+        outcome = response.get("outcome") or {}
+        outcome_kind = outcome.get("kind")
+        safe_refusal_accepted = (
+            expect_graph_changed
+            and response.get("graph_unchanged") is True
+            and isinstance(outcome_kind, str)
+            and outcome_kind in allowed_safe_refusal_outcome_kinds
+        )
+
         # Top-level response health.
         if response.get("ok") is False:
             issues.append(
@@ -243,7 +380,15 @@ def assess_live_output_dir(
             )
 
         if expect_graph_changed:
-            if response.get("graph_unchanged") is True:
+            if safe_refusal_accepted:
+                issues.append(
+                    {
+                        "check": "safe_refusal",
+                        "severity": "info",
+                        "detail": f"Accepted safe refusal outcome.kind={outcome_kind!r}.",
+                    }
+                )
+            elif response.get("graph_unchanged") is True:
                 issues.append(
                     {
                         "check": "graph_changed",
@@ -253,7 +398,7 @@ def assess_live_output_dir(
                 )
 
             no_reason = response.get("no_candidate_reason")
-            if no_reason in {"no_changes", "no_candidate"}:
+            if not safe_refusal_accepted and no_reason in {"no_changes", "no_candidate"}:
                 issues.append(
                     {
                         "check": "no_candidate_reason",
@@ -262,9 +407,7 @@ def assess_live_output_dir(
                     }
                 )
 
-            outcome = response.get("outcome") or {}
-            outcome_kind = outcome.get("kind")
-            if outcome_kind in {"noop", "requires_custom_nodes"}:
+            if not safe_refusal_accepted and outcome_kind in {"noop", "requires_custom_nodes"}:
                 issues.append(
                     {
                         "check": "outcome_kind",
@@ -275,7 +418,7 @@ def assess_live_output_dir(
 
             gates = response.get("gates") or {}
             false_gates = [name for name, value in gates.items() if value is False]
-            if false_gates:
+            if false_gates and not safe_refusal_accepted:
                 issues.append(
                     {
                         "check": "gates",
@@ -283,11 +426,29 @@ def assess_live_output_dir(
                         "detail": f"Expected edit but gates failed: {', '.join(sorted(false_gates))}.",
                     }
                 )
+        elif expected_outcome_kinds:
+            outcome = response.get("outcome") or {}
+            outcome_kind = outcome.get("kind")
+            if outcome_kind not in expected_outcome_kinds:
+                issues.append(
+                    {
+                        "check": "outcome_kind",
+                        "severity": "error",
+                        "detail": (
+                            f"Expected outcome.kind in {sorted(expected_outcome_kinds)!r} "
+                            f"but got {outcome_kind!r}."
+                        ),
+                    }
+                )
 
         # LLM intent judge: score the candidate edit against the query when the
         # scenario expects a graph change.  This runs by default; set
         # ``assessment.skip_intent_judge: true`` in the scenario to disable it.
-        if expect_graph_changed and not scenario.get("assessment", {}).get("skip_intent_judge"):
+        if (
+            expect_graph_changed
+            and not safe_refusal_accepted
+            and not scenario.get("assessment", {}).get("skip_intent_judge")
+        ):
             verdict = judge_edit_intent(output_dir, scenario)
             if verdict.get("pass_") is False:
                 issues.append(
@@ -353,7 +514,7 @@ def assess_live_output_dir(
     if impl_result is not None:
         impl_message = impl_result.get("message", "")
         if isinstance(impl_message, str):
-            if expect_graph_changed and "unchanged" in impl_message.lower():
+            if expect_graph_changed and not safe_refusal_accepted and "unchanged" in impl_message.lower():
                 issues.append(
                     {
                         "check": "implementation_result",
@@ -370,6 +531,8 @@ def assess_live_output_dir(
                 }
             )
 
+    issues.extend(_assess_model_request_artifact(output_dir, scenario))
+
     # Deduplicate while preserving order.
     seen: set[tuple[str, str, str]] = set()
     deduped: list[dict[str, Any]] = []
@@ -384,6 +547,8 @@ def assess_live_output_dir(
     return {
         "passed": len(errors) == 0,
         "expect_graph_changed": expect_graph_changed,
+        "expected_outcome_kinds": sorted(expected_outcome_kinds),
+        "allow_safe_refusal_outcome_kinds": sorted(allowed_safe_refusal_outcome_kinds),
         "issue_count": len(deduped),
         "error_count": len(errors),
         "issues": deduped,

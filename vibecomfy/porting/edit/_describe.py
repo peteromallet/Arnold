@@ -17,6 +17,10 @@ from vibecomfy.porting.edit._diff import _UNRESOLVED_OLD_VALUE
 from vibecomfy.porting.edit.projection import HELPER_NODE_TYPES, MODE_LABELS
 from vibecomfy.porting.edit.ops import LinkSourceRef
 from vibecomfy.porting.edit.ledger import EditLedger
+from vibecomfy.porting.widgets.compact_resolver import (
+    missing_widget_value_sentinel,
+    widget_value_for_field,
+)
 from vibecomfy.schema import schema_for
 
 if TYPE_CHECKING:
@@ -316,8 +320,11 @@ class _DescribeMixin:
         else:
             lines.append("No available local class names contain the requested terms.")
         lines.append(
-            "Use one of the available node type names from the initial catalog, "
-            "or stop with clarify(...) if the required custom node is absent."
+            "This only means the current authoring schema does not expose that "
+            "class. It does not invalidate workflow precedent or community "
+            "evidence. Use available signatures for actual edits; if no "
+            "authorable class is available, choose an evidence-supported "
+            "available alternative or stop cleanly with clarify(...)."
         )
         return "\n".join(lines) + "\n"
 
@@ -393,39 +400,11 @@ class _DescribeMixin:
         return self._resolve_widget_value(node, field)
 
     def _resolve_widget_value(self, node: Mapping[str, Any], field: str) -> Any:
-        """Resolve a widget value given a node dict and field name.
-
-        Tries (a) node inputs slot ordering by name, (b) schema input ordering,
-        since the schema may not carry ``widget`` metadata in test providers.
-        """
-        wv = node.get("widgets_values")
-        if isinstance(wv, Mapping):
-            return wv.get(field)
-        if not isinstance(wv, list):
+        """Resolve a widget value through the compact per-node resolver."""
+        value = widget_value_for_field(node, field, schema_provider=self.schema_provider)
+        if value is missing_widget_value_sentinel():
             return None
-        # (a) Try inputs slot order first: find the slot named *field* and use its
-        # positional index to index into widgets_values.
-        inputs = node.get("inputs") or []
-        if isinstance(inputs, list):
-            for idx, slot in enumerate(inputs):
-                if isinstance(slot, Mapping) and slot.get("name") == field:
-                    if 0 <= idx < len(wv):
-                        return wv[idx]
-                    break
-        # (b) Fall back to schema input ordering
-        class_type = str(node.get("type") or node.get("class_type") or "")
-        schema = schema_for(self.schema_provider, class_type)
-        schema_inputs = getattr(schema, "inputs", {}) or {}
-        if isinstance(schema_inputs, Mapping) and field in schema_inputs:
-            # Get the positional index in the schema's input order
-            ordered_names = list(schema_inputs.keys())
-            try:
-                idx = ordered_names.index(field)
-                if 0 <= idx < len(wv):
-                    return wv[idx]
-            except ValueError:
-                pass
-        return None
+        return value
 
     def _original_node_mode(self, scope_path: str, uid: str) -> Any:
         """Look up the original mode of a node from the original ledger."""

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from vibecomfy.porting.widgets.schema import ui_widget_value_names_for_class
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
+from vibecomfy.porting.widgets.compact_resolver import widget_index_for_field
 
 
 def _find_named_slot_index(slots: Any, name: str) -> int | None:
@@ -24,12 +25,13 @@ def _widget_name_for_input(slot: Any) -> str | None:
     return str(name) if isinstance(name, str) and name else None
 
 
-def _widget_index_for_field(class_type: str, field_name: str) -> int | None:
-    widget_names = ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True)
-    for index, name in enumerate(widget_names):
-        if name == field_name:
-            return index
-    return None
+def _widget_index_for_field(
+    node: Mapping[str, Any],
+    field_name: str,
+    *,
+    schema_provider: Any | None = None,
+) -> int | None:
+    return widget_index_for_field(node, field_name, schema_provider=schema_provider)
 
 
 def _widget_index_from_input_stubs(inputs: Any, field_name: str) -> int | None:
@@ -51,11 +53,13 @@ def _reorder_names(node: Mapping[str, Any], class_type: str, axis: str) -> tuple
         values = node.get("widgets_values")
         if not isinstance(values, list):
             return None
-        names = list(ui_widget_value_names_for_class(class_type, allow_object_info_fallback=True))
-        if len(names) < len(values):
-            recovered = _widget_names_from_input_stubs(node.get("inputs"))
-            if len(recovered) >= len(values):
-                names = recovered
+        names = list(
+            compact_widget_names_for_node(
+                node,
+                class_type,
+                value_count=len(values),
+            ).names
+        )
         if len(names) != len(values) or any(not name for name in names):
             return None
         return tuple(names)

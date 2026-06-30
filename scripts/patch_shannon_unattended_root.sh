@@ -30,7 +30,7 @@ py_shannon = Path(sys.argv[2])
 text = index_ts.read_text(encoding="utf-8")
 text = text.replace(
     '  addBoolean(args, "--dangerously-skip-permissions", parsed.dangerouslySkipPermissions);\n',
-    '  // Patched for root Railway runner: Claude Code rejects dangerous bypass flags under root.\n',
+    '  // Patched for root cloud runner: Claude Code rejects dangerous bypass flags under root.\n',
 )
 text = text.replace(
     '  addBoolean(args, "--allow-dangerously-skip-permissions", parsed.allowDangerouslySkipPermissions);\n',
@@ -162,7 +162,7 @@ py_shannon.write_text(py_text, encoding="utf-8")
 patched_index = index_ts.read_text(encoding="utf-8")
 required_index = [
     'parsed.permissionMode === "bypassPermissions" ? "dontAsk"',
-    "Patched for root Railway runner",
+    "Patched for root cloud runner",
     "Patched for Claude Code v2.1.x",
     "send the first prompt through tmux after launch",
 ]

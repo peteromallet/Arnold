@@ -2,6 +2,226 @@
 # Contents: Batch REPL setup, prompt assembly, provider calls, and first clarify rejection branch.
 
 SOURCE = r'''
+_BATCH_PROTOCOL_RETRY_PROMPT = """Your previous response could not be applied because it did not include a valid batch block.
+
+Reply in exactly this format:
+
+One short sentence for the user.
+```batch
+# one or more edit statements, or clarify("question"), or done()
+```
+
+If you cannot safely edit the graph, still use the same format and put your question or blocker inside `clarify("...")` in the batch block.
+Do not include markdown other than the single batch block."""
+
+
+def _malformed_model_json_detail(exc: BaseException) -> dict[str, str]:
+    detail: dict[str, str] = {}
+    parse_reason = getattr(exc, "parse_reason", None)
+    if isinstance(parse_reason, str) and parse_reason.strip():
+        detail["parse_reason"] = parse_reason.strip()
+    raw_preview = getattr(exc, "raw_response_preview", None)
+    if isinstance(raw_preview, str) and raw_preview.strip():
+        detail["raw_response_preview"] = raw_preview.strip()
+    return detail
+
+
+def _batch_protocol_parse_reason(exc: BaseException) -> str:
+    explicit = getattr(exc, "parse_reason", None)
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    text = str(exc).lower()
+    if "empty" in text:
+        return "empty"
+    if "multiple" in text:
+        return "multiple_batch_fences"
+    if "must be a string" in text or "non_string" in text:
+        return "non_string"
+    if "batch fenced block" in text or "batch code block" in text:
+        return "missing_batch_fence"
+    return "malformed"
+
+
+def _batch_protocol_retry_messages(
+    messages: list[dict[str, str]],
+    exc: BaseException | None = None,
+) -> list[dict[str, str]]:
+    prompt = _BATCH_PROTOCOL_RETRY_PROMPT
+    if exc is not None:
+        detail = _malformed_model_json_detail(exc)
+        raw_preview = detail.get("raw_response_preview")
+        if raw_preview:
+            prompt = (
+                f"{prompt}\n\n"
+                "Previous response preview, for correction only:\n"
+                f"{raw_preview}"
+            )
+    return [*messages, {"role": "system", "content": prompt}]
+
+
+_MAX_EXECUTION_PROTOCOL_SOURCES = 3
+_MAX_EXECUTION_PROTOCOL_LIST_ITEMS = 16
+_MAX_EXECUTION_PROTOCOL_STRING = 900
+
+
+def _compact_protocol_string(value: Any, *, limit: int = _MAX_EXECUTION_PROTOCOL_STRING) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 18)].rstrip() + "\n... [truncated]"
+
+
+def _compact_protocol_list(value: Any, *, limit: int = _MAX_EXECUTION_PROTOCOL_LIST_ITEMS) -> list[Any]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    compacted: list[Any] = []
+    for item in value[:limit]:
+        if isinstance(item, str):
+            compacted.append(_compact_protocol_string(item, limit=240))
+        elif isinstance(item, (int, float, bool)) or item is None:
+            compacted.append(item)
+        else:
+            compacted.append(_compact_protocol_string(item, limit=240))
+    if len(value) > limit:
+        compacted.append(f"... [{len(value) - limit} omitted]")
+    return compacted
+
+
+def _copy_compact_protocol_fields(
+    source: Mapping[str, Any],
+    keys: tuple[str, ...],
+    *,
+    string_limit: int = _MAX_EXECUTION_PROTOCOL_STRING,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in keys:
+        if key not in source:
+            continue
+        value = source.get(key)
+        if isinstance(value, str):
+            result[key] = _compact_protocol_string(value, limit=string_limit)
+        elif isinstance(value, (list, tuple)):
+            result[key] = _compact_protocol_list(value)
+        elif isinstance(value, Mapping):
+            result[key] = {
+                str(k): (
+                    _compact_protocol_string(v, limit=240)
+                    if isinstance(v, str)
+                    else v
+                )
+                for k, v in list(value.items())[:12]
+                if not isinstance(v, (dict, list, tuple))
+            }
+        elif value is not None:
+            result[key] = value
+    return result
+
+
+def _compact_research_source_for_prompt(source: Any) -> dict[str, Any] | None:
+    if not isinstance(source, Mapping):
+        return None
+    compact = _copy_compact_protocol_fields(
+        source,
+        (
+            "source",
+            "source_type",
+            "pack",
+            "class_type",
+            "name",
+            "title",
+            "url",
+            "source_workflow_path",
+            "description",
+            "summary",
+            "node_types",
+            "workflow_schema_classes",
+            "terminal_output_path",
+            "minimal_spine",
+            "model_families",
+            "models",
+            "reasons",
+            "requested_terms",
+            "promotion_gates",
+        ),
+    )
+    if "workflow_schema" in source:
+        schema = source.get("workflow_schema")
+        if isinstance(schema, Mapping):
+            compact["workflow_schema_classes"] = _compact_protocol_list(
+                list(schema.keys()),
+                limit=_MAX_EXECUTION_PROTOCOL_LIST_ITEMS,
+            )
+            compact["workflow_schema_omitted"] = (
+                "omitted from prompt; exact classes are provisional authoring evidence when surfaced in signatures"
+            )
+    return compact or None
+
+
+def _compact_execution_protocol_notes_for_prompt(notes: Mapping[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in (
+        "research_goal",
+        "workflow_precedent_status",
+        "research_warnings",
+    ):
+        if key in notes:
+            value = notes.get(key)
+            if isinstance(value, str):
+                compact[key] = _compact_protocol_string(value)
+            elif isinstance(value, (list, tuple)):
+                compact[key] = _compact_protocol_list(value, limit=8)
+            else:
+                compact[key] = value
+
+    selected = notes.get("selected_precedent")
+    if isinstance(selected, Mapping):
+        compact["selected_precedent"] = _copy_compact_protocol_fields(
+            selected,
+            (
+                "name",
+                "source",
+                "source_workflow_path",
+                "minimal_spine",
+                "terminal_output_path",
+                "model_families",
+                "models",
+                "reasons",
+                "requested_terms",
+                "promotion_gates",
+            ),
+        )
+
+    sources = notes.get("research_sources")
+    if isinstance(sources, (list, tuple)):
+        compact_sources: list[dict[str, Any]] = []
+        for source in sources[:_MAX_EXECUTION_PROTOCOL_SOURCES]:
+            compact_source = _compact_research_source_for_prompt(source)
+            if compact_source:
+                compact_sources.append(compact_source)
+        if compact_sources:
+            compact["research_sources"] = compact_sources
+        if len(sources) > _MAX_EXECUTION_PROTOCOL_SOURCES:
+            compact["research_sources_omitted"] = len(sources) - _MAX_EXECUTION_PROTOCOL_SOURCES
+
+    for key, value in notes.items():
+        if key in compact or key in {
+            "_discardability",
+            "selected_precedent",
+            "research_sources",
+            "research_goal",
+            "workflow_precedent_status",
+            "research_warnings",
+        }:
+            continue
+        if isinstance(value, str):
+            compact[key] = _compact_protocol_string(value, limit=500)
+        elif isinstance(value, (list, tuple)):
+            compact[key] = _compact_protocol_list(value, limit=8)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            compact[key] = value
+    return compact
+
+
 def _stage_agent_batch_repl(
     state: AgentEditState,
     _context: TurnContext,
@@ -16,6 +236,7 @@ def _stage_agent_batch_repl(
 
     start = time.monotonic()
     prepared_ui = state.guard_original_ui or state.graph
+    _hydrate_research_precedent_node_schemas(state)
     session = edit_session_module.EditSession(prepared_ui, schema_provider=state.schema_provider)
     state.batch_session = session
     initial_render = session.render()
@@ -23,6 +244,14 @@ def _stage_agent_batch_repl(
     focus_types = set(present_types)
     effective_task = _effective_implementation_task(state)
     focus_types.update(_seed_focus_types_for_authoring(state))
+    focus_types.update(
+        _workflow_class_types_from_research_context(
+            state,
+            max_classes=32,
+            missing_only=False,
+            custom_only=False,
+        )
+    )
     focus_types.update(_focus_types_from_research_brief(state.executor_research_brief))
     if _is_code_node_intent(effective_task):
         focus_types.add("vibecomfy.exec")
@@ -95,13 +324,25 @@ def _stage_agent_batch_repl(
             if state.execution_protocol_notes:
                 notes = dict(state.execution_protocol_notes)
                 discard_note = notes.pop("_discardability", None)
+                notes = _compact_execution_protocol_notes_for_prompt(notes)
                 notes_str = json.dumps(notes, indent=2, sort_keys=True)
+                authority_line = (
+                    str(discard_note).strip()
+                    if isinstance(discard_note, str) and discard_note.strip()
+                    else "This is contextual evidence, NOT authoritative guidance."
+                )
                 parts.append(
                     "## Scoped Research Context (execution_protocol_notes)\n"
-                    "This is contextual evidence, NOT authoritative guidance.\n"
+                    f"{authority_line}\n"
                     f"{notes_str}"
                 )
-            if state.research_context_packet:
+            has_selected_precedent = False
+            if isinstance(state.execution_protocol_notes, Mapping):
+                has_selected_precedent = isinstance(
+                    state.execution_protocol_notes.get("selected_precedent"),
+                    Mapping,
+                )
+            if state.research_context_packet and not has_selected_precedent:
                 packet_str = json.dumps(
                     state.research_context_packet, indent=2, sort_keys=True
                 )
@@ -220,20 +461,81 @@ def _stage_agent_batch_repl(
         )
 
         try:
-            if deepseek_client is not None:
-                turn_result = _normalize_test_client_batch_response(deepseek_client(messages))
-            else:
-                turn_result = run_agent_turn_batch(
-                    state.task,
-                    messages,
-                    route=route,
-                    model=model,
+            try:
+                if deepseek_client is not None:
+                    turn_result = _normalize_test_client_batch_response(deepseek_client(messages))
+                else:
+                    turn_result = run_agent_turn_batch(
+                        state.task,
+                        messages,
+                        route=route,
+                        model=model,
+                    )
+            except (MalformedModelJSON, MissingRequiredField) as first_exc:
+                retry_messages = _batch_protocol_retry_messages(messages, first_exc)
+                first_detail = _malformed_model_json_detail(first_exc)
+                retry_request_entry = {
+                    "turn_number": turn_number,
+                    "messages": retry_messages,
+                    "budget_remaining": budget_remaining,
+                    "node_variable_index": node_variable_index,
+                    "included_full_render": include_full_render,
+                    "protocol_retry": {
+                        "attempt": 2,
+                        "reason": _batch_protocol_parse_reason(first_exc),
+                        "message": str(first_exc),
+                    },
+                }
+                request_log.append(retry_request_entry)
+                write_json_artifact(
+                    state.model_request_path,
+                    {"response_contract": "batch_repl", "turns": request_log},
+                )
+                response_log.append(
+                    {
+                        "turn_number": turn_number,
+                        "error": {
+                            "type": type(first_exc).__name__,
+                            "message": str(first_exc),
+                            "parse_reason": _batch_protocol_parse_reason(first_exc),
+                            "retrying": True,
+                            "attempt": 1,
+                            **first_detail,
+                        },
+                    }
+                )
+                write_json_artifact(state.model_response_path, {"turns": response_log})
+                if deepseek_client is not None:
+                    turn_result = _normalize_test_client_batch_response(deepseek_client(retry_messages))
+                else:
+                    turn_result = run_agent_turn_batch(
+                        state.task,
+                        retry_messages,
+                        route=route,
+                        model=model,
+                    )
+                retry_metadata = dict(turn_result.audit_metadata or {})
+                retry_metadata["batch_repl_protocol_retry"] = {
+                    "count": 1,
+                    "reason": str(first_exc),
+                    "parse_reason": _batch_protocol_parse_reason(first_exc),
+                }
+                turn_result = dataclasses.replace(
+                    turn_result,
+                    audit_metadata=retry_metadata,
                 )
         except (MalformedModelJSON, MissingRequiredField) as exc:
-            feedback = (
-                f"Agent response format error: {exc} "
-                "Respond with one user-facing sentence followed by exactly one ```batch fenced block."
-            )
+            parse_reason = _batch_protocol_parse_reason(exc)
+            exc_detail = _malformed_model_json_detail(exc)
+            malformed_diagnostic = {
+                "code": "malformed_batch_response",
+                "severity": "error",
+                "parse_reason": parse_reason,
+                "attempt_count": 2,
+                "turn_number": turn_number,
+                "response_contract": "batch_repl",
+                **exc_detail,
+            }
             error_record = {
                 "turn_number": turn_number,
                 "task": state.task,
@@ -241,6 +543,8 @@ def _stage_agent_batch_repl(
                 "batch": "",
                 "error": str(exc),
                 "error_type": type(exc).__name__,
+                **exc_detail,
+                "diagnostics": [malformed_diagnostic],
                 "request_messages": messages,
             }
             response_log.append(
@@ -249,7 +553,13 @@ def _stage_agent_batch_repl(
                     "error": {
                         "type": type(exc).__name__,
                         "message": str(exc),
-                        "retrying": consecutive_errors + 1 < max_consecutive_errors,
+                        "parse_reason": parse_reason,
+                        "retrying": False,
+                        "attempt": 2,
+                        **exc_detail,
+                        "diagnostics": [
+                            malformed_diagnostic,
+                        ],
                     },
                 }
             )
@@ -257,13 +567,19 @@ def _stage_agent_batch_repl(
             state.messages_path.open("a", encoding="utf-8").write(
                 json.dumps(error_record, sort_keys=True) + "\n"
             )
-            if consecutive_errors + 1 >= max_consecutive_errors:
-                raise
-            last_report = feedback
-            previous_model_message = ""
-            last_landed_count = 0
-            consecutive_errors += 1
-            continue
+            state.batch_exit_mode = "protocol_failure"
+            state.batch_final_summary = (
+                "Stopped because the model did not return a valid batch_repl response."
+            )
+            if state.batch_turns:
+                _emit_agent_edit_turn_event(
+                    state,
+                    _context,
+                    state.batch_turns[-1],
+                    client_id=client_id,
+                    status="error",
+                )
+            raise
         except Exception as exc:
             error_record = {
                 "turn_number": turn_number,

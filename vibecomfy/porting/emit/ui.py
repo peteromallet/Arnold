@@ -78,6 +78,7 @@ from vibecomfy.contracts.intent_nodes import (
     validate_runtime_code_contract,
 )
 from vibecomfy.identity.uid import mint_local_uid
+from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 from vibecomfy.porting.widgets.aliases import widget_names_for_class, widget_names_from_schema
 from vibecomfy.workflow import VibeEdge, VibeNode
 
@@ -170,6 +171,7 @@ class WidgetShapeEvidence:
     provider: str | None
     explicit_widget_overflow: bool = False
     raw_widget_length_recovered: bool = False
+    value_domain: str = "compact"
 
 
 def _canonicalize_coord(value: float) -> float:
@@ -672,18 +674,112 @@ def _get_node_schema_provenance(
     }
 
 
-def _widget_names_for_emission(class_type: str, schema: Any) -> list[str | None]:
-    """Return the raw widget-name list ComfyUI reads positionally.
+def _widget_names_for_emission(
+    class_type: str,
+    schema: Any,
+    *,
+    node: Any | None = None,
+    schema_provider: Any | None = None,
+) -> list[str | None]:
+    """Return widget names in the value domain this node can safely emit."""
+    from vibecomfy.porting.object_info.consume import object_info_widget_order  # noqa: PLC0415
 
-    ComfyUI's ``convert_ui_to_api`` consumes ``widgets_values`` against the raw
-    object-info widget order, including ``None`` UI-only positions such as
-    KSampler's control-after-generate slot.  Emitting a compacted list shifts
-    later values into the wrong fields.
-    """
     committed = widget_names_for_class(class_type)
+    object_info_order = object_info_widget_order(class_type)
+    if _widget_value_domain_for_emission(node, committed, object_info_order) == "raw_object_info":
+        if committed is not None and any(name is None for name in committed):
+            return list(committed)
+        if object_info_order:
+            return list(object_info_order)
+        if committed is not None:
+            return list(committed)
+
+    if node is not None:
+        count = _compact_widget_count_for_emission(node)
+        if count:
+            return list(
+                compact_widget_names_for_node(
+                    node,
+                    class_type,
+                    value_count=count,
+                    schema_provider=schema_provider,
+                ).names
+            )
+
     if committed is not None:
         return list(committed)
     return list(widget_names_from_schema(class_type, schema))
+
+
+def _widget_value_domain_for_emission(
+    node: Any | None,
+    committed: list[str | None] | None,
+    object_info_order: list[str | None],
+) -> str:
+    if committed is not None and any(name is None for name in committed):
+        return "raw_object_info"
+    raw_count = _captured_raw_widget_count(node)
+    if raw_count is not None and object_info_order and raw_count == len(object_info_order):
+        return "raw_object_info"
+    return "compact"
+
+
+def _compact_widget_count_for_emission(node: Any) -> int:
+    raw_count = _captured_raw_widget_count(node)
+    widget_key_count = _widget_key_count(getattr(node, "widgets", None))
+    if raw_count is not None and widget_key_count and raw_count == widget_key_count:
+        return raw_count
+    if widget_key_count:
+        return widget_key_count
+    return raw_count or 0
+
+
+def _captured_raw_widget_count(node: Any | None) -> int | None:
+    if node is None:
+        return None
+    raw_ui = getattr(node, "metadata", {}).get("_ui", {})
+    raw_widgets = raw_ui.get("widgets_values") if isinstance(raw_ui, dict) else None
+    if isinstance(raw_widgets, list):
+        return len(raw_widgets)
+    raw_widget_payload = getattr(node, "raw_widgets", None)
+    length = getattr(raw_widget_payload, "length", None)
+    if isinstance(length, int):
+        return length
+    values = getattr(raw_widget_payload, "values", None)
+    if isinstance(values, list):
+        return len(values)
+    return None
+
+
+def _widget_key_count(values: Any) -> int:
+    if not isinstance(values, Mapping):
+        return 0
+    indices: list[int] = []
+    for key in values:
+        key_str = str(key)
+        if not key_str.startswith("widget_"):
+            continue
+        try:
+            indices.append(int(key_str.split("_", 1)[1]))
+        except ValueError:
+            continue
+    if not indices:
+        return 0
+    expected = list(range(max(indices) + 1))
+    return max(indices) + 1 if sorted(indices) == expected else 0
+
+
+def _object_info_order_safely_extends_committed(
+    committed: list[str | None],
+    object_info_order: list[str | None],
+) -> bool:
+    if not object_info_order or len(object_info_order) <= len(committed):
+        return False
+    if any(name is None for name in committed):
+        return False
+    committed_names = [name for name in committed if isinstance(name, str)]
+    object_info_names = [name for name in object_info_order if isinstance(name, str)]
+    return object_info_names == committed_names
 
 
 def _raw_widget_order_from_provider(
@@ -800,15 +896,21 @@ def _full_widget_name_count(
     ``None`` means the class is schema-less for widget purposes so the
     length assertion is skipped.
     """
-    # 1. Raw object_info_widget_order (authoritative, nulls included)
+    # 1. Committed table, extended only by reconciled object_info metadata when
+    # it is clearly the same named order plus UI-only slots.
+    committed = widget_names_for_class(class_type)
+    if committed is not None:
+        from vibecomfy.porting.object_info.consume import object_info_widget_order  # noqa: PLC0415
+
+        object_info_order = object_info_widget_order(class_type)
+        if _object_info_order_safely_extends_committed(committed, object_info_order):
+            return len(object_info_order)
+        return len(committed)
+
+    # 2. Raw object_info_widget_order from the provider (nulls included).
     raw = _raw_widget_order_from_provider(class_type, schema_provider)
     if raw is not None and len(raw) > 0:
         return len(raw)
-
-    # 2. Committed table
-    committed = widget_names_for_class(class_type)
-    if committed is not None:
-        return len(committed)
 
     # 3. Provider schema (null-free)
     names = widget_names_from_schema(class_type, schema)
@@ -820,6 +922,7 @@ def _build_widget_values(
     widget_names: list[str | None],
     *,
     default_values: Mapping[str, Any] | None = None,
+    value_domain: str = "compact",
 ) -> list[Any]:
     """Reverse the normalizer's positional widget read-back.
 
@@ -850,13 +953,17 @@ def _build_widget_values(
     raw_ui = getattr(node, "metadata", {}).get("_ui", {})
     raw_widgets = raw_ui.get("widgets_values") if isinstance(raw_ui, dict) else None
     if not isinstance(raw_widgets, list):
-        raw_widgets = []
+        raw_widget_payload = getattr(node, "raw_widgets", None)
+        raw_widget_values = getattr(raw_widget_payload, "values", None)
+        raw_widgets = list(raw_widget_values) if isinstance(raw_widget_values, list) else []
 
     has_seed_control_slot = any(
         isinstance(name, str) and name in _SEED_INPUT_NAMES
         for name in widget_names
     )
-    if use_schema_defaults:
+    if value_domain == "compact":
+        length = max(len(widget_names), max_widget, len(raw_widgets))
+    elif use_schema_defaults:
         length = max(len(widget_names), len(raw_widgets))
     else:
         length = max(len(widget_names), max_widget, len(raw_widgets))
@@ -1015,7 +1122,7 @@ def _emit_litegraph_node_dict(
     include_main_positions: bool,
     widget_default_values: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    widget_names = _widget_names_for_emission(node.class_type, schema)
+    widget_names = _widget_names_for_emission(node.class_type, schema, node=node)
 
     # Step 6 (T8): re-stamp the verbatim captured properties blob as the base,
     # then overlay the IR identity keys.  When no captured blob exists (e.g.
@@ -1055,6 +1162,13 @@ def _emit_litegraph_node_dict(
             if isinstance(exec_source, str):
                 intent_props["source"] = exec_source
 
+    from vibecomfy.porting.object_info.consume import object_info_widget_order  # noqa: PLC0415
+
+    value_domain = _widget_value_domain_for_emission(
+        node,
+        widget_names_for_class(node.class_type),
+        object_info_widget_order(node.class_type),
+    )
     node_dict: dict[str, Any] = {
         "id": litegraph_node_id,
         "type": node.class_type,
@@ -1070,6 +1184,7 @@ def _emit_litegraph_node_dict(
             node,
             widget_names,
             default_values=widget_default_values,
+            value_domain=value_domain,
         ),
     }
     # Emit color / bgcolor only when non-None (litegraph convention: absent = default)
@@ -1351,6 +1466,7 @@ def _widget_shape_evidence_summary(evidence: WidgetShapeEvidence) -> dict[str, A
         "provider": evidence.provider,
         "explicit_widget_overflow": evidence.explicit_widget_overflow,
         "raw_widget_length_recovered": evidence.raw_widget_length_recovered,
+        "value_domain": evidence.value_domain,
     }
 
 
@@ -1426,6 +1542,7 @@ def _build_recovery_entry(
         "control_after_generate": p.get("control_after_generate"),
         "control_after_generate_defaulted": p.get("control_after_generate_defaulted"),
         "widget_length_check": p.get("widget_length_check"),
+        "value_domain": getattr(getattr(verdict, "evidence", None), "value_domain", None),
         "has_raw_ui_payload": has_raw_ui_payload,
     }
     entry.update(_widget_shape_report_fields(verdict))
@@ -1662,8 +1779,22 @@ def derive_widget_shape_evidence(
     """
     schema = _schema_for_provider(schema_provider, node.class_type)
     provenance = _get_node_schema_provenance(node.class_type, schema)
-    widget_names = _widget_names_for_emission(node.class_type, schema)
-    candidate_widget_count = len(_build_widget_values(node, widget_names))
+    widget_names = _widget_names_for_emission(
+        node.class_type,
+        schema,
+        node=node,
+        schema_provider=schema_provider,
+    )
+    from vibecomfy.porting.object_info.consume import object_info_widget_order  # noqa: PLC0415
+
+    value_domain = _widget_value_domain_for_emission(
+        node,
+        widget_names_for_class(node.class_type),
+        object_info_widget_order(node.class_type),
+    )
+    candidate_widget_count = len(
+        _build_widget_values(node, widget_names, value_domain=value_domain)
+    )
     schema_widget_count = _full_widget_name_count(
         node.class_type,
         schema,
@@ -1747,13 +1878,18 @@ def derive_widget_shape_evidence(
         raw_widget_count=raw_widget_count,
         candidate_widget_count=candidate_widget_count,
         schema_widget_count=schema_widget_count,
-        compacted_widget_names=tuple(name for name in widget_names if name is not None),
+        compacted_widget_names=tuple(
+            name
+            for index, name in enumerate(widget_names)
+            if name is not None and name != f"widget_{index}"
+        ),
         raw_widget_shape=raw_widget_shape,
         has_dict_rows=has_dict_rows,
         overflow=overflow,
         provider=provenance.get("provider"),
         explicit_widget_overflow=explicit_widget_overflow,
         raw_widget_length_recovered=raw_widget_length_recovered,
+        value_domain=value_domain,
     )
 
 
@@ -2100,7 +2236,11 @@ def emit_ui_json(
             link_deltas={node_id: link_delta} if link_delta else {},
             identity_matched=identity_matched,
             allow_schema_default_regenerate=allow_schema_defaults,
-            is_new_node=(node.uid or node_id) in new_node_keys,
+            is_new_node=(
+                (node.uid or node_id) in new_node_keys
+                and getattr(node, "raw_widgets", None) is None
+                and raw_ui_node is None
+            ),
         )
         widget_shape_verdicts[node_id] = verdict
         widget_shape_default_values[node_id] = (
@@ -2245,7 +2385,12 @@ def emit_ui_json(
                 pass  # appended after the loop; diagnostic is in the provenance entry
 
         # --- widget metadata for this class ---
-        widget_names = _widget_names_for_emission(node.class_type, schema)
+        widget_names = _widget_names_for_emission(
+            node.class_type,
+            schema,
+            node=node,
+            schema_provider=schema_provider,
+        )
         widget_name_set = {name for name in widget_names if name is not None}
         full_committed = widget_names_for_class(node.class_type)
         if full_committed is not None:

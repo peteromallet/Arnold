@@ -292,6 +292,12 @@ def _runtime_model_for_route(route: str | None, model: str | None) -> str | None
     label.  That is not a valid OpenRouter/Anthropic/Codex model id, so keep it
     out of the provider seam and let the route resolve its real default.
     """
+    # Explicit per-process force-override: when set, ignore the profile/judge
+    # model slug and route everything through this model (e.g. swapping the
+    # hermes backend to a non-DeepSeek OpenAI-compatible endpoint). No-op unset.
+    forced_model = os.getenv("VIBECOMFY_FORCE_MODEL")
+    if forced_model:
+        return forced_model
     if _is_real_model_override(model):
         return model
     normalized_route = _normalize_route(route)
@@ -333,6 +339,13 @@ def _is_native_deepseek_endpoint() -> bool:
 
 
 def _hermes_credential_for(route: str | None, model: str | None) -> str | None:
+    # Explicit per-process override (e.g. pointing the hermes backend at a
+    # non-OpenRouter OpenAI-compatible endpoint such as Fireworks). Bypasses
+    # _resolve_openrouter_key(), which force-clobbers OPENROUTER_API_KEY from
+    # ~/.hermes/.env and would ignore a freshly-exported key. No-op when unset.
+    explicit_key = os.getenv("VIBECOMFY_HERMES_API_KEY")
+    if explicit_key:
+        return explicit_key
     # When pointed at DeepSeek's native API, prefer DEEPSEEK_API_KEY directly so a
     # stale OpenRouter ``sk-or-*`` pool key in ~/.hermes/.env can't win —
     # _resolve_openrouter_key() force-prefers any sk-or-* entry it finds there.
