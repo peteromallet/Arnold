@@ -80,6 +80,7 @@ Observed result:
   listed in the alignment plan.
 - The completion chain may launch with the current planning artifacts only from
   a checkout where the initiative source and native-representation docs are
-  committed in `HEAD` and clean. It may create the first completion manifest
-  during M7, but composition launch must fail if that manifest is absent,
-  stale, or missing required proof artifacts.
+  committed in `HEAD` and clean. Completion M7 must create the first completion
+  manifest with `megaplan chain manifest --spec ... --proof-map ...`, and
+  composition launch must fail if that manifest is absent, stale, or missing
+  required proof artifacts.
