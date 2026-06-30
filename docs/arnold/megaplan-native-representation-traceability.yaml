@@ -49,7 +49,7 @@ final_conformance_gate:
       canonical_source: [".py"]
       audited_pure_phase_body: [".py"]
       declared_policy: [".py", ".yaml", ".yml", ".json", ".md"]
-    required_row_fields: [id, status, semantic_carrier, proof_artifacts]
+    required_row_fields: [id, status, semantic_carrier, proof_categories, proof_artifacts]
     implemented_required_row_fields: [carrier_evidence]
     deferred_required_row_fields: [downstream_owner, blocking_proof, reason]
   required_report_sections:
