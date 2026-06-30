@@ -45,6 +45,8 @@ Signs you should split:
 
 When you split, structure the dependency graph explicitly. Each handoff is a written artifact — schema, API surface, doc — that the next brief can cite. Sprints without that artifact between them are really one sprint pretending to be two.
 
+For high-confidence epic handoffs, use the chain completion manifest feature instead of relying only on prose or chain state. A downstream `chain.yaml` can require a prerequisite chain to be complete with `kind: chain_completed` plus `require_manifest: true`; the prerequisite chain then emits `completion-manifest.json` via `megaplan chain manifest --spec ... --proof-map ...`. The manifest hashes the chain spec, North Star when declared, milestone briefs, and explicit proof artifacts; it also records completed milestone labels, plan names, and review-merge PR metadata when applicable. Downstream launch then rejects missing, stale, or mismatched manifest evidence.
+
 **But: one profile per sprint.** Within a sprint, score the overall planning difficulty for the sprint as a whole. Operational simplicity beats the savings from splitting by difficulty alone. Only split when lower-difficulty work is *substantial* (multiple days) **and** independent. Structure the plan so easier work lives in easier sprints, not interleaved inside harder ones.
 
 ### What goes in the brief
@@ -53,7 +55,7 @@ When you split, structure the dependency graph explicitly. Each handoff is a wri
 
 **The brief must be locked in before init** — fully self-contained so the model can run end-to-end without coming back for clarification. The harness snapshots the brief at `init`; later edits to the idea-file are not re-read. If you find yourself wanting to "ask the model" what to do, write that decision down first.
 
-**Store durable briefs in `.megaplan/briefs/`.** Single-plan ideas live at `.megaplan/briefs/<slug>.md`. Epics live at `.megaplan/briefs/<epic-slug>/chain.yaml` with their milestone briefs in the same directory. `.megaplan/plans/` is generated run state; `.megaplan/briefs/` is the committed input material you hand to `python -m arnold_pipelines.megaplan init` or `python -m arnold_pipelines.megaplan chain start`. Use `python -m arnold_pipelines.megaplan brief new` or `python -m arnold_pipelines.megaplan brief epic` to create the canonical files.
+**Store durable briefs in `.megaplan/initiatives/<slug>/`.** Single-plan ideas live at `.megaplan/initiatives/<slug>/briefs/<slug>.md`. Epics live at `.megaplan/initiatives/<epic-slug>/chain.yaml` with milestone briefs under `briefs/`. `.megaplan/plans/` is generated run state; `.megaplan/initiatives/` is the committed input material you hand to `python -m arnold_pipelines.megaplan init` or `python -m arnold_pipelines.megaplan chain start`. Use `python -m arnold_pipelines.megaplan brief new` or `python -m arnold_pipelines.megaplan brief epic` to create the canonical files.
 
 For single plans, pass `--north-star path/to/NORTHSTAR.md` at `init` when the local brief needs durable alignment context. This is optional, but strongly recommended for drift-sensitive standalone plans: migrations, public contracts, cross-cutting refactors, multi-agent handoffs, or any task where local success criteria could accidentally narrow the intended destination. For epics, keep `NORTHSTAR.md` beside `chain.yaml` and declare it as `anchors.north_star`; `brief epic` scaffolds this by default and chain runs require it unless explicitly opted out. Anchor files are snapshotted into plan state at initialization, so edit the source before starting the run.
 
