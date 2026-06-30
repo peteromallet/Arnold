@@ -36,6 +36,7 @@ from arnold_pipelines.megaplan.model_seam import (
     ModelStructuralAuditError,
     ModelTier,
     capture_step_output,
+    coerce_plan_markdown_payload,
     render_prompt_for_dispatch,
     render_step_message,
 )
@@ -1466,6 +1467,9 @@ def parse_agent_output(
                 pass
         except OSError:
             pass
+
+    if payload is None and step == "plan" and _looks_like_plan_markdown(raw_output):
+        payload = coerce_plan_markdown_payload(raw_output)
 
     # Try parsing the final text response
     if payload is None:
@@ -2998,6 +3002,17 @@ def _parse_json_response(text: str) -> dict | None:
                 continue
 
     return None
+
+
+def _looks_like_plan_markdown(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    if stripped.startswith("# "):
+        return True
+    if "## Overview" in text:
+        return True
+    return bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", text))
 
 
 def _repair_json(text: str) -> str:

@@ -3336,14 +3336,23 @@ def _run_codex_step_uncapped(
         error_code, error_message = _diagnose_codex_failure(raw, result.returncode)
         if error_code != "worker_error":
             raise CliError(error_code, error_message, extra={"raw_output": raw})
+    try:
+        output_raw = output_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        output_raw = ""
     if free_text:
-        try:
-            output_raw = output_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            output_raw = ""
         text = output_raw or raw
+        payload: dict[str, Any] = {}
+        if step == "plan" and (
+            text.lstrip().startswith("# ")
+            or "## Overview" in text
+            or bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", text))
+        ):
+            from arnold_pipelines.megaplan.model_seam import coerce_plan_markdown_payload
+
+            payload = coerce_plan_markdown_payload(text)
         return WorkerResult(
-            payload={},
+            payload=payload,
             raw_output=text,
             duration_ms=result.duration_ms,
             cost_usd=0.0,
@@ -3352,6 +3361,16 @@ def _run_codex_step_uncapped(
             rendered_prompt=prompt,
             worker_channel=_CODEX_WORKER_CHANNEL,
         )
+    capture_input: str | dict[str, Any] = raw
+    plan_text = output_raw or raw
+    if step == "plan" and (
+        plan_text.lstrip().startswith("# ")
+        or "## Overview" in plan_text
+        or bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", plan_text))
+    ):
+        from arnold_pipelines.megaplan.model_seam import coerce_plan_markdown_payload
+
+        capture_input = coerce_plan_markdown_payload(plan_text)
     try:
         capture_outcome = capture_step_output(
             StepInvocation(
@@ -3373,7 +3392,7 @@ def _run_codex_step_uncapped(
                     },
                 },
             ),
-            raw,
+            capture_input,
         )
         payload = _normalize_step_payload_for_audit(
             step,
