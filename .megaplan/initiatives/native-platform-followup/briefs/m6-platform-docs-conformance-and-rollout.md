@@ -61,7 +61,10 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
   reference the target report and traceability file, include one row for every
   traceability row id, allow only `implemented` or `deferred` statuses, and
   require `id`, `status`, `semantic_carrier`, and `proof_artifacts` for each
-  row. Any `deferred` row must include `downstream_owner`, `blocking_proof`,
+  row. Implemented rows must use one of these `semantic_carrier` values:
+  `canonical_source`, `declared_policy`, or `audited_pure_phase_body`.
+  Deferred rows must use `semantic_carrier: explicit_deferral`. Any
+  `deferred` row must include `downstream_owner`, `blocking_proof`,
   and `reason`. Validate the YAML ledger with
   `python scripts/validate_native_representation_conformance.py --conformance
   docs/arnold/megaplan-native-representation-conformance.yaml`. Create the final platform

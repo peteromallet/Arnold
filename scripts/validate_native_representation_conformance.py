@@ -20,6 +20,12 @@ EXPECTED_TRACEABILITY = "docs/arnold/megaplan-native-representation-traceability
 VALID_STATUSES = {"implemented", "deferred"}
 REQUIRED_ROW_FIELDS = {"id", "status", "semantic_carrier", "proof_artifacts"}
 DEFERRED_REQUIRED_ROW_FIELDS = {"downstream_owner", "blocking_proof", "reason"}
+IMPLEMENTED_SEMANTIC_CARRIERS = {
+    "canonical_source",
+    "declared_policy",
+    "audited_pure_phase_body",
+}
+DEFERRED_SEMANTIC_CARRIERS = {"explicit_deferral"}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -128,6 +134,16 @@ def validate_conformance_ledger(
         carrier = row.get("semantic_carrier")
         if not isinstance(carrier, str) or not carrier.strip():
             errors.append(f"row {row_id!r} semantic_carrier must be a non-empty string")
+        elif status == "implemented" and carrier not in IMPLEMENTED_SEMANTIC_CARRIERS:
+            errors.append(
+                f"row {row_id!r} implemented semantic_carrier must be one of "
+                f"{sorted(IMPLEMENTED_SEMANTIC_CARRIERS)}"
+            )
+        elif status == "deferred" and carrier not in DEFERRED_SEMANTIC_CARRIERS:
+            errors.append(
+                f"row {row_id!r} deferred semantic_carrier must be one of "
+                f"{sorted(DEFERRED_SEMANTIC_CARRIERS)}"
+            )
 
         try:
             proof_paths = _string_list(row.get("proof_artifacts"), field="proof_artifacts", row_id=row_id)

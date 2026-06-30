@@ -183,6 +183,16 @@ def test_final_conformance_gate_is_closeout_owned() -> None:
     assert (ROOT / machine_report["validator"]).is_file()
     assert machine_report["validator"] in closeout_text
     assert machine_report["row_status_values"] == ["implemented", "deferred"]
+    assert machine_report["implemented_semantic_carriers"] == [
+        "canonical_source",
+        "declared_policy",
+        "audited_pure_phase_body",
+    ]
+    assert machine_report["deferred_semantic_carriers"] == ["explicit_deferral"]
+    for carrier in machine_report["implemented_semantic_carriers"]:
+        assert carrier in closeout_text, carrier
+    for carrier in machine_report["deferred_semantic_carriers"]:
+        assert carrier in closeout_text, carrier
     for field in machine_report["required_row_fields"]:
         assert field in closeout_text, field
     for field in machine_report["deferred_required_row_fields"]:
@@ -212,13 +222,13 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
                     {
                         "id": "row-one",
                         "status": "implemented",
-                        "semantic_carrier": "canonical source",
+                        "semantic_carrier": "canonical_source",
                         "proof_artifacts": ["proof-one.md"],
                     },
                     {
                         "id": "row-two",
                         "status": "deferred",
-                        "semantic_carrier": "platform deferral",
+                        "semantic_carrier": "explicit_deferral",
                         "proof_artifacts": ["proof-two.md"],
                         "downstream_owner": "future-platform-hardening",
                         "blocking_proof": ["blocking-proof.md"],
@@ -273,6 +283,7 @@ def test_final_conformance_yaml_validator_rejects_false_pass(tmp_path: Path) -> 
     )
 
     assert any("missing deferred fields" in error for error in errors)
+    assert any("deferred semantic_carrier must be one of" in error for error in errors)
     assert any("path does not exist: missing-proof.md" in error for error in errors)
     assert any("cover every traceability id in order" in error for error in errors)
 

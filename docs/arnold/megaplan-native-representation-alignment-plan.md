@@ -404,6 +404,10 @@ The alignment work is done only when:
   conformance report plus YAML row ledger prove every row in
   `docs/arnold/megaplan-native-representation-traceability.yaml` is
   implemented or explicitly deferred with downstream owner and blocking proof;
+- every implemented row in the final YAML ledger uses `semantic_carrier:
+  canonical_source`, `semantic_carrier: declared_policy`, or
+  `semantic_carrier: audited_pure_phase_body`; deferred rows use
+  `semantic_carrier: explicit_deferral`;
 - `python scripts/validate_native_representation_conformance.py --conformance
   docs/arnold/megaplan-native-representation-conformance.yaml` passes against
   the final YAML ledger.
