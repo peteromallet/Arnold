@@ -17,8 +17,7 @@ jobs:
 
       - name: Install dependencies
         # Use the checked-in lockfile. A fresh resolve spans every declared
-        # Python version and currently trips over the optional ComfyUI extra
-        # on Python 3.14 even though this parity job only needs dev deps.
+        # Python version; this parity job only needs dev deps.
         run: uv sync --frozen --extra dev
 
       - name: Check canonical ready-template parity

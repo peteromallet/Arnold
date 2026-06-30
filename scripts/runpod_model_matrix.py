@@ -36,7 +36,7 @@ def _remote_script() -> str:
 set -u
 cd {REMOTE_ROOT}
 python3 -m pip install -e '.[dev]'
-python3 -m pip install 'comfyui@git+https://github.com/peteromallet/ComfyUI.git@fix/latentupscale-model-mmap-residency' 'comfy-script[default]'
+python3 -m pip install --extra-index-url https://nodes.appmana.com/simple/ 'comfyui==0.26.0' 'comfy-script[default]'
 python3 -m pytest -q tests
 rm -rf out output input vendor/workflow_templates custom_nodes
 git clone --depth 1 https://github.com/Comfy-Org/workflow_templates.git vendor/workflow_templates

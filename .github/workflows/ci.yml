@@ -5,8 +5,8 @@
 # Steps:
 #   1. Checkout (fetch-depth: 2 so PR diffs see the merge base if needed).
 #   2. Install uv.
-#   3. Install the package plus the pinned ComfyUI optional dependency used by
-#      the oracle converter.
+#   3. Install the package plus the pinned AppMana ComfyUI optional dependency
+#      used by the oracle converter.
 #   4. Run `make ci`, the shared local/GitHub contract for root hygiene, the
 #      maintained Python suite, browser smoke, snapshot freshness, and the Comfy
 #      oracle gate.

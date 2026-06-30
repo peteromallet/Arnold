@@ -23,9 +23,9 @@ downloads the ``out/`` and ``output/`` artifacts, and terminates the pod
 (``terminate_after_exec=True`` — no manual teardown needed; RunPod bills by the
 second, and a leaked pod is a real money leak).
 
-On the pod, the script ``pip``-installs VibeComfy plus the pip-installable
-ComfyUI fork (``comfyui@git+...@fix/latentupscale-model-mmap-residency``) and
-``comfy-script``. ComfyUI is intentionally consumed as the pip ``comfy`` package
+On the pod, the script ``pip``-installs VibeComfy plus the AppMana-published
+``comfyui`` package and ``comfy-script``. ComfyUI is intentionally consumed as
+the pip ``comfy`` package
 (not the legacy ``ComfyUI/server.py`` source tree), so a
 ``Could not locate ComfyUI root (no server.py + nodes.py found)`` notice at
 startup is *expected* and does not block the suite. Steps run under ``set -e``;
@@ -197,7 +197,7 @@ trap finish EXIT
 log "installing package and ComfyUI runtime dependencies"
 "$PY" -m pip install --upgrade pip wheel setuptools
 "$PY" -m pip install -e '.[dev]'
-"$PY" -m pip install 'comfyui@git+https://github.com/peteromallet/ComfyUI.git@fix/latentupscale-model-mmap-residency' 'comfy-script[default]'
+"$PY" -m pip install --extra-index-url https://nodes.appmana.com/simple/ 'comfyui==0.26.0' 'comfy-script[default]'
 
 run_step runtime_doctor setup out/corpus_matrix/runtime_doctor.json "$PY" -m vibecomfy.cli runtime doctor --json
 cp out/corpus_matrix/logs/runtime_doctor.log out/corpus_matrix/runtime_doctor.json

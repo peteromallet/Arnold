@@ -2,6 +2,7 @@ PYTHON ?= .venv/bin/python
 PIP ?= $(PYTHON) -m pip
 PYTEST ?= $(PYTHON) -m pytest
 NODE ?= node
+COMFY_INDEX_URL ?= https://nodes.appmana.com/simple/
 
 FAST_PYTEST := \
 	tests/test_cli_loader.py \
@@ -88,7 +89,7 @@ install-dev:
 	$(PIP) install -e ".[dev]"
 
 install-ci:
-	$(PIP) install -e ".[dev,runpod-launch,comfy]"
+	$(PIP) install --extra-index-url "$(COMFY_INDEX_URL)" -e ".[dev,runpod-launch,comfy]"
 	$(PIP) install "lazy-object-proxy>=1.10" "frozendict>=2.4" "pillow>=10" "ConfigArgParse>=1.7.1"
 
 prune-empty-runtime-root:

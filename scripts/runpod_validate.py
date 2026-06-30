@@ -12,7 +12,7 @@ set -euo pipefail
 cd {REMOTE_ROOT}
 mkdir -p out/corpus_matrix output
 python3 -m pip install -e '.[dev]'
-python3 -m pip install 'comfyui@git+https://github.com/peteromallet/ComfyUI.git@fix/latentupscale-model-mmap-residency' 'comfy-script[default]'
+python3 -m pip install --extra-index-url https://nodes.appmana.com/simple/ 'comfyui==0.26.0' 'comfy-script[default]'
 python3 -m vibecomfy.cli runtime doctor
 python3 -m vibecomfy.cli runtime smoke --mode managed
 printf 'id\tstatus\tseconds\tmedia_files\tbytes\n' > out/corpus_matrix/results.tsv

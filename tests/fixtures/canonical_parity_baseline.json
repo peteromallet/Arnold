@@ -3593,25 +3593,26 @@
     {
       "id": "smoke/empty_image_red",
       "path": "ready_templates/smoke/empty_image_red.py",
-      "sha256": "e67d6c5ad1a0f5234fd6d791569b6a6e3df87d3bb0c601cc61f3f7877e0846a0",
+      "sha256": "9e2be44631f4c16626c6ccd01833208895e0cb9f1cdcd8755dcbf071d0d7338e",
       "canonical_form": {
         "nodes": [
           {
-            "label": "9b1214ed6b5c",
+            "label": "705f2d02242d",
             "class_type": "EmptyImage",
             "inputs": {
+              "batch_size": 1,
               "color": 16711680,
               "height": 64,
               "width": 64
             }
           },
           {
-            "label": "511d1c66f201",
+            "label": "6d6da8825792",
             "class_type": "SaveImage",
             "inputs": {
               "filename_prefix": "vibecomfy_ready_smoke_red",
               "images": [
-                "9b1214ed6b5c",
+                "705f2d02242d",
                 0
               ]
             }

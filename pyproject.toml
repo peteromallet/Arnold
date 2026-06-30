@@ -25,10 +25,11 @@ dev = [
   "pytest-rerunfailures>=14",
 ]
 comfy = [
-  # Optional adoption hook only (M2 Step 7 / SD2). No M2 feature depends on
-  # this; vibecomfy.comfy_backend.ensure_nodes() falls back to pure-Python when
-  # this extra is not installed. Mirrors the opt-in `comfy` pytest marker.
-  "comfyui @ git+https://github.com/peteromallet/ComfyUI.git@f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
+  # Optional adoption hook only. No core VibeComfy feature depends on this;
+  # vibecomfy.comfy_backend.ensure_nodes() falls back to pure-Python when this
+  # extra is not installed. The package is published on AppMana's Python index;
+  # pip callers must pass --extra-index-url https://nodes.appmana.com/simple/.
+  "comfyui==0.26.0",
 ]
 png = [
   # Optional image-ingest hook (M2 Step 11): read a ComfyUI workflow chunk
@@ -115,3 +116,11 @@ exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECK
 
 [project.entry-points.pytest11]
 vibecomfy = "vibecomfy.testing._pytest_plugin"
+
+[tool.uv.sources]
+comfyui = { index = "appmana" }
+
+[[tool.uv.index]]
+name = "appmana"
+url = "https://nodes.appmana.com/simple/"
+explicit = true
