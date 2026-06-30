@@ -114,6 +114,37 @@ def test_launch_precondition_contains_text_fails_and_passes(tmp_path: Path) -> N
     validate_paths(spec, tmp_path, spec_path=spec_path)
 
 
+def test_launch_precondition_review_log_clean_fails_on_block_and_unaddressed_edit(tmp_path: Path) -> None:
+    review_log = tmp_path / "review.md"
+    spec_path = _write_chain(tmp_path, "milestones: []\n")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "review log clean",
+                    "path": "review.md",
+                    "check": {"kind": "review_log_clean"},
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    review_log.write_text(
+        "## Review\n\n- H1 End-State Fit: `PASS WITH EDIT`.\n\nThe edits were applied:\n- fixed.\n",
+        encoding="utf-8",
+    )
+    validate_paths(spec, tmp_path, spec_path=spec_path)
+
+    review_log.write_text("## Review\n\n- H1 End-State Fit: `BLOCK`.\n", encoding="utf-8")
+    with pytest.raises(CliError, match="blocking verdict"):
+        validate_paths(spec, tmp_path, spec_path=spec_path)
+
+    review_log.write_text("## Review\n\n- H1 End-State Fit: `PASS WITH EDIT`.\n", encoding="utf-8")
+    with pytest.raises(CliError, match="unaddressed PASS WITH EDIT"):
+        validate_paths(spec, tmp_path, spec_path=spec_path)
+
+
 def test_git_tracked_precondition_rejects_untracked_file(tmp_path: Path) -> None:
     _git(tmp_path, "init")
     tracked = tmp_path / "tracked.md"

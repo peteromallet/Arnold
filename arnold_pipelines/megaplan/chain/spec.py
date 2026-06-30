@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -305,20 +306,20 @@ class LaunchPreconditionSpec:
                 "invalid_spec",
                 f"launch_preconditions[{index}].check must be a string or mapping",
             )
-        if check_name not in {"exists", "contains_text"}:
+        if check_name not in {"exists", "contains_text", "review_log_clean"}:
             raise CliError(
                 "invalid_spec",
-                f"launch_preconditions[{index}].check must be `exists` or `contains_text`; got {check_name!r}",
+                f"launch_preconditions[{index}].check must be `exists`, `contains_text`, or `review_log_clean`; got {check_name!r}",
             )
         if check_name == "contains_text" and not text:
             raise CliError(
                 "invalid_spec",
                 f"launch_preconditions[{index}] contains_text check requires `text`",
             )
-        if check_name == "exists" and text is not None:
+        if check_name in {"exists", "review_log_clean"} and text is not None:
             raise CliError(
                 "invalid_spec",
-                f"launch_preconditions[{index}] exists check does not support `text`",
+                f"launch_preconditions[{index}] {check_name} check does not support `text`",
             )
         return cls(
             name=name.strip(),
@@ -1216,6 +1217,39 @@ def _validate_git_tracked_precondition(
         )
 
 
+def _validate_review_log_clean(
+    *,
+    contents: str,
+    target: Path,
+    label: str,
+    spec_path: Path,
+) -> None:
+    for line in contents.splitlines():
+        stripped = line.strip()
+        if re.match(r"^- [HD]\d+\b.*: `BLOCK`", stripped):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: review log contains blocking verdict in {target}: {stripped}",
+            )
+        if "returned `BLOCK`" in stripped and not stripped.startswith("No "):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: review log contains blocking summary in {target}: {stripped}",
+            )
+
+    sections = re.split(r"^## ", contents, flags=re.MULTILINE)
+    for section in sections:
+        if "`PASS WITH EDIT`" not in section and "PASS WITH\nEDIT" not in section:
+            continue
+        if "edits were applied" in section.lower():
+            continue
+        title = section.splitlines()[0] if section.splitlines() else "<untitled>"
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: review log section has unaddressed PASS WITH EDIT verdicts in {target}: {title}",
+        )
+
+
 def _completed_milestone_labels(state: ChainState) -> set[str]:
     labels: set[str] = set()
     for record in state.completed:
@@ -1672,6 +1706,20 @@ def validate_launch_preconditions(spec: ChainSpec, root: Path, spec_path: Path) 
                     "launch_precondition_failed",
                     f"{label} failed for {spec_path}: artifact {target} does not contain required text {expected!r}",
                 )
+        if precondition.check == "review_log_clean":
+            try:
+                contents = target.read_text(encoding="utf-8")
+            except UnicodeDecodeError as exc:
+                raise CliError(
+                    "launch_precondition_failed",
+                    f"{label} failed for {spec_path}: artifact is not UTF-8 text at {target}",
+                ) from exc
+            _validate_review_log_clean(
+                contents=contents,
+                target=target,
+                label=label,
+                spec_path=spec_path,
+            )
 
 
 def validate_paths(spec: ChainSpec, root: Path, spec_path: Path | None = None) -> None:

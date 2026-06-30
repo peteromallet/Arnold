@@ -24,6 +24,10 @@ launch_preconditions:
     check:
       kind: contains_text
       text: "Native Python Representation Report"
+  - name: review execution log has no unaddressed blockers
+    path: docs/arnold/megaplan-native-representation-review-execution.md
+    check:
+      kind: review_log_clean
   - name: machine-readable traceability exists
     path: docs/arnold/megaplan-native-representation-traceability.yaml
     check:
