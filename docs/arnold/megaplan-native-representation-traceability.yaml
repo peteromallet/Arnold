@@ -28,6 +28,23 @@ chain_handoff_gates:
     closeout_milestone: composition-m6
     closeout_brief: .megaplan/initiatives/native-composition-followup/briefs/m6-composition-docs-and-conformance.md
     closeout_deliverables: [proof-map.json, completion-manifest.json, megaplan-composition-conformance-report.md]
+final_conformance_gate:
+  id: platform-final-report-conformance
+  chain: .megaplan/initiatives/native-platform-followup/chain.yaml
+  closeout_milestone: platform-m6
+  closeout_brief: .megaplan/initiatives/native-platform-followup/briefs/m6-platform-docs-conformance-and-rollout.md
+  closeout_deliverables:
+    - proof-map.json
+    - completion-manifest.json
+    - docs/arnold/megaplan-native-representation-conformance-report.md
+  required_report_sections:
+    - Structural conformance
+    - Handler purity inventory
+    - Mutation tests
+    - Static topology snapshots
+    - Fixed scenario manifest
+    - Installed package source-path reconciliation
+    - Platform preservation rerun
 rows:
   - id: prep-clarification-gate
     requirement: Prep clarification gate

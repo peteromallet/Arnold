@@ -152,6 +152,32 @@ def test_chain_handoff_gates_are_executable_and_closeout_owned() -> None:
         assert "megaplan chain manifest" in closeout_text, gate["id"]
 
 
+def test_final_conformance_gate_is_closeout_owned() -> None:
+    payload = _load_yaml(TRACEABILITY_PATH)
+    gate = payload.get("final_conformance_gate")
+    assert isinstance(gate, dict)
+    assert gate["id"] == "platform-final-report-conformance"
+    assert gate["chain"] == ".megaplan/initiatives/native-platform-followup/chain.yaml"
+    assert gate["closeout_milestone"] == "platform-m6"
+
+    chain = ROOT / gate["chain"]
+    closeout_brief = ROOT / gate["closeout_brief"]
+    assert chain.is_file()
+    assert closeout_brief.is_file()
+
+    closeout_text = closeout_brief.read_text(encoding="utf-8")
+    assert gate["closeout_milestone"] in {
+        milestone
+        for row in payload["rows"]
+        for milestone in row["milestones"]
+    }
+    for deliverable in gate["closeout_deliverables"]:
+        assert deliverable in closeout_text, deliverable
+    for section in gate["required_report_sections"]:
+        assert section in closeout_text, section
+    assert "megaplan chain manifest" in closeout_text
+
+
 def test_review_execution_log_has_no_unaddressed_blockers() -> None:
     review_text = REVIEW_EXECUTION_PATH.read_text(encoding="utf-8")
 
