@@ -784,18 +784,23 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {}
     if isinstance(payload.get("plan"), str):
         normalized["plan"] = payload["plan"]
-        normalized["questions"] = _normalize_plan_questions(payload.get("questions"))
-        normalized["success_criteria"] = _normalize_plan_success_criteria(
-            payload.get("success_criteria")
+        extracted = _extract_plan_markdown_metadata(payload["plan"])
+        normalized["questions"] = _normalize_plan_questions(
+            payload.get("questions", extracted.get("questions"))
         )
-        normalized["assumptions"] = _normalize_plan_assumptions(payload.get("assumptions"))
+        normalized["success_criteria"] = _normalize_plan_success_criteria(
+            payload.get("success_criteria", extracted.get("success_criteria"))
+        )
+        normalized["assumptions"] = _normalize_plan_assumptions(
+            payload.get("assumptions", extracted.get("assumptions"))
+        )
         # Pass through changed_surfaces and test_blast_radius if present
-        changed = payload.get("changed_surfaces")
+        changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
         if isinstance(changed, list):
             normalized["changed_surfaces"] = [
                 str(s) for s in changed if isinstance(s, str) and s.strip()
             ]
-        blast = payload.get("test_blast_radius")
+        blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
         if isinstance(blast, dict):
             normalized["test_blast_radius"] = blast
         return normalized
@@ -839,22 +844,114 @@ def _normalize_plan_capture_payload(payload: dict[str, Any]) -> dict[str, Any]:
     plan_text = payload.get("plan_text") or payload.get("markdown") or "\n\n".join(parts)
     if not isinstance(plan_text, str):
         plan_text = "\n\n".join(parts)
+    extracted = _extract_plan_markdown_metadata(plan_text)
     normalized["plan"] = plan_text
-    normalized["questions"] = _normalize_plan_questions(payload.get("questions"))
-    normalized["success_criteria"] = _normalize_plan_success_criteria(
-        payload.get("success_criteria")
+    normalized["questions"] = _normalize_plan_questions(
+        payload.get("questions", extracted.get("questions"))
     )
-    normalized["assumptions"] = _normalize_plan_assumptions(payload.get("assumptions"))
+    normalized["success_criteria"] = _normalize_plan_success_criteria(
+        payload.get("success_criteria", extracted.get("success_criteria"))
+    )
+    normalized["assumptions"] = _normalize_plan_assumptions(
+        payload.get("assumptions", extracted.get("assumptions"))
+    )
     # Pass through changed_surfaces and test_blast_radius if present
-    changed = payload.get("changed_surfaces")
+    changed = payload.get("changed_surfaces", extracted.get("changed_surfaces"))
     if isinstance(changed, list):
         normalized["changed_surfaces"] = [
             str(s) for s in changed if isinstance(s, str) and s.strip()
         ]
-    blast = payload.get("test_blast_radius")
+    blast = payload.get("test_blast_radius", extracted.get("test_blast_radius"))
     if isinstance(blast, dict):
         normalized["test_blast_radius"] = blast
     return normalized
+
+
+def coerce_plan_markdown_payload(plan_text: str) -> dict[str, Any]:
+    """Wrap raw plan markdown in the canonical plan payload shape."""
+
+    return _normalize_plan_capture_payload({"plan": plan_text})
+
+
+def _extract_plan_markdown_metadata(plan_text: str) -> dict[str, Any]:
+    extracted: dict[str, Any] = {}
+    questions_block = _extract_plan_markdown_section(plan_text, "Questions")
+    if questions_block:
+        extracted["questions"] = _extract_markdown_list_values(questions_block)
+    assumptions_block = _extract_plan_markdown_section(plan_text, "Assumptions")
+    if assumptions_block:
+        extracted["assumptions"] = _extract_markdown_list_values(assumptions_block)
+    success_block = _extract_plan_markdown_section(plan_text, "Success Criteria")
+    success_value = _extract_markdown_json_value(success_block) if success_block else None
+    if isinstance(success_value, list):
+        extracted["success_criteria"] = success_value
+    elif isinstance(success_value, dict):
+        extracted["success_criteria"] = [success_value]
+    changed_block = _extract_plan_markdown_section(plan_text, "Changed Surfaces")
+    changed_value = _extract_markdown_json_value(changed_block) if changed_block else None
+    if isinstance(changed_value, list):
+        extracted["changed_surfaces"] = changed_value
+    else:
+        changed_list = _extract_markdown_list_values(changed_block or "")
+        if changed_list:
+            extracted["changed_surfaces"] = changed_list
+    blast_block = _extract_plan_markdown_section(plan_text, "Test Blast Radius")
+    blast_value = _extract_markdown_json_value(blast_block) if blast_block else None
+    if isinstance(blast_value, dict):
+        extracted["test_blast_radius"] = blast_value
+    return extracted
+
+
+def _extract_plan_markdown_section(plan_text: str, heading: str) -> str | None:
+    match = re.search(
+        rf"(?ms)^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
+        plan_text,
+    )
+    if match is None:
+        return None
+    body = match.group(1).strip()
+    return body or None
+
+
+def _extract_markdown_list_values(section_text: str) -> list[str]:
+    values: list[str] = []
+    for line in section_text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(("-", "*")) and not re.match(r"^\d+\.\s+", stripped):
+            continue
+        item = re.sub(r"^(?:[-*]\s+|\d+\.\s+)", "", stripped).strip()
+        if item:
+            values.append(item)
+    return values
+
+
+def _extract_markdown_json_value(section_text: str) -> Any | None:
+    text = section_text.strip()
+    if not text:
+        return None
+
+    fenced_blocks = re.findall(r"```(?:json)?\s*\n(.*?)```", text, re.DOTALL)
+    for block in fenced_blocks:
+        try:
+            return json.loads(block.strip())
+        except json.JSONDecodeError:
+            continue
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "{[":
+            continue
+        try:
+            parsed, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        return parsed
+    return None
 
 
 def _normalize_plan_questions(value: Any) -> list[str]:

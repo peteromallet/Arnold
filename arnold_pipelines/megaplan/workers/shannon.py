@@ -66,6 +66,7 @@ from arnold_pipelines.megaplan.model_seam import (
     ModelTier,
     ModelStructuralAuditError,
     capture_step_output,
+    coerce_plan_markdown_payload,
     render_compact_review_prompt,
     render_prompt_for_dispatch,
     render_step_message,
@@ -2903,26 +2904,42 @@ def run_shannon_step(
     # the envelope is far cheaper than redoing the whole batch, and the
     # surrounding execute loop deliberately does not retry execute.
     def _parse_and_validate(raw_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
-        env_, pay_ = _parse_shannon_output(raw_text)
-        pay_ = _apply_file_fallback(step, pay_, plan_dir, output_path=output_path)
         try:
-            capture_outcome = capture_step_output(
-                StepInvocation(
-                    kind="model",
-                metadata={
-                    "tier": ModelTier.NON_ENFORCED.value,
-                    "worker": session_agent,
-                    "model": model,
-                    "normalized_model": model,
-                    "validation_step": step,
-                    "compatibility_validation_step": step,
-                    "schema": schema,
-                },
-            ),
-            pay_,
+            env_, pay_ = _parse_shannon_output(raw_text)
+        except CliError as error:
+            if step != "plan":
+                raise
+            env_, plan_text = _extract_free_text_result(raw_text)
+            pay_ = coerce_plan_markdown_payload(plan_text)
+        pay_ = _apply_file_fallback(step, pay_, plan_dir, output_path=output_path)
+        invocation = StepInvocation(
+            kind="model",
+            metadata={
+                "tier": ModelTier.NON_ENFORCED.value,
+                "worker": session_agent,
+                "model": model,
+                "normalized_model": model,
+                "validation_step": step,
+                "compatibility_validation_step": step,
+                "schema": schema,
+            },
         )
+        try:
+            capture_outcome = capture_step_output(invocation, pay_)
         except ModelStructuralAuditError as error:
-            raise CliError("schema_error", str(error), extra={"raw_output": raw_text}) from error
+            if step == "plan":
+                env_, plan_text = _extract_free_text_result(raw_text)
+                fallback_payload = coerce_plan_markdown_payload(plan_text)
+                try:
+                    capture_outcome = capture_step_output(invocation, fallback_payload)
+                except ModelStructuralAuditError as fallback_error:
+                    raise CliError(
+                        "schema_error",
+                        str(fallback_error),
+                        extra={"raw_output": raw_text},
+                    ) from fallback_error
+            else:
+                raise CliError("schema_error", str(error), extra={"raw_output": raw_text}) from error
         pay_ = dict(capture_outcome.legacy_payload)
         return env_, pay_
 
