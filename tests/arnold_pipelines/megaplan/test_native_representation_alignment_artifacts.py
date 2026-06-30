@@ -434,6 +434,90 @@ def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
     )
 
 
+def test_final_conformance_yaml_validator_uses_traceability_target_report(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
+    traceability["target_report"] = "docs/arnold/custom-native-target.md"
+    traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/custom-native-target.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.py"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        validate_conformance_ledger(
+            repo_root=tmp_path,
+            conformance_path=conformance_path,
+            traceability_path=traceability_path,
+        )
+        == []
+    )
+
+
+def test_final_conformance_yaml_validator_rejects_stale_target_report(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
+    traceability["target_report"] = "docs/arnold/custom-native-target.md"
+    traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.py"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+    )
+
+    assert any(
+        "target_report must be 'docs/arnold/custom-native-target.md'" in error
+        for error in errors
+    )
+
+
 def test_final_conformance_yaml_validator_uses_traceability_suffix_contract(
     tmp_path: Path,
 ) -> None:

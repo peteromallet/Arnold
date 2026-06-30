@@ -106,6 +106,13 @@ def _machine_report_contract(traceability: dict[str, Any]) -> dict[str, Any]:
     return report
 
 
+def _traceability_target_report(traceability: dict[str, Any]) -> str:
+    target_report = traceability.get("target_report", EXPECTED_TARGET_REPORT)
+    if not isinstance(target_report, str) or not target_report.strip():
+        raise ValueError("traceability target_report must be a non-empty string")
+    return target_report.strip()
+
+
 def _string_set_from_contract(
     contract: dict[str, Any],
     key: str,
@@ -154,6 +161,7 @@ def validate_conformance_ledger(
         conformance = _load_yaml(conformance_path)
         traceability = _load_yaml(traceability_path)
         machine_report = _machine_report_contract(traceability)
+        expected_target_report = _traceability_target_report(traceability)
         valid_statuses = _string_set_from_contract(
             machine_report,
             "row_status_values",
@@ -176,8 +184,8 @@ def validate_conformance_ledger(
     expected_schema = machine_report.get("schema", EXPECTED_SCHEMA)
     if conformance.get("schema") != expected_schema:
         errors.append(f"schema must be {expected_schema!r}")
-    if conformance.get("target_report") != EXPECTED_TARGET_REPORT:
-        errors.append(f"target_report must be {EXPECTED_TARGET_REPORT!r}")
+    if conformance.get("target_report") != expected_target_report:
+        errors.append(f"target_report must be {expected_target_report!r}")
     if conformance.get("traceability") != EXPECTED_TRACEABILITY:
         errors.append(f"traceability must be {EXPECTED_TRACEABILITY!r}")
 
