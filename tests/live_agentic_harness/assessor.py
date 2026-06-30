@@ -24,6 +24,8 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from vibecomfy.executor.graph_facts import GraphFieldTarget, compare_effective_field
+
 from .intent_judge import judge_edit_intent
 
 _ERROR_SEVERITIES = {"error", "fatal"}
@@ -275,6 +277,19 @@ def _assessment_config(scenario: Mapping[str, Any] | None) -> Mapping[str, Any]:
     return assessment if isinstance(assessment, Mapping) else {}
 
 
+def _effective_edit_targets(scenario: Mapping[str, Any] | None) -> list[Mapping[str, Any]]:
+    """Return explicit effective-value targets required by the scenario."""
+    assessment = _assessment_config(scenario)
+    raw = assessment.get("effective_edit_targets")
+    if raw is None:
+        raw = assessment.get("effective_targets")
+    if isinstance(raw, Mapping):
+        return [raw]
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, Mapping)]
+    return []
+
+
 def _model_request_text(output_dir: Path) -> str | None:
     """Return copied model_request.json text when the headless run produced it."""
     path = output_dir / "model_request.json"
@@ -343,8 +358,17 @@ def _assess_model_request_artifact(
                 }
             )
         else:
+            decoded: Any = None
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                decoded = None
             for substring in forbidden:
-                if substring in text:
+                found_in_decoded_string = any(
+                    isinstance(node, str) and substring in node
+                    for node in _walk(decoded)
+                )
+                if substring in text or found_in_decoded_string:
                     issues.append(
                         {
                             "check": "model_request_forbidden_substring",
@@ -355,6 +379,171 @@ def _assess_model_request_artifact(
                             ),
                         }
                     )
+    return issues
+
+
+def _ui_artifact_path(
+    output_dir: Path,
+    response: Mapping[str, Any],
+    artifact_name: str,
+    fallback_name: str,
+) -> Path:
+    artifacts = response.get("artifacts")
+    if isinstance(artifacts, Mapping) and isinstance(artifacts.get(artifact_name), str):
+        return Path(artifacts[artifact_name])
+    return output_dir / fallback_name
+
+
+def _load_ui_artifact(
+    output_dir: Path,
+    response: Mapping[str, Any],
+    artifact_name: str,
+    fallback_name: str,
+) -> Mapping[str, Any] | None:
+    path = _ui_artifact_path(output_dir, response, artifact_name, fallback_name)
+    loaded = _load_json(path)
+    return loaded if isinstance(loaded, Mapping) else None
+
+
+def _graph_field_target(target: Mapping[str, Any]) -> GraphFieldTarget | None:
+    node_id = target.get("node_id")
+    if node_id is None:
+        return None
+    widget_index = target.get("widget_index")
+    if isinstance(widget_index, bool) or not isinstance(widget_index, int):
+        widget_index = None
+    field_name = target.get("field_name") or target.get("input_name") or target.get("widget_name")
+    if not isinstance(field_name, str) or not field_name:
+        field_name = None
+    if field_name is None and widget_index is None:
+        return None
+    return GraphFieldTarget(node_id=node_id, field_name=field_name, widget_index=widget_index)
+
+
+def _assess_effective_edit_targets(
+    output_dir: Path,
+    response: Mapping[str, Any],
+    scenario: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Fail when a claimed parameter target has no effective value change."""
+    targets = _effective_edit_targets(scenario)
+    if not targets:
+        return []
+
+    original_ui = _load_ui_artifact(output_dir, response, "original_ui", "original.ui.json")
+    candidate_ui = _load_ui_artifact(output_dir, response, "candidate_ui", "candidate.ui.json")
+    if original_ui is None or candidate_ui is None:
+        return [
+            {
+                "check": "effective_edit",
+                "severity": "error",
+                "detail": "Scenario requires effective edit checks, but UI artifacts are missing.",
+            }
+        ]
+
+    issues: list[dict[str, Any]] = []
+    for target in targets:
+        label = str(
+            target.get("label")
+            or target.get("input_name")
+            or target.get("widget_name")
+            or target.get("node_id")
+            or "target"
+        )
+        graph_target = _graph_field_target(target)
+        if graph_target is None:
+            issues.append(
+                {
+                    "check": "effective_edit",
+                    "severity": "error",
+                    "detail": f"Could not resolve effective edit target {label!r}.",
+                }
+            )
+            continue
+
+        try:
+            change = compare_effective_field(original_ui, candidate_ui, graph_target)
+        except (KeyError, ValueError) as exc:
+            issues.append(
+                {
+                    "check": "effective_edit",
+                    "severity": "error",
+                    "detail": f"Could not resolve effective edit target {label!r}: {exc}.",
+                }
+            )
+            continue
+
+        allow_shared_source = target.get("allow_shared_source_edit") is True
+        if (
+            change.effective_changed is True
+            and not allow_shared_source
+            and change.before.source is not None
+            and change.after.source is not None
+            and str(change.before.source.node_id) == str(change.after.source.node_id)
+            and change.before.source.output_slot == change.after.source.output_slot
+            and max(
+                change.before.source.outgoing_link_count,
+                change.after.source.outgoing_link_count,
+            )
+            > 1
+        ):
+            issues.append(
+                {
+                    "check": "shared_effective_source_edit",
+                    "severity": "error",
+                    "detail": (
+                        f"Target {label!r} changed through linked source "
+                        f"{change.after.source.node_id!r} output "
+                        f"{change.after.source.output_slot}, which has "
+                        f"{change.after.source.outgoing_link_count} consumers. "
+                        "Set allow_shared_source_edit when the shared edit is intentional."
+                    ),
+                }
+            )
+            continue
+
+        if change.effective_changed is True:
+            continue
+
+        if (
+            change.raw_changed is True
+            and (change.before.overridden or change.after.overridden)
+            and change.effective_changed is False
+        ):
+            issues.append(
+                {
+                    "check": "inert_effective_edit",
+                    "severity": "error",
+                    "detail": (
+                        f"Changed static widget for linked target {label!r} "
+                        f"from {change.before.raw_value!r} to {change.after.raw_value!r}, "
+                        f"but the effective linked value remained "
+                        f"{change.after.effective_value!r}."
+                    ),
+                }
+            )
+        elif change.effective_changed is None:
+            issues.append(
+                {
+                    "check": "effective_edit",
+                    "severity": "error",
+                    "detail": (
+                        f"Could not prove effective value changed for target {label!r}; "
+                        "one or both effective values were unknown."
+                    ),
+                }
+            )
+        else:
+            issues.append(
+                {
+                    "check": "effective_edit",
+                    "severity": "error",
+                    "detail": (
+                        f"Expected effective value change for target {label!r}, "
+                        f"but it remained {change.after.effective_value!r}."
+                    ),
+                }
+            )
     return issues
 
 
@@ -481,6 +670,9 @@ def assess_live_output_dir(
                         "detail": f"Expected edit but gates failed: {', '.join(sorted(false_gates))}.",
                     }
                 )
+
+            if not safe_refusal_accepted:
+                issues.extend(_assess_effective_edit_targets(output_dir, response, scenario))
         elif expected_outcome_kinds:
             outcome = response.get("outcome") or {}
             outcome_kind = outcome.get("kind")

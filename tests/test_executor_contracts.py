@@ -2062,12 +2062,13 @@ class TestPrecedentAdaptationPlan:
             "non_actionable",
             "structural_validation_failed_without_concrete_edits",
         )
-        assert adaptation_plan_actionability_payload(d)["allowed_followups"] == [
-            "retry_or_select_better_precedent",
-            "use_current_graph_direct_edit_if_schema_sufficient",
-            "safe_refusal_or_clarification_if_authoring_surface_missing",
+        followups = adaptation_plan_actionability_payload(d)["allowed_followups"]
+        assert followups == [
+            "apply_bound_current_graph_edit_if_schema_sufficient",
             "build_execution_plan_with_required_nodes_and_rewires",
+            "typed_refusal_or_clarification_if_authoring_surface_missing",
         ]
+        assert not any("search" in item or "retry" in item for item in followups)
 
     def test_structural_fail_with_concrete_edit_ops_remains_actionable(self) -> None:
         pap = PrecedentAdaptationPlan(

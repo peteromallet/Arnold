@@ -509,6 +509,7 @@ def test_public_outcome_kinds_are_closed_and_ordered() -> None:
         "noop",
         "clarify",
         "error",
+        "requires_custom_nodes",
     )
 
 
@@ -1962,12 +1963,25 @@ def test_all_public_outcome_kinds_tested_by_ensure_contract() -> None:
     )
     assert error["outcome"]["kind"] == "error"
 
+    # requires_custom_nodes (already public, non-applyable)
+    requires_custom_nodes = ensure_agent_edit_response_contract(
+        {"ok": True, "outcome": {"kind": "requires_custom_nodes", "reason": "missing pack"}},
+        stage="submit",
+    )
+    assert requires_custom_nodes["outcome"]["kind"] == "requires_custom_nodes"
+
 
 def test_public_outcome_kinds_are_the_closed_contract_set() -> None:
-    """The public outcome kinds are exactly the four contractual values."""
-    assert PUBLIC_OUTCOME_KINDS == ("candidate", "noop", "clarify", "error")
-    assert len(PUBLIC_OUTCOME_KINDS) == 4
-    assert len(set(PUBLIC_OUTCOME_KINDS)) == 4
+    """The public outcome kinds are exactly the contractual values."""
+    assert PUBLIC_OUTCOME_KINDS == (
+        "candidate",
+        "noop",
+        "clarify",
+        "error",
+        "requires_custom_nodes",
+    )
+    assert len(PUBLIC_OUTCOME_KINDS) == 5
+    assert len(set(PUBLIC_OUTCOME_KINDS)) == 5
 
 
 def test_internal_to_public_outcome_is_closed_authoritative_mapping() -> None:

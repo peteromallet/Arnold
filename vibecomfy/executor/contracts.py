@@ -51,10 +51,9 @@ def _thaw_jsonish(value: Any) -> Any:
 
 
 _ADAPTATION_PLAN_FOLLOWUPS: tuple[str, ...] = (
-    "retry_or_select_better_precedent",
-    "use_current_graph_direct_edit_if_schema_sufficient",
-    "safe_refusal_or_clarification_if_authoring_surface_missing",
+    "apply_bound_current_graph_edit_if_schema_sufficient",
     "build_execution_plan_with_required_nodes_and_rewires",
+    "typed_refusal_or_clarification_if_authoring_surface_missing",
 )
 
 

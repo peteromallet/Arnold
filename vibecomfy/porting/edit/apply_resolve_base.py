@@ -294,7 +294,7 @@ def _resolve_set_node_field(
         issues.append(
             _issue(
                 "automatic_link_removal",
-                "set_node_field will remove the overriding input link before applying the widget value.",
+                "Field is linked/overridden; edit the effective source when it is the same semantic control, or refuse/clarify if it is unrelated.",
                 severity="info",
                 detail={
                     "scope_path": op.target.scope_path,
@@ -302,6 +302,8 @@ def _resolve_set_node_field(
                     "field_path": field_path,
                     "requested_field_path": op.target.field_path,
                     "link_id": automatic_link_removal,
+                    "effective_surface": "linked_override",
+                    "next_action": "edit_effective_source_or_refuse_if_unrelated",
                 },
             )
         )

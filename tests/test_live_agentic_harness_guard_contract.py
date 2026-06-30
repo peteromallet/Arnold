@@ -31,6 +31,89 @@ def _write_flow_metadata(output_dir: Path, **overrides: object) -> None:
     (output_dir / "flow_metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
 
 
+def _write_successful_candidate(output_dir: Path, **overrides: object) -> None:
+    response = {
+        "ok": True,
+        "graph_unchanged": False,
+        "candidate_graph": {"nodes": [{"id": 1}], "links": []},
+        "outcome": {"kind": "candidate"},
+        "gates": {
+            "ir_validate_ok": True,
+            "lower_ok": True,
+            "plan_validate_ok": True,
+            "python_load_ok": True,
+            "queue_validate_ok": True,
+            "state_match_ok": True,
+            "ui_emit_ok": True,
+            "ui_fidelity_ok": True,
+            "ui_load_safe_ok": True,
+        },
+    }
+    response.update(overrides)
+    (output_dir / "response.json").write_text(json.dumps(response), encoding="utf-8")
+
+
+def _write_ui_pair(output_dir: Path, original: dict, candidate: dict) -> None:
+    (output_dir / "original.ui.json").write_text(json.dumps(original), encoding="utf-8")
+    (output_dir / "candidate.ui.json").write_text(json.dumps(candidate), encoding="utf-8")
+
+
+def _effective_target_scenario() -> dict:
+    return {
+        "id": "effective-edit",
+        "assessment": {
+            "expect_graph_changed": True,
+            "skip_intent_judge": True,
+            "effective_edit_targets": [
+                {
+                    "label": "frame_count",
+                    "node_id": 2,
+                    "input_name": "frame_count",
+                    "widget_index": 0,
+                    "source_widget_index": 0,
+                }
+            ],
+        },
+    }
+
+
+def _frame_count_graph(
+    *,
+    source_value: int = 8,
+    target_value: int = 8,
+    linked: bool = True,
+    shared_source: bool = False,
+    save_prefix: str | None = None,
+) -> dict:
+    link_id = 10 if linked else None
+    nodes = []
+    links = []
+    if linked:
+        nodes.append({"id": 1, "type": "PrimitiveInt", "widgets_values": [source_value]})
+        links.append([10, 1, 0, 2, 0, "INT"])
+    nodes.append(
+        {
+            "id": 2,
+            "type": "VideoGenerator",
+            "widgets_values": [target_value],
+            "inputs": [{"name": "frame_count", "type": "INT", "link": link_id}],
+        }
+    )
+    if save_prefix is not None:
+        nodes.append({"id": 3, "type": "SaveVideo", "widgets_values": [save_prefix]})
+    if linked and shared_source:
+        nodes.append(
+            {
+                "id": 4,
+                "type": "OtherConsumer",
+                "widgets_values": [target_value],
+                "inputs": [{"name": "other_count", "type": "INT", "link": 11}],
+            }
+        )
+        links.append([11, 1, 0, 4, 0, "INT"])
+    return {"nodes": nodes, "links": links}
+
+
 @pytest.mark.parametrize("dispatcher", [DISPATCHER_FAKE, DISPATCHER_FAKING])
 def test_agentic_guard_rejects_fake_dispatchers(tmp_path: Path, dispatcher: str) -> None:
     output_dir = tmp_path / dispatcher
@@ -109,6 +192,7 @@ def test_agentic_guard_catches_unchanged_graph_and_upstream_errors(tmp_path: Pat
     assert assessment["expect_graph_changed"] is True
     checks = {issue["check"] for issue in assessment["issues"] if issue["severity"] == "error"}
     assert "graph_changed" in checks
+    assert "outcome_kind" in checks
     assert "upstream_failure" in checks
     assert "implementation_result" in checks
     assert "gates" in checks
@@ -340,3 +424,136 @@ def test_agentic_guard_rejects_forbidden_model_request_substrings(tmp_path: Path
         for issue in issues
         if issue["severity"] == "error"
     } == {"model_request_forbidden_substring"}
+
+
+def test_agentic_guard_rejects_static_widget_edit_overridden_by_link(tmp_path: Path) -> None:
+    output_dir = tmp_path / "inert-linked-widget"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    _write_successful_candidate(output_dir)
+    _write_ui_pair(
+        output_dir,
+        _frame_count_graph(source_value=8, target_value=8, linked=True),
+        _frame_count_graph(source_value=8, target_value=16, linked=True),
+    )
+
+    verdict = guard_output_dir(output_dir, scenario=_effective_target_scenario())
+
+    assert verdict["live_agentic_success"] is False
+    checks = {
+        issue["check"]
+        for issue in verdict["assessment"]["issues"]
+        if issue["severity"] == "error"
+    }
+    assert checks == {"inert_effective_edit"}
+
+
+def test_agentic_guard_rejects_no_effective_value_change_for_claimed_target(tmp_path: Path) -> None:
+    output_dir = tmp_path / "no-effective-target-change"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    _write_successful_candidate(output_dir)
+    _write_ui_pair(
+        output_dir,
+        _frame_count_graph(target_value=8, linked=False, save_prefix="before"),
+        _frame_count_graph(target_value=8, linked=False, save_prefix="after"),
+    )
+
+    verdict = guard_output_dir(output_dir, scenario=_effective_target_scenario())
+
+    assert verdict["live_agentic_success"] is False
+    checks = {
+        issue["check"]
+        for issue in verdict["assessment"]["issues"]
+        if issue["severity"] == "error"
+    }
+    assert checks == {"effective_edit"}
+
+
+def test_agentic_guard_accepts_linked_source_edit_that_changes_effective_value(tmp_path: Path) -> None:
+    output_dir = tmp_path / "linked-source-effective-change"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    _write_successful_candidate(output_dir)
+    _write_ui_pair(
+        output_dir,
+        _frame_count_graph(source_value=8, target_value=8, linked=True),
+        _frame_count_graph(source_value=16, target_value=8, linked=True),
+    )
+
+    verdict = guard_output_dir(output_dir, scenario=_effective_target_scenario())
+
+    assert verdict["live_agentic_success"] is True
+    assert verdict["assessment"]["passed"] is True
+
+
+def test_agentic_guard_rejects_shared_linked_source_edit_by_default(tmp_path: Path) -> None:
+    output_dir = tmp_path / "shared-linked-source-effective-change"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    _write_successful_candidate(output_dir)
+    _write_ui_pair(
+        output_dir,
+        _frame_count_graph(source_value=8, target_value=8, linked=True, shared_source=True),
+        _frame_count_graph(source_value=16, target_value=8, linked=True, shared_source=True),
+    )
+
+    verdict = guard_output_dir(output_dir, scenario=_effective_target_scenario())
+
+    assert verdict["live_agentic_success"] is False
+    checks = {
+        issue["check"]
+        for issue in verdict["assessment"]["issues"]
+        if issue["severity"] == "error"
+    }
+    assert checks == {"shared_effective_source_edit"}
+
+
+def test_agentic_guard_allows_shared_linked_source_edit_when_declared(tmp_path: Path) -> None:
+    output_dir = tmp_path / "shared-linked-source-intentional"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    _write_successful_candidate(output_dir)
+    _write_ui_pair(
+        output_dir,
+        _frame_count_graph(source_value=8, target_value=8, linked=True, shared_source=True),
+        _frame_count_graph(source_value=16, target_value=8, linked=True, shared_source=True),
+    )
+    scenario = _effective_target_scenario()
+    scenario["assessment"]["effective_edit_targets"][0]["allow_shared_source_edit"] = True
+
+    verdict = guard_output_dir(output_dir, scenario=scenario)
+
+    assert verdict["live_agentic_success"] is True
+    assert verdict["assessment"]["passed"] is True
+
+
+def test_agentic_guard_does_not_count_skipped_queue_validation_as_success(tmp_path: Path) -> None:
+    output_dir = tmp_path / "queue-skipped"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    _write_successful_candidate(
+        output_dir,
+        gates={
+            "ir_validate_ok": True,
+            "lower_ok": True,
+            "python_load_ok": True,
+            "queue_validate_ok": False,
+            "state_match_ok": True,
+            "ui_emit_ok": True,
+            "ui_fidelity_ok": True,
+            "ui_load_safe_ok": True,
+        },
+        debug={
+            "stage_snapshots": [
+                {"stage": "ingest", "ok": True, "issues": []},
+                {"stage": "agent_batch", "ok": True, "issues": []},
+            ]
+        },
+    )
+
+    verdict = guard_output_dir(
+        output_dir,
+        scenario={"assessment": {"expect_graph_changed": True, "skip_intent_judge": True}},
+    )
+
+    assert verdict["live_agentic_success"] is False
+    assert verdict["score_class"] == "product_fail"
+    assert [issue["check"] for issue in verdict["assessment"]["issues"]] == [
+        "queue_validate_skipped",
+        "gates",
+    ]

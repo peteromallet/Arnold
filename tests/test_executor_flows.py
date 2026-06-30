@@ -5553,6 +5553,8 @@ class TestAdaptGraphIntegration:
             "structural_validation_failed_without_concrete_edits"
         )
         assert "current graph facts" in notes["_discardability"]
+        assert "typed refusal/clarification" in notes["_discardability"]
+        assert "select better precedent" not in notes["_discardability"]
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_adapt)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)

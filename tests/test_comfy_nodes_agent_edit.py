@@ -14661,8 +14661,9 @@ def test_compact_execution_protocol_notes_preserves_adaptation_actionability() -
                 "actionability": "non_actionable",
                 "non_actionable_reason": "structural_validation_failed_without_concrete_edits",
                 "allowed_followups": [
-                    "retry_or_select_better_precedent",
-                    "use_current_graph_direct_edit_if_schema_sufficient",
+                    "apply_bound_current_graph_edit_if_schema_sufficient",
+                    "build_execution_plan_with_required_nodes_and_rewires",
+                    "typed_refusal_or_clarification_if_authoring_surface_missing",
                 ],
                 "full_plan": {"selected_slice": {"source_class_type": "BadWF"}},
             },
@@ -14674,7 +14675,11 @@ def test_compact_execution_protocol_notes_preserves_adaptation_actionability() -
     assert actionability["non_actionable_reason"] == (
         "structural_validation_failed_without_concrete_edits"
     )
-    assert "use_current_graph_direct_edit_if_schema_sufficient" in actionability["allowed_followups"]
+    assert "apply_bound_current_graph_edit_if_schema_sufficient" in actionability["allowed_followups"]
+    assert not any(
+        "search" in item or "retry" in item
+        for item in actionability["allowed_followups"]
+    )
     assert "full_plan" not in actionability
 
 
@@ -14745,6 +14750,31 @@ class TestBuildBatchMessagesResearchToolExposure:
         assert "then `messages` or `web`" in system
         assert "Use `registry` only when the user explicitly asks" in system
         assert "Do not research installation, provider packs, registry, or local addability" in system
+
+    def test_effective_surface_guidance_is_execute_only(self) -> None:
+        """Effective-surface guidance belongs to edit execution, not research."""
+        from vibecomfy.comfy_nodes.agent.provider import build_batch_messages
+
+        execute_messages = build_batch_messages(
+            task="change the linked frame rate",
+            python_source="video = VHS_VideoCombine(frame_rate=24)",
+        )
+        research_messages = build_batch_messages(
+            task="which node controls frame rate?",
+            python_source="video = VHS_VideoCombine(frame_rate=24)",
+            research_only=True,
+        )
+
+        execute_system = execute_messages[0]["content"]
+        research_combined = "\n".join(message["content"] for message in research_messages)
+
+        assert "Effective surface rule:" in execute_system
+        assert "linked/overridden" in execute_system
+        assert "effective source" in execute_system
+        assert "typed refusal" in execute_system
+        assert "Effective surface rule:" not in research_combined
+        assert "linked override" not in research_combined
+        assert "effective source" not in research_combined
 
     def test_research_block_uses_evidence_context_label_turn0(self) -> None:
         """Research block on turn 0 uses 'Research evidence/context' as the section

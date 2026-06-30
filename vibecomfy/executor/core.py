@@ -1123,10 +1123,10 @@ def _run_implement(
                         " The adaptation plan is explicitly non-actionable: "
                         "do not use a failed or empty adaptation plan as edit "
                         "instructions. Instead use current graph facts for a "
-                        "direct local edit when schema is sufficient, build an "
-                        "execution_plan with concrete required nodes/rewires, "
-                        "select better precedent evidence, or stop safely when "
-                        "the authoring surface is missing."
+                        "bounded direct edit when schema is sufficient, follow "
+                        "an execution_plan with concrete required nodes/rewires, "
+                        "or return a typed refusal/clarification naming the "
+                        "missing authoring surface."
                     )
                 payload["execution_protocol_notes"] = protocol_notes
             # Include precedent packet as discardable research context.

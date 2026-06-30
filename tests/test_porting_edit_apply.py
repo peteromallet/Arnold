@@ -912,6 +912,17 @@ def test_apply_delta_auto_unlinks_schema_less_linked_widget_and_records_diagnost
         "automatic_link_removal",
         "schema_less_linked_widget_recovery",
     }
+    link_diag = next(
+        issue for issue in result.diagnostics if issue.code == "automatic_link_removal"
+    )
+    assert len(link_diag.message) < 170
+    assert "effective source" in link_diag.message
+    assert "refuse/clarify" in link_diag.message
+    assert link_diag.detail["effective_surface"] == "linked_override"
+    assert (
+        link_diag.detail["next_action"]
+        == "edit_effective_source_or_refuse_if_unrelated"
+    )
     target = next(node for node in result.candidate["nodes"] if node["id"] == 2)
     source = next(node for node in result.candidate["nodes"] if node["id"] == 1)
     assert target["inputs"] == []
