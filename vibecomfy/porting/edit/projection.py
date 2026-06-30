@@ -291,9 +291,7 @@ def _schema_hint_lines(class_type: str, schema_provider: Any) -> list[str]:
     for name in sorted(inputs):
         spec = inputs[name]
         literal = input_spec_is_literal_widget(spec)
-        label = "field" if literal else "input"
         bits = [f"{name}: type={json.dumps(getattr(spec, 'type', None), ensure_ascii=True)}"]
-        bits.append("surface=widget" if literal else "surface=socket")
         if getattr(spec, "required", False):
             bits.append("required=true")
         if getattr(spec, "default", None) is not None:
@@ -304,7 +302,8 @@ def _schema_hint_lines(class_type: str, schema_provider: Any) -> list[str]:
             bits.append(f"choices={_format_value(preview)}")
         if getattr(spec, "min", None) is not None or getattr(spec, "max", None) is not None:
             bits.append(f"range=[{getattr(spec, 'min', None)}, {getattr(spec, 'max', None)}]")
-        lines.append(f"- {label} " + " ".join(bits))
+        bits.append("surface=widget" if literal else "surface=socket")
+        lines.append("- input " + " ".join(bits))
     outputs = getattr(schema, "outputs", None) or []
     for index, output in enumerate(outputs):
         lines.append(

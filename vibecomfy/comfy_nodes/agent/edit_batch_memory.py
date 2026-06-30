@@ -664,4 +664,17 @@ def _direct_existing_parameter_tweak_feedback(
     )
 
 
+def _targeted_edit_hardening_feedback(state: Any) -> str:
+    """Nudge read-only turns back to concrete edits when a local target is clear."""
+    targets = _existing_parameter_tweak_targets(state, max_targets=2)
+    if not targets:
+        return ""
+    target_text = "; ".join(targets)
+    return (
+        "Targeted edit hardening: this was a read-only turn, but the current canvas already exposes "
+        f"concrete editable targets ({target_text}). On the next turn, make a minimal local edit against "
+        "one of those existing nodes instead of continuing analysis."
+    )
+
+
 '''

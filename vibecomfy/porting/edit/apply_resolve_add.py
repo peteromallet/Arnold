@@ -166,6 +166,7 @@ def _resolve_add_node(
         return None, issues
 
     resolved_inputs: dict[str, ResolvedLinkEndpoint] = {}
+    resolved_input_specs: dict[str, InputSpec] = {}
     for input_name, source in op.inputs.items():
         if source.scope_path != op.scope_path:
             return None, [
@@ -233,6 +234,7 @@ def _resolve_add_node(
                 )
             ]
         resolved_inputs[input_name] = source_ref
+        resolved_input_specs[input_name] = spec
 
     anchor_near = None
     anchor_between = None
@@ -255,6 +257,7 @@ def _resolve_add_node(
             schema=schema,
             schema_inputs=schema_inputs,
             resolved_inputs=resolved_inputs,
+            resolved_input_specs=resolved_input_specs,
             anchor_near=anchor_near,
             anchor_between=anchor_between,
             anchor_group_index=anchor_group_index,
