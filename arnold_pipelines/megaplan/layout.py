@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import shutil
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
@@ -156,6 +157,73 @@ def initiative_search_text(repo_root: str | Path, slug: str) -> str:
     return "\n".join(parts)
 
 
+def initiative_compact_index(repo_root: str | Path, *, limit: int = 50) -> list[dict[str, Any]]:
+    """Return compact initiative rows suitable for prompt/context injection."""
+    base = Path(repo_root) / INITIATIVES_DIR
+    if not base.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(base.iterdir()):
+        if not path.is_dir():
+            continue
+        metadata = initiative_metadata(repo_root, path.name)
+        rows.append(
+            {
+                "slug": metadata["slug"],
+                "title": metadata["title"],
+                "description": _compact_text(metadata["description"], 180),
+                "chain": bool(metadata["chain_path"]),
+                "recent_docs": [doc["path"] for doc in metadata["recent_docs"][:4]],
+            }
+        )
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def search_initiatives(
+    repo_root: str | Path,
+    query: str | Iterable[str],
+    *,
+    keywords_all: bool = False,
+    limit: int = 25,
+) -> list[dict[str, Any]]:
+    """Search initiatives by slug/title/description with forgiving token matching."""
+    terms = _search_terms(query)
+    if not terms:
+        return []
+    base = Path(repo_root) / INITIATIVES_DIR
+    if not base.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(base.iterdir()):
+        if not path.is_dir():
+            continue
+        metadata = initiative_metadata(repo_root, path.name)
+        searchable = " ".join(
+            str(value or "")
+            for value in (
+                metadata["slug"],
+                metadata["title"],
+                metadata["description"],
+            )
+        )
+        term_scores = [_term_match_score(term, searchable) for term in terms]
+        matched = all(score > 0 for score in term_scores) if keywords_all else any(score > 0 for score in term_scores)
+        if not matched:
+            continue
+        score = sum(term_scores) / max(1, len(terms))
+        rows.append(
+            {
+                **metadata,
+                "match_score": round(score, 3),
+                "matched_terms": [term for term, term_score in zip(terms, term_scores) if term_score > 0],
+            }
+        )
+    rows.sort(key=lambda row: (row["match_score"], row["slug"]), reverse=True)
+    return rows[:limit]
+
+
 def _read_initiative_readme(root: Path) -> dict[str, str | None]:
     path = root / "README.md"
     if not path.exists():
@@ -186,6 +254,45 @@ def _read_initiative_readme(root: Path) -> dict[str, str | None]:
         description_parts.append(stripped)
     description = " ".join(description_parts) or None
     return {"title": title, "description": description}
+
+
+def _search_terms(query: str | Iterable[str]) -> list[str]:
+    raw = [query] if isinstance(query, str) else list(query)
+    terms: list[str] = []
+    for value in raw:
+        terms.extend(_normalize_search_token(part) for part in str(value).split())
+    return [term for term in terms if term]
+
+
+def _normalize_search_token(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _search_tokens(value: str) -> list[str]:
+    return [token for token in (_normalize_search_token(part) for part in re.split(r"[^A-Za-z0-9]+", value)) if token]
+
+
+def _term_match_score(term: str, searchable: str) -> float:
+    normalized = " ".join(_search_tokens(searchable))
+    if not normalized:
+        return 0.0
+    if term in normalized.replace(" ", "") or term in normalized.split():
+        return 1.0
+    best = max((SequenceMatcher(None, term, token).ratio() for token in normalized.split()), default=0.0)
+    if best >= 0.82:
+        return best
+    if len(term) >= 5 and best >= 0.72:
+        return best * 0.85
+    return 0.0
+
+
+def _compact_text(value: Any, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = " ".join(str(value).split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)].rstrip() + "..."
 
 
 def recent_initiative_docs(root: Path, *, limit: int = 12) -> list[dict[str, Any]]:

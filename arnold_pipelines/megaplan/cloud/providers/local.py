@@ -106,6 +106,14 @@ class LocalProvider(Provider):
             input=payload,
         )
 
+    def upload_archive(self, src: Path, dest_dir: str) -> None:
+        payload = base64.b64encode(src.read_bytes()).decode("ascii")
+        inner = f"mkdir -p {shlex.quote(dest_dir)} && base64 -d | tar -xzf - -C {shlex.quote(dest_dir)}"
+        self._run(
+            self._compose_argv("exec", "-T", "agent", "bash", "-lc", inner),
+            input=payload,
+        )
+
     def read_remote_file(self, path: str) -> str:
         result = self._run(self._compose_argv("exec", "-T", "agent", "cat", path))
         return result.stdout

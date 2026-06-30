@@ -153,6 +153,12 @@ def test_initiative_new_rejects_existing_and_searches_description(tmp_path: Path
     search_payload = json.loads(searched.stdout)
     assert [item["slug"] for item in search_payload["initiatives"]] == ["cloud-agents"]
 
+    fuzzy = _run_megaplan(["initiative", "search", "clod", "agnts", "--keywords-all"], cwd=tmp_path)
+    assert fuzzy.returncode == 0, fuzzy.stderr
+    fuzzy_payload = json.loads(fuzzy.stdout)
+    assert [item["slug"] for item in fuzzy_payload["initiatives"]] == ["cloud-agents"]
+    assert fuzzy_payload["initiatives"][0]["matched_terms"] == ["clod", "agnts"]
+
 
 def test_initiative_new_requires_description(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)

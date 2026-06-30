@@ -1,0 +1,33 @@
+base_branch: native-python-working-tree
+
+anchors:
+  north_star: NORTHSTAR.md
+
+milestones:
+  - label: m1-platform-contract
+    idea: .megaplan/initiatives/native-python-pipelines-completion/briefs/m1-platform-contract.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+
+  - label: m2-megaplan-subpipelines-layout
+    idea: .megaplan/initiatives/native-python-pipelines-completion/briefs/m2-megaplan-subpipelines-layout.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on:
+      - m1-platform-contract
+
+on_failure:
+  abort: stop_chain
+
+on_escalate:
+  abort: stop_chain
+
+merge_policy: review
+
+driver:
+  auto_approve: false
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0

@@ -13,9 +13,9 @@ a new runtime. A workflow `.py` file is parsed and validated as source; the
 compiler must not execute the file to discover topology.
 
 The implementation source material named by the M1 brief under
-`.megaplan/briefs/workflow-manifest-runtime-cleanup/` is not available in this
+`.megaplan/initiatives/workflow-manifest-runtime-cleanup/briefs/` is not available in this
 checkout. This contract therefore proceeds from the available
-`.megaplan/briefs/python-shaped-workflow-authoring/m1-component-contract-grammar.md`,
+`.megaplan/initiatives/python-shaped-workflow-authoring/briefs/m1-component-contract-grammar.md`,
 the plan metadata, and the existing workflow DSL and manifest contracts.
 
 ## Source Shape

@@ -267,7 +267,6 @@ def _list_untracked(repo: Path) -> list[str]:
 
 _CARRY_IGNORED_INPUT_PREFIXES: tuple[str, ...] = (
     ".megaplan/initiatives/",
-    ".megaplan/briefs/",
 )
 
 
@@ -278,9 +277,8 @@ def _list_ignored_inputs(repo: Path) -> list[str]:
     matched by ``.gitignore``. But some gitignored paths — notably
     ``.megaplan/initiatives/`` (the chain/milestone spec files a
     ``--in-worktree`` run reads) — are required INPUT, not run state, and must
-    travel into the new worktree or the run fails with ``missing_idea_file``. Legacy
-    ``.megaplan/briefs/`` is carried only for transitional compatibility. Run state
-    (``.megaplan/plans/``, ``.state-locks/``) is deliberately NOT included.
+    travel into the new worktree or the run fails with ``missing_idea_file``. Run
+    state (``.megaplan/plans/``, ``.state-locks/``) is deliberately NOT included.
     """
     paths: list[str] = []
     for prefix in _CARRY_IGNORED_INPUT_PREFIXES:
@@ -401,7 +399,7 @@ def carry_dirty_state(source: Path, target: Path) -> tuple[int, int]:
     untracked = _list_untracked(source)
     untracked_count = _copy_untracked(source, target, untracked)
 
-    # Gitignored INPUT material (e.g. .megaplan/briefs/) that --exclude-standard
+    # Gitignored INPUT material (e.g. .megaplan/initiatives/) that --exclude-standard
     # hides from _list_untracked but the run needs present in the worktree.
     ignored_inputs = _list_ignored_inputs(source)
     untracked_count += _copy_untracked(source, target, ignored_inputs)

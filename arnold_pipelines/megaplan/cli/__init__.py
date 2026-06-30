@@ -1261,8 +1261,8 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
         ALLOWED_INITIATIVE_SUBDIRS,
         initiative_metadata,
         initiative_root,
-        initiative_search_text,
         initiatives_dir,
+        search_initiatives,
         slugify_initiative,
     )
 
@@ -1330,19 +1330,15 @@ def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
             "initiatives": rows,
         }
     if action == "search":
-        keywords = [keyword.lower() for keyword in (args.keywords or []) if keyword.strip()]
+        keywords = [keyword for keyword in (args.keywords or []) if keyword.strip()]
         if not keywords:
             raise CliError("invalid_args", "initiative search requires at least one keyword")
-        rows = []
-        for path in sorted(initiatives_dir(root).iterdir()):
-            if not path.is_dir():
-                continue
-            text = initiative_search_text(root, path.name).lower()
-            matched = all(keyword in text for keyword in keywords) if args.keywords_all else any(keyword in text for keyword in keywords)
-            if matched:
-                rows.append(initiative_metadata(root, path.name))
-        if args.limit is not None:
-            rows = rows[: args.limit]
+        rows = search_initiatives(
+            root,
+            keywords,
+            keywords_all=args.keywords_all,
+            limit=args.limit or 25,
+        )
         return {
             "success": True,
             "step": "initiative",

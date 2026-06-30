@@ -23,3 +23,15 @@ INFO:discord.gateway:Shard ID None has connected to Gateway (Session ID: 62ac276
 INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord service ready user_id=1451307647696506922 guild_count=1 recovered_turns=0
 INFO:arnold_pipelines.megaplan.resident.discord:Resident scheduler loop started interval_s=10.0
 INFO:discord.gateway:Shard ID None has successfully RESUMED session 62ac2768a4d7fe83589764ddf3b1fd65.
+WARNING:discord.client:PyNaCl is not installed, voice will NOT be supported
+WARNING:discord.client:davey is not installed, voice will NOT be supported
+INFO:discord.client:logging in using static token
+INFO:discord.gateway:Shard ID None has connected to Gateway (Session ID: 5ed55bb78d72dbd1fecdb9d3d468c007).
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord service ready user_id=1451307647696506922 guild_count=1 recovered_turns=0
+INFO:arnold_pipelines.megaplan.resident.discord:Resident scheduler loop started interval_s=10.0
+WARNING:discord.client:PyNaCl is not installed, voice will NOT be supported
+WARNING:discord.client:davey is not installed, voice will NOT be supported
+INFO:discord.client:logging in using static token
+INFO:discord.gateway:Shard ID None has connected to Gateway (Session ID: 858d4650c53390bec47cb26e83e424a2).
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord service ready user_id=1451307647696506922 guild_count=1 recovered_turns=0
+INFO:arnold_pipelines.megaplan.resident.discord:Resident scheduler loop started interval_s=10.0

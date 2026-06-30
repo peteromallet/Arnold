@@ -253,15 +253,11 @@ def test_cloud_chain_spec_location_requires_durable_initiatives_tree(tmp_path: P
     project = tmp_path / "app"
     valid = project / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
     loose = project / "chain.yaml"
-    legacy = project / ".megaplan" / "briefs" / "demo" / "chain.yaml"
     valid.parent.mkdir(parents=True)
-    legacy.parent.mkdir(parents=True)
     valid.write_text("milestones: []\n", encoding="utf-8")
-    legacy.write_text("milestones: []\n", encoding="utf-8")
     loose.write_text("milestones: []\n", encoding="utf-8")
 
     _validate_chain_spec_location(valid, project)
-    _validate_chain_spec_location(legacy, project, allow_legacy_briefs_layout=True)
     with pytest.raises(CliError) as excinfo:
         _validate_chain_spec_location(loose, project)
 
@@ -350,7 +346,6 @@ def test_sync_megaplan_uses_derived_chain_workspace(tmp_path: Path, monkeypatch:
             workspace=None,
             clean=True,
             allow_loose_chain_spec=False,
-            allow_legacy_briefs_layout=False,
         ),
         cloud_spec,
         CaptureProvider(),

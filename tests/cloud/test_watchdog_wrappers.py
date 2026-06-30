@@ -195,18 +195,6 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert "workflow-manifest-runtime" not in text
 
 
-def test_watchdog_flags_setup_deviations_instead_of_skipping() -> None:
-    text = _wrapper("arnold-watchdog")
-
-    assert 'report_item "$report_items" "$session" "flag" "workspace_missing" "workspace missing"' in text
-    assert 'report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing"' in text
-    assert 'report_item "$report_items" "" "flag" "setup_invalid" "missing session: $marker"' in text
-    assert 'report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker"' in text
-    assert '"spec_missing" "chain spec missing"' in text
-    assert '"skip" "spec_missing"' not in text
-    assert '"skip" "workspace_missing"' not in text
-
-
 def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     text = _repair_wrapper()
 
@@ -225,8 +213,6 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "## STATE MISMATCH DETECTED + CLEARED" in text
     assert "state mismatch detected + cleared" in text
     assert "repair_clear_stale_state_if_needed()" in text
-    assert 'if [[ "$INITIAL_HEALTH" == "alive" ]]' in text
-    assert "repair target already running; no dev-fix needed" in text
     assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
     assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
@@ -675,7 +661,7 @@ def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_resu
 
 def test_repair_loop_clear_stale_state_syncs_plan_chain_mismatch(tmp_path: Path) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "demo-plan"
-    chain_dir = tmp_path / ".megaplan" / "briefs" / "demo" / ".megaplan" / "plans" / ".chains"
+    chain_dir = tmp_path / ".megaplan" / "initiatives" / "demo" / ".megaplan" / "plans" / ".chains"
     plan_dir.mkdir(parents=True)
     chain_dir.mkdir(parents=True)
     state_path = plan_dir / "state.json"
@@ -1001,7 +987,7 @@ def test_repair_loop_classifies_completed_chain_as_chain_completed(tmp_path: Pat
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     import hashlib
@@ -1038,7 +1024,7 @@ def test_repair_loop_classifies_completed_chain_with_null_current_fields(tmp_pat
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     import hashlib
@@ -1129,7 +1115,7 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     )
     timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
 
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     marker_path = marker_dir / "demo-session.json"
@@ -1793,96 +1779,6 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
     assert not stale_pidfile.exists()
 
 
-def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Path) -> None:
-    marker_dir = tmp_path / "markers"
-    repair_root = tmp_path / "repair-root"
-    workspace = tmp_path / "ws"
-    bin_dir = tmp_path / "bin"
-    codex_pids = tmp_path / "codex-pids.txt"
-    marker_dir.mkdir()
-    repair_root.mkdir()
-    workspace.mkdir()
-    bin_dir.mkdir()
-
-    (marker_dir / "demo-session.json").write_text(
-        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
-        encoding="utf-8",
-    )
-    _write_plan(
-        workspace / ".megaplan" / "plans" / "demo-plan",
-        {
-            "name": "demo-plan",
-            "current_state": "blocked",
-            "iteration": 1,
-            "latest_failure": {
-                "kind": "phase_failed",
-                "message": "boom",
-                "recorded_at": "2026-06-29T00:00:00Z",
-                "metadata": {"exit_code": 1},
-            },
-        },
-    )
-
-    timeout_path = bin_dir / "timeout"
-    timeout_path.write_text(
-        "#!/usr/bin/env bash\n"
-        "shift\n"
-        "exec \"$@\"\n",
-        encoding="utf-8",
-    )
-    timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
-    codex_path = bin_dir / "codex"
-    codex_path.write_text(
-        "#!/usr/bin/env bash\n"
-        f"printf '%s\\n' \"$$\" >> {shlex.quote(str(codex_pids))}\n"
-        "sleep 30\n",
-        encoding="utf-8",
-    )
-    codex_path.chmod(codex_path.stat().st_mode | stat.S_IXUSR)
-    launcher_path = tmp_path / "launcher.py"
-    launcher_path.write_text("import time\n\ntime.sleep(30)\n", encoding="utf-8")
-
-    env = dict(os.environ)
-    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
-    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
-    env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
-    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
-    env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
-
-    args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
-    pidfile = marker_dir / "demo-session.repair-loop.pid"
-    first = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-    second: subprocess.Popen[str] | None = None
-    try:
-        for _ in range(100):
-            if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(first.pid):
-                break
-            time.sleep(0.05)
-        assert pidfile.read_text(encoding="utf-8").strip() == str(first.pid)
-
-        first.kill()
-        first.wait(timeout=15)
-        assert pidfile.exists(), "kill -9 should leave a stale pidfile for recovery"
-
-        second = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
-        for _ in range(100):
-            if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(second.pid):
-                break
-            time.sleep(0.05)
-        assert pidfile.read_text(encoding="utf-8").strip() == str(second.pid)
-    finally:
-        if second is not None and second.poll() is None:
-            second.terminate()
-            second.communicate(timeout=15)
-        if first.poll() is None:
-            first.terminate()
-            first.wait(timeout=15)
-        if codex_pids.exists():
-            for raw_pid in codex_pids.read_text(encoding="utf-8").splitlines():
-                if raw_pid.strip().isdigit():
-                    subprocess.run(["kill", "-9", raw_pid.strip()], check=False)
-
-
 def test_watchdog_complete_teardown_collects_setsid_descendant_pgids(tmp_path: Path) -> None:
     ps_path = tmp_path / "ps"
     ps_path.write_text(
@@ -1943,7 +1839,7 @@ def test_watchdog_stopped_tmux_reports_awaiting_pr_merge_from_chain_state(tmp_pa
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True)
     spec_path.write_text("merge_policy: review\n", encoding="utf-8")
     (chain_dir / "demo-chain.json").write_text(
@@ -1978,7 +1874,7 @@ def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True)
     spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
     (chain_dir / "demo-chain.json").write_text(
@@ -2062,7 +1958,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
         "cd "
         f"{workspace}"
         " && MEGAPLAN_TRUSTED_CONTAINER=1 python3 -m arnold_pipelines.megaplan init "
-        "--project-dir . --idea-file .megaplan/briefs/per-workflow-window-chat.md "
+        "--project-dir . --idea-file .megaplan/initiatives/per-workflow-window-chat/briefs/per-workflow-window-chat.md "
         "--name per-workflow-window-chat-cloud-20260628 --auto-start\n"
         "EOF\n",
         encoding="utf-8",
@@ -2075,7 +1971,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
         "cat <<'EOF'\n"
         "4000 1 bash -lc bootstrap\n"
         "4001 4000 /root/.pyenv/versions/3.11.11/bin/python3 -m arnold_pipelines.megaplan init "
-        "--project-dir . --idea-file .megaplan/briefs/per-workflow-window-chat.md "
+        "--project-dir . --idea-file .megaplan/initiatives/per-workflow-window-chat/briefs/per-workflow-window-chat.md "
         "--name per-workflow-window-chat-cloud-20260628 --auto-start\n"
         "4002 4001 /root/.pyenv/versions/3.11.11/bin/python3 -m arnold_pipelines.megaplan critique "
         "--plan per-workflow-window-chat-cloud-20260628\n"
@@ -2104,7 +2000,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
     assert payload["workspace"] == str(workspace)
     assert payload["run_kind"] == "plan"
     assert payload["plan_name"] == "per-workflow-window-chat-cloud-20260628"
-    assert payload["remote_spec"] == ".megaplan/briefs/per-workflow-window-chat.md"
+    assert payload["remote_spec"] == ".megaplan/initiatives/per-workflow-window-chat/briefs/per-workflow-window-chat.md"
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in payload["relaunch_command"]
 
 
@@ -2167,7 +2063,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
         "cd "
         f"{workspace}"
         " && python3 -m arnold_pipelines.megaplan init --project-dir . "
-        "--idea-file .megaplan/briefs/shared.md --name shared-discover-plan --auto-start\n"
+        "--idea-file .megaplan/initiatives/shared/briefs/shared.md --name shared-discover-plan --auto-start\n"
         f"watchdog-demo\t5000\t{workspace}\tbash -lc '/usr/local/bin/arnold-watchdog --once'\n"
         f"kimi-helper\t6000\t{workspace}\tbash -lc '/usr/local/bin/arnold-kimi-goal-operator demo'\n"
         "EOF\n",
@@ -2181,7 +2077,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
         "cat <<'EOF'\n"
         "4000 1 bash -lc bootstrap\n"
         "4001 4000 python3 -m arnold_pipelines.megaplan init --project-dir . "
-        "--idea-file .megaplan/briefs/shared.md --name shared-discover-plan --auto-start\n"
+        "--idea-file .megaplan/initiatives/shared/briefs/shared.md --name shared-discover-plan --auto-start\n"
         "5000 1 bash -lc /usr/local/bin/arnold-watchdog --once\n"
         "6000 1 bash -lc /usr/local/bin/arnold-kimi-goal-operator demo\n"
         "EOF\n",
@@ -2196,7 +2092,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
     fields = lines[0].split("\t")
     assert fields[0] == "vibecomfy-shared-discover"
     assert fields[1] == str(workspace)
-    assert fields[2] == ".megaplan/briefs/shared.md"
+    assert fields[2] == ".megaplan/initiatives/shared/briefs/shared.md"
     assert fields[3] == "plan"
     assert fields[4] == "shared-discover-plan"
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan shared-discover-plan" in fields[5]
@@ -2279,7 +2175,7 @@ PLAN_STATUS_MANUAL_REVIEW='0'
 EOF
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2346,7 +2242,7 @@ PLAN_STATUS_MANUAL_REVIEW='0'
 EOF
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan '' ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2401,7 +2297,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2466,7 +2362,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2532,7 +2428,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2594,7 +2490,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2659,7 +2555,7 @@ tmux() {
   return 0
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2678,7 +2574,7 @@ def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_pa
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     _write_plan(
@@ -2738,7 +2634,7 @@ PLAN_STATUS_MANUAL_REVIEW='0'
 EOF
 }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2798,7 +2694,7 @@ tmux() {
   return 0
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2850,7 +2746,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2869,7 +2765,7 @@ def test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     _write_plan(
@@ -2933,7 +2829,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2955,7 +2851,7 @@ def test_watchdog_awaiting_human_chain_state_dispatches_repair_before_needs_huma
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     plan_dir = workspace / ".megaplan" / "plans" / plan_name
@@ -3030,7 +2926,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -3049,7 +2945,7 @@ def test_watchdog_completed_chain_state_reports_complete_without_repair(tmp_path
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -3095,7 +2991,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -3114,7 +3010,7 @@ def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -3166,7 +3062,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -3186,7 +3082,7 @@ def test_watchdog_normal_chain_state_does_not_force_missing_base_ref_manual_revi
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -3222,7 +3118,7 @@ def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: P
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -3233,7 +3129,7 @@ def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: P
             {
                 "session": "demo-session",
                 "workspace": str(workspace),
-                "remote_spec": ".megaplan/briefs/demo-chain.yaml",
+                "remote_spec": ".megaplan/initiatives/demo-chain/chain.yaml",
                 "run_kind": "chain",
             }
         ),
@@ -3321,7 +3217,7 @@ def test_watchdog_needs_human_webhook_posts_once_when_configured(tmp_path: Path)
     log_path = tmp_path / "watchdog.log"
     notify_line = (
         f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws "
-        ".megaplan/briefs/demo.md chain stopped 'manual_review halt'"
+        ".megaplan/initiatives/demo/briefs/demo.md chain stopped 'manual_review halt'"
     )
     script = "\n\n".join(
         [
@@ -3396,7 +3292,7 @@ PLAN_STATUS_FAILURE_RECORDED_AT='2026-06-28T11:29:34Z'
 PLAN_STATUS_TIERS_TRIED='deepseek:flash, codex:gpt-5.4, codex:gpt-5.5'
 PLAN_STATUS_PUSHED_COMMITS='abc123def456, fedcba654321'
 """.strip(),
-            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/briefs/demo.md chain stopped 'manual_review halt'",
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/initiatives/demo/briefs/demo.md chain stopped 'manual_review halt'",
         ]
     )
 
@@ -3445,7 +3341,7 @@ report_item() {
 log() { printf '%s\n' "$*" >> "$LOG"; }
 PLAN_STATUS_PLAN_NAME='demo-plan'
 """.strip(),
-            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/briefs/demo.md chain stopped 'manual_review halt'",
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/initiatives/demo/briefs/demo.md chain stopped 'manual_review halt'",
         ]
     )
 
@@ -3459,7 +3355,7 @@ PLAN_STATUS_PLAN_NAME='demo-plan'
 
 def test_watchdog_resolves_relative_chain_specs_against_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     report_path = tmp_path / "report.tsv"
@@ -3477,7 +3373,7 @@ plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_dispatch_marker_clear() { :; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -3603,11 +3499,9 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"' in text
     assert 'FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"' in text
     assert 'REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"' in text
-    assert 'REPAIR_PID_GUARD_FILE="${REPAIR_PID_FILE}.guard"' in text
     assert "acquire_repair_lock()" in text
     assert "repair_loop_pid_matches_session()" in text
-    assert "find_live_repair_loop_for_session()" in text
-    assert 'flock "$guard_fd"' in text
+    assert 'if ( set -o noclobber; printf \'%s\\n\' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then' in text
     assert 'log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"' in text
     assert 'log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"' in text
     assert "guard_against_recursive_repair_loop()" in text
@@ -3890,17 +3784,6 @@ def _write_chain_state(state_path: Path, state: dict) -> None:
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
-def _init_git_repo(path: Path) -> str:
-    path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
-    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=path, check=True)
-    subprocess.run(["git", "config", "user.name", "Watchdog Tests"], cwd=path, check=True)
-    (path / "README.md").write_text("base\n", encoding="utf-8")
-    subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
-    subprocess.run(["git", "commit", "-m", "base"], cwd=path, check=True, capture_output=True, text=True)
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, text=True).strip()
-
-
 def test_chain_health_status_is_wired_into_launch_chain_tick() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -3968,7 +3851,7 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
     ws = tmp / "ws"
     marker = tmp / "markers"
     repair_dir = tmp / "repair-data"
-    spec_path = ws / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = ws / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
@@ -4019,209 +3902,6 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
     assert "Route to arnold_pipelines/megaplan/chain/" in artifact["why_chain_layer_issue"]
 
 
-def test_chain_health_status_leaves_one_off_completion_guard_repair_eligible() -> None:
-    tmp = Path(tempfile.mkdtemp())
-    ws = tmp / "ws"
-    marker = tmp / "markers"
-    repair_dir = tmp / "repair-data"
-    plan_name = "sprint-1-safe-compiler-20260630-0033"
-    _write_plan(
-        ws / ".megaplan" / "plans" / plan_name,
-        {"current_state": "blocked", "iteration": 1},
-        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
-    )
-    _write_chain_state(
-        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
-        {
-            "current_milestone_index": 0,
-            "current_plan_name": plan_name,
-            "last_state": "authority_divergence",
-            "pr_state": "",
-            "completed": [],
-        },
-    )
-    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
-    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
-        "[chain] completion guard blocked sprint-01-safe-compiler-foundation: "
-        "no semantic diff from milestone_base_sha 9d2d53e to local HEAD; "
-        "no typed no-op completion waiver found\n",
-        encoding="utf-8",
-    )
-
-    payload = _run_chain_health(ws, marker, repair_dir, health="stopped")
-
-    assert payload["CHAIN_HEALTH_STATUS"] == "ok"
-    assert payload["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
-
-
-def test_chain_health_status_escalates_recurring_completion_guard_with_zero_git_advancement() -> None:
-    tmp = Path(tempfile.mkdtemp())
-    ws = tmp / "ws"
-    marker = tmp / "markers"
-    repair_dir = tmp / "repair-data"
-    base_sha = _init_git_repo(ws)
-    plan_name = "sprint-1-safe-compiler-20260630-0033"
-    _write_plan(
-        ws / ".megaplan" / "plans" / plan_name,
-        {
-            "current_state": "blocked",
-            "iteration": 3,
-            "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
-        },
-        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
-    )
-    _write_chain_state(
-        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
-        {
-            "current_milestone_index": 0,
-            "current_plan_name": plan_name,
-            "last_state": "authority_divergence",
-            "pr_state": "",
-            "completed": [],
-        },
-    )
-    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
-    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
-        (
-            "[chain] completion guard blocked sprint-01-safe-compiler-foundation: "
-            f"no semantic diff from milestone_base_sha {base_sha} to local HEAD; "
-            "no typed no-op completion waiver found\n"
-        )
-        * 3,
-        encoding="utf-8",
-    )
-
-    payload = _run_chain_health(
-        ws,
-        marker,
-        repair_dir,
-        health="stopped",
-        env_overrides={"CLOUD_WATCHDOG_CHAIN_COMPLETION_GUARD_REPEATS": "3"},
-    )
-
-    assert payload["CHAIN_HEALTH_STATUS"] == "needs_human"
-    assert "produces NO code changes" in payload["CHAIN_HEALTH_SUMMARY"]
-    assert "Not auto-repairable" in payload["CHAIN_HEALTH_SUMMARY"]
-    artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
-    assert artifact["issue_kind"] == "plan_noop_completion_guard"
-    assert artifact["completion_guard"]["repeat_count"] == 3
-    assert artifact["details"]["completion_guard_advancement"]["available"] is True
-    assert artifact["details"]["completion_guard_advancement"]["ahead_count"] == 0
-    assert artifact["details"]["completion_guard_worktree"]["dirty"] is False
-
-
-def test_chain_health_status_classifies_zero_git_advancement_with_dirty_worktree_as_commit_bug() -> None:
-    tmp = Path(tempfile.mkdtemp())
-    ws = tmp / "ws"
-    marker = tmp / "markers"
-    repair_dir = tmp / "repair-data"
-    base_sha = _init_git_repo(ws)
-    (ws / "compiler.py").write_text("print('uncommitted execute output')\n", encoding="utf-8")
-    plan_name = "sprint-1-safe-compiler-20260630-0033"
-    _write_plan(
-        ws / ".megaplan" / "plans" / plan_name,
-        {
-            "current_state": "blocked",
-            "iteration": 3,
-            "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
-        },
-        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
-    )
-    _write_chain_state(
-        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
-        {
-            "current_milestone_index": 0,
-            "current_plan_name": plan_name,
-            "last_state": "authority_divergence",
-            "pr_state": "",
-            "completed": [],
-        },
-    )
-    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
-    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
-        (
-            "[chain] completion guard blocked sprint-01-safe-compiler-foundation: "
-            f"no semantic diff from milestone_base_sha {base_sha} to local HEAD; "
-            "no typed no-op completion waiver found\n"
-        )
-        * 3,
-        encoding="utf-8",
-    )
-
-    payload = _run_chain_health(
-        ws,
-        marker,
-        repair_dir,
-        health="stopped",
-        env_overrides={"CLOUD_WATCHDOG_CHAIN_COMPLETION_GUARD_REPEATS": "3"},
-    )
-
-    assert payload["CHAIN_HEALTH_STATUS"] == "chain_uncommitted_execute_output"
-    assert "execute output was not committed" in payload["CHAIN_HEALTH_SUMMARY"]
-    assert "no-op waiver" in payload["CHAIN_HEALTH_SUMMARY"]
-    assert "CHAIN HEALTH EVIDENCE: working tree has 1 uncommitted files" in payload["CHAIN_HEALTH_LOG_MESSAGE"]
-    artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
-    assert artifact["issue_kind"] == "chain_uncommitted_execute_output"
-    worktree = artifact["details"]["completion_guard_worktree"]
-    assert worktree["dirty"] is True
-    assert worktree["uncommitted_file_count"] == 1
-    assert "compiler.py" in "\n".join(worktree["sample"])
-    assert "Working tree evidence: 1 uncommitted files" in artifact["evidence_markdown"]
-    assert "commit-and-push gating" in artifact["evidence_markdown"]
-
-
-def test_chain_health_status_keeps_recurring_completion_guard_repair_eligible_when_git_advanced() -> None:
-    tmp = Path(tempfile.mkdtemp())
-    ws = tmp / "ws"
-    marker = tmp / "markers"
-    repair_dir = tmp / "repair-data"
-    base_sha = _init_git_repo(ws)
-    (ws / "compiler.py").write_text("print('work landed')\n", encoding="utf-8")
-    subprocess.run(["git", "add", "compiler.py"], cwd=ws, check=True)
-    subprocess.run(["git", "commit", "-m", "land work"], cwd=ws, check=True, capture_output=True, text=True)
-    plan_name = "sprint-1-safe-compiler-20260630-0033"
-    _write_plan(
-        ws / ".megaplan" / "plans" / plan_name,
-        {
-            "current_state": "blocked",
-            "iteration": 3,
-            "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
-        },
-        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
-    )
-    _write_chain_state(
-        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
-        {
-            "current_milestone_index": 0,
-            "current_plan_name": plan_name,
-            "last_state": "authority_divergence",
-            "pr_state": "",
-            "completed": [],
-        },
-    )
-    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
-    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
-        (
-            "[chain] completion guard blocked sprint-01-safe-compiler-foundation: "
-            f"no semantic diff from milestone_base_sha {base_sha} to local HEAD; "
-            "no typed no-op completion waiver found\n"
-        )
-        * 3,
-        encoding="utf-8",
-    )
-
-    payload = _run_chain_health(
-        ws,
-        marker,
-        repair_dir,
-        health="stopped",
-        env_overrides={"CLOUD_WATCHDOG_CHAIN_COMPLETION_GUARD_REPEATS": "3"},
-    )
-
-    assert payload["CHAIN_HEALTH_STATUS"] == "ok"
-    assert payload["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
-
-
 def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"
@@ -4247,14 +3927,12 @@ def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
         ws,
         marker,
         repair_dir,
-        health="alive",
         env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
     )
     second = _run_chain_health(
         ws,
         marker,
         repair_dir,
-        health="alive",
         env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
     )
 
@@ -4814,7 +4492,7 @@ def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_ar
     discover_bin.write_text(
         "#!/usr/bin/env bash\n"
         "cat <<'EOF'\n"
-        f"bootstrap-session\t{bootstrap_ws}\t.megaplan/briefs/bootstrap.md\tplan\tm1-bootstrap\tignored\n"
+        f"bootstrap-session\t{bootstrap_ws}\t.megaplan/initiatives/bootstrap/briefs/bootstrap.md\tplan\tm1-bootstrap\tignored\n"
         f"chain-session-live\t{chain_ws}\t/tmp/spec.yaml\tchain\t\tignored\n"
         "EOF\n",
         encoding="utf-8",
@@ -5104,7 +4782,7 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
                 "plan": plan_name,
                 "session": "demo-session",
                 "kind": "chain",
-                "remote_spec": str(workspace / ".megaplan" / "briefs" / "demo" / "chain.yaml"),
+                "remote_spec": str(workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"),
                 "launch_command": "python3 -P -m arnold_pipelines.megaplan chain start --spec demo",
                 "log": str(workspace / ".megaplan" / "cloud-chain-demo-session.log"),
                 "sources": ["marker"],

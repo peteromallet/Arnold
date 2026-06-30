@@ -33,11 +33,13 @@ from arnold_pipelines.megaplan.layout import (
     ALLOWED_INITIATIVE_SUBDIRS,
     LAYOUT_POLICY_VERSION,
     classify_initiative_doc_path,
+    initiative_compact_index,
     initiative_doc_dir,
     initiative_metadata,
     initiative_root,
     initiatives_dir,
     migrate_legacy_briefs_layout,
+    search_initiatives,
     slugify_initiative,
 )
 
@@ -305,6 +307,12 @@ class ListInitiativesInput(InitiativeToolInput):
     limit: int = Field(default=50, gt=0, le=200)
 
 
+class SearchInitiativesInput(InitiativeToolInput):
+    query: str = Field(min_length=1)
+    keywords_all: bool = False
+    limit: int = Field(default=10, gt=0, le=50)
+
+
 class CreateInitiativeInput(InitiativeToolInput):
     slug: str
     title: str | None = None
@@ -387,7 +395,8 @@ class MegaplanResidentProfile:
             "handoffs in handoff/. Never create planning docs directly under "
             ".megaplan/briefs. Use tickets/ only for backlog/issues and plans/ "
             "only for generated runtime state. If a project or epic does not "
-            "exist yet, create the initiative folder first."
+            "exist yet, search initiatives by rough slug/title/description first; "
+            "reuse the closest existing initiative when it matches before creating a new one."
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
@@ -400,6 +409,7 @@ class MegaplanResidentProfile:
                 "allowed_doc_kinds": sorted(ALLOWED_INITIATIVE_SUBDIRS),
                 "legacy_briefs_root": ".megaplan/briefs",
             },
+            "initiative_index": initiative_compact_index(Path.cwd(), limit=40),
         }
         if self.store is None:
             return base
@@ -464,6 +474,7 @@ class MegaplanResidentProfile:
             ToolRegistration("read_plan_artifact", "Read a bounded plan artifact through the Megaplan store.", "read", ReadPlanArtifactInput, ToolResult, self._read_plan_artifact),
             ToolRegistration("write_plan_artifact", "Write a plan artifact through the Megaplan store after admin confirmation.", "artifact_write", WritePlanArtifactInput, ToolResult, self._write_plan_artifact),
             ToolRegistration("list_initiatives", "List canonical .megaplan initiative folders.", "read", ListInitiativesInput, ToolResult, self._list_initiatives),
+            ToolRegistration("search_initiatives", "Search canonical initiatives by slug/title/description with rough fuzzy matching.", "read", SearchInitiativesInput, ToolResult, self._search_initiatives),
             ToolRegistration("create_initiative", "Create a canonical .megaplan/initiatives/<slug> folder.", "write", CreateInitiativeInput, ToolResult, self._create_initiative),
             ToolRegistration("read_initiative", "Read metadata and bounded document inventory for one initiative.", "read", ReadInitiativeInput, ToolResult, self._read_initiative),
             ToolRegistration("write_initiative_doc", "Write a document under an initiative briefs/research/decisions/notes/assets/handoff folder.", "write", WriteInitiativeDocInput, ToolResult, self._write_initiative_doc),
@@ -693,6 +704,27 @@ class MegaplanResidentProfile:
             "initiatives listed",
             initiatives=rows,
             count=len(rows),
+            layout_policy_version=LAYOUT_POLICY_VERSION,
+        )
+
+    def _search_initiatives(self, payload: SearchInitiativesInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        try:
+            root = _resident_project_root(payload.project_root)
+            rows = search_initiatives(
+                root,
+                payload.query,
+                keywords_all=payload.keywords_all,
+                limit=payload.limit,
+            )
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok(
+            "initiatives searched",
+            initiatives=rows,
+            count=len(rows),
+            query=payload.query,
             layout_policy_version=LAYOUT_POLICY_VERSION,
         )
 

@@ -115,6 +115,9 @@ class Provider(abc.ABC):
     def upload_file(self, src: Path, dest: str) -> None:
         raise CliError("not_implemented", "This provider does not support file upload")
 
+    def upload_archive(self, src: Path, dest_dir: str) -> None:
+        raise CliError("not_implemented", "This provider does not support archive upload")
+
     @abc.abstractmethod
     def read_remote_file(self, path: str) -> str:
         raise CliError("not_implemented", "This provider does not support remote file reads")

@@ -116,7 +116,7 @@ all Megaplan plans and runs that pre-date the M4 manifest runtime.
 | Nested `.megaplan` dirs | `.megaplan/runs/<alias>/.megaplan-event-store/` | `migrate` | megaplan | Event-store used by sub-epics; fold into parent journal. |
 | Telemetry | `.megaplan/telemetry/` | `archive outside active tree` | megaplan | Cost/usage telemetry; not runtime authority. |
 | Watchdog logs | `.megaplan/watchdog-run-logs/` | `archive outside active tree` | megaplan | Operational observability only. |
-| Briefs | `.megaplan/briefs/**` | `project read-only with sunset` | megaplan | Authoring input; immutable after adoption. |
+| Briefs | `.megaplan/initiatives/<slug>/briefs/**` | `project read-only with sunset` | megaplan | Authoring input; immutable after adoption. |
 | Schemas | `.megaplan/schemas/` | `project read-only with sunset` | arnold | Runtime schema authority now lives in `arnold/kernel` content-type registry. |
 | Tickets | `.megaplan/tickets/` | `migrate` | megaplan | Convert to `Ticket` storage model events if linked to a run. |
 | Drafts | `.megaplan/plan_v4_draft.md`, `plan_v2_revised.json` | `archive outside active tree` | megaplan | Superseded drafts. |

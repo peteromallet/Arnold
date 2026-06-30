@@ -52,7 +52,6 @@ DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"
 PROGRESS_FILE="$MARKER_DIR/${SAFE_SESSION}.repair-progress.json"
 NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
-REPAIR_PID_GUARD_FILE="${REPAIR_PID_FILE}.guard"
 
 mkdir -p "$RUN_DIR" "$DATA_DIR" "$FINDINGS_DIR"
 
@@ -158,76 +157,17 @@ raise SystemExit(1)
 PY
 }
 
-find_live_repair_loop_for_session() {
-  local session="${1:-$SESSION}"
-  python3 - "$session" "$$" <<'PY'
-import os
-import pathlib
-import sys
-
-session, self_pid_text = sys.argv[1:]
-try:
-    self_pid = int(self_pid_text)
-except Exception:
-    self_pid = -1
-excluded_pids = {self_pid, os.getppid()}
-
-
-def parse_args(pid: int) -> list[str]:
-    try:
-        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
-    except Exception:
-        return []
-    return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
-
-
-def matches(args: list[str]) -> bool:
-    def match_at(idx: int) -> bool:
-        if idx >= len(args):
-            return False
-        base = os.path.basename(args[idx])
-        if base != "arnold-repair-loop":
-            return False
-        return idx + 1 < len(args) and args[idx + 1] == session
-
-    for idx in range(len(args)):
-        if match_at(idx):
-            return True
-        if os.path.basename(args[idx]) in {"bash", "sh"} and match_at(idx + 1):
-            return True
-    return False
-
-
-for proc_dir in sorted(pathlib.Path("/proc").iterdir(), key=lambda path: path.name):
-    if not proc_dir.name.isdigit():
-        continue
-    pid = int(proc_dir.name)
-    if pid in excluded_pids:
-        continue
-    if matches(parse_args(pid)):
-        print(pid)
-        raise SystemExit(0)
-raise SystemExit(1)
-PY
-}
-
 release_repair_lock() {
-  local current_pid="" guard_fd
+  local current_pid=""
   if [[ "$REPAIR_PID_FILE_OWNED" != "1" ]]; then
     return
   fi
-  exec {guard_fd}> "$REPAIR_PID_GUARD_FILE" || return
-  flock "$guard_fd" 2>/dev/null || {
-    exec {guard_fd}>&-
-    return
-  }
   if [[ -r "$REPAIR_PID_FILE" ]]; then
     read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
   fi
   if [[ "$current_pid" == "$$" ]]; then
     rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
   fi
-  exec {guard_fd}>&-
   REPAIR_PID_FILE_OWNED=0
 }
 
@@ -246,38 +186,31 @@ trap 'shutdown_repair_loop; exit 130' INT
 trap 'shutdown_repair_loop; exit 143' TERM
 
 acquire_repair_lock() {
-  local existing_pid="" live_pid="" guard_fd
+  local existing_pid=""
   mkdir -p "$(dirname "$REPAIR_PID_FILE")"
-  exec {guard_fd}> "$REPAIR_PID_GUARD_FILE" || return 1
-  flock "$guard_fd" || {
-    exec {guard_fd}>&-
-    return 1
-  }
-  if [[ -r "$REPAIR_PID_FILE" ]]; then
-    read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
-  else
-    existing_pid=""
-  fi
-  if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
-    log "another repair loop is already active; exiting session=$SESSION owner_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
-    exec {guard_fd}>&-
-    return 1
-  fi
-  if live_pid="$(find_live_repair_loop_for_session "$SESSION" 2>/dev/null)"; then
-    log "another repair loop is already active; exiting session=$SESSION owner_pid=$live_pid pidfile=$REPAIR_PID_FILE"
-    exec {guard_fd}>&-
-    return 1
-  fi
-  if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]]; then
-    log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
-  elif [[ -f "$REPAIR_PID_FILE" ]]; then
-    log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=${existing_pid:-empty} pidfile=$REPAIR_PID_FILE"
-  fi
-  printf '%s\n' "$$" > "$REPAIR_PID_FILE"
-  REPAIR_PID_FILE_OWNED=1
-  log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
-  exec {guard_fd}>&-
-  return 0
+  while true; do
+    if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
+      REPAIR_PID_FILE_OWNED=1
+      log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"
+      return 0
+    fi
+    if [[ -r "$REPAIR_PID_FILE" ]]; then
+      read -r existing_pid < "$REPAIR_PID_FILE" || existing_pid=""
+    else
+      existing_pid=""
+    fi
+    if repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
+      log "another repair loop is already active; exiting session=$SESSION owner_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
+      return 1
+    fi
+    if [[ -n "$existing_pid" ]]; then
+      log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
+    else
+      log "empty repair pidfile detected; reclaiming session=$SESSION pidfile=$REPAIR_PID_FILE"
+    fi
+    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+    sleep 0.05
+  done
 }
 
 safe_name() {
@@ -334,7 +267,7 @@ plans_dir = workspace / ".megaplan" / "plans"
 chain_paths = sorted(
     {
         *plans_dir.glob(".chains/*.json"),
-        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *workspace.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"),
         *(workspace / ".megaplan").glob("**/chain_state.json"),
     },
     key=lambda path: path.stat().st_mtime,
@@ -512,7 +445,7 @@ def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
     candidates: list[tuple[float, pathlib.Path]] = []
     for pattern in (
         ".megaplan/plans/*/state.json",
-        ".megaplan/briefs/*/.megaplan/plans/*/state.json",
+        ".megaplan/initiatives/*/.megaplan/plans/*/state.json",
     ):
         for path in root.glob(pattern):
             try:
@@ -525,7 +458,7 @@ def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
 def latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
     candidates = set()
     candidates.update((root / ".megaplan" / "plans" / ".chains").glob("*.json"))
-    candidates.update(root.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"))
+    candidates.update(root.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"))
     candidates.update((root / ".megaplan").glob("**/chain_state.json"))
     ordered: list[tuple[float, pathlib.Path]] = []
     for path in candidates:
@@ -932,7 +865,7 @@ def _candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
     candidates = []
     for pattern in (
         ".megaplan/plans/*/state.json",
-        ".megaplan/briefs/*/.megaplan/plans/*/state.json",
+        ".megaplan/initiatives/*/.megaplan/plans/*/state.json",
     ):
         for path in root.glob(pattern):
             try:
@@ -947,7 +880,7 @@ def _latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
     chains_root = root / ".megaplan"
     candidates = set()
     candidates.update((root / ".megaplan" / "plans" / ".chains").glob("*.json"))
-    candidates.update(root.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"))
+    candidates.update(root.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"))
     candidates.update(chains_root.glob("**/chain_state.json"))
     ordered = []
     for path in candidates:
@@ -3466,12 +3399,6 @@ exit_if_repair_target_complete "start"
 
 INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
 repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
-if [[ "$INITIAL_HEALTH" == "alive" ]]; then
-  repair_data_set_outcome "running"
-  clear_repair_markers
-  log "repair target already running; no dev-fix needed session=$SESSION"
-  exit 0
-fi
 
 STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
 if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then

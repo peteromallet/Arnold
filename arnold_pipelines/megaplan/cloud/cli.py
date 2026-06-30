@@ -31,7 +31,7 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
-from arnold_pipelines.megaplan.layout import is_canonical_chain_spec, is_legacy_briefs_chain_spec
+from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -109,11 +109,6 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
             "Intended only for temporary compatibility."
         ),
     )
-    chain_parser.add_argument(
-        "--allow-legacy-briefs-layout",
-        action="store_true",
-        help="Allow the retired .megaplan/briefs/<initiative>/chain.yaml layout temporarily.",
-    )
     _add_repo_override_args(chain_parser)
 
     sync_parser = cloud_sub.add_parser(
@@ -143,11 +138,6 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         "--allow-loose-chain-spec",
         action="store_true",
         help="Allow a sync target chain spec outside .megaplan/initiatives/<initiative>/chain.yaml.",
-    )
-    sync_parser.add_argument(
-        "--allow-legacy-briefs-layout",
-        action="store_true",
-        help="Allow a sync target chain spec under retired .megaplan/briefs/<initiative>/chain.yaml.",
     )
     _add_repo_override_args(sync_parser)
 
@@ -610,7 +600,6 @@ def _validate_chain_spec_location(
     project_root: Path,
     *,
     allow_loose: bool = False,
-    allow_legacy_briefs_layout: bool = False,
 ) -> None:
     """Require durable chain specs to live under .megaplan/initiatives/<initiative>/.
 
@@ -635,17 +624,14 @@ def _validate_chain_spec_location(
         ) from exc
     if is_canonical_chain_spec(local_spec_path, project_root):
         return
-    if allow_legacy_briefs_layout and is_legacy_briefs_chain_spec(local_spec_path, project_root):
-        return
     raise CliError(
         "chain_spec_layout_violation",
         (
             "cloud chain specs must live at "
             ".megaplan/initiatives/<initiative>/chain.yaml; got "
             f"{relative.as_posix()}. Move the chain and milestone briefs into "
-            "that durable initiative folder, pass --allow-legacy-briefs-layout "
-            "for a temporary legacy launch, or pass --allow-loose-chain-spec "
-            "for a broader compatibility launch."
+            "that durable initiative folder or pass --allow-loose-chain-spec "
+            "for a temporary compatibility launch."
         ),
         extra={"chain_spec": relative.as_posix()},
     )
@@ -1736,7 +1722,6 @@ def _resolve_sync_megaplan_context(root: Path, args: argparse.Namespace, spec: C
             local_spec_path,
             project_root,
             allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
-            allow_legacy_briefs_layout=bool(getattr(args, "allow_legacy_briefs_layout", False)),
         )
         chain_spec = chain_module.load_spec(local_spec_path)
         ctx = _derive_chain_launch_context(
@@ -1898,7 +1883,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         local_spec_path,
         project_root,
         allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
-        allow_legacy_briefs_layout=bool(getattr(args, "allow_legacy_briefs_layout", False)),
     )
     chain_spec = chain_module.load_spec(local_spec_path)
     chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)

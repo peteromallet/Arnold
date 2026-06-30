@@ -212,11 +212,11 @@ retirement classification, compatibility-policy documentation, allowlist
 ratcheting, and artifact-gate hardening.
 
 The clean extraction phase is complete. The next work is an epic, captured in
-`.megaplan/briefs/arnold-post-extraction-next/chain.yaml`, not more broad
+`.megaplan/initiatives/arnold-post-extraction-next/chain.yaml`, not more broad
 quarrying.
 
 1. **M1: Megaplan canonical executor bridge** —
-   run `.megaplan/briefs/arnold-post-extraction-next/m1-megaplan-canonical-executor-bridge.md`
+   run `.megaplan/initiatives/arnold-post-extraction-next/briefs/m1-megaplan-canonical-executor-bridge.md`
    first. This wires one representative Megaplan path onto
    `arnold.pipeline.run_pipeline` through package-owned adapters/hooks while
    preserving compatibility.
@@ -319,11 +319,11 @@ classification of Slices 1–32 as landed is accepted as authoritative.
 ## Next Execution Order
 
 The clean extraction phase is complete. The next work is an epic, captured in
-`.megaplan/briefs/arnold-post-extraction-next/chain.yaml`, not more broad
+`.megaplan/initiatives/arnold-post-extraction-next/chain.yaml`, not more broad
 quarrying.
 
 1. **M1: Megaplan canonical executor bridge** —
-   run `.megaplan/briefs/arnold-post-extraction-next/m1-megaplan-canonical-executor-bridge.md`
+   run `.megaplan/initiatives/arnold-post-extraction-next/briefs/m1-megaplan-canonical-executor-bridge.md`
    first. This wires one representative Megaplan path onto
    `arnold.pipeline.run_pipeline` through package-owned adapters/hooks while
    preserving compatibility.

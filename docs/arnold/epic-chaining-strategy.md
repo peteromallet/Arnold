@@ -127,10 +127,10 @@ anchors:
 
 epics:
   - id: python-shaped-workflow-authoring
-    spec: .megaplan/briefs/python-shaped-workflow-authoring/chain.yaml
+    spec: .megaplan/initiatives/python-shaped-workflow-authoring/chain.yaml
 
   - id: native-python-pipelines-completion
-    spec: .megaplan/briefs/native-python-pipelines-completion/chain.yaml
+    spec: .megaplan/initiatives/native-python-pipelines-completion/chain.yaml
     handoff_from_previous:
       require_merged_base: true
       artifacts:
@@ -167,12 +167,12 @@ The parent state should intentionally mirror `ChainState`:
   "schema_version": 1,
   "current_epic_index": 1,
   "current_epic_id": "native-python-pipelines-completion",
-  "current_spec_path": ".megaplan/briefs/native-python-pipelines-completion/chain.yaml",
+  "current_spec_path": ".megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
   "last_state": "awaiting_pr_merge",
   "completed": [
     {
       "id": "python-shaped-workflow-authoring",
-      "spec": ".megaplan/briefs/python-shaped-workflow-authoring/chain.yaml",
+      "spec": ".megaplan/initiatives/python-shaped-workflow-authoring/chain.yaml",
       "status": "done",
       "base_branch": "main",
       "pr_number": 456,

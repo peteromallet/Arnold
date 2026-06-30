@@ -1,4 +1,8 @@
-# Deferred / superseded milestone drafts (v1)
+# Epic Pipeline Unification
+
+Unify Megaplan's pipeline planning, dispatch, service spine, execution realm, supervisor tier, and sinks while preserving deferred milestone research.
+
+## Legacy Notes
 
 These are the v1 milestone briefs. After the pre-mortem (briefs/validation/premortem/SYNTHESIS.md)
 the epic was re-aimed around the guiding principle: **share what other tools use; don't generalize

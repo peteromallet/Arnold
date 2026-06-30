@@ -60,7 +60,7 @@ def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
 
     run = load_agentbox_operation(config, "chain-1")
@@ -72,7 +72,7 @@ def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
     assert run.state is OperationState.RUNNING
     assert run.metadata["launch_intent"] == "megaplan_chain"
     assert run.metadata["validation"]["status"] == "passed"
-    assert result.resolved_spec_path == result.project_root / ".megaplan/briefs/epic/chain.yaml"
+    assert result.resolved_spec_path == result.project_root / ".megaplan/initiatives/epic/chain.yaml"
     assert result.resolved_spec_path.is_absolute()
     assert calls == [
         {
@@ -108,25 +108,25 @@ def test_megaplan_chain_launch_validates_relative_spec_before_tmux(
         (
             "missing_spec",
             lambda repo: None,
-            ".megaplan/briefs/epic/missing.yaml",
+            ".megaplan/initiatives/epic/missing.yaml",
             "invalid_spec",
         ),
         (
             "invalid_yaml",
             lambda repo: _write_raw_chain(repo, "milestones: [\n"),
-            ".megaplan/briefs/epic/chain.yaml",
+            ".megaplan/initiatives/epic/chain.yaml",
             "invalid_spec",
         ),
         (
             "missing_idea",
             lambda repo: _write_chain(repo, idea_path="missing.md"),
-            ".megaplan/briefs/epic/chain.yaml",
+            ".megaplan/initiatives/epic/chain.yaml",
             "missing_idea_file",
         ),
         (
             "missing_seed_plan",
             lambda repo: (_write_valid_chain(repo, seed_plan="missing-seed")),
-            ".megaplan/briefs/epic/chain.yaml",
+            ".megaplan/initiatives/epic/chain.yaml",
             "missing_seed_plan",
         ),
     ],
@@ -188,7 +188,7 @@ def test_megaplan_chain_retry_after_validation_failure_reuses_resources_and_reru
 ) -> None:
     config = _config_with_repo(tmp_path, "app")
     repo = config.repos_root / "app"
-    _write_chain(repo, idea_path=".megaplan/briefs/epic/idea.md")
+    _write_chain(repo, idea_path=".megaplan/initiatives/epic/briefs/idea.md")
     _git(repo, "add", ".")
     _git(repo, "commit", "-m", "add chain spec without idea")
 
@@ -202,7 +202,7 @@ def test_megaplan_chain_retry_after_validation_failure_reuses_resources_and_reru
             config,
             "chain-1",
             repo_name="app",
-            spec_path=".megaplan/briefs/epic/chain.yaml",
+            spec_path=".megaplan/initiatives/epic/chain.yaml",
         )
 
     failed_resources = open_operation_store(config).list_typed_resources("chain-1")
@@ -211,7 +211,9 @@ def test_megaplan_chain_retry_after_validation_failure_reuses_resources_and_reru
     )
     failed_run_paths = run_dir_paths(config, "chain-1")
     worktree_path = Path(str(failed_worktree.details["worktree_path"]))
-    (worktree_path / ".megaplan" / "briefs" / "epic" / "idea.md").write_text(
+    retry_idea_path = worktree_path / ".megaplan" / "initiatives" / "epic" / "briefs" / "idea.md"
+    retry_idea_path.parent.mkdir(parents=True, exist_ok=True)
+    retry_idea_path.write_text(
         "Retry with the missing idea now present.\n",
         encoding="utf-8",
     )
@@ -231,7 +233,7 @@ def test_megaplan_chain_retry_after_validation_failure_reuses_resources_and_reru
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
 
     resources = open_operation_store(config).list_typed_resources("chain-1")
@@ -283,7 +285,7 @@ def test_megaplan_chain_retry_after_tmux_start_failure_reuses_prepared_resources
             config,
             "chain-1",
             repo_name="app",
-            spec_path=".megaplan/briefs/epic/chain.yaml",
+            spec_path=".megaplan/initiatives/epic/chain.yaml",
         )
 
     failed_resources = open_operation_store(config).list_typed_resources("chain-1")
@@ -296,7 +298,7 @@ def test_megaplan_chain_retry_after_tmux_start_failure_reuses_prepared_resources
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     resources = open_operation_store(config).list_typed_resources("chain-1")
 
@@ -339,13 +341,13 @@ def test_megaplan_chain_duplicate_running_launch_summarizes_live_session_without
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     second = MegaplanChainHandler().launch(
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     resources = open_operation_store(config).list_typed_resources("chain-1")
     events = _events(second.host_result.run_paths.events_path)
@@ -380,7 +382,7 @@ def test_megaplan_chain_refuses_terminal_operation_retry_without_resetting_state
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     update_agentbox_operation(config, "chain-1", state=OperationState.SUCCEEDED)
 
@@ -394,7 +396,7 @@ def test_megaplan_chain_refuses_terminal_operation_retry_without_resetting_state
             config,
             "chain-1",
             repo_name="app",
-            spec_path=".megaplan/briefs/epic/chain.yaml",
+            spec_path=".megaplan/initiatives/epic/chain.yaml",
         )
 
     run = load_agentbox_operation(config, "chain-1")
@@ -429,7 +431,7 @@ def test_megaplan_chain_status_snapshot_classifies_complete_over_live_runner(
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     save_chain_state(
         result.resolved_spec_path,
@@ -489,7 +491,7 @@ def test_megaplan_chain_status_snapshot_uses_latest_verdict_human_verification(
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     save_chain_state(
         result.resolved_spec_path,
@@ -536,7 +538,7 @@ def test_megaplan_chain_status_snapshot_classifies_active_plan_without_runner_as
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     save_chain_state(
         result.resolved_spec_path,
@@ -651,7 +653,7 @@ def test_megaplan_chain_status_snapshot_classifies_cross_file_states(
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     save_chain_state(result.resolved_spec_path, chain_state)
     if plan_state is not None:
@@ -693,7 +695,7 @@ def test_megaplan_chain_tick_persists_classification_and_status_change_event(
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     save_chain_state(
         result.resolved_spec_path,
@@ -744,7 +746,7 @@ def test_megaplan_chain_resume_restarts_stored_command_only_for_stale_dead_runne
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     save_chain_state(
         result.resolved_spec_path,
@@ -785,7 +787,7 @@ def test_megaplan_chain_resume_directs_pre_running_failures_to_retry_launch(
             config,
             "chain-1",
             repo_name="app",
-            spec_path=".megaplan/briefs/epic/missing.yaml",
+            spec_path=".megaplan/initiatives/epic/missing.yaml",
         )
 
     with pytest.raises(MegaplanChainLaunchError) as exc_info:
@@ -820,7 +822,7 @@ def test_megaplan_chain_summarize_and_cleanup_descriptor_are_compact_and_non_des
         config,
         "chain-1",
         repo_name="app",
-        spec_path=".megaplan/briefs/epic/chain.yaml",
+        spec_path=".megaplan/initiatives/epic/chain.yaml",
     )
     save_chain_state(
         result.resolved_spec_path,
@@ -945,12 +947,12 @@ def _write_valid_chain(
     prerequisite_policy: str | None = None,
     validation_policy: str | None = None,
 ) -> None:
-    idea = repo / ".megaplan" / "briefs" / "epic" / "idea.md"
+    idea = repo / ".megaplan" / "initiatives" / "epic" / "briefs" / "idea.md"
     idea.parent.mkdir(parents=True, exist_ok=True)
     idea.write_text("Implement the first milestone.\n", encoding="utf-8")
     _write_chain(
         repo,
-        idea_path=".megaplan/briefs/epic/idea.md",
+        idea_path=".megaplan/initiatives/epic/briefs/idea.md",
         seed_plan=seed_plan,
         prerequisite_policy=prerequisite_policy,
         validation_policy=validation_policy,
@@ -991,7 +993,7 @@ def _write_chain(
 
 
 def _write_raw_chain(repo: Path, content: str) -> None:
-    spec = repo / ".megaplan" / "briefs" / "epic" / "chain.yaml"
+    spec = repo / ".megaplan" / "initiatives" / "epic" / "chain.yaml"
     spec.parent.mkdir(parents=True, exist_ok=True)
     spec.write_text(content, encoding="utf-8")
 
