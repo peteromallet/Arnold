@@ -2865,7 +2865,10 @@ for key in (
     value = str(signature.get(key) or "").strip() or "-"
     signature_bits.append(f"{key}={value}")
 print("## RECURRENCE EVIDENCE")
-print(f"- Recurrence detected for this session on attempt {recurrence.get('attempt_number')}.")
+print(
+    "- This is attempt "
+    f"{recurrence.get('attempt_number')} for the SAME problem (recurrence detected)."
+)
 layer1 = recurrence.get("layer1") or {}
 layer2 = recurrence.get("layer2") or {}
 if layer1.get("detected"):
@@ -2879,6 +2882,7 @@ if layer2.get("detected"):
         f"{layer2.get('no_advance_dispatch_count')} repair dispatches within "
         f"{layer2.get('window_seconds')} seconds with no milestone/state advancement."
     )
+print("- The symptom came back despite these prior fixes:")
 print("- Recurrence means the prior attempts treated symptoms, not the cause.")
 print(f"- Controlled signature: `({' ; '.join(signature_bits)})`")
 print("- Prior fixes for this problem:")

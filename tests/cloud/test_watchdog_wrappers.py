@@ -973,7 +973,9 @@ def test_repair_loop_renders_recurrence_block_from_controlled_signature_history(
     assert result.returncode == 0, result.stderr
     block = result.stdout
     assert "## RECURRENCE EVIDENCE" in block
-    assert "attempt 3" in block
+    assert "This is attempt 3 for the SAME problem (recurrence detected)." in block
+    assert "The symptom came back despite these prior fixes:" in block
+    assert "Recurrence means the prior attempts treated symptoms, not the cause." in block
     assert "Layer 1 fired" in block
     assert "Layer 2 fired" in block
     assert "authority_divergence" in block
