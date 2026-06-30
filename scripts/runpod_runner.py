@@ -1,14 +1,28 @@
-"""Thin compatibility shim over runpod-lifecycle v0.2.
+"""VibeComfy-facing wrapper over the `runpod_lifecycle` package (v0.3.0).
 
 All heavy lifting (launch, upload, exec, poll, download) lives in
-``runpod_lifecycle.runner.ship_and_run{,_detached}``.  This module
-keeps only vibecomfy-specific conventions: env-var lookups, the
-artifact-format reader stack (delegated to ``runpod_artifacts``),
-and ``run_pod`` / ``run_pod_detached``.
+``runpod_lifecycle.runner.ship_and_run{,_detached}``. This module adds only
+vibecomfy-specific conventions: env-var lookups, the artifact-format reader
+stack (delegated to ``runpod_artifacts``), and the ``run_pod`` /
+``run_pod_detached`` entry points used by the acceptance/corpus/matrix scripts.
 
-Backward-compatible public surface for existing callers
-(``runpod_validate.py``, ``runpod_model_matrix.py``,
-``runpod_corpus_matrix.py``, and the test suite)."""
+Env vars (read in ``_runpod_config_kwargs``)
+--------------------------------------------
+Credentials/defaults come from the *sibling* ``runpod-lifecycle`` repo's ``.env``
+(see that package's skill). This wrapper reads vibecomfy-specific overrides:
+
+- ``VIBECOMFY_RUNPOD_GPU``        CSV of GPU candidates (fanned across by the lifecycle).
+                                  Default ``NVIDIA GeForce RTX 4090``.
+- ``VIBECOMFY_RUNPOD_STORAGE``    primary network-volume name. Default ``Peter``.
+- ``VIBECOMFY_RUNPOD_STORAGE_VOLUMES``  CSV of extra volumes tried after the primary
+                                  (fan across datacenters — a single volume pins one DC).
+- ``VIBECOMFY_RUNPOD_DISK_SIZE_GB`` / ``VIBECOMFY_RUNPOD_CONTAINER_DISK_GB``  pod/container disk.
+
+v0.3.0 note: ``ship_and_run_detached`` no longer accepts ``guard_factory``,
+``poll_command_template``, ``poll_exit_marker``, or ``artifact_paths``; this
+wrapper relies on the lifecycle's hardcoded defaults (artifacts under
+``["out", "output"]``, downloaded to ``local_root/"artifacts"``).
+"""
 
 from __future__ import annotations
 
@@ -35,8 +49,17 @@ VIBECOMFY_RUNPOD_CONTAINER_DISK_ENV = "VIBECOMFY_RUNPOD_CONTAINER_DISK_GB"
 def _runpod_config_kwargs() -> dict[str, Any]:
     config_kwargs: dict[str, Any] = {
         "storage_name": os.getenv("VIBECOMFY_RUNPOD_STORAGE", "Peter"),
-        "storage_volumes": (),
-        "gpu_type": os.getenv("VIBECOMFY_RUNPOD_GPU", "NVIDIA GeForce RTX 4090"),
+        # Extra network volumes (CSV of names) to fan across datacenters when
+        # the primary storage's DC has no GPU capacity. The lifecycle tries
+        # every GPU against every resolved volume.
+        "storage_volumes": tuple(
+            v.strip()
+            for v in os.getenv("VIBECOMFY_RUNPOD_STORAGE_VOLUMES", "").split(",")
+            if v.strip()
+        ),
+        "gpu_type": _parse_gpu_type_env(
+            os.getenv("VIBECOMFY_RUNPOD_GPU") or "NVIDIA GeForce RTX 4090"
+        ),
         "ram_tiers": (32, 16),
     }
     if os.getenv(VIBECOMFY_RUNPOD_CONTAINER_DISK_ENV):
@@ -61,6 +84,7 @@ from runpod_lifecycle import UploadHeartbeat  # noqa: E402
 from runpod_lifecycle import install_signal_handlers  # noqa: E402
 from runpod_lifecycle import should_skip  # noqa: E402
 from runpod_lifecycle import RunPodConfig  # noqa: E402
+from runpod_lifecycle.config import _parse_gpu_type_env  # noqa: E402
 from runpod_lifecycle import ship_and_run  # noqa: E402
 from runpod_lifecycle import ship_and_run_detached  # noqa: E402
 from runpod_lifecycle import ShipAndRunResult  # noqa: E402
@@ -232,11 +256,7 @@ async def run_pod_detached(
         timeout=timeout,
         name_prefix=name_prefix,
         terminate_after_exec=True,
-        guard_factory=_compat_guard_factory(PodGuard),
         poll_interval=poll_interval,
-        poll_command_template=poll_command_template,
-        poll_exit_marker="out/corpus_matrix/exit_code",
-        artifact_paths=["out/corpus_matrix", "output", "out/runs"],
     )
 
     pod_id = getattr(result.pod, "id", None) if result.pod else None

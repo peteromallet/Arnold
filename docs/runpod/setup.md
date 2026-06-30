@@ -6,6 +6,36 @@ Run the live validation from the VibeComfy repo:
 python scripts/runpod_validate.py
 ```
 
+For the fuller end-to-end acceptance path, run:
+
+```bash
+python scripts/runpod_acceptance.py
+```
+
+That suite launches a pod, uploads the checkout, installs VibeComfy and ComfyUI,
+then proves the core user paths in one evidence bundle:
+
+- setup inspection: `config show`, `runtime doctor`, and managed runtime smoke
+- dependency planning: `nodes install-plan`, `fetch --dry-run`, and model-stage dry-run
+- direct Comfy API JSON queueing against a managed Comfy server
+- raw JSON intake via `port check` and `port convert`
+- converted JSON-as-Python execution through embedded runtime
+- ready-template Python execution through embedded runtime
+- the same ready-template and converted Python workflows against an already-running
+  ComfyUI HTTP server through `--runtime server --server-url`
+
+The default acceptance path uses the no-model red-image smoke graph so it proves
+runtime plumbing quickly. Add a model-backed ready template when you want a real
+model-family proof on the same pod:
+
+```bash
+python scripts/runpod_acceptance.py --model-template image/z_image --model-phase core
+```
+
+Artifacts are downloaded under `out/runpod_artifacts/<timestamp>/`, including
+`out/corpus_matrix/results.tsv`, `out/corpus_matrix/acceptance_summary.json`,
+`out/runs/**/metadata.json`, output media, and logs.
+
 Install the RunPod support extra from the VibeComfy repo:
 
 ```bash
@@ -40,6 +70,11 @@ What the script does:
 - Terminates the launched pod in `finally`.
 
 The cheap smoke exists only to prove launch, upload, runtime startup, Python ready-template execution, artifact download, and termination. Production validation should execute model-backed Python ready templates from `ready_templates/`, not raw JSON fixtures.
+
+Use `runpod_acceptance.py` when the question is whether the package works end to
+end across representations and runtime modes. Use `runpod_validate.py` only for
+the cheapest launch/runtime sanity check. Use `runpod_corpus_matrix.py` for broad
+model-family and template coverage after acceptance is green.
 
 The script has local signal handling, explicit `finally` termination, and a max-runtime watchdog. RunPod's current pod docs expose explicit stop/delete calls and a local scheduled stop pattern; network-volume pods should be terminated rather than stopped, so these scripts terminate the launched pod id.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check and optionally install the canonical VibeComfy agent skill."""
+"""Check and optionally install the canonical VibeComfy agent skills."""
 
 from __future__ import annotations
 
@@ -11,6 +11,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "docs" / "agent-skill" / "SKILL.md"
+SKILLS_SOURCE_DIR = ROOT / "docs" / "agent-skill" / "skills"
+EXPECTED_AUXILIARY_SKILLS = (
+    "add-comfy-workflow-template",
+    "debug-comfy-workflow",
+    "explain-comfy-workflow",
+    "edit-comfy-workflow",
+    "run-comfy-workflow",
+    "search-comfy-workflows",
+    "vibecomfy-setup",
+)
+OBSOLETE_AUXILIARY_SKILLS = (
+    "sync-vibecomfy-skills",
+)
 COPY_TARGETS = ()
 LOCAL_COPY_TARGETS = ()
 SYMLINK_TARGETS = {}
@@ -38,6 +51,31 @@ def _read_source() -> str:
     return content
 
 
+def _auxiliary_skill_sources() -> dict[str, Path]:
+    if not SKILLS_SOURCE_DIR.exists():
+        raise SystemExit("docs/agent-skill/skills is missing")
+    found = {
+        path.parent.name: path.parent
+        for path in sorted(SKILLS_SOURCE_DIR.glob("*/SKILL.md"))
+    }
+    expected = set(EXPECTED_AUXILIARY_SKILLS)
+    actual = set(found)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    if missing or extra:
+        parts = []
+        if missing:
+            parts.append(f"missing auxiliary skills: {', '.join(missing)}")
+        if extra:
+            parts.append(f"unexpected auxiliary skills: {', '.join(extra)}")
+        raise SystemExit("; ".join(parts))
+    for name, source in found.items():
+        content = (source / "SKILL.md").read_text(encoding="utf-8")
+        if not content.startswith("---\n") or f"name: {name}" not in content:
+            raise SystemExit(f"{_relative(source / 'SKILL.md')} must have matching skill frontmatter")
+    return found
+
+
 def _check_copy(path: Path, expected: str) -> str | None:
     if not path.exists():
         return f"{_relative(path)} is missing"
@@ -58,6 +96,7 @@ def _check_symlink(path: Path, expected_target: str) -> str | None:
 
 def check() -> int:
     source = _read_source()
+    _auxiliary_skill_sources()
     errors = []
     errors.extend(error for target in COPY_TARGETS if (error := _check_copy(target, source)))
     errors.extend(error for target, link in SYMLINK_TARGETS.items() if (error := _check_symlink(target, link)))
@@ -90,9 +129,10 @@ def apply() -> int:
 class SkillSinker:
     """Install the VibeComfy skill into local agent harness surfaces."""
 
-    def __init__(self, source: Path, codex_agents: Path) -> None:
+    def __init__(self, source: Path, codex_agents: Path, auxiliary_sources: dict[str, Path]) -> None:
         self.source = source
         self.codex_agents = codex_agents
+        self.auxiliary_sources = auxiliary_sources
 
     def install(self) -> None:
         self._link_skill_dirs()
@@ -105,14 +145,35 @@ class SkillSinker:
             if not target_dir.exists():
                 print(f"skipped {target_dir} (parent missing)")
                 continue
-            target = target_dir / "vibecomfy"
-            if target.is_symlink() and target.resolve() == self.source.resolve():
-                print(f"kept {target} -> {self.source}")
-                continue
-            if target.exists() or target.is_symlink():
-                raise SystemExit(f"{target} exists; remove it or install manually")
-            target.symlink_to(self.source, target_is_directory=True)
-            print(f"linked {target} -> {self.source}")
+            self._link_one(target_dir / "vibecomfy", self.source)
+            for name, source in self.auxiliary_sources.items():
+                self._link_one(target_dir / name, source)
+            for name in OBSOLETE_AUXILIARY_SKILLS:
+                self._remove_obsolete(target_dir / name)
+
+    @staticmethod
+    def _link_one(target: Path, source: Path) -> None:
+        if target.is_symlink() and target.resolve() == source.resolve():
+            print(f"kept {target} -> {source}")
+            return
+        if target.is_symlink():
+            old_target = target.readlink()
+            target.unlink()
+            target.symlink_to(source, target_is_directory=True)
+            print(f"retargeted {target} from {old_target} to {source}")
+            return
+        if target.exists() or target.is_symlink():
+            raise SystemExit(f"{target} exists; remove it or install manually")
+        target.symlink_to(source, target_is_directory=True)
+        print(f"linked {target} -> {source}")
+
+    @staticmethod
+    def _remove_obsolete(target: Path) -> None:
+        if not target.is_symlink():
+            return
+        old_target = target.readlink()
+        target.unlink()
+        print(f"removed obsolete {target} -> {old_target}")
 
     def _rewrite_codex_agents(self) -> None:
         if not self.codex_agents.parent.exists():
@@ -128,10 +189,15 @@ class SkillSinker:
         print(f"updated {self.codex_agents} SkillSinker block")
 
     def _render_codex_block(self) -> str:
+        auxiliary_lines = "\n".join(
+            f"- `{name}` ({source}): VibeComfy package skill."
+            for name, source in sorted(self.auxiliary_sources.items())
+        )
         return (
             f"{SKILLSINKER_BEGIN}\n"
-            "# VibeComfy skill\n\n"
+            "# VibeComfy skills\n\n"
             f"- `vibecomfy` ({self.source}): Use VibeComfy to load, edit, validate, port, and run ComfyUI workflows through Python ready templates.\n"
+            f"{auxiliary_lines}\n"
             f"{SKILLSINKER_END}"
         )
 
@@ -151,7 +217,7 @@ def install_user() -> int:
     apply_result = apply()
     if apply_result != 0:
         return apply_result
-    SkillSinker(USER_SKILL_SOURCE, CODEX_AGENTS).install()
+    SkillSinker(USER_SKILL_SOURCE, CODEX_AGENTS, _auxiliary_skill_sources()).install()
     return check()
 
 

@@ -27,6 +27,7 @@ def build() -> VibeWorkflow:
         _id='1',
         width=64,
         height=64,
+        batch_size=1,
         color=16711680,
     )
 
