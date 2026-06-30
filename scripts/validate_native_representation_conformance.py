@@ -82,12 +82,10 @@ def _validate_carrier_evidence_shape(
     *,
     carrier: str,
     row_id: str,
+    suffixes: dict[str, set[str]],
 ) -> None:
-    if carrier in {"canonical_source", "audited_pure_phase_body"}:
-        allowed = CODE_CARRIER_SUFFIXES
-    elif carrier == "declared_policy":
-        allowed = POLICY_CARRIER_SUFFIXES
-    else:
+    allowed = suffixes.get(carrier)
+    if allowed is None:
         return
     for path in paths:
         suffix = Path(path).suffix
@@ -96,6 +94,52 @@ def _validate_carrier_evidence_shape(
                 f"row {row_id!r} carrier_evidence path {path!r} has suffix "
                 f"{suffix!r}; {carrier} requires one of {sorted(allowed)}"
             )
+
+
+def _machine_report_contract(traceability: dict[str, Any]) -> dict[str, Any]:
+    gate = traceability.get("final_conformance_gate")
+    if not isinstance(gate, dict):
+        raise ValueError("traceability missing final_conformance_gate mapping")
+    report = gate.get("machine_readable_report")
+    if not isinstance(report, dict):
+        raise ValueError("traceability missing final_conformance_gate.machine_readable_report mapping")
+    return report
+
+
+def _string_set_from_contract(
+    contract: dict[str, Any],
+    key: str,
+    *,
+    fallback: set[str],
+) -> set[str]:
+    value = contract.get(key)
+    if value is None:
+        return set(fallback)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"machine_readable_report.{key} must be a list[str]")
+    return set(value)
+
+
+def _suffix_contract(contract: dict[str, Any]) -> dict[str, set[str]]:
+    raw = contract.get("carrier_evidence_suffixes")
+    if raw is None:
+        return {
+            "canonical_source": set(CODE_CARRIER_SUFFIXES),
+            "audited_pure_phase_body": set(CODE_CARRIER_SUFFIXES),
+            "declared_policy": set(POLICY_CARRIER_SUFFIXES),
+        }
+    if not isinstance(raw, dict):
+        raise ValueError("machine_readable_report.carrier_evidence_suffixes must be a mapping")
+    suffixes: dict[str, set[str]] = {}
+    for carrier, values in raw.items():
+        if not isinstance(carrier, str):
+            raise ValueError("machine_readable_report.carrier_evidence_suffixes keys must be strings")
+        if not isinstance(values, list) or not all(isinstance(item, str) for item in values):
+            raise ValueError(
+                f"machine_readable_report.carrier_evidence_suffixes.{carrier} must be a list[str]"
+            )
+        suffixes[carrier] = set(values)
+    return suffixes
 
 
 def validate_conformance_ledger(
@@ -109,11 +153,29 @@ def validate_conformance_ledger(
     try:
         conformance = _load_yaml(conformance_path)
         traceability = _load_yaml(traceability_path)
+        machine_report = _machine_report_contract(traceability)
+        valid_statuses = _string_set_from_contract(
+            machine_report,
+            "row_status_values",
+            fallback=VALID_STATUSES,
+        )
+        implemented_carriers = _string_set_from_contract(
+            machine_report,
+            "implemented_semantic_carriers",
+            fallback=IMPLEMENTED_SEMANTIC_CARRIERS,
+        )
+        deferred_carriers = _string_set_from_contract(
+            machine_report,
+            "deferred_semantic_carriers",
+            fallback=DEFERRED_SEMANTIC_CARRIERS,
+        )
+        carrier_suffixes = _suffix_contract(machine_report)
     except ValueError as exc:
         return [str(exc)]
 
-    if conformance.get("schema") != EXPECTED_SCHEMA:
-        errors.append(f"schema must be {EXPECTED_SCHEMA!r}")
+    expected_schema = machine_report.get("schema", EXPECTED_SCHEMA)
+    if conformance.get("schema") != expected_schema:
+        errors.append(f"schema must be {expected_schema!r}")
     if conformance.get("target_report") != EXPECTED_TARGET_REPORT:
         errors.append(f"target_report must be {EXPECTED_TARGET_REPORT!r}")
     if conformance.get("traceability") != EXPECTED_TRACEABILITY:
@@ -153,20 +215,20 @@ def validate_conformance_ledger(
             errors.append(f"row {row_id!r} missing required fields: {', '.join(missing)}")
 
         status = row.get("status")
-        if status not in VALID_STATUSES:
-            errors.append(f"row {row_id!r} status must be one of {sorted(VALID_STATUSES)}")
+        if status not in valid_statuses:
+            errors.append(f"row {row_id!r} status must be one of {sorted(valid_statuses)}")
         carrier = row.get("semantic_carrier")
         if not isinstance(carrier, str) or not carrier.strip():
             errors.append(f"row {row_id!r} semantic_carrier must be a non-empty string")
-        elif status == "implemented" and carrier not in IMPLEMENTED_SEMANTIC_CARRIERS:
+        elif status == "implemented" and carrier not in implemented_carriers:
             errors.append(
                 f"row {row_id!r} implemented semantic_carrier must be one of "
-                f"{sorted(IMPLEMENTED_SEMANTIC_CARRIERS)}"
+                f"{sorted(implemented_carriers)}"
             )
-        elif status == "deferred" and carrier not in DEFERRED_SEMANTIC_CARRIERS:
+        elif status == "deferred" and carrier not in deferred_carriers:
             errors.append(
                 f"row {row_id!r} deferred semantic_carrier must be one of "
-                f"{sorted(DEFERRED_SEMANTIC_CARRIERS)}"
+                f"{sorted(deferred_carriers)}"
             )
 
         try:
@@ -226,6 +288,7 @@ def validate_conformance_ledger(
                     carrier_paths,
                     carrier=carrier,
                     row_id=row_id,
+                    suffixes=carrier_suffixes,
                 )
             except ValueError as exc:
                 errors.append(str(exc))

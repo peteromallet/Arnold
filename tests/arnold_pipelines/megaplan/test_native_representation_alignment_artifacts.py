@@ -22,6 +22,34 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return payload
 
 
+def _write_conformance_traceability_fixture(path: Path, row_ids: list[str]) -> None:
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "final_conformance_gate": {
+                    "machine_readable_report": {
+                        "schema": "arnold.megaplan_native_representation.conformance.v1",
+                        "row_status_values": ["implemented", "deferred"],
+                        "implemented_semantic_carriers": [
+                            "canonical_source",
+                            "declared_policy",
+                            "audited_pure_phase_body",
+                        ],
+                        "deferred_semantic_carriers": ["explicit_deferral"],
+                        "carrier_evidence_suffixes": {
+                            "canonical_source": [".py"],
+                            "audited_pure_phase_body": [".py"],
+                            "declared_policy": [".py", ".yaml", ".yml", ".json", ".md"],
+                        },
+                    }
+                },
+                "rows": [{"id": row_id} for row_id in row_ids],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 def test_traceability_artifact_covers_alignment_matrix_rows() -> None:
     payload = _load_yaml(TRACEABILITY_PATH)
     assert payload["schema"] == "arnold.megaplan_native_representation.traceability.v1"
@@ -221,10 +249,7 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
     (tmp_path / "carrier-one.py").write_text("# carrier one\n", encoding="utf-8")
     (tmp_path / "proof-two.md").write_text("# Proof two\n", encoding="utf-8")
     (tmp_path / "blocking-proof.md").write_text("# Blocking proof\n", encoding="utf-8")
-    traceability_path.write_text(
-        yaml.safe_dump({"rows": [{"id": "row-one"}, {"id": "row-two"}]}),
-        encoding="utf-8",
-    )
+    _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -267,10 +292,7 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
 def test_final_conformance_yaml_validator_rejects_false_pass(tmp_path: Path) -> None:
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
-    traceability_path.write_text(
-        yaml.safe_dump({"rows": [{"id": "row-one"}, {"id": "row-two"}]}),
-        encoding="utf-8",
-    )
+    _write_conformance_traceability_fixture(traceability_path, ["row-one", "row-two"])
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -308,10 +330,7 @@ def test_final_conformance_yaml_validator_requires_carrier_evidence_for_implemen
     traceability_path = tmp_path / "traceability.yaml"
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
-    traceability_path.write_text(
-        yaml.safe_dump({"rows": [{"id": "row-one"}]}),
-        encoding="utf-8",
-    )
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -347,10 +366,7 @@ def test_final_conformance_yaml_validator_rejects_non_code_canonical_source(
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "report.md").write_text("# Report\n", encoding="utf-8")
-    traceability_path.write_text(
-        yaml.safe_dump({"rows": [{"id": "row-one"}]}),
-        encoding="utf-8",
-    )
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -387,10 +403,7 @@ def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
     conformance_path = tmp_path / "conformance.yaml"
     (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
     (tmp_path / "policy.yaml").write_text("policy: true\n", encoding="utf-8")
-    traceability_path.write_text(
-        yaml.safe_dump({"rows": [{"id": "row-one"}]}),
-        encoding="utf-8",
-    )
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
     conformance_path.write_text(
         yaml.safe_dump(
             {
@@ -403,6 +416,49 @@ def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
                         "status": "implemented",
                         "semantic_carrier": "declared_policy",
                         "carrier_evidence": ["policy.yaml"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        validate_conformance_ledger(
+            repo_root=tmp_path,
+            conformance_path=conformance_path,
+            traceability_path=traceability_path,
+        )
+        == []
+    )
+
+
+def test_final_conformance_yaml_validator_uses_traceability_suffix_contract(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "policy.custom").write_text("policy=true\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
+    traceability["final_conformance_gate"]["machine_readable_report"][
+        "carrier_evidence_suffixes"
+    ]["declared_policy"] = [".custom"]
+    traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "declared_policy",
+                        "carrier_evidence": ["policy.custom"],
                         "proof_artifacts": ["proof.md"],
                     }
                 ],

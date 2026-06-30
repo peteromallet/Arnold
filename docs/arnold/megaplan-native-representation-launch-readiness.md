@@ -52,7 +52,7 @@ python -m arnold_pipelines.megaplan.cli chain verify --spec .megaplan/initiative
 
 Observed result:
 
-- alignment-artifact and launch-precondition tests: `30 passed`;
+- alignment-artifact and launch-precondition tests: `34 passed`;
 - completion chain verify: success from committed source;
 - composition chain verify: expected failure, missing completion chain state;
 - platform chain verify: expected failure, missing completion chain state.
