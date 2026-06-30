@@ -697,6 +697,244 @@ def _verify_completed_chain(
     }
 
 
+def _sha256_path(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _project_relative_path(root: Path, path: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root.resolve()))
+    except ValueError as exc:
+        raise CliError(
+            "invalid_args",
+            f"path is outside project root {root}: {path}",
+        ) from exc
+
+
+def _load_manifest_proof_map(path: Path) -> dict[str, list[str]]:
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise CliError("invalid_args", f"proof map not found: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise CliError("invalid_args", f"proof map is invalid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise CliError("invalid_args", "proof map must be a JSON object")
+    if isinstance(raw.get("milestones"), dict):
+        raw = raw["milestones"]
+    proof_map: dict[str, list[str]] = {}
+    for label, value in raw.items():
+        if not isinstance(label, str) or not label:
+            raise CliError("invalid_args", "proof map milestone labels must be strings")
+        if not isinstance(value, list) or not value:
+            raise CliError(
+                "invalid_args",
+                f"proof map for milestone {label!r} must be a non-empty list",
+            )
+        paths: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                paths.append(item.strip())
+                continue
+            if isinstance(item, dict):
+                candidate = item.get("path")
+                if isinstance(candidate, str) and candidate.strip():
+                    paths.append(candidate.strip())
+                    continue
+            raise CliError(
+                "invalid_args",
+                f"proof map for milestone {label!r} contains an invalid path entry",
+            )
+        proof_map[label] = paths
+    return proof_map
+
+
+def _completion_records_by_label_strict(state: ChainState) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    duplicates: set[str] = set()
+    for record in state.completed:
+        if not isinstance(record, dict):
+            continue
+        label = record.get("label")
+        if not isinstance(label, str) or not label:
+            continue
+        if label in records:
+            duplicates.add(label)
+        records[label] = record
+    if duplicates:
+        raise CliError(
+            "invalid_chain_state",
+            f"chain state has duplicate completed records for {sorted(duplicates)}",
+        )
+    return records
+
+
+def _record_pr_merge_sha(root: Path, record: dict[str, Any]) -> str:
+    merge_sha, source = _published_pr_target_from_record(record)
+    if merge_sha:
+        return merge_sha
+    pr_number = record.get("pr_number")
+    if not isinstance(pr_number, int):
+        raise CliError(
+            "invalid_chain_state",
+            f"completed record {record.get('label')!r} is missing PR number",
+        )
+    merge_sha, reason = _published_pr_target_from_gh(root, pr_number)
+    if merge_sha:
+        return merge_sha
+    raise CliError(
+        "invalid_chain_state",
+        f"completed record {record.get('label')!r} has no merge SHA ({source}; {reason})",
+    )
+
+
+def _build_completion_manifest(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    proof_map: dict[str, list[str]],
+) -> dict[str, Any]:
+    if state.current_plan_name is not None:
+        raise CliError(
+            "invalid_chain_state",
+            f"chain still has active plan {state.current_plan_name!r}",
+        )
+    if state.current_milestone_index < len(spec.milestones):
+        raise CliError(
+            "invalid_chain_state",
+            "chain has not advanced past all milestones",
+        )
+    records_by_label = _completion_records_by_label_strict(state)
+    manifest: dict[str, Any] = {
+        "schema": "arnold.megaplan.chain_completion_manifest.v1",
+        "chain": {
+            "path": _project_relative_path(root, spec_path),
+            "sha256": _sha256_path(spec_path),
+        },
+        "milestones": [],
+    }
+    if spec.anchors.north_star:
+        north_star_path = resolve_anchor_path(spec_path, spec.anchors.north_star)
+        if not north_star_path.is_file():
+            raise CliError(
+                "invalid_spec",
+                f"chain North Star not found: {north_star_path}",
+            )
+        manifest["north_star"] = {
+            "path": _project_relative_path(root, north_star_path),
+            "sha256": _sha256_path(north_star_path),
+        }
+    for milestone in spec.milestones:
+        record = records_by_label.get(milestone.label)
+        if not record:
+            raise CliError(
+                "invalid_chain_state",
+                f"chain state missing completed record for {milestone.label!r}",
+            )
+        if record.get("status") != "done":
+            raise CliError(
+                "invalid_chain_state",
+                f"completed record {milestone.label!r} status must be 'done'",
+            )
+        plan = record.get("plan")
+        if not isinstance(plan, str) or not plan.strip():
+            raise CliError(
+                "invalid_chain_state",
+                f"completed record {milestone.label!r} missing plan name",
+            )
+        brief_path = (root / milestone.idea).resolve()
+        if not brief_path.is_file():
+            raise CliError(
+                "invalid_spec",
+                f"milestone {milestone.label!r} brief not found: {brief_path}",
+            )
+        proof_entries: list[dict[str, str]] = []
+        for proof in proof_map.get(milestone.label, []):
+            proof_path = (root / proof).resolve()
+            if not proof_path.is_file():
+                raise CliError(
+                    "invalid_args",
+                    f"proof artifact for milestone {milestone.label!r} not found: {proof_path}",
+                )
+            proof_entries.append(
+                {
+                    "path": _project_relative_path(root, proof_path),
+                    "sha256": _sha256_path(proof_path),
+                }
+            )
+        if not proof_entries:
+            raise CliError(
+                "invalid_args",
+                f"proof map missing proof artifacts for milestone {milestone.label!r}",
+            )
+        milestone_entry: dict[str, Any] = {
+            "label": milestone.label,
+            "brief_path": _project_relative_path(root, brief_path),
+            "brief_sha256": _sha256_path(brief_path),
+            "status": "done",
+            "plan": plan,
+            "proof_artifacts": proof_entries,
+        }
+        if spec.merge_policy == "review":
+            pr_number = record.get("pr_number")
+            pr_state = record.get("pr_state")
+            if not isinstance(pr_number, int) or pr_state != "merged":
+                raise CliError(
+                    "invalid_chain_state",
+                    f"completed record {milestone.label!r} missing merged PR evidence",
+                )
+            milestone_entry["pr_number"] = pr_number
+            milestone_entry["pr_state"] = "merged"
+            milestone_entry["pr_merge_sha"] = _record_pr_merge_sha(root, record)
+        manifest["milestones"].append(milestone_entry)
+    return manifest
+
+
+def _write_completion_manifest(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    proof_map_path: Path,
+    output_path: Path | None,
+) -> dict[str, Any]:
+    proof_map = _load_manifest_proof_map(proof_map_path)
+    manifest = _build_completion_manifest(
+        root=root,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        proof_map=proof_map,
+    )
+    out_path = output_path or spec_path.with_name("completion-manifest.json")
+    out_path = out_path.expanduser().resolve()
+    if out_path.parent != spec_path.parent.resolve():
+        raise CliError(
+            "invalid_args",
+            "completion manifest output must live beside the chain spec",
+        )
+    out_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    manifest_hash = _sha256_path(out_path)
+    metadata = dict(state.metadata)
+    metadata["completion_manifest"] = {
+        "path": _project_relative_path(root, out_path),
+        "sha256": manifest_hash,
+        "schema": "arnold.megaplan.chain_completion_manifest.v1",
+    }
+    state.metadata = metadata
+    chain_spec.save_chain_state(spec_path, state)
+    return {
+        "success": True,
+        "spec": str(spec_path),
+        "manifest": str(out_path),
+        "manifest_sha256": manifest_hash,
+        "milestone_count": len(spec.milestones),
+    }
+
+
 def _shadow_milestone_completion_verdict(
     root: Path,
     plan_name: str,
@@ -4034,6 +4272,34 @@ def build_chain_parser(subparsers: Any) -> None:
         help="Read chain plans from this project directory instead of discovering from CWD.",
     )
 
+    manifest_parser = chain_sub.add_parser(
+        "manifest", help="Write a content-addressed completion manifest"
+    )
+    manifest_parser.add_argument(
+        "--spec", required=True, help="Path to the completed chain spec YAML"
+    )
+    manifest_parser.add_argument(
+        "--project-dir",
+        required=False,
+        help="Read chain state from this project directory instead of discovering from CWD.",
+    )
+    manifest_parser.add_argument(
+        "--proof-map",
+        required=True,
+        help=(
+            "JSON mapping milestone labels to proof artifact paths. "
+            "May also be an object with a top-level `milestones` mapping."
+        ),
+    )
+    manifest_parser.add_argument(
+        "--output",
+        required=False,
+        help=(
+            "Output path for completion-manifest.json. Defaults beside chain.yaml; "
+            "custom paths must stay in the chain spec directory."
+        ),
+    )
+
     override_parser = chain_sub.add_parser(
         "override", help="Set runtime policy overrides without editing chain.yaml"
     )
@@ -4240,6 +4506,40 @@ def run_chain_cli(
             )
             + "\n"
         )
+        return 0
+
+    if action == "manifest":
+        project_root = root
+        project_dir_arg = getattr(args, "project_dir", None)
+        if isinstance(project_dir_arg, str) and project_dir_arg.strip():
+            project_root = Path(project_dir_arg).expanduser().resolve()
+        proof_map_arg = getattr(args, "proof_map", None)
+        if not isinstance(proof_map_arg, str) or not proof_map_arg.strip():
+            return _emit_error(CliError("invalid_args", "--proof-map is required"))
+        proof_map_path = Path(proof_map_arg).expanduser()
+        if not proof_map_path.is_absolute():
+            proof_map_path = (project_root / proof_map_path).resolve()
+        output_arg = getattr(args, "output", None)
+        output_path: Path | None = None
+        if isinstance(output_arg, str) and output_arg.strip():
+            output_path = Path(output_arg).expanduser()
+            if not output_path.is_absolute():
+                output_path = (project_root / output_path).resolve()
+        try:
+            spec = chain_spec.load_spec(spec_path)
+            chain_spec.validate_paths(spec, project_root, spec_path=spec_path)
+            chain_state = chain_spec.load_chain_state(spec_path)
+            payload = _write_completion_manifest(
+                root=project_root,
+                spec_path=spec_path,
+                spec=spec,
+                state=chain_state,
+                proof_map_path=proof_map_path,
+                output_path=output_path,
+            )
+        except CliError as exc:
+            return _emit_error(exc)
+        sys.stdout.write(json.dumps(payload, indent=2) + "\n")
         return 0
 
     if action not in (None, "start"):

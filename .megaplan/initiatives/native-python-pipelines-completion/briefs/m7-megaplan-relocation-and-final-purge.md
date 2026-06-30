@@ -104,7 +104,9 @@ Finish the migration by inventorying every remaining legacy import and flag, mov
 - Expected status change: substrate `enabled` by proving reviewers and runtime call sites agree on the canonical source/import surface.
 - Proof artifacts: final import inventory, `rg` results for legacy flags/imports, import-surface characterization tests, and CLI/run smoke tests.
 - Completion-manifest gate: before this chain can hand off to composition,
-  implement and produce
+  run `megaplan chain manifest --spec
+  .megaplan/initiatives/native-python-pipelines-completion/chain.yaml
+  --proof-map <reviewed-proof-map.json>` to produce
   `.megaplan/initiatives/native-python-pipelines-completion/completion-manifest.json`
   with schema `arnold.megaplan.chain_completion_manifest.v1`. The manifest must
   bind the current chain spec, `NORTHSTAR.md`, ordered milestone labels, every

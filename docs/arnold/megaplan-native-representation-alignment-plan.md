@@ -353,10 +353,11 @@ GPT-5.5 Codex high-reasoning launch-readiness review on 2026-07-01 judged
 these artifacts sufficient for the current planning/alignment phase and
 sufficient to launch only the first prerequisite chain
 (`native-python-pipelines-completion`) once the launch checkout has the
-load-bearing initiative/docs files committed in `HEAD` and clean. Completion
-manifest generation and validation may be implemented during the completion
-chain, but it may not defer past completion M7 and must block
-`native-composition-followup` launch if absent, stale, or incomplete.
+load-bearing initiative/docs files committed in `HEAD` and clean. The harness
+now exposes `megaplan chain manifest --spec ... --proof-map ...` to write the
+content-addressed prerequisite manifest. Completion M7 must run that command
+with reviewed proof artifacts, and `native-composition-followup` launch must
+fail if the manifest is absent, stale, or incomplete.
 
 ## Completion Standard
 
