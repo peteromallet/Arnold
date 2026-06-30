@@ -33,7 +33,7 @@ compatibility artifacts, not final semantic authority.
 | Machine-readable traceability | `docs/arnold/megaplan-native-representation-traceability.yaml` records 31 row IDs, owners, milestones, proof artifacts, false-pass guards, and negative invariants. | Satisfied for planning; validated by focused pytest. |
 | Fixed D1-D15 scenario manifest | `docs/arnold/megaplan-native-representation-scenarios.yaml` records 15 scenario IDs with required cases, topology requirements, row references, and false-pass guards. | Satisfied for planning; validated by focused pytest. |
 | Executable launch prerequisite gates | `arnold_pipelines/megaplan/chain/spec.py` supports `launch_preconditions` with `exists`, `contains_text`, `git_tracked`, and `chain_completed`; `chain verify` calls `validate_paths()`. | Satisfied. |
-| Release-gate hardening adjudicated | GPT-5.5 high-reasoning release-gate review found label/hash-only prerequisite completion too weak; the gate now requires no active prerequisite plan, cursor advanced past all milestones, `done` records, plan names, and merged PR evidence for review-merge prerequisite chains. | Strengthened; remaining future hardening is artifact/brief hashes or an authoritative completion manifest. |
+| Release-gate hardening adjudicated | GPT-5.5 high-reasoning release-gate reviews found label/hash-only prerequisite completion too weak; the gate now requires no active prerequisite plan, cursor advanced past all milestones, `done` records, plan names, merged PR evidence for review-merge prerequisite chains, and `require_manifest: true` content-addressed completion manifests before dependent chains launch. | Strengthened; richer archives/signing can defer, but manifest validation cannot defer past completion M7. |
 | Planning artifacts adjudicated | GPT-5.5 high-reasoning review on 2026-07-01 judged the traceability/scenario artifacts sufficient for the planning/alignment phase and sufficient to launch only the first prerequisite chain, assuming the launch checkout has those artifacts committed and clean. | Satisfied for planning; source-gate verify passes from committed alignment source. |
 | Clean-source preflight | `git_tracked` launch preconditions fail before `require_clean_base` can stash staged, modified, deleted, or untracked initiative/docs files away, and pass only when the gated source paths are committed in `HEAD` and clean. | Satisfied; current completion-chain verify passes after commit `afed21b4`. |
 | Composition cannot launch before completion | `megaplan chain verify --spec .megaplan/initiatives/native-composition-followup/chain.yaml` fails on missing completion chain state. | Satisfied; expected no-launch result. |
@@ -63,11 +63,15 @@ Observed result:
   canonical hashed state path and proves every current completion milestone is
   `done` against the current completion `chain.yaml` SHA-256, with a plan name
   and merged PR evidence for each milestone because the completion chain uses
-  `merge_policy: review`.
+  `merge_policy: review`, plus a content-addressed
+  `.megaplan/initiatives/native-python-pipelines-completion/completion-manifest.json`
+  that binds the current chain, North Star, milestone briefs, merged PR merge
+  SHAs, and declared proof artifacts by SHA-256.
 - Do not start the platform chain until completion and composition chain states
   both prove all current milestones `done` against their current `chain.yaml`
   SHA-256 values, with plan names and merged PR evidence for review-merge
-  prerequisite chains.
+  prerequisite chains, and each prerequisite chain has a matching
+  `completion-manifest.json`.
 - Do not satisfy those prerequisites with legacy `chain_state.json`, summary
   `verified_count`, stale state, active prerequisite cursors, `finalized`
   records, missing plan names, missing merged PR evidence, or prose claims.
@@ -76,7 +80,6 @@ Observed result:
   listed in the alignment plan.
 - The completion chain may launch with the current planning artifacts only from
   a checkout where the initiative source and native-representation docs are
-  committed in `HEAD` and clean. Before composition launches after a
-  long/unattended interval, re-adjudicate whether prerequisite chain state must
-  also bind milestone brief/artifact hashes or an authoritative completion
-  manifest.
+  committed in `HEAD` and clean. It may create the first completion manifest
+  during M7, but composition launch must fail if that manifest is absent,
+  stale, or missing required proof artifacts.

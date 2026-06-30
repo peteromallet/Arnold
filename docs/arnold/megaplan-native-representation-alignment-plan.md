@@ -329,9 +329,16 @@ Codex GPT-5.5 high-reasoning release-gate review on 2026-07-01 found that
 plain label/hash completion was not release-hard enough. The gate now rejects
 unsupported failure-policy keys and requires prerequisite chains to have
 advanced past all milestones with `done` records, plan names, and merged PR
-evidence for review-merge chains. Remaining hardening before autonomous launch:
-decide whether prerequisite state should also record milestone brief hashes or
-a stronger authoritative completion manifest.
+evidence for review-merge chains. A follow-up GPT-5.5 high-reasoning
+adjudication on 2026-07-01 ruled that downstream chain launch also requires an
+authoritative completion manifest for each prerequisite chain. That manifest is
+content-addressed evidence, not prose: it must bind the prerequisite
+`chain.yaml`, `NORTHSTAR.md`, ordered milestone labels, milestone brief paths
+and SHA-256 hashes, completed plan names, merged PR evidence including merge
+SHA for review-merge chains, final milestone status, and declared proof
+artifact paths and SHA-256 hashes. The dependent `chain_completed`
+precondition must use `require_manifest: true` before
+`native-composition-followup` or `native-platform-followup` can launch.
 
 The row-by-row traceability matrix is now mirrored in
 `docs/arnold/megaplan-native-representation-traceability.yaml`, and the fixed
@@ -346,11 +353,10 @@ GPT-5.5 Codex high-reasoning launch-readiness review on 2026-07-01 judged
 these artifacts sufficient for the current planning/alignment phase and
 sufficient to launch only the first prerequisite chain
 (`native-python-pipelines-completion`) once the launch checkout has the
-load-bearing initiative/docs files committed in `HEAD` and clean. The
-brief/artifact hash or
-authoritative completion-manifest question can defer past the first chain
-launch, but should be treated as a pre-composition hardening decision if the
-dependent chains will run unattended or after a long delay.
+load-bearing initiative/docs files committed in `HEAD` and clean. Completion
+manifest generation and validation may be implemented during the completion
+chain, but it may not defer past completion M7 and must block
+`native-composition-followup` launch if absent, stale, or incomplete.
 
 ## Completion Standard
 
@@ -365,6 +371,11 @@ The alignment work is done only when:
 - no row is `missing`;
 - every milestone brief has a `Native Representation Alignment` section and has
   updated the matrix rows it owns;
+- prerequisite chain completion for `native-composition-followup` and
+  `native-platform-followup` is proven by the canonical chain state plus a
+  content-addressed `completion-manifest.json` for each prerequisite chain,
+  including current chain/North Star/brief/proof artifact hashes and merged PR
+  evidence;
 - high-abstraction reviewers agree the three-epic sequence converges on the
   report, not merely on a cleaner graph/manifest wrapper;
 - detail reviewers agree the major hidden-handler behaviors have either been

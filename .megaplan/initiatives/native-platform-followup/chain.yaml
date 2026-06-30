@@ -14,9 +14,11 @@ launch_preconditions:
   - name: native python completion chain completed
     kind: chain_completed
     chain: .megaplan/initiatives/native-python-pipelines-completion/chain.yaml
+    require_manifest: true
   - name: native composition chain completed
     kind: chain_completed
     chain: .megaplan/initiatives/native-composition-followup/chain.yaml
+    require_manifest: true
   - name: native representation end-state anchor exists
     path: docs/arnold/megaplan-native-representation-report.md
     check:
@@ -58,6 +60,9 @@ launch_preconditions:
     check:
       kind: contains_text
       text: "Megaplan composition conformance"
+  - name: composition conformance report is committed and clean
+    kind: git_tracked
+    path: docs/arnold/megaplan-composition-conformance-report.md
 
 milestones:
   - label: m1-side-effect-reconcile-and-idempotency

@@ -183,12 +183,13 @@ class LaunchPreconditionSpec:
     chain: str | None = None
     check: str = "exists"
     text: str | None = None
+    require_manifest: bool = False
 
     @classmethod
     def from_yaml(cls, value: Any, index: int) -> "LaunchPreconditionSpec":
         if not isinstance(value, dict):
             raise CliError("invalid_spec", f"launch_preconditions[{index}] must be a mapping")
-        allowed = {"name", "kind", "path", "chain", "check", "text"}
+        allowed = {"name", "kind", "path", "chain", "check", "text", "require_manifest"}
         unknown = sorted(set(value) - allowed)
         if unknown:
             raise CliError(
@@ -223,11 +224,18 @@ class LaunchPreconditionSpec:
                     "invalid_spec",
                     f"launch_preconditions[{index}] chain_completed does not support check {check!r}",
                 )
+            require_manifest = value.get("require_manifest", False)
+            if not isinstance(require_manifest, bool):
+                raise CliError(
+                    "invalid_spec",
+                    f"launch_preconditions[{index}].require_manifest must be a boolean",
+                )
             return cls(
                 name=name.strip(),
                 kind=kind,
                 chain=chain.strip(),
                 check="chain_completed",
+                require_manifest=require_manifest,
             )
 
         if kind == "git_tracked":
@@ -1270,6 +1278,270 @@ def _validate_completed_record_evidence(
             )
 
 
+def _sha256_file(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"unable to hash launch prerequisite file {path}: {exc}",
+        ) from exc
+
+
+def _require_manifest_string(
+    obj: dict[str, Any],
+    key: str,
+    *,
+    manifest_path: Path,
+    label: str,
+    dependent_spec_path: Path,
+) -> str:
+    value = obj.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {dependent_spec_path}: completion manifest {manifest_path} missing string field {key!r}",
+        )
+    return value
+
+
+def _validate_manifest_file_hash(
+    manifest_entry: dict[str, Any],
+    *,
+    path_key: str,
+    hash_key: str,
+    root: Path,
+    manifest_path: Path,
+    label: str,
+    dependent_spec_path: Path,
+) -> Path:
+    rel_path = _require_manifest_string(
+        manifest_entry,
+        path_key,
+        manifest_path=manifest_path,
+        label=label,
+        dependent_spec_path=dependent_spec_path,
+    )
+    expected_hash = _require_manifest_string(
+        manifest_entry,
+        hash_key,
+        manifest_path=manifest_path,
+        label=label,
+        dependent_spec_path=dependent_spec_path,
+    )
+    target = _resolve_launch_precondition_path(rel_path, root)
+    _require_inside_root(target, root, label)
+    if not target.is_file():
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {dependent_spec_path}: completion manifest file missing at {target}",
+        )
+    actual_hash = _sha256_file(target)
+    if actual_hash != expected_hash:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {dependent_spec_path}: completion manifest hash mismatch for {rel_path}",
+        )
+    return target
+
+
+def _validate_completion_manifest(
+    *,
+    precondition: LaunchPreconditionSpec,
+    root: Path,
+    spec_path: Path,
+    label: str,
+    chain_path: Path,
+    prereq_spec: ChainSpec,
+    prereq_state: ChainState,
+    records_by_label: dict[str, dict[str, Any]],
+) -> None:
+    manifest_path = chain_path.with_name("completion-manifest.json")
+    if not manifest_path.is_file():
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: prerequisite completion manifest missing at {manifest_path}",
+        )
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest is invalid JSON: {exc}",
+        ) from exc
+    if not isinstance(raw, dict):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest must be an object",
+        )
+    schema = raw.get("schema")
+    if schema != "arnold.megaplan.chain_completion_manifest.v1":
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest has unsupported schema {schema!r}",
+        )
+    chain_entry = raw.get("chain")
+    if not isinstance(chain_entry, dict):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest missing chain object",
+        )
+    manifest_chain_path = _require_manifest_string(
+        chain_entry,
+        "path",
+        manifest_path=manifest_path,
+        label=label,
+        dependent_spec_path=spec_path,
+    )
+    expected_chain_rel = _pathspec_for_git(chain_path, root)
+    if manifest_chain_path != expected_chain_rel:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest chain path mismatch; expected {expected_chain_rel}, got {manifest_chain_path!r}",
+        )
+    manifest_chain_hash = _require_manifest_string(
+        chain_entry,
+        "sha256",
+        manifest_path=manifest_path,
+        label=label,
+        dependent_spec_path=spec_path,
+    )
+    actual_chain_hash = _sha256_file(chain_path)
+    if manifest_chain_hash != actual_chain_hash:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest chain hash mismatch for {manifest_chain_path}",
+        )
+    if prereq_spec.anchors.north_star:
+        north_star_entry = raw.get("north_star")
+        if not isinstance(north_star_entry, dict):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: completion manifest missing north_star object",
+            )
+        north_star_path = resolve_anchor_path(chain_path, prereq_spec.anchors.north_star)
+        manifest_north_star_path = _require_manifest_string(
+            north_star_entry,
+            "path",
+            manifest_path=manifest_path,
+            label=label,
+            dependent_spec_path=spec_path,
+        )
+        expected_north_star_rel = _pathspec_for_git(north_star_path, root)
+        if manifest_north_star_path != expected_north_star_rel:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: completion manifest North Star path mismatch; expected {expected_north_star_rel}, got {manifest_north_star_path!r}",
+            )
+        _validate_manifest_file_hash(
+            north_star_entry,
+            path_key="path",
+            hash_key="sha256",
+            root=root,
+            manifest_path=manifest_path,
+            label=label,
+            dependent_spec_path=spec_path,
+        )
+    milestones = raw.get("milestones")
+    if not isinstance(milestones, list) or any(not isinstance(item, dict) for item in milestones):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest milestones must be a list of objects",
+        )
+    expected_labels = [milestone.label for milestone in prereq_spec.milestones]
+    manifest_labels = [item.get("label") for item in milestones]
+    if manifest_labels != expected_labels:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest milestone order mismatch; expected {expected_labels}, got {manifest_labels}",
+        )
+    seen_proofs: set[str] = set()
+    for manifest_milestone, spec_milestone in zip(milestones, prereq_spec.milestones):
+        record = records_by_label[spec_milestone.label]
+        manifest_brief_path = _require_manifest_string(
+            manifest_milestone,
+            "brief_path",
+            manifest_path=manifest_path,
+            label=label,
+            dependent_spec_path=spec_path,
+        )
+        expected_brief_path = _pathspec_for_git(
+            _resolve_launch_precondition_path(spec_milestone.idea, root),
+            root,
+        )
+        if manifest_brief_path != expected_brief_path:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: completion manifest brief path mismatch for {spec_milestone.label!r}; expected {expected_brief_path}, got {manifest_brief_path!r}",
+            )
+        _validate_manifest_file_hash(
+            manifest_milestone,
+            path_key="brief_path",
+            hash_key="brief_sha256",
+            root=root,
+            manifest_path=manifest_path,
+            label=label,
+            dependent_spec_path=spec_path,
+        )
+        if manifest_milestone.get("status") != "done":
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: completion manifest milestone {spec_milestone.label!r} status must be 'done'",
+            )
+        if manifest_milestone.get("plan") != record.get("plan"):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: completion manifest plan mismatch for {spec_milestone.label!r}",
+            )
+        if prereq_spec.merge_policy == "review":
+            if manifest_milestone.get("pr_number") != record.get("pr_number") or manifest_milestone.get("pr_state") != "merged":
+                raise CliError(
+                    "launch_precondition_failed",
+                    f"{label} failed for {spec_path}: completion manifest merged PR evidence mismatch for {spec_milestone.label!r}",
+                )
+            pr_merge_sha = manifest_milestone.get("pr_merge_sha")
+            if not isinstance(pr_merge_sha, str) or not pr_merge_sha.strip():
+                raise CliError(
+                    "launch_precondition_failed",
+                    f"{label} failed for {spec_path}: completion manifest milestone {spec_milestone.label!r} missing pr_merge_sha",
+                )
+        proof_artifacts = manifest_milestone.get("proof_artifacts")
+        if not isinstance(proof_artifacts, list):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: completion manifest milestone {spec_milestone.label!r} proof_artifacts must be a list",
+            )
+        for proof in proof_artifacts:
+            if not isinstance(proof, dict):
+                raise CliError(
+                    "launch_precondition_failed",
+                    f"{label} failed for {spec_path}: completion manifest proof artifact for {spec_milestone.label!r} must be an object",
+                )
+            proof_path = _validate_manifest_file_hash(
+                proof,
+                path_key="path",
+                hash_key="sha256",
+                root=root,
+                manifest_path=manifest_path,
+                label=label,
+                dependent_spec_path=spec_path,
+            )
+            seen_proofs.add(_pathspec_for_git(proof_path, root))
+    if not seen_proofs:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest contains no proof artifacts",
+        )
+    metadata = prereq_state.metadata.get("completion_manifest")
+    if isinstance(metadata, dict):
+        recorded_hash = metadata.get("sha256")
+        if recorded_hash is not None and recorded_hash != _sha256_file(manifest_path):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: prerequisite state completion_manifest hash does not match {manifest_path}",
+            )
+
+
 def _validate_chain_completed_precondition(
     precondition: LaunchPreconditionSpec,
     root: Path,
@@ -1343,6 +1615,17 @@ def _validate_chain_completed_precondition(
             prerequisite_spec=prereq_spec,
             precondition_label=label,
             dependent_spec_path=spec_path,
+        )
+    if precondition.require_manifest:
+        _validate_completion_manifest(
+            precondition=precondition,
+            root=root,
+            spec_path=spec_path,
+            label=label,
+            chain_path=chain_path,
+            prereq_spec=prereq_spec,
+            prereq_state=prereq_state,
+            records_by_label=records_by_label,
         )
 
 

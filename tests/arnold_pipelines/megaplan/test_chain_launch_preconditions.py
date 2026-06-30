@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import subprocess
 from pathlib import Path
 
@@ -29,6 +31,10 @@ def _git(root: Path, *args: str) -> None:
 def _commit_all(root: Path, message: str = "test") -> None:
     _git(root, "add", ".")
     _git(root, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", message)
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def test_launch_preconditions_reject_unknown_keys() -> None:
@@ -480,3 +486,215 @@ milestones:
     )
 
     validate_paths(spec, tmp_path, spec_path=dependent_path)
+
+
+def test_chain_completed_require_manifest_must_be_boolean() -> None:
+    with pytest.raises(CliError, match="require_manifest must be a boolean"):
+        ChainSpec.from_dict(
+            {
+                "launch_preconditions": [
+                    {
+                        "name": "completion chain complete",
+                        "kind": "chain_completed",
+                        "chain": "chain.yaml",
+                        "require_manifest": "yes",
+                    }
+                ],
+                "milestones": [],
+            }
+        )
+
+
+def test_chain_completed_require_manifest_fails_when_manifest_missing(tmp_path: Path) -> None:
+    prereq_path = _write_chain(
+        tmp_path,
+        """
+milestones:
+  - label: m1
+    idea: m1.md
+""",
+    )
+    (tmp_path / "m1.md").write_text("# M1\n", encoding="utf-8")
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[{"label": "m1", "status": "done", "plan": "plan-m1"}],
+        ),
+    )
+    dependent_path = tmp_path / "dependent.yaml"
+    dependent_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "completion chain complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                    "require_manifest": True,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    with pytest.raises(CliError, match="completion manifest missing"):
+        validate_paths(spec, tmp_path, spec_path=dependent_path)
+
+
+def _write_completion_manifest(
+    root: Path,
+    chain_path: Path,
+    *,
+    plan: str = "plan-m1",
+    brief_sha256: str | None = None,
+    proof_sha256: str | None = None,
+) -> None:
+    proof_path = root / "proof.md"
+    if not proof_path.exists():
+        proof_path.write_text("# Proof\n", encoding="utf-8")
+    brief_path = root / "m1.md"
+    manifest = {
+        "schema": "arnold.megaplan.chain_completion_manifest.v1",
+        "chain": {
+            "path": str(chain_path.relative_to(root)),
+            "sha256": _sha256(chain_path),
+        },
+        "milestones": [
+            {
+                "label": "m1",
+                "brief_path": "m1.md",
+                "brief_sha256": brief_sha256 or _sha256(brief_path),
+                "status": "done",
+                "plan": plan,
+                "proof_artifacts": [
+                    {
+                        "path": "proof.md",
+                        "sha256": proof_sha256 or _sha256(proof_path),
+                    }
+                ],
+            }
+        ],
+    }
+    chain_path.with_name("completion-manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_chain_completed_require_manifest_passes_with_matching_hashes(tmp_path: Path) -> None:
+    prereq_path = _write_chain(
+        tmp_path,
+        """
+milestones:
+  - label: m1
+    idea: m1.md
+""",
+    )
+    (tmp_path / "m1.md").write_text("# M1\n", encoding="utf-8")
+    _write_completion_manifest(tmp_path, prereq_path)
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[{"label": "m1", "status": "done", "plan": "plan-m1"}],
+        ),
+    )
+    dependent_path = tmp_path / "dependent.yaml"
+    dependent_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "completion chain complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                    "require_manifest": True,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    validate_paths(spec, tmp_path, spec_path=dependent_path)
+
+
+def test_chain_completed_require_manifest_rejects_stale_brief_hash(tmp_path: Path) -> None:
+    prereq_path = _write_chain(
+        tmp_path,
+        """
+milestones:
+  - label: m1
+    idea: m1.md
+""",
+    )
+    brief_path = tmp_path / "m1.md"
+    brief_path.write_text("# M1\n", encoding="utf-8")
+    _write_completion_manifest(tmp_path, prereq_path)
+    brief_path.write_text("# M1 changed\n", encoding="utf-8")
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[{"label": "m1", "status": "done", "plan": "plan-m1"}],
+        ),
+    )
+    dependent_path = tmp_path / "dependent.yaml"
+    dependent_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "completion chain complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                    "require_manifest": True,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    with pytest.raises(CliError, match="hash mismatch for m1.md"):
+        validate_paths(spec, tmp_path, spec_path=dependent_path)
+
+
+def test_chain_completed_require_manifest_rejects_stale_proof_hash(tmp_path: Path) -> None:
+    prereq_path = _write_chain(
+        tmp_path,
+        """
+milestones:
+  - label: m1
+    idea: m1.md
+""",
+    )
+    (tmp_path / "m1.md").write_text("# M1\n", encoding="utf-8")
+    proof_path = tmp_path / "proof.md"
+    proof_path.write_text("# Proof\n", encoding="utf-8")
+    _write_completion_manifest(tmp_path, prereq_path)
+    proof_path.write_text("# Proof changed\n", encoding="utf-8")
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[{"label": "m1", "status": "done", "plan": "plan-m1"}],
+        ),
+    )
+    dependent_path = tmp_path / "dependent.yaml"
+    dependent_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "completion chain complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                    "require_manifest": True,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+
+    with pytest.raises(CliError, match="hash mismatch for proof.md"):
+        validate_paths(spec, tmp_path, spec_path=dependent_path)
