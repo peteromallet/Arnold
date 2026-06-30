@@ -1,0 +1,77 @@
+base_branch: native-python-working-tree
+
+anchors:
+  north_star: NORTHSTAR.md
+
+# Epic: Native Platform Follow-Up
+# Prerequisites:
+# - .megaplan/briefs/native-python-pipelines-completion/chain.yaml complete
+# - .megaplan/briefs/native-composition-followup/chain.yaml complete
+# Intent: add production platform, security, sharing/versioning, side-effect
+# safety, and fleet supervision around the native composition primitive.
+
+milestones:
+  - label: m1-side-effect-reconcile-and-idempotency
+    idea: .megaplan/briefs/native-platform-followup/m1-side-effect-reconcile-and-idempotency.md
+    profile: partnered-5
+    robustness: extreme
+    depth: max
+
+  - label: m2-security-broker-and-approval-gates
+    idea: .megaplan/briefs/native-platform-followup/m2-security-broker-and-approval-gates.md
+    profile: partnered-5
+    robustness: extreme
+    depth: max
+    depends_on: [m1-side-effect-reconcile-and-idempotency]
+
+  - label: m3-shared-library-packs-and-versioning
+    idea: .megaplan/briefs/native-platform-followup/m3-shared-library-packs-and-versioning.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on: [m1-side-effect-reconcile-and-idempotency]
+
+  - label: m4-durable-substrate-and-checkpoint-backend
+    idea: .megaplan/briefs/native-platform-followup/m4-durable-substrate-and-checkpoint-backend.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on:
+      [
+        m1-side-effect-reconcile-and-idempotency,
+        m2-security-broker-and-approval-gates,
+        m3-shared-library-packs-and-versioning,
+      ]
+
+  - label: m5-worker-fleet-supervision-and-cancellation
+    idea: .megaplan/briefs/native-platform-followup/m5-worker-fleet-supervision-and-cancellation.md
+    profile: partnered-5
+    robustness: extreme
+    depth: max
+    depends_on: [m4-durable-substrate-and-checkpoint-backend]
+
+  - label: m6-platform-docs-conformance-and-rollout
+    idea: .megaplan/briefs/native-platform-followup/m6-platform-docs-conformance-and-rollout.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on: [m5-worker-fleet-supervision-and-cancellation]
+
+on_failure:
+  retry_same_milestone: once
+  then: escalate_with_artifacts
+  abort: stop_chain
+
+on_escalate:
+  preserve_worktree: true
+  require_status_summary: true
+  abort: stop_chain
+
+merge_policy: review
+
+driver:
+  auto_approve: false
+  max_iterations: 80
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0

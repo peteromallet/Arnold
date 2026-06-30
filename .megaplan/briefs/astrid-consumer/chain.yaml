@@ -16,6 +16,9 @@
 # .megaplan/briefs/astrid-consumer/. NB: not yet committed — commit onto arnold-generalized-pipeline
 # (after step-io + migration finalize) before running.
 
+anchors:
+  north_star: NORTHSTAR.md
+
 base_branch: arnold-generalized-pipeline
 
 # NB: top-level `defaults:` is NOT a valid chain-spec key (parser rejects it). Per-milestone

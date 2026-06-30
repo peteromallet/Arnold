@@ -15,6 +15,9 @@
 # behavior-preserving + green-suite-gated and the new path is flag-off. Prefer running the chain from a
 # separate known-good engine checkout against this worktree.
 
+anchors:
+  north_star: NORTHSTAR.md
+
 base_branch: shannon-stream-epic   # fresh branch off main holding the committed briefs+doc; milestones merge here, off main, for a clean reviewable diff.
 
 milestones:

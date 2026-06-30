@@ -1,0 +1,79 @@
+base_branch: native-python-working-tree
+
+anchors:
+  north_star: NORTHSTAR.md
+
+# Epic: Native Composition Follow-Up
+# Prerequisite: .megaplan/briefs/native-python-pipelines-completion/chain.yaml complete.
+# Intent: evolve the completed native-first runtime into a true compositional
+# workflow layer. M0 defines the contract. M1 migrates canonical Megaplan first
+# under that contract so the abstraction is validated against the hardest real
+# workflow without letting Megaplan-specific hacks define the general model.
+
+milestones:
+  - label: m0-composition-contract-and-examples
+    idea: .megaplan/briefs/native-composition-followup/m0-composition-contract-and-examples.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+
+  - label: m1-megaplan-compositional-migration
+    idea: .megaplan/briefs/native-composition-followup/m1-megaplan-compositional-migration.md
+    profile: partnered-5
+    robustness: extreme
+    depth: max
+    depends_on: [m0-composition-contract-and-examples]
+
+  - label: m2-routing-validator-and-authoring-boundary
+    idea: .megaplan/briefs/native-composition-followup/m2-routing-validator-and-authoring-boundary.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on: [m0-composition-contract-and-examples, m1-megaplan-compositional-migration]
+
+  - label: m3-general-nested-workflow-invocation
+    idea: .megaplan/briefs/native-composition-followup/m3-general-nested-workflow-invocation.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on: [m0-composition-contract-and-examples, m1-megaplan-compositional-migration, m2-routing-validator-and-authoring-boundary]
+
+  - label: m4-tree-graph-trace-and-audit-skeleton
+    idea: .megaplan/briefs/native-composition-followup/m4-tree-graph-trace-and-audit-skeleton.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on: [m2-routing-validator-and-authoring-boundary, m3-general-nested-workflow-invocation]
+
+  - label: m5-composite-resume-and-start-from-path
+    idea: .megaplan/briefs/native-composition-followup/m5-composite-resume-and-start-from-path.md
+    profile: partnered-5
+    robustness: extreme
+    depth: max
+    depends_on: [m3-general-nested-workflow-invocation, m4-tree-graph-trace-and-audit-skeleton]
+
+  - label: m6-composition-docs-and-conformance
+    idea: .megaplan/briefs/native-composition-followup/m6-composition-docs-and-conformance.md
+    profile: partnered-5
+    robustness: thorough
+    depth: high
+    depends_on: [m5-composite-resume-and-start-from-path]
+
+on_failure:
+  retry_same_milestone: once
+  then: escalate_with_artifacts
+  abort: stop_chain
+
+on_escalate:
+  preserve_worktree: true
+  require_status_summary: true
+  abort: stop_chain
+
+merge_policy: review
+
+driver:
+  auto_approve: false
+  max_iterations: 80
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0

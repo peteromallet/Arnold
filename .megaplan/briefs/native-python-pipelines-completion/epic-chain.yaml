@@ -1,7 +1,7 @@
 base_branch: native-python-working-tree
 
 anchors:
-  north_star: ../../../briefs/native-python-pipelines-completion/NORTHSTAR.md
+  north_star: NORTHSTAR.md
 
 epics:
   - id: python-shaped-workflow-authoring

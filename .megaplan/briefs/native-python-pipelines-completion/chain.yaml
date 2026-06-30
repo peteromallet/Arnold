@@ -1,17 +1,17 @@
 base_branch: native-python-working-tree
 
 anchors:
-  north_star: ../../../briefs/native-python-pipelines-completion/NORTHSTAR.md
+  north_star: NORTHSTAR.md
 
 milestones:
   - label: m1-platform-contract
-    idea: ../../../briefs/native-python-pipelines-completion/m1-platform-contract.md
+    idea: .megaplan/briefs/native-python-pipelines-completion/m1-platform-contract.md
     profile: partnered-5
     robustness: thorough
     depth: high
 
   - label: m2-megaplan-subpipelines-layout
-    idea: ../../../briefs/native-python-pipelines-completion/m2-megaplan-subpipelines-layout.md
+    idea: .megaplan/briefs/native-python-pipelines-completion/m2-megaplan-subpipelines-layout.md
     profile: partnered-5
     robustness: thorough
     depth: high

@@ -1,3 +1,6 @@
+anchors:
+  north_star: NORTHSTAR.md
+
 base_branch: python-shaped-workflow-authoring-cleanup
 
 milestones:

@@ -1,3 +1,6 @@
+anchors:
+  north_star: NORTHSTAR.md
+
 base_branch: arnold-epic
 
 milestones:
