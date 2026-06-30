@@ -1,6 +1,12 @@
 [
   [
     "EmptyImage",
+    "batch_size",
+    "1",
+    1
+  ],
+  [
+    "EmptyImage",
     "color",
     "16711680",
     1
