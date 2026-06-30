@@ -79,11 +79,12 @@ Observed result:
 - Do not mark report conformance merely because a chain verifies or completes;
   final report conformance still requires the composition/platform M6 evidence
   listed in the alignment plan. The terminal platform closeout must create
-  `docs/arnold/megaplan-native-representation-conformance-report.md`, final
+  `docs/arnold/megaplan-native-representation-conformance-report.md`,
+  `docs/arnold/megaplan-native-representation-conformance.yaml`, final
   `proof-map.json`, and
   `.megaplan/initiatives/native-platform-followup/completion-manifest.json`;
-  the conformance report must map every traceability row to implemented or
-  explicitly deferred with proof.
+  the conformance report and machine-readable YAML ledger must map every
+  traceability row to implemented or explicitly deferred with proof.
 - The completion chain may launch with the current planning artifacts only from
   a checkout where the initiative source and native-representation docs are
   committed in `HEAD` and clean. Completion M7 must create the first completion

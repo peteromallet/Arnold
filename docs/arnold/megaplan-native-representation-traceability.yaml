@@ -37,6 +37,13 @@ final_conformance_gate:
     - proof-map.json
     - completion-manifest.json
     - docs/arnold/megaplan-native-representation-conformance-report.md
+    - docs/arnold/megaplan-native-representation-conformance.yaml
+  machine_readable_report:
+    path: docs/arnold/megaplan-native-representation-conformance.yaml
+    schema: arnold.megaplan_native_representation.conformance.v1
+    row_status_values: [implemented, deferred]
+    required_row_fields: [id, status, semantic_carrier, proof_artifacts]
+    deferred_required_row_fields: [downstream_owner, blocking_proof, reason]
   required_report_sections:
     - Structural conformance
     - Handler purity inventory
