@@ -96,11 +96,16 @@ def analyze_source(
     source: str,
     *,
     schema_provider: Any | None = None,
+    use_comfy_converter: bool = True,
     head_check_models: bool = False,
     head_client: Any | None = None,
     mode: PortAnalysisMode = "auto",
 ) -> PortReport:
-    loaded = load_port_source(source, schema_provider=schema_provider)
+    loaded = load_port_source(
+        source,
+        schema_provider=schema_provider,
+        use_comfy_converter=use_comfy_converter,
+    )
     workflow = loaded.workflow
     resolved_mode = _resolve_analysis_mode(mode, workflow)
 

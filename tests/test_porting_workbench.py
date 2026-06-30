@@ -581,6 +581,8 @@ def test_analyze_source_can_include_opt_in_model_head_checks(tmp_path: Path) -> 
 
     report = analyze_source(
         str(path),
+        schema_provider=FakeSchemaProvider({}),
+        use_comfy_converter=False,
         head_check_models=True,
         head_client=lambda url, timeout: {"status_code": 403, "url": url},
     )
