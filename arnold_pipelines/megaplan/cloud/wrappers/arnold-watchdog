@@ -1321,6 +1321,7 @@ chain_health_status() {
   CHAIN_HEALTH_ARTIFACT_PATH=""
   CHAIN_HEALTH_STATE_PATH=""
   CHAIN_HEALTH_LOG_PATH=""
+  CHAIN_HEALTH_LOG_MESSAGE=""
   eval "$(python3 - "$session" "$workspace" "$remote_spec_path" "$health" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
 import collections
 import datetime as dt
@@ -1329,6 +1330,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -1455,6 +1457,118 @@ def read_tail_lines(path: Path | None, *, max_lines: int) -> list[str]:
         return []
 
 
+def run_git(args: list[str], *, timeout: int = 15) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(workspace),
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def first_string(*values: object) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def milestone_base_sha_from_state_or_reason(plan_state: dict[str, object], reason: str) -> str:
+    meta = plan_state.get("meta")
+    chain_policy = meta.get("chain_policy") if isinstance(meta, dict) else None
+    if isinstance(chain_policy, dict):
+        value = first_string(chain_policy.get("milestone_base_sha"))
+        if value:
+            return value
+    value = first_string(chain_state.get("current_milestone_base_sha"))
+    if value:
+        return value
+    match = re.search(r"\bmilestone_base_sha\s+([0-9a-fA-F]{7,40})\b", reason)
+    if match:
+        return match.group(1)
+    return ""
+
+
+def completion_guard_advancement(base_sha: str, previous_snapshot: dict[str, object]) -> dict[str, object]:
+    if not base_sha:
+        return {"available": False, "reason": "missing_milestone_base_sha"}
+    inside = run_git(["rev-parse", "--is-inside-work-tree"])
+    if inside is None:
+        return {"available": False, "base_sha": base_sha, "reason": "git_unavailable"}
+    if inside.returncode != 0 or inside.stdout.strip().lower() != "true":
+        return {"available": False, "base_sha": base_sha, "reason": "not_git_worktree"}
+    head = run_git(["rev-parse", "HEAD"])
+    if head is None:
+        return {"available": False, "base_sha": base_sha, "reason": "git_head_unavailable"}
+    if head.returncode != 0:
+        return {
+            "available": False,
+            "base_sha": base_sha,
+            "reason": "git_head_failed",
+            "stderr": (head.stderr or "").strip()[-500:],
+        }
+    rev_list = run_git(["rev-list", "--count", f"{base_sha}..HEAD"])
+    if rev_list is None:
+        return {
+            "available": False,
+            "base_sha": base_sha,
+            "head": head.stdout.strip(),
+            "reason": "git_rev_list_unavailable",
+        }
+    if rev_list.returncode != 0:
+        return {
+            "available": False,
+            "base_sha": base_sha,
+            "head": head.stdout.strip(),
+            "reason": "git_rev_list_failed",
+            "stderr": (rev_list.stderr or "").strip()[-500:],
+        }
+    try:
+        ahead_count = int(rev_list.stdout.strip())
+    except ValueError:
+        return {
+            "available": False,
+            "base_sha": base_sha,
+            "head": head.stdout.strip(),
+            "reason": "git_rev_list_non_integer",
+            "stdout": (rev_list.stdout or "").strip()[-120:],
+        }
+    return {
+        "available": True,
+        "base_sha": base_sha,
+        "head": head.stdout.strip(),
+        "ahead_count": ahead_count,
+        "zero_advancement": ahead_count == 0,
+        "command": f"git rev-list --count {base_sha}..HEAD",
+    }
+
+
+def state_fallback_zero_advancement(previous_snapshot: dict[str, object]) -> dict[str, object]:
+    if not previous_snapshot:
+        return {
+            "used": True,
+            "zero_advancement": None,
+            "reason": "no_previous_snapshot_for_state_fallback",
+        }
+    previous_completed = int(previous_snapshot.get("completed_count") or -1)
+    previous_index = int(previous_snapshot.get("current_milestone_index") or -1)
+    zero = previous_completed == completed_count and previous_index == current_index
+    return {
+        "used": True,
+        "zero_advancement": zero,
+        "reason": "git_unavailable; falling back to state-file completed-count/current-index",
+        "previous_completed_count": previous_completed,
+        "current_completed_count": completed_count,
+        "previous_milestone_index": previous_index,
+        "current_milestone_index": current_index,
+    }
+
+
 artifact_path = repair_data_dir / f"{safe_session_name(session)}.chain-health.json"
 snapshot_path = marker_dir / f"{safe_session_name(session)}.chain-health.progress.json"
 marker_dir.mkdir(parents=True, exist_ok=True)
@@ -1473,7 +1587,10 @@ completed = chain_state.get("completed")
 completed_list = completed if isinstance(completed, list) else []
 completed_count = len(completed_list)
 
-events_path = workspace / ".megaplan" / "plans" / current_plan_name / "events.ndjson" if current_plan_name else None
+plan_dir = workspace / ".megaplan" / "plans" / current_plan_name if current_plan_name else None
+plan_state_path = plan_dir / "state.json" if plan_dir is not None else None
+plan_state = load_json(plan_state_path) if plan_state_path is not None else {}
+events_path = plan_dir / "events.ndjson" if plan_dir is not None else None
 events_exists = events_path is not None and events_path.exists()
 events_mtime = events_path.stat().st_mtime if events_exists else 0.0
 events_size = events_path.stat().st_size if events_exists else 0
@@ -1536,6 +1653,7 @@ if skip_detection:
     emit("CHAIN_HEALTH_ARTIFACT_PATH", "")
     emit("CHAIN_HEALTH_STATE_PATH", str(chain_state_path) if chain_state_path is not None else "")
     emit("CHAIN_HEALTH_LOG_PATH", str(chain_log_path) if chain_log_path is not None else "")
+    emit("CHAIN_HEALTH_LOG_MESSAGE", "")
     raise SystemExit(0)
 
 merged_counts: collections.Counter[str] = collections.Counter()
@@ -1579,6 +1697,8 @@ completion_guard = {
     "repeat_count": 0,
 }
 details: dict[str, object] = {}
+chain_health_log_message = ""
+completion_guard_repair_eligible = False
 
 cycle_milestone = next(
     (
@@ -1626,25 +1746,67 @@ if status == "ok" and guard_counts:
             "plan repair loop will not fix a chain-driver completion pathology"
         )
         details = {"completion_guard_repeats": guard_repeat_count}
-if status == "ok" and health == "stopped" and last_state in STOPPED_COMPLETION_GUARD_STATES and guard_counts:
-    guard_milestone, guard_repeat_count = max(guard_counts.items(), key=lambda item: item[1])
-    status = "chain_completion_guard"
-    issue_kind = "chain_completion_guard"
-    recurring_lines = [guard_examples.get(guard_milestone, "")]
-    completion_guard = {
-        "milestone": guard_milestone,
-        "reason": guard_reasons.get(guard_milestone, ""),
-        "repeat_count": guard_repeat_count,
-    }
-    summary = (
-        f"stopped chain in {last_state} after completion guard rejected {guard_milestone}; "
-        "route to chain-driver completion handling"
-    )
+
+if status in {"chain_cycle", "chain_completion_guard_rejections"}:
+    guard_milestone = str(completion_guard.get("milestone") or "")
+    guard_reason = str(completion_guard.get("reason") or "")
+    guard_repeat_count = int(completion_guard.get("repeat_count") or 0)
+    base_sha = milestone_base_sha_from_state_or_reason(plan_state, guard_reason)
+    advancement_check = completion_guard_advancement(base_sha, previous)
+    fallback_check: dict[str, object] = {"used": False}
+    zero_advancement = False
+    if advancement_check.get("available") is True:
+        zero_advancement = advancement_check.get("zero_advancement") is True
+    else:
+        fallback_check = state_fallback_zero_advancement(previous)
+        chain_health_log_message = (
+            "completion guard git advancement check unavailable "
+            f"session={session} base={base_sha or 'unknown'} reason={advancement_check.get('reason')}; "
+            "falling back to state-file completed-count/current-index"
+        )
+        zero_advancement = fallback_check.get("zero_advancement") is True
     details = {
-        "completion_guard_repeats": guard_repeat_count,
-        "stopped_completion_guard": True,
+        **details,
+        "completion_guard_advancement": advancement_check,
+        "completion_guard_state_fallback": fallback_check,
     }
-if status == "ok" and last_state in NONTERMINAL_STATES and stuck_ticks >= STUCK_TICKS:
+    if zero_advancement:
+        status = "needs_human"
+        issue_kind = "plan_noop_completion_guard"
+        base_label = base_sha or "unknown"
+        summary = (
+            f"milestone {guard_milestone or 'unknown'} produces NO code changes vs base {base_label} "
+            f"across {guard_repeat_count} attempts "
+            "(git rev-list base..HEAD == 0); completion guard correctly blocks; "
+            "this is a PLAN decision: rework the milestone so its execute lands work, OR grant a typed no-op "
+            "completion waiver. Not auto-repairable."
+        )
+        details["plan_level_diagnosis"] = summary
+    elif advancement_check.get("available") is True:
+        # Code landed after the milestone base, so this is a repair-eligible
+        # completion-guard edge case (for example a stale base SHA), not a
+        # plan-level no-op. Return ok so launch_chain_tick continues into the
+        # existing repair/relaunch path.
+        completion_guard_repair_eligible = True
+        status = "ok"
+        issue_kind = ""
+        summary = ""
+        recurring_lines = []
+        details = {}
+    elif fallback_check.get("used") is True and fallback_check.get("zero_advancement") is False:
+        completion_guard_repair_eligible = True
+        status = "ok"
+        issue_kind = ""
+        summary = ""
+        recurring_lines = []
+        details = {}
+
+if (
+    status == "ok"
+    and not completion_guard_repair_eligible
+    and last_state in NONTERMINAL_STATES
+    and stuck_ticks >= STUCK_TICKS
+):
     status = "chain_stuck"
     issue_kind = "chain_stuck_nonterminal"
     recurring_lines = interesting_lines[-3:] if interesting_lines else log_lines[-3:]
@@ -1653,7 +1815,7 @@ if status == "ok" and last_state in NONTERMINAL_STATES and stuck_ticks >= STUCK_
         "treat as chain-layer sickness"
     )
     details = {"stuck_ticks": stuck_ticks}
-if status == "ok" and no_advance_ticks >= NO_ADVANCE_TICKS:
+if status == "ok" and not completion_guard_repair_eligible and no_advance_ticks >= NO_ADVANCE_TICKS:
     status = "chain_no_advance"
     issue_kind = "chain_no_advance"
     recurring_lines = interesting_lines[-3:] if interesting_lines else log_lines[-3:]
@@ -1745,6 +1907,7 @@ emit("CHAIN_HEALTH_SUMMARY", summary)
 emit("CHAIN_HEALTH_ARTIFACT_PATH", str(artifact_path) if status != "ok" else "")
 emit("CHAIN_HEALTH_STATE_PATH", str(chain_state_path) if chain_state_path is not None else "")
 emit("CHAIN_HEALTH_LOG_PATH", str(chain_log_path) if chain_log_path is not None else "")
+emit("CHAIN_HEALTH_LOG_MESSAGE", chain_health_log_message)
 PY
 )"
 }
@@ -3106,6 +3269,9 @@ launch_chain_tick() {
   fi
   if [[ "$run_kind" == "chain" ]]; then
     chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
+    if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
+      log "${CHAIN_HEALTH_LOG_MESSAGE}"
+    fi
     if [[ "${CHAIN_HEALTH_STATUS:-ok}" != "ok" ]]; then
       local chain_health_message
       chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain-level issue detected}"
