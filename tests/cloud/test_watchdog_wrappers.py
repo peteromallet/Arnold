@@ -3890,6 +3890,17 @@ def _write_chain_state(state_path: Path, state: dict) -> None:
     state_path.write_text(json.dumps(state), encoding="utf-8")
 
 
+def _init_git_repo(path: Path) -> str:
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "tests@example.invalid"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Watchdog Tests"], cwd=path, check=True)
+    (path / "README.md").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=path, check=True, capture_output=True, text=True)
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=path, text=True).strip()
+
+
 def test_chain_health_status_is_wired_into_launch_chain_tick() -> None:
     text = _wrapper("arnold-watchdog")
 
@@ -4008,7 +4019,7 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
     assert "Route to arnold_pipelines/megaplan/chain/" in artifact["why_chain_layer_issue"]
 
 
-def test_chain_health_status_detects_stopped_authority_divergence_completion_guard() -> None:
+def test_chain_health_status_leaves_one_off_completion_guard_repair_eligible() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"
     marker = tmp / "markers"
@@ -4039,13 +4050,115 @@ def test_chain_health_status_detects_stopped_authority_divergence_completion_gua
 
     payload = _run_chain_health(ws, marker, repair_dir, health="stopped")
 
-    assert payload["CHAIN_HEALTH_STATUS"] == "chain_completion_guard"
+    assert payload["CHAIN_HEALTH_STATUS"] == "ok"
+    assert payload["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
+def test_chain_health_status_escalates_recurring_completion_guard_with_zero_git_advancement() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    base_sha = _init_git_repo(ws)
+    plan_name = "sprint-1-safe-compiler-20260630-0033"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {
+            "current_state": "blocked",
+            "iteration": 3,
+            "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
+        },
+        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 0,
+            "current_plan_name": plan_name,
+            "last_state": "authority_divergence",
+            "pr_state": "",
+            "completed": [],
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        (
+            "[chain] completion guard blocked sprint-01-safe-compiler-foundation: "
+            f"no semantic diff from milestone_base_sha {base_sha} to local HEAD; "
+            "no typed no-op completion waiver found\n"
+        )
+        * 3,
+        encoding="utf-8",
+    )
+
+    payload = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="stopped",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_COMPLETION_GUARD_REPEATS": "3"},
+    )
+
+    assert payload["CHAIN_HEALTH_STATUS"] == "needs_human"
+    assert "produces NO code changes" in payload["CHAIN_HEALTH_SUMMARY"]
+    assert "Not auto-repairable" in payload["CHAIN_HEALTH_SUMMARY"]
     artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
-    assert artifact["issue_kind"] == "chain_completion_guard"
-    assert artifact["details"]["stopped_completion_guard"] is True
-    assert artifact["chain_state_summary"]["last_state"] == "authority_divergence"
-    assert "no semantic diff from milestone_base_sha" in artifact["completion_guard"]["reason"]
-    assert "## CHAIN HEALTH EVIDENCE" in artifact["evidence_markdown"]
+    assert artifact["issue_kind"] == "plan_noop_completion_guard"
+    assert artifact["completion_guard"]["repeat_count"] == 3
+    assert artifact["details"]["completion_guard_advancement"]["available"] is True
+    assert artifact["details"]["completion_guard_advancement"]["ahead_count"] == 0
+
+
+def test_chain_health_status_keeps_recurring_completion_guard_repair_eligible_when_git_advanced() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    base_sha = _init_git_repo(ws)
+    (ws / "compiler.py").write_text("print('work landed')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "compiler.py"], cwd=ws, check=True)
+    subprocess.run(["git", "commit", "-m", "land work"], cwd=ws, check=True, capture_output=True, text=True)
+    plan_name = "sprint-1-safe-compiler-20260630-0033"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {
+            "current_state": "blocked",
+            "iteration": 3,
+            "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
+        },
+        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 0,
+            "current_plan_name": plan_name,
+            "last_state": "authority_divergence",
+            "pr_state": "",
+            "completed": [],
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        (
+            "[chain] completion guard blocked sprint-01-safe-compiler-foundation: "
+            f"no semantic diff from milestone_base_sha {base_sha} to local HEAD; "
+            "no typed no-op completion waiver found\n"
+        )
+        * 3,
+        encoding="utf-8",
+    )
+
+    payload = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="stopped",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_COMPLETION_GUARD_REPEATS": "3"},
+    )
+
+    assert payload["CHAIN_HEALTH_STATUS"] == "ok"
+    assert payload["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
 
 
 def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
