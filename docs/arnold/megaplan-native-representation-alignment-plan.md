@@ -408,6 +408,9 @@ The alignment work is done only when:
   canonical_source`, `semantic_carrier: declared_policy`, or
   `semantic_carrier: audited_pure_phase_body`; deferred rows use
   `semantic_carrier: explicit_deferral`;
+- every implemented row includes `carrier_evidence` paths pointing at the
+  source, declared policy, or audited pure phase body that carries the
+  semantic, and the validator confirms those paths exist;
 - `python scripts/validate_native_representation_conformance.py --conformance
   docs/arnold/megaplan-native-representation-conformance.yaml` passes against
   the final YAML ledger.
