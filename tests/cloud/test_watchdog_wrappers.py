@@ -3544,6 +3544,9 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "send_discord_escalation" in text
     assert "## Incident Snapshot" in text
     assert "## RECURRENCE EVIDENCE" in text
+    assert "This is attempt " in text
+    assert "for the SAME problem (recurrence detected)." in text
+    assert "The symptom came back despite these prior fixes:" in text
     assert "primary failure signal(s)" in text
     assert "current run narrative (plan log tail when present)" in text
     assert "## Prior repair attempts" in text
@@ -3553,6 +3556,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "Do not just fix the one symptom that caused this stop" in text
     assert "Do NOT pick the likely fix" in text
     assert "Trace the actual mechanism end-to-end" in text
+    assert "Use the extra time in this root-cause attempt" in text
     assert "append it to the findings doc at $FINDINGS_DOC" in text
     assert "structural_pattern, other_instantiations, human_review_recommendation" in text
     assert "findings_doc_path, findings_doc_appended" in text
