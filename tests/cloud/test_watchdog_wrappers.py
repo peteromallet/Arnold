@@ -225,6 +225,8 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "## STATE MISMATCH DETECTED + CLEARED" in text
     assert "state mismatch detected + cleared" in text
     assert "repair_clear_stale_state_if_needed()" in text
+    assert 'if [[ "$INITIAL_HEALTH" == "alive" ]]' in text
+    assert "repair target already running; no dev-fix needed" in text
     assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
     assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
