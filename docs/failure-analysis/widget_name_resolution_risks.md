@@ -16,9 +16,9 @@ The fix must be tightening: accurate names may unlock edits, but unknown or unpr
 
 ### ACN_AdvancedControlNetApply
 
-Scenario: [image-sd3-image-generation-with-controlnet-19d221.json](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/tests/live_agentic_harness/scenarios/image-sd3-image-generation-with-controlnet-19d221.json:3)
+Scenario: [image-sd3-image-generation-with-controlnet-19d221.json](../../tests/live_agentic_harness/scenarios/image-sd3-image-generation-with-controlnet-19d221.json)
 
-Graph node: [external_workflows/corpus/19d221f074b42462.json](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/external_workflows/corpus/19d221f074b42462.json:1465)
+Graph node: `external_workflows/corpus/19d221f074b42462.json:1465`
 
 Raw facts from the graph:
 
@@ -50,13 +50,13 @@ set_node_field node 60 strength=0.5
   fails: unknown_node_field ACN_AdvancedControlNetApply does not expose field 'strength'
 ```
 
-Why `strength` is missing: this repo's selected object-info cache entry is a stub, [ComfyUI-Hotshot@stub.json](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/cache/object_info/ComfyUI-Hotshot@stub.json:2). It has required sockets `positive`, `negative`, `control_net`, `image`; optional rows `latent_kf_override`, `mask_optional`, `timestep_kf`, `weights_override`; and no `strength`. Worse, it classifies `mask_optional` as `FLOAT` even though the LiteGraph input row says `MASK`. This is not a simple "link-only type filtered out" case. It is incomplete or wrong stub data, so a fix cannot infer `strength` from object-info. It needs a higher-confidence source, class-specific schema, or no name.
+Why `strength` is missing: this repo's selected object-info cache entry is a stub, [ComfyUI-Hotshot@stub.json](../../vibecomfy/porting/cache/object_info/ComfyUI-Hotshot@stub.json). It has required sockets `positive`, `negative`, `control_net`, `image`; optional rows `latent_kf_override`, `mask_optional`, `timestep_kf`, `weights_override`; and no `strength`. Worse, it classifies `mask_optional` as `FLOAT` even though the LiteGraph input row says `MASK`. This is not a simple "link-only type filtered out" case. It is incomplete or wrong stub data, so a fix cannot infer `strength` from object-info. It needs a higher-confidence source, class-specific schema, or no name.
 
 ### SVD_img2vid_Conditioning
 
-Scenario: [video-svd-image-to-video-generation-fc240f.json](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/tests/live_agentic_harness/scenarios/video-svd-image-to-video-generation-fc240f.json:3)
+Scenario: [video-svd-image-to-video-generation-fc240f.json](../../tests/live_agentic_harness/scenarios/video-svd-image-to-video-generation-fc240f.json)
 
-Graph node: [external_workflows/corpus/fc240f1c4331a5e5.json](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/external_workflows/corpus/fc240f1c4331a5e5.json:630)
+Graph node: `external_workflows/corpus/fc240f1c4331a5e5.json:630`
 
 Raw facts from the current graph:
 
@@ -92,7 +92,7 @@ This differs from the shared brief: in the checked-in scenario graph, `motion_bu
 
 ### Porting widget schema facade
 
-[vibecomfy/porting/widgets/schema.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widgets/schema.py:12)
+[vibecomfy/porting/widgets/schema.py](../../vibecomfy/porting/widgets/schema.py)
 
 - `effective_widget_names_for_class` returns curated `WIDGET_SCHEMA`, or raw `object_info_widget_order` when `allow_object_info_fallback=True`.
 - `ui_widget_value_names_for_class` returns curated `WIDGET_SCHEMA`, or compact `object_info_widget_value_order` when fallback is allowed.
@@ -101,107 +101,107 @@ This differs from the shared brief: in the checked-in scenario graph, `motion_bu
 
 ### Object-info extraction and filtering
 
-[vibecomfy/porting/object_info/consume.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/object_info/consume.py:29)
+[vibecomfy/porting/object_info/consume.py](../../vibecomfy/porting/object_info/consume.py)
 
 - `_WIDGET_LIKE_TYPES` removes link-only sockets; `_LITERAL_WIDGET_TYPES` keeps scalar widgets.
-- `object_info_widget_order` returns reconciled raw `object_info_widget_order`, including `None` UI-only slots and link inputs, from [line 461](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/object_info/consume.py:461).
-- `object_info_widget_value_order` compacts to literal widget names only at [line 511](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/object_info/consume.py:511).
-- `_input_spec_is_widget_value` treats `FLOAT`, `INT`, `STRING`, enum/list choices, etc. as widget values and rejects socket-like uppercase types at [line 537](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/object_info/consume.py:537).
-- `_iter_input_specs` ignores `hidden` and uses `input_order_all` when present, otherwise sorted names at [line 710](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/object_info/consume.py:710).
+- `object_info_widget_order` returns reconciled raw `object_info_widget_order`, including `None` UI-only slots and link inputs, from [line 461](../../vibecomfy/porting/object_info/consume.py).
+- `object_info_widget_value_order` compacts to literal widget names only at [line 511](../../vibecomfy/porting/object_info/consume.py).
+- `_input_spec_is_widget_value` treats `FLOAT`, `INT`, `STRING`, enum/list choices, etc. as widget values and rejects socket-like uppercase types at [line 537](../../vibecomfy/porting/object_info/consume.py).
+- `_iter_input_specs` ignores `hidden` and uses `input_order_all` when present, otherwise sorted names at [line 710](../../vibecomfy/porting/object_info/consume.py).
 - Change impact: adding `hidden` or changing sort/order changes schema, strict-ready, and emit behavior. Treating unknown uppercase custom types as widget values or link-only can either over-accept fake names or drop real widgets.
 
 ### Apply path
 
-[vibecomfy/porting/edit/apply_resolve_base.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/edit/apply_resolve_base.py:163)
+[vibecomfy/porting/edit/apply_resolve_base.py](../../vibecomfy/porting/edit/apply_resolve_base.py)
 
-- `_resolve_set_node_field` canonicalizes the requested field, checks raw input slots, then calls `_widget_index_for_field` at [line 207](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/edit/apply_resolve_base.py:207).
-- `_widget_index_for_field` in [apply_slots.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/edit/apply_slots.py:27) directly enumerates `ui_widget_value_names_for_class(..., allow_object_info_fallback=True)`.
-- `_widget_index_from_input_stubs` at [line 35](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/edit/apply_slots.py:35) only runs if the raw input slot's `widget.name` equals the requested field. The current ACN/SVD `_ui.inputs` rows do not have `widget` dicts, so this recovery does not help.
-- `_apply_set_node_field` writes to the resolved index and extends `widgets_values` with `None` up to that index at [apply_mutate.py:409](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/edit/apply_mutate.py:409).
+- `_resolve_set_node_field` canonicalizes the requested field, checks raw input slots, then calls `_widget_index_for_field` at [line 207](../../vibecomfy/porting/edit/apply_resolve_base.py).
+- `_widget_index_for_field` in [apply_slots.py](../../vibecomfy/porting/edit/apply_slots.py) directly enumerates `ui_widget_value_names_for_class(..., allow_object_info_fallback=True)`.
+- `_widget_index_from_input_stubs` at [line 35](../../vibecomfy/porting/edit/apply_slots.py) only runs if the raw input slot's `widget.name` equals the requested field. The current ACN/SVD `_ui.inputs` rows do not have `widget` dicts, so this recovery does not help.
+- `_apply_set_node_field` writes to the resolved index and extends `widgets_values` with `None` up to that index at [apply_mutate.py:409](../../vibecomfy/porting/edit/apply_mutate.py).
 - Change impact: more accurate names will immediately route model edits to different physical slots. That is desired only when the source is proven 1:1 with `widgets_values`. A wrong longer list is dangerous because `_write_widget_value` will grow `widgets_values`, creating shape overflow.
 
 ### Graph inspection and agent rendering
 
-[vibecomfy/porting/edit/projection.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/edit/projection.py:246)
+[vibecomfy/porting/edit/projection.py](../../vibecomfy/porting/edit/projection.py)
 
 - `_field_rows` labels each `widgets_values[index]` using `ui_widget_value_names_for_class`; if the list is short, it recovers from input stubs only when there are enough widget names.
 - This is why ACN can be shown as `mask_optional=0.6`, `timestep_kf=0`, `latent_kf_override=0.75`.
-- [emit_prepare.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/emit_prepare.py:351) renders Python-call kwargs for the agent. For `widget_N`, it calls `resolve_widget_key_with_provenance` using `metadata.input_aliases` or `_ui_widget_aliases`.
-- `_ui_widget_aliases` only reads `item["widget"]["name"]` from `_ui.inputs`, and returns `None` if alias count does not cover the highest `widget_N` key at [emit_constants.py:1062](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/emit_constants.py:1062).
-- `_translate_widget_for_key` delegates to `resolve_widget_key_with_provenance` at [emit_constants.py:855](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/emit_constants.py:855).
+- [emit_prepare.py](../../vibecomfy/porting/emit/emit_prepare.py) renders Python-call kwargs for the agent. For `widget_N`, it calls `resolve_widget_key_with_provenance` using `metadata.input_aliases` or `_ui_widget_aliases`.
+- `_ui_widget_aliases` only reads `item["widget"]["name"]` from `_ui.inputs`, and returns `None` if alias count does not cover the highest `widget_N` key at [emit_constants.py:1062](../../vibecomfy/porting/emit/emit_constants.py).
+- `_translate_widget_for_key` delegates to `resolve_widget_key_with_provenance` at [emit_constants.py:855](../../vibecomfy/porting/emit/emit_constants.py).
 - Change impact: if projection, Python rendering, and apply use different provenance ladders, the agent can be shown one field, lint another, and mutate a third. The fix must make these surfaces agree or explicitly mark unresolved positions as `widget_N`.
 
 ### Compile widget aliasing
 
-[vibecomfy/_compile/_widgets.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/_compile/_widgets.py:1)
+[vibecomfy/_compile/_widgets.py](../../vibecomfy/_compile/_widgets.py)
 
-- Compile layer intentionally excludes object-info fallback: comments at [lines 1-8](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/_compile/_widgets.py:1) say object-info fallback belongs to conversion/emission, not Layer 1.
-- `resolve_widget_name_with_provenance` precedence is per-node `input_aliases`, committed `WIDGET_SCHEMA`, semantic patches, schema provider, then unresolved `widget_N` at [line 760](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/_compile/_widgets.py:760).
-- `apply_positional_widget_aliases` rewrites `widget_N` keys in node inputs at [line 805](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/_compile/_widgets.py:805).
-- `_compile/_resolve.py` updates raw `_ui.widgets_values` after folding Primitive helper values by using its own `_widget_index_for_field`, which checks committed schema, `metadata.input_aliases`, then `_ui.inputs[].widget.name` at [line 350](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/_compile/_resolve.py:350).
+- Compile layer intentionally excludes object-info fallback: comments at [lines 1-8](../../vibecomfy/_compile/_widgets.py) say object-info fallback belongs to conversion/emission, not Layer 1.
+- `resolve_widget_name_with_provenance` precedence is per-node `input_aliases`, committed `WIDGET_SCHEMA`, semantic patches, schema provider, then unresolved `widget_N` at [line 760](../../vibecomfy/_compile/_widgets.py).
+- `apply_positional_widget_aliases` rewrites `widget_N` keys in node inputs at [line 805](../../vibecomfy/_compile/_widgets.py).
+- `_compile/_resolve.py` updates raw `_ui.widgets_values` after folding Primitive helper values by using its own `_widget_index_for_field`, which checks committed schema, `metadata.input_aliases`, then `_ui.inputs[].widget.name` at [line 350](../../vibecomfy/_compile/_resolve.py).
 - Change impact: if porting starts trusting object-info where compile does not, parity can pass/fail differently from runtime compile. If compile starts using object-info, it weakens a deliberate Layer 1 boundary.
 
 ### Porting widget aliases and parity
 
-[vibecomfy/porting/widgets/aliases.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widgets/aliases.py:55)
+[vibecomfy/porting/widgets/aliases.py](../../vibecomfy/porting/widgets/aliases.py)
 
-- Porting alias resolver includes object-info fallback, but `_object_info_position_is_safe` only allows an object-info index when there is no `None` before it at [line 108](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widgets/aliases.py:108).
-- `unresolved_widget_aliases` scans API prompt inputs for unresolved `widget_N` at [line 218](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widgets/aliases.py:218).
-- `widget_alias_suggestions` builds suggested schema entries and pads to observed widget count at [line 282](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widgets/aliases.py:282).
-- [parity.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/parity.py:63) canonicalizes `widget_N` keys. It can prefer caller-provided `class_widget_aliases`; otherwise it calls porting `resolve_widget_name_with_provenance` at [line 104](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/parity.py:104).
+- Porting alias resolver includes object-info fallback, but `_object_info_position_is_safe` only allows an object-info index when there is no `None` before it at [line 108](../../vibecomfy/porting/widgets/aliases.py).
+- `unresolved_widget_aliases` scans API prompt inputs for unresolved `widget_N` at [line 218](../../vibecomfy/porting/widgets/aliases.py).
+- `widget_alias_suggestions` builds suggested schema entries and pads to observed widget count at [line 282](../../vibecomfy/porting/widgets/aliases.py).
+- [parity.py](../../vibecomfy/porting/parity.py) canonicalizes `widget_N` keys. It can prefer caller-provided `class_widget_aliases`; otherwise it calls porting `resolve_widget_name_with_provenance` at [line 104](../../vibecomfy/porting/parity.py).
 - Change impact: overly broad alias resolution can mask a bad conversion by canonicalizing both original and generated graphs through the same wrong name. Parity should prefer independent schema-source aliases where available, not a candidate-derived map.
 
 ### strict_ready
 
-[vibecomfy/porting/strict_ready.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/strict_ready.py:150)
+[vibecomfy/porting/strict_ready.py](../../vibecomfy/porting/strict_ready.py)
 
-- `_schema_backed_widget_diagnostics` converts unresolved schema-backed `widget_N` aliases into `strict_ready_unresolved_widgets` errors at [line 319](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/strict_ready.py:319).
-- `_hidden_model_filename_diagnostics` lets a model filename remain under `widget_N` only if per-node `metadata.input_aliases` has a non-`None` alias for that index at [line 391](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/strict_ready.py:391).
-- `_class_widget_aliases` only trusts `node.metadata["input_aliases"]` at [line 413](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/strict_ready.py:413).
+- `_schema_backed_widget_diagnostics` converts unresolved schema-backed `widget_N` aliases into `strict_ready_unresolved_widgets` errors at [line 319](../../vibecomfy/porting/strict_ready.py).
+- `_hidden_model_filename_diagnostics` lets a model filename remain under `widget_N` only if per-node `metadata.input_aliases` has a non-`None` alias for that index at [line 391](../../vibecomfy/porting/strict_ready.py).
+- `_class_widget_aliases` only trusts `node.metadata["input_aliases"]` at [line 413](../../vibecomfy/porting/strict_ready.py).
 - Change impact: adding names can silence strict-ready unresolved-widget and hidden-model diagnostics. That is good only if the names are independently proven; it is gaming if a fix populates aliases from the same wrong map used to emit.
 
 ### emit/ui.py and widget_shape_fence
 
-[vibecomfy/porting/emit/ui.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/ui.py:675)
+[vibecomfy/porting/emit/ui.py](../../vibecomfy/porting/emit/ui.py)
 
 - `_widget_names_for_emission` intentionally uses raw `object_info_widget_order`, not compact value order, because `convert_ui_to_api` consumes serialized `widgets_values` positionally against raw object-info order with `None` slots.
-- `_full_widget_name_count` establishes the schema widget count for the widget-shape fence using committed schema, raw provider order, or provider schema at [line 806](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/ui.py:806).
-- `_build_widget_values` rebuilds `widgets_values` from node widgets/inputs and raw captured widget values at [line 844](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/ui.py:844).
-- `derive_widget_shape_evidence` computes `candidate_widget_count`, `schema_widget_count`, overflow, and explicit overflow at [line 1681](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/ui.py:1681).
-- `emit_ui_json` runs the fence pre-pass before emitting any nodes at [line 2049](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/ui.py:2049).
+- `_full_widget_name_count` establishes the schema widget count for the widget-shape fence using committed schema, raw provider order, or provider schema at [line 806](../../vibecomfy/porting/emit/ui.py).
+- `_build_widget_values` rebuilds `widgets_values` from node widgets/inputs and raw captured widget values at [line 844](../../vibecomfy/porting/emit/ui.py).
+- `derive_widget_shape_evidence` computes `candidate_widget_count`, `schema_widget_count`, overflow, and explicit overflow at [line 1681](../../vibecomfy/porting/emit/ui.py).
+- `emit_ui_json` runs the fence pre-pass before emitting any nodes at [line 2049](../../vibecomfy/porting/emit/ui.py).
 
-[vibecomfy/porting/widget_shape_fence.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widget_shape_fence.py:58)
+[vibecomfy/porting/widget_shape_fence.py](../../vibecomfy/porting/widget_shape_fence.py)
 
 - `decide_widget_shape` pins unchanged identity-matched raw UI, allows carefully bounded observed/static recovery, refuses explicit overflow, and refuses dynamic/widget-delta cases without full raw evidence.
-- `_static_refusal_reasons` marks overflow, schema-less dynamic widgets, low-confidence dynamic widgets, and dict-row widgets at [line 278](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widget_shape_fence.py:278).
-- `_has_full_raw_ui_payload` requires `id`, `type`, and `widgets_values` at [line 363](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/widget_shape_fence.py:363).
+- `_static_refusal_reasons` marks overflow, schema-less dynamic widgets, low-confidence dynamic widgets, and dict-row widgets at [line 278](../../vibecomfy/porting/widget_shape_fence.py).
+- `_has_full_raw_ui_payload` requires `id`, `type`, and `widgets_values` at [line 363](../../vibecomfy/porting/widget_shape_fence.py).
 - Change impact: a more accurate name list can make `candidate_widget_count` or `schema_widget_count` change. That can be a good tightening if it exposes real overflow, but it can mis-flag valid graphs if dynamic UI-only widgets are represented as missing schema names. It can also over-loosen if "no `_ui` means skip validation" is introduced.
 
 ### emit/signatures.py
 
-[vibecomfy/porting/emit/signatures.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/signatures.py:89)
+[vibecomfy/porting/emit/signatures.py](../../vibecomfy/porting/emit/signatures.py)
 
 - Signature rows are schema-provider input order, not `widgets_values` order.
-- `_build_input_signature_fields` iterates `schema.inputs.items()` at [line 206](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/signatures.py:206).
-- `ObjectInfoIndexSchemaProvider` orders schema inputs from object-info widget order via `_order_object_info_inputs` at [schema/provider.py:1112](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/schema/provider.py:1112).
+- `_build_input_signature_fields` iterates `schema.inputs.items()` at [line 206](../../vibecomfy/porting/emit/signatures.py).
+- `ObjectInfoIndexSchemaProvider` orders schema inputs from object-info widget order via `_order_object_info_inputs` at [schema/provider.py:1112](../../vibecomfy/schema/provider.py).
 - Change impact: if schema input order is changed to match compact widget values, agent node catalogs and compatibility displays change. This may help named parameter selection, but it must not imply link sockets are editable widgets.
 
 ### emit/subgraph.py
 
-[vibecomfy/porting/emit/emit_subgraph.py](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/emit_subgraph.py:833)
+[vibecomfy/porting/emit/emit_subgraph.py](../../vibecomfy/porting/emit/emit_subgraph.py)
 
 - `_positional_ui_widget_names` tries explicit `widgets`, `widget_inputs`, `input_aliases`, `properties.proxyWidgets`, committed schema, object-info raw order, then `_ui.inputs[].widget.name`.
 - It maps names by value position and blocks `None` schema positions from being overwritten.
-- `_ui_widget_values_by_name` returns `raw_values[index]` for any non-`None` name at [line 915](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/porting/emit/emit_subgraph.py:915).
+- `_ui_widget_values_by_name` returns `raw_values[index]` for any non-`None` name at [line 915](../../vibecomfy/porting/emit/emit_subgraph.py).
 - Change impact: because it currently enumerates raw object-info by index, SVD-style raw order can label compact value index 3 as `width` if earlier link/placeholder entries are not compacted. This is a likely hidden consumer to audit with tests.
 
 ### Browser/front-end live node handling
 
 Browser code resolves live node widget names against `node.widgets`, not object-info:
 
-- [comfy_adapter.js](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/comfy_nodes/web/comfy_adapter.js:270) reads/writes by `findSlotIndex(node.widgets, rest[0], "name")`.
-- [vibecomfy_roundtrip.js](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js:1653) reads named widget slots from live `node.widgets`.
-- [panel_overlay.js](/Users/peteromalley/Documents/reigh-workspace/vibecomfy/vibecomfy/comfy_nodes/web/panel_overlay.js:615) also matches widget names/labels.
+- [comfy_adapter.js](../../vibecomfy/comfy_nodes/web/comfy_adapter.js) reads/writes by `findSlotIndex(node.widgets, rest[0], "name")`.
+- [vibecomfy_roundtrip.js](../../vibecomfy/comfy_nodes/web/vibecomfy_roundtrip.js) reads named widget slots from live `node.widgets`.
+- [panel_overlay.js](../../vibecomfy/comfy_nodes/web/panel_overlay.js) also matches widget names/labels.
 
 Change impact: if Python-side names diverge from live `node.widgets`, server-side apply can accept names that the browser cannot highlight/read/write, or vice versa.
 
