@@ -31,6 +31,7 @@ HERMES_LAUNCHER="${CLOUD_WATCHDOG_HERMES_LAUNCHER:-/root/.claude/skills/subagent
 KIMI_MODEL="${KIMI_GOAL_MODEL:-kimi-k2.7-code}"
 KIMI_BASE_URL="${KIMI_BASE_URL:-https://api.kimi.com/coding/v1}"
 DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"
+DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-1800}"
 KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"
 MECHANICAL_VERIFY_INITIAL_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_INITIAL_SECS:-12}"
 MECHANICAL_VERIFY_HOLD_SECS="${CLOUD_WATCHDOG_MECHANICAL_VERIFY_HOLD_SECS:-18}"
@@ -38,6 +39,9 @@ KIMI_VERIFY_INITIAL_SECS="${CLOUD_WATCHDOG_KIMI_VERIFY_INITIAL_SECS:-12}"
 KIMI_VERIFY_HOLD_SECS="${CLOUD_WATCHDOG_KIMI_VERIFY_HOLD_SECS:-18}"
 KIMI_MAX_TURNS="${CLOUD_WATCHDOG_KIMI_MAX_TURNS:-40}"
 CODEX_REASONING_EFFORT="${CLOUD_WATCHDOG_CODEX_REASONING_EFFORT:-low}"
+ROOT_CAUSE_REASONING_EFFORT="${CLOUD_WATCHDOG_ROOT_CAUSE_REASONING_EFFORT:-high}"
+REPAIR_RECURRENCE_MIN_DISPATCHES="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_MIN_DISPATCHES:-3}"
+REPAIR_RECURRENCE_WINDOW_SECS="${CLOUD_WATCHDOG_REPAIR_RECURRENCE_WINDOW_SECS:-21600}"
 DISCORD_DM_BIN="${DISCORD_DM_BIN:-$ARNOLD_SRC/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -45,6 +49,7 @@ SAFE_SESSION="$(printf '%s' "$SESSION" | tr -c 'A-Za-z0-9_.-' '-')"
 RUN_DIR="$ROOT/${TS}-${SAFE_SESSION}"
 LOG="$RUN_DIR/operator.log"
 DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"
+PROGRESS_FILE="$MARKER_DIR/${SAFE_SESSION}.repair-progress.json"
 NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
 
@@ -1021,6 +1026,29 @@ def _read_events(path: pathlib.Path) -> list[dict[str, object]]:
     return events
 
 
+def _latest_gate_event(path: pathlib.Path | None) -> dict[str, object]:
+    if path is None or not path.exists():
+        return {}
+    for event in reversed(_read_events(path)):
+        payload = event.get("payload")
+        payload_dict = payload if isinstance(payload, dict) else {}
+        recommendation = payload_dict.get("recommendation") or event.get("recommendation")
+        if recommendation in (None, ""):
+            continue
+        phase = str(event.get("phase") or payload_dict.get("phase") or "").strip()
+        kind = str(event.get("kind") or "").strip()
+        if phase != "gate" and kind not in {"gate", "phase_end"}:
+            continue
+        return {
+            "recommendation": recommendation,
+            "kind": kind,
+            "phase": phase,
+            "seq": event.get("seq"),
+            "timestamp": _event_timestamp(event),
+        }
+    return {}
+
+
 def _latest_success_after_failure(
     plan_state: dict[str, object],
     events_path: pathlib.Path,
@@ -1319,11 +1347,28 @@ if chain_state_path is not None:
     chain_state = _load_json(chain_state_path)
     metadata = chain_state.get("metadata")
     missing_base_ref = metadata.get("missing_base_ref") if isinstance(metadata, dict) else None
+    milestones = chain_state.get("milestones") if isinstance(chain_state.get("milestones"), list) else []
+    completed = chain_state.get("completed") if isinstance(chain_state.get("completed"), list) else []
+    current_milestone_index = chain_state.get("current_milestone_index")
+    try:
+        current_milestone_index = int(current_milestone_index)
+    except (TypeError, ValueError):
+        current_milestone_index = None
+    current_milestone_label = ""
+    if current_milestone_index is not None and 0 <= current_milestone_index < len(milestones):
+        current_milestone = milestones[current_milestone_index]
+        if isinstance(current_milestone, dict):
+            current_milestone_label = (
+                str(current_milestone.get("label") or current_milestone.get("id") or "").strip()
+            )
     chain_state_summary = {
         "path": str(chain_state_path),
         "current_plan_name": chain_state.get("current_plan_name") or "",
         "current_state": chain_state.get("current_state") or "",
         "last_state": chain_state.get("last_state") or "",
+        "current_milestone_index": current_milestone_index,
+        "current_milestone_label": current_milestone_label,
+        "completed_count": len(completed),
         "missing_base_ref": missing_base_ref or chain_state.get("missing_base_ref"),
         "error": chain_state.get("error"),
         "events": chain_state.get("events")[-5:] if isinstance(chain_state.get("events"), list) else [],
@@ -1334,10 +1379,12 @@ else:
 plan_latest_failure = {}
 stale_state = {"classification": "NO LATEST FAILURE", "summary": "no latest_failure is set"}
 user_action_context = {}
+plan_runtime_state = {}
 preferred_plan_name = marker_plan_name if run_kind == "plan" else str(chain_state_summary.get("current_plan_name") or "")
 plan_state_path = _resolve_plan_state(workspace, preferred_plan_name)
 plan_events_path = None
 plan_events_tail = ""
+last_gate = {}
 if plan_state_path is not None:
     plan_state = _load_json(plan_state_path)
     latest_failure = plan_state.get("latest_failure") or {}
@@ -1345,6 +1392,7 @@ if plan_state_path is not None:
     plan_events_path = plan_state_path.parent / "events.ndjson"
     if plan_events_path.exists():
         plan_events_tail = _events_tail(plan_events_path, limit=12)
+        last_gate = _latest_gate_event(plan_events_path)
     stale_state = _stale_state_analysis(plan_state, plan_events_path, latest_failure)
     plan_latest_failure = {
         "plan_name": plan_state.get("name") or plan_state_path.parent.name,
@@ -1363,6 +1411,24 @@ if plan_state_path is not None:
     }
     plan_dir = plan_state_path.parent
     execute_attempt_context = _collect_execute_attempt_context(plan_dir, plan_state)
+    resume_cursor = plan_state.get("resume_cursor") if isinstance(plan_state.get("resume_cursor"), dict) else {}
+    meta = plan_state.get("meta") if isinstance(plan_state.get("meta"), dict) else {}
+    plan_runtime_state = {
+        "current_state": plan_state.get("current_state") or plan_state.get("state") or "",
+        "retry_strategy": resume_cursor.get("retry_strategy") or "",
+        "manual_review_origin": (
+            resume_cursor.get("manual_review_origin")
+            or meta.get("manual_review_origin")
+            or metadata.get("manual_review_origin")
+            or ""
+        ),
+        "awaiting_human_reason": (
+            plan_state.get("awaiting_human_reason")
+            or resume_cursor.get("awaiting_human_reason")
+            or meta.get("awaiting_human_reason")
+            or ""
+        ),
+    }
     finalize_path = plan_dir / "finalize.json"
     user_actions_path = plan_dir / "user_actions.md"
     resolutions_path = plan_dir / "user_action_resolutions.json"
@@ -1375,7 +1441,6 @@ if plan_state_path is not None:
     except Exception:
         resolutions_raw = {}
     resolutions = resolutions_raw if isinstance(resolutions_raw, dict) else {}
-    meta = plan_state.get("meta") if isinstance(plan_state, dict) else {}
     meta_resolutions = meta.get("user_action_resolutions") if isinstance(meta, dict) else {}
     if isinstance(meta_resolutions, dict):
         for action_id, resolution in meta_resolutions.items():
@@ -1440,6 +1505,7 @@ if plan_state_path is not None:
 else:
     latest_failure = {}
     execute_attempt_context = {}
+    last_gate = {}
 
 state_mismatch = _state_mismatch_analysis(plan_latest_failure, chain_state_summary)
 raw_failure_signals = _unique_strings(
@@ -1478,6 +1544,8 @@ payload = {
     "mechanical_log_path": str(log_path) if log_path is not None else "",
     "plan_latest_failure": plan_latest_failure,
     "chain_state_summary": chain_state_summary,
+    "plan_runtime_state": plan_runtime_state,
+    "last_gate": last_gate,
     "user_action_context": user_action_context,
     "execute_attempt_context": execute_attempt_context,
 }
@@ -1933,12 +2001,14 @@ repair_data_init() {
   tmux_info="$(tmux capture-pane -pt "$SESSION" -S -80 2>/dev/null || true)"
   chain_state="$(find "$WORKSPACE/.megaplan" -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | tail -10)"
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$run_kind" "$plan_name")"
-  python3 - "$DATA_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
+  python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
 import json
+import pathlib
 import sys
 
 (
     path,
+    progress_path,
     session,
     workspace,
     spec,
@@ -1959,6 +2029,17 @@ import sys
     failure_context,
 ) = sys.argv[1:]
 failure_context_payload = json.loads(failure_context)
+data_path = pathlib.Path(path)
+existing = {}
+if data_path.exists():
+    try:
+        existing = json.loads(data_path.read_text(encoding="utf-8"))
+    except Exception:
+        existing = {}
+attempts = existing.get("attempts") if isinstance(existing.get("attempts"), list) else []
+if not attempts and isinstance(existing.get("iterations"), list):
+    attempts = [item for item in existing.get("iterations") if isinstance(item, dict)]
+repair_run_count = int(existing.get("repair_run_count") or 0) + 1
 
 payload = {
     "session": session,
@@ -1969,6 +2050,9 @@ payload = {
     "arnold_src": arnold_src,
     "sync_branch": sync_branch,
     "run_dir": run_dir,
+    "progress_path": progress_path,
+    "repair_run_count": repair_run_count,
+    "attempt_counter": int(existing.get("attempt_counter") or len(attempts)),
     "initial_facts": {
         "relaunch_command": relaunch_command,
         "initial_health": initial_health,
@@ -1991,12 +2075,21 @@ payload = {
         "mechanical_log_path": failure_context_payload.get("mechanical_log_path", ""),
         "plan_latest_failure": failure_context_payload.get("plan_latest_failure", {}),
         "chain_state_summary": failure_context_payload.get("chain_state_summary", {}),
+        "plan_runtime_state": failure_context_payload.get("plan_runtime_state", {}),
+        "last_gate": failure_context_payload.get("last_gate", {}),
         "user_action_context": failure_context_payload.get("user_action_context", {}),
         "execute_attempt_context": failure_context_payload.get("execute_attempt_context", {}),
         "watchdog_log_tail": watchdog_log,
         "tmux_pane_tail": tmux_info,
         "chain_state_files": chain_state,
     },
+    "attempts": attempts,
+    "current_attempt_id": None,
+    "current_signature": {},
+    "current_advancement_snapshot": {},
+    "current_recurrence": {},
+    "current_failure_context": failure_context_payload,
+    "run_recurrence_detected": False,
     "iterations": [],
     "outcome": "repairing",
 }
@@ -2008,20 +2101,33 @@ PY
 
 repair_data_record_dev() {
   local iteration="$1"
-  local requested_model="$2"
-  local dispatch_model="$3"
-  local fallback_reason="$4"
-  local report_path="$5"
-  local turn_rc="$6"
-  local before_sha="$7"
-  local after_sha="$8"
-  python3 - "$DATA_FILE" "$iteration" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
+  local attempt_id="$2"
+  local requested_model="$3"
+  local dispatch_model="$4"
+  local fallback_reason="$5"
+  local report_path="$6"
+  local turn_rc="$7"
+  local before_sha="$8"
+  local after_sha="$9"
+  python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
 import json
 import pathlib
 import sys
 
-path, iteration_raw, requested_model, dispatch_model, fallback_reason, report_path, turn_rc, before_sha, after_sha = sys.argv[1:]
+(
+    path,
+    iteration_raw,
+    attempt_id_raw,
+    requested_model,
+    dispatch_model,
+    fallback_reason,
+    report_path,
+    turn_rc,
+    before_sha,
+    after_sha,
+) = sys.argv[1:]
 iteration = int(iteration_raw)
+attempt_id = int(attempt_id_raw)
 payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
 report = {}
 report_file = pathlib.Path(report_path)
@@ -2036,6 +2142,7 @@ while len(iterations) < iteration:
     iterations.append({"i": len(iterations) + 1})
 entry = iterations[iteration - 1]
 entry["i"] = iteration
+entry["attempt_id"] = attempt_id
 entry["dev_model_requested"] = requested_model
 entry["dev_model"] = dispatch_model
 if fallback_reason:
@@ -2065,6 +2172,43 @@ entry["other_instantiations"] = report.get("other_instantiations") or []
 entry["human_review_recommendation"] = report.get("human_review_recommendation") or ""
 entry["findings_doc_path"] = report.get("findings_doc_path") or ""
 entry["findings_doc_appended"] = bool(report.get("findings_doc_appended"))
+entry["problem_signature"] = payload.get("current_signature") or {}
+entry["advancement_snapshot"] = payload.get("current_advancement_snapshot") or {}
+entry["recurrence"] = payload.get("current_recurrence") or {}
+entry["failure_context"] = payload.get("current_failure_context") or {}
+
+attempts = payload.setdefault("attempts", [])
+attempt = None
+for item in attempts:
+    if isinstance(item, dict) and int(item.get("attempt_id") or 0) == attempt_id:
+        attempt = item
+        break
+if attempt is None:
+    attempt = {"attempt_id": attempt_id}
+    attempts.append(attempt)
+attempt["attempt_id"] = attempt_id
+attempt["repair_run_count"] = payload.get("repair_run_count")
+attempt["iteration"] = iteration
+attempt["dispatched_at"] = (payload.get("current_recurrence") or {}).get("dispatched_at") or ""
+attempt["problem_signature"] = payload.get("current_signature") or {}
+attempt["advancement_snapshot"] = payload.get("current_advancement_snapshot") or {}
+attempt["recurrence"] = payload.get("current_recurrence") or {}
+attempt["failure_context"] = payload.get("current_failure_context") or {}
+attempt["dev_model_requested"] = requested_model
+attempt["dev_model"] = dispatch_model
+if fallback_reason:
+    attempt["dev_model_fallback"] = fallback_reason
+attempt["dev_turn_rc"] = int(turn_rc)
+attempt["dev_fix_sha"] = entry["dev_fix_sha"]
+attempt["dev_hypothesis"] = entry["dev_hypothesis"]
+attempt["dev_summary"] = entry["dev_summary"]
+attempt["dev_validation"] = entry["dev_validation"]
+attempt["dev_report"] = report
+attempt["structural_pattern"] = entry["structural_pattern"]
+attempt["other_instantiations"] = entry["other_instantiations"]
+attempt["human_review_recommendation"] = entry["human_review_recommendation"]
+attempt["findings_doc_path"] = entry["findings_doc_path"]
+attempt["findings_doc_appended"] = entry["findings_doc_appended"]
 
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
@@ -2169,17 +2313,19 @@ PY
 
 repair_data_record_mechanical() {
   local iteration="$1"
-  local status="$2"
-  local detail="$3"
+  local attempt_id="$2"
+  local status="$3"
+  local detail="$4"
   local failure_context
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  python3 - "$DATA_FILE" "$iteration" "$status" "$detail" "$failure_context" <<'PY'
+  python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context" <<'PY'
 import json
 import pathlib
 import sys
 
-path, iteration_raw, status, detail, failure_context = sys.argv[1:]
+path, iteration_raw, attempt_id_raw, status, detail, failure_context = sys.argv[1:]
 iteration = int(iteration_raw)
+attempt_id = int(attempt_id_raw)
 payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
 failure_context_payload = json.loads(failure_context)
 iterations = payload.setdefault("iterations", [])
@@ -2205,26 +2351,38 @@ entry["mechanical_log_tail"] = failure_context_payload.get("mechanical_log_tail"
 entry["mechanical_log_path"] = failure_context_payload.get("mechanical_log_path", "")
 entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", {})
 entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", {})
+entry["plan_runtime_state"] = failure_context_payload.get("plan_runtime_state", {})
+entry["last_gate"] = failure_context_payload.get("last_gate", {})
 entry["user_action_context"] = failure_context_payload.get("user_action_context", {})
 entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", {})
+attempts = payload.setdefault("attempts", [])
+for item in attempts:
+    if not isinstance(item, dict) or int(item.get("attempt_id") or 0) != attempt_id:
+        continue
+    item["mechanical_launch"] = status
+    item["mechanical_detail"] = detail
+    item["post_launch_failure_context"] = failure_context_payload
+    break
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }
 
 repair_data_record_kimi() {
   local iteration="$1"
-  local status="$2"
-  local report_path="$3"
-  local turn_rc="$4"
+  local attempt_id="$2"
+  local status="$3"
+  local report_path="$4"
+  local turn_rc="$5"
   local failure_context
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  python3 - "$DATA_FILE" "$iteration" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
+  python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
 import json
 import pathlib
 import sys
 
-path, iteration_raw, status, report_path, turn_rc, failure_context = sys.argv[1:]
+path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context = sys.argv[1:]
 iteration = int(iteration_raw)
+attempt_id = int(attempt_id_raw)
 payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
 failure_context_payload = json.loads(failure_context)
 report = {}
@@ -2269,9 +2427,23 @@ entry["plan_events_tail"] = failure_context_payload.get("plan_events_tail", entr
 entry["plan_events_path"] = failure_context_payload.get("plan_events_path", entry.get("plan_events_path", ""))
 entry["plan_latest_failure"] = failure_context_payload.get("plan_latest_failure", entry.get("plan_latest_failure", {}))
 entry["chain_state_summary"] = failure_context_payload.get("chain_state_summary", entry.get("chain_state_summary", {}))
+entry["plan_runtime_state"] = failure_context_payload.get("plan_runtime_state", entry.get("plan_runtime_state", {}))
+entry["last_gate"] = failure_context_payload.get("last_gate", entry.get("last_gate", {}))
 entry["user_action_context"] = failure_context_payload.get("user_action_context", entry.get("user_action_context", {}))
 entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", entry.get("execute_attempt_context", {}))
 entry["kimi_report"] = report
+attempts = payload.setdefault("attempts", [])
+for item in attempts:
+    if not isinstance(item, dict) or int(item.get("attempt_id") or 0) != attempt_id:
+        continue
+    item["kimi_model"] = "kimi-k2.7-code"
+    item["kimi_turn_rc"] = int(turn_rc)
+    item["kimi_launch"] = status
+    item["kimi_diagnosis"] = entry["kimi_diagnosis"]
+    item["why"] = entry["why"]
+    item["post_kimi_failure_context"] = failure_context_payload
+    item["kimi_report"] = report
+    break
 
 pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
@@ -2562,6 +2734,178 @@ EOF
   echo "running"
 }
 
+repair_recurrence_prepare_attempt() {
+  local iteration="$1"
+  local requested_model="$2"
+  local dispatch_model="$3"
+  local failure_context
+  failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$failure_context" "$iteration" "$requested_model" "$dispatch_model" "$REPAIR_RECURRENCE_MIN_DISPATCHES" "$REPAIR_RECURRENCE_WINDOW_SECS" <<'PY'
+import datetime as dt
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud import repair_recurrence
+
+(
+    data_path_raw,
+    progress_path_raw,
+    failure_context_raw,
+    iteration_raw,
+    requested_model,
+    dispatch_model,
+    min_dispatches_raw,
+    window_seconds_raw,
+) = sys.argv[1:]
+data_path = pathlib.Path(data_path_raw)
+progress_path = pathlib.Path(progress_path_raw)
+failure_context = json.loads(failure_context_raw)
+payload = json.loads(data_path.read_text(encoding="utf-8"))
+try:
+    progress_payload = json.loads(progress_path.read_text(encoding="utf-8"))
+except Exception:
+    progress_payload = {}
+
+iteration = int(iteration_raw)
+min_dispatches = max(int(min_dispatches_raw), 1)
+window_seconds = max(int(window_seconds_raw), 0)
+dispatched_at = dt.datetime.now(dt.timezone.utc).isoformat()
+signature = repair_recurrence.build_problem_signature(failure_context)
+advancement = repair_recurrence.build_advancement_snapshot(
+    failure_context,
+    run_kind=str(payload.get("run_kind") or ""),
+)
+session_snapshot = repair_recurrence.update_session_repair_snapshot(
+    progress_payload,
+    advancement,
+    dispatched_at=dispatched_at,
+    min_dispatches=min_dispatches,
+    window_seconds=window_seconds,
+)
+recurrence = repair_recurrence.evaluate_recurrence(
+    signature,
+    payload.get("attempts") if isinstance(payload.get("attempts"), list) else [],
+    session_snapshot,
+)
+attempt_id = int(payload.get("attempt_counter") or 0) + 1
+payload["attempt_counter"] = attempt_id
+payload["current_attempt_id"] = attempt_id
+payload["current_failure_context"] = failure_context
+payload["current_signature"] = signature
+payload["current_advancement_snapshot"] = advancement
+payload["current_recurrence"] = {
+    **recurrence,
+    "attempt_id": attempt_id,
+    "iteration": iteration,
+    "requested_model": requested_model,
+    "dispatch_model": dispatch_model,
+    "dispatched_at": dispatched_at,
+    "root_cause_mode": bool(recurrence.get("detected")),
+}
+payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
+data_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+progress_path.write_text(json.dumps(session_snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}")
+PY
+}
+
+render_recurrence_block() {
+  python3 - "$DATA_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+recurrence = payload.get("current_recurrence") or {}
+if not recurrence.get("detected"):
+    raise SystemExit(0)
+attempts = payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
+matching_ids = {
+    int(item)
+    for item in (recurrence.get("layer1") or {}).get("matching_attempt_ids") or []
+    if str(item).strip()
+}
+if matching_ids:
+    relevant = [
+        item
+        for item in attempts
+        if isinstance(item, dict) and int(item.get("attempt_id") or 0) in matching_ids
+    ]
+else:
+    take = max(int((recurrence.get("layer2") or {}).get("no_advance_dispatch_count") or 1) - 1, 1)
+    relevant = [item for item in attempts if isinstance(item, dict)][-take:]
+signature = recurrence.get("problem_signature") or {}
+signature_bits = []
+for key in (
+    "failure_kind",
+    "current_state",
+    "phase_or_step",
+    "milestone_or_plan",
+    "gate_recommendation",
+    "blocked_task_id",
+):
+    value = str(signature.get(key) or "").strip() or "-"
+    signature_bits.append(f"{key}={value}")
+print("## RECURRENCE EVIDENCE")
+print(f"- Recurrence detected for this session on attempt {recurrence.get('attempt_number')}.")
+layer1 = recurrence.get("layer1") or {}
+layer2 = recurrence.get("layer2") or {}
+if layer1.get("detected"):
+    print(
+        "- Layer 1 fired: the same controlled-field problem signature returned after "
+        f"{layer1.get('repeat_count')} prior repair dispatch(es)."
+    )
+if layer2.get("detected"):
+    print(
+        "- Layer 2 fired: the session absorbed "
+        f"{layer2.get('no_advance_dispatch_count')} repair dispatches within "
+        f"{layer2.get('window_seconds')} seconds with no milestone/state advancement."
+    )
+print("- Recurrence means the prior attempts treated symptoms, not the cause.")
+print(f"- Controlled signature: `({' ; '.join(signature_bits)})`")
+print("- Prior fixes for this problem:")
+if not relevant:
+    print("- none captured")
+for item in relevant[-4:]:
+    model = item.get("dev_model") or item.get("dev_model_requested") or "n/a"
+    attempted = item.get("dev_summary") or "n/a"
+    dev_report = item.get("dev_report") if isinstance(item.get("dev_report"), dict) else {}
+    if attempted == "n/a" and dev_report:
+        attempted = dev_report.get("what_tried") or dev_report.get("fix_summary") or "n/a"
+    commit = item.get("dev_fix_sha") or "none"
+    conclusion = item.get("dev_hypothesis") or item.get("why") or item.get("kimi_diagnosis") or "n/a"
+    print(
+        f"- attempt {item.get('attempt_id') or item.get('i') or '?'}: "
+        f"model={model} what_tried={attempted} commit={commit} conclusion={conclusion}"
+    )
+PY
+}
+
+repair_exhausted_should_retry_without_human() {
+  python3 - "$DATA_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+recurrence = payload.get("current_recurrence") or {}
+run_detected = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
+failure_context = payload.get("current_failure_context") if isinstance(payload.get("current_failure_context"), dict) else {}
+plan_runtime = failure_context.get("plan_runtime_state") if isinstance(failure_context.get("plan_runtime_state"), dict) else {}
+user_action_context = failure_context.get("user_action_context") if isinstance(failure_context.get("user_action_context"), dict) else {}
+unresolved = user_action_context.get("unresolved_user_actions") if isinstance(user_action_context.get("unresolved_user_actions"), list) else []
+current_state = str(plan_runtime.get("current_state") or "").strip().lower()
+manual_review_origin = str(plan_runtime.get("manual_review_origin") or "").strip()
+human_gate = bool(unresolved) or (
+    current_state == "manual_review"
+    and manual_review_origin not in {"", "auto_stall", "auto_stall_legacy"}
+)
+print("1" if run_detected and not human_gate else "0")
+PY
+}
+
 render_chain_health_block() {
   # Read the chain-health artifact the watchdog writes when it detects a
   # chain-level cycle / stuck-state / completion-guard rejection, and render the
@@ -2598,16 +2942,43 @@ write_dev_prompt() {
   local requested_model="$2"
   local dispatch_model="$3"
   local report_path="$4"
-  local failure_summary chain_health_block
+  local recurrence_mode="${5:-0}"
+  local failure_summary chain_health_block recurrence_block mode_tasks
   failure_summary="$(render_failure_summary "$DATA_FILE")"
   chain_health_block="$(render_chain_health_block)"
+  recurrence_block="$(render_recurrence_block)"
+  if [[ "$recurrence_mode" == "1" ]]; then
+    mode_tasks="$(cat <<EOF
+9. This is a recurring problem. Do NOT pick the likely fix. Do NOT repeat the prior approaches listed above.
+10. Trace the actual mechanism end-to-end: inspect the real stderr/exit code, the actual SHAs, prompt contents, chain/plan state, and any worker inputs the run received versus what it should have received.
+11. Do not stop at a status label. Name the precise mechanism that recreates the symptom before you propose a fix.
+12. Use the extra time in this root-cause attempt; depth matters more than turn-shortness here.
+13. Write a concise JSON report to $report_path with keys:
+    classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
+    structural_pattern, other_instantiations, human_review_recommendation,
+    findings_doc_path, findings_doc_appended.
+EOF
+)"
+  else
+    mode_tasks="$(cat <<EOF
+9. Use the raw failure signal, run narrative, and prior-attempt history to avoid repeating failed ideas.
+10. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
+11. Write a concise JSON report to $report_path with keys:
+    classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
+    structural_pattern, other_instantiations, human_review_recommendation,
+    findings_doc_path, findings_doc_appended.
+EOF
+)"
+  fi
   cat > "$prompt_path" <<EOF
 You are the watchdog repair-loop dev-fix agent for a stopped Arnold cloud session.
 
 $failure_summary
 $chain_health_block
+$recurrence_block
 
 **IF A "CHAIN HEALTH EVIDENCE" BLOCK IS PRESENT ABOVE: the root cause is a CHAIN-DRIVER code bug (completion guard / state progression / authority_divergence cycle) in arnold_pipelines/megaplan/chain/, NOT a plan bug. Read the recurring chain-log lines and the completion-guard verdict in that block, then fix the chain driver there. Do NOT chase the plan's latest_failure -- for a chain-level cycle the plan is a victim, not the cause.**
+**IF A "RECURRENCE EVIDENCE" BLOCK IS PRESENT ABOVE: recurrence means the symptom came back after prior fixes. Do NOT reuse those approaches. Move into root-cause mode and trace the precise mechanism that regenerates the stop.**
 
 Session: $SESSION
 Workspace: $WORKSPACE
@@ -2639,12 +3010,7 @@ Task:
 6. Validate minimally: py_compile for touched python files and/or the smallest relevant focused test.
 7. If source changes pass validation, commit and push them.
 8. Do not relaunch the run yourself. The wrapper will do the mechanical launch next using the marker's run-kind-aware command.
-9. Use the raw failure signal, run narrative, and prior-attempt history to avoid repeating failed ideas.
-10. Keep the turn short. Pick the most likely fix from the current evidence instead of broad exploration.
-11. Write a concise JSON report to $report_path with keys:
-   classification, hypothesis, what_tried, validation, pushed_commit, remaining_blockers,
-   structural_pattern, other_instantiations, human_review_recommendation,
-   findings_doc_path, findings_doc_appended.
+$mode_tasks
 
 Constraints:
 - Work only in $ARNOLD_SRC for source fixes. You may update the active plan's user_action_resolutions.json and state metadata only through the user-action CLI above.
@@ -2652,7 +3018,7 @@ Constraints:
 - Do not escalate awaiting_human just because a user action exists. Escalate only after you have reviewed the evidence and cannot make a confident decision.
 - If you find a pattern such as flags positioned wrong across multiple dispatch sites or stale recovery logic duplicated in several places, fix what you can now and persist the broader findings in $FINDINGS_DOC.
 - Do not ask for user input.
-- End the turn as soon as you have either a narrow fix or a concrete blocker.
+- End the turn as soon as you have either a narrow fix or a concrete blocker, unless recurrence was detected; in that case stay long enough to name the root mechanism.
 EOF
 }
 
@@ -2696,20 +3062,28 @@ EOF
 
 run_dev_fix_turn() {
   local iteration="$1"
-  local requested_model="$2"
-  local dispatch_model="$3"
-  local dispatch_kind="$4"
-  local fallback_reason="$5"
-  local prompt_path report_path before_sha after_sha rc
+  local attempt_id="$2"
+  local recurring="$3"
+  local requested_model="$4"
+  local dispatch_model="$5"
+  local dispatch_kind="$6"
+  local fallback_reason="$7"
+  local prompt_path report_path before_sha after_sha rc dev_timeout reasoning_effort
   prompt_path="$RUN_DIR/iter${iteration}-dev-fix-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-dev-fix-report.json"
-  write_dev_prompt "$prompt_path" "$requested_model" "$dispatch_model" "$report_path"
+  write_dev_prompt "$prompt_path" "$requested_model" "$dispatch_model" "$report_path" "$recurring"
   before_sha="$(cd "$ARNOLD_SRC" && git rev-parse HEAD 2>/dev/null || true)"
-  log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model"
+  dev_timeout="$DEV_TIMEOUT"
+  reasoning_effort="$CODEX_REASONING_EFFORT"
+  if [[ "$recurring" == "1" ]]; then
+    dev_timeout="$DEV_ROOT_CAUSE_TIMEOUT"
+    reasoning_effort="$ROOT_CAUSE_REASONING_EFFORT"
+  fi
+  log "iteration=$iteration dev-fix model=$dispatch_model requested=$requested_model recurring=$recurring timeout=$dev_timeout reasoning=$reasoning_effort"
   if [[ "$dispatch_kind" == "hermes" ]]; then
     (
       cd "$ARNOLD_SRC" &&
-      timeout "$DEV_TIMEOUT" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" python "$HERMES_LAUNCHER" \
+      timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" python "$HERMES_LAUNCHER" \
         --model="$dispatch_model" \
         --toolsets="file,web,terminal" \
         --query_file="$prompt_path" \
@@ -2718,10 +3092,10 @@ run_dev_fix_turn() {
   else
     (
       cd "$ARNOLD_SRC" &&
-      timeout "$DEV_TIMEOUT" codex exec \
+      timeout "$dev_timeout" codex exec \
         --sandbox danger-full-access \
         -c model="$dispatch_model" \
-        -c model_reasoning_effort="$CODEX_REASONING_EFFORT" \
+        -c model_reasoning_effort="$reasoning_effort" \
         "$(cat "$prompt_path")" </dev/null
     ) >> "$LOG" 2>&1 &
   fi
@@ -2733,7 +3107,7 @@ run_dev_fix_turn() {
     rc=$?
   fi
   after_sha="$(cd "$ARNOLD_SRC" && git rev-parse HEAD 2>/dev/null || true)"
-  repair_data_record_dev "$iteration" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
+  repair_data_record_dev "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$rc" "$before_sha" "$after_sha"
   append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"
 }
 
@@ -2767,11 +3141,11 @@ run_kimi_launch_turn() {
     rc=$?
   fi
   health="$(verify_started_and_holding "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$KIMI_VERIFY_INITIAL_SECS" "$KIMI_VERIFY_HOLD_SECS")" || {
-    repair_data_record_kimi "$iteration" "failed:$health" "$report_path" "$rc"
+    repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:$health" "$report_path" "$rc"
     kill_tmux_session_if_present "$SESSION"
     return 1
   }
-  repair_data_record_kimi "$iteration" "running" "$report_path" "$rc"
+  repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running" "$report_path" "$rc"
   return 0
 }
 
@@ -2907,10 +3281,10 @@ STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
 if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   log "stale state cleared before dev-fix: ${STALE_CLEAR_STATUS#cleared:}"
   mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
-    repair_data_record_mechanical "1" "$mechanical_status" "after stale-state clear: $mechanical_status"
+    repair_data_record_mechanical "1" "0" "$mechanical_status" "after stale-state clear: $mechanical_status"
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
-    repair_data_record_mechanical "1" "running" "stale state cleared; mechanical launch came up and held"
+    repair_data_record_mechanical "1" "0" "running" "stale state cleared; mechanical launch came up and held"
     repair_data_set_outcome "running"
     clear_repair_markers
     log "repair loop succeeded after stale-state clear"
@@ -2955,14 +3329,15 @@ for iteration in 1 2 3; do
       ;;
   esac
 
-  run_dev_fix_turn "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
+  IFS=$'\t' read -r CURRENT_ATTEMPT_ID CURRENT_RECURRING <<< "$(repair_recurrence_prepare_attempt "$iteration" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL")"
+  run_dev_fix_turn "$iteration" "$CURRENT_ATTEMPT_ID" "${CURRENT_RECURRING:-0}" "$DEV_REQUESTED_MODEL" "$DEV_DISPATCH_MODEL" "$DEV_DISPATCH_KIND" "$DEV_FALLBACK_REASON"
   exit_if_repair_target_complete "iteration-$iteration-post-dev-fix"
 
   mechanical_status="$(mechanical_launch_step "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
-    repair_data_record_mechanical "$iteration" "$mechanical_status" "$mechanical_status"
+    repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "$mechanical_status" "$mechanical_status"
   }
   if [[ "${mechanical_status:-}" == "running" ]]; then
-    repair_data_record_mechanical "$iteration" "running" "mechanical launch came up and held"
+    repair_data_record_mechanical "$iteration" "$CURRENT_ATTEMPT_ID" "running" "mechanical launch came up and held"
     repair_data_set_outcome "running"
     clear_repair_markers
     log "repair loop succeeded mechanically iteration=$iteration"
@@ -2970,7 +3345,7 @@ for iteration in 1 2 3; do
   fi
 
   if [[ -z "${KIMI_API_KEY:-}" ]]; then
-    repair_data_record_kimi "$iteration" "failed:KIMI_API_KEY missing" "$RUN_DIR/iter${iteration}-kimi-report.json" 78
+    repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "failed:KIMI_API_KEY missing" "$RUN_DIR/iter${iteration}-kimi-report.json" 78
     continue
   fi
 
@@ -2983,6 +3358,12 @@ for iteration in 1 2 3; do
     exit 0
   fi
 done
+
+if [[ "$(repair_exhausted_should_retry_without_human)" == "1" ]]; then
+  repair_data_set_outcome "recurring_retry_pending"
+  log "repair loop exhausted but recurrence detected; leaving session for another root-cause repair dispatch session=$SESSION data=$DATA_FILE"
+  exit 1
+fi
 
 repair_data_set_outcome "discord_escalated"
 discord_status="$(send_discord_escalation)"
