@@ -1,0 +1,19 @@
+{
+  "id": "rconv_ebfb6191eba4",
+  "transport": "discord",
+  "conversation_key": "discord:dm:301463647895683072",
+  "active_epic_id": null,
+  "guild_id": null,
+  "channel_id": "1451308037074714654",
+  "thread_id": null,
+  "dm_user_id": "301463647895683072",
+  "last_inbound_message_id": "msg_5501d9303527",
+  "last_outbound_message_id": "msg_08719eefaab2",
+  "delivery_cursor": "msg_08719eefaab2",
+  "metadata": {
+    "last_subject_user_id": "301463647895683072"
+  },
+  "created_at": "2026-06-30T17:13:00.384502Z",
+  "updated_at": "2026-06-30T17:16:50.270929Z",
+  "last_active_at": "2026-06-30T17:16:50.270862Z"
+}

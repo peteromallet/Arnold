@@ -35,7 +35,7 @@ Three names, three meanings:
 
 A chain spec is a YAML file declaring the base branch, an optional seed plan, and an ordered list of milestones. Each milestone has its own rubric knobs (profile, robustness, depth, vendor, prep/feedback flags).
 
-Store durable epic artifacts under `.megaplan/briefs/<epic-slug>/`: put the executable `chain.yaml` there and keep the milestone brief files beside it. Single-plan idea briefs that are not part of an epic live directly under `.megaplan/briefs/<slug>.md`. `.megaplan/plans/` remains generated runtime state; `.megaplan/briefs/` is the committed source material that creates runs.
+Store durable epic artifacts under `.megaplan/initiatives/<epic-slug>/`: put the executable `chain.yaml` at the initiative root and keep milestone brief files under `briefs/`. Single-plan idea briefs live at `.megaplan/initiatives/<slug>/briefs/<slug>.md`. `.megaplan/plans/` remains generated runtime state; `.megaplan/initiatives/` is the committed source material that creates runs.
 
 ```yaml
 base_branch: main
@@ -50,27 +50,27 @@ seed:
 
 milestones:
   - label: m1-schema
-    idea: .megaplan/briefs/artifact-store/m1-schema.md
+    idea: .megaplan/initiatives/artifact-store/briefs/m1-schema.md
     branch: epic/m1-schema           # optional, informational for now
     profile: apex                    # tier 5 — schema everyone downstream builds on
     robustness: thorough
     depth: high
 
   - label: m2-storage
-    idea: .megaplan/briefs/artifact-store/m2-storage.md
+    idea: .megaplan/initiatives/artifact-store/briefs/m2-storage.md
     profile: premium                 # tier 4 — production migration logic
     robustness: thorough
     depth: high
 
   - label: m3-api
-    idea: .megaplan/briefs/artifact-store/m3-api.md
+    idea: .megaplan/initiatives/artifact-store/briefs/m3-api.md
     profile: partnered               # tier 3 — once schema+storage are locked, the API is mechanical
     depth: medium
     anchors:
       north_star: m3-api-northstar.md # optional milestone extension; does not override the epic anchor
 
   - label: m4-docs
-    idea: .megaplan/briefs/artifact-store/m4-docs.md
+    idea: .megaplan/initiatives/artifact-store/briefs/m4-docs.md
     profile: directed                # tier 2 — docs benefit from a smart plan, cheap to execute
 
 on_failure:
@@ -93,7 +93,7 @@ Epics require a top-level North Star by default. Put `NORTHSTAR.md` beside `chai
 If an epic truly has no durable end-state beyond its milestone briefs, opt out explicitly:
 
 ```bash
-megaplan chain start --spec .megaplan/briefs/my-epic/chain.yaml \
+megaplan chain start --spec .megaplan/initiatives/my-epic/chain.yaml \
   --no-require-anchor \
   --missing-anchor-ack "Mechanical cleanup chain; no cross-milestone destination."
 ```
@@ -185,15 +185,15 @@ When supervising a long cloud chain, follow the cadence in the main megaplan ski
 
 Scope: build a new artifact store that downstream sprints will consume. ~5 weeks of work, four sequential milestones.
 
-**1. Decompose into milestones.** Create an epic directory under `.megaplan/briefs/` and write one idea file per milestone, each sized to ~1 week:
+**1. Decompose into milestones.** Create an initiative directory under `.megaplan/initiatives/` and write one idea file per milestone under its `briefs/` directory, each sized to ~1 week:
 
 ```
-.megaplan/briefs/artifact-store/m1-schema.md         # schema + invariants
-.megaplan/briefs/artifact-store/m2-storage.md        # storage layer against the schema
-.megaplan/briefs/artifact-store/m3-api.md            # public API over storage
-.megaplan/briefs/artifact-store/m4-docs.md           # docs + migration guide
-.megaplan/briefs/artifact-store/NORTHSTAR.md         # durable end-state intent
-.megaplan/briefs/artifact-store/chain.yaml           # chain spec
+.megaplan/initiatives/artifact-store/briefs/m1-schema.md  # schema + invariants
+.megaplan/initiatives/artifact-store/briefs/m2-storage.md # storage layer against the schema
+.megaplan/initiatives/artifact-store/briefs/m3-api.md     # public API over storage
+.megaplan/initiatives/artifact-store/briefs/m4-docs.md    # docs + migration guide
+.megaplan/initiatives/artifact-store/NORTHSTAR.md         # durable end-state intent
+.megaplan/initiatives/artifact-store/chain.yaml           # chain spec
 ```
 
 Each idea file is a full brief (see the "What goes in the brief" section of megaplan-prep) — outcome, scope, locked decisions, open questions, constraints, done criteria, touchpoints, anti-scope. Briefs are locked at init; later edits are not re-read.
@@ -208,7 +208,7 @@ Each idea file is a full brief (see the "What goes in the brief" section of mega
 **3. Drive it.**
 
 ```bash
-megaplan chain start --spec .megaplan/briefs/artifact-store/chain.yaml
+megaplan chain start --spec .megaplan/initiatives/artifact-store/chain.yaml
 ```
 
 For a long unattended run, do this inside `megaplan cloud` so it survives the terminal.
@@ -216,7 +216,7 @@ For a long unattended run, do this inside `megaplan cloud` so it survives the te
 **4. Observe.**
 
 ```bash
-megaplan chain status --spec .megaplan/briefs/artifact-store/chain.yaml
+megaplan chain status --spec .megaplan/initiatives/artifact-store/chain.yaml
 ```
 
 Shows current milestone index, current plan name, last state, completed milestones, and PR state if applicable.

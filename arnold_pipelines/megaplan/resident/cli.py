@@ -10,7 +10,7 @@ from typing import Any
 from arnold_pipelines.megaplan.store import DBStore, FileStore, Store
 from arnold_pipelines.megaplan.types import CliError
 
-from .agent_loop import OpenAICompatibleAgentRunner
+from .agent_loop import CodexCliAgentRunner, OpenAICompatibleAgentRunner
 from .auth import StoreBackedConfirmationManager, ResidentAuthorizer
 from .cloud import CloudCliBackend
 from .config import ResidentConfig
@@ -157,12 +157,18 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
         authorizer=authorizer,
         store=store,
         profile=_resident_profile(store=store, authorizer=authorizer, config=config),
-        runner=OpenAICompatibleAgentRunner(config),
+        runner=_resident_runner(config, root),
         outbound=outbound,
     )
     service = ResidentDiscordService(runtime=runtime, token=token)
     service.run()
     return {"success": True, "step": "resident", "action": "discord", "stopped": True, "project_root": str(root)}
+
+
+def _resident_runner(config: ResidentConfig, root: Path):
+    if config.model_provider == "codex":
+        return CodexCliAgentRunner(config, cwd=root)
+    return OpenAICompatibleAgentRunner(config)
 
 
 def _resident_profile(*, store: Store, authorizer: ResidentAuthorizer, config: ResidentConfig):

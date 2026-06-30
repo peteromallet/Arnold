@@ -12,20 +12,20 @@ They deliberately sit beside tickets, but they are not tickets:
 
 ## Local format
 
-Single-plan briefs live directly under:
+Single-plan briefs live under their initiative:
 
 ```text
-<repo>/.megaplan/briefs/<slug>.md
+<repo>/.megaplan/initiatives/<slug>/briefs/<slug>.md
 ```
 
-Epic briefs live in a directory:
+Epic briefs live in an initiative directory:
 
 ```text
-<repo>/.megaplan/briefs/<epic-slug>/chain.yaml
-<repo>/.megaplan/briefs/<epic-slug>/<milestone>.md
+<repo>/.megaplan/initiatives/<epic-slug>/chain.yaml
+<repo>/.megaplan/initiatives/<epic-slug>/briefs/<milestone>.md
 ```
 
-Commit these files. `.megaplan/briefs/` is durable input material;
+Commit these files. `.megaplan/initiatives/` is durable input material;
 `.megaplan/plans/` is generated run state.
 
 New briefs are markdown artifacts with YAML frontmatter. `megaplan init` strips
@@ -57,8 +57,8 @@ megaplan brief epic artifact-store \
   --milestone m3-api="Public API"
 ```
 
-That writes `.megaplan/briefs/artifact-store/chain.yaml` and milestone brief
-stubs in the same directory.
+That writes `.megaplan/initiatives/artifact-store/chain.yaml` and milestone brief
+stubs under `.megaplan/initiatives/artifact-store/briefs/`.
 
 Read and search briefs:
 
@@ -76,7 +76,7 @@ tickets have status/link/auto-addressing; briefs are inputs to runs.
 ## Lifecycle
 
 `megaplan init --idea-file <path>` reads the idea file and snapshots the text into
-the plan state. It does not move arbitrary files into `.megaplan/briefs/`.
+the plan state. It does not move arbitrary files into the retired `.megaplan/briefs/` tree.
 
 Use `megaplan brief new --init` when you want ticket-like ergonomics: first create
 the canonical committed source file, then initialize from it.
@@ -84,9 +84,9 @@ the canonical committed source file, then initialize from it.
 For epics, run:
 
 ```bash
-megaplan chain start --spec .megaplan/briefs/<epic-slug>/chain.yaml
+megaplan chain start --spec .megaplan/initiatives/<epic-slug>/chain.yaml
 ```
 
-When a chain spec is stored under `.megaplan/briefs/`, chain runtime state still
+When a chain spec is stored under `.megaplan/initiatives/`, chain runtime state still
 lives under root `.megaplan/plans/.chains/`; it does not create nested runtime
-directories inside the brief tree.
+directories inside the initiative tree.

@@ -29,6 +29,17 @@ from arnold_pipelines.megaplan.store import (
 )
 from arnold_pipelines.megaplan.store.export import collect_epic_export, write_epic_export_tar
 from arnold_pipelines.megaplan.types import CliError
+from arnold_pipelines.megaplan.layout import (
+    ALLOWED_INITIATIVE_SUBDIRS,
+    LAYOUT_POLICY_VERSION,
+    classify_initiative_doc_path,
+    initiative_doc_dir,
+    initiative_metadata,
+    initiative_root,
+    initiatives_dir,
+    migrate_legacy_briefs_layout,
+    slugify_initiative,
+)
 
 from .auth import ActionKind, AuthorizationSubject, ConfirmationManager, ResidentAuthorizer, StoreBackedConfirmationManager
 from .cloud import (
@@ -45,6 +56,7 @@ from .tool_registry import ToolRegistration, ToolRegistry
 from .tool_schemas import ToolInput, ToolResult
 
 MEGAPLAN_RESIDENT_PROMPT_VERSION = "megaplan-resident-v1"
+INITIATIVE_DOC_KIND = Literal["briefs", "research", "decisions", "notes", "assets", "handoff"]
 
 
 class ActorToolInput(ToolInput):
@@ -284,6 +296,44 @@ class WritePlanArtifactInput(PlanArtifactInput):
     confirmation_phrase: str | None = None
 
 
+class InitiativeToolInput(ActorToolInput):
+    project_root: str = "."
+
+
+class ListInitiativesInput(InitiativeToolInput):
+    limit: int = Field(default=50, gt=0, le=200)
+
+
+class CreateInitiativeInput(InitiativeToolInput):
+    slug: str
+    title: str | None = None
+    description: str = Field(min_length=1)
+    north_star: str | None = None
+    create_chain: bool = False
+
+
+class ReadInitiativeInput(InitiativeToolInput):
+    slug: str
+    max_docs: int = Field(default=25, gt=0, le=100)
+
+
+class WriteInitiativeDocInput(InitiativeToolInput):
+    initiative_slug: str
+    doc_kind: INITIATIVE_DOC_KIND
+    filename: str
+    content_text: str
+    create_if_missing: bool = True
+    overwrite: bool = False
+
+
+class ClassifyInitiativeDocInput(ToolInput):
+    path: str
+
+
+class MigrateInitiativeLayoutInput(InitiativeToolInput):
+    apply: bool = False
+
+
 class ExportEpicBundleInput(EpicInput):
     confirmation_request_id: str | None = None
     confirmation_phrase: str | None = None
@@ -328,13 +378,27 @@ class MegaplanResidentProfile:
             "You are the resident Megaplan operator. Shape epics through Megaplan "
             "editorial tools, report cloud status through constrained cloud tools, "
             "ask for human input when gates or ambiguity require it, and do not "
-            "run arbitrary remote shell commands."
+            "run arbitrary remote shell commands. Durable planning assets use "
+            f"{LAYOUT_POLICY_VERSION}: create or update project material under "
+            ".megaplan/initiatives/<slug>/ only. Put executable chain specs at "
+            "chain.yaml, milestone briefs in briefs/, research in research/, "
+            "decisions in decisions/, notes in notes/, assets in assets/, and "
+            "handoffs in handoff/. Never create planning docs directly under "
+            ".megaplan/briefs. Use tickets/ only for backlog/issues and plans/ "
+            "only for generated runtime state. If a project or epic does not "
+            "exist yet, create the initiative folder first."
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
+            "layout_policy": {
+                "version": LAYOUT_POLICY_VERSION,
+                "initiatives_root": ".megaplan/initiatives",
+                "allowed_doc_kinds": sorted(ALLOWED_INITIATIVE_SUBDIRS),
+                "legacy_briefs_root": ".megaplan/briefs",
+            },
         }
         if self.store is None:
             return base
@@ -342,6 +406,7 @@ class MegaplanResidentProfile:
         if conversation is None:
             return base
         active_epic_id = conversation.active_epic_id
+        active_initiative_slug = slugify_initiative(active_epic_id) if active_epic_id else None
         context = self.store.load_hot_context(active_epic_id) if active_epic_id else None
         cloud_runs = self.store.list_cloud_runs(conversation_id=conversation.id, limit=5)
         pending_checks = self.store.list_scheduled_jobs(
@@ -354,6 +419,11 @@ class MegaplanResidentProfile:
             {
                 "conversation": conversation.model_dump(mode="json"),
                 "active_epic": context.epic.model_dump(mode="json") if context and context.epic else None,
+                "active_initiative": (
+                    initiative_metadata(Path.cwd(), active_initiative_slug)
+                    if active_initiative_slug
+                    else None
+                ),
                 "recent_messages": [row.model_dump(mode="json") for row in (context.recent_messages if context else [])],
                 "recent_tool_calls": [row.model_dump(mode="json") for row in (context.recent_tool_calls if context else [])],
                 "checklist": [
@@ -392,6 +462,12 @@ class MegaplanResidentProfile:
             ToolRegistration("add_repo", "Alias for registering durable repo metadata after admin confirmation.", "repo_write", RegisterCodebaseInput, ToolResult, self._register_codebase),
             ToolRegistration("read_plan_artifact", "Read a bounded plan artifact through the Megaplan store.", "read", ReadPlanArtifactInput, ToolResult, self._read_plan_artifact),
             ToolRegistration("write_plan_artifact", "Write a plan artifact through the Megaplan store after admin confirmation.", "artifact_write", WritePlanArtifactInput, ToolResult, self._write_plan_artifact),
+            ToolRegistration("list_initiatives", "List canonical .megaplan initiative folders.", "read", ListInitiativesInput, ToolResult, self._list_initiatives),
+            ToolRegistration("create_initiative", "Create a canonical .megaplan/initiatives/<slug> folder.", "write", CreateInitiativeInput, ToolResult, self._create_initiative),
+            ToolRegistration("read_initiative", "Read metadata and bounded document inventory for one initiative.", "read", ReadInitiativeInput, ToolResult, self._read_initiative),
+            ToolRegistration("write_initiative_doc", "Write a document under an initiative briefs/research/decisions/notes/assets/handoff folder.", "write", WriteInitiativeDocInput, ToolResult, self._write_initiative_doc),
+            ToolRegistration("classify_initiative_doc", "Classify a prospective initiative document path into the canonical folder set.", "read", ClassifyInitiativeDocInput, ToolResult, self._classify_initiative_doc),
+            ToolRegistration("migrate_initiative_layout", "Dry-run or apply migration from legacy .megaplan/briefs to initiatives layout.", "write", MigrateInitiativeLayoutInput, ToolResult, self._migrate_initiative_layout),
             ToolRegistration("export_epic_bundle", "Export an epic bundle under the managed resident export root after admin confirmation.", "export", ExportEpicBundleInput, ToolResult, self._export_epic_bundle),
             ToolRegistration("reconcile_epic", "Summarize or apply epic reconciliation using existing store helpers.", "reconcile_apply", ReconcileEpicInput, ToolResult, self._reconcile_epic),
             ToolRegistration("reconcile_plan_storage", "Summarize or apply plan storage reconciliation using existing store helpers.", "reconcile_apply", ReconcilePlanStorageInput, ToolResult, self._reconcile_plan_storage),
@@ -598,6 +674,119 @@ class MegaplanResidentProfile:
         except Exception as exc:
             return _exception_result(exc)
         return _ok("plan artifact written", artifact=ref.model_dump(mode="json"))
+
+    def _list_initiatives(self, payload: ListInitiativesInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        try:
+            root = _resident_project_root(payload.project_root)
+            base = initiatives_dir(root)
+            rows = [
+                initiative_metadata(root, path.name)
+                for path in sorted(base.iterdir())
+                if path.is_dir()
+            ][: payload.limit]
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok(
+            "initiatives listed",
+            initiatives=rows,
+            count=len(rows),
+            layout_policy_version=LAYOUT_POLICY_VERSION,
+        )
+
+    def _create_initiative(self, payload: CreateInitiativeInput) -> ToolResult:
+        if denied := self._denied(payload, "write"):
+            return denied
+        try:
+            root = _resident_project_root(payload.project_root)
+            slug = slugify_initiative(payload.slug)
+            initiative = initiative_root(root, slug)
+            for name in ALLOWED_INITIATIVE_SUBDIRS:
+                (initiative / name).mkdir(parents=True, exist_ok=True)
+            if payload.north_star is not None:
+                (initiative / "NORTHSTAR.md").write_text(payload.north_star.rstrip() + "\n", encoding="utf-8")
+            description = payload.description.strip()
+            if not description:
+                raise ValueError("initiative description must not be empty")
+            readme = initiative / "README.md"
+            if not readme.exists():
+                title = (payload.title or slug.replace("-", " ").title()).strip()
+                readme.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
+            if payload.create_chain:
+                chain = initiative / "chain.yaml"
+                if not chain.exists():
+                    chain.write_text("milestones: []\n", encoding="utf-8")
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok("initiative created", initiative=initiative_metadata(root, slug))
+
+    def _read_initiative(self, payload: ReadInitiativeInput) -> ToolResult:
+        if denied := self._denied(payload, "read"):
+            return denied
+        try:
+            root = _resident_project_root(payload.project_root)
+            slug = slugify_initiative(payload.slug)
+            initiative = initiative_root(root, slug)
+            if not initiative.exists():
+                return _fail("initiative not found", slug=slug, path=str(initiative))
+            files = [
+                path
+                for path in sorted(initiative.rglob("*"))
+                if path.is_file() and ".megaplan" not in path.relative_to(initiative).parts
+            ][: payload.max_docs]
+            docs = [
+                {
+                    "path": path.relative_to(initiative).as_posix(),
+                    "size_bytes": path.stat().st_size,
+                }
+                for path in files
+            ]
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok("initiative read", initiative=initiative_metadata(root, slug), documents=docs)
+
+    def _write_initiative_doc(self, payload: WriteInitiativeDocInput) -> ToolResult:
+        if denied := self._denied(payload, "write"):
+            return denied
+        try:
+            root = _resident_project_root(payload.project_root)
+            slug = slugify_initiative(payload.initiative_slug)
+            initiative = initiative_root(root, slug)
+            if not initiative.exists() and not payload.create_if_missing:
+                return _fail("initiative not found", slug=slug, path=str(initiative))
+            target_dir = initiative_doc_dir(root, slug, payload.doc_kind)
+            target = _safe_child_path(target_dir, payload.filename)
+            if target.exists() and not payload.overwrite:
+                return _fail("initiative document already exists", path=str(target))
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(payload.content_text.rstrip() + "\n", encoding="utf-8")
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok(
+            "initiative document written",
+            initiative=initiative_metadata(root, slug),
+            path=str(target),
+            relative_path=target.relative_to(root).as_posix(),
+            doc_kind=payload.doc_kind,
+        )
+
+    def _classify_initiative_doc(self, payload: ClassifyInitiativeDocInput) -> ToolResult:
+        try:
+            kind = classify_initiative_doc_path(payload.path)
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok("initiative document classified", path=payload.path, doc_kind=kind)
+
+    def _migrate_initiative_layout(self, payload: MigrateInitiativeLayoutInput) -> ToolResult:
+        if denied := self._denied(payload, "write"):
+            return denied
+        try:
+            root = _resident_project_root(payload.project_root)
+            result = migrate_legacy_briefs_layout(root, apply=payload.apply)
+        except Exception as exc:
+            return _exception_result(exc)
+        return _ok("initiative layout migration complete", **result)
 
     def _export_epic_bundle(self, payload: ExportEpicBundleInput) -> ToolResult:
         if confirm := self._require_confirmation(
@@ -1684,6 +1873,25 @@ def _bounded_text(value: str, limit: int) -> str:
 
 def _safe_filename(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "epic"
+
+
+def _resident_project_root(value: str) -> Path:
+    root = Path(value).expanduser()
+    if not root.is_absolute():
+        root = Path.cwd() / root
+    return root.resolve()
+
+
+def _safe_child_path(root: Path, relative: str) -> Path:
+    if not relative or relative.strip() in {"", ".", ".."}:
+        raise ValueError("filename must not be empty")
+    rel = Path(relative)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError("filename must be relative and stay inside the initiative")
+    target = (root / rel).resolve()
+    if not _is_relative_to(target, root):
+        raise ValueError("filename escaped initiative document directory")
+    return target
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:

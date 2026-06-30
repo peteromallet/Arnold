@@ -1,0 +1,18 @@
+WARNING:discord.client:PyNaCl is not installed, voice will NOT be supported
+WARNING:discord.client:davey is not installed, voice will NOT be supported
+INFO:discord.client:logging in using static token
+INFO:discord.gateway:Shard ID None has connected to Gateway (Session ID: a9709c738d6d623a22d259821df0bd65).
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord service ready user_id=1451307647696506922 guild_count=1 recovered_turns=0
+WARNING:discord.client:PyNaCl is not installed, voice will NOT be supported
+WARNING:discord.client:davey is not installed, voice will NOT be supported
+INFO:discord.client:logging in using static token
+INFO:discord.gateway:Shard ID None has connected to Gateway (Session ID: bc33d15078a647aee3ed84277c363f82).
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord service ready user_id=1451307647696506922 guild_count=1 recovered_turns=0
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord inbound message_id=1521563469290279032 author_id=301463647895683072 conversation_key=discord:dm:301463647895683072 content_length=3
+WARNING:discord.client:PyNaCl is not installed, voice will NOT be supported
+WARNING:discord.client:davey is not installed, voice will NOT be supported
+INFO:discord.client:logging in using static token
+INFO:discord.gateway:Shard ID None has connected to Gateway (Session ID: ff5432b3b9b8320a986f3653d5bfbf27).
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord service ready user_id=1451307647696506922 guild_count=1 recovered_turns=0
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord inbound message_id=1521564223929450607 author_id=301463647895683072 conversation_key=discord:dm:301463647895683072 content_length=3
+INFO:arnold_pipelines.megaplan.resident.discord:Resident Discord inbound message_id=1521565115801927690 author_id=301463647895683072 conversation_key=discord:dm:301463647895683072 content_length=30

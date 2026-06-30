@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
 from importlib import resources
@@ -30,6 +31,7 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
+from arnold_pipelines.megaplan.layout import is_canonical_chain_spec, is_legacy_briefs_chain_spec
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -99,37 +101,55 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
             "the cloud editable install branch."
         ),
     )
+    chain_parser.add_argument(
+        "--allow-loose-chain-spec",
+        action="store_true",
+        help=(
+            "Allow launching a chain spec outside .megaplan/initiatives/<initiative>/chain.yaml. "
+            "Intended only for temporary compatibility."
+        ),
+    )
+    chain_parser.add_argument(
+        "--allow-legacy-briefs-layout",
+        action="store_true",
+        help="Allow the retired .megaplan/briefs/<initiative>/chain.yaml layout temporarily.",
+    )
     _add_repo_override_args(chain_parser)
 
-    launch_epic_parser = cloud_sub.add_parser(
-        "launch-epic",
+    sync_parser = cloud_sub.add_parser(
+        "sync-megaplan",
         parents=[shared],
-        help="Validate, canonicalize, upload, launch, and watchdog-verify a cloud epic",
+        help="Upload durable .megaplan planning artifacts to the cloud workspace",
     )
-    launch_epic_parser.add_argument("spec_or_dir", help="Local chain.yaml or epic brief directory")
-    launch_epic_parser.add_argument(
-        "--slug",
+    sync_parser.add_argument(
+        "spec",
+        nargs="?",
+        help=(
+            "Optional local .megaplan/initiatives/<initiative>/chain.yaml. When supplied, "
+            "uses the same derived cloud workspace as `cloud chain`."
+        ),
+    )
+    sync_parser.add_argument(
+        "--workspace",
         default=None,
-        help="Override the canonical epic slug (default: chain directory name)",
+        help="Explicit remote workspace override. Use only for manual migration.",
     )
-    launch_epic_parser.add_argument(
-        "--fresh",
-        "--reset",
-        dest="fresh",
+    sync_parser.add_argument(
+        "--clean",
         action="store_true",
-        help="Reset this chain's remote state before launch",
+        help="Remove remote durable .megaplan/initiatives, tickets, and ideas before upload.",
     )
-    launch_epic_parser.add_argument(
-        "--no-git-refresh",
+    sync_parser.add_argument(
+        "--allow-loose-chain-spec",
         action="store_true",
-        help="Pass --no-git-refresh to the remote chain start command",
+        help="Allow a sync target chain spec outside .megaplan/initiatives/<initiative>/chain.yaml.",
     )
-    launch_epic_parser.add_argument(
-        "--no-editable-install-sync",
+    sync_parser.add_argument(
+        "--allow-legacy-briefs-layout",
         action="store_true",
-        help="Skip syncing the launching Arnold checkout to editible-install before launch",
+        help="Allow a sync target chain spec under retired .megaplan/briefs/<initiative>/chain.yaml.",
     )
-    _add_repo_override_args(launch_epic_parser)
+    _add_repo_override_args(sync_parser)
 
     bootstrap_parser = cloud_sub.add_parser(
         "bootstrap",
@@ -261,9 +281,8 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
             with _materialized_deploy_dir(spec):
                 return _run_chain_wrapper(root, args, spec, provider)
 
-        if action == "launch-epic":
-            with _materialized_deploy_dir(spec):
-                return _run_launch_epic_wrapper(root, args, spec, provider)
+        if action == "sync-megaplan":
+            return _run_sync_megaplan(root, args, spec, provider)
 
         if action == "bootstrap":
             with _materialized_deploy_dir(spec):
@@ -584,6 +603,52 @@ def _chain_project_root(local_spec_path: Path, fallback_root: Path) -> Path:
     spec's repository root, not the caller's current working directory.
     """
     return _git_repo_root(local_spec_path) or fallback_root.expanduser().resolve()
+
+
+def _validate_chain_spec_location(
+    local_spec_path: Path,
+    project_root: Path,
+    *,
+    allow_loose: bool = False,
+    allow_legacy_briefs_layout: bool = False,
+) -> None:
+    """Require durable chain specs to live under .megaplan/initiatives/<initiative>/.
+
+    Cloud launches upload the spec and its idea files into a long-lived remote
+    checkout. Keeping the local source in the durable initiatives tree is what
+    makes the remote copy auditable instead of another loose cloud-only artifact.
+    """
+    if allow_loose:
+        return
+    try:
+        relative = local_spec_path.expanduser().resolve().relative_to(
+            project_root.expanduser().resolve()
+        )
+    except ValueError as exc:
+        raise CliError(
+            "chain_spec_outside_project",
+            (
+                f"chain spec {local_spec_path} is outside project root {project_root}. "
+                "Move it under .megaplan/initiatives/<initiative>/chain.yaml or pass "
+                "--allow-loose-chain-spec for a temporary compatibility launch."
+            ),
+        ) from exc
+    if is_canonical_chain_spec(local_spec_path, project_root):
+        return
+    if allow_legacy_briefs_layout and is_legacy_briefs_chain_spec(local_spec_path, project_root):
+        return
+    raise CliError(
+        "chain_spec_layout_violation",
+        (
+            "cloud chain specs must live at "
+            ".megaplan/initiatives/<initiative>/chain.yaml; got "
+            f"{relative.as_posix()}. Move the chain and milestone briefs into "
+            "that durable initiative folder, pass --allow-legacy-briefs-layout "
+            "for a temporary legacy launch, or pass --allow-loose-chain-spec "
+            "for a broader compatibility launch."
+        ),
+        extra={"chain_spec": relative.as_posix()},
+    )
 
 
 def _arnold_engine_repo_root() -> Path:
@@ -1079,233 +1144,12 @@ def _repo_dir_name(repo_url: str) -> str:
     return _slugify_chain_identity(tail) or "app"
 
 
-def _epic_slug_for_spec_path(local_spec_path: Path) -> str:
-    if local_spec_path.name == "chain.yaml" and local_spec_path.parent.name:
-        return _slugify_chain_identity(local_spec_path.parent.name)
-    return _slugify_chain_identity(local_spec_path.stem)
-
-
 def _chain_identity_for(local_spec_path: Path, chain_spec: Any) -> tuple[str, str, str]:
     labels = ",".join(m.label for m in getattr(chain_spec, "milestones", []) if getattr(m, "label", None))
     seed = getattr(chain_spec, "seed_plan", None) or ""
-    slug = _epic_slug_for_spec_path(local_spec_path)
-    identity = f"{slug}:{seed}:{labels}"
+    identity = f"{local_spec_path.stem}:{seed}:{labels}"
     digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:10]
-    return identity, slug, digest
-
-
-@dataclass(frozen=True)
-class CanonicalEpicMaterialization:
-    spec_path: Path
-    project_root: Path
-    slug: str
-    brief_dir: Path
-    copied_files: list[str]
-    generated_chain: bool
-
-
-def _copy_if_different(src: Path, dest: Path) -> bool:
-    src = src.expanduser().resolve()
-    dest = dest.expanduser().resolve()
-    if src == dest:
-        return False
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dest)
-    return True
-
-
-def _resolve_chain_local_artifact(
-    raw_path: str,
-    *,
-    project_root: Path,
-    spec_dir: Path,
-) -> Path:
-    path = Path(raw_path).expanduser()
-    candidates = [path] if path.is_absolute() else [project_root / path, spec_dir / path]
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate.resolve()
-    tried = "\n".join(f"- {candidate}" for candidate in candidates)
-    raise CliError(
-        "missing_epic_artifact",
-        f"required chain artifact not found: {raw_path}\nTried:\n{tried}",
-        extra={"missing_artifact": raw_path, "tried_paths": [str(candidate) for candidate in candidates]},
-    )
-
-
-def _milestone_label_from_brief(path: Path) -> str:
-    return _slugify_chain_identity(path.stem)
-
-
-def _brief_markdown_files(directory: Path) -> list[Path]:
-    excluded = {"northstar.md", "north_star.md", "readme.md", "goal.md"}
-    files = [
-        path
-        for path in directory.glob("*.md")
-        if path.name.lower() not in excluded and path.is_file()
-    ]
-    return sorted(files, key=lambda item: item.name)
-
-
-def _default_generated_chain_yaml(
-    *,
-    slug: str,
-    base_branch: str,
-    brief_names: list[str],
-) -> dict[str, Any]:
-    return {
-        "base_branch": base_branch,
-        "anchors": {"north_star": "NORTHSTAR.md"},
-        "milestones": [
-            {
-                "label": _milestone_label_from_brief(Path(name)),
-                "idea": f".megaplan/briefs/{slug}/{name}",
-                "branch": f"epic/{slug}/{_milestone_label_from_brief(Path(name))}",
-                "vendor": "codex",
-                "depth": "high",
-                "robustness": "full",
-                "with_prep": True,
-            }
-            for name in brief_names
-        ],
-        "on_failure": {"abort": "stop_chain"},
-        "on_escalate": {"abort": "stop_chain"},
-        "merge_policy": "auto",
-        "driver": {
-            "robustness": "full",
-            "auto_approve": True,
-            "max_iterations": 80,
-            "poll_sleep": 8.0,
-        },
-    }
-
-
-def _materialize_canonical_epic_input(
-    *,
-    root: Path,
-    spec: CloudSpec,
-    spec_or_dir: str,
-    slug_override: str | None = None,
-) -> CanonicalEpicMaterialization:
-    source = Path(spec_or_dir).expanduser().resolve()
-    if not source.exists():
-        raise CliError("missing_epic_artifact", f"epic input not found: {source}")
-
-    source_dir = source if source.is_dir() else source.parent
-    source_spec = source if source.is_file() else source_dir / "chain.yaml"
-    slug_source = slug_override or (source_dir.name if source_spec.name == "chain.yaml" else source_spec.stem)
-    slug = _slugify_chain_identity(slug_source)
-    if not slug:
-        raise CliError("invalid_epic_slug", f"unable to derive epic slug from {source}")
-
-    project_root = _chain_project_root(source_spec if source_spec.exists() else source_dir, root)
-    canonical_dir = project_root / ".megaplan" / "briefs" / slug
-    canonical_dir.mkdir(parents=True, exist_ok=True)
-
-    copied: list[str] = []
-    generated_chain = False
-
-    if source_spec.exists():
-        raw = _read_chain_yaml(source_spec)
-        anchors = raw.get("anchors")
-        if not isinstance(anchors, dict) or not isinstance(anchors.get("north_star"), str) or not anchors["north_star"].strip():
-            raise CliError(
-                "missing_north_star",
-                "chain.yaml must declare anchors.north_star: NORTHSTAR.md for cloud launch",
-                extra={"spec": str(source_spec)},
-            )
-        north_source = _resolve_chain_local_artifact(
-            anchors["north_star"],
-            project_root=project_root,
-            spec_dir=source_spec.parent,
-        )
-        if north_source.name != "NORTHSTAR.md":
-            north_dest = canonical_dir / "NORTHSTAR.md"
-        else:
-            north_dest = canonical_dir / north_source.name
-        if _copy_if_different(north_source, north_dest):
-            copied.append(str(north_dest))
-        raw = dict(raw)
-        raw["anchors"] = {"north_star": "NORTHSTAR.md"}
-        milestones = raw.get("milestones")
-        if not isinstance(milestones, list) or not milestones:
-            raise CliError("missing_epic_artifact", "chain.yaml must contain at least one milestone")
-        rewritten: list[Any] = []
-        seen_dest_names: set[str] = set()
-        for idx, item in enumerate(milestones):
-            if not isinstance(item, dict):
-                raise CliError("invalid_spec", f"milestones[{idx}] must be a mapping")
-            idea = item.get("idea")
-            if not isinstance(idea, str) or not idea.strip():
-                raise CliError("invalid_spec", f"milestones[{idx}].idea is required")
-            idea_source = _resolve_chain_local_artifact(
-                idea,
-                project_root=project_root,
-                spec_dir=source_spec.parent,
-            )
-            dest_name = idea_source.name
-            if dest_name in seen_dest_names:
-                dest_name = f"{idx + 1:02d}-{dest_name}"
-            seen_dest_names.add(dest_name)
-            idea_dest = canonical_dir / dest_name
-            if _copy_if_different(idea_source, idea_dest):
-                copied.append(str(idea_dest))
-            copied_item = dict(item)
-            copied_item["idea"] = f".megaplan/briefs/{slug}/{dest_name}"
-            rewritten.append(copied_item)
-        raw["milestones"] = rewritten
-    else:
-        north_source = source_dir / "NORTHSTAR.md"
-        if not north_source.is_file():
-            raise CliError(
-                "missing_north_star",
-                f"epic directory must contain NORTHSTAR.md before launch: {source_dir}",
-                extra={"missing_artifact": str(north_source)},
-            )
-        if _copy_if_different(north_source, canonical_dir / "NORTHSTAR.md"):
-            copied.append(str(canonical_dir / "NORTHSTAR.md"))
-        briefs = _brief_markdown_files(source_dir)
-        if not briefs:
-            raise CliError(
-                "missing_epic_artifact",
-                f"epic directory has no milestone markdown briefs: {source_dir}",
-            )
-        brief_names: list[str] = []
-        for brief in briefs:
-            dest = canonical_dir / brief.name
-            if _copy_if_different(brief, dest):
-                copied.append(str(dest))
-            brief_names.append(brief.name)
-        raw = _default_generated_chain_yaml(
-            slug=slug,
-            base_branch=spec.repo.branch,
-            brief_names=brief_names,
-        )
-        generated_chain = True
-
-    canonical_spec = canonical_dir / "chain.yaml"
-    canonical_spec.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
-    copied.append(str(canonical_spec))
-
-    # Validate after materialization so the exact files being uploaded are the
-    # files accepted by the chain runner and watchdog contract.
-    chain_spec = _read_chain_yaml(canonical_spec)
-    if not isinstance(chain_spec.get("anchors"), dict) or chain_spec["anchors"].get("north_star") != "NORTHSTAR.md":
-        raise CliError("missing_north_star", "canonical chain.yaml must declare anchors.north_star: NORTHSTAR.md")
-    from arnold_pipelines.megaplan import chain as chain_module
-
-    loaded = chain_module.load_spec(canonical_spec)
-    chain_module.chain_spec.validate_anchor_requirement(loaded, canonical_spec)
-    chain_module.chain_spec.validate_paths(loaded, project_root, spec_path=canonical_spec)
-
-    return CanonicalEpicMaterialization(
-        spec_path=canonical_spec,
-        project_root=project_root,
-        slug=slug,
-        brief_dir=canonical_dir,
-        copied_files=copied,
-        generated_chain=generated_chain,
-    )
+    return identity, _slugify_chain_identity(local_spec_path.stem), digest
 
 
 def _derive_chain_launch_context(
@@ -1837,6 +1681,115 @@ else:
     )
 
 
+_DURABLE_MEGAPLAN_DIRS = ("initiatives", "tickets", "ideas")
+
+
+def _durable_megaplan_uploads(project_root: Path, workspace: str) -> list[tuple[Path, str]]:
+    """Return local durable .megaplan files and their remote workspace paths."""
+    root = project_root.expanduser().resolve()
+    uploads: list[tuple[Path, str]] = []
+    for name in _DURABLE_MEGAPLAN_DIRS:
+        local_dir = root / ".megaplan" / name
+        if not local_dir.exists():
+            continue
+        for path in sorted(local_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.name == ".DS_Store":
+                continue
+            relative = path.relative_to(root)
+            remote = str(PurePosixPath(workspace).joinpath(*relative.parts))
+            uploads.append((path, remote))
+    return uploads
+
+
+def _write_durable_megaplan_archive(project_root: Path, uploads: list[tuple[Path, str]]) -> Path:
+    """Write a tar.gz containing uploads at repo-relative archive names."""
+    root = project_root.expanduser().resolve()
+    handle = NamedTemporaryFile(suffix=".megaplan-durable.tar.gz", delete=False)
+    archive_path = Path(handle.name)
+    handle.close()
+    with tarfile.open(archive_path, "w:gz") as tar:
+        for local_source, _remote_path in uploads:
+            arcname = local_source.expanduser().resolve().relative_to(root).as_posix()
+            tar.add(local_source, arcname=arcname, recursive=False)
+    return archive_path
+
+
+def _clean_remote_durable_megaplan_command(workspace: str) -> str:
+    roots = " ".join(
+        shlex.quote(str(PurePosixPath(workspace) / ".megaplan" / name))
+        for name in _DURABLE_MEGAPLAN_DIRS
+    )
+    return f"rm -rf {roots} && mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
+
+
+def _resolve_sync_megaplan_context(root: Path, args: argparse.Namespace, spec: CloudSpec):
+    from arnold_pipelines.megaplan import chain as chain_module
+
+    explicit_workspace = getattr(args, "workspace", None)
+    raw_spec = getattr(args, "spec", None)
+    if raw_spec:
+        local_spec_path = Path(raw_spec).expanduser().resolve()
+        project_root = _chain_project_root(local_spec_path, root)
+        _validate_chain_spec_location(
+            local_spec_path,
+            project_root,
+            allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
+            allow_legacy_briefs_layout=bool(getattr(args, "allow_legacy_briefs_layout", False)),
+        )
+        chain_spec = chain_module.load_spec(local_spec_path)
+        ctx = _derive_chain_launch_context(
+            root=project_root,
+            spec=spec,
+            local_spec_path=local_spec_path,
+            chain_spec=chain_spec,
+        )
+        workspace = explicit_workspace or ctx.workspace
+        return project_root, workspace, ctx.remote_spec_path, ctx.session_name
+    project_root = root.expanduser().resolve()
+    workspace = explicit_workspace or spec.repo.workspace
+    return project_root, workspace, None, None
+
+
+def _run_sync_megaplan(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
+    project_root, workspace, remote_spec, session_name = _resolve_sync_megaplan_context(
+        root,
+        args,
+        spec,
+    )
+    sync_spec = replace(spec, repo=replace(spec.repo, workspace=workspace))
+    _ensure_repo_checkout(sync_spec, provider, relay=False)
+    uploads = _durable_megaplan_uploads(project_root, workspace)
+    if bool(getattr(args, "clean", False)):
+        result = provider.ssh_exec(_clean_remote_durable_megaplan_command(workspace))
+        if result.returncode != 0:
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            raise CliError(
+                "provider_failed",
+                f"remote .megaplan durable clean failed (exit {result.returncode})",
+            )
+    archive_path: Path | None = None
+    try:
+        archive_path = _write_durable_megaplan_archive(project_root, uploads)
+        provider.upload_archive(archive_path, workspace)
+    finally:
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
+    payload = {
+        "success": True,
+        "project_root": str(project_root),
+        "workspace": workspace,
+        "remote_spec": remote_spec,
+        "chain_session": session_name,
+        "uploaded_files": len(uploads),
+        "uploaded_roots": list(_DURABLE_MEGAPLAN_DIRS),
+        "cleaned": bool(getattr(args, "clean", False)),
+    }
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0
+
+
 def _chain_launch_verification_command(
     *,
     workspace: str,
@@ -1935,99 +1888,18 @@ def _run_chain_launch_verification(provider, ctx: ChainLaunchContext) -> dict[st
     return payload
 
 
-def _watchdog_tracking_verification_command(ctx: ChainLaunchContext) -> str:
-    script = f"""
-import json, pathlib, sys
-marker_path = pathlib.Path({ctx.marker_path!r})
-workspace = pathlib.Path({ctx.workspace!r})
-remote_spec = pathlib.Path({ctx.remote_spec_path!r})
-session = {ctx.session_name!r}
-identity_digest = {ctx.digest!r}
-checks = {{
-    "marker_path": str(marker_path),
-    "workspace": str(workspace),
-    "remote_spec": str(remote_spec),
-    "session": session,
-    "marker_present": marker_path.is_file(),
-    "workspace_present": workspace.is_dir(),
-    "spec_present": remote_spec.is_file(),
-    "tracked": False,
-    "errors": [],
-}}
-payload = {{}}
-if not checks["marker_present"]:
-    checks["errors"].append("marker missing")
-else:
-    try:
-        payload = json.loads(marker_path.read_text())
-    except Exception as exc:
-        checks["errors"].append(f"marker unreadable: {{exc}}")
-if payload:
-    for key, expected in {{
-        "session": session,
-        "workspace": str(workspace),
-        "remote_spec": str(remote_spec),
-        "identity_digest": identity_digest,
-    }}.items():
-        if payload.get(key) != expected:
-            checks["errors"].append(f"marker {{key}}={{payload.get(key)!r}} expected {{expected!r}}")
-if not checks["workspace_present"]:
-    checks["errors"].append("workspace missing")
-if not checks["spec_present"]:
-    checks["errors"].append("remote_spec missing")
-checks["tracked"] = not checks["errors"]
-print(json.dumps(checks, sort_keys=True))
-sys.exit(0 if checks["tracked"] else 1)
-"""
-    return f"python3 - <<'MEGAPLAN_WATCHDOG_TRACKING'\n{script.strip()}\nMEGAPLAN_WATCHDOG_TRACKING"
-
-
-def _run_watchdog_tracking_verification(provider, ctx: ChainLaunchContext) -> dict[str, Any]:
-    result = provider.ssh_exec(_watchdog_tracking_verification_command(ctx))
-    raw = (result.stdout or "").strip().splitlines()
-    try:
-        payload = json.loads(raw[-1] if raw else "{}")
-    except json.JSONDecodeError as exc:
-        payload = {
-            "tracked": False,
-            "errors": [f"tracking verification output was not JSON: {exc}"],
-            "raw": result.stdout,
-        }
-    if result.returncode != 0:
-        payload.setdefault("tracked", False)
-        if result.stderr:
-            payload.setdefault("errors", []).append(result.stderr.strip())
-    payload["status"] = "tracked" if payload.get("tracked") else "not_tracked"
-    return payload
-
-
 def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
     from arnold_pipelines.megaplan import chain as chain_module
     from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 
-    if not bool(getattr(args, "_canonicalized_epic", False)):
-        materialized = _materialize_canonical_epic_input(
-            root=root,
-            spec=spec,
-            spec_or_dir=args.spec,
-        )
-        sys.stderr.write(
-            "cloud chain canonicalized: "
-            f"slug={materialized.slug} "
-            f"spec={materialized.spec_path} "
-            f"generated_chain={materialized.generated_chain}\n"
-        )
-        args = argparse.Namespace(
-            **{
-                **vars(args),
-                "spec": str(materialized.spec_path),
-                "idea_dir": str(materialized.project_root),
-                "_canonicalized_epic": True,
-            }
-        )
-
     local_spec_path = Path(args.spec).expanduser().resolve()
     project_root = _chain_project_root(local_spec_path, root)
+    _validate_chain_spec_location(
+        local_spec_path,
+        project_root,
+        allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
+        allow_legacy_briefs_layout=bool(getattr(args, "allow_legacy_briefs_layout", False)),
+    )
     chain_spec = chain_module.load_spec(local_spec_path)
     chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
     chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)
@@ -2199,14 +2071,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             "chain_session_collision" if result.returncode == 17 else "provider_failed",
             (result.stderr or result.stdout or "remote tmux launch failed").strip(),
         )
-    tracking = _run_watchdog_tracking_verification(provider, launch_ctx)
-    if not tracking.get("tracked"):
-        raise CliError(
-            "watchdog_tracking_failed",
-            "cloud launch completed but watchdog tracking verification failed: "
-            + "; ".join(str(item) for item in tracking.get("errors", []) or ["unknown error"]),
-            extra={"watchdog_tracking": tracking},
-        )
     verification = _run_chain_launch_verification(provider, launch_ctx)
     provenance = _cloud_chain_launch_provenance(
         spec=spec,
@@ -2217,7 +2081,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         repo_head=repo_head,
         tmux_result=result,
         editable_install_sync=editable_install_sync,
-        verification={**verification, "watchdog_tracking": tracking},
+        verification=verification,
     )
     sys.stderr.write(
         "cloud chain launch: "
@@ -2255,30 +2119,6 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         encoding="utf-8",
     )
     return 0
-
-
-def _run_launch_epic_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
-    materialized = _materialize_canonical_epic_input(
-        root=root,
-        spec=spec,
-        spec_or_dir=args.spec_or_dir,
-        slug_override=getattr(args, "slug", None),
-    )
-    sys.stderr.write(
-        "cloud launch-epic canonicalized: "
-        f"slug={materialized.slug} "
-        f"spec={materialized.spec_path} "
-        f"generated_chain={materialized.generated_chain}\n"
-    )
-    chain_args = argparse.Namespace(
-        **{
-            **vars(args),
-            "spec": str(materialized.spec_path),
-            "idea_dir": str(materialized.project_root),
-            "_canonicalized_epic": True,
-        }
-    )
-    return _run_chain_wrapper(root, chain_args, spec, provider)
 
 
 def _derive_bootstrap_session_name(spec: CloudSpec) -> str:

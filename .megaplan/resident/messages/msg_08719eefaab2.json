@@ -1,0 +1,17 @@
+{
+  "id": "msg_08719eefaab2",
+  "epic_id": null,
+  "conversation_id": "rconv_ebfb6191eba4",
+  "idempotency_key": "resident-outbound:turn_cc991d34d41e:final:357edb8043",
+  "direction": "outbound",
+  "content": "Nothing is running in the resident-visible state right now.\n\nI see:\n- Active epic: none\n- Active initiative: none\n- Cloud runs: none\n- Pending cloud checks: none\n- Sprints queued: none",
+  "sent_at": "2026-06-30T17:16:49.771048Z",
+  "discord_message_id": "inv_turn_cc991d34d41e_1",
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": [],
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": "turn_cc991d34d41e"
+}

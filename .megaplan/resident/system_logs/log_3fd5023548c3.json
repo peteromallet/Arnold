@@ -1,0 +1,21 @@
+{
+  "id": "log_3fd5023548c3",
+  "level": "warn",
+  "category": "system",
+  "event_type": "resident_inbound_denied",
+  "message": "Resident inbound event denied before execution",
+  "details": {
+    "reason": "guild_not_allowed",
+    "audit": {
+      "user_id": "301463647895683072",
+      "guild_id": null,
+      "channel_id": "1451308037074714654",
+      "action": "inbound",
+      "reason": "guild_not_allowed",
+      "occurred_at": "2026-06-30T17:10:00.437511Z"
+    }
+  },
+  "turn_id": null,
+  "epic_id": null,
+  "occurred_at": "2026-06-30T17:10:00.437661Z"
+}

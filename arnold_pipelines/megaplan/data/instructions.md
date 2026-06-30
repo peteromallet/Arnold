@@ -198,10 +198,10 @@ Use it when:
 - You are scaffolding an epic's `chain.yaml` and milestone idea files
 - You want the source document committed before `<launcher> init` snapshots it into plan state
 
-Briefs live as committed files under `.megaplan/briefs/`. Single-plan ideas live
-at `.megaplan/briefs/{slug}.md`; epics live at
-`.megaplan/briefs/{epic-slug}/chain.yaml` with milestone briefs beside the chain
-spec. This is ticket-like in storage and ergonomics, but not in lifecycle:
+Briefs live as committed files under `.megaplan/initiatives/{slug}/`. Single-plan
+ideas live at `.megaplan/initiatives/{slug}/briefs/{slug}.md`; epics live at
+`.megaplan/initiatives/{epic-slug}/chain.yaml` with milestone briefs under the
+initiative's `briefs/` directory. This is ticket-like in storage and ergonomics, but not in lifecycle:
 briefs feed `<launcher> init` / `<launcher> chain start`; tickets are open problem
 notes that can be discovered, linked, and auto-addressed by epics.
 
@@ -218,7 +218,7 @@ with `--no-require-anchor --missing-anchor-ack "<reason>"` or matching
 `driver.require_anchor: false` plus `driver.missing_anchor_ack` in the spec.
 
 `<launcher> init --idea-file <path>` reads the file and snapshots its text; it does
-not move arbitrary files into `.megaplan/briefs/`. If the idea file is a markdown
+not move arbitrary files into the retired `.megaplan/briefs/` tree. If the idea file is a markdown
 artifact with YAML frontmatter, `init` snapshots only the markdown body. Use
 `<launcher> brief new --init` to create the canonical source file first and then
 initialize from it.

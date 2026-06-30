@@ -1,0 +1,17 @@
+{
+  "id": "msg_aa89443551be",
+  "epic_id": null,
+  "conversation_id": "rconv_ebfb6191eba4",
+  "idempotency_key": "discord:message:1521564223929450607",
+  "direction": "inbound",
+  "content": "hey",
+  "sent_at": "2026-06-30T17:13:00.391522Z",
+  "discord_message_id": "1521564223929450607",
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": null,
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": "turn_2480274c67b1"
+}

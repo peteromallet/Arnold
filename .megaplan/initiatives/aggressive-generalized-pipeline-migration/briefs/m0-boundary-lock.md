@@ -8,10 +8,10 @@ Make the existing Arnold substrate explicit and protected before more code moves
 
 Use these existing source notes as authoritative context:
 
-- `.megaplan/initiatives/aggressive-migration-deepseek-synthesis-20260607.md`
-- `.megaplan/briefs/briefs/generalized-pipeline-project-scope-20260607.md`
-- `.megaplan/initiatives/generalized-pipeline-seam-swarm-20260607.md`
-- `.megaplan/briefs/briefs/pipeline-generalization-seams-20260607.md`
+- `.megaplan/initiatives/aggressive-generalized-pipeline-migration/research/aggressive-migration-deepseek-synthesis-20260607.md`
+- `.megaplan/initiatives/aggressive-generalized-pipeline-migration/notes/generalized-pipeline-project-scope-20260607.md`
+- `.megaplan/initiatives/aggressive-generalized-pipeline-migration/notes/generalized-pipeline-seam-swarm-20260607.md`
+- `.megaplan/initiatives/aggressive-generalized-pipeline-migration/notes/pipeline-generalization-seams-20260607.md`
 
 ## Scope
 

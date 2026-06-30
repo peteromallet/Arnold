@@ -1,0 +1,17 @@
+{
+  "id": "msg_5501d9303527",
+  "epic_id": null,
+  "conversation_id": "rconv_ebfb6191eba4",
+  "idempotency_key": "discord:message:1521565115801927690",
+  "direction": "inbound",
+  "content": "Is tehre anything running now?",
+  "sent_at": "2026-06-30T17:16:33.030779Z",
+  "discord_message_id": "1521565115801927690",
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": null,
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": "turn_cc991d34d41e"
+}

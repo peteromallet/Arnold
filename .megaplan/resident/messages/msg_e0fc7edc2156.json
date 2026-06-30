@@ -1,0 +1,17 @@
+{
+  "id": "msg_e0fc7edc2156",
+  "epic_id": null,
+  "conversation_id": "rconv_ebfb6191eba4",
+  "idempotency_key": "resident-outbound:turn_2480274c67b1:final:aa67a4f8cf",
+  "direction": "outbound",
+  "content": "Hey. I\u2019m here as the Megaplan resident operator. What epic, initiative, cloud run, or planning action do you want to work on?",
+  "sent_at": "2026-06-30T17:13:15.621598Z",
+  "discord_message_id": "inv_turn_2480274c67b1_1",
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": [],
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": "turn_2480274c67b1"
+}

@@ -266,6 +266,7 @@ def _list_untracked(repo: Path) -> list[str]:
 
 
 _CARRY_IGNORED_INPUT_PREFIXES: tuple[str, ...] = (
+    ".megaplan/initiatives/",
     ".megaplan/briefs/",
 )
 
@@ -275,9 +276,10 @@ def _list_ignored_inputs(repo: Path) -> list[str]:
 
     ``_list_untracked`` uses ``--exclude-standard`` and therefore hides anything
     matched by ``.gitignore``. But some gitignored paths — notably
-    ``.megaplan/briefs/`` (the chain/milestone spec files a ``--in-worktree`` run
-    reads) — are required INPUT, not run state, and must travel into the new
-    worktree or the run fails with ``missing_idea_file``. Run state
+    ``.megaplan/initiatives/`` (the chain/milestone spec files a
+    ``--in-worktree`` run reads) — are required INPUT, not run state, and must
+    travel into the new worktree or the run fails with ``missing_idea_file``. Legacy
+    ``.megaplan/briefs/`` is carried only for transitional compatibility. Run state
     (``.megaplan/plans/``, ``.state-locks/``) is deliberately NOT included.
     """
     paths: list[str] = []
