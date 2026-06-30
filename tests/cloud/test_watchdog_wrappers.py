@@ -1791,6 +1791,96 @@ def test_repair_loop_reclaims_stale_pidfile_on_start(tmp_path: Path) -> None:
     assert not stale_pidfile.exists()
 
 
+def test_repair_loop_reclaims_pidfile_after_kill9_with_child_alive(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_root = tmp_path / "repair-root"
+    workspace = tmp_path / "ws"
+    bin_dir = tmp_path / "bin"
+    codex_pids = tmp_path / "codex-pids.txt"
+    marker_dir.mkdir()
+    repair_root.mkdir()
+    workspace.mkdir()
+    bin_dir.mkdir()
+
+    (marker_dir / "demo-session.json").write_text(
+        json.dumps({"run_kind": "plan", "plan_name": "demo-plan", "relaunch_command": "true"}),
+        encoding="utf-8",
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / "demo-plan",
+        {
+            "name": "demo-plan",
+            "current_state": "blocked",
+            "iteration": 1,
+            "latest_failure": {
+                "kind": "phase_failed",
+                "message": "boom",
+                "recorded_at": "2026-06-29T00:00:00Z",
+                "metadata": {"exit_code": 1},
+            },
+        },
+    )
+
+    timeout_path = bin_dir / "timeout"
+    timeout_path.write_text(
+        "#!/usr/bin/env bash\n"
+        "shift\n"
+        "exec \"$@\"\n",
+        encoding="utf-8",
+    )
+    timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
+    codex_path = bin_dir / "codex"
+    codex_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf '%s\\n' \"$$\" >> {shlex.quote(str(codex_pids))}\n"
+        "sleep 30\n",
+        encoding="utf-8",
+    )
+    codex_path.chmod(codex_path.stat().st_mode | stat.S_IXUSR)
+    launcher_path = tmp_path / "launcher.py"
+    launcher_path.write_text("import time\n\ntime.sleep(30)\n", encoding="utf-8")
+
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}:{env.get('PATH', '')}"
+    env["CLOUD_WATCHDOG_MARKER_DIR"] = str(marker_dir)
+    env["CLOUD_WATCHDOG_REPAIR_ROOT"] = str(repair_root)
+    env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"] = str(marker_dir / "repair-data")
+    env["CLOUD_WATCHDOG_HERMES_LAUNCHER"] = str(launcher_path)
+
+    args = ["bash", str(WRAPPER_DIR / "arnold-repair-loop"), "demo-session", str(workspace), "/tmp/spec.json"]
+    pidfile = marker_dir / "demo-session.repair-loop.pid"
+    first = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+    second: subprocess.Popen[str] | None = None
+    try:
+        for _ in range(100):
+            if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(first.pid):
+                break
+            time.sleep(0.05)
+        assert pidfile.read_text(encoding="utf-8").strip() == str(first.pid)
+
+        first.kill()
+        first.wait(timeout=15)
+        assert pidfile.exists(), "kill -9 should leave a stale pidfile for recovery"
+
+        second = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+        for _ in range(100):
+            if pidfile.exists() and pidfile.read_text(encoding="utf-8").strip() == str(second.pid):
+                break
+            time.sleep(0.05)
+        assert pidfile.read_text(encoding="utf-8").strip() == str(second.pid)
+    finally:
+        if second is not None and second.poll() is None:
+            second.terminate()
+            second.communicate(timeout=15)
+        if first.poll() is None:
+            first.terminate()
+            first.wait(timeout=15)
+        if codex_pids.exists():
+            for raw_pid in codex_pids.read_text(encoding="utf-8").splitlines():
+                if raw_pid.strip().isdigit():
+                    subprocess.run(["kill", "-9", raw_pid.strip()], check=False)
+
+
 def test_watchdog_complete_teardown_collects_setsid_descendant_pgids(tmp_path: Path) -> None:
     ps_path = tmp_path / "ps"
     ps_path.write_text(
@@ -3511,9 +3601,11 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"' in text
     assert 'FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"' in text
     assert 'REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"' in text
+    assert 'REPAIR_PID_GUARD_FILE="${REPAIR_PID_FILE}.guard"' in text
     assert "acquire_repair_lock()" in text
     assert "repair_loop_pid_matches_session()" in text
-    assert 'if ( set -o noclobber; printf \'%s\\n\' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then' in text
+    assert "find_live_repair_loop_for_session()" in text
+    assert 'flock "$guard_fd"' in text
     assert 'log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"' in text
     assert 'log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"' in text
     assert "guard_against_recursive_repair_loop()" in text
@@ -3914,6 +4006,46 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
     assert "Route to arnold_pipelines/megaplan/chain/" in artifact["why_chain_layer_issue"]
 
 
+def test_chain_health_status_detects_stopped_authority_divergence_completion_guard() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    plan_name = "sprint-1-safe-compiler-20260630-0033"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {"current_state": "blocked", "iteration": 1},
+        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 0,
+            "current_plan_name": plan_name,
+            "last_state": "authority_divergence",
+            "pr_state": "",
+            "completed": [],
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "[chain] completion guard blocked sprint-01-safe-compiler-foundation: "
+        "no semantic diff from milestone_base_sha 9d2d53e to local HEAD; "
+        "no typed no-op completion waiver found\n",
+        encoding="utf-8",
+    )
+
+    payload = _run_chain_health(ws, marker, repair_dir, health="stopped")
+
+    assert payload["CHAIN_HEALTH_STATUS"] == "chain_completion_guard"
+    artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
+    assert artifact["issue_kind"] == "chain_completion_guard"
+    assert artifact["details"]["stopped_completion_guard"] is True
+    assert artifact["chain_state_summary"]["last_state"] == "authority_divergence"
+    assert "no semantic diff from milestone_base_sha" in artifact["completion_guard"]["reason"]
+    assert "## CHAIN HEALTH EVIDENCE" in artifact["evidence_markdown"]
+
+
 def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"
@@ -3939,12 +4071,14 @@ def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
         ws,
         marker,
         repair_dir,
+        health="alive",
         env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
     )
     second = _run_chain_health(
         ws,
         marker,
         repair_dir,
+        health="alive",
         env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
     )
 
