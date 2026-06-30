@@ -823,6 +823,7 @@ def apply_profile_expansion(
             args.profile = profile_name
 
     profile_steps: set[str] = set()
+    profile_default_specs: dict[str, str] = {}
     if profile_name:
         profiles = load_profiles(project_dir=project_dir)
         metadata = load_profile_metadata(project_dir=project_dir)
@@ -961,7 +962,6 @@ def apply_profile_expansion(
     if state is not None:
         persisted = list((state.get("config") or {}).get("phase_model") or [])
         profile_block_start = len(cli_phase_models)
-        profile_default_specs: dict[str, str] = {}
         for entry in phase_models[profile_block_start:]:
             if isinstance(entry, str) and "=" in entry:
                 _ps, _pv = entry.split("=", 1)
