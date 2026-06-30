@@ -1369,6 +1369,11 @@ if chain_state_path is not None:
         "current_milestone_index": current_milestone_index,
         "current_milestone_label": current_milestone_label,
         "completed_count": len(completed),
+        "pr_number": chain_state.get("pr_number"),
+        "pr_state": chain_state.get("pr_state"),
+        "target_base": chain_state.get("target_base"),
+        "target_base_ref": chain_state.get("target_base_ref"),
+        "base_branch": chain_state.get("base_branch") or chain_state.get("target_base"),
         "missing_base_ref": missing_base_ref or chain_state.get("missing_base_ref"),
         "error": chain_state.get("error"),
         "events": chain_state.get("events")[-5:] if isinstance(chain_state.get("events"), list) else [],
@@ -1527,6 +1532,7 @@ elif stale_state.get("classification") == "STALE STATE":
     failure_classification = "stale_state"
 
 payload = {
+    "workspace": str(workspace),
     "run_kind": run_kind,
     "requested_plan_name": marker_plan_name,
     "failure_classification": failure_classification,
@@ -2003,8 +2009,10 @@ repair_data_init() {
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$run_kind" "$plan_name")"
   python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
 import json
+import os
 import pathlib
 import sys
+import tempfile
 
 (
     path,
@@ -2030,6 +2038,25 @@ import sys
 ) = sys.argv[1:]
 failure_context_payload = json.loads(failure_context)
 data_path = pathlib.Path(path)
+
+
+def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target_path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+
+
 existing = {}
 if data_path.exists():
     try:
@@ -2093,9 +2120,7 @@ payload = {
     "iterations": [],
     "outcome": "repairing",
 }
-with open(path, "w", encoding="utf-8") as handle:
-    json.dump(payload, handle, indent=2, sort_keys=True)
-    handle.write("\n")
+_atomic_write_json(data_path, payload)
 PY
 }
 
@@ -2111,8 +2136,27 @@ repair_data_record_dev() {
   local after_sha="$9"
   python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
 import json
+import os
 import pathlib
 import sys
+import tempfile
+
+
+def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target_path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 (
     path,
@@ -2226,7 +2270,7 @@ attempt["human_review_recommendation"] = entry["human_review_recommendation"]
 attempt["findings_doc_path"] = entry["findings_doc_path"]
 attempt["findings_doc_appended"] = entry["findings_doc_appended"]
 
-pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+_atomic_write_json(pathlib.Path(path), payload)
 PY
 }
 
@@ -2336,8 +2380,27 @@ repair_data_record_mechanical() {
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context" <<'PY'
 import json
+import os
 import pathlib
 import sys
+import tempfile
+
+
+def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target_path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 path, iteration_raw, attempt_id_raw, status, detail, failure_context = sys.argv[1:]
 iteration = int(iteration_raw)
@@ -2379,7 +2442,7 @@ for item in attempts:
     item["mechanical_detail"] = detail
     item["post_launch_failure_context"] = failure_context_payload
     break
-pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+_atomic_write_json(pathlib.Path(path), payload)
 PY
 }
 
@@ -2393,8 +2456,27 @@ repair_data_record_kimi() {
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
   python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
 import json
+import os
 import pathlib
 import sys
+import tempfile
+
+
+def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target_path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context = sys.argv[1:]
 iteration = int(iteration_raw)
@@ -2461,7 +2543,7 @@ for item in attempts:
     item["kimi_report"] = report
     break
 
-pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+_atomic_write_json(pathlib.Path(path), payload)
 PY
 }
 
@@ -2469,13 +2551,32 @@ repair_data_set_outcome() {
   local outcome="$1"
   python3 - "$DATA_FILE" "$outcome" <<'PY'
 import json
+import os
 import pathlib
 import sys
+import tempfile
+
+
+def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, target_path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 path, outcome = sys.argv[1:]
 payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
 payload["outcome"] = outcome
-pathlib.Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+_atomic_write_json(pathlib.Path(path), payload)
 PY
 }
 
@@ -2791,6 +2892,8 @@ signature = repair_recurrence.build_problem_signature(failure_context)
 advancement = repair_recurrence.build_advancement_snapshot(
     failure_context,
     run_kind=str(payload.get("run_kind") or ""),
+    workspace=str(payload.get("workspace") or failure_context.get("workspace") or ""),
+    logger=lambda message: print(f"repair_recurrence: {message}", file=sys.stderr),
 )
 session_snapshot = repair_recurrence.update_session_repair_snapshot(
     progress_payload,
@@ -2820,8 +2923,8 @@ payload["current_recurrence"] = {
     "root_cause_mode": bool(recurrence.get("detected")),
 }
 payload["run_recurrence_detected"] = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
-data_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-progress_path.write_text(json.dumps(session_snapshot, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+repair_recurrence.atomic_write_json(data_path, payload)
+repair_recurrence.atomic_write_json(progress_path, session_snapshot)
 print(f"{attempt_id}\t{1 if recurrence.get('detected') else 0}")
 PY
 }
@@ -2867,7 +2970,7 @@ for key in (
 print("## RECURRENCE EVIDENCE")
 print(
     "- This is attempt "
-    f"{recurrence.get('attempt_number')} for the SAME problem (recurrence detected)."
+    f"{recurrence.get('attempt_number')} for the same controlled-field symptom (recurrence detected)."
 )
 layer1 = recurrence.get("layer1") or {}
 layer2 = recurrence.get("layer2") or {}
@@ -2883,7 +2986,7 @@ if layer2.get("detected"):
         f"{layer2.get('window_seconds')} seconds with no milestone/state advancement."
     )
 print("- The symptom came back despite these prior fixes:")
-print("- Recurrence means the prior attempts treated symptoms, not the cause.")
+print("- Recurrence means the prior attempts may have treated symptoms, not the cause.")
 print(f"- Controlled signature: `({' ; '.join(signature_bits)})`")
 print("- Prior fixes for this problem:")
 if not relevant:
