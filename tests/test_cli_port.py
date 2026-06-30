@@ -634,6 +634,82 @@ def test_port_convert_ready_template_mode_requires_ready_id_and_writes_metadata(
     assert provenance["output_mode"] == "ready_template"
 
 
+def test_port_convert_diff_implies_dry_run_and_preserves_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    out = tmp_path / "existing.py"
+    original = "# existing user file\nVALUE = 'keep me'\n"
+    out.write_text(original, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            out=str(out),
+            ready_id=None,
+            json=True,
+            head_check_models=False,
+            strict_ready_template=False,
+            dry_run=False,
+            diff=True,
+            all=False,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert out.read_text(encoding="utf-8") == original
+    assert payload["status"] == "ok"
+    assert payload["write"]["written"] is False
+    assert payload["write"]["dry_run"] is True
+    assert payload["write"]["diff_requested"] is True
+    assert payload["write"]["diff_forced_dry_run"] is True
+    assert payload["write"]["diff"]["original_exists"] is True
+    assert payload["write"]["diff"]["changed"] is True
+    assert payload["write"]["diff"]["unified_diff_line_count"] > 0
+    assert payload["write"]["diff"]["unified_diff"].startswith("--- ")
+
+
+def test_port_convert_real_write_refuses_manual_target_preserving_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _write_port_node_index(tmp_path)
+    workflow_path = _write_port_workflow(tmp_path)
+    out = tmp_path / "manual.py"
+    original = "# vibecomfy: manual\nVALUE = 'keep me'\n"
+    out.write_text(original, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    code = _cmd_port_convert(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            out=str(out),
+            ready_id=None,
+            json=True,
+            head_check_models=False,
+            strict_ready_template=False,
+            dry_run=False,
+            diff=False,
+            all=False,
+        )
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert code == 1
+    assert payload["status"] == "refused"
+    assert "# vibecomfy: manual" in payload["message"]
+    assert "port convert refused" in captured.err
+    assert out.read_text(encoding="utf-8") == original
+    assert list(tmp_path.glob(".vibecomfy-port-*")) == []
+
+
 def test_strict_ready_template_gate_escalates_unresolved_widgets() -> None:
     from vibecomfy.commands.port import _apply_strict_ready_template_gate
     from vibecomfy.porting.report import PortReport

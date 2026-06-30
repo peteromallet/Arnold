@@ -315,6 +315,26 @@ def _emit_convert_payload(payload: dict[str, Any], *, json_output: bool) -> None
                 f"import={validation['import_ok']} build={validation['build_ok']} "
                 f"compile={validation['compile_ok']} schema={validation['schema_ok']}"
             )
+        write = payload.get("write")
+        if isinstance(write, dict):
+            manual_refusal = write.get("manual_refusal")
+            if isinstance(manual_refusal, dict) and manual_refusal.get("refused"):
+                print(
+                    "manual target preview: write promotion would be refused: "
+                    f"{manual_refusal.get('message')}"
+                )
+            diff = write.get("diff")
+            if isinstance(diff, dict) and write.get("dry_run"):
+                original_lines = int(diff.get("original_line_count") or 0)
+                emitted_lines = int(diff.get("emitted_line_count") or 0)
+                delta = int(diff.get("line_count_delta") or 0)
+                print(
+                    f"LOC: {original_lines} -> {emitted_lines} "
+                    f"({'+' if delta >= 0 else ''}{delta})"
+                )
+                unified = diff.get("unified_diff")
+                if isinstance(unified, str) and unified:
+                    print(unified, end="" if unified.endswith("\n") else "\n")
         return
     print(payload.get("message", "port convert failed"), file=sys.stderr)
     report = payload.get("report") or {}

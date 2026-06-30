@@ -803,19 +803,42 @@ class ConversionWriteError(RuntimeError):
         super().__init__(message)
 
 
+def _manual_template_refusal_message(target: Path) -> str:
+    return (
+        f"Target {target} is marked '# vibecomfy: manual'. "
+        f"Remove the marker or use a different output path."
+    )
+
+
+def _manual_template_refusal_preview(target: Path) -> dict[str, Any]:
+    """Return manual-marker refusal metadata without raising."""
+    if not target.exists():
+        return {"refused": False}
+    lines = target.read_text(encoding="utf-8").splitlines()
+    first_line = lines[0].strip() if lines else ""
+    if "# vibecomfy: manual" not in first_line:
+        return {"refused": False}
+    return {
+        "refused": True,
+        "marker": "# vibecomfy: manual",
+        "message": _manual_template_refusal_message(target),
+    }
+
+
 def _check_manual_refusal(target: Path) -> None:
     """Refuse to overwrite a template marked `# vibecomfy: manual`."""
-    if not target.exists():
-        return
-    first_line = target.read_text(encoding="utf-8").splitlines()[0].strip() if target.exists() else ""
-    if "# vibecomfy: manual" in first_line:
-        raise ManualTemplateRefusal(
-            f"Target {target} is marked '# vibecomfy: manual'. "
-            f"Remove the marker or use a different output path."
-        )
+    preview = _manual_template_refusal_preview(target)
+    if preview["refused"]:
+        raise ManualTemplateRefusal(str(preview["message"]))
 
 
-def _compute_diff(original: str, emitted: str, target_path: str) -> dict[str, Any]:
+def _compute_diff(
+    original: str,
+    emitted: str,
+    target_path: str,
+    *,
+    original_exists: bool,
+) -> dict[str, Any]:
     """Produce unified diff + JSON diff metadata."""
     original_lines = original.splitlines(keepends=True)
     emitted_lines = emitted.splitlines(keepends=True)
@@ -829,9 +852,15 @@ def _compute_diff(original: str, emitted: str, target_path: str) -> dict[str, An
     )
     return {
         "unified_diff": unified,
-        "original_exists": bool(original),
-        "emitted_line_count": len(emitted_lines),
-        "original_line_count": len(original_lines),
+        "unified_diff_line_count": len(unified.splitlines()),
+        "original_exists": original_exists,
+        "changed": original != emitted,
+        "emitted_line_count": len(emitted.splitlines()),
+        "original_line_count": len(original.splitlines()),
+        "line_count_delta": len(emitted.splitlines()) - len(original.splitlines()),
+        "emitted_byte_count": len(emitted.encode("utf-8")),
+        "original_byte_count": len(original.encode("utf-8")),
+        "byte_count_delta": len(emitted.encode("utf-8")) - len(original.encode("utf-8")),
     }
 
 
@@ -858,11 +887,19 @@ def port_convert_and_write(
         ManualTemplateRefusal: If target has `# vibecomfy: manual` marker.
         ConversionWriteError: If validation or parity fails.
     """
-    # Gate 1: manual-template refusal
-    _check_manual_refusal(target)
+    requested_dry_run = dry_run
+    dry_run = dry_run or diff
 
-    # Read original content for diff
-    original_content = target.read_text(encoding="utf-8") if target.exists() else ""
+    # Read original content for diff/preview without creating target parents in
+    # read-only modes.
+    original_exists = target.exists()
+    original_content = target.read_text(encoding="utf-8") if original_exists else ""
+
+    # Gate 1: manual-template refusal applies only to real write promotion.
+    # Diff mode is a preview mode and must preserve manual targets byte-for-byte.
+    manual_refusal = _manual_template_refusal_preview(target)
+    if not dry_run and manual_refusal["refused"]:
+        raise ManualTemplateRefusal(str(manual_refusal["message"]))
 
     # Gate 2: validation must pass
     validation = result.validation
@@ -914,21 +951,35 @@ def port_convert_and_write(
     # Diff mode
     diff_data: dict[str, Any] | None = None
     if diff:
-        diff_data = _compute_diff(original_content, result.text, str(target))
+        diff_data = _compute_diff(
+            original_content,
+            result.text,
+            str(target),
+            original_exists=original_exists,
+        )
 
     # Dry-run mode
     if dry_run:
         payload: dict[str, Any] = {
             "written": False,
             "dry_run": True,
+            "diff_requested": diff,
+            "diff_forced_dry_run": diff and not requested_dry_run,
             "target": str(target),
+            "target_exists": original_exists,
             "validation": validation.to_json(),
+            "manual_refusal": manual_refusal,
         }
         if diff_data is not None:
             payload["diff"] = diff_data
         else:
             # Always include diff in dry-run
-            payload["diff"] = _compute_diff(original_content, result.text, str(target))
+            payload["diff"] = _compute_diff(
+                original_content,
+                result.text,
+                str(target),
+                original_exists=original_exists,
+            )
         return payload
 
     # Gate 3: atomic write - temp file in target directory, validate, then replace
@@ -967,7 +1018,10 @@ def port_convert_and_write(
     return {
         "written": True,
         "dry_run": False,
+        "diff_requested": diff,
+        "diff_forced_dry_run": False,
         "target": str(target),
+        "target_exists": original_exists,
         "validation": validation.to_json(),
         "diff": diff_data,
     }
