@@ -45,31 +45,43 @@ ssh:
 secrets: []   # leave empty if pre-set on the box; listing would overwrite box values with local env
 ```
 
-### Recommended launch: direct `chain start` on the box (bypass the local orchestrator)
+### Recommended launch: canonical `launch-epic`
 
-The local `megaplan cloud chain` orchestrator works but has several sharp edges (see Gotchas below). The most reliable launch is to SSH in and run `chain start` directly in a tmux session on the box:
+Use the standardized launcher for cloud epics:
 
 ```bash
-ssh root@<box-ip> 'docker exec megaplan-cloud-agent bash -lc "
-  cd /workspace/<unique-per-chain>
-  # ensure the clone is at the latest base branch (the orchestrator refresh fetches but doesn't ff)
-  git fetch origin <base-branch> && git reset --hard origin/<base-branch>
-  # chain.yaml anchor must be BARE (chain.yaml-dir-relative for direct chain start)
-  tmux kill-session -t <chain-session> 2>/dev/null
-  tmux new-session -d -s <chain-session> \"python -m arnold_pipelines.megaplan chain start \
-    --spec <chain.yaml-path-in-clone> --project-dir . --fresh --no-git-refresh \
-    2>&1 | tee .megaplan/cloud-chain-direct.log\""
-'
+megaplan cloud launch-epic --cloud-yaml cloud.<chain>.yaml .megaplan/briefs/<epic-slug> --fresh
 ```
 
-Observe: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tmux ls'` and `tail -f /workspace/<unique-per-chain>/.megaplan/cloud-chain-direct.log`. Milestone plan state lives under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
+`launch-epic` is the sanctioned path. It validates the North Star, `chain.yaml`
+or the inputs needed to generate one, and every milestone brief before it
+uploads anything. It materializes the canonical layout, starts tmux, writes the
+watchdog marker, and then verifies that the marker's `remote_spec` resolves on
+the box. If that verification fails, the command fails instead of leaving an
+orphaned chain.
+
+Canonical chain layout on the box:
+
+```text
+/workspace/<epic-slug>-<identity-digest>/<repo-name>/.megaplan/briefs/<epic-slug>/chain.yaml
+/workspace/<epic-slug>-<identity-digest>/<repo-name>/.megaplan/briefs/<epic-slug>/NORTHSTAR.md
+/workspace/<epic-slug>-<identity-digest>/<repo-name>/.megaplan/briefs/<epic-slug>/<milestone>.md
+```
+
+The watchdog marker must point `remote_spec` to that real `chain.yaml`, never to
+`<workspace>/chain.yaml` or another guessed path.
+
+Observe: `megaplan cloud status --all --cloud-yaml cloud.<chain>.yaml`, `tmux ls`
+on the box, and the per-chain log under
+`<workspace>/.megaplan/cloud-chain-<session>.log`. Milestone plan state lives
+under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
 
 ### Gotchas specific to the ssh/Hetzner path (learned the hard way)
 
-1. **Chain spec requires a `north_star` anchor** — `megaplan init`/`chain` rejects the spec without `anchors: north_star: <path>`. Not documented in `megaplan-prep`; add it.
-2. **Anchor-path resolution is inconsistent between the orchestrator and `chain start`.** The `megaplan cloud chain` orchestrator places the spec at the repo root and resolves the anchor **repo-root-relative**; `chain start` resolves it **chain.yaml-dir-relative**. Idea (`m*.md`) paths are repo-root-relative in both. So: for direct `chain start` with the spec at `.megaplan/briefs/<epic>/chain.yaml`, use a BARE `north_star: NORTHSTAR.md` (sits next to chain.yaml). For the orchestrator, use the full repo-root-relative path. There is no single anchor path that satisfies both — a real bug to fix in `arnold_pipelines.megaplan.cloud`.
-3. **`--idea-dir` does NOT deliver gitignored `.megaplan/briefs/` to the box clone.** The box clones the repo; if briefs are gitignored (the default `.megaplan/*` policy), the clone lacks them and `chain start` fails `missing_idea_file`. Either commit the briefs to the branch (force-add) before launching, or stop gitignoring briefs. `--idea-dir` uploads idea files but not to the path the runner checks.
-4. **The base-branch refresh fetches but does NOT fast-forward the box clone's local branch.** If the clone's `<base-branch>` is already checked out, `git checkout <base-branch>` is a no-op and the clone stays at the old commit. Force it: `git fetch origin <base-branch> && git reset --hard origin/<base-branch>` before launching (or after any push to the base branch).
+1. **Chain spec requires a `north_star` anchor** — `launch-epic` rejects the setup without `anchors: north_star: NORTHSTAR.md` and a real `NORTHSTAR.md` next to the canonical `chain.yaml`.
+2. **Do not bypass `launch-epic` for normal epics.** Direct tmux/`chain start` launches can drift out of the canonical marker contract and fall outside watchdog supervision.
+3. **Missing specs/workspaces are watchdog issues.** A marker whose `workspace` or `remote_spec` does not resolve is reported as `workspace_missing` or `spec_missing`, not hidden as a benign skip.
+4. **The canonical spec is under `.megaplan/briefs/<epic>/chain.yaml`.** The marker's `remote_spec` must be that exact file. Bare `<workspace>/chain.yaml` paths are invalid.
 5. **The editable arnold `.pth` can get disabled mid-run** (renamed `*.pth.disabled`) by a cloud-chain editable-install-sync side-effect, breaking `import arnold`/`import arnold_pipelines` locally + any local tooling that uses it. Re-enable: `mv <site-packages>/_editable_impl_arnold.pth.disabled <site-packages>/_editable_impl_arnold.pth`. (Also: keep the local venv on an editable install of `~/Documents/Arnold` — a stale non-editable copy shadows the live code and lags the path migration.)
 6. **arnold path migration: `arnold.pipelines.megaplan` → `arnold_pipelines.megaplan`.** Live arnold moved megaplan to the top-level `arnold_pipelines` package and dropped `arnold.pipelines.megaplan`. Older tooling (e.g. the hermes subagent launcher, watchdog scripts) may still use the old dotted path and depend on a stale site-packages copy as a bridge. When you editable-install live arnold, update those tools to `arnold_pipelines.megaplan` too, or they break.
 7. **Use a unique `workspace` + `chain_session` per chain.** The box runs multiple chains concurrently; sharing a workspace or tmux session name collides.
@@ -84,7 +96,7 @@ Typical flow:
 2. Edit it (set the provider, primary `repo:`, any `extra_repos:`, the secret names, etc.).
 3. Export the secret values into your local env (the names listed under `secrets:` in `cloud.yaml`).
 4. `megaplan cloud deploy` to build the image and start the runner.
-5. `megaplan cloud chain <chain.yaml>` for a multi-milestone run, or `megaplan cloud bootstrap <idea.md>` for a single plan.
+5. `megaplan cloud launch-epic <spec-or-dir>` for a multi-milestone run, or `megaplan cloud bootstrap <idea.md>` for a single plan.
 6. Use `status`, `logs`, `attach` to observe; `down` to pause, `destroy` to tear the volume.
 
 See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), and provider-specific troubleshooting.
@@ -249,7 +261,7 @@ For users running multiple chains across many repos on the shared Hetzner agentb
 2. **Per chain**:
    - Write `cloud.<chain>.yaml` with `provider: ssh`, `repo:` + any `extra_repos:` + `chain_session: <chain-name>` + `mode: idle`.
    - `megaplan cloud deploy --cloud-yaml cloud.<chain>.yaml` only when adding new repos or bumping `megaplan.ref` (the entrypoint is baked in at build time).
-   - `megaplan cloud chain --cloud-yaml cloud.<chain>.yaml <chain.yaml>` to launch.
+   - `megaplan cloud launch-epic --cloud-yaml cloud.<chain>.yaml <spec-or-dir>` to validate, materialize, launch, and watchdog-verify.
 
 3. **Observing**:
    - `megaplan cloud status --chain` for the chain summary.
