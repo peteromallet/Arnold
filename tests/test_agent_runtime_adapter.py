@@ -137,6 +137,38 @@ def test_run_worker_mirrors_openrouter_key_into_backend_env_aliases(
     assert captured_env["HERMES_API_KEY"] == "sk-or-v1-test-key"
 
 
+def test_run_worker_mirrors_parent_resolved_native_deepseek_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runtime, "_resolve_openrouter_key", lambda: "sk-or-v1-stale-key")
+    captured_env: dict[str, str] = {}
+
+    def fake_run(args, **kwargs):
+        captured_env.update(kwargs["env"])
+        with open(args[3], "w", encoding="utf-8") as fh:
+            json.dump({"content": "hello"}, fh)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(runtime.subprocess, "run", fake_run)
+
+    result = runtime._run_worker(
+        {
+            "api_key": "sk-native-deepseek-key",
+            "base_url": "https://api.deepseek.com/v1",
+            "model": "deepseek-v4-flash",
+        },
+        "system",
+        "user",
+        response_contract="batch_repl",
+        agent_id="hermes",
+    )
+
+    assert result["content"] == "hello"
+    assert captured_env["OPENROUTER_API_KEY"] == "sk-native-deepseek-key"
+    assert captured_env["OPENAI_API_KEY"] == "sk-native-deepseek-key"
+    assert captured_env["HERMES_API_KEY"] == "sk-native-deepseek-key"
+
+
 def test_worker_bootstraps_repo_root_from_neutral_cwd(tmp_path) -> None:
     request_path = tmp_path / "request.json"
     result_path = tmp_path / "result.json"

@@ -449,13 +449,14 @@ def _run_worker(
                 fh,
             )
         env = dict(os.environ)
-        # Ensure the child can see freshly stored browser credentials even if
-        # only ~/.hermes/.env had them.
-        openrouter_key = _resolve_openrouter_key()
-        if openrouter_key:
-            env["OPENROUTER_API_KEY"] = openrouter_key
-            env["OPENAI_API_KEY"] = openrouter_key
-            env["HERMES_API_KEY"] = openrouter_key
+        # Ensure the child sees the same credential the parent resolved for the
+        # Hermes adapter.  For native DeepSeek endpoints this must be the
+        # DeepSeek key, not a stale browser/OpenRouter key from ~/.hermes/.env.
+        hermes_key = agent_kwargs.get("api_key") or _resolve_openrouter_key()
+        if isinstance(hermes_key, str) and hermes_key:
+            env["OPENROUTER_API_KEY"] = hermes_key
+            env["OPENAI_API_KEY"] = hermes_key
+            env["HERMES_API_KEY"] = hermes_key
         # Don't leak ComfyUI's cwd/path into the child (it is what causes the
         # `utils` collision); run from a neutral directory.
         try:
