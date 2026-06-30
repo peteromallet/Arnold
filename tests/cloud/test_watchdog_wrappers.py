@@ -195,6 +195,18 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert "workflow-manifest-runtime" not in text
 
 
+def test_watchdog_flags_setup_deviations_instead_of_skipping() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert 'report_item "$report_items" "$session" "flag" "workspace_missing" "workspace missing"' in text
+    assert 'report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing"' in text
+    assert 'report_item "$report_items" "" "flag" "setup_invalid" "missing session: $marker"' in text
+    assert 'report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker"' in text
+    assert '"spec_missing" "chain spec missing"' in text
+    assert '"skip" "spec_missing"' not in text
+    assert '"skip" "workspace_missing"' not in text
+
+
 def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     text = _repair_wrapper()
 

@@ -3009,8 +3009,8 @@ launch_chain_tick() {
   fi
 
   if [[ ! -d "$workspace" ]]; then
-    log "skip $session: workspace missing: $workspace"
-    report_item "$report_items" "$session" "skip" "workspace_missing" "workspace missing" "$workspace" "$remote_spec"
+    log "flag $session: workspace missing: $workspace"
+    report_item "$report_items" "$session" "flag" "workspace_missing" "workspace missing" "$workspace" "$remote_spec"
     return 1
   fi
   if [[ "$run_kind" == "chain" && "$remote_spec" != /* ]]; then
@@ -3019,8 +3019,8 @@ launch_chain_tick() {
   local health
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-    log "skip $session: chain spec missing: $remote_spec"
-    report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    log "flag $session: chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
     return 1
   fi
   if [[ "$run_kind" == "chain" ]]; then
@@ -3269,8 +3269,8 @@ launch_chain_tick() {
   fi
 
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
-    log "skip $session: chain spec missing: $remote_spec"
-    report_item "$report_items" "$session" "skip" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    log "flag $session: chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
     return 1
   fi
 
@@ -3394,18 +3394,18 @@ scan_once() {
     found=$((found + 1))
     local session workspace remote_spec run_kind plan_name relaunch_command
     session="$(json_field "$marker" session 2>/dev/null)" || {
-      log "skip invalid marker (missing session): $marker"
-      report_item "$report_items" "" "skip" "invalid_marker" "missing session: $marker"
+      log "flag invalid marker (missing session): $marker"
+      report_item "$report_items" "" "flag" "setup_invalid" "missing session: $marker"
       continue
     }
     workspace="$(json_field "$marker" workspace 2>/dev/null)" || {
-      log "skip invalid marker (missing workspace): $marker"
-      report_item "$report_items" "$session" "skip" "invalid_marker" "missing workspace: $marker"
+      log "flag invalid marker (missing workspace): $marker"
+      report_item "$report_items" "$session" "flag" "workspace_missing" "missing workspace: $marker"
       continue
     }
     remote_spec="$(json_field "$marker" remote_spec 2>/dev/null)" || {
-      log "skip invalid marker (missing remote_spec): $marker"
-      report_item "$report_items" "$session" "skip" "invalid_marker" "missing remote_spec: $marker" "$workspace"
+      log "flag invalid marker (missing remote_spec): $marker"
+      report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker" "$workspace"
       continue
     }
     run_kind="$(json_field "$marker" run_kind 2>/dev/null || true)"
