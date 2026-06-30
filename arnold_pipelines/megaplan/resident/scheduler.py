@@ -192,6 +192,14 @@ class ResidentJobHandlers:
         previous_status = run.status
         updated = self._persist_cloud_result(run, result)
         classification = result.classification
+        if bool(job.payload.get("notify_every_check", False)):
+            await self._notify_cloud_check_fire(
+                conversation=conversation,
+                job=job,
+                run=updated,
+                classification=classification,
+                summary=result.summary,
+            )
         if classification == "running":
             self._reschedule_cloud_check(job, updated)
         elif classification in TERMINAL_OR_INPUT_NEEDED:
@@ -293,6 +301,47 @@ class ResidentJobHandlers:
                 ),
             )
         return updated
+
+    async def _notify_cloud_check_fire(
+        self,
+        *,
+        conversation: ResidentConversation,
+        job: ScheduledJob,
+        run: CloudRun,
+        classification: CloudClassification,
+        summary: str,
+    ) -> None:
+        content = _cloud_check_notification_text(job, run, classification, summary)
+        idempotency_key = deterministic_idempotency_key("resident-cloud-check-notification", job.id, job.attempt_count)
+        message = self.store.create_message(
+            epic_id=run.epic_id,
+            conversation_id=conversation.id,
+            direction="outbound",
+            content=content,
+            idempotency_key=idempotency_key,
+        )
+        self.store.update_resident_conversation(
+            conversation.id,
+            last_outbound_message_id=message.id,
+            delivery_cursor=message.id,
+            last_active_at=utc_now(),
+            idempotency_key=deterministic_idempotency_key("resident-cloud-check-notification-pointer", conversation.id, message.id),
+        )
+        if self.outbound is not None:
+            await self.outbound.send(
+                OutboundMessage(
+                    conversation_key=conversation.conversation_key,
+                    content=content,
+                    idempotency_key=idempotency_key,
+                    metadata={
+                        "conversation_id": conversation.id,
+                        "message_id": message.id,
+                        "scheduled_job_id": job.id,
+                        "cloud_run_id": run.id,
+                        "cloud_status": classification,
+                    },
+                )
+            )
 
     def _reschedule_cloud_check(self, job: ScheduledJob, run: CloudRun) -> None:
         pending = self.store.list_scheduled_jobs(
@@ -458,3 +507,15 @@ def _job_from_payload(payload: dict[str, Any]) -> ScheduledJob:
 def _cloud_notification_text(run: CloudRun, classification: CloudClassification, summary: str) -> str:
     target = run.target_id or run.plan_id or run.sprint_id or run.id
     return f"Cloud run {target} is {classification}: {summary}"
+
+
+def _cloud_check_notification_text(
+    job: ScheduledJob,
+    run: CloudRun,
+    classification: CloudClassification,
+    summary: str,
+) -> str:
+    target = run.target_id or run.plan_id or run.sprint_id or run.id
+    interval = int(job.payload.get("check_interval_s") or 0)
+    cadence = f" every {interval // 3600}h" if interval and interval % 3600 == 0 else (f" every {interval}s" if interval else "")
+    return f"Cloud check{cadence} ran for {target}: {classification}. {summary}"

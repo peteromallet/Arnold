@@ -10,6 +10,7 @@ from typing import Any
 
 from .auth import AuthorizationSubject
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
+from .scheduler import ScheduledJobWorker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -128,11 +129,21 @@ class DiscordOutboundSink(OutboundSink):
 class ResidentDiscordService:
     """Thin discord.py service that feeds Discord events into ResidentRuntime."""
 
-    def __init__(self, *, runtime: ResidentRuntime, token: str) -> None:
+    def __init__(
+        self,
+        *,
+        runtime: ResidentRuntime,
+        token: str,
+        scheduler: ScheduledJobWorker | None = None,
+        scheduler_interval_s: float = 10.0,
+    ) -> None:
         if not token:
             raise ValueError("Discord token is required")
         self.runtime = runtime
         self.token = token
+        self.scheduler = scheduler
+        self.scheduler_interval_s = scheduler_interval_s
+        self._scheduler_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         try:
@@ -151,6 +162,7 @@ class ResidentDiscordService:
             if isinstance(outbound, DiscordOutboundSink):
                 outbound.bind_client(client)
             recovered = await self.runtime.recover_abandoned_turns()
+            self._ensure_scheduler_started(client)
             user = getattr(client, "user", None)
             guilds = getattr(client, "guilds", ())
             LOGGER.info(
@@ -185,6 +197,30 @@ class ResidentDiscordService:
 
     def run(self) -> None:
         asyncio.run(self.start())
+
+    def _ensure_scheduler_started(self, client: Any) -> None:
+        if self.scheduler is None:
+            return
+        if self._scheduler_task is not None and not self._scheduler_task.done():
+            return
+        self._scheduler_task = client.loop.create_task(self._scheduler_loop(client))
+
+    async def _scheduler_loop(self, client: Any) -> None:
+        LOGGER.info("Resident scheduler loop started interval_s=%s", self.scheduler_interval_s)
+        while not client.is_closed():
+            try:
+                result = await self.scheduler.run_due_once()
+                if result.claimed:
+                    LOGGER.info(
+                        "Resident scheduler processed claimed=%s fired=%s retried=%s cancelled=%s",
+                        result.claimed,
+                        result.fired,
+                        result.retried,
+                        result.cancelled,
+                    )
+            except Exception:
+                LOGGER.exception("Resident scheduler loop failed")
+            await asyncio.sleep(max(1.0, self.scheduler_interval_s))
 
 
 def discord_token_from_env(env_name: str) -> str | None:

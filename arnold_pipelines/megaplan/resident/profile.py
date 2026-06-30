@@ -192,6 +192,7 @@ class CloudLogsInput(CloudToolInput):
 class ScheduleCloudCheckInput(CloudToolInput):
     interval_seconds: int = Field(default=60, gt=0)
     scheduled_for: datetime | None = None
+    notify_every_check: bool = True
     payload: dict[str, Any] = Field(default_factory=dict)
     max_attempts: int = Field(default=3, ge=1)
 
@@ -1401,6 +1402,7 @@ class MegaplanResidentProfile:
             "project_root": payload.project_root,
             "cloud_yaml": payload.cloud_yaml or str(self.config.cloud_yaml_path),
             "check_interval_s": payload.interval_seconds,
+            "notify_every_check": payload.notify_every_check,
             **payload.payload,
         }
         job = store.create_scheduled_job(
