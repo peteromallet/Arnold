@@ -193,6 +193,16 @@ def test_final_conformance_gate_is_closeout_owned() -> None:
         assert carrier in closeout_text, carrier
     for carrier in machine_report["deferred_semantic_carriers"]:
         assert carrier in closeout_text, carrier
+    suffixes = machine_report["carrier_evidence_suffixes"]
+    assert suffixes == {
+        "canonical_source": [".py"],
+        "audited_pure_phase_body": [".py"],
+        "declared_policy": [".py", ".yaml", ".yml", ".json", ".md"],
+    }
+    for carrier, allowed_suffixes in suffixes.items():
+        assert carrier in closeout_text, carrier
+        for suffix in allowed_suffixes:
+            assert suffix in closeout_text, suffix
     for field in machine_report["required_row_fields"]:
         assert field in closeout_text, field
     for field in machine_report["implemented_required_row_fields"]:
@@ -328,6 +338,87 @@ def test_final_conformance_yaml_validator_requires_carrier_evidence_for_implemen
     )
 
     assert any("missing implemented fields: carrier_evidence" in error for error in errors)
+
+
+def test_final_conformance_yaml_validator_rejects_non_code_canonical_source(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "report.md").write_text("# Report\n", encoding="utf-8")
+    traceability_path.write_text(
+        yaml.safe_dump({"rows": [{"id": "row-one"}]}),
+        encoding="utf-8",
+    )
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["report.md"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+    )
+
+    assert any("canonical_source requires one of ['.py']" in error for error in errors)
+
+
+def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "policy.yaml").write_text("policy: true\n", encoding="utf-8")
+    traceability_path.write_text(
+        yaml.safe_dump({"rows": [{"id": "row-one"}]}),
+        encoding="utf-8",
+    )
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "declared_policy",
+                        "carrier_evidence": ["policy.yaml"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        validate_conformance_ledger(
+            repo_root=tmp_path,
+            conformance_path=conformance_path,
+            traceability_path=traceability_path,
+        )
+        == []
+    )
 
 
 def test_review_execution_log_has_no_unaddressed_blockers() -> None:

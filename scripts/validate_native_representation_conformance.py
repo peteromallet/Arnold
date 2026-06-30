@@ -27,6 +27,8 @@ IMPLEMENTED_SEMANTIC_CARRIERS = {
     "audited_pure_phase_body",
 }
 DEFERRED_SEMANTIC_CARRIERS = {"explicit_deferral"}
+CODE_CARRIER_SUFFIXES = {".py"}
+POLICY_CARRIER_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md"}
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -73,6 +75,27 @@ def _validate_paths_exist(paths: list[str], *, repo_root: Path, field: str, row_
         target = repo_root / path
         if not target.is_file():
             raise ValueError(f"row {row_id!r} field {field!r} path does not exist: {path}")
+
+
+def _validate_carrier_evidence_shape(
+    paths: list[str],
+    *,
+    carrier: str,
+    row_id: str,
+) -> None:
+    if carrier in {"canonical_source", "audited_pure_phase_body"}:
+        allowed = CODE_CARRIER_SUFFIXES
+    elif carrier == "declared_policy":
+        allowed = POLICY_CARRIER_SUFFIXES
+    else:
+        return
+    for path in paths:
+        suffix = Path(path).suffix
+        if suffix not in allowed:
+            raise ValueError(
+                f"row {row_id!r} carrier_evidence path {path!r} has suffix "
+                f"{suffix!r}; {carrier} requires one of {sorted(allowed)}"
+            )
 
 
 def validate_conformance_ledger(
@@ -197,6 +220,11 @@ def validate_conformance_ledger(
                     carrier_paths,
                     repo_root=repo_root,
                     field="carrier_evidence",
+                    row_id=row_id,
+                )
+                _validate_carrier_evidence_shape(
+                    carrier_paths,
+                    carrier=carrier,
                     row_id=row_id,
                 )
             except ValueError as exc:
