@@ -42,6 +42,9 @@ DEFAULT_INFRA_RETRIES = 1
 REPO = Path(__file__).resolve().parents[2]
 
 _PROVIDER_INFRA_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"OpenRouter rejected", re.IGNORECASE),
+    re.compile(r"model provider is temporarily unavailable", re.IGNORECASE),
+    re.compile(r"provider is temporarily unavailable", re.IGNORECASE),
     re.compile(r"not have enough credits", re.IGNORECASE),
     re.compile(r"insufficient credits", re.IGNORECASE),
     re.compile(r"insufficient balance", re.IGNORECASE),
@@ -214,6 +217,8 @@ def _summary_text_for_infra_classification(summary: dict[str, Any]) -> str:
         if isinstance(assessment, dict):
             for issue in assessment.get("issues") or []:
                 if not isinstance(issue, dict):
+                    continue
+                if issue.get("check") == "soft_warning":
                     continue
                 detail = issue.get("detail")
                 if isinstance(detail, str):

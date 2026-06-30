@@ -244,6 +244,73 @@ def test_runner_counts_persistent_provider_capacity_as_infra_blocked(
     assert summary["score_classes"] == {"infra_blocked": 1}
 
 
+def test_runner_does_not_classify_soft_search_429_as_infra(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    scenarios_dir = tmp_path / "scenarios"
+    scenarios_dir.mkdir()
+    scenario_path = scenarios_dir / "soft-search-warning.json"
+    scenario_path.write_text(
+        json.dumps({"id": "soft-search-warning", "query": "do it"}),
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN202, ARG001
+        out_file = Path(cmd[cmd.index("--single-out") + 1])
+        tag = cmd[cmd.index("--tag") + 1]
+        output_dir = tmp_path / "out" / tag / "soft-search-warning"
+        payload = _summary(tmp_path / "out" / tag, "soft-search-warning", ok=False)
+        payload.update(
+            {
+                "status": "success",
+                "error": None,
+                "output_dir": str(output_dir),
+                "guard": {
+                    "live_agentic_success": False,
+                    "score_class": "product_fail",
+                    "assessment": {
+                        "passed": False,
+                        "issues": [
+                            {
+                                "check": "graph_changed",
+                                "severity": "error",
+                                "detail": "Expected graph change but response.graph_unchanged is True.",
+                            },
+                            {
+                                "check": "soft_warning",
+                                "severity": "warning",
+                                "detail": "web search: brave search HTTP error: HTTP Error 429: Too Many Requests",
+                            },
+                        ],
+                    },
+                },
+            }
+        )
+        out_file.write_text(json.dumps(payload), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr("tests.live_agentic_harness.runner.subprocess.run", fake_run)
+
+    summary = run_tag(
+        "tag",
+        scenarios_dir=scenarios_dir,
+        output_base=tmp_path / "out",
+        max_workers=1,
+        per_scenario_timeout=1,
+        infra_retries=1,
+        progress_every=0,
+    )
+
+    scenario = summary["scenarios"][0]
+    assert scenario["attempt_count"] == 1
+    assert scenario["failure_class"] == "product_or_assessment_failure"
+    assert scenario["score_class"] == "product_fail"
+    assert scenario.get("retryable_infra") is not True
+    assert summary["infra_failures"] == 0
+    assert summary["product_or_assessment_failures"] == 1
+
+
 def test_runner_timeout_preserves_scenario_graph_change_expectation(
     tmp_path: Path,
     monkeypatch,
