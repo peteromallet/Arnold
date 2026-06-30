@@ -106,13 +106,14 @@ Finish the migration by inventorying every remaining legacy import and flag, mov
 - Completion-manifest gate: before this chain can hand off to composition,
   run `megaplan chain manifest --spec
   .megaplan/initiatives/native-python-pipelines-completion/chain.yaml
-  --proof-map <reviewed-proof-map.json>` to produce
+  --proof-map <proof-map.json>` to produce
   `.megaplan/initiatives/native-python-pipelines-completion/completion-manifest.json`
   with schema `arnold.megaplan.chain_completion_manifest.v1`. The manifest must
-  bind the current chain spec, `NORTHSTAR.md`, ordered milestone labels, every
-  completion milestone brief path and SHA-256, completed plan names, merged PR
-  numbers/states/merge SHAs, final `done` statuses, and declared proof artifact
-  paths plus SHA-256 hashes. `native-composition-followup` must keep
+  hash the current chain spec, `NORTHSTAR.md`, every completion milestone brief,
+  and declared proof artifact paths. It must also record ordered milestone
+  labels, completed plan names, merged PR numbers/states/merge SHAs, and final
+  `done` statuses so downstream launch can compare those records against
+  canonical chain state. `native-composition-followup` must keep
   `require_manifest: true` on its prerequisite and fail launch if this manifest
   is absent or stale.
 - False-pass guard: deleting `_pipeline` or compatibility modules without proving callers moved can break resume/chain behavior while appearing clean.

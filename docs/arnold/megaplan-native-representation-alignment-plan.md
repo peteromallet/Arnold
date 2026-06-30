@@ -334,9 +334,10 @@ adjudication on 2026-07-01 ruled that downstream chain launch also requires an
 authoritative completion manifest for each prerequisite chain. That manifest is
 content-addressed evidence, not prose: it must bind the prerequisite
 `chain.yaml`, `NORTHSTAR.md`, ordered milestone labels, milestone brief paths
-and SHA-256 hashes, completed plan names, merged PR evidence including merge
-SHA for review-merge chains, final milestone status, and declared proof
-artifact paths and SHA-256 hashes. The dependent `chain_completed`
+and SHA-256 hashes, final milestone status, and declared proof artifact paths
+and SHA-256 hashes. It must also record completed plan names and merged PR
+metadata, including merge SHA for review-merge chains, so downstream launch can
+compare those records against canonical chain state. The dependent `chain_completed`
 precondition must use `require_manifest: true` before
 `native-composition-followup` or `native-platform-followup` can launch.
 
@@ -356,8 +357,10 @@ sufficient to launch only the first prerequisite chain
 load-bearing initiative/docs files committed in `HEAD` and clean. The harness
 now exposes `megaplan chain manifest --spec ... --proof-map ...` to write the
 content-addressed prerequisite manifest. Completion M7 must run that command
-with reviewed proof artifacts, and `native-composition-followup` launch must
-fail if the manifest is absent, stale, or incomplete.
+with an explicit proof map, and `native-composition-followup` launch must fail
+if the manifest is absent, stale, has no proof artifacts, or no longer matches
+the current chain spec, North Star, milestone briefs, proof file hashes, state
+records, or review-merge PR metadata.
 
 ## Completion Standard
 
@@ -375,8 +378,8 @@ The alignment work is done only when:
 - prerequisite chain completion for `native-composition-followup` and
   `native-platform-followup` is proven by the canonical chain state plus a
   content-addressed `completion-manifest.json` for each prerequisite chain,
-  including current chain/North Star/brief/proof artifact hashes and merged PR
-  evidence;
+  including current chain/North Star/brief/proof artifact hashes, matching plan
+  records, and merged PR metadata for review-merge prerequisite chains;
 - high-abstraction reviewers agree the three-epic sequence converges on the
   report, not merely on a cleaner graph/manifest wrapper;
 - detail reviewers agree the major hidden-handler behaviors have either been

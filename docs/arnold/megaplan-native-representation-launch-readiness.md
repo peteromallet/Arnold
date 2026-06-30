@@ -19,8 +19,8 @@ compatibility artifacts, not final semantic authority.
 | Chain | Current launch verdict | Reason |
 | --- | --- | --- |
 | `native-python-pipelines-completion` | Source-gate ready; not started. | The chain is the first prerequisite chain. Its `git_tracked` launch preconditions now pass from committed source in `HEAD`, and `chain verify` succeeds structurally. |
-| `native-composition-followup` | No-launch until completion chain state proves M1-M7 are `done` with evidence. | `launch_preconditions[0]` requires `native-python-pipelines-completion/chain.yaml` to be complete against the current chain spec hash, with plan records and merged PR evidence because that chain uses `merge_policy: review`. |
-| `native-platform-followup` | No-launch until completion and composition are both evidence-complete, and the composition conformance report exists. | `launch_preconditions` require both prerequisite chain states plus `docs/arnold/megaplan-composition-conformance-report.md`. |
+| `native-composition-followup` | No-launch until completion chain state proves M1-M7 are `done` with evidence and a matching manifest. | `launch_preconditions[0]` requires `native-python-pipelines-completion/chain.yaml` to be complete against the current chain spec hash, with plan records, review-merge PR metadata, and `require_manifest: true`. |
+| `native-platform-followup` | No-launch until completion and composition are both evidence-complete with matching manifests, and the composition conformance report exists. | `launch_preconditions` require both prerequisite chain states with `require_manifest: true` plus `docs/arnold/megaplan-composition-conformance-report.md`. |
 
 ## Evidence
 
@@ -35,7 +35,7 @@ compatibility artifacts, not final semantic authority.
 | Executable launch prerequisite gates | `arnold_pipelines/megaplan/chain/spec.py` supports `launch_preconditions` with `exists`, `contains_text`, `git_tracked`, and `chain_completed`; `chain verify` calls `validate_paths()`. | Satisfied. |
 | Release-gate hardening adjudicated | GPT-5.5 high-reasoning release-gate reviews found label/hash-only prerequisite completion too weak; the gate now requires no active prerequisite plan, cursor advanced past all milestones, `done` records, plan names, merged PR evidence for review-merge prerequisite chains, and `require_manifest: true` content-addressed completion manifests before dependent chains launch. | Strengthened; richer archives/signing can defer, but manifest validation cannot defer past completion M7. |
 | Planning artifacts adjudicated | GPT-5.5 high-reasoning review on 2026-07-01 judged the traceability/scenario artifacts sufficient for the planning/alignment phase and sufficient to launch only the first prerequisite chain, assuming the launch checkout has those artifacts committed and clean. | Satisfied for planning; source-gate verify passes from committed alignment source. |
-| Clean-source preflight | `git_tracked` launch preconditions fail before `require_clean_base` can stash staged, modified, deleted, or untracked initiative/docs files away, and pass only when the gated source paths are committed in `HEAD` and clean. | Satisfied; current completion-chain verify passes after commit `afed21b4`. |
+| Clean-source preflight | `git_tracked` launch preconditions fail before `require_clean_base` can stash staged, modified, deleted, or untracked initiative/docs files away, and pass only when the gated source paths are committed in `HEAD` and clean. | Satisfied; current completion-chain verify passes from committed source. |
 | Composition cannot launch before completion | `megaplan chain verify --spec .megaplan/initiatives/native-composition-followup/chain.yaml` fails on missing completion chain state. | Satisfied; expected no-launch result. |
 | Platform cannot launch before completion/composition | `megaplan chain verify --spec .megaplan/initiatives/native-platform-followup/chain.yaml` fails on missing completion chain state before reaching later platform gates. | Satisfied; expected no-launch result. |
 | Launch-precondition regression tests | `pytest -q tests/arnold_pipelines/megaplan/test_chain_launch_preconditions.py` passes. | Satisfied. |
@@ -52,8 +52,8 @@ python -m arnold_pipelines.megaplan.cli chain verify --spec .megaplan/initiative
 
 Observed result:
 
-- alignment-artifact and launch-precondition tests: `17 passed`;
-- completion chain verify: success after commit `afed21b4`;
+- alignment-artifact and launch-precondition tests: `24 passed`;
+- completion chain verify: success from committed source;
 - composition chain verify: expected failure, missing completion chain state;
 - platform chain verify: expected failure, missing completion chain state.
 
@@ -62,15 +62,16 @@ Observed result:
 - Do not start the composition chain until completion chain state exists at the
   canonical hashed state path and proves every current completion milestone is
   `done` against the current completion `chain.yaml` SHA-256, with a plan name
-  and merged PR evidence for each milestone because the completion chain uses
-  `merge_policy: review`, plus a content-addressed
+  and review-merge PR metadata for each milestone because the completion chain
+  uses `merge_policy: review`, plus a content-addressed
   `.megaplan/initiatives/native-python-pipelines-completion/completion-manifest.json`
-  that binds the current chain, North Star, milestone briefs, merged PR merge
-  SHAs, and declared proof artifacts by SHA-256.
+  that hashes the current chain, North Star, milestone briefs, and declared
+  proof artifacts, and records matching plan names plus PR number/state/merge
+  SHA.
 - Do not start the platform chain until completion and composition chain states
   both prove all current milestones `done` against their current `chain.yaml`
-  SHA-256 values, with plan names and merged PR evidence for review-merge
-  prerequisite chains, and each prerequisite chain has a matching
+  SHA-256 values, with plan names and review-merge PR metadata for
+  review-merge prerequisite chains, and each prerequisite chain has a matching
   `completion-manifest.json`.
 - Do not satisfy those prerequisites with legacy `chain_state.json`, summary
   `verified_count`, stale state, active prerequisite cursors, `finalized`
