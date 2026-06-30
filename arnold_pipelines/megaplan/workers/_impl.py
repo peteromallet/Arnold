@@ -2919,6 +2919,7 @@ def _run_codex_step_uncapped(
         else ModelTier.ENFORCED
     )
     schema = read_json(schema_file)
+    capture_schema = SCHEMAS.get(codex_schema_name, schema)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -3338,14 +3339,19 @@ def _run_codex_step_uncapped(
         output_raw = output_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         output_raw = ""
+    def _looks_like_plain_plan_markdown(value: str) -> bool:
+        stripped = value.lstrip()
+        if stripped.startswith(("{", "[")):
+            return False
+        return (
+            stripped.startswith("# ")
+            or "## Overview" in value
+            or bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", value))
+        )
     if free_text:
         text = output_raw or raw
         payload: dict[str, Any] = {}
-        if step == "plan" and (
-            text.lstrip().startswith("# ")
-            or "## Overview" in text
-            or bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", text))
-        ):
+        if step == "plan" and _looks_like_plain_plan_markdown(text):
             from arnold_pipelines.megaplan.model_seam import coerce_plan_markdown_payload
 
             payload = coerce_plan_markdown_payload(text)
@@ -3361,11 +3367,7 @@ def _run_codex_step_uncapped(
         )
     capture_input: str | dict[str, Any] = raw
     plan_text = output_raw or raw
-    if step == "plan" and (
-        plan_text.lstrip().startswith("# ")
-        or "## Overview" in plan_text
-        or bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", plan_text))
-    ):
+    if step == "plan" and _looks_like_plain_plan_markdown(plan_text):
         from arnold_pipelines.megaplan.model_seam import coerce_plan_markdown_payload
 
         capture_input = coerce_plan_markdown_payload(plan_text)
@@ -3381,6 +3383,7 @@ def _run_codex_step_uncapped(
                     "validation_step": step,
                     "compatibility_validation_step": step,
                     "schema": schema,
+                    "capture_schema": capture_schema,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),
@@ -3601,6 +3604,7 @@ def run_codex_prep_step(
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
     schema = read_json(schema_file)
+    capture_schema = SCHEMAS.get(STEP_SCHEMA_FILENAMES[step], schema)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -3661,6 +3665,7 @@ def run_codex_prep_step(
                     "validation_step": step,
                     "compatibility_validation_step": step,
                     "schema": schema,
+                    "capture_schema": capture_schema,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),

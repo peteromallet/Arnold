@@ -199,6 +199,9 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
         sub = subparsers.add_parser(command)
         sub.add_argument("--plan", required=False)
+        sub.add_argument("--fresh", action="store_true", default=False)
+        sub.add_argument("--persist", action="store_true", default=False)
+        sub.add_argument("--ephemeral", action="store_true", default=False)
 
     build_auto_parser(subparsers)
     build_chain_parser(subparsers)
