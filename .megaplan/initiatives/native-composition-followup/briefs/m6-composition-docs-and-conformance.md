@@ -91,12 +91,19 @@ static graph queries, tree traces, per-attempt audit skeletons, and path resume.
   substrate. Worktree reconcile, credential brokerage, DBOS/Postgres fleet
   durability, full pack/versioning product, and production supervision are
   covered by the platform follow-up epic, not by this composition epic.
+- Before platform can launch, this milestone produces
+  `docs/arnold/megaplan-composition-conformance-report.md`, an explicit
+  `proof-map.json` for the composition chain, and
+  `.megaplan/initiatives/native-composition-followup/completion-manifest.json`
+  using `megaplan chain manifest --spec
+  .megaplan/initiatives/native-composition-followup/chain.yaml --proof-map
+  <proof-map.json>`.
 
 ## Native Representation Alignment
 
 - Matrix rows owned or affected: all composition-owned rows in `docs/arnold/megaplan-native-representation-alignment-plan.md`, especially Source readability; Handler topology extraction/purity audit; Golden trace regeneration guard; Behavior parity with existing Megaplan.
 - Expected status change: no composition-owned row may remain `missing` or merely planning-only `enabled`; each must be `implemented` with proof or explicitly `deferred` to a downstream owner.
-- Proof artifacts: row-by-row alignment proof, structural conformance test, handler-purity inventory and scans, mutation tests moving logic back into handlers, fixed D1-D15 scenario manifest, generated override action matrix, rendered policy view, static topology snapshots, rendered topology diff, docs/scaffold tests, installed-package smoke test, and source-path reconciliation proof.
+- Proof artifacts: row-by-row alignment proof, structural conformance test, handler-purity inventory and scans, mutation tests moving logic back into handlers, fixed D1-D15 scenario manifest, generated override action matrix, rendered policy view, static topology snapshots, rendered topology diff, docs/scaffold tests, installed-package smoke test, source-path reconciliation proof, `docs/arnold/megaplan-composition-conformance-report.md`, the explicit `proof-map.json` used for platform handoff, and the generated `completion-manifest.json`.
 - False-pass guard: human-readable docs or route labels do not prove conformance unless structural checks fail when semantics are hidden in handlers.
 - Doctrine gate: final docs and conformance must prove that canonical
   compositional source is the semantic authority, `WorkflowManifest` is the

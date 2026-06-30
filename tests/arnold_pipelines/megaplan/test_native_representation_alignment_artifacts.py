@@ -108,3 +108,44 @@ def test_fixed_scenarios_reference_traceability_rows() -> None:
         assert scenario["false_pass_guard"]
 
     assert row_ids - referenced_rows == set()
+
+
+def test_chain_handoff_gates_are_executable_and_closeout_owned() -> None:
+    payload = _load_yaml(TRACEABILITY_PATH)
+    gates = payload.get("chain_handoff_gates")
+    assert isinstance(gates, list)
+    assert [gate["id"] for gate in gates] == [
+        "completion-to-composition",
+        "completion-to-platform",
+        "composition-to-platform",
+    ]
+
+    for gate in gates:
+        assert gate["require_manifest"] is True
+        upstream = gate["upstream_chain"]
+        downstream = ROOT / gate["downstream_chain"]
+        closeout_brief = ROOT / gate["closeout_brief"]
+        assert downstream.is_file(), gate["id"]
+        assert closeout_brief.is_file(), gate["id"]
+
+        downstream_spec = _load_yaml(downstream)
+        matching_preconditions = [
+            precondition
+            for precondition in downstream_spec.get("launch_preconditions", [])
+            if precondition.get("kind") == "chain_completed"
+            and precondition.get("name") == gate["required_precondition"]
+        ]
+        assert len(matching_preconditions) == 1, gate["id"]
+        precondition = matching_preconditions[0]
+        assert precondition["chain"] == upstream
+        assert precondition.get("require_manifest") is True
+
+        closeout_text = closeout_brief.read_text(encoding="utf-8")
+        assert gate["closeout_milestone"] in {
+            milestone
+            for row in payload["rows"]
+            for milestone in row["milestones"]
+        }
+        for deliverable in gate["closeout_deliverables"]:
+            assert deliverable in closeout_text, (gate["id"], deliverable)
+        assert "megaplan chain manifest" in closeout_text, gate["id"]
