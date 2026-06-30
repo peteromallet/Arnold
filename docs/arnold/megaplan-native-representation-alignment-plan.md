@@ -403,7 +403,10 @@ The alignment work is done only when:
   `proof-map.json`, and the final platform `completion-manifest.json`, and the
   conformance report plus YAML row ledger prove every row in
   `docs/arnold/megaplan-native-representation-traceability.yaml` is
-  implemented or explicitly deferred with downstream owner and blocking proof.
+  implemented or explicitly deferred with downstream owner and blocking proof;
+- `python scripts/validate_native_representation_conformance.py --conformance
+  docs/arnold/megaplan-native-representation-conformance.yaml` passes against
+  the final YAML ledger.
 
 The practical final test is simple: open the canonical Megaplan workflow source.
 If the real product flow is not visible there, the sequence has not reached the
