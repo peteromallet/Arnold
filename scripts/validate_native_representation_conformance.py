@@ -18,7 +18,7 @@ EXPECTED_SCHEMA = "arnold.megaplan_native_representation.conformance.v1"
 EXPECTED_TARGET_REPORT = "docs/arnold/megaplan-native-representation-report.md"
 EXPECTED_TRACEABILITY = "docs/arnold/megaplan-native-representation-traceability.yaml"
 VALID_STATUSES = {"implemented", "deferred"}
-REQUIRED_ROW_FIELDS = {"id", "status", "semantic_carrier", "proof_artifacts"}
+REQUIRED_ROW_FIELDS = {"id", "status", "semantic_carrier", "proof_categories", "proof_artifacts"}
 IMPLEMENTED_REQUIRED_ROW_FIELDS = {"carrier_evidence"}
 DEFERRED_REQUIRED_ROW_FIELDS = {"downstream_owner", "blocking_proof", "reason"}
 IMPLEMENTED_SEMANTIC_CARRIERS = {
@@ -68,6 +68,19 @@ def _string_list(value: Any, *, field: str, row_id: str) -> list[str]:
     for item in value:
         normalized.append(_normalize_repo_path(item, field=field, row_id=row_id))
     return normalized
+
+
+def _label_list(value: Any, *, field: str, row_id: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(f"row {row_id!r} field {field!r} must be a list[str]")
+    if not value:
+        raise ValueError(f"row {row_id!r} field {field!r} must not be empty")
+    labels: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"row {row_id!r} field {field!r} must contain non-empty strings")
+        labels.append(item.strip())
+    return labels
 
 
 def _validate_paths_exist(paths: list[str], *, repo_root: Path, field: str, row_id: str) -> None:
@@ -193,11 +206,25 @@ def validate_conformance_ledger(
     if not isinstance(trace_rows, list):
         errors.append("traceability rows must be a list")
         trace_rows = []
-    expected_ids = [
-        row.get("id")
-        for row in trace_rows
-        if isinstance(row, dict) and isinstance(row.get("id"), str)
-    ]
+    expected_ids = []
+    traceability_proof_categories: dict[str, list[str]] = {}
+    allowed_proof_categories: set[str] = set()
+    for row in trace_rows:
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+            continue
+        row_id = row["id"]
+        expected_ids.append(row_id)
+        try:
+            proof_categories = _label_list(
+                row.get("proof_artifacts"),
+                field="traceability.proof_artifacts",
+                row_id=row_id,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+            proof_categories = []
+        traceability_proof_categories[row_id] = proof_categories
+        allowed_proof_categories.update(proof_categories)
 
     rows = conformance.get("rows")
     if not isinstance(rows, list):
@@ -238,6 +265,28 @@ def validate_conformance_ledger(
                 f"row {row_id!r} deferred semantic_carrier must be one of "
                 f"{sorted(deferred_carriers)}"
             )
+
+        try:
+            proof_categories = _label_list(
+                row.get("proof_categories"),
+                field="proof_categories",
+                row_id=row_id,
+            )
+            unknown_categories = sorted(set(proof_categories) - allowed_proof_categories)
+            if unknown_categories:
+                errors.append(
+                    f"row {row_id!r} proof_categories contains unknown labels: "
+                    f"{', '.join(unknown_categories)}"
+                )
+            expected_categories = set(traceability_proof_categories.get(row_id, []))
+            missing_categories = sorted(expected_categories - set(proof_categories))
+            if missing_categories:
+                errors.append(
+                    f"row {row_id!r} proof_categories missing traceability labels: "
+                    f"{', '.join(missing_categories)}"
+                )
+        except ValueError as exc:
+            errors.append(str(exc))
 
         try:
             proof_paths = _string_list(row.get("proof_artifacts"), field="proof_artifacts", row_id=row_id)

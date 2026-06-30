@@ -60,8 +60,11 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
   `arnold.megaplan_native_representation.conformance.v1`. The YAML ledger must
   reference the target report and traceability file, include one row for every
   traceability row id, allow only `implemented` or `deferred` statuses, and
-  require `id`, `status`, `semantic_carrier`, and `proof_artifacts` for each
-  row. Implemented rows must use one of these `semantic_carrier` values:
+  require `id`, `status`, `semantic_carrier`, `proof_categories`, and
+  `proof_artifacts` for each row. `proof_categories` must cover every proof
+  label listed in the matching traceability row's `proof_artifacts` field, and
+  may only use labels that appear somewhere in the traceability matrix.
+  Implemented rows must use one of these `semantic_carrier` values:
   `canonical_source`, `declared_policy`, or `audited_pure_phase_body`.
   Implemented rows must also include `carrier_evidence` paths pointing to the
   source, declared policy, or audited pure phase body that carries the semantic.
@@ -110,8 +113,8 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
 - `docs/arnold/megaplan-native-representation-conformance.yaml` exists with
   schema `arnold.megaplan_native_representation.conformance.v1`, covers every
   row id from `docs/arnold/megaplan-native-representation-traceability.yaml`,
-  and records row status, semantic carrier, carrier evidence, and proof
-  artifacts in a machine-readable form. `python
+  and records row status, semantic carrier, proof categories, carrier evidence,
+  and proof artifacts in a machine-readable form. `python
   scripts/validate_native_representation_conformance.py --conformance
   docs/arnold/megaplan-native-representation-conformance.yaml` passes.
 - The final platform `proof-map.json` and generated

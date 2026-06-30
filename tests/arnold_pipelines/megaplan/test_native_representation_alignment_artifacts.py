@@ -43,7 +43,10 @@ def _write_conformance_traceability_fixture(path: Path, row_ids: list[str]) -> N
                         },
                     }
                 },
-                "rows": [{"id": row_id} for row_id in row_ids],
+                "rows": [
+                    {"id": row_id, "proof_artifacts": ["source_excerpt"]}
+                    for row_id in row_ids
+                ],
             }
         ),
         encoding="utf-8",
@@ -262,12 +265,14 @@ def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
                         "carrier_evidence": ["carrier-one.py"],
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof-one.md"],
                     },
                     {
                         "id": "row-two",
                         "status": "deferred",
                         "semantic_carrier": "explicit_deferral",
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof-two.md"],
                         "downstream_owner": "future-platform-hardening",
                         "blocking_proof": ["blocking-proof.md"],
@@ -304,6 +309,7 @@ def test_final_conformance_yaml_validator_rejects_false_pass(tmp_path: Path) -> 
                         "id": "row-one",
                         "status": "deferred",
                         "semantic_carrier": "handler",
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["missing-proof.md"],
                     }
                 ],
@@ -342,6 +348,7 @@ def test_final_conformance_yaml_validator_requires_carrier_evidence_for_implemen
                         "id": "row-one",
                         "status": "implemented",
                         "semantic_carrier": "declared_policy",
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
                 ],
@@ -379,6 +386,7 @@ def test_final_conformance_yaml_validator_rejects_non_code_canonical_source(
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
                         "carrier_evidence": ["report.md"],
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
                 ],
@@ -416,6 +424,7 @@ def test_final_conformance_yaml_validator_accepts_declared_policy_artifact(
                         "status": "implemented",
                         "semantic_carrier": "declared_policy",
                         "carrier_evidence": ["policy.yaml"],
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
                 ],
@@ -457,6 +466,7 @@ def test_final_conformance_yaml_validator_uses_traceability_target_report(
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
                         "carrier_evidence": ["carrier.py"],
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
                 ],
@@ -498,6 +508,7 @@ def test_final_conformance_yaml_validator_rejects_stale_target_report(
                         "status": "implemented",
                         "semantic_carrier": "canonical_source",
                         "carrier_evidence": ["carrier.py"],
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
                 ],
@@ -514,6 +525,91 @@ def test_final_conformance_yaml_validator_rejects_stale_target_report(
 
     assert any(
         "target_report must be 'docs/arnold/custom-native-target.md'" in error
+        for error in errors
+    )
+
+
+def test_final_conformance_yaml_validator_requires_traceability_proof_categories(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    traceability = yaml.safe_load(traceability_path.read_text(encoding="utf-8"))
+    traceability["rows"][0]["proof_artifacts"] = ["source_excerpt", "rendered_route"]
+    traceability_path.write_text(yaml.safe_dump(traceability), encoding="utf-8")
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.py"],
+                        "proof_categories": ["source_excerpt"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+    )
+
+    assert any(
+        "proof_categories missing traceability labels: rendered_route" in error
+        for error in errors
+    )
+
+
+def test_final_conformance_yaml_validator_rejects_unknown_proof_categories(
+    tmp_path: Path,
+) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof.md").write_text("# Proof\n", encoding="utf-8")
+    (tmp_path / "carrier.py").write_text("# carrier\n", encoding="utf-8")
+    _write_conformance_traceability_fixture(traceability_path, ["row-one"])
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical_source",
+                        "carrier_evidence": ["carrier.py"],
+                        "proof_categories": ["source_excerpt", "typoed_label"],
+                        "proof_artifacts": ["proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+    )
+
+    assert any(
+        "proof_categories contains unknown labels: typoed_label" in error
         for error in errors
     )
 
@@ -543,6 +639,7 @@ def test_final_conformance_yaml_validator_uses_traceability_suffix_contract(
                         "status": "implemented",
                         "semantic_carrier": "declared_policy",
                         "carrier_evidence": ["policy.custom"],
+                        "proof_categories": ["source_excerpt"],
                         "proof_artifacts": ["proof.md"],
                     }
                 ],
