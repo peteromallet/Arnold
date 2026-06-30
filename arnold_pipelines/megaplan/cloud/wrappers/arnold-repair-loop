@@ -3466,6 +3466,12 @@ exit_if_repair_target_complete "start"
 
 INITIAL_HEALTH="$(session_health_status "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME")"
 repair_data_init "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND" "$INITIAL_HEALTH"
+if [[ "$INITIAL_HEALTH" == "alive" ]]; then
+  repair_data_set_outcome "running"
+  clear_repair_markers
+  log "repair target already running; no dev-fix needed session=$SESSION"
+  exit 0
+fi
 
 STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
 if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
