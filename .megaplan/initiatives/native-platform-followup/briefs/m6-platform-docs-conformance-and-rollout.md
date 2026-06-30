@@ -62,7 +62,9 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
   traceability row id, allow only `implemented` or `deferred` statuses, and
   require `id`, `status`, `semantic_carrier`, and `proof_artifacts` for each
   row. Any `deferred` row must include `downstream_owner`, `blocking_proof`,
-  and `reason`. Create the final platform
+  and `reason`. Validate the YAML ledger with
+  `python scripts/validate_native_representation_conformance.py --conformance
+  docs/arnold/megaplan-native-representation-conformance.yaml`. Create the final platform
   `proof-map.json` and run `megaplan chain manifest --spec
   .megaplan/initiatives/native-platform-followup/chain.yaml --proof-map
   <proof-map.json>` to produce
@@ -101,7 +103,9 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
   schema `arnold.megaplan_native_representation.conformance.v1`, covers every
   row id from `docs/arnold/megaplan-native-representation-traceability.yaml`,
   and records row status, semantic carrier, and proof artifacts in a
-  machine-readable form.
+  machine-readable form. `python
+  scripts/validate_native_representation_conformance.py --conformance
+  docs/arnold/megaplan-native-representation-conformance.yaml` passes.
 - The final platform `proof-map.json` and generated
   `.megaplan/initiatives/native-platform-followup/completion-manifest.json`
   exist and include the final conformance report plus all declared proof
@@ -111,7 +115,7 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
 
 - Matrix rows owned or affected: all platform-affected rows in `docs/arnold/megaplan-native-representation-alignment-plan.md`, especially Human decision/suspension; Execute approval/no-review/deferred-human gates; Auto-drive/event/liveness transitions; Golden trace regeneration guard; Canonical source path reconciliation; Behavior parity with existing Megaplan.
 - Expected status change: no platform-owned row may remain `missing` or planning-only `enabled`; each must be `implemented` or explicitly `deferred` with downstream owner and blocking proof.
-- Proof artifacts: end-to-end platform conformance scenario, Megaplan chain/PR conformance, installed-package post-hardening structural conformance rerun, handler-purity inventory rerun, mutation/static-topology/scenario/policy/override/source-path reruns, production-covered/local-only matrix, rollout and rollback checklist, final `docs/arnold/megaplan-native-representation-conformance-report.md`, final `docs/arnold/megaplan-native-representation-conformance.yaml`, final `proof-map.json`, and final `completion-manifest.json`.
+- Proof artifacts: end-to-end platform conformance scenario, Megaplan chain/PR conformance, installed-package post-hardening structural conformance rerun, handler-purity inventory rerun, mutation/static-topology/scenario/policy/override/source-path reruns, production-covered/local-only matrix, rollout and rollback checklist, final `docs/arnold/megaplan-native-representation-conformance-report.md`, final `docs/arnold/megaplan-native-representation-conformance.yaml`, final conformance YAML validator output, final `proof-map.json`, and final `completion-manifest.json`.
 - False-pass guard: platform docs or green production tests do not count if structural conformance shows Megaplan workflow semantics were moved back into opaque handlers or runtime side effects.
 - Doctrine-preservation check: rerun the exact source/manifest/native_program
   relationship proof against the installed package after platform hardening.

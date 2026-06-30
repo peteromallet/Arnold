@@ -6,6 +6,8 @@ from typing import Any
 
 import yaml
 
+from scripts.validate_native_representation_conformance import validate_conformance_ledger
+
 
 ROOT = Path(__file__).resolve().parents[3]
 TRACEABILITY_PATH = ROOT / "docs/arnold/megaplan-native-representation-traceability.yaml"
@@ -178,6 +180,8 @@ def test_final_conformance_gate_is_closeout_owned() -> None:
     assert machine_report["path"] in gate["closeout_deliverables"]
     assert machine_report["path"] in closeout_text
     assert machine_report["schema"] in closeout_text
+    assert (ROOT / machine_report["validator"]).is_file()
+    assert machine_report["validator"] in closeout_text
     assert machine_report["row_status_values"] == ["implemented", "deferred"]
     for field in machine_report["required_row_fields"]:
         assert field in closeout_text, field
@@ -186,6 +190,91 @@ def test_final_conformance_gate_is_closeout_owned() -> None:
     for section in gate["required_report_sections"]:
         assert section in closeout_text, section
     assert "megaplan chain manifest" in closeout_text
+
+
+def test_final_conformance_yaml_validator_accepts_complete_ledger(tmp_path: Path) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    (tmp_path / "proof-one.md").write_text("# Proof one\n", encoding="utf-8")
+    (tmp_path / "proof-two.md").write_text("# Proof two\n", encoding="utf-8")
+    (tmp_path / "blocking-proof.md").write_text("# Blocking proof\n", encoding="utf-8")
+    traceability_path.write_text(
+        yaml.safe_dump({"rows": [{"id": "row-one"}, {"id": "row-two"}]}),
+        encoding="utf-8",
+    )
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "implemented",
+                        "semantic_carrier": "canonical source",
+                        "proof_artifacts": ["proof-one.md"],
+                    },
+                    {
+                        "id": "row-two",
+                        "status": "deferred",
+                        "semantic_carrier": "platform deferral",
+                        "proof_artifacts": ["proof-two.md"],
+                        "downstream_owner": "future-platform-hardening",
+                        "blocking_proof": ["blocking-proof.md"],
+                        "reason": "operator prerequisite",
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        validate_conformance_ledger(
+            repo_root=tmp_path,
+            conformance_path=conformance_path,
+            traceability_path=traceability_path,
+        )
+        == []
+    )
+
+
+def test_final_conformance_yaml_validator_rejects_false_pass(tmp_path: Path) -> None:
+    traceability_path = tmp_path / "traceability.yaml"
+    conformance_path = tmp_path / "conformance.yaml"
+    traceability_path.write_text(
+        yaml.safe_dump({"rows": [{"id": "row-one"}, {"id": "row-two"}]}),
+        encoding="utf-8",
+    )
+    conformance_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema": "arnold.megaplan_native_representation.conformance.v1",
+                "target_report": "docs/arnold/megaplan-native-representation-report.md",
+                "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+                "rows": [
+                    {
+                        "id": "row-one",
+                        "status": "deferred",
+                        "semantic_carrier": "handler",
+                        "proof_artifacts": ["missing-proof.md"],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    errors = validate_conformance_ledger(
+        repo_root=tmp_path,
+        conformance_path=conformance_path,
+        traceability_path=traceability_path,
+    )
+
+    assert any("missing deferred fields" in error for error in errors)
+    assert any("path does not exist: missing-proof.md" in error for error in errors)
+    assert any("cover every traceability id in order" in error for error in errors)
 
 
 def test_review_execution_log_has_no_unaddressed_blockers() -> None:

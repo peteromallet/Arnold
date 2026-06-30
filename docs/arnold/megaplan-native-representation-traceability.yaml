@@ -41,6 +41,7 @@ final_conformance_gate:
   machine_readable_report:
     path: docs/arnold/megaplan-native-representation-conformance.yaml
     schema: arnold.megaplan_native_representation.conformance.v1
+    validator: scripts/validate_native_representation_conformance.py
     row_status_values: [implemented, deferred]
     required_row_fields: [id, status, semantic_carrier, proof_artifacts]
     deferred_required_row_fields: [downstream_owner, blocking_proof, reason]
