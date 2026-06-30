@@ -32,7 +32,7 @@ compatibility artifacts, not final semantic authority.
 | Every target milestone brief has alignment section | Local check found 21 target briefs and no missing or duplicate `## Native Representation Alignment` sections. | Satisfied. |
 | Machine-readable traceability | `docs/arnold/megaplan-native-representation-traceability.yaml` records 31 row IDs, owners, milestones, proof artifacts, false-pass guards, and negative invariants. | Satisfied for planning; validated by focused pytest. |
 | Fixed D1-D15 scenario manifest | `docs/arnold/megaplan-native-representation-scenarios.yaml` records 15 scenario IDs with required cases, topology requirements, row references, and false-pass guards. | Satisfied for planning; validated by focused pytest. |
-| Executable launch prerequisite gates | `arnold_pipelines/megaplan/chain/spec.py` supports `launch_preconditions` with `exists`, `contains_text`, `git_tracked`, and `chain_completed`; `chain verify` calls `validate_paths()`. | Satisfied. |
+| Executable launch prerequisite gates | `arnold_pipelines/megaplan/chain/spec.py` supports `launch_preconditions` with `exists`, `contains_text`, `review_log_clean`, `git_tracked`, and `chain_completed`; `chain verify` calls `validate_paths()`. | Satisfied. |
 | Release-gate hardening adjudicated | GPT-5.5 high-reasoning release-gate reviews found label/hash-only prerequisite completion too weak; the gate now requires no active prerequisite plan, cursor advanced past all milestones, `done` records, plan names, merged PR evidence for review-merge prerequisite chains, and `require_manifest: true` content-addressed completion manifests before dependent chains launch. | Strengthened; richer archives/signing can defer, but manifest validation cannot defer past completion M7. |
 | Planning artifacts adjudicated | GPT-5.5 high-reasoning review on 2026-07-01 judged the traceability/scenario artifacts sufficient for the planning/alignment phase and sufficient to launch only the first prerequisite chain, assuming the launch checkout has those artifacts committed and clean. | Satisfied for planning; source-gate verify passes from committed alignment source. |
 | Clean-source preflight | `git_tracked` launch preconditions fail before `require_clean_base` can stash staged, modified, deleted, or untracked initiative/docs files away, and pass only when the gated source paths are committed in `HEAD` and clean. | Satisfied; current completion-chain verify passes from committed source. |
@@ -52,7 +52,7 @@ python -m arnold_pipelines.megaplan.cli chain verify --spec .megaplan/initiative
 
 Observed result:
 
-- alignment-artifact and launch-precondition tests: `26 passed`;
+- alignment-artifact and launch-precondition tests: `27 passed`;
 - completion chain verify: success from committed source;
 - composition chain verify: expected failure, missing completion chain state;
 - platform chain verify: expected failure, missing completion chain state.

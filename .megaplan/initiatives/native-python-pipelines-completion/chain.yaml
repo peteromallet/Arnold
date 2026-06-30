@@ -14,11 +14,10 @@ launch_preconditions:
     check:
       kind: contains_text
       text: "Completion Standard"
-  - name: review execution log exists
+  - name: review execution log has no unaddressed blockers
     path: docs/arnold/megaplan-native-representation-review-execution.md
     check:
-      kind: contains_text
-      text: "Doctrine-Aware Detail Revalidation"
+      kind: review_log_clean
   - name: launch readiness ledger exists
     path: docs/arnold/megaplan-native-representation-launch-readiness.md
     check:
