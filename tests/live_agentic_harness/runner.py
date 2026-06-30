@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -39,6 +40,16 @@ DEFAULT_PER_SCENARIO_TIMEOUT = 1200  # seconds; kills a wedged/over-slow scenari
 DEFAULT_PROGRESS_EVERY = 10
 DEFAULT_INFRA_RETRIES = 1
 REPO = Path(__file__).resolve().parents[2]
+
+_PROVIDER_INFRA_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"not have enough credits", re.IGNORECASE),
+    re.compile(r"insufficient credits", re.IGNORECASE),
+    re.compile(r"insufficient balance", re.IGNORECASE),
+    re.compile(r"quota exceeded", re.IGNORECASE),
+    re.compile(r"rate limit", re.IGNORECASE),
+    re.compile(r"too many requests", re.IGNORECASE),
+    re.compile(r"HTTP Error 429", re.IGNORECASE),
+)
 
 
 def _scenario_paths(scenarios_dir: Path) -> list[Path]:
@@ -190,7 +201,67 @@ def _attempt_record(summary: dict[str, Any], *, attempt: int) -> dict[str, Any]:
     }
 
 
+def _summary_text_for_infra_classification(summary: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("error", "stdout_tail", "stderr_tail"):
+        value = summary.get(key)
+        if isinstance(value, str):
+            parts.append(value)
+
+    guard = summary.get("guard")
+    if isinstance(guard, dict):
+        assessment = guard.get("assessment")
+        if isinstance(assessment, dict):
+            for issue in assessment.get("issues") or []:
+                if not isinstance(issue, dict):
+                    continue
+                detail = issue.get("detail")
+                if isinstance(detail, str):
+                    parts.append(detail)
+    return "\n".join(parts)
+
+
+def _provider_infra_failure_class(summary: dict[str, Any]) -> str | None:
+    text = _summary_text_for_infra_classification(summary)
+    if not text:
+        return None
+    if any(pattern.search(text) for pattern in _PROVIDER_INFRA_PATTERNS):
+        return "infra_provider_capacity"
+    return None
+
+
+def _mark_summary_as_infra(summary: dict[str, Any], failure_class: str) -> None:
+    summary["failure_class"] = failure_class
+    summary["score_class"] = "infra_blocked"
+    summary["retryable_infra"] = True
+    guard = summary.get("guard")
+    if isinstance(guard, dict):
+        guard["failure_class"] = failure_class
+        guard["score_class"] = "infra_blocked"
+        assessment = guard.get("assessment")
+        if isinstance(assessment, dict):
+            assessment.setdefault("issues", []).append(
+                {
+                    "check": "infra_classification",
+                    "severity": "warning",
+                    "detail": (
+                        "Provider capacity/rate-limit/credit failure was classified "
+                        "as retryable infrastructure, not product quality."
+                    ),
+                    "failure_class": failure_class,
+                }
+            )
+
+
+def _classify_retryable_infra_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    failure_class = _provider_infra_failure_class(summary)
+    if failure_class is not None and summary.get("guard", {}).get("live_agentic_success") is not True:
+        _mark_summary_as_infra(summary, failure_class)
+    return summary
+
+
 def _is_retryable_infra_summary(summary: dict[str, Any]) -> bool:
+    _classify_retryable_infra_summary(summary)
     return bool(summary.get("retryable_infra")) or str(summary.get("failure_class") or "").startswith("infra_")
 
 
@@ -348,6 +419,7 @@ def run_single(scenario_path: str, tag: str, output_base: Any, out_file: Path | 
     scenario.setdefault("id", path.stem)
     summary = run_headless_scenario(scenario, output_base=output_base, tag=tag)
     summary["guard"] = guard_output_dir(summary["output_dir"], scenario=scenario)
+    _classify_retryable_infra_summary(summary)
     _persist_scenario_summary(summary, output_base, tag)
     if out_file is not None:
         out_file.parent.mkdir(parents=True, exist_ok=True)
@@ -471,8 +543,9 @@ def run_tag(
                             elapsed_s=elapsed_s,
                         )
 
+                    retryable_infra = _is_retryable_infra_summary(final_summary)
                     attempts.append(_attempt_record(final_summary, attempt=attempt))
-                    if not _is_retryable_infra_summary(final_summary):
+                    if not retryable_infra:
                         break
 
                 if final_summary is None:

@@ -114,6 +114,136 @@ def test_runner_retries_infra_timeout_and_preserves_attempts(
     ).exists()
 
 
+def test_runner_retries_provider_capacity_summary_and_preserves_attempts(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    scenarios_dir = tmp_path / "scenarios"
+    scenarios_dir.mkdir()
+    scenario_path = scenarios_dir / "provider-capacity.json"
+    scenario_path.write_text(
+        json.dumps({"id": "provider-capacity", "query": "do it"}),
+        encoding="utf-8",
+    )
+
+    calls = 0
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN202, ARG001
+        nonlocal calls
+        calls += 1
+        out_file = Path(cmd[cmd.index("--single-out") + 1])
+        tag = cmd[cmd.index("--tag") + 1]
+        output_dir = tmp_path / "out" / tag / "provider-capacity"
+        if calls == 1:
+            payload = _summary(tmp_path / "out" / tag, "provider-capacity", ok=False)
+            payload.update(
+                {
+                    "status": "executor_failure",
+                    "error": (
+                        "OpenRouter rejected the request because the account does "
+                        "not have enough credits for the requested token budget."
+                    ),
+                    "output_dir": str(output_dir),
+                    "guard": {
+                        "live_agentic_success": False,
+                        "score_class": "product_fail",
+                        "assessment": {
+                            "passed": False,
+                            "issues": [
+                                {
+                                    "check": "response_ok",
+                                    "severity": "error",
+                                    "detail": (
+                                        "response.ok is False: OpenRouter rejected "
+                                        "the request because the account does not "
+                                        "have enough credits for the requested token budget."
+                                    ),
+                                }
+                            ],
+                        },
+                    },
+                }
+            )
+        else:
+            payload = _summary(tmp_path / "out" / tag, "provider-capacity", ok=True)
+            payload["output_dir"] = str(output_dir)
+        out_file.write_text(json.dumps(payload), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("tests.live_agentic_harness.runner.subprocess.run", fake_run)
+
+    summary = run_tag(
+        "tag",
+        scenarios_dir=scenarios_dir,
+        output_base=tmp_path / "out",
+        max_workers=1,
+        per_scenario_timeout=1,
+        infra_retries=1,
+        progress_every=0,
+    )
+
+    scenario = summary["scenarios"][0]
+    assert calls == 2
+    assert summary["passed"] == 1
+    assert summary["raw_first_attempt_passed"] == 0
+    assert scenario["attempt_count"] == 2
+    assert scenario["attempts"][0]["failure_class"] == "infra_provider_capacity"
+    assert scenario["attempts"][0]["score_class"] == "infra_blocked"
+    assert scenario["attempts"][0]["retryable_infra"] is True
+    assert scenario["attempts"][1]["live_agentic_success"] is True
+
+
+def test_runner_counts_persistent_provider_capacity_as_infra_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    scenarios_dir = tmp_path / "scenarios"
+    scenarios_dir.mkdir()
+    scenario_path = scenarios_dir / "provider-down.json"
+    scenario_path.write_text(json.dumps({"id": "provider-down", "query": "do it"}), encoding="utf-8")
+
+    def fake_run(cmd, **kwargs):  # noqa: ANN001, ANN202, ARG001
+        out_file = Path(cmd[cmd.index("--single-out") + 1])
+        tag = cmd[cmd.index("--tag") + 1]
+        output_dir = tmp_path / "out" / tag / "provider-down"
+        payload = _summary(tmp_path / "out" / tag, "provider-down", ok=False)
+        payload.update(
+            {
+                "status": "executor_failure",
+                "error": "HTTP Error 429: Too Many Requests",
+                "output_dir": str(output_dir),
+                "guard": {
+                    "live_agentic_success": False,
+                    "score_class": "product_fail",
+                    "assessment": {"passed": False, "issues": []},
+                },
+            }
+        )
+        out_file.write_text(json.dumps(payload), encoding="utf-8")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="")
+
+    monkeypatch.setattr("tests.live_agentic_harness.runner.subprocess.run", fake_run)
+
+    summary = run_tag(
+        "tag",
+        scenarios_dir=scenarios_dir,
+        output_base=tmp_path / "out",
+        max_workers=1,
+        per_scenario_timeout=1,
+        infra_retries=1,
+        progress_every=0,
+    )
+
+    scenario = summary["scenarios"][0]
+    assert scenario["attempt_count"] == 2
+    assert scenario["failure_class"] == "infra_provider_capacity"
+    assert scenario["score_class"] == "infra_blocked"
+    assert summary["passed"] == 0
+    assert summary["infra_failures"] == 1
+    assert summary["product_or_assessment_failures"] == 0
+    assert summary["score_classes"] == {"infra_blocked": 1}
+
+
 def test_runner_timeout_preserves_scenario_graph_change_expectation(
     tmp_path: Path,
     monkeypatch,
