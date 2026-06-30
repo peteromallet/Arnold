@@ -102,7 +102,10 @@ Finish the migration by inventorying every remaining legacy import and flag, mov
 
 - Matrix rows affected: Canonical source path reconciliation; Behavior parity with existing Megaplan; Source readability.
 - Expected status change: substrate `enabled` by proving reviewers and runtime call sites agree on the canonical source/import surface.
-- Proof artifacts: final import inventory, `rg` results for legacy flags/imports, import-surface characterization tests, and CLI/run smoke tests.
+- Proof artifacts: final import inventory, `rg` results for legacy flags/imports,
+  import-surface characterization tests, CLI/run smoke tests, the explicit
+  `proof-map.json` used for the handoff, and the generated
+  `completion-manifest.json`.
 - Completion-manifest gate: before this chain can hand off to composition,
   run `megaplan chain manifest --spec
   .megaplan/initiatives/native-python-pipelines-completion/chain.yaml
@@ -115,7 +118,8 @@ Finish the migration by inventorying every remaining legacy import and flag, mov
   `done` statuses so downstream launch can compare those records against
   canonical chain state. `native-composition-followup` must keep
   `require_manifest: true` on its prerequisite and fail launch if this manifest
-  is absent or stale.
+  is absent, stale, lacks proof artifacts, or no longer matches the current
+  chain source, state records, or proof file hashes.
 - False-pass guard: deleting `_pipeline` or compatibility modules without proving callers moved can break resume/chain behavior while appearing clean.
 - Doctrine guard: `Source readability` remains substrate/source-path proof in
   this completion milestone. It is not report conformance unless composition M6
