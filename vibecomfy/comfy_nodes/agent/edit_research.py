@@ -94,6 +94,8 @@ def _build_precedent_adaptation_prompt(
     """
     if not adaptation_plan:
         return ""
+    if not is_actionable_adaptation_plan(adaptation_plan):
+        return ""
 
     parts: list[str] = []
 

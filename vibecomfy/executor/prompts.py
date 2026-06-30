@@ -18,6 +18,7 @@ from typing import Any
 
 from .contracts import (
     ClassifyDecision,
+    adaptation_plan_actionability_payload,
     format_route_options_for_prompt,
     format_task_options_for_prompt,
 )
@@ -580,20 +581,28 @@ def build_reply_messages(
     if implementation_message:
         parts.append(f"\nImplementation: {implementation_message}")
     if adaptation_plan:
-        # Emit context_note first if present (neutrality disclaimer).
-        context_note = adaptation_plan.get("context_note")
-        if isinstance(context_note, str) and context_note.strip():
-            parts.append(f"\n{context_note.strip()}")
-        selected = adaptation_plan.get("selected_slice") or {}
-        bindings = adaptation_plan.get("anchor_bindings") or []
-        roles = ", ".join(sorted({b.get("anchor_role", "") for b in bindings if b.get("anchor_role")}))
-        parts.append(
-            f"\nAdaptation plan (reference context — not a winner): "
-            f"reference slice '{selected.get('source_class_type', 'unknown')}', "
-            f"bound anchor roles: {roles or 'none'}, "
-            f"structural_validation={adaptation_plan.get('structural_validation', 'not_evaluated')}, "
-            f"semantic_validation={adaptation_plan.get('semantic_validation', 'not_evaluated')}."
-        )
+        actionability = adaptation_plan_actionability_payload(adaptation_plan)
+        if actionability.get("actionability") == "non_actionable":
+            parts.append(
+                "\nAdaptation plan: non-actionable "
+                f"({actionability.get('non_actionable_reason', 'no concrete edits')}). "
+                "Do not treat it as implementation guidance."
+            )
+        else:
+            # Emit context_note first if present (neutrality disclaimer).
+            context_note = adaptation_plan.get("context_note")
+            if isinstance(context_note, str) and context_note.strip():
+                parts.append(f"\n{context_note.strip()}")
+            selected = adaptation_plan.get("selected_slice") or {}
+            bindings = adaptation_plan.get("anchor_bindings") or []
+            roles = ", ".join(sorted({b.get("anchor_role", "") for b in bindings if b.get("anchor_role")}))
+            parts.append(
+                f"\nAdaptation plan (reference context - not a winner): "
+                f"reference slice '{selected.get('source_class_type', 'unknown')}', "
+                f"bound anchor roles: {roles or 'none'}, "
+                f"structural_validation={adaptation_plan.get('structural_validation', 'not_evaluated')}, "
+                f"semantic_validation={adaptation_plan.get('semantic_validation', 'not_evaluated')}."
+            )
     return [
         {"role": "system", "content": _REPLY_SYSTEM},
         {"role": "user", "content": "\n".join(parts)},

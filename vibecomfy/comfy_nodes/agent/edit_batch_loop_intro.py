@@ -249,6 +249,17 @@ def _compact_execution_protocol_notes_for_prompt(notes: Mapping[str, Any]) -> di
             ),
         )
 
+    actionability = notes.get("adaptation_plan_actionability")
+    if isinstance(actionability, Mapping):
+        compact["adaptation_plan_actionability"] = _copy_compact_protocol_fields(
+            actionability,
+            (
+                "actionability",
+                "non_actionable_reason",
+                "allowed_followups",
+            ),
+        )
+
     sources = notes.get("research_sources")
     if isinstance(sources, (list, tuple)):
         compact_sources: list[dict[str, Any]] = []

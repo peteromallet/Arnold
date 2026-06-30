@@ -5544,6 +5544,15 @@ class TestAdaptGraphIntegration:
         assert plan is not None
         assert plan.structural_validation == "fail"
         assert plan.candidate_graph is None
+        payload = mock_edit.call_args[0][0]
+        assert "adaptation_plan" not in payload
+        notes = payload["execution_protocol_notes"]
+        actionability = notes["adaptation_plan_actionability"]
+        assert actionability["actionability"] == "non_actionable"
+        assert actionability["non_actionable_reason"] == (
+            "structural_validation_failed_without_concrete_edits"
+        )
+        assert "current graph facts" in notes["_discardability"]
 
     @mock.patch("vibecomfy.executor.core.run_classify_turn", side_effect=_fake_classify_adapt)
     @mock.patch("vibecomfy.executor.core.run_reply_turn", side_effect=_fake_reply_route_gate)

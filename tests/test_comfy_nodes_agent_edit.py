@@ -14395,6 +14395,23 @@ def test_build_precedent_adaptation_prompt_returns_empty_for_empty_dict() -> Non
     assert result == ""
 
 
+def test_build_precedent_adaptation_prompt_returns_empty_for_failed_empty_plan() -> None:
+    """Failed plans with no concrete edits must not enter implementation prompts."""
+    from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
+
+    plan = {
+        "selected_slice": {"source_class_type": "HotShotWorkflow", "node_ids": []},
+        "anchor_bindings": [],
+        "required_new_nodes": [],
+        "required_rewires": [],
+        "edit_ops": [],
+        "structural_validation": "fail",
+        "semantic_validation": "not_evaluated",
+    }
+
+    assert _build_precedent_adaptation_prompt(plan) == ""
+
+
 def test_build_precedent_adaptation_prompt_includes_selected_slice_info() -> None:
     """_build_precedent_adaptation_prompt includes selected_slice details."""
     from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
@@ -14407,6 +14424,9 @@ def test_build_precedent_adaptation_prompt_includes_selected_slice_info() -> Non
             "exit_anchor": "output_video",
             "python_path": "/templates/audio_lipsync.py",
         },
+        "edit_ops": [
+            {"kind": "add_node", "target": "audio_loader"},
+        ],
     }
     result = _build_precedent_adaptation_prompt(plan)
     assert "AudioLipsyncWorkflow" in result
@@ -14425,6 +14445,9 @@ def test_build_precedent_adaptation_prompt_includes_anchor_bindings() -> None:
         "anchor_bindings": [
             {"input_audio": "node_5"},
             {"output_video": "node_10"},
+        ],
+        "required_rewires": [
+            {"from": "node_5", "to": "node_10", "slot": "audio"},
         ],
     }
     result = _build_precedent_adaptation_prompt(plan)
@@ -14486,6 +14509,7 @@ def test_build_precedent_adaptation_prompt_includes_socket_evidence_from_slices(
     from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
 
     plan = {"selected_slice": {"source_class_type": "MainWorkflow"}}
+    plan["required_new_nodes"] = [{"class_type": "HelperNode", "id": "new_1"}]
     slices = (
         {"source_class_type": "HelperA", "entry_anchor": "in1", "exit_anchor": "out1"},
         {"source_class_type": "HelperB"},
@@ -14497,15 +14521,27 @@ def test_build_precedent_adaptation_prompt_includes_socket_evidence_from_slices(
 
 
 def test_build_precedent_adaptation_prompt_includes_structural_validation() -> None:
-    """_build_precedent_adaptation_prompt includes structural validation warnings."""
+    """Actionable failed plans keep validation warnings; empty failed plans do not render."""
     from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
 
     plan_fail = {"selected_slice": {"source_class_type": "BadWF"}, "structural_validation": "fail"}
     result = _build_precedent_adaptation_prompt(plan_fail)
+    assert result == ""
+
+    plan_fail_with_ops = {
+        "selected_slice": {"source_class_type": "BadWF"},
+        "structural_validation": "fail",
+        "edit_ops": [{"kind": "set_field", "target": "node_1.seed", "value": 42}],
+    }
+    result = _build_precedent_adaptation_prompt(plan_fail_with_ops)
     assert "AVOID" in result
     assert "structural validation FAILED" in result
 
-    plan_advisory = {"selected_slice": {"source_class_type": "WarnWF"}, "structural_validation": "advisory"}
+    plan_advisory = {
+        "selected_slice": {"source_class_type": "WarnWF"},
+        "structural_validation": "advisory",
+        "required_new_nodes": [{"class_type": "WarnNode", "id": "new_1"}],
+    }
     result = _build_precedent_adaptation_prompt(plan_advisory)
     assert "NOTE:" in result
     assert "structural validation has advisories" in result
@@ -14515,12 +14551,24 @@ def test_build_precedent_adaptation_prompt_includes_semantic_validation() -> Non
     """_build_precedent_adaptation_prompt includes semantic validation status."""
     from vibecomfy.comfy_nodes.agent.edit import _build_precedent_adaptation_prompt
 
-    plan_pass = {"selected_slice": {"source_class_type": "GoodWF"}, "semantic_validation": "pass"}
+    plan_pass = {
+        "selected_slice": {"source_class_type": "GoodWF"},
+        "semantic_validation": "pass",
+        "edit_ops": [{"kind": "set_field", "target": "node_1.seed", "value": 42}],
+    }
     result = _build_precedent_adaptation_prompt(plan_pass)
     assert "Semantic validation: PASS" in result
 
     plan_fail = {"selected_slice": {"source_class_type": "BadWF"}, "semantic_validation": "fail"}
     result = _build_precedent_adaptation_prompt(plan_fail)
+    assert result == ""
+
+    plan_fail_with_ops = {
+        "selected_slice": {"source_class_type": "BadWF"},
+        "semantic_validation": "fail",
+        "edit_ops": [{"kind": "set_field", "target": "node_1.seed", "value": 42}],
+    }
+    result = _build_precedent_adaptation_prompt(plan_fail_with_ops)
     assert "AVOID" in result
     assert "semantic validation FAILED" in result
 
@@ -14601,6 +14649,33 @@ def test_build_batch_messages_direct_edit_scenario_no_precedent_leak() -> None:
     assert "Precedent adaptation plan (structured):" not in user_content
     # Research context should also be absent when empty
     assert "Research findings (external + local corpus):" not in user_content
+
+
+def test_compact_execution_protocol_notes_preserves_adaptation_actionability() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _compact_execution_protocol_notes_for_prompt
+
+    compact = _compact_execution_protocol_notes_for_prompt(
+        {
+            "_discardability": "context only",
+            "adaptation_plan_actionability": {
+                "actionability": "non_actionable",
+                "non_actionable_reason": "structural_validation_failed_without_concrete_edits",
+                "allowed_followups": [
+                    "retry_or_select_better_precedent",
+                    "use_current_graph_direct_edit_if_schema_sufficient",
+                ],
+                "full_plan": {"selected_slice": {"source_class_type": "BadWF"}},
+            },
+        }
+    )
+
+    actionability = compact["adaptation_plan_actionability"]
+    assert actionability["actionability"] == "non_actionable"
+    assert actionability["non_actionable_reason"] == (
+        "structural_validation_failed_without_concrete_edits"
+    )
+    assert "use_current_graph_direct_edit_if_schema_sufficient" in actionability["allowed_followups"]
+    assert "full_plan" not in actionability
 
 
 # ── T14: provider research tool exposure and neutral formatting tests ──────

@@ -29,6 +29,8 @@ from vibecomfy.executor.contracts import (
     TopologyFindings,
     WorkflowSlice,
     _ALLOWED_ROUTES,
+    adaptation_plan_actionability,
+    adaptation_plan_actionability_payload,
     format_route_options_for_prompt,
     warning_detail_from_exception,
 )
@@ -1001,6 +1003,38 @@ class TestBuildReplyMessages:
         assert "Do NOT suggest edits or changes" in system
         assert "Graph inspection" in user
         assert "CheckpointLoaderSimple -> 2: KSampler" in user
+
+    def test_failed_empty_adaptation_plan_reply_is_non_actionable(self) -> None:
+        msgs = build_reply_messages(
+            "adapt this graph",
+            adaptation_plan={
+                "selected_slice": {"source_class_type": "BadWF"},
+                "anchor_bindings": [],
+                "required_new_nodes": [],
+                "required_rewires": [],
+                "edit_ops": [],
+                "structural_validation": "fail",
+                "semantic_validation": "not_evaluated",
+            },
+        )
+        user = msgs[1]["content"]
+        assert "Adaptation plan: non-actionable" in user
+        assert "BadWF" not in user
+        assert "reference slice" not in user
+
+    def test_concrete_adaptation_plan_reply_keeps_reference_summary(self) -> None:
+        msgs = build_reply_messages(
+            "adapt this graph",
+            adaptation_plan={
+                "selected_slice": {"source_class_type": "UsableWF"},
+                "edit_ops": [{"op": "set_field", "target": "node_1.seed", "value": 42}],
+                "structural_validation": "fail",
+                "semantic_validation": "not_evaluated",
+            },
+        )
+        user = msgs[1]["content"]
+        assert "Adaptation plan (reference context - not a winner)" in user
+        assert "UsableWF" in user
 
 
 # ── Response parsers ─────────────────────────────────────────────────────────
@@ -2013,8 +2047,37 @@ class TestPrecedentAdaptationPlan:
         assert d["edit_ops"] == []
         assert d["structural_validation"] == "not_evaluated"
         assert d["semantic_validation"] == "not_evaluated"
+        assert d["actionability"] == "non_actionable"
+        assert d["non_actionable_reason"] == "no_concrete_adaptation_edits"
+        assert "allowed_followups" in d
         # candidate_graph omitted when None
         assert "candidate_graph" not in d
+
+    def test_failed_empty_plan_is_explicitly_non_actionable(self) -> None:
+        pap = PrecedentAdaptationPlan(structural_validation="fail")
+        d = pap.to_dict()
+        assert d["actionability"] == "non_actionable"
+        assert d["non_actionable_reason"] == "structural_validation_failed_without_concrete_edits"
+        assert adaptation_plan_actionability(d) == (
+            "non_actionable",
+            "structural_validation_failed_without_concrete_edits",
+        )
+        assert adaptation_plan_actionability_payload(d)["allowed_followups"] == [
+            "retry_or_select_better_precedent",
+            "use_current_graph_direct_edit_if_schema_sufficient",
+            "safe_refusal_or_clarification_if_authoring_surface_missing",
+            "build_execution_plan_with_required_nodes_and_rewires",
+        ]
+
+    def test_structural_fail_with_concrete_edit_ops_remains_actionable(self) -> None:
+        pap = PrecedentAdaptationPlan(
+            structural_validation="fail",
+            edit_ops=({"op": "set_field", "target": "node_1.seed", "value": 42},),
+        )
+        d = pap.to_dict()
+        assert d["actionability"] == "actionable"
+        assert "non_actionable_reason" not in d
+        assert adaptation_plan_actionability(d) == ("actionable", "")
 
     def test_to_dict_with_all_fields(self) -> None:
         ws = WorkflowSlice(
@@ -2293,10 +2356,10 @@ class TestResearchResultPrecedentFields:
 
 
 class TestCanonicalRouteVocabulary:
-    """Public route taxonomy is exactly the six canonical labels plus the
+    """Public route taxonomy is exactly the seven canonical labels plus the
     internal empty-string sentinel."""
 
-    def test_allowed_routes_are_six_public_plus_empty_sentinel(self) -> None:
+    def test_allowed_routes_are_seven_public_plus_empty_sentinel(self) -> None:
         assert _ALLOWED_ROUTES == {
             "",
             "clarify",
@@ -2305,13 +2368,21 @@ class TestCanonicalRouteVocabulary:
             "research",
             "revise",
             "adapt",
+            "requires_custom_nodes",
         }
 
     def test_route_options_prompt_lists_all_public_routes(self) -> None:
         options = format_route_options_for_prompt()
-        for route in ("clarify", "respond", "inspect", "research", "revise", "adapt"):
+        for route in (
+            "clarify",
+            "respond",
+            "inspect",
+            "research",
+            "revise",
+            "adapt",
+            "requires_custom_nodes",
+        ):
             assert f'"{route}"' in options, f"route {route!r} missing from prompt"
-        assert '"requires_custom_nodes"' not in options
         assert '""' in options or "empty string" in options.lower()
 
 
@@ -2319,13 +2390,13 @@ class TestCanonicalRouteVocabulary:
 
 
 class TestClassifierDecisionTable:
-    """Verify the locked six-route decision table is fully present in the
+    """Verify the locked primary-route decision table is fully present in the
     classify system prompt."""
 
-    def test_system_prompt_contains_all_six_route_entries(self) -> None:
+    def test_system_prompt_contains_all_primary_route_entries(self) -> None:
         msgs = build_classify_messages("test query")
         system = msgs[0]["content"]
-        # Every route must appear with its decision-table entry.
+        # Every primary classifier route must appear with its decision-table entry.
         route_entries = {
             "respond": 'route="respond"',
             "research": 'route="research"',

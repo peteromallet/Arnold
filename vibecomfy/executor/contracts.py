@@ -50,6 +50,78 @@ def _thaw_jsonish(value: Any) -> Any:
     return value
 
 
+_ADAPTATION_PLAN_FOLLOWUPS: tuple[str, ...] = (
+    "retry_or_select_better_precedent",
+    "use_current_graph_direct_edit_if_schema_sufficient",
+    "safe_refusal_or_clarification_if_authoring_surface_missing",
+    "build_execution_plan_with_required_nodes_and_rewires",
+)
+
+
+def _adaptation_plan_field(value: Any, key: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(key, default)
+    return getattr(value, key, default)
+
+
+def adaptation_plan_actionability(value: Any) -> tuple[str, str]:
+    """Return ``("actionable", "")`` or ``("non_actionable", reason)``.
+
+    Validation status alone is not enough. A structurally failed plan with
+    concrete edit operations can still describe a current-graph direct edit,
+    while a passing or unevaluated plan with no candidate graph, nodes, rewires,
+    or edit ops is still only evidence.
+    """
+
+    if value is None:
+        return "non_actionable", "missing_plan"
+    if not isinstance(value, Mapping) and not any(
+        hasattr(value, key)
+        for key in (
+            "candidate_graph",
+            "required_new_nodes",
+            "required_rewires",
+            "edit_ops",
+            "structural_validation",
+            "semantic_validation",
+        )
+    ):
+        return "non_actionable", "invalid_plan_shape"
+
+    explicit = _adaptation_plan_field(value, "actionability")
+    if explicit == "non_actionable":
+        reason = _adaptation_plan_field(value, "non_actionable_reason") or "explicitly_non_actionable"
+        return "non_actionable", str(reason)
+
+    candidate_graph = _adaptation_plan_field(value, "candidate_graph")
+    required_new_nodes = _adaptation_plan_field(value, "required_new_nodes") or ()
+    required_rewires = _adaptation_plan_field(value, "required_rewires") or ()
+    edit_ops = _adaptation_plan_field(value, "edit_ops") or ()
+    if candidate_graph or required_new_nodes or required_rewires or edit_ops:
+        return "actionable", ""
+
+    structural = _adaptation_plan_field(value, "structural_validation")
+    semantic = _adaptation_plan_field(value, "semantic_validation")
+    if structural == "fail":
+        return "non_actionable", "structural_validation_failed_without_concrete_edits"
+    if semantic == "fail":
+        return "non_actionable", "semantic_validation_failed_without_concrete_edits"
+    return "non_actionable", "no_concrete_adaptation_edits"
+
+
+def is_actionable_adaptation_plan(value: Any) -> bool:
+    return adaptation_plan_actionability(value)[0] == "actionable"
+
+
+def adaptation_plan_actionability_payload(value: Any) -> dict[str, Any]:
+    actionability, reason = adaptation_plan_actionability(value)
+    payload: dict[str, Any] = {"actionability": actionability}
+    if actionability != "actionable":
+        payload["non_actionable_reason"] = reason
+        payload["allowed_followups"] = list(_ADAPTATION_PLAN_FOLLOWUPS)
+    return payload
+
+
 def _safe_exception_message(exc: BaseException) -> str:
     message = " ".join(str(exc).split())
     if not message:
@@ -747,6 +819,7 @@ class PrecedentAdaptationPlan:
             "structural_validation": self.structural_validation,
             "semantic_validation": self.semantic_validation,
         }
+        payload.update(adaptation_plan_actionability_payload(self))
         if self.warnings:
             payload["warnings"] = _thaw_jsonish(self.warnings)
         if self.structural_validation == "pass" and self.candidate_graph is not None:
@@ -1851,5 +1924,8 @@ __all__ = [
     "SelectedPrecedent",
     "TopologyFindings",
     "WorkflowSlice",
+    "adaptation_plan_actionability",
+    "adaptation_plan_actionability_payload",
+    "is_actionable_adaptation_plan",
     "warning_detail_from_exception",
 ]

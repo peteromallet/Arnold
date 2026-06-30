@@ -53,6 +53,7 @@ from .contracts import (
     Report,
     ResearchResult,
     _ALLOWED_ROUTES,
+    adaptation_plan_actionability_payload,
     warning_detail_from_exception,
 )
 from .graph_inspection import _graph_inspection
@@ -1072,6 +1073,12 @@ def _run_implement(
                 )
             if research_result.warnings:
                 protocol_notes["research_warnings"] = list(research_result.warnings)
+            if research_result.adaptation_plan is not None:
+                protocol_notes["adaptation_plan_actionability"] = (
+                    adaptation_plan_actionability_payload(
+                        research_result.adaptation_plan
+                    )
+                )
             execution_plan_note = _adapt_execution_plan_note(
                 request,
                 plan,
@@ -1106,6 +1113,20 @@ def _run_implement(
                         "It is NOT authoritative guidance or a required "
                         "implementation. Discard any packet that is empty, "
                         "irrelevant, or contradicts the user's explicit request."
+                    )
+                actionability = protocol_notes.get("adaptation_plan_actionability")
+                if (
+                    isinstance(actionability, Mapping)
+                    and actionability.get("actionability") == "non_actionable"
+                ):
+                    protocol_notes["_discardability"] += (
+                        " The adaptation plan is explicitly non-actionable: "
+                        "do not use a failed or empty adaptation plan as edit "
+                        "instructions. Instead use current graph facts for a "
+                        "direct local edit when schema is sufficient, build an "
+                        "execution_plan with concrete required nodes/rewires, "
+                        "select better precedent evidence, or stop safely when "
+                        "the authoring surface is missing."
                     )
                 payload["execution_protocol_notes"] = protocol_notes
             # Include precedent packet as discardable research context.

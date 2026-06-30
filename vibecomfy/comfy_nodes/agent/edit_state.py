@@ -104,6 +104,7 @@ from vibecomfy.executor.contracts import (
     ReadinessReport,
     RevisionEvidence,
     TopologyFindings,
+    is_actionable_adaptation_plan,
 )
 from vibecomfy.executor.revision_evidence import (
     collect_graph_facts,
