@@ -1,0 +1,380 @@
+# Megaplan Native Representation Alignment Plan
+
+## Purpose
+
+`docs/arnold/megaplan-native-representation-report.md` is the target shape for
+canonical Megaplan. The goal is not merely "Python-authored workflow files"; the
+goal is a Megaplan workflow where product semantics are visible in native Python
+structure:
+
+- loops are loops;
+- gates are branches;
+- tiebreaker is a subworkflow;
+- review rework is an explicit cycle;
+- human intervention is a suspension point;
+- task execution fanout is not hidden behind one opaque handler;
+- timeout, retry, model routing, escalation, override, and resume behavior are
+  declared as workflow structure or policy rather than implicit handler effects.
+
+This document defines how the three follow-up epics should be checked against
+that target. It is both a traceability matrix template and a review plan.
+
+## Doctrine Precedence
+
+Use this precedence order when documents appear to conflict:
+
+1. Canonical Megaplan product semantics are owned by visible compositional
+   native Python source, declared workflow policy, or an audited pure phase
+   body. If a reviewer cannot see the real Megaplan control flow in those
+   carriers, the report target is not met.
+2. `WorkflowManifest` is the stable normalized runtime, replay, inspection, and
+   interchange contract. It proves compiled behavior and durable execution, but
+   it is not the final Megaplan authoring doctrine and must not become a second
+   source of product semantic truth separate from canonical source.
+3. `Pipeline.native_program` and projected compatibility shells are migration
+   substrate and dispatch compatibility. They are useful proof that execution
+   can move away from graph-era bundles, but they never prove report
+   conformance by themselves.
+
+The older workflow-manifest-runtime work remains valuable as runtime/kernel
+quarry and compatibility evidence. Where it says Megaplan should be authored as
+explicit-node manifest data, read that as an intermediate migration substrate
+unless a later composition milestone deliberately re-charters it. The final
+target remains the native representation report: Megaplan semantics visible in
+canonical compositional source and declared policy, with manifests compiled
+from that source.
+
+## Governing Sources
+
+- `docs/arnold/megaplan-native-representation-report.md`
+- `docs/arnold/megaplan-native-representation-launch-readiness.md`
+- `docs/arnold/megaplan-native-representation-traceability.yaml`
+- `docs/arnold/megaplan-native-representation-scenarios.yaml`
+- `docs/arnold/python-shaped-authoring-contract.md`
+- `.megaplan/initiatives/native-python-pipelines-completion/NORTHSTAR.md`
+- `.megaplan/initiatives/native-composition-followup/NORTHSTAR.md`
+- `.megaplan/initiatives/native-platform-followup/NORTHSTAR.md`
+- `.megaplan/initiatives/workflow-manifest-runtime/NORTHSTAR.md` (reconciled
+  runtime/kernel source; not an authoring end-state override)
+- `.megaplan/initiatives/native-python-pipelines-completion/briefs/*.md`
+- `.megaplan/initiatives/native-composition-followup/briefs/*.md`
+- `.megaplan/initiatives/native-platform-followup/briefs/*.md`
+
+## Epic Responsibilities
+
+| Epic | Responsibility against the report | Must not claim |
+| --- | --- | --- |
+| Native Python Pipelines Completion | Establish or preserve migration substrate: native-backed dispatch, resume, trace, package, and test truth so later visible compositional Megaplan work is possible. | Full report conformance; `Pipeline.native_program` as final authoring truth; or any closure based only on non-null native programs, projected shells, route labels, or native traces. |
+| Native Composition Follow-Up | Primary delivery epic for the report shape: native compositional source, declared interfaces, subworkflows, loops, routing, tree traces, path resume, and canonical Megaplan as proof target. | That a flat graph, explicit-node manifest, projected shell, or handler-ref wrapper is enough. |
+| Native Platform Follow-Up | Production hardening around the report shape: durable backend, side-effect fences, brokered credentials, approval gates, worker leases, cancellation, audit, and reconcile. | Any platform/runtime/manifest design that moves semantic ownership out of canonical source/declared policy and back into opaque handlers or runtime side effects. |
+
+## Traceability Matrix
+
+Every row must end with one of:
+
+- `implemented`: visible in source and proven by tests/rendered topology;
+- `enabled`: substrate exists, but a later named epic owns visible Megaplan use;
+- `deferred`: explicitly not in scope, with owner and proof gate;
+- `missing`: no credible owner or proof.
+
+`missing` is a blocking result for launching or trusting the full sequence. A
+row is not `implemented` if the required branch, loop, retry, fanout,
+suspension, route, or policy exists only inside a handler body or implicit state
+mutation. For composition-owned Megaplan semantics, `enabled` is only an interim
+status before the composition epic launches; by the end of that epic the row
+must be `implemented` or explicitly `deferred` with a downstream owner and
+blocking proof.
+
+For this pre-launch planning pass, `enabled` means the row has an explicit
+milestone owner, final shape, proof artifact, and false-pass guard in the
+three-epic sequence. It does not mean the report requirement is already
+implemented. Closing an owning milestone must update the row to `implemented`
+or to a narrower explicit `deferred` status with a downstream owner.
+
+| Report requirement | Current hidden/current surface | Responsible epic | Owning milestone | Status | Required final shape | Required proof | False-pass scenario | Required negative test/source invariant |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Prep clarification gate | `_apply_prep_clarify_gate()` and state mutation in prep/plan handlers. | Composition, with platform durability for waits. | Composition M1/M5, Platform M4 | enabled | `prep` result branches to a declared human suspension/resume path when blocking questions exist. | Source excerpt, rendered route, suspend/resume test, legacy state/cursor compatibility test. | Handler sets a waiting state while topology still shows a single prep node. | Structural conformance fails if the branch is not visible outside handler code. |
+| Plan artifact/version metadata | Planner handler writes artifacts and metadata. | Completion/Composition. | Completion M3.5/M5, Composition M1/M6 | enabled | Plan remains a phase, but inputs/outputs/artifacts are declared at the workflow boundary. | Artifact manifest and schema test. | Artifacts are emitted but source does not declare their contract. | Schema/source invariant requires declared boundary names for plan artifacts. |
+| Critique skip on bare robustness | Robustness condition hidden in handler/state policy. | Composition. | Composition M1/M6 | enabled | Robustness variant is explicit workflow policy or branch. | Rendered topology for bare/light/full variants and behavior golden. | Bare mode skips in handler only. | Mutation moving skip into handler makes conformance fail. |
+| Adaptive critique evaluator retry | Retry loop inside `handle_critique()`. | Composition. | Composition M1/M6 | enabled | Retry is visible at critique call site or declared as step policy. | Retry exhaustion and retry-success tests with event trace. | Retry works but is invisible to topology/policy inspection. | Source invariant rejects retry loops in retained critique handler. |
+| Parallel critique lenses with fan-in | `run_parallel_critique(...)` hidden in critique handler. | Composition. | Composition M0/M1/M3/M6 | enabled | `parallel_map`/fanout over selected checks plus reducer/fan-in is visible. | Dynamic-list fanout fixture, reducer trace, fallback behavior test. | Native trace lists child calls but source still invokes one handler. | Static topology snapshot includes untaken selected-lens branches. |
+| Bounded critique/gate/revise loop | Loop partly present as graph policy, termination hidden in handlers/state. | Composition. | Composition M0/M1/M2/M6 | enabled | A visible bounded loop with typed outcomes for proceed, iterate, blocked, escalate, and cap/no-progress termination. | Loop iteration trace, cap test, severity-aware termination test. | A state field jumps back to critique without visible typed outcomes. | Source invariant requires loop bounds and outcome enum at workflow level. |
+| Gate preflight and payload normalization | Gate handler normalizes/recover payloads and checks agent availability. | Composition. | Composition M1/M2/M6 | enabled | Preflight, malformed payload recovery, and agent-availability decisions are named gate sub-decisions or declared policies. | Malformed payload golden, unavailable-agent route, topology excerpt. | Bad payload fallback remains buried inside `handle_gate()`. | Handler-purity scan rejects route decisions in gate payload recovery code. |
+| Gate signal building and reprompt | Gate handler builds signals, validates flags, reprompts. | Composition. | Composition M1/M2/M6 | enabled | Gate remains a named subworkflow or step cluster with explicit retry/reprompt policy and declared outputs. | Gate retry/reprompt test, route decision golden, artifact schema check. | Gate looks native but reprompt/downgrade lives in handler. | Source invariant requires reprompt policy and downgrade route outside handler. |
+| Gate flag/debt/fallback handling | Handler records debt, validates flags, and mutates state. | Composition/Platform. | Composition M1/M2/M6, Platform M4/M6 | enabled | Flag resolution, debt recording, high-complexity downgrade, and fallback routes are explicit effects/events/routes. | Effect/event trace, accepted-with-debt golden, downgrade golden. | Debt flag is written but no explicit product route exists. | Semantic diff fails if debt/downgrade route disappears from topology. |
+| Tiebreaker researcher/challenger path | `tiebreaker_run` / `tiebreaker_decide` handlers hide internal split. | Composition. | Composition M1/M3/M4/M6 | enabled | Tiebreaker is a declared subworkflow with researcher, challenger, decision, and parent promotion. | Subworkflow graph, path-addressed trace, proceed/iterate/escalate tests. | One native node calls old tiebreaker handler. | Structural conformance fails for single handler-backed tiebreaker stage. |
+| Human decision/suspension | Human wait states spread across handlers/control. | Composition/Platform. | Composition M1/M5, Platform M2/M4/M6 | enabled | Human gates are explicit suspension points with durable resume coordinates. | Process-death resume test and rendered suspension points. | Status says waiting but resume coordinate is implicit state. | Resume test starts from persisted path, not handler-local fields. |
+| Finalize fallback routes | Finalize handler carries fallback/test-selection behavior. | Composition. | Composition M1/M6 | enabled | Finalize failures, baseline/test selection, and fallback outcomes are declared outputs/routes where they affect control flow. | Finalize failure golden and route test. | Finalize errors are swallowed into artifact flags. | Topology includes failure/fallback routes and tests assert they are taken. |
+| Dependency-aware execute batches | Execute DAG and batching live in `execute/batch.py`. | Composition, with platform worker hardening. | Composition M1/M3/M4/M6, Platform M1/M5/M6 | enabled | Execution is not one opaque handler; dependency-aware runtime task batches are visible as a subworkflow or dynamic DAG primitive. | DAG fixture, partial failure/resume test, task dependency trace. | Execute remains one node with richer internal logging. | Structural conformance fails if execute is only one handler-backed stage. |
+| Execute approval/no-review/deferred-human gates | Confirmation, no-review, and deferred-human behavior hidden in execute/control code. | Composition/Platform. | Composition M1/M5/M6, Platform M2/M4/M6 | enabled | Approval and deferred-human/no-review choices are declared suspension/effect gates before protected execution or review. | Approval deny/approve/resume tests, no-review golden, deferred-human golden. | Approval works through side effect but topology cannot show it. | Source invariant requires protected actions to pass through declared gate. |
+| Execute/review/rework loop | Review rework path partly route-level, much behavior hidden in review/execute handlers. | Composition. | Composition M1/M4/M5/M6 | enabled | Review can approve, request rework, block, force-proceed, or escalate through an explicit loop. | Review pass/rework/block/force-proceed goldens and loop trace. | Review handler mutates `next_step` to execute. | Mutation hiding rework route in handler must fail conformance. |
+| Review parallel checks/fan-in | Review panels and checks hidden in review code. | Composition. | Composition M1/M3/M4/M6 | enabled | Review fanout and reducer are represented as workflow structure or declared policy. | Parallel review trace and deterministic ordering test. | Parallel checks run but topology has one review node. | Static snapshot includes child review checks and reducer. |
+| Review infrastructure retry and cap outcomes | Infra failure retry, deferred-human-must route, and repeated failure caps are hidden in review code. | Composition/Platform. | Composition M1/M2/M6, Platform M4/M5/M6 | enabled | Review distinguishes infra retry, blocking failure, advisory failure, deferred human, force-proceed, and cap outcomes. | Infra retry golden, repeated-failure cap golden, force-proceed/block route tests. | Rework cap is a handler threshold with no visible branch. | Source invariant requires cap and outcome classifier outside retained handler. |
+| Override full action surface | Product control meanings are spread across override handler and control binding. | Composition/Platform. | Composition M1/M2/M6, Platform M2/M6 | enabled | Override routes are explicit product-owned decision paths; neutral runtime only dispatches declared keys. | Override matrix for abort, replan, force-proceed, add-note, resume-clarify, recover-blocked, set-robustness/profile/model/vendor. | Only abort/replan are visible; other actions mutate config/state. | No-generic-Megaplan-literal scan plus action-by-action route tests. |
+| Timeout/deadline policy | Phase/runtime timeout logic spread across runtime helpers. | Composition/Platform. | Composition M1/M6, Platform M4/M5/M6 | enabled | Timeout/deadline policy is declared at step/subworkflow call sites or workflow policy. | Timeout event trace, retry/escalation test. | Runtime helper times out but source does not declare retryability. | Source invariant requires timeout/retry policy at call site or named policy object. |
+| Model routing by phase/task complexity | Profiles and routing live outside workflow source. | Composition/Platform. | Composition M1/M6, Platform M2/M6 | enabled | Model routing is visible as declared policy keyed by phase/task complexity, without neutral Megaplan literals. | Profile validation, task-complexity route test, rendered policy view. | Correct model is picked by hidden profile code only. | Rendered policy view and negative test for missing route metadata. |
+| Runtime-list iteration | Current source compilers reject broad dynamic iteration. | Composition. | Composition M0/M1/M3/M6 | enabled | Supported runtime-list iteration or typed dynamic map for critique/review/execute. | Compiler fixture and runtime trace for dynamic list input. | Megaplan uses bespoke helper instead of general native construct. | Compiler acceptance/rejection fixtures prevent Megaplan-only escape hatch. |
+| Dynamic parallel map | Fixed fanout exists; Megaplan needs runtime-selected lists. | Composition. | Composition M0/M1/M3/M6 | enabled | `parallel_map` or equivalent is a first-class native construct. | Selected-lens fanout and execute-batch fanout fixtures. | Fanout only works for hardcoded examples. | Dynamic-list fixture must vary list at runtime and preserve child paths. |
+| Typed loop outcomes or break/continue | Existing compiler subsets reject `break`/`continue`. | Composition. | Composition M0/M1/M2/M6 | enabled | Either typed loop outcomes or a safe break/continue subset expresses native loop exits. | Compiler acceptance/rejection tests and route parity. | Handler returns magic strings consumed by generic router. | Source invariant requires typed outcome declarations or accepted Python loop syntax. |
+| Auto-drive/event/liveness transitions | Auto-drive and control transitions mutate state through helpers. | Platform, with composition-visible hooks. | Completion M3.5, Composition M1/M6, Platform M4/M5/M6 | enabled | Stall caps, external-provider retry, phase-timeout retryability, cost/context retry, escalation, and status projection are visible as declared overlays/events. | Event replay test, liveness policy test, status projection parity. | Auto-drive keeps working but status is derived from hidden mutation. | Replay from events reproduces the same visible workflow path. |
+| Path-addressed checkpoints | Current plan has traces, but nested composition needs stable paths. | Composition/Platform. | Composition M0/M4/M5/M6, Platform M4/M6 | enabled | Every step/subworkflow/loop iteration has stable path identity. | Tree trace snapshot, resume-from-path test. | Flattened trace loses subworkflow identity. | Snapshot asserts nested path identity and resume target. |
+| Trace-only native shadow topology | Report recommends a shadow topology before full migration. | Composition. | Composition M0/M1 | enabled | A reviewable native shadow topology exists before behavior switches, showing intended Megaplan product structure. | Shadow topology diff, review signoff, parity notes. | Migration starts directly from handler-backed runtime and drifts. | Epic cannot launch migration milestone without accepted shadow topology. |
+| Handler topology extraction/purity audit | Current handlers own routing, loop exits, fanout, and state mutation. | Composition. | Composition M1/M2/M6, Platform M6 | enabled | Retained handlers are pure phase bodies only; product topology moves to workflow source or declared policy. | Handler inventory, purity scan, source excerpts, reviewer signoff. | Handler names are wrapped in native nodes but retain control flow. | Scan for `current_state`, `next_step`, `workflow_transition`, `run_parallel_*`, auto-loop dispatch, and override action dispatch. |
+| Golden trace regeneration guard | Existing traces can be regenerated after behavior drift. | All three. | Completion M5, Composition M6, Platform M6 | enabled | Scenario definitions are fixed; regenerated traces require semantic diff review. | Golden scenario manifest, semantic diff checklist, reviewer approval. | Tests pass because goldens were overwritten. | CI fails on unreviewed trace regeneration or missing semantic diff note. |
+| Canonical source path reconciliation | Briefs reference future `arnold/pipelines/...` while current code uses `arnold_pipelines/...`; some expected paths may not exist in the current checkout. | Completion/Composition. | Completion M2/M7, Composition M0/M1/M6, Platform M6 | enabled | Each milestone identifies the actual canonical source path and import surface it is changing. | Path reconciliation table and import smoke test. | Review inspects stale/future path, or a missing expected file such as `arnold_pipelines/megaplan/workflows/pipeline.py`, and misses live source. | Milestone cannot close without import/path inventory matching installed package and a stale-path negative check for missing or renamed expected files. |
+| Behavior parity with existing Megaplan | Current behavior is broad and handler-heavy. | All three. | Completion M3.5/M5, Composition M1/M6, Platform M6 | enabled | New structure preserves fresh, iterate, tiebreaker, execute/review, human, override, resume, and failure paths. | Golden suite, live smoke, installed-wheel conformance. | Report shape looks good but regressions hide in less common flows. | Scenario goldens cover prep blocking, bare skip, critique retry/fallback, gate reprompt/downgrade, severity cap, tiebreaker pick/escalate/replan, finalize failure, execute approval, DAG partial resume, review infra retry, review cap, and every override action. |
+| Source readability | Current source may still be graph-like or handler-ref-heavy. | Composition. | Composition M1/M6 | enabled | A reviewer can understand the real Megaplan product flow by reading the canonical workflow source. | Human review checklist plus rendered topology diff. | Source has readable names but the important decisions are still elsewhere. | Structural conformance and handler-purity inventory are required, not just human readability. |
+
+## High-Abstraction Review Waves
+
+These reviews judge whether the whole sequence is structurally likely to reach
+the report target. Each should return findings, missing proof gates, and edits
+to North Stars or milestone briefs.
+
+| Wave | Question | Inputs | Output |
+| --- | --- | --- | --- |
+| H0 Matrix Closure Gate | Before launching each epic, does every row have status, owning milestone, proof artifact, and false-pass test? | Traceability matrix, milestone briefs, current source. | Launch/no-launch verdict and required brief edits. |
+| H1 End-State Fit | If all three epics pass as written, does Megaplan look like the report, or merely like a better manifest graph? | Native report, three North Stars, all milestone briefs. | Verdict, blocking gaps, required milestone edits. |
+| H2 Sequencing | Are prerequisites ordered correctly, especially substrate before composition and composition before platform hardening? | Chain specs, milestone dependencies, report matrix. | Reordered milestones or explicit dependency gates. |
+| H3 Product/Neutral Boundary | Does Arnold stay generic while Megaplan owns product semantics? | Workflow migration docs, cleanup docs, composition/platform briefs. | Boundary risks and scans/tests to prevent leakage. |
+| H4 Deferral Honesty | Are any load-bearing report requirements mislabeled as optional or deferred too late? | Traceability matrix and all brief done criteria. | Deferral table with owners and blockers. |
+| H5 Proof Sufficiency | Would the proposed tests catch a false pass where handlers still hide semantics? | Test plans, conformance docs, current fixtures. | Required proof gates and golden scenarios. |
+| H6 Semantics Carrier Review | For every hidden-logic item in the report, is the semantic carrier canonical source, declared policy, or a deliberately pure phase body? | Report, handler inventory, source excerpts. | Carrier table and required extraction edits. |
+| H7 Native Language Sufficiency | Can the native language/runtime express dynamic maps, typed loop exits, policy calls, nested paths, and subworkflow invocation without Megaplan-only escape hatches? | Compiler/runtime source, composition briefs, Megaplan target source. | Missing language primitives, acceptance/rejection fixtures, and sequencing changes. |
+| H8 Completion-vs-Conformance Review | Are completion-epic native truth tests being mistaken for report conformance? | Completion briefs, Megaplan migration briefs, matrix statuses. | Rows that are only substrate proof, plus required composition conformance gates. |
+| H9 Platform Preservation Review | Does platform durability, brokerage, worker supervision, or reconcile move workflow semantics back into runtime side effects? | Platform briefs, conformance scenario, composition output. | Platform regression checks and post-hardening structural conformance proof. |
+
+## Detail Audit Waves
+
+These reviews inspect one product slice at a time. They should be run after the
+matrix is filled once and again before each epic is launched.
+
+| Wave | Slice | Required checks |
+| --- | --- | --- |
+| D1 Prep/Plan | Prep clarification, plan artifacts, criteria import, open questions, human wait. |
+| D2 Critique | Robustness skip, evaluator retry, selected checks, parallel fanout, reducer, fallback. |
+| D3 Gate Preflight | Payload normalization/recovery, agent availability, high-complexity downgrade, malformed input backstop. |
+| D4 Gate/Revise | Gate signal building, flag resolution, reprompt, debt, fallback, severity termination, revise loop. |
+| D5 Tiebreaker | Researcher/challenger split, decision, promotion, escalation, replan, path identity. |
+| D6 Finalize | Task generation, baseline/test selection, user actions, fallback/failure routes. |
+| D7 Execute DAG | Dependency DAG, batching, model routing, side effects, partial failure, resume/reconcile. |
+| D8 Execute Gates | Approval, no-review, deferred-human, protected actions, deny/cancel/resume. |
+| D9 Review Fanout | Parallel checks, reducer ordering, infra retry, outcome classifier. |
+| D10 Review Caps | Pass/rework/block/escalate outcomes, rework loop, repeated failure caps, force-proceed distinction. |
+| D11 Human/Control | Suspension, override action routes, add-note, resume-clarify, recover-blocked, abort, replan, profile/model/vendor changes. |
+| D12 Runtime/Trace | Tree traces, checkpoint paths, replay, resume from path, event/control overlays, trace regeneration guard. |
+| D13 Policy/Platform | Timeout, retry, model routing, credentials, worker leases, cancellation, audit, conformance. |
+| D14 Compiler/Authoring | Dynamic iteration, parallel map, typed loop outcomes, policy call syntax, nested subworkflow invocation, rejection of Megaplan-only escape hatches. |
+| D15 Handler Extraction | Handler inventory, purity classification, source invariants, mutation tests that move semantics back into handlers. |
+
+## Milestone Brief Requirements
+
+Every milestone brief in the three-epic sequence must include a `Native
+Representation Alignment` section before launch. That section must list:
+
+- matrix rows owned or affected by the milestone;
+- row status changes expected by the milestone;
+- proof artifacts the milestone will produce;
+- false-pass scenarios the milestone explicitly guards against;
+- deferrals created or retired, with downstream owner and blocking proof;
+- the canonical source paths/import surfaces the milestone will inspect or edit.
+
+A milestone cannot close by saying `native_program` is non-null, route labels
+exist, or traces render. It must show that the relevant Megaplan semantics are
+visible in canonical workflow source, declared policy, or an audited pure phase
+body. Completion-epic milestones may produce substrate proof; composition-owned
+report rows still require later structural conformance.
+
+## Required Proof Gates
+
+The final plan should require these proof gates before the sequence is treated
+as report-conformant:
+
+- structural conformance test that fails if `critique`, `gate`, `tiebreaker`,
+  `execute`, `review`, or `override` are represented only as single
+  handler-backed stages;
+- handler-purity inventory and scan for `current_state`, `next_step`,
+  `workflow_transition`, `run_parallel_*`, auto-loop dispatch, override action
+  dispatch, and equivalent routing/state mutation APIs;
+- mutation tests that move one visible branch, retry, fanout, or suspension
+  route back into a handler and prove conformance fails;
+- static topology snapshots that include untaken branches, not only runtime
+  traces from a happy path;
+- fixed scenario manifest and semantic diff process for regenerated goldens;
+- installed-package/source-path reconciliation proving reviews inspect the
+  actual canonical source that users run;
+- platform post-hardening check proving DB durability, brokered credentials,
+  workers, cancellation, and reconcile did not collapse product routes into
+  runtime side effects.
+
+## Required Review Prompt Shape
+
+Every review agent should receive:
+
+1. the native representation report;
+2. the three North Stars;
+3. the relevant milestone briefs;
+4. this alignment plan;
+5. the current canonical Megaplan source and generated topology if available.
+
+Each review must answer:
+
+- Which report requirements does the plan fully satisfy?
+- Which requirements are only enabled, not delivered?
+- Which requirements are missing or under-specified?
+- What exact milestone brief edits or proof gates would make the plan robust?
+- What false-pass scenario could make the team believe the report was satisfied
+  when it was not?
+
+## Current Pre-Launch Audit
+
+This planning pass established the pre-launch alignment baseline:
+
+- 31 matrix rows have explicit milestone owners, proof artifacts, final shape,
+  false-pass scenarios, and source invariants.
+- All rows are `enabled` in the pre-launch sense defined above: they have named
+  owners and proof gates, but they are not yet implemented.
+- Every milestone brief in the three-epic sequence contains a `Native
+  Representation Alignment` section.
+- Every brief is referenced by its initiative `chain.yaml`; the completion
+  chain runs M1, M2, M3, M3.5, M4, M5, M6, and M7.
+- Cross-chain prerequisite references point at initiative-root chain files, not
+  stale `briefs/chain.yaml` paths.
+- A GPT-5.5 Codex high-reasoning doctrine arbitration on 2026-06-30 found that
+  the previous launch audit was only a pre-doctrine baseline. It is not launch
+  approval until the manifest/runtime versus compositional-source doctrine is
+  reconciled into the plan and the required review waves are rerun.
+- Earlier H0-H9 and D1-D15 review waves are recorded in
+  `docs/arnold/megaplan-native-representation-review-execution.md`. After the
+  doctrine update, H0-H9 and D1-D15 were rerun with GPT-5.5 high reasoning; no
+  review returned `BLOCK`, and all `PASS WITH EDIT` findings from those
+  doctrine-aware passes have been folded into this plan and the milestone
+  briefs.
+
+## Mandatory Doctrine Revalidation
+
+Before implementation chains launch:
+
+- preserve the doctrine-aware H0-H9 and D1-D15 review log as required launch
+  evidence;
+- treat any future `BLOCK` or unaddressed `PASS WITH EDIT` from H1 End-State
+  Fit, H7 Native Language Sufficiency, H8 Completion-vs-Conformance Review,
+  D14 Compiler/Authoring, D15 Handler Extraction, D1-D11 scenario slices, D12
+  Runtime/Trace, D13 Policy/Platform, or H9 Platform Preservation Review as a
+  no-launch condition;
+- require every review to state whether it is evaluating source authoring,
+  manifest/runtime behavior, or `native_program` compatibility so those proof
+  classes are not conflated.
+
+## Chain Launch Preconditions
+
+The executable chain specs for the three follow-up epics use
+`driver.require_clean_base: true`. That is intentional: each milestone should
+start from a clean base so review findings are about the milestone diff, not
+carried local WIP. The chain harness also supports top-level
+`launch_preconditions` with `exists`, `contains_text`, `git_tracked`, and
+`chain_completed` checks; these are validated by `megaplan chain verify` and
+before `megaplan chain start` reaches agent backend preflight.
+
+The launch path must therefore satisfy these invariants:
+
+- the chain spec, `NORTHSTAR.md`, and every milestone brief are committed in
+  `HEAD` and clean in the checkout that runs the chain;
+- `base_branch` names an existing branch or remote ref; for the current local
+  launch pass the three follow-up specs target `main`;
+- no generated runtime state lives under `.megaplan/initiatives/**/.megaplan/`;
+- launchers must not rely on untracked durable source files when
+  `require_clean_base` is enabled, because the chain runner auto-stashes carried
+  WIP before `megaplan init` and untracked idea files then disappear from the
+  run checkout.
+- composition follow-up launch requires the native-python-pipelines-completion
+  chain state to prove every current M1-M7 milestone is `done` against the
+  current chain spec hash, with plan evidence and merged PR evidence when the
+  prerequisite chain uses `merge_policy: review`;
+- platform follow-up launch requires both the completion chain and composition
+  chain state to prove every current milestone is `done` against the current
+  chain spec hash, with plan evidence and merged PR evidence when the
+  prerequisite chain uses `merge_policy: review`;
+- composition follow-up launch requires the permanent native representation
+  report and alignment plan anchors to exist and contain their expected markers;
+- all three chains require the machine-readable traceability and fixed scenario
+  artifacts to exist with their expected schema markers;
+- all three chains require their initiative source directory and every
+  load-bearing native-representation document to be committed in `HEAD` and
+  clean before launch, so `require_clean_base` cannot stash away staged,
+  modified, deleted, or untracked source files;
+- platform follow-up launch requires the composition conformance report
+  `docs/arnold/megaplan-composition-conformance-report.md`, which composition
+  M6 must produce before platform starts.
+
+A preflight failure on 2026-06-30 proved this invariant: the first completion
+milestone could not initialize because untracked initiative files were hidden by
+the `require_clean_base` auto-stash. Treat any recurrence as a launcher
+precondition failure, not as a missing-brief authoring failure.
+
+If composition `chain verify` fails before completion M7 lands, or platform
+`chain verify` fails before completion M7 and composition M6 land, that is the
+expected enforcement behavior. Do not bypass it with manual launch unless the
+missing prerequisite is deliberately re-chartered in this alignment plan and
+the affected initiative North Star.
+
+Residual risk is execution discipline. The final M6 conformance gates must be
+real blockers, not documentation-only checklists. In particular, composition
+M6 and platform M6 must refuse closure unless structural conformance,
+handler-purity inventory, mutation tests, static topology snapshots, semantic
+golden review, source-path reconciliation, and post-platform preservation
+checks all pass.
+
+Codex GPT-5.5 high-reasoning release-gate review on 2026-07-01 found that
+plain label/hash completion was not release-hard enough. The gate now rejects
+unsupported failure-policy keys and requires prerequisite chains to have
+advanced past all milestones with `done` records, plan names, and merged PR
+evidence for review-merge chains. Remaining hardening before autonomous launch:
+decide whether prerequisite state should also record milestone brief hashes or
+a stronger authoritative completion manifest.
+
+The row-by-row traceability matrix is now mirrored in
+`docs/arnold/megaplan-native-representation-traceability.yaml`, and the fixed
+D1-D15 scenario manifest is now recorded in
+`docs/arnold/megaplan-native-representation-scenarios.yaml`. The focused
+validator in
+`tests/arnold_pipelines/megaplan/test_native_representation_alignment_artifacts.py`
+checks the schema, 31 traceability rows, 15 fixed scenarios, row references,
+required proof fields, and scenario coverage of every row.
+
+GPT-5.5 Codex high-reasoning launch-readiness review on 2026-07-01 judged
+these artifacts sufficient for the current planning/alignment phase and
+sufficient to launch only the first prerequisite chain
+(`native-python-pipelines-completion`) once the launch checkout has the
+load-bearing initiative/docs files committed in `HEAD` and clean. The
+brief/artifact hash or
+authoritative completion-manifest question can defer past the first chain
+launch, but should be treated as a pre-composition hardening decision if the
+dependent chains will run unattended or after a long delay.
+
+## Completion Standard
+
+The alignment work is done only when:
+
+- completion-owned substrate rows may remain `enabled` only as named inputs to
+  later epics; composition-owned final report rows are `implemented` or
+  explicitly `deferred` with downstream owner and blocking proof; no
+  report-owned Megaplan semantic may be deferred merely because it still lives
+  in a handler, metadata constant, route label, native trace, manifest
+  projection, or `native_program` shell;
+- no row is `missing`;
+- every milestone brief has a `Native Representation Alignment` section and has
+  updated the matrix rows it owns;
+- high-abstraction reviewers agree the three-epic sequence converges on the
+  report, not merely on a cleaner graph/manifest wrapper;
+- detail reviewers agree the major hidden-handler behaviors have either been
+  lifted into visible workflow structure or intentionally retained as pure phase
+  implementation details;
+- final conformance includes source excerpts, rendered topology, static topology
+  snapshots with untaken branches, trace fixtures, behavior goldens, resume
+  tests, handler-purity inventory, mutation tests, installed artifact checks,
+  and post-platform preservation checks.
+
+The practical final test is simple: open the canonical Megaplan workflow source.
+If the real product flow is not visible there, the sequence has not reached the
+native representation target.

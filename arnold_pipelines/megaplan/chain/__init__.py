@@ -4229,6 +4229,7 @@ def run_chain_cli(
             project_root = Path(project_dir_arg).expanduser().resolve()
         try:
             spec = chain_spec.load_spec(spec_path)
+            chain_spec.validate_paths(spec, project_root, spec_path=spec_path)
             chain_state = chain_spec.load_chain_state(spec_path)
         except CliError as exc:
             return _emit_error(exc)

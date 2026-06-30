@@ -1,0 +1,254 @@
+schema: arnold.megaplan_native_representation.traceability.v1
+target_report: docs/arnold/megaplan-native-representation-report.md
+alignment_plan: docs/arnold/megaplan-native-representation-alignment-plan.md
+status_values: [enabled, implemented, deferred, missing]
+completion_rule: missing blocks launch; implemented requires visible source, declared policy, or audited pure phase body plus proof.
+rows:
+  - id: prep-clarification-gate
+    requirement: Prep clarification gate
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m5, platform-m4]
+    proof_artifacts: [source_excerpt, rendered_route, suspend_resume_test, legacy_cursor_compatibility_test]
+    false_pass_guard: Handler sets a waiting state while topology still shows a single prep node.
+    negative_invariant: Structural conformance fails if the branch is not visible outside handler code.
+  - id: plan-artifact-version-metadata
+    requirement: Plan artifact/version metadata
+    status: enabled
+    owners: [native-python-pipelines-completion, native-composition-followup]
+    milestones: [completion-m3-5, completion-m5, composition-m1, composition-m6]
+    proof_artifacts: [artifact_manifest, schema_test]
+    false_pass_guard: Artifacts are emitted but source does not declare their contract.
+    negative_invariant: Schema/source invariant requires declared boundary names for plan artifacts.
+  - id: critique-bare-skip
+    requirement: Critique skip on bare robustness
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m6]
+    proof_artifacts: [variant_topology, behavior_golden]
+    false_pass_guard: Bare mode skips in handler only.
+    negative_invariant: Mutation moving skip into handler makes conformance fail.
+  - id: critique-evaluator-retry
+    requirement: Adaptive critique evaluator retry
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m6]
+    proof_artifacts: [retry_exhaustion_test, retry_success_test, event_trace]
+    false_pass_guard: Retry works but is invisible to topology/policy inspection.
+    negative_invariant: Source invariant rejects retry loops in retained critique handler.
+  - id: critique-parallel-lenses
+    requirement: Parallel critique lenses with fan-in
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m0, composition-m1, composition-m3, composition-m6]
+    proof_artifacts: [dynamic_list_fanout_fixture, reducer_trace, fallback_behavior_test]
+    false_pass_guard: Native trace lists child calls but source still invokes one handler.
+    negative_invariant: Static topology snapshot includes untaken selected-lens branches.
+  - id: critique-gate-revise-loop
+    requirement: Bounded critique/gate/revise loop
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m0, composition-m1, composition-m2, composition-m6]
+    proof_artifacts: [loop_iteration_trace, cap_test, severity_termination_test]
+    false_pass_guard: A state field jumps back to critique without visible typed outcomes.
+    negative_invariant: Source invariant requires loop bounds and outcome enum at workflow level.
+  - id: gate-preflight-normalization
+    requirement: Gate preflight and payload normalization
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m2, composition-m6]
+    proof_artifacts: [malformed_payload_golden, unavailable_agent_route, topology_excerpt]
+    false_pass_guard: Bad payload fallback remains buried inside handle_gate.
+    negative_invariant: Handler-purity scan rejects route decisions in gate payload recovery code.
+  - id: gate-signal-reprompt
+    requirement: Gate signal building and reprompt
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m2, composition-m6]
+    proof_artifacts: [gate_retry_test, route_decision_golden, artifact_schema_check]
+    false_pass_guard: Gate looks native but reprompt/downgrade lives in handler.
+    negative_invariant: Source invariant requires reprompt policy and downgrade route outside handler.
+  - id: gate-flag-debt-fallback
+    requirement: Gate flag/debt/fallback handling
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m2, composition-m6, platform-m4, platform-m6]
+    proof_artifacts: [effect_event_trace, accepted_with_debt_golden, downgrade_golden]
+    false_pass_guard: Debt flag is written but no explicit product route exists.
+    negative_invariant: Semantic diff fails if debt/downgrade route disappears from topology.
+  - id: tiebreaker-subworkflow
+    requirement: Tiebreaker researcher/challenger path
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m3, composition-m4, composition-m6]
+    proof_artifacts: [subworkflow_graph, path_addressed_trace, proceed_iterate_escalate_tests]
+    false_pass_guard: One native node calls old tiebreaker handler.
+    negative_invariant: Structural conformance fails for single handler-backed tiebreaker stage.
+  - id: human-decision-suspension
+    requirement: Human decision/suspension
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m5, platform-m2, platform-m4, platform-m6]
+    proof_artifacts: [process_death_resume_test, rendered_suspension_points]
+    false_pass_guard: Status says waiting but resume coordinate is implicit state.
+    negative_invariant: Resume test starts from persisted path, not handler-local fields.
+  - id: finalize-fallback-routes
+    requirement: Finalize fallback routes
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m6]
+    proof_artifacts: [finalize_failure_golden, route_test]
+    false_pass_guard: Finalize errors are swallowed into artifact flags.
+    negative_invariant: Topology includes failure/fallback routes and tests assert they are taken.
+  - id: execute-dependency-batches
+    requirement: Dependency-aware execute batches
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m3, composition-m4, composition-m6, platform-m1, platform-m5, platform-m6]
+    proof_artifacts: [dag_fixture, partial_failure_resume_test, task_dependency_trace]
+    false_pass_guard: Execute remains one node with richer internal logging.
+    negative_invariant: Structural conformance fails if execute is only one handler-backed stage.
+  - id: execute-approval-gates
+    requirement: Execute approval/no-review/deferred-human gates
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m5, composition-m6, platform-m2, platform-m4, platform-m6]
+    proof_artifacts: [approval_tests, no_review_golden, deferred_human_golden]
+    false_pass_guard: Approval works through side effect but topology cannot show it.
+    negative_invariant: Source invariant requires protected actions to pass through declared gate.
+  - id: execute-review-rework-loop
+    requirement: Execute/review/rework loop
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m4, composition-m5, composition-m6]
+    proof_artifacts: [review_goldens, loop_trace]
+    false_pass_guard: Review handler mutates next_step to execute.
+    negative_invariant: Mutation hiding rework route in handler must fail conformance.
+  - id: review-parallel-fanin
+    requirement: Review parallel checks/fan-in
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m3, composition-m4, composition-m6]
+    proof_artifacts: [parallel_review_trace, deterministic_ordering_test]
+    false_pass_guard: Parallel checks run but topology has one review node.
+    negative_invariant: Static snapshot includes child review checks and reducer.
+  - id: review-retry-cap-outcomes
+    requirement: Review infrastructure retry and cap outcomes
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m2, composition-m6, platform-m4, platform-m5, platform-m6]
+    proof_artifacts: [infra_retry_golden, repeated_failure_cap_golden, force_proceed_block_tests]
+    false_pass_guard: Rework cap is a handler threshold with no visible branch.
+    negative_invariant: Source invariant requires cap and outcome classifier outside retained handler.
+  - id: override-action-surface
+    requirement: Override full action surface
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m2, composition-m6, platform-m2, platform-m6]
+    proof_artifacts: [override_matrix, action_route_tests]
+    false_pass_guard: Only abort/replan are visible; other actions mutate config/state.
+    negative_invariant: No-generic-Megaplan-literal scan plus action-by-action route tests.
+  - id: timeout-deadline-policy
+    requirement: Timeout/deadline policy
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m6, platform-m4, platform-m5, platform-m6]
+    proof_artifacts: [timeout_event_trace, retry_escalation_test]
+    false_pass_guard: Runtime helper times out but source does not declare retryability.
+    negative_invariant: Source invariant requires timeout/retry policy at call site or named policy object.
+  - id: model-routing-policy
+    requirement: Model routing by phase/task complexity
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m6, platform-m2, platform-m6]
+    proof_artifacts: [profile_validation, task_complexity_route_test, rendered_policy_view]
+    false_pass_guard: Correct model is picked by hidden profile code only.
+    negative_invariant: Rendered policy view and negative test for missing route metadata.
+  - id: runtime-list-iteration
+    requirement: Runtime-list iteration
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m0, composition-m1, composition-m3, composition-m6]
+    proof_artifacts: [compiler_fixture, runtime_trace]
+    false_pass_guard: Megaplan uses bespoke helper instead of general native construct.
+    negative_invariant: Compiler acceptance/rejection fixtures prevent Megaplan-only escape hatch.
+  - id: dynamic-parallel-map
+    requirement: Dynamic parallel map
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m0, composition-m1, composition-m3, composition-m6]
+    proof_artifacts: [selected_lens_fanout_fixture, execute_batch_fanout_fixture]
+    false_pass_guard: Fanout only works for hardcoded examples.
+    negative_invariant: Dynamic-list fixture must vary list at runtime and preserve child paths.
+  - id: typed-loop-outcomes
+    requirement: Typed loop outcomes or break/continue
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m0, composition-m1, composition-m2, composition-m6]
+    proof_artifacts: [compiler_acceptance_tests, compiler_rejection_tests, route_parity]
+    false_pass_guard: Handler returns magic strings consumed by generic router.
+    negative_invariant: Source invariant requires typed outcome declarations or accepted Python loop syntax.
+  - id: autodrive-event-liveness
+    requirement: Auto-drive/event/liveness transitions
+    status: enabled
+    owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
+    milestones: [completion-m3-5, composition-m1, composition-m6, platform-m4, platform-m5, platform-m6]
+    proof_artifacts: [event_replay_test, liveness_policy_test, status_projection_parity]
+    false_pass_guard: Auto-drive keeps working but status is derived from hidden mutation.
+    negative_invariant: Replay from events reproduces the same visible workflow path.
+  - id: path-addressed-checkpoints
+    requirement: Path-addressed checkpoints
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m0, composition-m4, composition-m5, composition-m6, platform-m4, platform-m6]
+    proof_artifacts: [tree_trace_snapshot, resume_from_path_test]
+    false_pass_guard: Flattened trace loses subworkflow identity.
+    negative_invariant: Snapshot asserts nested path identity and resume target.
+  - id: shadow-topology
+    requirement: Trace-only native shadow topology
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m0, composition-m1]
+    proof_artifacts: [shadow_topology_diff, review_signoff, parity_notes]
+    false_pass_guard: Migration starts directly from handler-backed runtime and drifts.
+    negative_invariant: Epic cannot launch migration milestone without accepted shadow topology.
+  - id: handler-purity-audit
+    requirement: Handler topology extraction/purity audit
+    status: enabled
+    owners: [native-composition-followup, native-platform-followup]
+    milestones: [composition-m1, composition-m2, composition-m6, platform-m6]
+    proof_artifacts: [handler_inventory, purity_scan, source_excerpts, reviewer_signoff]
+    false_pass_guard: Handler names are wrapped in native nodes but retain control flow.
+    negative_invariant: Scan covers current_state, next_step, workflow_transition, run_parallel, auto-loop dispatch, and override action dispatch.
+  - id: golden-trace-regeneration
+    requirement: Golden trace regeneration guard
+    status: enabled
+    owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
+    milestones: [completion-m5, composition-m6, platform-m6]
+    proof_artifacts: [golden_scenario_manifest, semantic_diff_checklist, reviewer_approval]
+    false_pass_guard: Tests pass because goldens were overwritten.
+    negative_invariant: CI fails on unreviewed trace regeneration or missing semantic diff note.
+  - id: source-path-reconciliation
+    requirement: Canonical source path reconciliation
+    status: enabled
+    owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
+    milestones: [completion-m2, completion-m7, composition-m0, composition-m1, composition-m6, platform-m6]
+    proof_artifacts: [path_reconciliation_table, import_smoke_test]
+    false_pass_guard: Review inspects stale or future path and misses live source.
+    negative_invariant: Milestone cannot close without import/path inventory matching installed package and stale-path negative check.
+  - id: behavior-parity
+    requirement: Behavior parity with existing Megaplan
+    status: enabled
+    owners: [native-python-pipelines-completion, native-composition-followup, native-platform-followup]
+    milestones: [completion-m3-5, completion-m5, composition-m1, composition-m6, platform-m6]
+    proof_artifacts: [golden_suite, live_smoke, installed_wheel_conformance]
+    false_pass_guard: Report shape looks good but regressions hide in uncommon flows.
+    negative_invariant: Scenario goldens cover all named prep, critique, gate, tiebreaker, execute, review, and override paths.
+  - id: source-readability
+    requirement: Source readability
+    status: enabled
+    owners: [native-composition-followup]
+    milestones: [composition-m1, composition-m6]
+    proof_artifacts: [human_review_checklist, rendered_topology_diff]
+    false_pass_guard: Source has readable names but important decisions are still elsewhere.
+    negative_invariant: Structural conformance and handler-purity inventory are required, not just human readability.

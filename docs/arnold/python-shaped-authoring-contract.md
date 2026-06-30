@@ -7,15 +7,21 @@ workflow source. The grammar version is:
 arnold.workflow.authoring.v1
 ```
 
+V1 is authoritative only for the first linear compiler slice. Megaplan native
+representation conformance requires the V2 extensions for nested workflow
+invocation, runtime-list fanout, typed loop outcomes, declared policy calls,
+stable path identity, and wrapper rejection before composition-owned report rows
+can close as implemented.
+
 Python-shaped authoring is a source frontend over
 `arnold.workflow.dsl.Pipeline` and the serialized `WorkflowManifest`. It is not
 a new runtime. A workflow `.py` file is parsed and validated as source; the
 compiler must not execute the file to discover topology.
 
 The implementation source material named by the M1 brief under
-`.megaplan/briefs/workflow-manifest-runtime-cleanup/` is not available in this
+`.megaplan/initiatives/workflow-manifest-runtime-cleanup/briefs/` is not available in this
 checkout. This contract therefore proceeds from the available
-`.megaplan/briefs/python-shaped-workflow-authoring/m1-component-contract-grammar.md`,
+`.megaplan/initiatives/python-shaped-workflow-authoring/briefs/m1-component-contract-grammar.md`,
 the plan metadata, and the existing workflow DSL and manifest contracts.
 
 ## Source Shape
@@ -250,3 +256,25 @@ grammar version, such as `arnold.workflow.authoring.v2`, rather than expanding
 `arnold.workflow.authoring.v1` in place. Any current ungated parser acceptance
 for those constructs is implementation debt for M3 and is not part of this V1
 contract.
+
+The V2 authoring contract is a required deliverable for native Megaplan
+composition before report-owned rows can become conformant. It must define the
+accepted source syntax, diagnostics, and provenance for:
+
+- nested workflow invocation with stable call-site identity;
+- runtime-list `parallel_map` or equivalent typed dynamic maps, including
+  mapper, reducer, item path template, and collection schema;
+- typed loop outcomes or the accepted `break`/`continue` subset;
+- declared policy-call metadata for retry, timeout, model routing,
+  escalation, suspension, idempotency, and effects at step, subworkflow, and
+  dynamic-map call sites;
+- stable path identity for child workflows, repeated child calls, loop
+  iterations, and dynamic-map items;
+- wrapper rejection rules proving a readable call to one handler-backed stage
+  is not sufficient for hidden Megaplan semantics.
+
+V2 acceptance fixtures must include both source-level examples and lowered
+runtime/manifest evidence. V2 rejection fixtures must cover magic-string
+handler loop exits, handler-local profile/model routing, bespoke Megaplan-only
+fanout helpers, direct manifest authoring, dynamic dispatch, cycles, and
+single-handler wrappers for report-owned stages.
