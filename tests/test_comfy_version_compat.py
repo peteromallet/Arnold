@@ -44,7 +44,7 @@ pytestmark = [
 # Channel descriptions are documented in docs/comfy_version_support.md.
 # These tests describe the contracts that Sprint 4 will implement.
 
-CHANNEL_CURRENT = "comfyui-0.18.2"
+CHANNEL_CURRENT = "comfyui-0.26.0"
 """Currently pinned pip-installable ComfyUI package — the active development target."""
 
 CHANNEL_PREVIOUS = "previous-release"
@@ -117,7 +117,7 @@ def test_all_channels_enumerated() -> None:
     Validates that the channel selection mechanism works correctly.
     """
     assert len(ALL_CHANNELS) == 4
-    assert CHANNEL_CURRENT == "comfyui-0.18.2"
+    assert CHANNEL_CURRENT == "comfyui-0.26.0"
     assert CHANNEL_PREVIOUS == "previous-release"
     assert CHANNEL_AHEAD == "ahead-candidate"
     assert CHANNEL_UPSTREAM_HEAD == "upstream-main-head"

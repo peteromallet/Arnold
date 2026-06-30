@@ -38,8 +38,8 @@ from vibecomfy.comfy_backend import (
 
 _VALID_MATRIX: dict = {
     "schema_version": "1.0",
-    "supported_comfyui_version": "0.18.2",
-    "pinned_comfyui_commit": "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
+    "supported_comfyui_version": "0.26.0",
+    "pinned_comfyui_commit": None,
     "vendor_path": "vibecomfy[comfy]",
     "object_info_fingerprint": None,
 }
@@ -61,8 +61,8 @@ def test_load_checked_in_version_matrix() -> None:
 
     assert isinstance(matrix, VersionMatrix)
     assert matrix.schema_version == "1.0"
-    assert matrix.supported_comfyui_version == "0.18.2"
-    assert matrix.pinned_comfyui_commit == "f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68"
+    assert matrix.supported_comfyui_version == "0.26.0"
+    assert matrix.pinned_comfyui_commit is None
     assert matrix.vendor_path == "vibecomfy[comfy]"
     assert matrix.object_info_fingerprint is None
 
@@ -301,7 +301,7 @@ def test_dict_fingerprint_is_accepted(monkeypatch) -> None:
 
 def test_read_vendored_commit_reads_installed_package_or_none() -> None:
     """The removed submodule is replaced by optional pip provenance."""
-    assert read_vendored_commit() in {None, _VALID_MATRIX["pinned_comfyui_commit"]}
+    assert read_vendored_commit() is None or isinstance(read_vendored_commit(), str)
 
 
 # ---------------------------------------------------------------------------
@@ -312,8 +312,16 @@ def test_read_vendored_commit_reads_installed_package_or_none() -> None:
 def test_check_comfy_compatibility_matches_pinned_commit(monkeypatch) -> None:
     import vibecomfy.comfy_backend as cb
 
+    pinned_matrix = VersionMatrix(
+        schema_version="1.0",
+        supported_comfyui_version="0.18.2",
+        pinned_comfyui_commit="f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
+        vendor_path="vibecomfy[comfy]",
+        object_info_fingerprint=None,
+    )
     reset_matrix_cache()
-    monkeypatch.setattr(cb, "read_vendored_commit", lambda: _VALID_MATRIX["pinned_comfyui_commit"])
+    monkeypatch.setattr(cb, "load_version_matrix", lambda: pinned_matrix)
+    monkeypatch.setattr(cb, "read_vendored_commit", lambda: pinned_matrix.pinned_comfyui_commit)
     monkeypatch.setattr(cb, "read_live_comfy_version", lambda: None)
 
     compatibility = check_comfy_compatibility()
@@ -322,11 +330,11 @@ def test_check_comfy_compatibility_matches_pinned_commit(monkeypatch) -> None:
         ok=True,
         reason_code="ok",
         expected={
-            "commit": _VALID_MATRIX["pinned_comfyui_commit"],
-            "version": _VALID_MATRIX["supported_comfyui_version"],
+            "commit": pinned_matrix.pinned_comfyui_commit,
+            "version": "0.18.2",
         },
         actual={
-            "commit": _VALID_MATRIX["pinned_comfyui_commit"],
+            "commit": pinned_matrix.pinned_comfyui_commit,
             "version": None,
         },
         safe_families=[],
@@ -336,7 +344,15 @@ def test_check_comfy_compatibility_matches_pinned_commit(monkeypatch) -> None:
 def test_check_comfy_compatibility_reports_commit_skew(monkeypatch) -> None:
     import vibecomfy.comfy_backend as cb
 
+    pinned_matrix = VersionMatrix(
+        schema_version="1.0",
+        supported_comfyui_version="0.18.2",
+        pinned_comfyui_commit="f7b38d2eb97207cd834bcc3eb2e8b1d447b96c68",
+        vendor_path="vibecomfy[comfy]",
+        object_info_fingerprint=None,
+    )
     reset_matrix_cache()
+    monkeypatch.setattr(cb, "load_version_matrix", lambda: pinned_matrix)
     monkeypatch.setattr(cb, "read_vendored_commit", lambda: "deadbeef" * 5)
     monkeypatch.setattr(cb, "read_live_comfy_version", lambda: None)
 
@@ -344,7 +360,7 @@ def test_check_comfy_compatibility_reports_commit_skew(monkeypatch) -> None:
 
     assert compatibility.ok is False
     assert compatibility.reason_code == "comfyui_version_skew"
-    assert compatibility.expected["commit"] == _VALID_MATRIX["pinned_comfyui_commit"]
+    assert compatibility.expected["commit"] == pinned_matrix.pinned_comfyui_commit
     assert compatibility.actual["commit"] == "deadbeef" * 5
     assert compatibility.safe_families == []
 

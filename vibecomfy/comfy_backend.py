@@ -63,7 +63,7 @@ class VersionMatrix:
 
     schema_version: str
     supported_comfyui_version: str
-    pinned_comfyui_commit: str
+    pinned_comfyui_commit: str | None
     vendor_path: str
     object_info_fingerprint: dict[str, Any] | None = None
 
@@ -149,12 +149,11 @@ def load_version_matrix() -> VersionMatrix:
             f"comfy_version_matrix.json must be a JSON object, got {type(raw).__name__}"
         )
 
-    # --- required string fields ---
+    # --- required fields ---
     missing: list[str] = []
     for key in (
         "schema_version",
         "supported_comfyui_version",
-        "pinned_comfyui_commit",
         "vendor_path",
     ):
         if key not in raw:
@@ -164,6 +163,13 @@ def load_version_matrix() -> VersionMatrix:
                 f"comfy_version_matrix.json field '{key}' must be a string, "
                 f"got {type(raw[key]).__name__}"
             )
+    if "pinned_comfyui_commit" not in raw:
+        missing.append("pinned_comfyui_commit")
+    elif raw["pinned_comfyui_commit"] is not None and not isinstance(raw["pinned_comfyui_commit"], str):
+        raise TypeError(
+            "comfy_version_matrix.json field 'pinned_comfyui_commit' must be a "
+            f"string or null, got {type(raw['pinned_comfyui_commit']).__name__}"
+        )
     if missing:
         _VERSION_MATRIX_CACHE = _MISSING
         raise ValueError(
@@ -277,7 +283,7 @@ def check_comfy_compatibility() -> ComfyCompatibility:
         "commit": matrix.pinned_comfyui_commit,
         "version": matrix.supported_comfyui_version,
     }
-    if actual_commit is not None:
+    if actual_commit is not None and matrix.pinned_comfyui_commit is not None:
         return ComfyCompatibility(
             ok=actual_commit == matrix.pinned_comfyui_commit,
             reason_code="ok" if actual_commit == matrix.pinned_comfyui_commit else "comfyui_version_skew",
