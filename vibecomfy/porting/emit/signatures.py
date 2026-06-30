@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
+from vibecomfy.porting.authoring_surface import input_spec_is_literal_widget
+
 READABILITY_WARNING_AVOIDABLE_POSITIONAL_OUTPUT = "avoidable_positional_output"
 READABILITY_WARNING_OUTPUT_NAME_AMBIGUITY = "output_name_ambiguity"
 READABILITY_WARNING_SCHEMA_BACKED_WIDGET_ALIAS_NOT_RESOLVED = "schema_backed_widget_alias_not_resolved"
@@ -284,12 +286,18 @@ def format_signature_rows(
             suffix_parts.append(f"confidence: {row.source_confidence:.2f}")
 
         param_parts: list[str] = []
+        literal_fields: list[str] = []
+        socket_inputs: list[str] = []
         for field in row.inputs:
             has_default = field.default is not None
             default_str = " = ..." if has_default else ""
             type_str = f": {field.type}" if field.type else ""
             optional_marker = "" if field.required else ""
             name_ident = to_python_identifier(field.name)
+            if input_spec_is_literal_widget(field):
+                literal_fields.append(name_ident)
+            else:
+                socket_inputs.append(name_ident)
             if field.choices is not None:
                 choices = field.choices
                 if len(choices) > _SIGNATURE_ENUM_LIMIT:
@@ -301,6 +309,14 @@ def format_signature_rows(
                     rendered = ", ".join(f'"{c}"' for c in choices)
                     type_str += f"[{rendered}]"
             param_parts.append(f"{name_ident}{type_str}{default_str}")
+
+        if literal_fields or socket_inputs:
+            note_parts: list[str] = []
+            if literal_fields:
+                note_parts.append(f"literal fields: {', '.join(literal_fields)}")
+            if socket_inputs:
+                note_parts.append(f"socket inputs: {', '.join(socket_inputs)}")
+            prefix_parts.append("# authoring: " + "; ".join(note_parts))
 
         return_parts: list[str] = []
         for output in row.outputs:

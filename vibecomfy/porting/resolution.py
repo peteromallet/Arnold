@@ -11,6 +11,7 @@ edit_apply.py so the dependency is one-directional and acyclic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from typing import Any, Generic, Mapping, Protocol, TypeVar
 
 from vibecomfy.porting.edit.ledger import EditLedger
@@ -23,6 +24,7 @@ from vibecomfy.porting.edit.ops import (
 from vibecomfy.porting.report import PortIssue
 
 T = TypeVar("T")
+_OUTPUT_ALIAS_RE = re.compile(r"output_(\d+)\Z")
 
 
 # ── node metadata ─────────────────────────────────────────────────────────────
@@ -264,6 +266,39 @@ def _find_named_slot(slots: Any, name: str) -> dict[str, Any] | None:
     return None
 
 
+def _positional_output_alias_index(output_slot: Any) -> int | None:
+    if not isinstance(output_slot, str):
+        return None
+    match = _OUTPUT_ALIAS_RE.fullmatch(output_slot)
+    if match is None:
+        return None
+    return int(match.group(1))
+
+
+def _output_name_at(outputs: list[Any], index: int) -> str:
+    output = outputs[index]
+    if isinstance(output, Mapping):
+        name = output.get("name")
+        if isinstance(name, str) and name:
+            return name
+    return f"output_{index}"
+
+
+def _output_type_at(outputs: list[Any], index: int) -> str | None:
+    output = outputs[index]
+    if isinstance(output, Mapping):
+        return _normalize_type(output.get("type"))
+    return None
+
+
+def _available_output_names(outputs: list[Any]) -> list[str]:
+    return [
+        str(output.get("name"))
+        for output in outputs
+        if isinstance(output, Mapping) and isinstance(output.get("name"), str) and output.get("name")
+    ]
+
+
 def _make_issue(
     code: str,
     message: str,
@@ -436,6 +471,23 @@ class ResolutionContext:
         for index, entry in enumerate(outputs):
             if isinstance(entry, Mapping) and entry.get("name") == slot_str:
                 return ResolveResult(index, [])
+        alias_index = _positional_output_alias_index(output_slot)
+        if alias_index is not None and 0 <= alias_index < len(outputs):
+            if len(outputs) == 1:
+                return ResolveResult(alias_index, [])
+            return ResolveResult(None, [_make_issue(
+                "ambiguous_output_alias",
+                (
+                    f"Node '{uid}' output {slot_str!r} is positional, but the node has "
+                    "multiple named outputs; use the exact output slot name instead."
+                ),
+                scope_path=scope_path, uid=uid,
+                detail={
+                    "output_slot": output_slot,
+                    "slot_index": alias_index,
+                    "available_slots": _available_output_names(outputs),
+                },
+            )])
         return ResolveResult(None, [_make_issue(
             "unknown_output_slot",
             f"Node '{uid}' has no output named {slot_str!r}.",
@@ -530,6 +582,27 @@ class ResolutionContext:
                     slot_name = str(ref.output_slot)
                     socket_type = _normalize_type(output_entry.get("type"))
                     break
+            alias_index = _positional_output_alias_index(ref.output_slot)
+            if slot_index is None and alias_index is not None and 0 <= alias_index < len(outputs):
+                if len(outputs) == 1:
+                    slot_index = alias_index
+                    slot_name = _output_name_at(outputs, alias_index)
+                    socket_type = _output_type_at(outputs, alias_index)
+                else:
+                    return ResolveResult(None, [_make_issue(
+                        "ambiguous_output_alias",
+                        (
+                            f"{class_type}.{ref.output_slot} is a positional output alias, but this node has "
+                            "multiple named outputs; use the exact output slot name instead."
+                        ),
+                        scope_path=ref.scope_path,
+                        uid=resolved_uid,
+                        detail={
+                            "output_slot": ref.output_slot,
+                            "slot_index": alias_index,
+                            "available_slots": _available_output_names(outputs),
+                        },
+                    )])
             if slot_index is None and schema_provider is not None:
                 try:
                     from vibecomfy.schema import schema_for  # noqa: PLC0415
@@ -541,6 +614,31 @@ class ResolutionContext:
                             slot_name = str(ref.output_slot)
                             socket_type = _normalize_type(getattr(output_spec, "type", None))
                             break
+                    if slot_index is None and alias_index is not None and 0 <= alias_index < len(output_specs):
+                        if len(output_specs) == 1:
+                            output_spec = output_specs[alias_index]
+                            slot_index = alias_index
+                            slot_name = str(getattr(output_spec, "name", None) or ref.output_slot)
+                            socket_type = _normalize_type(getattr(output_spec, "type", None))
+                        else:
+                            return ResolveResult(None, [_make_issue(
+                                "ambiguous_output_alias",
+                                (
+                                    f"{class_type}.{ref.output_slot} is a positional output alias, but this node has "
+                                    "multiple named outputs; use the exact output slot name instead."
+                                ),
+                                scope_path=ref.scope_path,
+                                uid=resolved_uid,
+                                detail={
+                                    "output_slot": ref.output_slot,
+                                    "slot_index": alias_index,
+                                    "available_slots": [
+                                        str(getattr(item, "name", ""))
+                                        for item in output_specs
+                                        if getattr(item, "name", None)
+                                    ],
+                                },
+                            )])
                 except ImportError:
                     pass
             if slot_index is None:

@@ -5,6 +5,7 @@ from typing import Any, Mapping
 
 from .ledger import EditLedger
 from .ops import AddNodeOp, AnchorRef, ReorderOp
+from vibecomfy.porting.authoring_surface import input_spec_is_socket_only
 from vibecomfy.porting.edit._ir_utils import _canonical_input_name_for_class, _input_spec_for_field
 from vibecomfy.porting.edit.apply_place import _group_index_by_title
 from vibecomfy.porting.edit.apply_resolve_base import _resolve_node, _resolve_scope, _resolve_source_endpoint
@@ -84,6 +85,20 @@ def _resolve_add_node(
                     "unknown_add_node_field",
                     f"{op.class_type} does not declare field {field_name!r}.",
                     detail={"scope_path": op.scope_path, "class_type": op.class_type, "field": field_name},
+                )
+            )
+            continue
+        if input_spec_is_socket_only(spec):
+            issues.append(
+                _issue(
+                    "socket_input_not_literal_widget",
+                    f"{op.class_type}.{field_name} is an input socket, not a widget; connect a source node instead.",
+                    detail={
+                        "scope_path": op.scope_path,
+                        "class_type": op.class_type,
+                        "field": field_name,
+                        "input_type": getattr(spec, "type", None),
+                    },
                 )
             )
             continue

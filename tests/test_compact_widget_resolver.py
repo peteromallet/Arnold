@@ -145,7 +145,8 @@ def test_set_node_field_rejects_svd_link_only_input_with_schema_provider() -> No
     result = resolve_delta(original, delta, schema_provider=get_authoring_schema_provider())
 
     assert result.ok is False
-    assert any(issue.code == "non_widget_field_not_editable" for issue in result.diagnostics)
+    assert any(issue.code == "socket_input_not_literal_widget" for issue in result.diagnostics)
+    assert any("input socket, not a widget" in issue.message for issue in result.diagnostics)
 
 
 def test_set_node_field_applies_svd_motion_bucket_with_schema_provider() -> None:
@@ -167,6 +168,110 @@ def test_set_node_field_applies_svd_motion_bucket_with_schema_provider() -> None
     assert result.candidate is not None
     assert result.candidate["nodes"][0]["widgets_values"][3] == 200
     assert not any(issue.code == "non_widget_field_not_editable" for issue in result.diagnostics)
+
+
+def test_style_model_apply_strength_uses_hidden_widget_padding_from_object_info() -> None:
+    provider = get_authoring_schema_provider()
+    node: dict[str, Any] = {
+        "id": 12,
+        "type": "StyleModelApply",
+        "pos": [0, 0],
+        "size": [240, 120],
+        "flags": {},
+        "order": 0,
+        "mode": 0,
+        "inputs": [
+            {"name": "conditioning", "type": "CONDITIONING", "link": 1},
+            {"name": "style_model", "type": "STYLE_MODEL", "link": 2},
+            {"name": "clip_vision_output", "type": "CLIP_VISION_OUTPUT", "link": 3},
+        ],
+        "outputs": [{"name": "CONDITIONING", "type": "CONDITIONING", "slot_index": 0}],
+        "properties": {},
+        "widgets_values": [None, None, 1.0, "multiply"],
+    }
+
+    resolution = compact_widget_names_for_node(node, "StyleModelApply", schema_provider=provider)
+
+    assert resolution.source == "schema_provider_leading_null_padding"
+    assert resolution.names == ("widget_0", "widget_1", "strength", "strength_type")
+    assert widget_index_for_field(node, "strength", schema_provider=provider) == 2
+    assert widget_index_for_field(node, "strength_type", schema_provider=provider) == 3
+    assert widget_index_for_field(node, "widget_0", schema_provider=provider) is None
+
+    projection = render_edit_projection(
+        _single_node_ui(copy.deepcopy(node)),
+        schema_provider=provider,
+        options=ProjectionOptions(full_detail_node_limit=10),
+    )
+    assert 'target=["", "12", "strength"] source=widgets_values[2] value=1.0' in projection.text
+    assert 'target=["", "12", "widget_0"]' not in projection.text
+
+    result = apply_delta(
+        _single_node_ui(copy.deepcopy(node)),
+        parse_edit_delta(
+            [
+                {
+                    "op": "set_node_field",
+                    "target": ["", "12", "strength"],
+                    "value": 0.65,
+                }
+            ]
+        ),
+        schema_provider=provider,
+    )
+
+    assert result.ok is True
+    assert result.candidate is not None
+    assert result.candidate["nodes"][0]["widgets_values"] == [None, None, 0.65, "multiply"]
+
+
+def test_empty_latent_image_batch_size_round_trips_by_named_widget() -> None:
+    provider = get_authoring_schema_provider()
+    node: dict[str, Any] = {
+        "id": 9,
+        "type": "EmptyLatentImage",
+        "pos": [0, 0],
+        "size": [220, 110],
+        "flags": {},
+        "order": 0,
+        "mode": 0,
+        "inputs": [],
+        "outputs": [{"name": "LATENT", "type": "LATENT", "slot_index": 0}],
+        "properties": {},
+        "widgets_values": [512, 512, 16],
+    }
+
+    assert compact_widget_names_for_node(node, "EmptyLatentImage", schema_provider=provider).names == (
+        "width",
+        "height",
+        "batch_size",
+    )
+    assert widget_index_for_field(node, "batch_size", schema_provider=provider) == 2
+
+    projection = render_edit_projection(
+        _single_node_ui(copy.deepcopy(node)),
+        schema_provider=provider,
+        options=ProjectionOptions(full_detail_node_limit=10),
+    )
+    assert 'target=["", "9", "batch_size"] source=widgets_values[2] value=16' in projection.text
+
+    result = apply_delta(
+        _single_node_ui(copy.deepcopy(node)),
+        parse_edit_delta(
+            [
+                {
+                    "op": "set_node_field",
+                    "target": ["", "9", "batch_size"],
+                    "value": 8,
+                }
+            ]
+        ),
+        schema_provider=provider,
+    )
+
+    assert result.ok is True
+    assert result.candidate is not None
+    assert result.candidate["nodes"][0]["widgets_values"] == [512, 512, 8]
 
 
 def test_acn_source_backed_schema_resolves_strength_and_rejects_stub_names() -> None:

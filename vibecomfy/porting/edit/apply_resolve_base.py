@@ -14,6 +14,7 @@ from vibecomfy.porting.edit.apply_links import _build_rewires, _build_rewires_fo
 from vibecomfy.porting.edit.apply_slots import _find_named_slot_index, _widget_index_for_field, _widget_index_from_input_stubs, _widget_name_for_input
 from vibecomfy.porting.edit.apply_types import ResolvedFieldRef, ResolvedLinkEndpoint, ResolvedNodeRef, ResolvedOp, ResolvedRemoveLinkRef, ResolvedRemoveNodePlan, _ctx, _endpoint_port_issues, _issue
 from vibecomfy.porting.edit.apply_values import _validate_literal_value
+from vibecomfy.porting.authoring_surface import input_spec_is_socket_only
 from vibecomfy.porting.report import PortIssue
 from vibecomfy.porting.resolution import EditLedgerBackend, _find_named_slot
 from vibecomfy.schema import schema_for, socket_types_compatible
@@ -232,6 +233,22 @@ def _resolve_set_node_field(
             )
         ]
     if widget_index is None and widget_key is None:
+        if input_spec_is_socket_only(schema_input):
+            input_type = getattr(schema_input, "type", None)
+            return None, [
+                _issue(
+                    "socket_input_not_literal_widget",
+                    f"{class_type}.{op.target.field_path} is an input socket, not a widget; connect a source node instead.",
+                    detail={
+                        "scope_path": op.target.scope_path,
+                        "uid": op.target.uid,
+                        "field_path": field_path,
+                        "requested_field_path": op.target.field_path,
+                        "class_type": class_type,
+                        "input_type": input_type,
+                    },
+                )
+            ]
         return None, [
             _issue(
                 "non_widget_field_not_editable",

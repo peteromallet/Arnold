@@ -1381,6 +1381,7 @@ class TestAvailableNodeSignatures:
 
         text = format_signature_rows(rows)
         assert "def KSampler(model: MODEL, seed: INT = ...) -> latent:LATENT:" in text
+        assert "# authoring: literal fields: seed; socket inputs: model" in text
 
     def test_format_signature_rows_no_outputs(self) -> None:
         from vibecomfy.porting.emitter import (
@@ -1837,6 +1838,27 @@ sampler = KSampler(
         assert result.statements[0].ok is True
         assert result.statements[0].op_kind == "node_call"
 
+    def test_apply_batch_rejects_socket_only_constructor_literal(self) -> None:
+        from vibecomfy.schema import InputSpec, NodeSchema, OutputSpec
+
+        session = TestEditSessionPrimitiveLowering._primitive_session()
+        session.schema_provider._schemas["KSampler"] = NodeSchema(
+            class_type="KSampler",
+            pack=None,
+            inputs={
+                "model": InputSpec(type="MODEL", required=True),
+                "seed": InputSpec(type="INT", required=False),
+                "steps": InputSpec(type="INT", required=False),
+            },
+            outputs=[OutputSpec(type="LATENT", name="LATENT")],
+        )
+
+        result = session.apply_batch("sampler = KSampler(model='checkpoint.safetensors', seed=1)\n")
+
+        assert result.ok is False
+        assert any(diag.code == "socket_input_not_literal_widget" for diag in result.diagnostics)
+        assert any("input socket, not a widget" in diag.message for diag in result.diagnostics)
+
     def test_apply_batch_accepts_handle_refs_in_node_call_values(self) -> None:
         session = TestEditSessionPrimitiveLowering._primitive_session()
         result = session.apply_batch(
@@ -1848,6 +1870,17 @@ save_image = SaveImage(images=src.in_, filename_prefix="ast")
         assert result.ok
         assert result.diagnostics == ()
         assert result.statements[0].op_kind == "node_call"
+
+    def test_apply_batch_maps_single_output_positional_alias(self) -> None:
+        session = TestEditSessionPrimitiveLowering._primitive_session()
+
+        result = session.apply_batch("dst.value = src.output_0\n")
+
+        assert result.ok is True
+        assert result.diagnostics == ()
+        dst = session.ledger.resolve_node("", "dst")
+        assert dst is not None
+        assert dst["inputs"][0]["link"] == 1
 
     def test_apply_batch_expands_bounded_for_over_constant_range(self) -> None:
         session = TestEditSessionPrimitiveLowering._primitive_session()

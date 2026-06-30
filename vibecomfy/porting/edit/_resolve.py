@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import textwrap
 from typing import Any, Mapping
 
@@ -16,6 +17,7 @@ from vibecomfy.porting.layout.placement import (
     infer_add_node_anchor_hint,
 )
 from vibecomfy.identity.codec import to_raw_name
+from vibecomfy.porting.authoring_surface import input_spec_is_socket_only
 from vibecomfy.schema import schema_for, socket_types_compatible
 
 from vibecomfy.porting.edit._session_types import (
@@ -53,6 +55,7 @@ from vibecomfy.porting.edit._ir_utils import (
 from vibecomfy.porting.resolution import _find_named_slot
 
 _EXEC_CLASS_TYPE = "vibecomfy.exec"
+_OUTPUT_ALIAS_RE = re.compile(r"output_(\d+)\Z")
 
 
 def _normalize_exec_io_entries(value: Any) -> list[tuple[str, str]]:
@@ -1170,6 +1173,22 @@ class _ResolveMixin:
             if literal_issue is not None:
                 issues.append(literal_issue)
                 continue
+            spec = _input_spec_for_field(schema_inputs, name)
+            if input_spec_is_socket_only(spec):
+                issues.append(
+                    _diag(
+                        "socket_input_not_literal_widget",
+                        f"{class_type}.{name} is an input socket, not a widget; connect a source node instead.",
+                        severity="error",
+                        detail={
+                            "class_type": class_type,
+                            "input": name,
+                            "target_name": target_name,
+                            "input_type": getattr(spec, "type", None),
+                        },
+                    )
+                )
+                continue
             literal_fields[name] = literal_value
 
         if class_type == _EXEC_CLASS_TYPE:
@@ -1513,6 +1532,32 @@ class _ResolveMixin:
             raw_slot = slot_attr if slot_attr in raw_name_map else to_raw_name(slot_attr, context=raw_name_map)
         except (KeyError, ValueError):
             raw_slot = None
+        if raw_slot is None:
+            alias_match = _OUTPUT_ALIAS_RE.fullmatch(slot_attr)
+            if alias_match is not None:
+                alias_index = int(alias_match.group(1))
+                if 0 <= alias_index < len(raw_outputs):
+                    if len(raw_outputs) == 1:
+                        item = raw_outputs[alias_index]
+                        raw_slot = item["name"]
+                    else:
+                        return None, [
+                            _diag(
+                                "ambiguous_output_alias",
+                                (
+                                    f"{node_ref.class_type}.{slot_attr} is a positional output alias, but this node has "
+                                    "multiple named outputs; use the exact output slot name instead."
+                                ),
+                                severity="error",
+                                detail={
+                                    "name": node_ref.name,
+                                    "uid": node_ref.uid,
+                                    "slot": slot_attr,
+                                    "slot_index": alias_index,
+                                    "available_slots": [item["name"] for item in raw_outputs if item["name"]],
+                                },
+                            )
+                        ]
         if raw_slot is None:
             return None, [
                 _diag(

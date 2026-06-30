@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from .ledger import EditLedger, ScopeState
 from .ops import NodeTarget
+from vibecomfy.porting.authoring_surface import input_spec_is_literal_widget
 from vibecomfy.porting.widgets.compact_resolver import compact_widget_names_for_node
 from vibecomfy.schema import is_workflow_stub_schema, schema_for
 
@@ -253,14 +254,21 @@ def _field_rows(
     rows: list[tuple[str, Any, str]] = []
     widgets = node.get("widgets_values")
     if isinstance(widgets, list):
-        names = compact_widget_names_for_node(
+        resolution = compact_widget_names_for_node(
             node,
             class_type,
             value_count=len(widgets),
             schema_provider=schema_provider,
-        ).names
+        )
+        names = resolution.names
         for index, value in enumerate(widgets):
             name = names[index] if index < len(names) and names[index] else f"widget_{index}"
+            if (
+                resolution.source.endswith("_leading_null_padding")
+                and value is None
+                and name == f"widget_{index}"
+            ):
+                continue
             rows.append((str(name), value, f"widgets_values[{index}]"))
     inputs = node.get("inputs")
     if isinstance(inputs, list):
@@ -282,7 +290,10 @@ def _schema_hint_lines(class_type: str, schema_provider: Any) -> list[str]:
     inputs = getattr(schema, "inputs", {}) or {}
     for name in sorted(inputs):
         spec = inputs[name]
+        literal = input_spec_is_literal_widget(spec)
+        label = "field" if literal else "input"
         bits = [f"{name}: type={json.dumps(getattr(spec, 'type', None), ensure_ascii=True)}"]
+        bits.append("surface=widget" if literal else "surface=socket")
         if getattr(spec, "required", False):
             bits.append("required=true")
         if getattr(spec, "default", None) is not None:
@@ -293,7 +304,7 @@ def _schema_hint_lines(class_type: str, schema_provider: Any) -> list[str]:
             bits.append(f"choices={_format_value(preview)}")
         if getattr(spec, "min", None) is not None or getattr(spec, "max", None) is not None:
             bits.append(f"range=[{getattr(spec, 'min', None)}, {getattr(spec, 'max', None)}]")
-        lines.append("- input " + " ".join(bits))
+        lines.append(f"- {label} " + " ".join(bits))
     outputs = getattr(schema, "outputs", None) or []
     for index, output in enumerate(outputs):
         lines.append(

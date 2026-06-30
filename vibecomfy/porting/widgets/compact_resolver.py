@@ -6,30 +6,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Literal
 
+from vibecomfy.porting.authoring_surface import input_spec_is_literal_widget
 from vibecomfy._compile._widgets import WIDGET_SCHEMA, WIDGET_SEMANTIC_NAMES
-
-
-_LITERAL_WIDGET_TYPES: frozenset[str] = frozenset({
-    "BOOLEAN",
-    "COMBO",
-    "ENUM",
-    "FLOAT",
-    "INT",
-    "STRING",
-})
-_WIDGET_LIKE_TYPES: frozenset[str] = frozenset({
-    "MODEL",
-    "CLIP",
-    "VAE",
-    "IMAGE",
-    "LATENT",
-    "CONDITIONING",
-    "MASK",
-    "AUDIO",
-    "VIDEO",
-    "CONTROL_NET",
-    "HIDDEN",
-})
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +63,9 @@ def widget_index_for_field(
     if match is not None:
         index = int(match.group(1))
         if count is None or 0 <= index < count:
+            resolution = compact_widget_names_for_node(node, schema_provider=schema_provider)
+            if _is_leading_null_padded_placeholder(node, resolution, index):
+                return None
             return index
         return None
 
@@ -156,6 +137,9 @@ def _candidate_name_sources(
     if not _object_info_entry_is_workflow_stub(class_type):
         provider_names = _provider_compact_aliases(schema_provider, class_type)
         if provider_names:
+            padded = _leading_null_padded_names(node, provider_names, value_count)
+            if padded:
+                sources.append(("schema_provider_leading_null_padding", padded))
             sources.append(("schema_provider", provider_names))
 
         if allow_object_info_fallback:
@@ -166,9 +150,47 @@ def _candidate_name_sources(
             except Exception:
                 object_info_names = []
             if object_info_names:
+                padded = _leading_null_padded_names(node, list(object_info_names), value_count)
+                if padded:
+                    sources.append(("object_info_widget_value_order_leading_null_padding", padded))
                 sources.append(("object_info_widget_value_order", list(object_info_names)))
 
     return sources
+
+
+def _leading_null_padded_names(
+    node: Mapping[str, Any] | Any,
+    names: list[str | None],
+    value_count: int,
+) -> list[str | None]:
+    values = _compact_values(node)
+    if not isinstance(values, list):
+        return []
+    prefix_count = value_count - len(names)
+    if prefix_count <= 0:
+        return []
+    if prefix_count >= value_count:
+        return []
+    if any(values[index] is not None for index in range(prefix_count)):
+        return []
+    return [None] * prefix_count + list(names)
+
+
+def _is_leading_null_padded_placeholder(
+    node: Mapping[str, Any] | Any,
+    resolution: WidgetNameResolution,
+    index: int,
+) -> bool:
+    if not resolution.source.endswith("_leading_null_padding"):
+        return False
+    values = _compact_values(node)
+    if not isinstance(values, list) or not 0 <= index < len(values):
+        return False
+    if values[index] is not None:
+        return False
+    if index >= len(resolution.names):
+        return False
+    return resolution.names[index] == f"widget_{index}"
 
 
 def _align_names(
@@ -389,18 +411,7 @@ def _provider_compact_aliases(schema_provider: Any | None, class_type: str) -> l
 
 
 def _provider_input_spec_is_widget_value(spec: Any) -> bool:
-    choices = getattr(spec, "choices", None)
-    if isinstance(choices, (list, tuple)):
-        return True
-    input_type = str(getattr(spec, "type", "") or "")
-    if not input_type:
-        return False
-    normalized = input_type.strip().upper()
-    if normalized in _LITERAL_WIDGET_TYPES:
-        return True
-    if normalized in _WIDGET_LIKE_TYPES:
-        return False
-    return not normalized.isupper()
+    return input_spec_is_literal_widget(spec)
 
 
 def _schema_from_provider(schema_provider: Any | None, class_type: str) -> Any | None:

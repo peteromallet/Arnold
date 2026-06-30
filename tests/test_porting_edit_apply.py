@@ -379,6 +379,72 @@ def test_resolve_delta_rejects_add_node_out_of_range_field_before_any_mutation()
     assert original == before
 
 
+def test_resolve_delta_accepts_ksampler_widget_fields_but_not_socket_literals() -> None:
+    original = _fixture()
+    provider = _SchemaProvider()
+    valid_delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "KSampler",
+                "fields": {
+                    "seed": 7,
+                    "steps": 20,
+                    "cfg": 7.5,
+                    "sampler_name": "euler",
+                    "scheduler": "normal",
+                    "denoise": 0.8,
+                },
+                "inputs": {},
+            }
+        ]
+    )
+    invalid_delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "KSampler",
+                "fields": {"model": "checkpoint.safetensors", "seed": 7},
+                "inputs": {},
+            }
+        ]
+    )
+
+    valid = resolve_delta(copy.deepcopy(original), valid_delta, schema_provider=provider)
+    invalid = resolve_delta(copy.deepcopy(original), invalid_delta, schema_provider=provider)
+
+    assert valid.ok is True
+    assert not any(issue.code == "unknown_add_node_field" for issue in valid.diagnostics)
+    assert invalid.ok is False
+    assert any(issue.code == "socket_input_not_literal_widget" for issue in invalid.diagnostics)
+    assert any("input socket, not a widget" in issue.message for issue in invalid.diagnostics)
+
+
+def test_resolve_delta_rejects_set_node_field_on_socket_only_input() -> None:
+    original = _fixture()
+    before = copy.deepcopy(original)
+    provider = _SchemaProvider()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "5", "model"],
+                "value": "checkpoint.safetensors",
+            }
+        ]
+    )
+
+    result = resolve_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is False
+    assert result.resolved_ops == ()
+    assert original == before
+    assert any(issue.code == "socket_input_not_literal_widget" for issue in result.diagnostics)
+    assert any("input socket, not a widget" in issue.message for issue in result.diagnostics)
+
+
 def test_apply_delta_stops_before_mutation_for_invalid_delta() -> None:
     original = _fixture()
     provider = _SchemaProvider()
@@ -659,6 +725,117 @@ def test_apply_delta_adds_node_with_group_growth_attribution() -> None:
     assert isinstance(groups, list) and len(groups) == 1
     assert groups[0]["bounding"][2] > original["groups"][0]["bounding"][2]
     assert any(issue.code == "add_node_group_growth" for issue in result.diagnostics)
+
+
+def test_apply_delta_maps_single_output_positional_alias_to_named_image_slot() -> None:
+    original = {
+        "last_node_id": 2,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "ImageFromBatch+",
+                "pos": [0, 0],
+                "size": [210, 58],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [], "slot_index": 0}],
+                "properties": {},
+                "widgets_values": [],
+            },
+            {
+                "id": 2,
+                "type": "SaveImage",
+                "pos": [240, 0],
+                "size": [210, 58],
+                "flags": {},
+                "order": 1,
+                "mode": 0,
+                "inputs": [{"name": "images", "type": "IMAGE", "link": None}],
+                "outputs": [],
+                "properties": {},
+                "widgets_values": ["before"],
+            },
+        ],
+        "links": [],
+    }
+    provider = _SchemaProvider()
+    provider._schemas["ImageFromBatch+"] = NodeSchema(
+        class_type="ImageFromBatch+",
+        pack="test",
+        inputs={},
+        outputs=[OutputSpec(type="IMAGE", name="IMAGE")],
+    )
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "upsert_link",
+                "from": ["", "1", "output_0"],
+                "to": ["", "2", "images"],
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is True
+    assert result.candidate is not None
+    assert result.candidate["links"] == [[1, 1, 0, 2, 0, "IMAGE"]]
+    source = next(node for node in result.candidate["nodes"] if node["id"] == 1)
+    assert source["outputs"][0]["links"] == [1]
+
+
+def test_resolve_delta_rejects_positional_output_alias_when_multiple_outputs_are_named() -> None:
+    original = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "DualOutput",
+                "pos": [0, 0],
+                "size": [210, 58],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [
+                    {"name": "IMAGE", "type": "IMAGE", "links": [], "slot_index": 0},
+                    {"name": "MASK", "type": "MASK", "links": [], "slot_index": 1},
+                ],
+                "properties": {},
+                "widgets_values": [],
+            },
+            {
+                "id": 2,
+                "type": "SaveImage",
+                "pos": [240, 0],
+                "size": [210, 58],
+                "flags": {},
+                "order": 1,
+                "mode": 0,
+                "inputs": [{"name": "images", "type": "IMAGE", "link": None}],
+                "outputs": [],
+                "properties": {},
+                "widgets_values": ["before"],
+            },
+        ],
+        "links": [],
+    }
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "upsert_link",
+                "from": ["", "1", "output_0"],
+                "to": ["", "2", "images"],
+            }
+        ]
+    )
+
+    result = resolve_delta(original, delta, schema_provider=_SchemaProvider())
+
+    assert result.ok is False
+    assert any(issue.code == "ambiguous_output_alias" for issue in result.diagnostics)
 
 
 def test_resolve_delta_rejects_unknown_add_node_group_anchor() -> None:
