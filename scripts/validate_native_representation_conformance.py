@@ -19,6 +19,7 @@ EXPECTED_TARGET_REPORT = "docs/arnold/megaplan-native-representation-report.md"
 EXPECTED_TRACEABILITY = "docs/arnold/megaplan-native-representation-traceability.yaml"
 VALID_STATUSES = {"implemented", "deferred"}
 REQUIRED_ROW_FIELDS = {"id", "status", "semantic_carrier", "proof_artifacts"}
+IMPLEMENTED_REQUIRED_ROW_FIELDS = {"carrier_evidence"}
 DEFERRED_REQUIRED_ROW_FIELDS = {"downstream_owner", "blocking_proof", "reason"}
 IMPLEMENTED_SEMANTIC_CARRIERS = {
     "canonical_source",
@@ -176,6 +177,26 @@ def validate_conformance_ledger(
                     blocking_paths,
                     repo_root=repo_root,
                     field="blocking_proof",
+                    row_id=row_id,
+                )
+            except ValueError as exc:
+                errors.append(str(exc))
+        elif status == "implemented":
+            missing_implemented = sorted(IMPLEMENTED_REQUIRED_ROW_FIELDS - set(row))
+            if missing_implemented:
+                errors.append(
+                    f"row {row_id!r} missing implemented fields: {', '.join(missing_implemented)}"
+                )
+            try:
+                carrier_paths = _string_list(
+                    row.get("carrier_evidence"),
+                    field="carrier_evidence",
+                    row_id=row_id,
+                )
+                _validate_paths_exist(
+                    carrier_paths,
+                    repo_root=repo_root,
+                    field="carrier_evidence",
                     row_id=row_id,
                 )
             except ValueError as exc:
