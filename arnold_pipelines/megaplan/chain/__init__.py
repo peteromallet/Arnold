@@ -1834,6 +1834,89 @@ def _append_completed_with_guard(
     return True, reason
 
 
+def _handle_completion_guard_failure(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_name: str,
+    outcome_status: str,
+    reason: str,
+    events: list[dict[str, Any]],
+    writer,
+) -> dict[str, Any]:
+    writer(
+        f"[chain] milestone {milestone.label} completion guard rejected terminal "
+        f"claim for {plan_name}: {reason}\n"
+    )
+    synthetic = DriverOutcome(
+        plan=plan_name,
+        status="blocked",
+        final_state=outcome_status,
+        iterations=0,
+        reason=f"completion guard rejected terminal claim: {reason}",
+        last_phase="completion_guard",
+    )
+    decision = _handle_outcome(
+        synthetic,
+        spec=spec,
+        writer=writer,
+        milestone=milestone,
+        state=state,
+        root=root,
+    )
+    if decision == "retry":
+        resumable_state = _resumable_retry_state(root, state.current_plan_name)
+        if resumable_state is not None:
+            writer(
+                f"[chain] retrying milestone {milestone.label} by resuming plan "
+                f"{state.current_plan_name} from {resumable_state}\n"
+            )
+        else:
+            writer(f"[chain] retrying milestone {milestone.label}\n")
+            state.current_plan_name = None
+        state.last_state = "blocked"
+        state.pr_number = None
+        state.pr_state = None
+        chain_spec.save_chain_state(spec_path, state)
+        return _result(
+            "stopped",
+            state,
+            events,
+            spec=spec,
+            reason=f"milestone {milestone.label} completion guard retrying: {reason}",
+        )
+    if decision == "stop":
+        state.last_state = "blocked"
+        _maybe_file_ladder_ticket(
+            root,
+            spec_path,
+            milestone,
+            synthetic,
+            state,
+            writer=writer,
+        )
+        chain_spec.save_chain_state(spec_path, state)
+        return _result(
+            "stopped",
+            state,
+            events,
+            spec=spec,
+            reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+        )
+    state.last_state = "authority_divergence"
+    chain_spec.save_chain_state(spec_path, state)
+    return _result(
+        "blocked",
+        state,
+        events,
+        spec=spec,
+        reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+    )
+
+
 def _finalize_records_missing_authority_fields(
     task_records: list[dict[str, Any]],
 ) -> list[str]:
@@ -3706,13 +3789,17 @@ def run_chain(
             writer=writer,
         )
         if not appended:
-            chain_spec.save_chain_state(spec_path, state)
-            return _result(
-                "blocked",
-                state,
-                events,
+            return _handle_completion_guard_failure(
+                root=root,
+                spec_path=spec_path,
                 spec=spec,
-                reason=f"milestone {milestone.label} completion guard blocked append: {reason}",
+                state=state,
+                milestone=milestone,
+                plan_name=plan_name,
+                outcome_status=outcome.status,
+                reason=reason,
+                events=events,
+                writer=writer,
             )
         _mark_plan_completed_by_chain(
             root,
