@@ -148,7 +148,8 @@ The edits were applied:
 Codex separately adjudicated the hard launch-gating question and recommended a
 code-backed chain feature rather than a documentation-only checklist. That
 feature is now implemented as top-level `launch_preconditions` in chain specs:
-`exists`, `contains_text`, and `chain_completed` checks are parsed in
+`exists`, `contains_text`, `review_log_clean`, `git_tracked`, and
+`chain_completed` checks are parsed in
 `arnold_pipelines/megaplan/chain/spec.py`, enforced by `validate_paths()`, and
 called by both `megaplan chain start` and `megaplan chain verify`.
 

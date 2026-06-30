@@ -272,9 +272,9 @@ The executable chain specs for the three follow-up epics use
 `driver.require_clean_base: true`. That is intentional: each milestone should
 start from a clean base so review findings are about the milestone diff, not
 carried local WIP. The chain harness also supports top-level
-`launch_preconditions` with `exists`, `contains_text`, `git_tracked`, and
-`chain_completed` checks; these are validated by `megaplan chain verify` and
-before `megaplan chain start` reaches agent backend preflight.
+`launch_preconditions` with `exists`, `contains_text`, `review_log_clean`,
+`git_tracked`, and `chain_completed` checks; these are validated by `megaplan
+chain verify` and before `megaplan chain start` reaches agent backend preflight.
 
 The launch path must therefore satisfy these invariants:
 
