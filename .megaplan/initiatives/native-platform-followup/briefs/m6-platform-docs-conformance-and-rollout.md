@@ -39,6 +39,27 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
 - Runbooks
   Add rollout and rollback checklist for enabling the platform features beyond
   canaries.
+- Final native-representation closeout
+  Create `docs/arnold/megaplan-native-representation-conformance-report.md`.
+  This is the final report-conformance ledger for the three-chain sequence,
+  not a replacement for the target report. It must include sections for
+  these exact headings:
+  `Structural conformance`;
+  `Handler purity inventory`;
+  `Mutation tests`;
+  `Static topology snapshots`;
+  `Fixed scenario manifest`;
+  `Installed package source-path reconciliation`;
+  `Platform preservation rerun`.
+  It must explicitly map each row in
+  `docs/arnold/megaplan-native-representation-traceability.yaml` to implemented
+  or deferred with proof, and no report-owned Megaplan semantic may be deferred
+  because it still lives in handlers, route labels, manifests, native traces,
+  or runtime side effects. Create the final platform
+  `proof-map.json` and run `megaplan chain manifest --spec
+  .megaplan/initiatives/native-platform-followup/chain.yaml --proof-map
+  <proof-map.json>` to produce
+  `.megaplan/initiatives/native-platform-followup/completion-manifest.json`.
 
 ## Verifiable Completion Criterion
 
@@ -64,12 +85,21 @@ side-effects, credentials, shared reuse, durability, and fleet operation.
 - The docs contain an operator decision record for the DB backend, credential
   broker coverage, and rollout mode; each production claim links to a test,
   runbook, or required operator prerequisite.
+- `docs/arnold/megaplan-native-representation-conformance-report.md` exists
+  and proves final report conformance row by row against
+  `docs/arnold/megaplan-native-representation-traceability.yaml`, including the
+  required structural conformance, handler-purity, mutation, static topology,
+  scenario, source-path, installed-package, and platform preservation evidence.
+- The final platform `proof-map.json` and generated
+  `.megaplan/initiatives/native-platform-followup/completion-manifest.json`
+  exist and include the final conformance report plus all declared proof
+  artifacts needed to audit the three-chain sequence.
 
 ## Native Representation Alignment
 
 - Matrix rows owned or affected: all platform-affected rows in `docs/arnold/megaplan-native-representation-alignment-plan.md`, especially Human decision/suspension; Execute approval/no-review/deferred-human gates; Auto-drive/event/liveness transitions; Golden trace regeneration guard; Canonical source path reconciliation; Behavior parity with existing Megaplan.
 - Expected status change: no platform-owned row may remain `missing` or planning-only `enabled`; each must be `implemented` or explicitly `deferred` with downstream owner and blocking proof.
-- Proof artifacts: end-to-end platform conformance scenario, Megaplan chain/PR conformance, installed-package post-hardening structural conformance rerun, handler-purity inventory rerun, mutation/static-topology/scenario/policy/override/source-path reruns, production-covered/local-only matrix, rollout and rollback checklist.
+- Proof artifacts: end-to-end platform conformance scenario, Megaplan chain/PR conformance, installed-package post-hardening structural conformance rerun, handler-purity inventory rerun, mutation/static-topology/scenario/policy/override/source-path reruns, production-covered/local-only matrix, rollout and rollback checklist, final `docs/arnold/megaplan-native-representation-conformance-report.md`, final `proof-map.json`, and final `completion-manifest.json`.
 - False-pass guard: platform docs or green production tests do not count if structural conformance shows Megaplan workflow semantics were moved back into opaque handlers or runtime side effects.
 - Doctrine-preservation check: rerun the exact source/manifest/native_program
   relationship proof against the installed package after platform hardening.

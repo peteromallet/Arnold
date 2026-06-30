@@ -52,7 +52,7 @@ python -m arnold_pipelines.megaplan.cli chain verify --spec .megaplan/initiative
 
 Observed result:
 
-- alignment-artifact and launch-precondition tests: `27 passed`;
+- alignment-artifact and launch-precondition tests: `28 passed`;
 - completion chain verify: success from committed source;
 - composition chain verify: expected failure, missing completion chain state;
 - platform chain verify: expected failure, missing completion chain state.
@@ -78,7 +78,12 @@ Observed result:
   records, missing plan names, missing merged PR evidence, or prose claims.
 - Do not mark report conformance merely because a chain verifies or completes;
   final report conformance still requires the composition/platform M6 evidence
-  listed in the alignment plan.
+  listed in the alignment plan. The terminal platform closeout must create
+  `docs/arnold/megaplan-native-representation-conformance-report.md`, final
+  `proof-map.json`, and
+  `.megaplan/initiatives/native-platform-followup/completion-manifest.json`;
+  the conformance report must map every traceability row to implemented or
+  explicitly deferred with proof.
 - The completion chain may launch with the current planning artifacts only from
   a checkout where the initiative source and native-representation docs are
   committed in `HEAD` and clean. Completion M7 must create the first completion
