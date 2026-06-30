@@ -3,6 +3,31 @@ target_report: docs/arnold/megaplan-native-representation-report.md
 alignment_plan: docs/arnold/megaplan-native-representation-alignment-plan.md
 status_values: [enabled, implemented, deferred, missing]
 completion_rule: missing blocks launch; implemented requires visible source, declared policy, or audited pure phase body plus proof.
+chain_handoff_gates:
+  - id: completion-to-composition
+    upstream_chain: .megaplan/initiatives/native-python-pipelines-completion/chain.yaml
+    downstream_chain: .megaplan/initiatives/native-composition-followup/chain.yaml
+    required_precondition: native python completion chain completed
+    require_manifest: true
+    closeout_milestone: completion-m7
+    closeout_brief: .megaplan/initiatives/native-python-pipelines-completion/briefs/m7-megaplan-relocation-and-final-purge.md
+    closeout_deliverables: [proof-map.json, completion-manifest.json]
+  - id: completion-to-platform
+    upstream_chain: .megaplan/initiatives/native-python-pipelines-completion/chain.yaml
+    downstream_chain: .megaplan/initiatives/native-platform-followup/chain.yaml
+    required_precondition: native python completion chain completed
+    require_manifest: true
+    closeout_milestone: completion-m7
+    closeout_brief: .megaplan/initiatives/native-python-pipelines-completion/briefs/m7-megaplan-relocation-and-final-purge.md
+    closeout_deliverables: [proof-map.json, completion-manifest.json]
+  - id: composition-to-platform
+    upstream_chain: .megaplan/initiatives/native-composition-followup/chain.yaml
+    downstream_chain: .megaplan/initiatives/native-platform-followup/chain.yaml
+    required_precondition: native composition chain completed
+    require_manifest: true
+    closeout_milestone: composition-m6
+    closeout_brief: .megaplan/initiatives/native-composition-followup/briefs/m6-composition-docs-and-conformance.md
+    closeout_deliverables: [proof-map.json, completion-manifest.json, megaplan-composition-conformance-report.md]
 rows:
   - id: prep-clarification-gate
     requirement: Prep clarification gate
