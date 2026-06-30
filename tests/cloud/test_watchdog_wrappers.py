@@ -199,6 +199,8 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     text = _repair_wrapper()
 
     assert "## Incident Snapshot" in text
+    assert "## RECURRENCE EVIDENCE" in text
+    assert "Recurrence means the prior attempts treated symptoms, not the cause." in text
     assert "Start from the inline incident snapshot above." in text
     assert "ATTEMPT to resolve those user actions before treating this as a human stop" in text
     assert "Classification guide:" in text
@@ -214,6 +216,8 @@ def test_repair_loop_prompts_start_from_inline_incident_snapshot() -> None:
     assert "MEGAPLAN_ACTOR_ID=repair-loop-dev-fix" in text
     assert "Use the raw failure signal, run narrative, and prior-attempt history" in text
     assert "Do not hardcode a workflow-specific workaround when a general engine fix is appropriate." in text
+    assert "This is a recurring problem. Do NOT pick the likely fix." in text
+    assert "Trace the actual mechanism end-to-end" in text
 
 
 def test_repair_loop_collects_failure_signal_narrative_and_event_tail(tmp_path: Path) -> None:
@@ -913,6 +917,68 @@ def test_repair_loop_summary_falls_back_to_latest_failure_metadata(tmp_path: Pat
     assert "latest_failure.metadata.stderr:" in summary
     assert "unrecognized arguments: --confirm-destructive --user-approved" in summary
     assert "latest_failure.metadata.exit_code: 2" in summary
+
+
+def test_repair_loop_renders_recurrence_block_from_controlled_signature_history(tmp_path: Path) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "attempts": [
+                    {
+                        "attempt_id": 1,
+                        "dev_model": "gpt-5.4",
+                        "dev_summary": "patched prompt-path normalization only",
+                        "dev_fix_sha": "abc1234",
+                        "dev_hypothesis": "worker read stale prompt target",
+                    },
+                    {
+                        "attempt_id": 2,
+                        "dev_model": "gpt-5.5",
+                        "dev_summary": "cleared stale state only",
+                        "dev_fix_sha": "def5678",
+                        "dev_hypothesis": "plan state was stale",
+                    },
+                ],
+                "current_recurrence": {
+                    "detected": True,
+                    "attempt_number": 3,
+                    "problem_signature": {
+                        "failure_kind": "authority_divergence",
+                        "current_state": "blocked",
+                        "phase_or_step": "execute",
+                        "milestone_or_plan": "m7-final-gate",
+                        "gate_recommendation": "ITERATE",
+                        "blocked_task_id": "m7-13-full-suite-final-gate",
+                    },
+                    "layer1": {"detected": True, "matching_attempt_ids": [1, 2], "repeat_count": 2},
+                    "layer2": {
+                        "detected": True,
+                        "no_advance_dispatch_count": 3,
+                        "min_dispatches": 3,
+                        "window_seconds": 21600,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "render_recurrence_block",
+        "python3 - \"$DATA_FILE\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    block = result.stdout
+    assert "## RECURRENCE EVIDENCE" in block
+    assert "attempt 3" in block
+    assert "Layer 1 fired" in block
+    assert "Layer 2 fired" in block
+    assert "authority_divergence" in block
+    assert "attempt 1: model=gpt-5.4" in block
+    assert "attempt 2: model=gpt-5.5" in block
 
 
 def test_repair_loop_classifies_completed_chain_as_chain_completed(tmp_path: Path) -> None:
@@ -3426,6 +3492,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     text = _wrapper("arnold-repair-loop")
 
     assert 'DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"' in text
+    assert 'PROGRESS_FILE="$MARKER_DIR/${SAFE_SESSION}.repair-progress.json"' in text
     assert 'NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"' in text
     assert 'FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"' in text
     assert 'FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"' in text
@@ -3447,6 +3514,9 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'append_repair_finding_if_reported "$iteration" "$report_path" "$dispatch_model"' in text
     assert "repair_data_record_mechanical()" in text
     assert "repair_data_record_kimi()" in text
+    assert "repair_recurrence_prepare_attempt()" in text
+    assert "render_recurrence_block()" in text
+    assert "repair_exhausted_should_retry_without_human()" in text
     assert "collect_failure_context_json()" in text
     assert "PLAN_STATUS_STATE_MISMATCH" in _wrapper("arnold-watchdog")
     assert "render_failure_summary()" in text
@@ -3458,16 +3528,20 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert '"mechanical_log_tail"' in text
     assert '"plan_latest_failure"' in text
     assert '"chain_state_summary"' in text
+    assert '"plan_runtime_state"' in text
+    assert '"last_gate"' in text
     assert "for iteration in 1 2 3; do" in text
     assert 'DEV_REQUESTED_MODEL="glm-5.2"' in text
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.4"' in text
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
     assert 'GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"' in text
     assert 'repair_data_set_outcome "running"' in text
+    assert 'repair_data_set_outcome "recurring_retry_pending"' in text
     assert 'repair_data_set_outcome "discord_escalated"' in text
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
     assert "## Incident Snapshot" in text
+    assert "## RECURRENCE EVIDENCE" in text
     assert "primary failure signal(s)" in text
     assert "current run narrative (plan log tail when present)" in text
     assert "## Prior repair attempts" in text
@@ -3475,6 +3549,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "Persistent findings doc: $FINDINGS_DOC" in text
     assert "Go to the deepest structural level" in text
     assert "Do not just fix the one symptom that caused this stop" in text
+    assert "Do NOT pick the likely fix" in text
+    assert "Trace the actual mechanism end-to-end" in text
     assert "append it to the findings doc at $FINDINGS_DOC" in text
     assert "structural_pattern, other_instantiations, human_review_recommendation" in text
     assert "findings_doc_path, findings_doc_appended" in text
@@ -3486,15 +3562,16 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     text = _wrapper("arnold-repair-loop")
 
     assert 'DEV_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_TIMEOUT_SECS:-600}"' in text
+    assert 'DEV_ROOT_CAUSE_TIMEOUT="${CLOUD_WATCHDOG_DEV_FIX_ROOT_CAUSE_TIMEOUT_SECS:-1800}"' in text
     assert 'KIMI_TIMEOUT="${CLOUD_WATCHDOG_KIMI_TIMEOUT_SECS:-600}"' in text
     assert 'KIMI_MAX_TURNS="${CLOUD_WATCHDOG_KIMI_MAX_TURNS:-40}"' in text
     assert "verify_started_and_holding()" in text
     assert "mechanical_launch_step()" in text
     assert "run_kimi_launch_turn()" in text
-    assert 'timeout "$DEV_TIMEOUT"' in text
+    assert 'timeout "$dev_timeout"' in text
     assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
     assert 'tmux new-session -d -s "$session"' in text
-    assert 'repair_data_record_kimi "$iteration" "running"' in text
+    assert 'repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running"' in text
 
 
 def test_watchdog_repair_loop_needs_human_sidecar_short_circuits_relaunch(tmp_path: Path) -> None:
