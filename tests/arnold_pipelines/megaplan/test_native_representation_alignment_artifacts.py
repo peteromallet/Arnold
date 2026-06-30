@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 TRACEABILITY_PATH = ROOT / "docs/arnold/megaplan-native-representation-traceability.yaml"
 SCENARIOS_PATH = ROOT / "docs/arnold/megaplan-native-representation-scenarios.yaml"
 ALIGNMENT_PLAN_PATH = ROOT / "docs/arnold/megaplan-native-representation-alignment-plan.md"
+REVIEW_EXECUTION_PATH = ROOT / "docs/arnold/megaplan-native-representation-review-execution.md"
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -149,3 +150,19 @@ def test_chain_handoff_gates_are_executable_and_closeout_owned() -> None:
         for deliverable in gate["closeout_deliverables"]:
             assert deliverable in closeout_text, (gate["id"], deliverable)
         assert "megaplan chain manifest" in closeout_text, gate["id"]
+
+
+def test_review_execution_log_has_no_unaddressed_blockers() -> None:
+    review_text = REVIEW_EXECUTION_PATH.read_text(encoding="utf-8")
+
+    for line in review_text.splitlines():
+        stripped = line.strip()
+        if re.match(r"^- [HD]\d+\b.*: `BLOCK`", stripped):
+            raise AssertionError(f"blocking review verdict remains in log: {line}")
+        if "returned `BLOCK`" in stripped and not stripped.startswith("No "):
+            raise AssertionError(f"blocking review summary remains in log: {line}")
+
+    sections = re.split(r"^## ", review_text, flags=re.MULTILINE)
+    for section in sections:
+        if "`PASS WITH EDIT`" in section or "PASS WITH\nEDIT" in section:
+            assert "edits were applied" in section.lower(), section.splitlines()[0]
