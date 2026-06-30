@@ -1167,20 +1167,82 @@ kimi_operator_running() {
 
 repair_loop_busy_state() {
   local session="$1"
-  local pidfile existing_pid=""
+  local pidfile guardfile existing_pid="" live_pid="" guard_fd
   if kimi_operator_running "$session"; then
     echo "same_session"
     return 0
   fi
   pidfile="$(repair_pidfile_path "$session")"
+  guardfile="${pidfile}.guard"
+  mkdir -p "$(dirname "$pidfile")" 2>/dev/null || true
+  exec {guard_fd}> "$guardfile" || {
+    echo "none"
+    return 0
+  }
+  flock "$guard_fd" 2>/dev/null || {
+    exec {guard_fd}>&-
+    echo "none"
+    return 0
+  }
   if [[ -r "$pidfile" ]]; then
     read -r existing_pid < "$pidfile" || existing_pid=""
     if repair_loop_pid_matches_session "$existing_pid" "$session"; then
+      exec {guard_fd}>&-
       echo "same_session"
       return 0
     fi
     rm -f "$pidfile" 2>/dev/null || true
   fi
+  live_pid="$(python3 - "$session" <<'PY' 2>/dev/null || true
+import os
+import pathlib
+import sys
+
+session = sys.argv[1]
+
+
+def parse_args(pid: int) -> list[str]:
+    try:
+        raw = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
+    except Exception:
+        return []
+    return [part.decode("utf-8", "replace") for part in raw.split(b"\0") if part]
+
+
+def matches(args: list[str]) -> bool:
+    def match_at(idx: int) -> bool:
+        if idx >= len(args):
+            return False
+        if os.path.basename(args[idx]) != "arnold-repair-loop":
+            return False
+        return idx + 1 < len(args) and args[idx + 1] == session
+
+    for idx in range(len(args)):
+        if match_at(idx):
+            return True
+        if os.path.basename(args[idx]) in {"bash", "sh"} and match_at(idx + 1):
+            return True
+    return False
+
+
+for proc_dir in sorted(pathlib.Path("/proc").iterdir(), key=lambda path: path.name):
+    if not proc_dir.name.isdigit():
+        continue
+    pid = int(proc_dir.name)
+    if pid == os.getpid() or pid == os.getppid():
+        continue
+    if matches(parse_args(pid)):
+        print(pid)
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+)"
+  if [[ -n "$live_pid" ]]; then
+    exec {guard_fd}>&-
+    echo "same_session"
+    return 0
+  fi
+  exec {guard_fd}>&-
   echo "none"
 }
 
@@ -1294,6 +1356,7 @@ GUARD_REPEATS = max(
 )
 LOG_WINDOW = max(120, int(os.environ.get("CLOUD_WATCHDOG_CHAIN_LOG_WINDOW_LINES", "1500")))
 NONTERMINAL_STATES = {"authority_divergence", "blocked", "error", "awaiting_human"}
+STOPPED_COMPLETION_GUARD_STATES = {"authority_divergence", "blocked", "error"}
 
 
 def emit(name: str, value: str) -> None:
@@ -1563,6 +1626,24 @@ if status == "ok" and guard_counts:
             "plan repair loop will not fix a chain-driver completion pathology"
         )
         details = {"completion_guard_repeats": guard_repeat_count}
+if status == "ok" and health == "stopped" and last_state in STOPPED_COMPLETION_GUARD_STATES and guard_counts:
+    guard_milestone, guard_repeat_count = max(guard_counts.items(), key=lambda item: item[1])
+    status = "chain_completion_guard"
+    issue_kind = "chain_completion_guard"
+    recurring_lines = [guard_examples.get(guard_milestone, "")]
+    completion_guard = {
+        "milestone": guard_milestone,
+        "reason": guard_reasons.get(guard_milestone, ""),
+        "repeat_count": guard_repeat_count,
+    }
+    summary = (
+        f"stopped chain in {last_state} after completion guard rejected {guard_milestone}; "
+        "route to chain-driver completion handling"
+    )
+    details = {
+        "completion_guard_repeats": guard_repeat_count,
+        "stopped_completion_guard": True,
+    }
 if status == "ok" and last_state in NONTERMINAL_STATES and stuck_ticks >= STUCK_TICKS:
     status = "chain_stuck"
     issue_kind = "chain_stuck_nonterminal"
