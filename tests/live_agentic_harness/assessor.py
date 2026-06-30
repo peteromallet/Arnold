@@ -491,12 +491,15 @@ def assess_live_output_dir(
                 }
             )
 
-        # Critical upstream failures (Hivemind 500, etc.).
+        # Critical upstream failures (Hivemind 500, etc.). When a successful
+        # candidate exists, a recovered research-side upstream error should stay
+        # visible but not invalidate an otherwise valid edit.
+        upstream_severity = "warning" if _has_successful_candidate(response) else "error"
         for msg in _collect_pattern_matches(response, _UPSTREAM_FAILURE_PATTERNS):
             issues.append(
                 {
                     "check": "upstream_failure",
-                    "severity": "error",
+                    "severity": upstream_severity,
                     "detail": msg,
                 }
             )

@@ -86,4 +86,5 @@ def guard_output_dir(
         "assessment": assessment,
         "live_agentic_success": metadata_success and assessment["passed"],
     }
+    verdict["score_class"] = "pass" if verdict["live_agentic_success"] else "product_fail"
     return verdict

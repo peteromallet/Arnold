@@ -65,6 +65,35 @@ def _parse_verdict(raw: str) -> dict[str, Any]:
     }
 
 
+def _load_implementation_payload(output_dir: Path) -> dict[str, Any] | None:
+    path = output_dir / "implementation_payload.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _schema_context_from_payload(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    graph = payload.get("graph")
+    if not isinstance(graph, Mapping):
+        return None
+    compiled_api = graph.get("compiled_api")
+    if not isinstance(compiled_api, Mapping):
+        return None
+    context: dict[str, Any] = {"compiled_api": compiled_api}
+    metadata = graph.get("metadata")
+    if isinstance(metadata, Mapping):
+        widget_index = metadata.get("widget_index") or metadata.get("object_info_index")
+        if isinstance(widget_index, Mapping):
+            context["widget_index"] = widget_index
+    return context
+
+
 def judge_edit_intent(
     output_dir: Path | str,
     scenario: Mapping[str, Any],
@@ -118,6 +147,17 @@ def judge_edit_intent(
         return {"pass_": None, "error": f"failed to load UI artifacts: {exc}"}
 
     system_prompt = _load_prompt()
+    implementation_payload = _load_implementation_payload(output_dir)
+    schema_context = _schema_context_from_payload(implementation_payload)
+    if schema_context:
+        system_prompt = (
+            system_prompt.rstrip()
+            + "\n\n## Schema and widget evidence\n"
+            "When schema_context is provided, use it to map opaque widget_N fields "
+            "to semantic input names. Treat literal widget values as static node "
+            "configuration, and linked inputs/edges as dataflow. Do not guess a "
+            "widget's meaning from index order when compiled_api names are available."
+        )
     # Optional non-prescriptive "desired outcome" rubric from the scenario. When
     # present, it grounds the judge on what a GOOD result achieves (the outcome +
     # what "smart/complete" means) WITHOUT prescribing exact nodes/params — sound
@@ -140,6 +180,8 @@ def judge_edit_intent(
     payload = {"nl_intent": query, "pre_ir": pre_ir, "post_ir": post_ir}
     if desired:
         payload["desired_outcome"] = desired
+    if schema_context:
+        payload["schema_context"] = schema_context
     user_content = json.dumps(payload, indent=2)
 
     try:
