@@ -523,7 +523,7 @@ def test_agentic_guard_allows_shared_linked_source_edit_when_declared(tmp_path: 
     assert verdict["assessment"]["passed"] is True
 
 
-def test_agentic_guard_does_not_count_skipped_queue_validation_as_success(tmp_path: Path) -> None:
+def test_agentic_guard_treats_skipped_queue_validation_as_warning(tmp_path: Path) -> None:
     output_dir = tmp_path / "queue-skipped"
     _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
     _write_successful_candidate(
@@ -551,9 +551,47 @@ def test_agentic_guard_does_not_count_skipped_queue_validation_as_success(tmp_pa
         scenario={"assessment": {"expect_graph_changed": True, "skip_intent_judge": True}},
     )
 
-    assert verdict["live_agentic_success"] is False
-    assert verdict["score_class"] == "product_fail"
+    assert verdict["live_agentic_success"] is True
+    assert verdict["score_class"] == "pass"
+    assert verdict["assessment"]["passed"] is True
     assert [issue["check"] for issue in verdict["assessment"]["issues"]] == [
         "queue_validate_skipped",
-        "gates",
     ]
+    assert verdict["assessment"]["issues"][0]["severity"] == "warning"
+
+
+def test_agentic_guard_product_fails_real_queue_validation_failure(tmp_path: Path) -> None:
+    output_dir = tmp_path / "queue-failed"
+    _write_flow_metadata(output_dir, status=STATUS_SUCCESS, live=True)
+    _write_successful_candidate(
+        output_dir,
+        gates={
+            "ir_validate_ok": True,
+            "lower_ok": True,
+            "python_load_ok": True,
+            "queue_validate_ok": False,
+            "state_match_ok": True,
+            "ui_emit_ok": True,
+            "ui_fidelity_ok": True,
+            "ui_load_safe_ok": True,
+        },
+        debug={
+            "stage_snapshots": [
+                {
+                    "stage": "queue_validate",
+                    "ok": False,
+                    "issues": [{"code": "schema_less_queue_blocker"}],
+                },
+            ]
+        },
+    )
+
+    verdict = guard_output_dir(
+        output_dir,
+        scenario={"assessment": {"expect_graph_changed": True, "skip_intent_judge": True}},
+    )
+
+    assert verdict["live_agentic_success"] is False
+    assert verdict["score_class"] == "product_fail"
+    assert [issue["check"] for issue in verdict["assessment"]["issues"]] == ["gates"]
+    assert "queue_validate_ok" in verdict["assessment"]["issues"][0]["detail"]

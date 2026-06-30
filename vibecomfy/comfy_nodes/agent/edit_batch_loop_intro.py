@@ -488,6 +488,18 @@ def _stage_agent_batch_repl(
             turn_research_summary = (
                 f"{turn_research_summary}\n\nPrior research/query memory:\n{research_memory}"
             ).strip()
+        discovery_nudge = (
+            _discovery_construction_nudge(state)
+            if not research_only_route
+            else ""
+        )
+        report_for_prompt = last_report
+        if discovery_nudge:
+            report_for_prompt = (
+                f"{report_for_prompt}\n\n{discovery_nudge}"
+                if report_for_prompt
+                else discovery_nudge
+            )
         execution_plan_status = _execution_plan_status_for_prompt(state)
         messages = build_batch_messages(
             task=effective_task,
@@ -500,7 +512,7 @@ def _stage_agent_batch_repl(
             signature_catalog=state.batch_signature_catalog if turn_number == 0 else "",
             available_node_names=available_node_names if turn_number == 0 else "",
             diff=last_diff,
-            report=last_report,
+            report=report_for_prompt,
             budget_remaining=budget_remaining,
             max_batches=max_batches,
             conversation_messages=conversation_messages if turn_number == 0 else None,
@@ -525,6 +537,8 @@ def _stage_agent_batch_repl(
             "node_variable_index": node_variable_index,
             "included_full_render": include_full_render,
         }
+        if discovery_nudge:
+            request_entry["discovery_construction_nudge"] = True
         request_log.append(request_entry)
         write_json_artifact(
             state.model_request_path,

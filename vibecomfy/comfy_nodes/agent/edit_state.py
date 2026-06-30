@@ -371,6 +371,51 @@ def _read_only_discovery_turn_count(state: AgentEditState) -> int:
     return count
 
 
+_DISCOVERY_CONSTRUCTION_NUDGE_THRESHOLD = 3
+_DISCOVERY_CONSTRUCTION_NUDGE = (
+    "Discovery-only loop nudge: stop broad searching. Construct one bounded edit "
+    "from the available signatures and workflow evidence. If no named node exists "
+    "and code execution is appropriate, use `vibecomfy.exec` with typed `io` as a "
+    "fallback; otherwise call `clarify(\"...\")` with the specific typed blocker."
+)
+
+
+def _turn_is_discovery_only_no_edit(turn: Mapping[str, Any]) -> bool:
+    statements = turn.get("statements")
+    if not isinstance(statements, list) or not statements:
+        return False
+    landed = turn.get("landed_op_count")
+    if isinstance(landed, int) and landed > 0:
+        return False
+    return all(
+        isinstance(statement, Mapping)
+        and str(statement.get("op_kind") or "") == "query"
+        for statement in statements
+    )
+
+
+def _consecutive_discovery_only_turn_count(state: AgentEditState) -> int:
+    count = 0
+    for turn in reversed(state.batch_turns):
+        if not isinstance(turn, Mapping):
+            break
+        if not _turn_is_discovery_only_no_edit(turn):
+            break
+        count += 1
+    return count
+
+
+def _discovery_construction_nudge(state: AgentEditState) -> str:
+    if _total_landed_edit_count(state) > 0:
+        return ""
+    if (
+        _consecutive_discovery_only_turn_count(state)
+        < _DISCOVERY_CONSTRUCTION_NUDGE_THRESHOLD
+    ):
+        return ""
+    return _DISCOVERY_CONSTRUCTION_NUDGE
+
+
 def _discovery_stop_message(state: AgentEditState) -> str:
     return (
         "I could not produce a safe graph edit from the available workflow precedent "

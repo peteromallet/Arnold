@@ -2603,6 +2603,44 @@ def test_batch_repl_search_query_output_is_in_next_turn_report() -> None:
     assert "def ImageScaleBy" in report
 
 
+def test_batch_repl_search_exact_hit_includes_related_class_hints() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
+    from vibecomfy.porting.edit.session import EditSession
+
+    provider = _Provider(
+        {
+            "LoadImage": _schema("LoadImage", [OutputSpec("IMAGE", "IMAGE")]),
+            "Rodin3D_Gen2": NodeSchema(
+                class_type="Rodin3D_Gen2",
+                pack=None,
+                inputs={"image": InputSpec("IMAGE", required=True)},
+                outputs=[OutputSpec("MESH", "MESH")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "Rodin3D_Regular": NodeSchema(
+                class_type="Rodin3D_Regular",
+                pack=None,
+                inputs={"image": InputSpec("IMAGE", required=True)},
+                outputs=[OutputSpec("MESH", "MESH")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    session = EditSession(_ui_graph(), schema_provider=provider)
+
+    result = session.apply_batch('search(focus_types=["Rodin3D_Regular"])')
+    report = _format_batch_report(result, consecutive_errors=0, budget_remaining=1)
+
+    query_output = result.statements[0].detail["query_output"]
+    assert "def Rodin3D_Regular" in query_output
+    assert "Related available class names" in query_output
+    assert "- Rodin3D_Regular: Rodin3D_Gen2" in query_output
+    assert "def Rodin3D_Gen2" not in query_output
+    assert "Rodin3D_Gen2" in report
+
+
 def test_batch_repl_search_exact_miss_explains_local_schema_lookup() -> None:
     from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
     from vibecomfy.porting.edit.session import EditSession
@@ -2633,6 +2671,76 @@ def test_batch_repl_search_exact_miss_explains_local_schema_lookup() -> None:
     assert "Do not broaden this into guessed branded constructors" in query_output
     assert "Use workflow precedent as pattern evidence" in query_output
     assert "No available local class names contain the requested terms." in report
+
+
+def test_batch_repl_search_graph_present_miss_reports_adjacent_authorable_nodes() -> None:
+    from vibecomfy.comfy_nodes.agent.edit import _format_batch_report
+    from vibecomfy.porting.edit.session import EditSession
+
+    provider = _Provider(
+        {
+            "LoadMask": NodeSchema(
+                class_type="LoadMask",
+                pack=None,
+                inputs={"image": InputSpec("STRING")},
+                outputs=[OutputSpec("MASK", "MASK")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+            "GrowMaskWithBlur": NodeSchema(
+                class_type="GrowMaskWithBlur",
+                pack=None,
+                inputs={
+                    "mask": InputSpec("MASK", required=True),
+                    "expand": InputSpec("INT", default=4),
+                    "blur": InputSpec("INT", default=2),
+                },
+                outputs=[OutputSpec("MASK", "MASK")],
+                source_provider="test",
+                confidence=1.0,
+            ),
+        }
+    )
+    graph = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "LoadMask",
+                "inputs": [{"name": "image", "type": "STRING", "link": None}],
+                "outputs": [{"name": "MASK", "type": "MASK", "links": [10]}],
+            },
+            {
+                "id": 2,
+                "type": "MissingMaskBridge",
+                "inputs": [{"name": "mask", "type": "MASK", "link": 10}],
+                "outputs": [{"name": "MASK", "type": "MASK", "links": [11]}],
+            },
+            {
+                "id": 3,
+                "type": "GrowMaskWithBlur",
+                "inputs": [{"name": "mask", "type": "MASK", "link": 11}],
+                "outputs": [{"name": "MASK", "type": "MASK", "links": []}],
+            },
+        ],
+        "links": [
+            [10, 1, 0, 2, 0, "MASK"],
+            [11, 2, 0, 3, 0, "MASK"],
+        ],
+    }
+    session = EditSession(graph, schema_provider=provider)
+
+    result = session.apply_batch('search(focus_types=["MissingMaskBridge"])')
+    report = _format_batch_report(result, consecutive_errors=0, budget_remaining=1)
+
+    query_output = result.statements[0].detail["query_output"]
+    assert "No node signature found for exact class type(s): 'MissingMaskBridge'." in query_output
+    assert "Graph context: the missing class is already present in the current graph" in query_output
+    assert "Adjacent schema-backed candidates near MissingMaskBridge:" in query_output
+    assert "upstream via MASK: LoadMask#1 (LoadMask)" in query_output
+    assert "def LoadMask" in query_output
+    assert "downstream via mask: GrowMaskWithBlur#3 (GrowMaskWithBlur)" in query_output
+    assert "def GrowMaskWithBlur" in query_output
+    assert "GrowMaskWithBlur" in report
 
 
 def test_batch_repl_search_partial_exact_miss_reports_missing_classes() -> None:
@@ -5722,6 +5830,118 @@ def test_handle_agent_edit_batch_repl_stops_repeated_discovery_only_turns(
     for turn in result["batch_turns"]:
         assert turn["landed_op_count"] == 0
         assert [statement["op_kind"] for statement in turn["statements"]] == ["query"]
+
+
+def test_handle_agent_edit_batch_repl_nudges_after_three_discovery_only_turns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    captured_messages: list[list[dict[str, str]]] = []
+    calls = 0
+
+    def _fake_batch_client(messages: list[dict[str, str]]) -> dict[str, str]:
+        nonlocal calls
+        captured_messages.append(messages)
+        calls += 1
+        if calls <= 3:
+            return {
+                "batch": 'search(focus_types=["MissingSpectralGate"])',
+                "message": "Checking the named spectral-gate authoring surface.",
+            }
+        return {
+            "batch": (
+                'clarify("Need an AUDIO typed path because no named '
+                'spectral-gate node is available.")'
+            ),
+            "message": "I need a typed audio path before changing the graph.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Add spectral gating to the audio path",
+            "session_id": "batch-discovery-nudge",
+            "max_batches": 5,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "clarify"
+    assert len(captured_messages) == 4
+    early_user_prompts = "\n".join(
+        messages[1]["content"] for messages in captured_messages[:3]
+    )
+    nudged_prompt = captured_messages[3][1]["content"]
+    assert "Discovery-only loop nudge" not in early_user_prompts
+    assert "Discovery-only loop nudge" in nudged_prompt
+    assert "stop broad searching" in nudged_prompt
+    assert "vibecomfy.exec" in nudged_prompt
+    assert "typed `io` as a fallback" in nudged_prompt
+    assert 'clarify("...")' in nudged_prompt
+
+
+def test_handle_agent_edit_batch_repl_discovery_nudge_suppressed_after_landed_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+
+    captured_messages: list[list[dict[str, str]]] = []
+    scripted_turns = iter(
+        [
+            {
+                "batch": 'saveimage.filename_prefix = "after"',
+                "message": "Updated the save prefix.",
+            },
+            {
+                "batch": 'search(focus_types=["MissingSpectralGate"])',
+                "message": "Checking the named spectral-gate authoring surface.",
+            },
+            {
+                "batch": 'search(focus_types=["MissingSpectralGate"])',
+                "message": "Checking again for the same authoring surface.",
+            },
+            {
+                "batch": 'search(focus_types=["MissingSpectralGate"])',
+                "message": "One more lookup before finalizing.",
+            },
+            {
+                "batch": "done()",
+                "message": "Committed the candidate.",
+            },
+        ]
+    )
+
+    def _fake_batch_client(messages: list[dict[str, str]]) -> dict[str, str]:
+        captured_messages.append(messages)
+        return next(scripted_turns)
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "change the save prefix and inspect audio gating options",
+            "session_id": "batch-discovery-nudge-after-edit",
+            "max_batches": 5,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["outcome"]["kind"] == "candidate"
+    assert len(captured_messages) == 5
+    all_user_prompts = "\n".join(
+        messages[1]["content"] for messages in captured_messages
+    )
+    assert "Discovery-only loop nudge" not in all_user_prompts
 
 
 def test_handle_agent_edit_batch_repl_unresolved_schema_capability_does_not_emit_noop_message(

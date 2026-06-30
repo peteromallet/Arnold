@@ -95,6 +95,39 @@ class _RuneXXSchemaProvider:
         return self._schemas.get(class_type)
 
 
+class _WidgetOnlySchemaProvider:
+    def __init__(self) -> None:
+        self._schemas = {
+            "LoadImage": NodeSchema(
+                class_type="LoadImage",
+                pack="core",
+                inputs={"widget_0": InputSpec(type="STRING", required=True)},
+                outputs=[OutputSpec(type="IMAGE", name="IMAGE")],
+            ),
+            "ImageBlend": NodeSchema(
+                class_type="ImageBlend",
+                pack="core",
+                inputs={
+                    "widget_0": InputSpec(type="FLOAT", min=0.0, max=1.0),
+                    "widget_1": InputSpec(type="STRING", choices=["normal", "multiply"]),
+                },
+                outputs=[OutputSpec(type="IMAGE", name="IMAGE")],
+            ),
+            "Tencent3DTextureEditNode": NodeSchema(
+                class_type="Tencent3DTextureEditNode",
+                pack="core",
+                inputs={
+                    "widget_0": InputSpec(type="STRING", required=True),
+                    "widget_1": InputSpec(type="INT", min=0, max=2147483647),
+                },
+                outputs=[OutputSpec(type="FILE_3D", name="model_3d")],
+            ),
+        }
+
+    def get_schema(self, class_type: str) -> NodeSchema | None:
+        return self._schemas.get(class_type)
+
+
 def _fixture(name: str = "flat.json") -> dict[str, object]:
     path = Path("tests/fixtures/agent_edit") / name
     return json.loads(path.read_text(encoding="utf-8"))
@@ -420,6 +453,167 @@ def test_resolve_delta_accepts_ksampler_widget_fields_but_not_socket_literals() 
     assert invalid.ok is False
     assert any(issue.code == "socket_input_not_literal_widget" for issue in invalid.diagnostics)
     assert any("input socket, not a widget" in issue.message for issue in invalid.diagnostics)
+    socket_issue = next(issue for issue in invalid.diagnostics if issue.code == "socket_input_not_literal_widget")
+    assert "source node/wire producing MODEL" in socket_issue.message
+    assert any(
+        "CheckpointLoaderSimple.MODEL" in source
+        for source in socket_issue.detail.get("compatible_source_classes", [])
+    )
+
+
+def test_resolve_delta_accepts_loadimage_semantic_alias_with_widget_only_schema() -> None:
+    original = _fixture()
+    provider = _WidgetOnlySchemaProvider()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "LoadImage",
+                "fields": {"image": "input/source.png"},
+                "inputs": {},
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is True
+    assert result.candidate is not None
+    node = next(node for node in result.candidate["nodes"] if node["type"] == "LoadImage")
+    assert node["widgets_values"][0] == "input/source.png"
+
+
+def test_resolve_delta_accepts_imageblend_semantic_aliases_for_add_node() -> None:
+    original = _fixture()
+    provider = _WidgetOnlySchemaProvider()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "ImageBlend",
+                "fields": {"blend_factor": 0.25, "blend_mode": "multiply"},
+                "inputs": {},
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is True
+    assert result.candidate is not None
+    node = next(node for node in result.candidate["nodes"] if node["type"] == "ImageBlend")
+    assert node["widgets_values"] == [0.25, "multiply"]
+
+
+def test_resolve_delta_accepts_object_info_semantic_alias_for_existing_widget_field() -> None:
+    original = {
+        "last_node_id": 1,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "Tencent3DTextureEditNode",
+                "pos": [0, 0],
+                "size": [210, 58],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [{"name": "model_3d", "type": "FILE_3D", "links": None, "slot_index": 0}],
+                "properties": {},
+                "widgets_values": ["old texture prompt", 0],
+            }
+        ],
+        "links": [],
+    }
+    provider = _WidgetOnlySchemaProvider()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "1", "prompt"],
+                "value": "new texture prompt",
+            }
+        ]
+    )
+
+    result = apply_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is True
+    assert result.candidate is not None
+    assert result.candidate["nodes"][0]["widgets_values"][0] == "new texture prompt"
+
+
+def test_resolve_delta_unknown_add_node_field_lists_valid_fields_and_aliases() -> None:
+    original = _fixture()
+    provider = _WidgetOnlySchemaProvider()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "add_node",
+                "scope_path": "",
+                "class_type": "ImageBlend",
+                "fields": {"opacity": 0.25},
+                "inputs": {},
+            }
+        ]
+    )
+
+    result = resolve_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is False
+    issue = next(issue for issue in result.diagnostics if issue.code == "unknown_add_node_field")
+    assert "Valid fields:" in issue.message
+    assert "Semantic aliases:" in issue.message
+    assert "blend_factor" in issue.detail["valid_fields"]
+    assert "widget_0" in issue.detail["valid_fields"]
+    assert issue.detail["semantic_aliases"]["blend_factor"] == "widget_0"
+    assert issue.detail["semantic_aliases"]["blend_mode"] == "widget_1"
+
+
+def test_resolve_delta_unknown_set_node_field_lists_valid_fields_and_aliases() -> None:
+    original = {
+        "last_node_id": 1,
+        "last_link_id": 0,
+        "nodes": [
+            {
+                "id": 1,
+                "type": "LoadImage",
+                "pos": [0, 0],
+                "size": [210, 58],
+                "flags": {},
+                "order": 0,
+                "mode": 0,
+                "inputs": [],
+                "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": None, "slot_index": 0}],
+                "properties": {},
+                "widgets_values": ["input/source.png"],
+            }
+        ],
+        "links": [],
+    }
+    provider = _WidgetOnlySchemaProvider()
+    delta = parse_edit_delta(
+        [
+            {
+                "op": "set_node_field",
+                "target": ["", "1", "filename"],
+                "value": "other.png",
+            }
+        ]
+    )
+
+    result = resolve_delta(original, delta, schema_provider=provider)
+
+    assert result.ok is False
+    issue = next(issue for issue in result.diagnostics if issue.code == "unknown_node_field")
+    assert "Valid fields:" in issue.message
+    assert "Semantic aliases:" in issue.message
+    assert "image" in issue.detail["valid_fields"]
+    assert "widget_0" in issue.detail["valid_fields"]
+    assert issue.detail["semantic_aliases"]["image"] == "widget_0"
 
 
 def test_resolve_delta_rejects_set_node_field_on_socket_only_input() -> None:
@@ -443,6 +637,12 @@ def test_resolve_delta_rejects_set_node_field_on_socket_only_input() -> None:
     assert original == before
     assert any(issue.code == "socket_input_not_literal_widget" for issue in result.diagnostics)
     assert any("input socket, not a widget" in issue.message for issue in result.diagnostics)
+    socket_issue = next(issue for issue in result.diagnostics if issue.code == "socket_input_not_literal_widget")
+    assert "source node/wire producing MODEL" in socket_issue.message
+    assert any(
+        "CheckpointLoaderSimple.MODEL" in source
+        for source in socket_issue.detail.get("compatible_source_classes", [])
+    )
 
 
 def test_apply_delta_stops_before_mutation_for_invalid_delta() -> None:

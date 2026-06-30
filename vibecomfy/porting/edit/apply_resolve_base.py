@@ -10,6 +10,12 @@ from vibecomfy.porting.edit._ir_utils import (
     _input_spec_for_field,
     _known_core_input_socket_type,
 )
+from vibecomfy.porting.edit.apply_field_aliases import (
+    field_diagnostics_for_node,
+    format_valid_field_hint,
+    resolve_set_node_field_alias,
+    socket_source_hint,
+)
 from vibecomfy.porting.edit.apply_links import _build_rewires, _build_rewires_for_setnode_gets, _collect_links_for_origin, _collect_links_for_target, _link_id, _link_ids, _resolve_getnode_source, _resolve_passthrough_source, _schema_output_type
 from vibecomfy.porting.edit.apply_slots import _find_named_slot_index, _widget_index_for_field, _widget_index_from_input_stubs, _widget_name_for_input
 from vibecomfy.porting.edit.apply_types import ResolvedFieldRef, ResolvedLinkEndpoint, ResolvedNodeRef, ResolvedOp, ResolvedRemoveLinkRef, ResolvedRemoveNodePlan, _ctx, _endpoint_port_issues, _issue
@@ -189,6 +195,13 @@ def _resolve_set_node_field(
     schema = schema_for(schema_provider, class_type)
     schema_inputs = getattr(schema, "inputs", {}) or {}
     field_path = _canonical_input_name_for_class(schema_inputs, class_type, op.target.field_path)
+    field_path = resolve_set_node_field_alias(
+        node,
+        class_type,
+        field_path,
+        schema_inputs,
+        schema_provider=schema_provider,
+    )
     target = (
         op.target
         if field_path == op.target.field_path
@@ -219,33 +232,50 @@ def _resolve_set_node_field(
                 widget_index = positional_index
 
     if input_name is None and widget_index is None and widget_key is None and schema_input is None:
+        field_detail = field_diagnostics_for_node(
+            node,
+            class_type,
+            schema_inputs,
+            schema_provider=schema_provider,
+        )
+        hint = format_valid_field_hint(field_detail)
+        message = f"{class_type} does not expose field {op.target.field_path!r}."
+        if hint:
+            message = f"{message} {hint}"
         return None, [
             _issue(
                 "unknown_node_field",
-                f"{class_type} does not expose field {op.target.field_path!r}.",
+                message,
                 detail={
                     "scope_path": op.target.scope_path,
                     "uid": op.target.uid,
                     "field_path": field_path,
                     "requested_field_path": op.target.field_path,
                     "class_type": class_type,
+                    **field_detail,
                 },
             )
         ]
     if widget_index is None and widget_key is None:
         if input_spec_is_socket_only(schema_input):
             input_type = getattr(schema_input, "type", None)
+            scope = ledger.scopes[op.target.scope_path]
+            hint, hint_detail = socket_source_hint(
+                scope.graph,
+                input_type,
+                target_node=node,
+            )
             return None, [
                 _issue(
                     "socket_input_not_literal_widget",
-                    f"{class_type}.{op.target.field_path} is an input socket, not a widget; connect a source node instead.",
+                    f"{class_type}.{op.target.field_path} is an input socket, not a widget. {hint}",
                     detail={
                         "scope_path": op.target.scope_path,
                         "uid": op.target.uid,
                         "field_path": field_path,
                         "requested_field_path": op.target.field_path,
                         "class_type": class_type,
-                        "input_type": input_type,
+                        **hint_detail,
                     },
                 )
             ]

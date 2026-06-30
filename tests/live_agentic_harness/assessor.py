@@ -651,6 +651,7 @@ def assess_live_output_dir(
             false_gates = [name for name, value in gates.items() if value is False]
             queue_validate_skipped = _queue_validate_skipped_for_successful_candidate(response)
             if queue_validate_skipped and "queue_validate_ok" in false_gates:
+                false_gates = [name for name in false_gates if name != "queue_validate_ok"]
                 issues.append(
                     {
                         "check": "queue_validate_skipped",

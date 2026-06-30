@@ -7,6 +7,12 @@ from .ledger import EditLedger
 from .ops import AddNodeOp, AnchorRef, ReorderOp
 from vibecomfy.porting.authoring_surface import input_spec_is_socket_only
 from vibecomfy.porting.edit._ir_utils import _canonical_input_name_for_class, _input_spec_for_field
+from vibecomfy.porting.edit.apply_field_aliases import (
+    field_diagnostics_for_class,
+    format_valid_field_hint,
+    resolve_add_node_field_alias,
+    socket_source_hint,
+)
 from vibecomfy.porting.edit.apply_place import _group_index_by_title
 from vibecomfy.porting.edit.apply_resolve_base import _resolve_node, _resolve_scope, _resolve_source_endpoint
 from vibecomfy.porting.edit.apply_slots import _linked_widget_names, _reorder_names
@@ -42,10 +48,38 @@ def _resolve_add_node(
         ]
 
     schema_inputs = getattr(schema, "inputs", {}) or {}
-    fields = {
-        _canonical_input_name_for_class(schema_inputs, op.class_type, str(field_name)): value
-        for field_name, value in op.fields.items()
-    }
+    fields: dict[str, Any] = {}
+    known_field_names: set[str] = set()
+    alias_issues: list[PortIssue] = []
+    original_by_resolved: dict[str, str] = {}
+    for raw_field_name, value in op.fields.items():
+        requested_field = str(raw_field_name)
+        canonical = _canonical_input_name_for_class(schema_inputs, op.class_type, requested_field)
+        resolved = resolve_add_node_field_alias(
+            op.class_type,
+            canonical,
+            schema_inputs,
+            schema_provider=schema_provider,
+        )
+        if resolved.field_name in fields:
+            alias_issues.append(
+                _issue(
+                    "duplicate_add_node_field_alias",
+                    f"{op.class_type} add_node received multiple values for field {resolved.field_name!r}.",
+                    detail={
+                        "scope_path": op.scope_path,
+                        "class_type": op.class_type,
+                        "field": resolved.field_name,
+                        "first_requested_field": original_by_resolved.get(resolved.field_name),
+                        "duplicate_requested_field": requested_field,
+                    },
+                )
+            )
+            continue
+        fields[resolved.field_name] = value
+        original_by_resolved[resolved.field_name] = requested_field
+        if resolved.known:
+            known_field_names.add(resolved.field_name)
     inputs = {
         _canonical_input_name_for_class(schema_inputs, op.class_type, str(input_name)): source
         for input_name, source in op.inputs.items()
@@ -59,7 +93,7 @@ def _resolve_add_node(
             inputs=inputs,
             anchor=op.anchor,
         )
-    issues = []
+    issues = list(alias_issues)
     for input_name, spec in schema_inputs.items():
         required = bool(getattr(spec, "required", False))
         default = getattr(spec, "default", None)
@@ -79,25 +113,40 @@ def _resolve_add_node(
             )
     for field_name, value in op.fields.items():
         spec = _input_spec_for_field(schema_inputs, field_name)
-        if spec is None:
+        if spec is None and field_name not in known_field_names:
+            field_detail = field_diagnostics_for_class(
+                op.class_type,
+                schema_inputs,
+                schema_provider=schema_provider,
+            )
+            hint = format_valid_field_hint(field_detail)
+            message = f"{op.class_type} does not declare field {field_name!r}."
+            if hint:
+                message = f"{message} {hint}"
             issues.append(
                 _issue(
                     "unknown_add_node_field",
-                    f"{op.class_type} does not declare field {field_name!r}.",
-                    detail={"scope_path": op.scope_path, "class_type": op.class_type, "field": field_name},
-                )
-            )
-            continue
-        if input_spec_is_socket_only(spec):
-            issues.append(
-                _issue(
-                    "socket_input_not_literal_widget",
-                    f"{op.class_type}.{field_name} is an input socket, not a widget; connect a source node instead.",
+                    message,
                     detail={
                         "scope_path": op.scope_path,
                         "class_type": op.class_type,
                         "field": field_name,
-                        "input_type": getattr(spec, "type", None),
+                        **field_detail,
+                    },
+                )
+            )
+            continue
+        if input_spec_is_socket_only(spec):
+            hint, hint_detail = socket_source_hint(scope.graph, getattr(spec, "type", None))
+            issues.append(
+                _issue(
+                    "socket_input_not_literal_widget",
+                    f"{op.class_type}.{field_name} is an input socket, not a widget. {hint}",
+                    detail={
+                        "scope_path": op.scope_path,
+                        "class_type": op.class_type,
+                        "field": field_name,
+                        **hint_detail,
                     },
                 )
             )
