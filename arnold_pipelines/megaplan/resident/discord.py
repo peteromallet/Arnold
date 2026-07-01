@@ -16,6 +16,8 @@ from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntim
 from .scheduler import ScheduledJobWorker
 
 LOGGER = logging.getLogger(__name__)
+DISCORD_MESSAGE_LIMIT = 2000
+DISCORD_SAFE_MESSAGE_LIMIT = 1900
 
 
 @dataclass(frozen=True)
@@ -114,9 +116,13 @@ class DiscordOutboundSink(OutboundSink):
             raise RuntimeError("Discord client is not bound")
         target = DiscordDeliveryTarget.from_conversation_key(message.conversation_key)
         channel = await self._resolve_channel(target)
-        sent = await channel.send(message.content)
+        sent_messages = []
+        for chunk in split_discord_message(message.content):
+            sent_messages.append(await channel.send(chunk))
         if isinstance(message.metadata, dict):
-            message.metadata["discord_message_id"] = str(getattr(sent, "id", ""))
+            ids = [str(getattr(sent, "id", "")) for sent in sent_messages]
+            message.metadata["discord_message_ids"] = ids
+            message.metadata["discord_message_id"] = ids[0] if ids else ""
 
     async def _resolve_channel(self, target: DiscordDeliveryTarget) -> Any:
         if target.dm_user_id:
@@ -127,6 +133,38 @@ class DiscordOutboundSink(OutboundSink):
         if channel is None:
             channel = await self.client.fetch_channel(channel_id)
         return channel
+
+
+def split_discord_message(content: str) -> list[str]:
+    """Split outbound Discord text into messages below Discord's hard limit."""
+
+    text = str(content or "")
+    if len(text) <= DISCORD_MESSAGE_LIMIT:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        chunk, remaining = _split_once(remaining, DISCORD_SAFE_MESSAGE_LIMIT)
+        chunks.append(chunk)
+    return chunks
+
+
+def _split_once(text: str, limit: int) -> tuple[str, str]:
+    if len(text) <= limit:
+        return text, ""
+    split_at = max(
+        text.rfind("\n\n", 0, limit + 1),
+        text.rfind("\n", 0, limit + 1),
+        text.rfind(" ", 0, limit + 1),
+    )
+    if split_at <= 0:
+        split_at = limit
+    chunk = text[:split_at].rstrip()
+    rest = text[split_at:].lstrip()
+    if not chunk:
+        chunk = text[:limit]
+        rest = text[limit:]
+    return chunk, rest
 
 
 class ResidentDiscordService:
