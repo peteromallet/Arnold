@@ -2888,6 +2888,15 @@ def drive(
         events.append({"msg": msg, **fields})
         writer(f"[auto {plan}] {msg}\n")
 
+    def _phase_failure_detail(next_step: str, stdout: str, stderr: str) -> str:
+        state_data = _read_state_data(plan_dir)
+        latest_failure = state_data.get("latest_failure") if isinstance(state_data, dict) else None
+        if isinstance(latest_failure, dict) and latest_failure.get("phase") == next_step:
+            message = latest_failure.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        return (stderr.strip() or stdout.strip()[-400:]).strip()
+
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
         before_phase_result = _phase_result_signature(plan_dir)
         run_kwargs: dict[str, Any] = {
@@ -4197,7 +4206,8 @@ def drive(
             # in state.json and the next status() reveals a recoverable valid_next.
             # Stall detection will still kill infinite loops.
             exit_kind = getattr(result, "exit_kind", None)
-            log(f"phase '{next_step}' exited with {exit_kind}: {err.strip() or out.strip()[-400:]}")
+            failure_detail = _phase_failure_detail(next_step, out, err)
+            log(f"phase '{next_step}' exited with {exit_kind}: {failure_detail}")
             # plan_locked is transient contention from a concurrent auto/phase,
             # not a phase failure. Writing STATE_FAILED here turns a recoverable
             # lock-wait into a terminal state — the bug that surfaced when two
@@ -4221,7 +4231,7 @@ def drive(
                 _record_failure(
                     plan_dir=plan_dir,
                     kind="phase_failed",
-                    message=f"phase '{next_step}' {exit_kind}",
+                    message=failure_detail or f"phase '{next_step}' {exit_kind}",
                     current_state=None,
                     phase=next_step,
                     resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
