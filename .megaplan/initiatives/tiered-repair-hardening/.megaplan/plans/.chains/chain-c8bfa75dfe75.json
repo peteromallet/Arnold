@@ -1,18 +1,26 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 0,
-  "current_plan_name": "m1-cloud-safe-repair-20260701-1836",
+  "current_milestone_index": 1,
+  "current_plan_name": "m2-one-hour-repair-20260701-2111",
   "current_milestone_base_sha": null,
-  "target_base_ref": "c0d973a16609d80a1d11b20276fd0cb6e22c91fe",
-  "last_state": null,
-  "pr_number": 129,
+  "target_base_ref": "a4308f2063c636b344c475a6d1b7c09ec6ef2cf1",
+  "last_state": "prepped",
+  "pr_number": 130,
   "pr_state": "open",
-  "completed": [],
-  "branch_head": "ec6b3343c7afcc8634f884e1714544e03395bce8",
-  "pr_head": "f9edc098df86ed3808b7eda5ce873f3f97354fb2",
-  "last_pushed_commit": "ec6b3343c7afcc8634f884e1714544e03395bce8",
-  "dirty_flag": false,
-  "sync_state": "stale",
+  "completed": [
+    {
+      "label": "m1-cloud-safe-substrate",
+      "plan": "m1-cloud-safe-repair-20260701-1836",
+      "status": "done",
+      "pr_number": 129,
+      "pr_state": "merged"
+    }
+  ],
+  "branch_head": "89901236616bc2bb27529f3dba08825fc43128d5",
+  "pr_head": "89901236616bc2bb27529f3dba08825fc43128d5",
+  "last_pushed_commit": "89901236616bc2bb27529f3dba08825fc43128d5",
+  "dirty_flag": true,
+  "sync_state": "dirty",
   "extra_repos": [],
   "chain_session": null,
   "resolved_workspace": null,
@@ -34,22 +42,34 @@
       "target_root": "/workspace/tiered-repair-hardening/Arnold",
       "work_dir": "/workspace/tiered-repair-hardening/Arnold",
       "engine_root": "/workspace/arnold",
-      "target_head": "c0d973a16609d80a1d11b20276fd0cb6e22c91fe",
+      "target_head": "89901236616bc2bb27529f3dba08825fc43128d5",
       "target_base": "c0d973a16609d80a1d11b20276fd0cb6e22c91fe",
       "target_base_ref": "main",
       "target_fallback_reason": null
     },
     "chain_spec_path": "/workspace/tiered-repair-hardening/Arnold/.megaplan/initiatives/tiered-repair-hardening/chain.yaml",
-    "chain_spec_sha256": "a1f691fdee9db8f97f898c4c11a8a85a3f6c2cc4d8d1f1cc89ef66c83a04ac26",
+    "chain_spec_sha256": "c59922d6014aff42d6fbc0a3bc412a6e7dd78fc29871e756f3e44d0931b847d5",
     "ground_truth_reconciliation": {
-      "reconciled_at": "2026-07-01T18:36:23Z",
-      "plan": null,
-      "current_state": null,
+      "reconciled_at": "2026-07-01T21:14:04Z",
+      "plan": "m2-one-hour-repair-20260701-2111",
+      "current_state": "prepped",
       "latest_failure": null,
-      "last_gate": null,
-      "active_step": null,
-      "pr_number": null,
-      "pr_state": null
+      "last_gate": {},
+      "active_step": {
+        "phase": "plan",
+        "agent": "codex",
+        "mode": "persistent",
+        "run_id": "a55f9ffc-3a66-4eb2-9b4c-6ee33047279c",
+        "worker_pid": 402615,
+        "started_at": "2026-07-01T21:13:06Z",
+        "attempt": 1,
+        "last_activity_at": "2026-07-01T21:13:41Z",
+        "last_activity_kind": "liveness",
+        "model": "gpt-5.5",
+        "last_activity_detail": "worker subprocess alive"
+      },
+      "pr_number": 130,
+      "pr_state": "open"
     }
   }
 }
