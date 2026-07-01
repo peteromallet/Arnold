@@ -510,7 +510,7 @@ class MegaplanResidentProfile:
             "active_chains": [
                 row
                 for row in chain_states
-                if row.get("last_state") not in {"done", "completed", "failed", "aborted"}
+                if _is_active_chain_state(row)
             ][:5],
         }
 
@@ -2137,11 +2137,51 @@ def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | No
             "mtime": _path_mtime(path),
             "current_state": data.get("current_state") or data.get("state"),
             "iteration": data.get("iteration"),
-            "active_step": data.get("active_step"),
-            "last_gate": data.get("last_gate"),
+            "active_step": _summarize_active_step(data.get("active_step")),
+            "last_gate": _summarize_last_gate(data.get("last_gate")),
             "read_error": data.get("_read_error"),
         }
     return None
+
+
+def _is_active_chain_state(row: dict[str, Any]) -> bool:
+    if not row.get("current_plan_name") and not row.get("plan_state"):
+        return False
+    state = str(row.get("last_state") or "").lower()
+    if state in {"done", "completed", "failed", "aborted", "finalized"}:
+        return False
+    plan_state = row.get("plan_state")
+    if isinstance(plan_state, dict):
+        plan_current_state = str(plan_state.get("current_state") or "").lower()
+        if plan_current_state in {"done", "completed", "failed", "aborted"}:
+            return False
+    return True
+
+
+def _summarize_active_step(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "phase": value.get("phase"),
+        "agent": value.get("agent"),
+        "attempt": value.get("attempt"),
+        "mode": value.get("mode"),
+        "started_at": value.get("started_at"),
+        "last_activity_at": value.get("last_activity_at"),
+        "last_activity_kind": value.get("last_activity_kind"),
+        "last_activity_detail": value.get("last_activity_detail"),
+    }
+
+
+def _summarize_last_gate(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "recommendation": value.get("recommendation"),
+        "passed": value.get("passed"),
+        "rationale": _bounded_text(str(value.get("rationale") or ""), 500) if value.get("rationale") else None,
+        "warnings": value.get("warnings") if isinstance(value.get("warnings"), list) else None,
+    }
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
