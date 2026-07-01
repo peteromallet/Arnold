@@ -5240,6 +5240,33 @@ def test_repair_loop_stops_recurring_retry_for_prep_clarification_gate(tmp_path:
     assert result.stdout.strip() == "0"
 
 
+def test_repair_loop_stops_recurring_retry_for_stale_awaiting_human_context(tmp_path: Path) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "run_recurrence_detected": True,
+                "current_recurrence": {"detected": True},
+                "current_failure_context": {
+                    "failure_classification": "timeout_or_hang",
+                    "plan_runtime_state": {"current_state": "awaiting_human_verify"},
+                    "user_action_context": {"unresolved_user_actions": []},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "repair_exhausted_should_retry_without_human",
+        "python3 - \"$DATA_FILE\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "0"
+
+
 def test_auditor_gather_flags_plan_stale_block_without_chain_evidence(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
     plan_name = "single-plan"
