@@ -54,6 +54,24 @@ def test_argv_for_megaplan_subcommand_ignores_console_script_on_path(monkeypatch
     assert is_megaplan_subcommand is True
 
 
+def test_semantic_repair_subcommands_are_allowlisted(monkeypatch) -> None:
+    monkeypatch.setattr("shutil.which", lambda cmd, path=None: None)
+
+    runner = RepairRunner(python_bin="python3")
+
+    plan_argv, _, plan_is_megaplan = runner._argv_for_command("plan --plan demo")
+    override_argv, _, override_is_megaplan = runner._argv_for_command(
+        "override resume-clarify --plan demo"
+    )
+
+    assert plan_argv[:4] == ["python3", "-P", "-m", "arnold_pipelines.megaplan"]
+    assert plan_argv[4:] == ["plan", "--plan", "demo"]
+    assert plan_is_megaplan is True
+    assert override_argv[:4] == ["python3", "-P", "-m", "arnold_pipelines.megaplan"]
+    assert override_argv[4:] == ["override", "resume-clarify", "--plan", "demo"]
+    assert override_is_megaplan is True
+
+
 def test_run_anchors_megaplan_subcommand_to_editable_engine(
     monkeypatch,
     tmp_path: Path,

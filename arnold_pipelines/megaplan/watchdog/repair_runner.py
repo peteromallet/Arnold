@@ -22,8 +22,10 @@ class RepairResult:
 _MEGAPLAN_SUBCOMMANDS: frozenset[str] = frozenset({
     "doctor",
     "auto",
+    "plan",
     "resume",
     "chain",
+    "override",
 })
 
 
@@ -105,8 +107,10 @@ class RepairRunner:
         """Anchor Megaplan subprocesses to the editable install engine checkout."""
 
         from arnold_pipelines.megaplan.runtime.process import megaplan_engine_env
+        from arnold_pipelines.megaplan.runtime.process import megaplan_engine_root
 
         env = megaplan_engine_env(base)
+        env["MEGAPLAN_ENGINE_ROOT"] = str(megaplan_engine_root())
         env["PYTHONSAFEPATH"] = "1"
         # Meta-loop repairs default to the validated partnered-5 profile
         # (arnold_pipelines/megaplan/profiles/partnered-5.toml). Plan configs that
