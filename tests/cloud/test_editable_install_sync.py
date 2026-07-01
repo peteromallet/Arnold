@@ -42,7 +42,7 @@ def test_cloud_refresh_uses_editible_install_branch() -> None:
     assert "REF=editible-install" in command
     assert 'git -C "$SRC" fetch origin "$REF"' in command
     assert 'git -C "$SRC" checkout "$REF"' in command
-    assert 'refusing editable install refresh: dirty source checkout' in command
+    assert 'refusing editable install refresh: tracked changes in source checkout' in command
     assert 'merge-base --is-ancestor HEAD "origin/$REF"' in command
     assert 'refusing editable install refresh: $SRC has local commits' in command
     assert 'git -C "$SRC" pull --ff-only origin "$REF"' in command
