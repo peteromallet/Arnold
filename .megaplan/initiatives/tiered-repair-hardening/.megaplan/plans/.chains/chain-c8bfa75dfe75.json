@@ -23,9 +23,9 @@
       "pr_state": "merged"
     }
   ],
-  "branch_head": "b272f97042853d32ba61a632349aa25ff3a4d16d",
+  "branch_head": "219552862d156cde7d4eb9b1a57c8636f7b669b9",
   "pr_head": "21c962c802b7c3d4449d0aac81ba8af9d77f483d",
-  "last_pushed_commit": "b272f97042853d32ba61a632349aa25ff3a4d16d",
+  "last_pushed_commit": "219552862d156cde7d4eb9b1a57c8636f7b669b9",
   "dirty_flag": false,
   "sync_state": "stale",
   "extra_repos": [],
