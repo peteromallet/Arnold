@@ -1128,6 +1128,17 @@ session_health_status() {
       echo "$wait_status"
       return 0
     fi
+  elif [[ "$run_kind" == "epic_chain" ]]; then
+    log_path="$workspace/.megaplan/cloud-epic-chain-${session}.log"
+    if [[ -f "$log_path" ]] && tail -80 "$log_path" 2>/dev/null | grep -Eq '"error": "invalid_spec"|invalid_spec|"error": "git_refresh_failed"|git_refresh_failed|fatal: couldn'\''t find remote ref'; then
+      echo "chain_log_failure"
+      return 0
+    fi
+
+    if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan epic-chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+      echo "alive"
+      return 0
+    fi
   elif [[ -n "$plan_name" ]]; then
     if ps -eww -o args= \
       | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan (init|auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)" \
@@ -3323,6 +3334,11 @@ launch_chain_tick() {
     report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
     return 1
   fi
+  if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
+    log "flag $session: epic-chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "flag" "spec_missing" "epic-chain spec missing" "$workspace" "$remote_spec"
+    return 1
+  fi
   if [[ "$run_kind" == "chain" ]]; then
     chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"
     if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
@@ -3601,6 +3617,11 @@ launch_chain_tick() {
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
     log "flag $session: chain spec missing: $remote_spec"
     report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    return 1
+  fi
+  if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
+    log "flag $session: epic-chain spec missing: $remote_spec"
+    report_item "$report_items" "$session" "flag" "spec_missing" "epic-chain spec missing" "$workspace" "$remote_spec"
     return 1
   fi
 

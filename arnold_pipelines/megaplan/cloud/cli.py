@@ -171,6 +171,31 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     _add_repo_override_args(launch_epic_parser)
 
+    epic_chain_parser = cloud_sub.add_parser(
+        "epic-chain",
+        parents=[shared],
+        help="Upload durable epic-chain inputs and start the parent epic-chain remotely",
+    )
+    epic_chain_parser.add_argument("spec", help="Local epic-chain spec path")
+    epic_chain_parser.add_argument(
+        "--fresh",
+        "--reset",
+        dest="fresh",
+        action="store_true",
+        help="Reset this parent epic-chain state before launch",
+    )
+    epic_chain_parser.add_argument(
+        "--one",
+        action="store_true",
+        help="Advance at most one completed child epic, then stop cleanly",
+    )
+    epic_chain_parser.add_argument(
+        "--no-editable-install-sync",
+        action="store_true",
+        help="Skip syncing the launching Arnold checkout to editible-install before launch",
+    )
+    _add_repo_override_args(epic_chain_parser)
+
     bootstrap_parser = cloud_sub.add_parser(
         "bootstrap",
         parents=[shared],
@@ -307,6 +332,10 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         if action == "launch-epic":
             with _materialized_deploy_dir(spec):
                 return _run_launch_epic_wrapper(root, args, spec, provider)
+
+        if action == "epic-chain":
+            with _materialized_deploy_dir(spec):
+                return _run_epic_chain_wrapper(root, args, spec, provider)
 
         if action == "bootstrap":
             with _materialized_deploy_dir(spec):
@@ -1745,8 +1774,8 @@ def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
         '  git -C "$SRC" fetch origin "$REF"',
         '  BRANCH="$(git -C "$SRC" branch --show-current)"',
         '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
-        '  if [ -n "$(git -C "$SRC" status --porcelain)" ]; then',
-        '    echo "[megaplan-refresh] refusing editable install refresh: dirty source checkout at $SRC"',
+        '  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
+        '    echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
         "    exit 19",
         "  fi",
         '  if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
@@ -1837,6 +1866,142 @@ def _tmux_chain_launch_command(
         f"{_write_session_marker_command(marker, marker_payload)}; "
         f"tmux new-session -d -s {shlex.quote(name)} -c {shlex.quote(workspace)} {shlex.quote(chain_cmd)}; "
         f"echo {shlex.quote(f'started {name} session')}; "
+        "fi"
+    )
+
+
+def _epic_chain_identity_for(local_spec_path: Path, epic_chain_spec: Any) -> tuple[str, str, str]:
+    child_ids = ",".join(epic.id for epic in getattr(epic_chain_spec, "epics", []))
+    slug = _slugify_chain_identity(local_spec_path.stem)
+    if local_spec_path.name == "epic-chain.yaml" and local_spec_path.parent.parent.name:
+        slug = _slugify_chain_identity(local_spec_path.parent.parent.name)
+    identity = f"epic-chain:{slug}:{child_ids}"
+    digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:10]
+    return identity, slug, digest
+
+
+def _remote_epic_chain_state_path(remote_spec_path: str) -> str:
+    spec = PurePosixPath(remote_spec_path)
+    digest = hashlib.sha1(remote_spec_path.encode("utf-8")).hexdigest()[:12]
+    return str(spec.parent / ".megaplan" / "plans" / ".epic_chains" / f"{spec.stem}-{digest}.json")
+
+
+def _derive_epic_chain_launch_context(
+    *,
+    root: Path,
+    spec: CloudSpec,
+    local_spec_path: Path,
+    epic_chain_spec: Any,
+) -> ChainLaunchContext:
+    identity, slug, digest = _epic_chain_identity_for(local_spec_path, epic_chain_spec)
+    session_name = (
+        spec.chain_session
+        if spec.chain_session_explicit
+        else f"{CHAIN_SESSION_NAME}-{slug}-parent-{digest[:8]}"
+    )
+    workspace = (
+        spec.repo.workspace
+        if spec.repo.workspace_explicit
+        else f"/workspace/{slug}-parent-{digest[:8]}/{_repo_dir_name(spec.repo.url)}"
+    )
+    remote_spec_path = _remote_chain_workspace_path(
+        local_spec_path,
+        local_root=root,
+        target_workspace=workspace,
+    )
+    log_relative = f".megaplan/cloud-epic-chain-{session_name}.log"
+    log_path = str(PurePosixPath(workspace) / log_relative)
+    marker_path = str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{session_name}.json")
+    return ChainLaunchContext(
+        identity=identity,
+        slug=slug,
+        digest=digest,
+        workspace=workspace,
+        remote_spec_path=remote_spec_path,
+        session_name=session_name,
+        log_relative=log_relative,
+        log_path=log_path,
+        state_path=_remote_epic_chain_state_path(remote_spec_path),
+        marker_path=marker_path,
+    )
+
+
+def _epic_chain_start_command(
+    remote_spec_path: str,
+    *,
+    workspace: str,
+    engine_dir: str | None = None,
+    one_shot: bool = False,
+    log_relative: str,
+) -> str:
+    flags = f"--spec {shlex.quote(remote_spec_path)} --project-dir {shlex.quote(workspace)}"
+    if one_shot:
+        flags += " --one"
+    log_target = shlex.quote(str(PurePosixPath(workspace) / log_relative))
+    prefix = (
+        f"if [ -f {shlex.quote(_CLOUD_HOT_ENV_PATH)} ]; then "
+        f"set -a; . {shlex.quote(_CLOUD_HOT_ENV_PATH)}; set +a; fi; "
+    )
+    if engine_dir:
+        engine_path = shlex.quote(engine_dir)
+        prefix += f"cd {engine_path} && PYTHONSAFEPATH=1 PYTHONPATH={engine_path}:${{PYTHONPATH:-}} "
+    return (
+        f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan epic-chain start {flags} "
+        f">> {log_target} 2>&1"
+    )
+
+
+def _refresh_then_epic_chain_start_command(
+    remote_spec_path: str,
+    *,
+    spec: CloudSpec | None = None,
+    workspace: str,
+    one_shot: bool = False,
+    log_relative: str,
+) -> str:
+    refresh = _megaplan_refresh_command(spec)
+    engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
+    log_target = str(PurePosixPath(workspace) / log_relative)
+    return (
+        f"{{ {refresh}; }} >> {shlex.quote(log_target)} 2>&1 || true; "
+        f"{_epic_chain_start_command(remote_spec_path, workspace=workspace, engine_dir=engine_dir, one_shot=one_shot, log_relative=log_relative)}"
+    )
+
+
+def _tmux_epic_chain_launch_command(
+    workspace: str,
+    remote_spec_path: str,
+    *,
+    one_shot: bool = False,
+    session_name: str,
+    spec: CloudSpec | None = None,
+    log_relative: str,
+    marker_path: str,
+    identity_digest: str,
+    marker_payload: dict[str, Any],
+) -> str:
+    epic_chain_cmd = _refresh_then_epic_chain_start_command(
+        remote_spec_path,
+        spec=spec,
+        workspace=workspace,
+        one_shot=one_shot,
+        log_relative=log_relative,
+    )
+    return (
+        f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
+        f"{shlex.quote(str(PurePosixPath(marker_path).parent))}"
+        " && "
+        f"if tmux has-session -t {shlex.quote(session_name)} 2>/dev/null; then "
+        f"if [ -f {shlex.quote(marker_path)} ] && grep -F {shlex.quote(identity_digest)} {shlex.quote(marker_path)} >/dev/null 2>&1; then "
+        f"echo {shlex.quote(f'{session_name} session already running for this epic-chain')}; "
+        "else "
+        f"echo {shlex.quote(f'ERROR: {session_name} session already running for a different run; refusing to disturb it')}; "
+        "exit 17; "
+        "fi; "
+        "else "
+        f"{_write_session_marker_command(marker_path, marker_payload)}; "
+        f"tmux new-session -d -s {shlex.quote(session_name)} -c {shlex.quote(workspace)} {shlex.quote(epic_chain_cmd)}; "
+        f"echo {shlex.quote(f'started {session_name} session')}; "
         "fi"
     )
 
@@ -2497,6 +2662,325 @@ def _run_launch_epic_wrapper(root: Path, args: argparse.Namespace, spec: CloudSp
         }
     )
     return _run_chain_wrapper(root, chain_args, spec, provider)
+
+
+def _validate_epic_chain_local_inputs(
+    *,
+    project_root: Path,
+    local_spec_path: Path,
+    epic_chain_spec: Any,
+) -> None:
+    from arnold_pipelines.megaplan import chain as chain_module
+
+    parent_north_star = getattr(getattr(epic_chain_spec, "anchors", None), "north_star", None)
+    if parent_north_star:
+        _resolve_chain_local_artifact(
+            parent_north_star,
+            project_root=project_root,
+            spec_dir=local_spec_path.parent,
+        )
+    for child in getattr(epic_chain_spec, "epics", []):
+        child_spec_path = Path(child.spec).expanduser()
+        if not child_spec_path.is_absolute():
+            child_spec_path = (local_spec_path.parent / child.spec).resolve()
+        if not child_spec_path.is_file():
+            raise CliError(
+                "missing_epic_artifact",
+                f"child epic {child.id!r} spec not found: {child_spec_path}",
+            )
+        chain_spec = chain_module.load_spec(child_spec_path)
+        chain_module.chain_spec.validate_anchor_requirement(chain_spec, child_spec_path)
+        child_north_star = getattr(getattr(chain_spec, "anchors", None), "north_star", None)
+        if child_north_star:
+            _resolve_chain_local_artifact(
+                child_north_star,
+                project_root=project_root,
+                spec_dir=child_spec_path.parent,
+            )
+        for milestone in getattr(chain_spec, "milestones", []):
+            _resolve_chain_local_artifact(
+                milestone.idea,
+                project_root=project_root,
+                spec_dir=child_spec_path.parent,
+            )
+            milestone_north_star = getattr(getattr(milestone, "anchors", None), "north_star", None)
+            if milestone_north_star:
+                _resolve_chain_local_artifact(
+                    milestone_north_star,
+                    project_root=project_root,
+                    spec_dir=child_spec_path.parent,
+                )
+
+
+def _epic_chain_state_reset_command(*, state_path: str, force: bool) -> str:
+    if not force:
+        return "true"
+    script = f"""
+import json, pathlib
+state_path = pathlib.Path({state_path!r})
+removed = []
+if state_path.exists():
+    state_path.unlink()
+    removed.append(str(state_path))
+print(json.dumps({{"status": "reset", "removed": removed}}, sort_keys=True))
+"""
+    return f"python3 - <<'MEGAPLAN_EPIC_CHAIN_RESET'\n{script.strip()}\nMEGAPLAN_EPIC_CHAIN_RESET"
+
+
+def _epic_chain_launch_verification_command(
+    *,
+    workspace: str,
+    session_name: str,
+    remote_spec_path: str,
+    state_path: str,
+    marker_path: str,
+    log_path: str,
+    attempts: int = _CHAIN_VERIFY_ATTEMPTS,
+    sleep_seconds: int = _CHAIN_VERIFY_SLEEP_SECONDS,
+) -> str:
+    script = f"""
+import json, pathlib, subprocess, time
+workspace = pathlib.Path({workspace!r})
+session = {session_name!r}
+remote_spec = pathlib.Path({remote_spec_path!r})
+state_path = pathlib.Path({state_path!r})
+marker_path = pathlib.Path({marker_path!r})
+log_path = pathlib.Path({log_path!r})
+attempts = {int(attempts)!r}
+sleep_seconds = {int(sleep_seconds)!r}
+last = {{}}
+for idx in range(max(1, attempts)):
+    alive = subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+    marker = None
+    state = None
+    if marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text())
+        except Exception as exc:
+            marker = {{"error": str(exc)}}
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text())
+        except Exception as exc:
+            state = {{"error": str(exc)}}
+    advanced = bool(state and (
+        state.get("current_epic_id")
+        or state.get("current_spec_path")
+        or state.get("completed")
+        or int(state.get("current_epic_index", -1)) >= 0
+    ))
+    last = {{
+        "session_alive": alive,
+        "workspace_present": workspace.is_dir(),
+        "spec_present": remote_spec.is_file(),
+        "marker_present": marker_path.is_file(),
+        "state_present": state_path.is_file(),
+        "advanced_past_init": advanced,
+        "epic_chain_log": str(log_path),
+        "epic_chain_log_size": log_path.stat().st_size if log_path.exists() else 0,
+        "marker": marker,
+        "attempts": idx + 1,
+    }}
+    if alive and last["spec_present"] and last["marker_present"] and advanced:
+        break
+    if idx + 1 < attempts:
+        time.sleep(sleep_seconds)
+last["status"] = "ok" if last.get("session_alive") and last.get("spec_present") and last.get("marker_present") and last.get("advanced_past_init") else "warning"
+print(json.dumps(last, sort_keys=True))
+"""
+    return f"python3 - <<'MEGAPLAN_EPIC_CHAIN_VERIFY'\n{script.strip()}\nMEGAPLAN_EPIC_CHAIN_VERIFY"
+
+
+def _run_epic_chain_launch_verification(provider, ctx: ChainLaunchContext) -> dict[str, Any]:
+    result = provider.ssh_exec(
+        _epic_chain_launch_verification_command(
+            workspace=ctx.workspace,
+            session_name=ctx.session_name,
+            remote_spec_path=ctx.remote_spec_path,
+            state_path=ctx.state_path,
+            marker_path=ctx.marker_path,
+            log_path=ctx.log_path,
+        )
+    )
+    raw = (result.stdout or "").strip().splitlines()
+    if result.returncode != 0:
+        return {
+            "status": "verification_failed",
+            "session_alive": False,
+            "likely_cause": (result.stderr or result.stdout or "verification command failed").strip(),
+        }
+    try:
+        return json.loads(raw[-1] if raw else "{}")
+    except json.JSONDecodeError as exc:
+        return {
+            "status": "verification_unparseable",
+            "likely_cause": f"verification output was not JSON: {exc}",
+            "raw": result.stdout,
+        }
+
+
+def _run_epic_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
+    from arnold_pipelines.megaplan.chain import epic_chain as epic_chain_module
+
+    local_spec_path = Path(args.spec).expanduser().resolve()
+    project_root = _chain_project_root(local_spec_path, root)
+    epic_chain_spec = epic_chain_module.load_epic_chain_spec(local_spec_path)
+    _validate_epic_chain_local_inputs(
+        project_root=project_root,
+        local_spec_path=local_spec_path,
+        epic_chain_spec=epic_chain_spec,
+    )
+
+    if bool(getattr(args, "no_editable_install_sync", False)):
+        editable_install_sync = {"status": "skipped", "reason": "disabled_by_flag"}
+    else:
+        editable_install_sync = _sync_launch_head_to_editable_install_branch(
+            _arnold_engine_repo_root(),
+            branch=_EDITABLE_INSTALL_BRANCH,
+        )
+        sys.stderr.write(
+            "cloud epic-chain editable-install sync: "
+            f"status={editable_install_sync.get('status')} "
+            f"branch={editable_install_sync.get('branch')} "
+            f"head={str(editable_install_sync.get('editable_head') or '')[:12]}\n"
+        )
+
+    launch_ctx = _derive_epic_chain_launch_context(
+        root=project_root,
+        spec=spec,
+        local_spec_path=local_spec_path,
+        epic_chain_spec=epic_chain_spec,
+    )
+    launch_spec = replace(
+        spec,
+        repo=replace(spec.repo, workspace=launch_ctx.workspace),
+        chain_session=launch_ctx.session_name,
+    )
+    _ensure_repo_checkout(launch_spec, provider, relay=False)
+    seed_codex_oauth(spec, provider)
+
+    clean_result = provider.ssh_exec(_clean_remote_durable_megaplan_command(launch_ctx.workspace))
+    if clean_result.returncode != 0:
+        _relay_output(clean_result, secret_names=spec.secrets, env=os.environ)
+        raise CliError(
+            "provider_failed",
+            f"remote .megaplan durable clean failed (exit {clean_result.returncode})",
+        )
+    uploads = _durable_megaplan_uploads(project_root, launch_ctx.workspace)
+    archive_path: Path | None = None
+    try:
+        archive_path = _write_durable_megaplan_archive(project_root, uploads)
+        provider.upload_archive(archive_path, launch_ctx.workspace)
+    finally:
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
+
+    reset_result = provider.ssh_exec(
+        _epic_chain_state_reset_command(
+            state_path=launch_ctx.state_path,
+            force=bool(getattr(args, "fresh", False)),
+        )
+    )
+    if reset_result.returncode != 0:
+        _relay_output(reset_result, secret_names=spec.secrets, env=os.environ)
+        raise CliError(
+            "provider_failed",
+            f"remote epic-chain state reset failed (exit {reset_result.returncode})",
+        )
+
+    relaunch_command = _refresh_then_epic_chain_start_command(
+        launch_ctx.remote_spec_path,
+        spec=launch_spec,
+        workspace=launch_ctx.workspace,
+        one_shot=bool(getattr(args, "one", False)),
+        log_relative=launch_ctx.log_relative,
+    )
+    marker_payload = {
+        "session": launch_ctx.session_name,
+        "workspace": launch_ctx.workspace,
+        "remote_spec": launch_ctx.remote_spec_path,
+        "identity_digest": launch_ctx.digest,
+        "chain_slug": launch_ctx.slug,
+        "run_kind": "epic_chain",
+        "relaunch_command": relaunch_command,
+        "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
+        "editable_source_head": (
+            editable_install_sync.get("editable_head")
+            or editable_install_sync.get("launch_head")
+        ),
+        "editable_install_sync": editable_install_sync,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    }
+    result = provider.ssh_exec(
+        _tmux_epic_chain_launch_command(
+            launch_ctx.workspace,
+            launch_ctx.remote_spec_path,
+            session_name=launch_ctx.session_name,
+            spec=launch_spec,
+            log_relative=launch_ctx.log_relative,
+            marker_path=launch_ctx.marker_path,
+            identity_digest=launch_ctx.digest,
+            marker_payload=marker_payload,
+            one_shot=bool(getattr(args, "one", False)),
+        )
+    )
+    _relay_output(result, secret_names=spec.secrets, env=os.environ)
+    if result.returncode != 0:
+        raise CliError(
+            "chain_session_collision" if result.returncode == 17 else "provider_failed",
+            (result.stderr or result.stdout or "remote tmux launch failed").strip(),
+        )
+    tracking = _run_watchdog_tracking_verification(provider, launch_ctx)
+    if not tracking.get("tracked"):
+        raise CliError(
+            "watchdog_tracking_failed",
+            "cloud epic-chain launch completed but watchdog tracking verification failed: "
+            + "; ".join(str(item) for item in tracking.get("errors", []) or ["unknown error"]),
+            extra={"watchdog_tracking": tracking},
+        )
+    verification = _run_epic_chain_launch_verification(provider, launch_ctx)
+    sys.stderr.write(
+        "cloud epic-chain launch: "
+        f"session={launch_ctx.session_name} "
+        f"alive={verification.get('session_alive')} "
+        f"advanced={verification.get('advanced_past_init')} "
+        f"log={launch_ctx.log_path}\n"
+    )
+    payload = {
+        "success": True,
+        "workspace": launch_ctx.workspace,
+        "remote_spec": launch_ctx.remote_spec_path,
+        "chain_session": launch_ctx.session_name,
+        "chain_log": launch_ctx.log_path,
+        "state_path": launch_ctx.state_path,
+        "uploaded_files": len(uploads),
+        "uploaded_roots": list(_DURABLE_MEGAPLAN_DIRS),
+        "verification": {**verification, "watchdog_tracking": tracking},
+        "editable_install_sync": editable_install_sync,
+    }
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+
+    marker_path = _marker_dir(_cloud_yaml_path(root, args)) / "last_chain.json"
+    marker_path.write_text(
+        json.dumps(
+            {
+                "remote_spec": launch_ctx.remote_spec_path,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "base_branch": epic_chain_spec.base_branch,
+                "provenance": payload,
+                "editable_install_sync": editable_install_sync,
+                "workspace": launch_ctx.workspace,
+                "chain_session": launch_ctx.session_name,
+                "chain_log": launch_ctx.log_path,
+                "provider": spec.provider,
+                "provider_identity": _get_provider_identity(spec),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return 0
 
 
 def _derive_bootstrap_session_name(spec: CloudSpec) -> str:

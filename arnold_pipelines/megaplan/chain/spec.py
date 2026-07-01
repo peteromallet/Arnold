@@ -1217,7 +1217,22 @@ def _git_status_porcelain(root: Path, rel: str) -> list[str]:
             "launch_precondition_failed",
             f"git command failed while validating launch preconditions: git status --porcelain --untracked-files=all -- {rel}; {detail}",
         )
-    return [line.rstrip() for line in proc.stdout.splitlines() if line.strip()]
+    return [
+        line.rstrip()
+        for line in proc.stdout.splitlines()
+        if line.strip() and not _is_runtime_status_line(line)
+    ]
+
+
+def _is_runtime_status_line(line: str) -> bool:
+    path = line[3:] if len(line) > 3 else line
+    runtime_parts = (
+        "/.megaplan/plans/",
+        "/.megaplan/epics/",
+        "/.megaplan/resident/",
+        "/.megaplan/cloud-sessions/",
+    )
+    return any(part in path for part in runtime_parts)
 
 
 def _tracked_paths_in_head(root: Path, rel: str) -> set[str]:
