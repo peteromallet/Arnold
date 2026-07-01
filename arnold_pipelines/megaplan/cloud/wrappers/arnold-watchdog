@@ -4033,7 +4033,7 @@ scan_once() {
   shopt -s nullglob
   for marker in "$MARKER_DIR"/*.json; do
     case "$marker" in
-      *.progress.json|*.reap-progress.json|*.chain-health.progress.json)
+      *.progress.json|*.reap-progress.json|*.repair-progress.json|*.chain-health.progress.json)
         continue
         ;;
     esac
