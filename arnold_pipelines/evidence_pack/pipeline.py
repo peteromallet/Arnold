@@ -1,12 +1,10 @@
-"""Thin compatibility shim — re-exports from ``arnold.pipelines.evidence_pack``.
-
-This package exists only to support legacy import paths. All behavior
-lives in the canonical ``arnold.pipelines.evidence_pack`` package.
+"""Compatibility shim — re-exports from ``arnold.pipelines.evidence_pack.pipeline``.
 
 Do NOT add graph-era imports or behavior forks to this module.
 """
 
-from arnold.pipelines.evidence_pack import (  # noqa: F401
+from arnold.pipelines.evidence_pack.pipeline import (  # noqa: F401
+    EvidencePackStep,
     arnold_api_version,
     build_pipeline,
     capabilities,
@@ -20,6 +18,7 @@ from arnold.pipelines.evidence_pack import (  # noqa: F401
 )
 
 __all__ = [
+    "EvidencePackStep",
     "arnold_api_version",
     "build_pipeline",
     "capabilities",
