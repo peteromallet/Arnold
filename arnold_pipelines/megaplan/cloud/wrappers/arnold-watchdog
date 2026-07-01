@@ -3021,6 +3021,7 @@ plan_phase_health_status() {
   local plan_name="${3:-}"
   python3 - "$workspace" "$run_kind" "$plan_name" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
