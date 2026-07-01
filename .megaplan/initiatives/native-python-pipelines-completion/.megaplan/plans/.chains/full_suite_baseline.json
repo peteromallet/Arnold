@@ -73,7 +73,7 @@
     "tests/m8/regression/test_structural_regressions.py",
     "tests/test_arnold_cli.py"
   ],
-  "captured_at_sha": "468a767ae18c1067a6ffb5565857a940ead7801d",
+  "captured_at_sha": "9355dff2102e5a42af74fde033317e15c696649d",
   "milestone": "m1-platform-contract",
   "collection_errors": [
     "tests/archive/m5/_pipeline/test_dynamic_primitives.py",
