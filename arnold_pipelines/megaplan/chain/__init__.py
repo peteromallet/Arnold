@@ -2109,14 +2109,7 @@ def _semantic_diff_nonempty_between_refs(
     target_ref = target_ref.strip()
     if not target_ref:
         return False, f"{target_label} unavailable"
-    proc = subprocess.run(
-        ["git", "diff", "--name-only", base_sha, target_ref, "--"],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-    )
+    proc = _diff_name_only_between_refs(root, base_sha, target_ref)
     if proc.returncode != 0:
         return (
             False,
@@ -2146,14 +2139,7 @@ def _raw_diff_nonempty_between_refs(
     target_ref = target_ref.strip()
     if not target_ref:
         return None, f"{target_label} unavailable"
-    proc = subprocess.run(
-        ["git", "diff", "--name-only", base_sha, target_ref, "--"],
-        cwd=str(root),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-    )
+    proc = _diff_name_only_between_refs(root, base_sha, target_ref)
     if proc.returncode != 0:
         return (
             None,
@@ -2171,6 +2157,40 @@ def _semantic_diff_nonempty_from_base(
 ) -> tuple[bool, str]:
     return _semantic_diff_nonempty_between_refs(
         root, base_sha, "HEAD", target_label="local HEAD"
+    )
+
+
+def _diff_name_only_between_refs(
+    root: Path, base_sha: str, target_ref: str
+) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run(
+        ["git", "diff", "--name-only", base_sha, target_ref, "--"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+    if proc.returncode == 0:
+        return proc
+    combined = f"{proc.stderr or ''}\n{proc.stdout or ''}".lower()
+    if "bad object" not in combined and "unknown revision" not in combined:
+        return proc
+    subprocess.run(
+        ["git", "fetch", "origin", "--prune"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    return subprocess.run(
+        ["git", "diff", "--name-only", base_sha, target_ref, "--"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
     )
 
 
