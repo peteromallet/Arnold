@@ -1069,6 +1069,48 @@ def test_merged_pr_completion_allows_published_semantic_diff(tmp_path: Path) -> 
     assert "published PR target" in reason
 
 
+def test_published_pr_diff_fetches_missing_remote_commit_before_blocking(
+    tmp_path: Path,
+) -> None:
+    local = tmp_path / "local"
+    remote = tmp_path / "remote.git"
+    other = tmp_path / "other"
+    local.mkdir()
+    remote.mkdir()
+    _git(remote, "init", "--bare")
+    base = _init_repo(local)
+    _git(local, "branch", "-M", "main")
+    _git(local, "remote", "add", "origin", str(remote))
+    _git(local, "push", "-u", "origin", "main")
+    _git(tmp_path, "clone", str(remote), str(other))
+    _git(other, "config", "user.email", "test@example.com")
+    _git(other, "config", "user.name", "Test User")
+    (other / "src" / "app.py").write_text("print('remote done')\n", encoding="utf-8")
+    _git(other, "add", "src/app.py")
+    _git(other, "commit", "-m", "remote semantic change")
+    target = _git(other, "rev-parse", "HEAD")
+    _git(other, "push", "origin", "main")
+
+    missing = subprocess.run(
+        ["git", "cat-file", "-t", target],
+        cwd=local,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert missing.returncode != 0
+
+    ok, reason = chain_module._semantic_diff_nonempty_between_refs(
+        local,
+        base,
+        target,
+        target_label=f"published PR target {target[:12]}",
+    )
+
+    assert ok is True
+    assert "published PR target" in reason
+
+
 def test_merged_pr_completion_allows_authoritative_true_noop_diff(
     tmp_path: Path,
 ) -> None:
