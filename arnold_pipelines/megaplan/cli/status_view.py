@@ -371,7 +371,25 @@ def _build_blocker_recovery_context(
     plan_dir: Path,
     finalize_data: dict[str, Any],
     state: dict[str, Any],
+    *,
+    active_step: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if (
+        isinstance(active_step, dict)
+        and active_step.get("recommended_action") == "wait"
+    ):
+        # While a live step is still running, stale phase_result.json data and
+        # partial execution_batch_*.json overlays are observational context, not
+        # actionable blockers.
+        return {
+            "can_continue": True,
+            "has_terminal_blockers": False,
+            "requires_rerun": False,
+            "blockers": [],
+            "prerequisite_blockers": [],
+            "quality_blockers": [],
+            "suggested_commands": [],
+        }
     phase_blocked_tasks, deviations = _phase_result_recovery_inputs(plan_dir)
     baseline_deviation_by_task: dict[str, Deviation] = {}
     if phase_blocked_tasks:
@@ -441,9 +459,16 @@ def _build_blocked_tasks_context(
     plan_dir: Path,
     finalize_data: dict[str, Any],
     state: dict[str, Any],
+    *,
+    active_step: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Build legacy-compatible blocked task status from shared recovery data."""
-    blocker_recovery = _build_blocker_recovery_context(plan_dir, finalize_data, state)
+    blocker_recovery = _build_blocker_recovery_context(
+        plan_dir,
+        finalize_data,
+        state,
+        active_step=active_step,
+    )
     prereq_blockers = blocker_recovery.get("prerequisite_blockers", [])
     if not prereq_blockers:
         return []
@@ -657,8 +682,19 @@ def _build_progress_payload(plan_dir: Path, state: dict[str, Any]) -> dict[str, 
     else:
         granularity_note = "Progress reflects the last finalize.json write (between-batch granularity)."
     # Build compact resolution context for the progress payload
-    blocked_tasks = _build_blocked_tasks_context(plan_dir, finalize_data, state)
-    blocker_recovery = _build_blocker_recovery_context(plan_dir, finalize_data, state)
+    active_step = _build_active_step(state.get("active_step"), plan_dir=plan_dir)
+    blocked_tasks = _build_blocked_tasks_context(
+        plan_dir,
+        finalize_data,
+        state,
+        active_step=active_step,
+    )
+    blocker_recovery = _build_blocker_recovery_context(
+        plan_dir,
+        finalize_data,
+        state,
+        active_step=active_step,
+    )
     blocked_task_resolution_summary = ""
     blocking_action_ids_map: dict[str, list[str]] = {}
     blocker_ids_map: dict[str, list[str]] = {}
@@ -940,11 +976,17 @@ def _build_status_payload(plan_dir: Path, state: dict[str, Any]) -> StepResponse
     finalize_path = plan_dir / "finalize.json"
     if finalize_path.exists():
         finalize_data = read_json(finalize_path)
-        blocked_tasks = _build_blocked_tasks_context(plan_dir, finalize_data, state)
+        blocked_tasks = _build_blocked_tasks_context(
+            plan_dir,
+            finalize_data,
+            state,
+            active_step=active_step,
+        )
         blocker_recovery = _build_blocker_recovery_context(
             plan_dir,
             finalize_data,
             state,
+            active_step=active_step,
         )
         if blocked_tasks:
             response["blocked_tasks"] = blocked_tasks
