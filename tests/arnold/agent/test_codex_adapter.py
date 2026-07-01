@@ -185,6 +185,85 @@ def test_run_codex_step_free_text_omits_output_schema(
     assert result.raw_output == "batch([done()])"
 
 
+def test_run_codex_step_plan_prefers_json_payload_over_transcript_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    from arnold_pipelines.megaplan._core import ensure_runtime_layout
+    from arnold_pipelines.megaplan.workers import _impl
+
+    root = tmp_path / "root"
+    root.mkdir()
+    ensure_runtime_layout(root)
+    plan_dir = root / ".megaplan" / "plans" / "oneshot"
+    plan_dir.mkdir(parents=True, exist_ok=True)
+    output_path = plan_dir / "plan.json"
+    state = {
+        "name": "json-plan-transcript",
+        "idea": "x",
+        "current_state": "prepped",
+        "iteration": 0,
+        "created_at": "1970-01-01T00:00:00Z",
+        "config": {"project_dir": str(tmp_path), "mode": "code"},
+        "sessions": {},
+        "plan_versions": [],
+        "history": [],
+        "meta": {},
+    }
+    plan_payload = {
+        "plan": (
+            "# Implementation Plan: Demo\n\n"
+            "## Overview\n\n"
+            "Ship the native-first contract.\n\n"
+            "## Phase 1: Patch Worker Parsing\n\n"
+            "### Step 1: Parse the structured plan payload (`arnold_pipelines/megaplan/workers/_impl.py`)\n"
+            "1. Recover the JSON `plan` object before treating the transcript as markdown.\n\n"
+            "## Validation Order\n\n"
+            "1. Run `pytest tests/arnold/agent/test_codex_adapter.py -q`.\n"
+        ),
+        "questions": [],
+        "success_criteria": [{"criterion": "Plan capture succeeds", "priority": "must"}],
+        "assumptions": [],
+    }
+
+    def fake_run_command(command, **kwargs):
+        del command, kwargs
+        output_path.write_text(
+            json.dumps(plan_payload)
+            + "\nOpenAI Codex v0.142.2\n--------\ntrailing transcript noise\n",
+            encoding="utf-8",
+        )
+        return _impl.CommandResult(
+            command=["codex"],
+            cwd=tmp_path,
+            returncode=0,
+            stdout="",
+            stderr="",
+            duration_ms=5,
+        )
+
+    monkeypatch.setattr(_impl, "run_command", fake_run_command)
+    monkeypatch.setattr(
+        _impl, "_codex_step_cost", lambda *args, **kwargs: (0.0, 0, 0, "gpt-5.5", None)
+    )
+
+    result = _impl.run_codex_step(
+        "plan",
+        state,
+        plan_dir,
+        root=root,
+        persistent=False,
+        fresh=True,
+        read_only=False,
+        output_path=output_path,
+        prompt_override="Return a structured plan payload.",
+    )
+
+    assert result.payload["plan"] == plan_payload["plan"]
+    assert result.payload["success_criteria"][0]["criterion"] == "Plan capture succeeds"
+
+
 def test_run_command_reads_prompt_file_path_as_file_contents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

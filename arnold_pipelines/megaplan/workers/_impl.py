@@ -2496,6 +2496,33 @@ def _extract_json_from_raw(raw: str) -> dict[str, Any] | None:
     return None
 
 
+def _looks_like_plan_markdown(text: str) -> bool:
+    stripped = text.lstrip()
+    if not stripped:
+        return False
+    if stripped.startswith("# "):
+        return True
+    if "## Overview" in text:
+        return True
+    return bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", text))
+
+
+def _extract_plan_capture_input(raw_text: str) -> str | dict[str, Any]:
+    candidate = _extract_json_from_raw(raw_text)
+    if isinstance(candidate, dict):
+        if isinstance(candidate.get("plan"), str):
+            return candidate
+        if isinstance(candidate.get("steps"), list):
+            return candidate
+        if isinstance(candidate.get("title"), str) and isinstance(candidate.get("overview"), str):
+            return candidate
+    if _looks_like_plan_markdown(raw_text):
+        from arnold_pipelines.megaplan.model_seam import coerce_plan_markdown_payload
+
+        return coerce_plan_markdown_payload(raw_text)
+    return raw_text
+
+
 def _json_decode_error_for_raw(raw: str) -> json.JSONDecodeError | None:
     """Return a representative JSON decode error for malformed model output."""
     text = raw.strip()
@@ -3577,14 +3604,10 @@ def _run_codex_step_uncapped(
     if free_text:
         text = output_raw or raw
         payload: dict[str, Any] = {}
-        if step == "plan" and (
-            text.lstrip().startswith("# ")
-            or "## Overview" in text
-            or bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", text))
-        ):
-            from arnold_pipelines.megaplan.model_seam import coerce_plan_markdown_payload
-
-            payload = coerce_plan_markdown_payload(text)
+        if step == "plan":
+            extracted = _extract_plan_capture_input(text)
+            if isinstance(extracted, dict):
+                payload = extracted
         return WorkerResult(
             payload=payload,
             raw_output=text,
@@ -3597,14 +3620,8 @@ def _run_codex_step_uncapped(
         )
     capture_input: str | dict[str, Any] = raw
     plan_text = output_raw or raw
-    if step == "plan" and (
-        plan_text.lstrip().startswith("# ")
-        or "## Overview" in plan_text
-        or bool(re.search(r"(?m)^#{2,3}\s+Step\s+\d+:\s+.+$", plan_text))
-    ):
-        from arnold_pipelines.megaplan.model_seam import coerce_plan_markdown_payload
-
-        capture_input = coerce_plan_markdown_payload(plan_text)
+    if step == "plan":
+        capture_input = _extract_plan_capture_input(plan_text)
     try:
         capture_outcome = capture_step_output(
             StepInvocation(
