@@ -400,10 +400,54 @@ This redaction applies to:
 - OpenSSH project/docs: https://www.openssh.com/
 - Config & environment map: [docs/configuration.md](configuration.md)
 
+## M1 Cloud-Safe Repair Substrate
+
+The M1 substrate wraps the existing watchdog, repair loop, auditor, and Discord
+dispatch with observe-only resolver evidence, shared repair locking, canonical
+redaction, and feature flags.  All behaviour-changing paths are disabled by
+default; the resolver and redaction are on.
+
+### Quick Reference
+
+| Topic | See |
+|---|---|
+| Rollback, preflight, flags, wrapper refresh, lock inspection, watchdog restart, validation | [docs/ops/recovery-runbooks.md](ops/recovery-runbooks.md) — `OPS-M1-REPAIR-ROLLBACK` |
+| Feature flag env vars and defaults | `arnold_pipelines/megaplan/cloud/feature_flags.py` |
+| Repair lock dir (`<marker_dir>/<session>.repair-loop.lock/`) | `arnold_pipelines/megaplan/cloud/repair_lock.py` |
+| Sidecar compatibility (needs-human, repair-data) | `arnold_pipelines/megaplan/cloud/repair_contract.py` |
+| Redaction API | `arnold_pipelines/megaplan/cloud/redact.py` |
+| Implementation plan (sprints, stages, policy decisions) | [docs/ops/tiered-repair-implementation-plan.md](ops/tiered-repair-implementation-plan.md) |
+
+### Key env vars
+
+| Variable | M1 Default | Behaviour |
+|---|---|---|
+| `ARNOLD_RESOLVER_OBSERVE` | `1` | Capture resolver evidence (additive, non-authoritative). |
+| `ARNOLD_RESOLVER_ENFORCEMENT` | `0` | Make resolver authoritative for target selection. |
+| `ARNOLD_ESCALATION_LEDGER` | `0` | Enable append-only escalation ledger. |
+| `ARNOLD_AUTONOMY` | `0` | Enable autonomous trigger/meta/auditor actions. |
+| `ARNOLD_REDACTION_ENABLED` | `1` | Redact secrets in persisted and outbound artifacts. |
+
+All flags accept `0`/`false`/`no`/`off` to disable.  Unset uses the M1 default.
+
+### Wrapper deployment note
+
+The editable-install sync updates the Python package but does **not** refresh
+`/usr/local/bin` wrappers.  After every merge that changes wrapper scripts or
+shared cloud Python modules, re-copy wrappers manually:
+
+```bash
+cd /workspace/arnold
+for w in arnold-repair-loop arnold-watchdog arnold-progress-auditor arnold-discord-dm; do
+  cp "arnold_pipelines/megaplan/cloud/wrappers/$w" "/usr/local/bin/$w"
+  chmod +x "/usr/local/bin/$w"
+done
+```
+
 ## Related Runbooks And Design Notes
 
 - **Cloud chain smoke**: [docs/ops/cloud-chain-smoke.md](ops/cloud-chain-smoke.md) — end-to-end smoke tests for cloud chain operations.
-- **Recovery runbooks**: [docs/ops/recovery-runbooks.md](ops/recovery-runbooks.md) — operational procedures for recovering cloud deployments.
+- **Recovery runbooks**: [docs/ops/recovery-runbooks.md](ops/recovery-runbooks.md) — operational procedures for recovering cloud deployments, including the M1 rollback/preflight runbook (`OPS-M1-REPAIR-ROLLBACK`).
 - **Cloud prerequisite resolution**: Active milestone briefs live under `.megaplan/initiatives/<initiative>/briefs/` — these are the source of truth for structured prerequisite/quality resolution metadata, auto recovery, chain policy/status, cloud supervision, and slot-first watchdog hardening.
 - **Slot-first watchdog**: The watchdog operates from the assigned slot/workspace first, verifies provider and session consistency, lists available human-verification actions, and only restarts or wakes chains when the status payload shows the chain is recoverable. Continuous branch and PR synchronization is required after stops and recoveries so status reflects what code reviewers and operators see.
 
