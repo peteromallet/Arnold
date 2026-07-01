@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from arnold_pipelines.megaplan.discord_dm import send_discord_dm
+from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
 
 def main() -> int:
@@ -31,7 +32,7 @@ def main() -> int:
             "error": str(exc),
         }
     else:
-        result = send_discord_dm(payload)
+        result = send_discord_dm(redact_payload(payload))
     json.dump(result, sys.stdout, sort_keys=True)
     sys.stdout.write("\n")
     return 0

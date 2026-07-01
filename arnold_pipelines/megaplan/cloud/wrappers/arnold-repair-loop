@@ -18,6 +18,8 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
+WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 MARKER_PATH="$MARKER_DIR/$SESSION.json"
 ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}}"
@@ -52,11 +54,13 @@ DATA_FILE="$DATA_DIR/${SAFE_SESSION}.repair-data.json"
 PROGRESS_FILE="$MARKER_DIR/${SAFE_SESSION}.repair-progress.json"
 NEEDS_HUMAN_FILE="$DATA_DIR/${SAFE_SESSION}.needs-human.json"
 REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"
+REPAIR_LOCK_DIR="${CLOUD_WATCHDOG_REPAIR_LOCK_DIR:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.lock}"
 
 mkdir -p "$RUN_DIR" "$DATA_DIR" "$FINDINGS_DIR"
 
 CHILD_PIDS=()
 CLEANUP_CHILDREN_RAN=0
+REPAIR_LOCK_DIR_OWNED=0
 REPAIR_PID_FILE_OWNED=0
 REPAIR_SHUTDOWN_RAN=0
 cleanup_children() {
@@ -86,7 +90,35 @@ cleanup_children() {
 }
 
 log() {
-  echo "[repair-loop $(date -Iseconds)] $*" | tee -a "$LOG"
+  local message
+  message="$(redact_inline_text "$*")"
+  echo "[repair-loop $(date -Iseconds)] $message" | tee -a "$LOG"
+}
+
+redact_inline_text() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$1" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+print(redact_text(sys.argv[1]), end="")
+PY
+}
+
+redact_file_in_place() {
+  local path="${1:-}"
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    return 0
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+path = Path(sys.argv[1])
+path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
+PY
 }
 
 clear_session_repair_markers_now() {
@@ -212,16 +244,26 @@ PY
 
 release_repair_lock() {
   local current_pid=""
-  if [[ "$REPAIR_PID_FILE_OWNED" != "1" ]]; then
-    return
-  fi
-  if [[ -r "$REPAIR_PID_FILE" ]]; then
-    read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
-  fi
-  if [[ "$current_pid" == "$$" ]]; then
-    rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+  if [[ "$REPAIR_PID_FILE_OWNED" == "1" ]]; then
+    if [[ -r "$REPAIR_PID_FILE" ]]; then
+      read -r current_pid < "$REPAIR_PID_FILE" || current_pid=""
+    fi
+    if [[ "$current_pid" == "$$" ]]; then
+      rm -f "$REPAIR_PID_FILE" 2>/dev/null || true
+    fi
   fi
   REPAIR_PID_FILE_OWNED=0
+  if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
+    PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REPAIR_LOCK_DIR" "$$" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
+
+lock_dir, pid_text = sys.argv[1:]
+raise SystemExit(0 if release_repair_lock(lock_dir, expected_pid=int(pid_text)) else 1)
+PY
+    REPAIR_LOCK_DIR_OWNED=0
+  fi
 }
 
 shutdown_repair_loop() {
@@ -239,8 +281,77 @@ trap 'shutdown_repair_loop; exit 130' INT
 trap 'shutdown_repair_loop; exit 143' TERM
 
 acquire_repair_lock() {
-  local existing_pid="" live_pid=""
+  local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json=""
+  local -a _repair_lock_result=()
   mkdir -p "$(dirname "$REPAIR_PID_FILE")"
+  mapfile -t _repair_lock_result < <(
+    PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REPAIR_LOCK_DIR" "$SESSION" "$$" "$WORKSPACE" "$0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY'
+import json
+import os
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock
+
+lock_dir, session, pid_text, workspace, *command_parts = sys.argv[1:]
+
+def is_pid_live(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+result = acquire_repair_lock(
+    lock_dir,
+    session=session,
+    pid=int(pid_text),
+    command=" ".join(command_parts),
+    cwd=workspace,
+    is_pid_live=is_pid_live,
+)
+owner_pid = ""
+if isinstance(result.owner, dict):
+    owner_pid = str(result.owner.get("pid") or "")
+print(result.status)
+print(owner_pid)
+print(json.dumps(result.stale_evidence or {}, sort_keys=True))
+PY
+  )
+  lock_status="${_repair_lock_result[0]:-}"
+  lock_owner_pid="${_repair_lock_result[1]:-}"
+  stale_lock_json="${_repair_lock_result[2]:-}"
+  if [[ -z "$stale_lock_json" ]]; then
+    stale_lock_json='{}'
+  fi
+  if [[ "$lock_status" == "busy" ]]; then
+    log "another repair loop is already active; exiting session=$SESSION owner_pid=${lock_owner_pid:-unknown} pidfile=$REPAIR_PID_FILE"
+    return 1
+  fi
+  if [[ "$lock_status" == "acquired" ]]; then
+    REPAIR_LOCK_DIR_OWNED=1
+  elif [[ "$lock_status" == "stale" ]]; then
+    log "stale repair lock detected; leaving evidence in place session=$SESSION lock_dir=$REPAIR_LOCK_DIR"
+    if [[ -f "$DATA_FILE" ]]; then
+      PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$stale_lock_json" <<'PY'
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, merge_additive_fields, save_repair_data
+
+path = pathlib.Path(sys.argv[1])
+stale_evidence = json.loads(sys.argv[2])
+payload = load_json(path, default={})
+verification = dict(payload.get("verification") or {})
+verification["repair_lock"] = {
+    "status": "stale",
+    "stale_evidence": stale_evidence,
+}
+payload = merge_additive_fields(payload, verification=verification)
+save_repair_data(path, payload)
+PY
+    fi
+  fi
   while true; do
     if ( set -o noclobber; printf '%s\n' "$$" > "$REPAIR_PID_FILE" ) 2>/dev/null; then
       REPAIR_PID_FILE_OWNED=1
@@ -253,10 +364,16 @@ acquire_repair_lock() {
       existing_pid=""
     fi
     if [[ -n "$existing_pid" && "$existing_pid" != "$$" ]] && repair_loop_pid_matches_session "$existing_pid" "$SESSION"; then
+      if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
+        release_repair_lock
+      fi
       log "another repair loop is already active; exiting session=$SESSION owner_pid=$existing_pid pidfile=$REPAIR_PID_FILE"
       return 1
     fi
     if live_pid="$(find_live_repair_loop_for_session "$SESSION" 2>/dev/null)"; then
+      if [[ "$REPAIR_LOCK_DIR_OWNED" == "1" ]]; then
+        release_repair_lock
+      fi
       log "another repair loop is already active; exiting session=$SESSION owner_pid=$live_pid pidfile=$REPAIR_PID_FILE"
       return 1
     fi
@@ -630,7 +747,7 @@ collect_failure_context_json() {
   local session="$2"
   local run_kind="${3:-chain}"
   local plan_name="${4:-}"
-  python3 - "$workspace" "$session" "$run_kind" "$plan_name" <<'PY'
+  python3 - "$workspace" "$session" "$run_kind" "$plan_name" "$MARKER_DIR" "$DATA_DIR" <<'PY'
 import json
 import pathlib
 import re
@@ -640,6 +757,8 @@ workspace = pathlib.Path(sys.argv[1])
 session = sys.argv[2]
 run_kind = sys.argv[3]
 marker_plan_name = sys.argv[4]
+marker_dir = pathlib.Path(sys.argv[5]) if len(sys.argv) > 5 else workspace / ".megaplan" / "cloud-sessions"
+repair_data_dir = pathlib.Path(sys.argv[6]) if len(sys.argv) > 6 else marker_dir / "repair-data"
 
 
 def _tail_text(path: pathlib.Path, lines: int = 20) -> str:
@@ -1650,6 +1769,16 @@ payload = {
     "user_action_context": user_action_context,
     "execute_attempt_context": execute_attempt_context,
 }
+try:
+    from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+    payload["resolver_output"] = resolve_current_target(
+        session,
+        marker_dir=marker_dir,
+        repair_data_dir=repair_data_dir,
+    )
+except Exception:
+    payload["resolver_output"] = {}
 print(json.dumps(payload, sort_keys=True))
 PY
 }
@@ -2128,12 +2257,16 @@ repair_data_init() {
   tmux_info="$(tmux capture-pane -pt "$SESSION" -S -80 2>/dev/null || true)"
   chain_state="$(find "$WORKSPACE/.megaplan" -path '*/.chains/*.json' -o -name 'chain_state.json' 2>/dev/null | sort | tail -10)"
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$run_kind" "$plan_name")"
-  python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$PROGRESS_FILE" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$run_kind" "$plan_name" "$ARNOLD_SRC" "$SYNC_BRANCH" "$RUN_DIR" "$relaunch_command" "$initial_health" "$marker_json" "$source_git" "$workspace_git" "$chain_log" "$watchdog_log" "$tmux_info" "$chain_state" "$failure_context" <<'PY'
 import json
-import os
 import pathlib
 import sys
-import tempfile
+
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    load_json,
+    merge_additive_fields,
+    save_repair_data,
+)
 
 (
     path,
@@ -2159,31 +2292,7 @@ import tempfile
 ) = sys.argv[1:]
 failure_context_payload = json.loads(failure_context)
 data_path = pathlib.Path(path)
-
-
-def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, target_path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
-
-
-existing = {}
-if data_path.exists():
-    try:
-        existing = json.loads(data_path.read_text(encoding="utf-8"))
-    except Exception:
-        existing = {}
+existing = load_json(data_path, default={})
 attempts = existing.get("attempts") if isinstance(existing.get("attempts"), list) else []
 if not attempts and isinstance(existing.get("iterations"), list):
     attempts = [item for item in existing.get("iterations") if isinstance(item, dict)]
@@ -2241,7 +2350,10 @@ payload = {
     "iterations": [],
     "outcome": "repairing",
 }
-_atomic_write_json(data_path, payload)
+resolver_output = failure_context_payload.get("resolver_output")
+payload["initial_facts"]["resolver_output"] = resolver_output or {}
+payload = merge_additive_fields(payload, target=resolver_output or {})
+save_repair_data(data_path, payload)
 PY
 }
 
@@ -2255,29 +2367,12 @@ repair_data_record_dev() {
   local turn_rc="$7"
   local before_sha="$8"
   local after_sha="$9"
-  python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$requested_model" "$dispatch_model" "$fallback_reason" "$report_path" "$turn_rc" "$before_sha" "$after_sha" <<'PY'
 import json
-import os
 import pathlib
 import sys
-import tempfile
 
-
-def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, target_path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
 (
     path,
@@ -2293,7 +2388,7 @@ def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
 ) = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
-payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+payload = load_json(pathlib.Path(path), default={})
 report = {}
 report_file = pathlib.Path(report_path)
 if report_file.exists():
@@ -2349,6 +2444,7 @@ entry["plan_runtime_state"] = (payload.get("current_failure_context") or {}).get
 entry["last_gate"] = (payload.get("current_failure_context") or {}).get("last_gate", {})
 entry["user_action_context"] = (payload.get("current_failure_context") or {}).get("user_action_context", {})
 entry["execute_attempt_context"] = (payload.get("current_failure_context") or {}).get("execute_attempt_context", {})
+entry["resolver_output"] = (payload.get("current_failure_context") or {}).get("resolver_output", {})
 
 attempts = payload.setdefault("attempts", [])
 attempt = None
@@ -2375,6 +2471,7 @@ attempt["plan_runtime_state"] = entry["plan_runtime_state"]
 attempt["last_gate"] = entry["last_gate"]
 attempt["user_action_context"] = entry["user_action_context"]
 attempt["execute_attempt_context"] = entry["execute_attempt_context"]
+attempt["resolver_output"] = entry["resolver_output"]
 attempt["dev_model_requested"] = requested_model
 attempt["dev_model"] = dispatch_model
 if fallback_reason:
@@ -2391,7 +2488,7 @@ attempt["human_review_recommendation"] = entry["human_review_recommendation"]
 attempt["findings_doc_path"] = entry["findings_doc_path"]
 attempt["findings_doc_appended"] = entry["findings_doc_appended"]
 
-_atomic_write_json(pathlib.Path(path), payload)
+save_repair_data(pathlib.Path(path), payload)
 PY
 }
 
@@ -2402,6 +2499,7 @@ append_repair_finding_if_reported() {
   python3 - "$report_path" "$FINDINGS_DOC" "$iteration" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$ARNOLD_SRC" "$DATA_FILE" "$dev_model" <<'PY'
 import datetime as dt
 import json
+import os
 import pathlib
 import sys
 
@@ -2499,34 +2597,17 @@ repair_data_record_mechanical() {
   local detail="$4"
   local failure_context
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail" "$failure_context" <<'PY'
 import json
-import os
 import pathlib
 import sys
-import tempfile
 
-
-def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, target_path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
 path, iteration_raw, attempt_id_raw, status, detail, failure_context = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
-payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+payload = load_json(pathlib.Path(path), default={})
 failure_context_payload = json.loads(failure_context)
 iterations = payload.setdefault("iterations", [])
 while len(iterations) < iteration:
@@ -2555,6 +2636,7 @@ entry["plan_runtime_state"] = failure_context_payload.get("plan_runtime_state", 
 entry["last_gate"] = failure_context_payload.get("last_gate", {})
 entry["user_action_context"] = failure_context_payload.get("user_action_context", {})
 entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", {})
+entry["resolver_output"] = failure_context_payload.get("resolver_output", {})
 attempts = payload.setdefault("attempts", [])
 for item in attempts:
     if not isinstance(item, dict) or int(item.get("attempt_id") or 0) != attempt_id:
@@ -2562,8 +2644,9 @@ for item in attempts:
     item["mechanical_launch"] = status
     item["mechanical_detail"] = detail
     item["post_launch_failure_context"] = failure_context_payload
+    item["resolver_output"] = failure_context_payload.get("resolver_output", {})
     break
-_atomic_write_json(pathlib.Path(path), payload)
+save_repair_data(pathlib.Path(path), payload)
 PY
 }
 
@@ -2575,34 +2658,17 @@ repair_data_record_kimi() {
   local turn_rc="$5"
   local failure_context
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context" <<'PY'
 import json
-import os
 import pathlib
 import sys
-import tempfile
 
-
-def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, target_path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
 path, iteration_raw, attempt_id_raw, status, report_path, turn_rc, failure_context = sys.argv[1:]
 iteration = int(iteration_raw)
 attempt_id = int(attempt_id_raw)
-payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+payload = load_json(pathlib.Path(path), default={})
 failure_context_payload = json.loads(failure_context)
 report = {}
 report_file = pathlib.Path(report_path)
@@ -2650,6 +2716,7 @@ entry["plan_runtime_state"] = failure_context_payload.get("plan_runtime_state", 
 entry["last_gate"] = failure_context_payload.get("last_gate", entry.get("last_gate", {}))
 entry["user_action_context"] = failure_context_payload.get("user_action_context", entry.get("user_action_context", {}))
 entry["execute_attempt_context"] = failure_context_payload.get("execute_attempt_context", entry.get("execute_attempt_context", {}))
+entry["resolver_output"] = failure_context_payload.get("resolver_output", entry.get("resolver_output", {}))
 entry["kimi_report"] = report
 attempts = payload.setdefault("attempts", [])
 for item in attempts:
@@ -2661,55 +2728,40 @@ for item in attempts:
     item["kimi_diagnosis"] = entry["kimi_diagnosis"]
     item["why"] = entry["why"]
     item["post_kimi_failure_context"] = failure_context_payload
+    item["resolver_output"] = failure_context_payload.get("resolver_output", {})
     item["kimi_report"] = report
     break
 
-_atomic_write_json(pathlib.Path(path), payload)
+save_repair_data(pathlib.Path(path), payload)
 PY
 }
 
 repair_data_set_outcome() {
   local outcome="$1"
-  python3 - "$DATA_FILE" "$outcome" <<'PY'
-import json
-import os
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$outcome" <<'PY'
 import pathlib
 import sys
-import tempfile
 
-
-def _atomic_write_json(target_path: pathlib.Path, payload: dict) -> None:
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{target_path.name}.", suffix=".tmp", dir=str(target_path.parent), text=True)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp_name, target_path)
-    except Exception:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json, save_repair_data
 
 path, outcome = sys.argv[1:]
-payload = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+payload = load_json(pathlib.Path(path), default={})
 payload["outcome"] = outcome
-_atomic_write_json(pathlib.Path(path), payload)
+save_repair_data(pathlib.Path(path), payload)
 PY
 }
 
 repair_clear_stale_state_if_needed() {
   local failure_context
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  python3 - "$DATA_FILE" "$failure_context" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context" <<'PY'
 import datetime as dt
 import json
 import os
 import pathlib
 import sys
+
+from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, load_json, save_repair_data
 
 data_path_raw, failure_context_raw = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
@@ -2817,12 +2869,7 @@ if has_state_mismatch:
                                 "chain_state_path": str(chain_state_path),
                             }
                         )
-                tmp_chain_path = chain_state_path.with_suffix(chain_state_path.suffix + ".tmp")
-                tmp_chain_path.write_text(
-                    json.dumps(chain_payload, indent=2, sort_keys=True) + "\n",
-                    encoding="utf-8",
-                )
-                os.replace(tmp_chain_path, chain_state_path)
+                atomic_write_json(chain_state_path, chain_payload)
                 state_mismatch["cleared"] = True
                 state_mismatch["action_taken"] = (
                     f"cleared chain last_state to match plan current_state ({plan_current_state})"
@@ -2849,11 +2896,9 @@ if isinstance(meta, dict):
             }
         )
 
-tmp_path = state_path.with_suffix(state_path.suffix + ".tmp")
-tmp_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-os.replace(tmp_path, state_path)
+atomic_write_json(state_path, state)
 
-payload = json.loads(data_path.read_text(encoding="utf-8"))
+payload = load_json(data_path, default={})
 failure_context["state_mismatch"] = state_mismatch
 payload.setdefault("stale_state_actions", []).append(
     {
@@ -2868,7 +2913,7 @@ initial = payload.setdefault("initial_facts", {})
 initial["failure_context"] = failure_context
 initial["stale_state"] = stale_state
 initial["state_mismatch"] = state_mismatch
-data_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+save_repair_data(data_path, payload)
 print("cleared:" + "; ".join(actions))
 PY
 }
@@ -3269,6 +3314,7 @@ Constraints:
 - Do not ask for user input.
 - End the turn as soon as you have either a narrow fix or a concrete blocker, unless recurrence was detected; in that case stay long enough to name the root mechanism.
 EOF
+  redact_file_in_place "$prompt_path"
 }
 
 write_kimi_prompt() {
@@ -3307,6 +3353,7 @@ classification, launch_result, diagnosis, why, remaining_blockers.
 
 Do not ask for user input.
 EOF
+  redact_file_in_place "$prompt_path"
 }
 
 run_dev_fix_turn() {
@@ -3411,45 +3458,21 @@ PY
 
 write_needs_human_marker() {
   local discord_status="$1"
-  python3 - "$DATA_FILE" "$NEEDS_HUMAN_FILE" "$discord_status" <<'PY'
-import datetime as dt
-import json
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$NEEDS_HUMAN_FILE" "$discord_status" <<'PY'
 import pathlib
 import sys
 
+from arnold_pipelines.megaplan.cloud.human_blockers import write_needs_human_marker_payload
+from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
+
 data_path, out_path, discord_status = sys.argv[1:]
-payload = json.loads(pathlib.Path(data_path).read_text(encoding="utf-8"))
-iterations = payload.get("iterations") or []
-plan_name = payload.get("plan_name") if isinstance(payload.get("plan_name"), str) else ""
-chain_current_plan_name = ""
-for item in reversed(iterations):
-    if not isinstance(item, dict):
-        continue
-    chain_state = item.get("chain_state_summary")
-    if isinstance(chain_state, dict):
-        value = chain_state.get("current_plan_name")
-        if isinstance(value, str) and value:
-            chain_current_plan_name = value
-            break
-summary_parts = []
-for item in iterations:
-    summary_parts.append(
-        f"i{item.get('i')} dev={item.get('dev_model', '')} sha={item.get('dev_fix_sha', '') or 'none'} "
-        f"mechanical={item.get('mechanical_launch', '') or 'n/a'} "
-        f"kimi={item.get('kimi_launch', '') or 'n/a'} why={item.get('why', '') or item.get('kimi_diagnosis', '') or 'n/a'}"
-    )
-marker = {
-    "session": payload.get("session"),
-    "workspace": payload.get("workspace"),
-    "spec": payload.get("spec"),
-    "plan_name": plan_name,
-    "chain_current_plan_name": chain_current_plan_name,
-    "summary": " | ".join(summary_parts),
-    "repair_data_path": data_path,
-    "discord_status": discord_status,
-    "recorded_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-}
-pathlib.Path(out_path).write_text(json.dumps(marker, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+payload = validate_repair_data(pathlib.Path(data_path))
+write_needs_human_marker_payload(
+    out_path,
+    payload,
+    repair_data_path=data_path,
+    discord_status=discord_status,
+)
 PY
 }
 
@@ -3461,10 +3484,12 @@ send_discord_escalation() {
     printf '%s' "$result_status"
     return 0
   fi
-  python3 - "$DATA_FILE" > "$RUN_DIR/discord-payload.json" <<'PY'
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" > "$RUN_DIR/discord-payload.json" <<'PY'
 import json
 import pathlib
 import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
 data = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 iterations = data.get("iterations") or []
@@ -3494,7 +3519,7 @@ payload = {
     "fields": fields,
     "next_action": f"Read {sys.argv[1]} and intervene manually.",
 }
-print(json.dumps(payload))
+print(json.dumps(redact_payload(payload)))
 PY
   if "$DISCORD_DM_BIN" < "$RUN_DIR/discord-payload.json" > "$result_path" 2>>"$LOG"; then
     result_status="$(python3 - "$result_path" <<'PY'
