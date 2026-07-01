@@ -288,6 +288,14 @@ def _extract_cli_error_payload(stdout: str, stderr: str) -> dict[str, Any] | Non
     return None
 
 
+def _filtered_failure_stderr(stderr: str) -> str:
+    """Drop non-fatal warning banners that should not mask the real failure."""
+
+    lines = [line.rstrip() for line in (stderr or "").splitlines()]
+    kept = [line for line in lines if not line.lstrip().startswith("M_WARN_")]
+    return "\n".join(line for line in kept if line.strip()).strip()
+
+
 def _is_cli_error_payload(payload: Any) -> bool:
     """Return True when *payload* looks like a structured CliError dict."""
     return (
@@ -2655,7 +2663,7 @@ def drive(
             message = latest_failure.get("message")
             if isinstance(message, str) and message.strip():
                 return message.strip()
-        return (stderr.strip() or stdout.strip()[-400:]).strip()
+        return (_filtered_failure_stderr(stderr) or stdout.strip()[-400:]).strip()
 
     def _run_phase(cmd: list[str], next_step: str) -> tuple[int, str, str, object | None]:
         before_phase_result = _phase_result_signature(plan_dir)
@@ -3906,6 +3914,7 @@ def drive(
             # Stall detection will still kill infinite loops.
             exit_kind = getattr(result, "exit_kind", None)
             failure_detail = _phase_failure_detail(next_step, out, err)
+            filtered_stderr = _filtered_failure_stderr(err)
             log(f"phase '{next_step}' exited with {exit_kind}: {failure_detail}")
             # plan_locked is transient contention from a concurrent auto/phase,
             # not a phase failure. Writing STATE_FAILED here turns a recoverable
@@ -3936,7 +3945,13 @@ def drive(
                     resume_cursor={"phase": next_step, "retry_strategy": "rerun_phase"},
                     last_artifact=_latest_artifact_name(plan_dir),
                     suggested_action="Inspect phase output and resume from the failed phase.",
-                    metadata={"exit_code": code, "stderr": err.strip(), "stdout": out.strip()[-400:], "iteration": iteration},
+                    metadata={
+                        "exit_code": code,
+                        "stderr": filtered_stderr,
+                        "stderr_raw": err.strip() if filtered_stderr != err.strip() else "",
+                        "stdout": out.strip()[-400:],
+                        "iteration": iteration,
+                    },
                 )
         elif result is None and code != 0:
             # Non-phase commands (e.g. 'override add-note') that failed —

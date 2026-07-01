@@ -162,6 +162,69 @@ def test_drive_internal_error_log_prefers_latest_failure_over_warning_stderr(
     assert "phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED" not in joined
 
 
+def test_drive_internal_error_ignores_warning_only_stderr_when_stdout_has_failure(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    structural_failure = (
+        "worker_structural_audit_failed: model output structural audit failed: "
+        "Plan must include at least one step section"
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "prepped"}),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "prepped",
+            "next_step": "plan",
+            "valid_next": ["plan"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="plan",
+                invocation_id="test-invocation",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            structural_failure,
+            "M_WARN_ROUTING_DEGRADED plan -> codex:high (no premium credential)",
+        )
+
+    writes: list[str] = []
+    captured_failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: captured_failures.append(kwargs))
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=1,
+        poll_sleep=0,
+        writer=writes.append,
+    )
+
+    phase_failure = next(item for item in captured_failures if item.get("kind") == "phase_failed")
+    assert outcome.status == "cap"
+    assert structural_failure in "".join(writes)
+    assert phase_failure["message"] == structural_failure
+    assert phase_failure["metadata"]["stderr"] == ""
+    assert "M_WARN_ROUTING_DEGRADED" in phase_failure["metadata"]["stderr_raw"]
+
+
 def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_blocked_loop(
     monkeypatch,
     tmp_path: Path,
