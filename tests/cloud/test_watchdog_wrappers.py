@@ -3961,10 +3961,11 @@ tmux() { echo TMUX >&2; return 1; }
     report = report_path.read_text(encoding="utf-8")
     log = log_path.read_text(encoding="utf-8")
     assert "\tobserve\tneeds_human\told parent repair exhaustion" not in report
-    assert "\trepair\trepair_dispatched\trepair loop dispatched after mechanical relaunch\t" in report
+    assert "\tobserve\tsuperseded\tlive sibling session owns workspace: child-session:alive\t" in report
     assert "stale repair needs-human marker cleared; sibling session is alive" in log
+    assert "stopped session superseded by live sibling" in log
     assert not sidecar_path.exists()
-    assert "DISPATCH" in result.stderr
+    assert "DISPATCH" not in result.stderr
 
 
 def test_watchdog_clears_stale_needs_human_sidecar_for_superseded_plan(tmp_path: Path) -> None:
