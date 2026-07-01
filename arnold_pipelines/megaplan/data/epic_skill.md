@@ -77,7 +77,7 @@ on_failure:
   abort: stop_chain                  # stop_chain | skip_milestone | retry_milestone
 on_escalate:
   abort: stop_chain
-merge_policy: auto                   # auto | review | manual. Use `auto` for unattended/cloud chains so milestone PRs merge themselves and the chain advances without a human; `review`/`manual` park the chain at `awaiting_pr_merge` after every milestone until someone merges the PR by hand.
+merge_policy: auto                   # auto | review | manual. Use `auto` by default for unattended/cloud chains so clean milestone PRs merge themselves and the chain advances without a human; use `review`/`manual` only when the user explicitly wants a human PR gate after every milestone.
 
 driver:
   robustness: standard               # default if a milestone doesn't override

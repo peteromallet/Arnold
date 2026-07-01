@@ -330,7 +330,7 @@ The supervisor targets the same `megaplan-chain` tmux session used by `cloud cha
 The supervisor will **only** perform these mutations:
 
 - **Restart a dead runner**: When `effective_status` is `stale_bookkeeping` and the `megaplan-chain` tmux session is dead or missing, the supervisor kills any stale session and starts a fresh one-shot tick.
-- **Advance past a merged PR**: When `effective_status` is `awaiting_pr_merge` and the PR has been merged (confirmed via `gh pr view --json state`), the supervisor advances the chain with a one-shot tick.
+- **Auto-merge or advance a milestone PR**: When `effective_status` is `awaiting_pr_merge`, the supervisor may auto-merge only if the chain declares `merge_policy: auto`; once the PR is merged (by policy or by a human), it advances the chain with a one-shot tick.
 
 #### Refusal cases (no mutation)
 
@@ -342,7 +342,7 @@ The supervisor **refuses to act** and returns `acted: false` with a `refused_rea
 | `complete` | All milestones processed; chain is done. |
 | `human_prerequisite` | Prerequisite policy is `required` and unmet; requires human operator resolution via `python -m arnold_pipelines.megaplan user-action resolve` or `python -m arnold_pipelines.megaplan chain override`. |
 | `quality_gate` | Validation policy is `required` and quality gate is failing; requires human operator resolution. |
-| `awaiting_pr_merge` (PR unmerged) | PR is still open; supervisor will not advance until merged. |
+| `awaiting_pr_merge` (PR unmerged, `merge_policy: review`/`manual`) | PR is still open; supervisor will not advance until merged by a human. |
 | `stale_bookkeeping` (runner alive) | Bookkeeping is stale but runner is alive; supervisor will not force-restart a live runner. |
 | Provider lacks `ssh_exec` | Cannot probe or mutate the remote runner. |
 

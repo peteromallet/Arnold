@@ -161,9 +161,9 @@ on_failure:
   abort: stop_chain
 on_escalate:
   abort: stop_chain
-merge_policy: review
+merge_policy: auto
 driver:
-  auto_approve: false
+  auto_approve: true
   require_clean_base: true
   robustness: thorough
   poll_sleep: 8.0

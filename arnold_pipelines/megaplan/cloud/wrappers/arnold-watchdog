@@ -1090,9 +1090,18 @@ session_health_status() {
   local wait_status
   if ! tmux has-session -t "$session" 2>/dev/null; then
     if [[ "$run_kind" == "chain" ]]; then
+      if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+        echo "alive"
+        return 0
+      fi
       wait_status="$(chain_wait_status "$workspace" "$remote_spec")"
       if [[ "$wait_status" != "none" ]]; then
         echo "$wait_status"
+        return 0
+      fi
+    elif [[ "$run_kind" == "epic_chain" ]]; then
+      if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan epic-chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+        echo "alive"
         return 0
       fi
     fi
