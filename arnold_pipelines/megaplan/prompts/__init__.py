@@ -23,9 +23,6 @@ from .critique import (
     _revise_prompt,
     _write_critique_template,
 )
-from arnold_pipelines.megaplan.pipelines.creative.prompts.critique_creative import _critique_creative_prompt
-from arnold_pipelines.megaplan.pipelines.creative.prompts.critique_joke import _critique_joke_prompt
-from arnold_pipelines.megaplan.pipelines.creative.prompts.revise_joke import _revise_joke_prompt
 from .execute import (
     _execute_approval_note,
     _execute_batch_prompt as _execute_code_batch_prompt,
@@ -41,6 +38,7 @@ from .finalize import _finalize_prompt, _write_finalize_template
 from .gate import _collect_critique_summaries, _flag_summary, _gate_prompt, _write_gate_template
 from .tiebreaker_challenger import challenger_prompt
 from .tiebreaker_researcher import researcher_prompt
+from arnold_pipelines.megaplan.pipelines.doc.prompts.execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
 
 
 def _feedback_prompt(state: PlanState, plan_dir: Path) -> str:
@@ -69,9 +67,6 @@ def _tiebreaker_challenger_prompt(
 ) -> str:
     """Adapter so the tiebreaker challenger prompt fits component prompt lookup."""
     return challenger_prompt(question, dict(researcher_output or {}), state, plan_dir, root=root)
-from arnold_pipelines.megaplan.pipelines.doc.prompts.execute_doc import _execute_doc_batch_prompt, _execute_doc_prompt
-from arnold_pipelines.megaplan.pipelines.creative.prompts.execute_creative import _execute_creative_batch_prompt, _execute_creative_prompt
-from arnold_pipelines.megaplan.pipelines.creative.prompts.execute_joke import _execute_joke_batch_prompt, _execute_joke_prompt
 from .planning import (
     PLAN_TEMPLATE,
     _plan_prompt,
@@ -81,8 +76,6 @@ from .planning import (
     _prep_triage_prompt,
 )
 from .prep_doc import _prep_doc_prompt
-from arnold_pipelines.megaplan.pipelines.creative.prompts.prep_joke import _prep_joke_prompt
-from arnold_pipelines.megaplan.pipelines.creative.prompts.revise_creative import _revise_creative_prompt
 from .review import (
     _review_prompt,
     _settled_decisions_block,
@@ -96,6 +89,44 @@ from .review_joke import _review_joke_prompt
 from ._projection import PromptProjectionCapabilities
 
 _PromptBuilder = Callable[..., str]
+
+
+def _creative_prompt_exports() -> dict[str, Any]:
+    from arnold_pipelines.megaplan.pipelines.creative.prompts.critique_creative import (
+        _critique_creative_prompt,
+    )
+    from arnold_pipelines.megaplan.pipelines.creative.prompts.critique_joke import (
+        _critique_joke_prompt,
+    )
+    from arnold_pipelines.megaplan.pipelines.creative.prompts.execute_creative import (
+        _execute_creative_batch_prompt,
+        _execute_creative_prompt,
+    )
+    from arnold_pipelines.megaplan.pipelines.creative.prompts.execute_joke import (
+        _execute_joke_batch_prompt,
+        _execute_joke_prompt,
+    )
+    from arnold_pipelines.megaplan.pipelines.creative.prompts.prep_joke import (
+        _prep_joke_prompt,
+    )
+    from arnold_pipelines.megaplan.pipelines.creative.prompts.revise_creative import (
+        _revise_creative_prompt,
+    )
+    from arnold_pipelines.megaplan.pipelines.creative.prompts.revise_joke import (
+        _revise_joke_prompt,
+    )
+
+    return {
+        "_critique_creative_prompt": _critique_creative_prompt,
+        "_critique_joke_prompt": _critique_joke_prompt,
+        "_execute_creative_batch_prompt": _execute_creative_batch_prompt,
+        "_execute_creative_prompt": _execute_creative_prompt,
+        "_execute_joke_batch_prompt": _execute_joke_batch_prompt,
+        "_execute_joke_prompt": _execute_joke_prompt,
+        "_prep_joke_prompt": _prep_joke_prompt,
+        "_revise_creative_prompt": _revise_creative_prompt,
+        "_revise_joke_prompt": _revise_joke_prompt,
+    }
 
 
 @dataclass(frozen=True)
@@ -230,7 +261,7 @@ def _execute_batch_prompt(
         )
         return _with_anchor_block(prompt, state, plan_dir, audience="execute-batch")
     if is_creative_mode(state):
-        prompt = _execute_creative_batch_prompt(
+        prompt = _creative_prompt_exports()["_execute_creative_batch_prompt"](
             state,
             plan_dir,
             batch_task_ids,
@@ -256,15 +287,16 @@ def _resolve_builder(
     builders: dict[str, _PromptBuilder], step: str, state: PlanState, agent_label: str
 ) -> _PromptBuilder:
     mode = state.get("config", {}).get("mode", "code")
+    creative_prompts = _creative_prompt_exports() if is_creative_mode(state) else {}
     if is_creative_mode(state) and get_form(creative_form_id(state) or "joke").id == "joke":
         if step == "prep":
-            return _prep_joke_prompt
+            return creative_prompts["_prep_joke_prompt"]
         if step == "critique":
-            return _critique_joke_prompt
+            return creative_prompts["_critique_joke_prompt"]
         if step == "revise":
-            return _revise_joke_prompt
+            return creative_prompts["_revise_joke_prompt"]
         if step == "execute":
-            return _execute_joke_prompt
+            return creative_prompts["_execute_joke_prompt"]
         if step == "review":
             return partial(
                 _review_joke_prompt,
@@ -277,11 +309,11 @@ def _resolve_builder(
         if step == "prep":
             return _prep_doc_prompt
         if step == "critique":
-            return _critique_creative_prompt
+            return creative_prompts["_critique_creative_prompt"]
         if step == "revise":
-            return _revise_creative_prompt
+            return creative_prompts["_revise_creative_prompt"]
         if step == "execute":
-            return _execute_creative_prompt
+            return creative_prompts["_execute_creative_prompt"]
         if step == "review":
             return partial(
                 _review_doc_prompt,
