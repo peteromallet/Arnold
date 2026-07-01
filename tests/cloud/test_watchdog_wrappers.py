@@ -3836,6 +3836,7 @@ def test_watchdog_repair_loop_needs_human_sidecar_short_circuits_relaunch(tmp_pa
         [
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("repair_needs_human_summary"),
+            _extract_wrapper_function("repair_needs_human_matches_current_plan"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
@@ -3866,6 +3867,113 @@ tmux() { echo TMUX >&2; return 1; }
     assert "repair_data=" in report
     assert "discord=delivered" in report
     assert "DISPATCH" not in result.stderr
+    assert "TMUX" not in result.stderr
+
+
+def test_watchdog_clears_stale_needs_human_sidecar_for_superseded_plan(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    plan_name = "m3-current-plan"
+    old_plan_name = "m1-old-plan"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    _write_chain_state(
+        workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+        {"current_plan_name": plan_name, "last_state": "awaiting_human"},
+    )
+    _write_plan(
+        workspace / ".megaplan" / "plans" / plan_name,
+        {
+            "name": plan_name,
+            "current_state": "awaiting_human",
+            "latest_failure": {
+                "kind": "blocked_by_prereq",
+                "message": "execute reported blocked tasks awaiting user action: T1",
+            },
+        },
+        events_body="{}\n",
+    )
+    repair_data_path = repair_data_dir / "demo-session.repair-data.json"
+    repair_data_path.write_text(
+        json.dumps(
+            {
+                "session": "demo-session",
+                "iterations": [
+                    {
+                        "i": 1,
+                        "chain_state_summary": {"current_plan_name": old_plan_name},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    sidecar_path = repair_data_dir / "demo-session.needs-human.json"
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "summary": "old repair exhaustion",
+                "repair_data_path": str(repair_data_path),
+                "chain_current_plan_name": old_plan_name,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("plan_attention_status_env"),
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("repair_needs_human_summary"),
+            _extract_wrapper_function("repair_needs_human_matches_current_plan"),
+            _extract_wrapper_function("plan_terminal_status"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+""".strip(),
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    log = log_path.read_text(encoding="utf-8")
+    assert "\trepair\trepair_dispatched\tawaiting_human repair loop dispatched before needs_human\t" in report
+    assert "\tobserve\tneeds_human\told repair exhaustion" not in report
+    assert "stale repair needs-human marker cleared" in log
+    assert not sidecar_path.exists()
+    assert "DISPATCH" in result.stderr
+    assert "RELAUNCH" not in result.stderr
     assert "TMUX" not in result.stderr
 
 

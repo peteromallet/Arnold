@@ -1371,6 +1371,73 @@ print("; ".join(parts) if parts else "repair loop exhausted; needs human")
 PY
 }
 
+repair_needs_human_matches_current_plan() {
+  local session="$1"
+  local current_plan="${2:-}"
+  python3 - "$(repair_needs_human_path "$session")" "$current_plan" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+current_plan = (sys.argv[2] or "").strip()
+if not current_plan:
+    raise SystemExit(0)
+try:
+    marker = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+
+plans: set[str] = set()
+
+def add(value: object) -> None:
+    if isinstance(value, str):
+        value = value.strip()
+        if value and "/" not in value:
+            plans.add(value)
+
+def collect_from_context(context: object) -> None:
+    if not isinstance(context, dict):
+        return
+    add(context.get("current_plan_name"))
+    chain_state = context.get("chain_state_summary")
+    if isinstance(chain_state, dict):
+        add(chain_state.get("current_plan_name"))
+    current = context.get("current")
+    if isinstance(current, dict):
+        add(current.get("milestone_or_plan"))
+        add(current.get("current_plan_name"))
+
+for key in ("plan_name", "current_plan_name", "chain_current_plan_name", "milestone_or_plan"):
+    add(marker.get(key))
+
+collect_from_context(marker)
+repair_data_path = marker.get("repair_data_path")
+if isinstance(repair_data_path, str) and repair_data_path:
+    try:
+        data = json.loads(pathlib.Path(repair_data_path).read_text(encoding="utf-8"))
+    except Exception:
+        data = {}
+    if isinstance(data, dict):
+        add(data.get("plan_name"))
+        collect_from_context(data.get("current_failure_context"))
+        iterations = data.get("iterations")
+        if isinstance(iterations, list):
+            for item in iterations[-3:]:
+                if not isinstance(item, dict):
+                    continue
+                add(item.get("plan_name"))
+                collect_from_context(item)
+                collect_from_context(item.get("failure_context"))
+                collect_from_context(item.get("current_failure_context"))
+
+if plans and current_plan not in plans:
+    print(",".join(sorted(plans)))
+    raise SystemExit(1)
+raise SystemExit(0)
+PY
+}
+
 chain_health_status() {
   local session="$1"
   local workspace="$2"
@@ -3642,10 +3709,17 @@ launch_chain_tick() {
       human_summary="$human_summary; commits=${PLAN_STATUS_PUSHED_COMMITS}"
     fi
     if [[ -f "$(repair_needs_human_path "$session")" ]]; then
-      repair_summary="$(repair_needs_human_summary "$session")"
-      log "session awaits human action and repair loop already requested human session=$session summary=$repair_summary"
-      report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
-      return 0
+      local stale_marker_plans
+      stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" 2>/dev/null)" || {
+        rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+        log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown} marker_plans=${stale_marker_plans:-unknown}"
+      }
+      if [[ -f "$(repair_needs_human_path "$session")" ]]; then
+        repair_summary="$(repair_needs_human_summary "$session")"
+        log "session awaits human action and repair loop already requested human session=$session summary=$repair_summary"
+        report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+        return 0
+      fi
     fi
     repair_busy="$(repair_loop_busy_state "$session")"
     if [[ "$repair_busy" == "same_session" ]]; then
@@ -3695,10 +3769,17 @@ launch_chain_tick() {
     fi
     if [[ "$manual_review_origin" == "auto_stall" || "$manual_review_origin" == "auto_stall_legacy" ]]; then
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
-        repair_summary="$(repair_needs_human_summary "$session")"
-        log "session auto-stalled into manual_review and repair loop already requested human session=$session summary=$repair_summary"
-        report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
-        return 0
+        local stale_marker_plans
+        stale_marker_plans="$(repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" 2>/dev/null)" || {
+          rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+          log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown} marker_plans=${stale_marker_plans:-unknown}"
+        }
+        if [[ -f "$(repair_needs_human_path "$session")" ]]; then
+          repair_summary="$(repair_needs_human_summary "$session")"
+          log "session auto-stalled into manual_review and repair loop already requested human session=$session summary=$repair_summary"
+          report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+          return 0
+        fi
       fi
       repair_busy="$(repair_loop_busy_state "$session")"
       if [[ "$repair_busy" == "same_session" ]]; then
@@ -3738,6 +3819,9 @@ launch_chain_tick() {
     if [[ "$run_kind" == "chain" ]] && [[ "$(chain_current_pr_merged "$workspace" "$remote_spec")" == "merged" ]]; then
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
       log "stale repair marker cleared; current milestone PR merged, falling through to relaunch session=$session"
+    elif ! repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" >/dev/null 2>&1; then
+      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+      log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
     else
       local repair_summary
       repair_summary="$(repair_needs_human_summary "$session")"
