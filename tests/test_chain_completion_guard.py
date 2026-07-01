@@ -9,12 +9,13 @@ import arnold_pipelines.megaplan.chain as chain_module
 from arnold_pipelines.megaplan.chain import (
     _append_completed_with_guard,
     _chain_completion_guard,
+    _handle_completion_guard_failure,
     _mark_plan_completed_by_chain,
     load_chain_state,
     run_chain,
     save_chain_state,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState
+from arnold_pipelines.megaplan.chain.spec import ChainState, load_spec
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
 
 
@@ -330,6 +331,114 @@ def test_run_chain_stops_when_resumed_pr_is_closed(tmp_path: Path) -> None:
     assert result["reason"] == "milestone m1 PR #99 is closed"
     assert saved.pr_state == "closed"
     assert saved.last_state == "pr_closed"
+
+
+def test_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "on_failure:\n"
+        "  retry: retry_milestone\n"
+        "  abort: stop_chain\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {tmp_path / 'idea.md'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "idea.md").write_text("ship milestone\n", encoding="utf-8")
+    (tmp_path / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    _write_plan(
+        tmp_path,
+        current_state="done",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    state = ChainState(current_milestone_index=0, current_plan_name="plan-m1")
+    spec = load_spec(spec_path)
+
+    result = _handle_completion_guard_failure(
+        root=tmp_path,
+        spec_path=spec_path,
+        spec=spec,
+        state=state,
+        milestone=spec.milestones[0],
+        plan_name="plan-m1",
+        outcome_status="done",
+        reason="no semantic diff from milestone_base_sha to local HEAD",
+        events=[],
+        writer=lambda _msg: None,
+    )
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "stopped"
+    assert "completion guard retrying" in result["reason"]
+    assert saved.current_plan_name is None
+    assert saved.last_state == "blocked"
+    assert saved.retry_counts["m1"] == 1
+
+
+def test_pr_merge_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = tmp_path / "chain.yaml"
+    spec_path.write_text(
+        "base_branch: main\n"
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "on_failure:\n"
+        "  retry: retry_milestone\n"
+        "  abort: stop_chain\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        f"    idea: {tmp_path / 'idea.md'}\n"
+        "    branch: test/m1\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "idea.md").write_text("ship milestone\n", encoding="utf-8")
+    (tmp_path / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    _write_plan(
+        tmp_path,
+        current_state="finalized",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done"}],
+    )
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state=STATE_AWAITING_PR_MERGE,
+            pr_number=62,
+            pr_state="awaiting_merge",
+        ),
+    )
+
+    with (
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch(
+            "arnold_pipelines.megaplan.chain._append_completed_with_guard",
+            return_value=(False, "no semantic diff from milestone_base_sha to local HEAD"),
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+        )
+
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "stopped"
+    assert "completion guard retrying" in result["reason"]
+    assert saved.current_plan_name == "plan-m1"
+    assert saved.last_state == "blocked"
+    assert saved.retry_counts["m1"] == 1
 
 
 def test_run_chain_clears_stale_closed_pr_state_on_restart(tmp_path: Path) -> None:
