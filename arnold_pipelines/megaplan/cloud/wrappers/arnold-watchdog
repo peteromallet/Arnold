@@ -1438,6 +1438,56 @@ raise SystemExit(0)
 PY
 }
 
+workspace_has_other_alive_session() {
+  local session="$1"
+  local workspace="$2"
+  local candidates other_session other_workspace other_remote_spec other_run_kind other_plan_name other_health
+  candidates="$(python3 - "$MARKER_DIR" "$session" "$workspace" <<'PY'
+import json
+import pathlib
+import sys
+
+marker_dir = pathlib.Path(sys.argv[1])
+session = sys.argv[2]
+workspace = sys.argv[3]
+for path in sorted(marker_dir.glob("*.json")):
+    if path.name.endswith((".repair-progress.json", ".chain-health.progress.json")):
+        continue
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    other_session = payload.get("session")
+    other_workspace = payload.get("workspace")
+    if not isinstance(other_session, str) or not isinstance(other_workspace, str):
+        continue
+    if other_session == session or other_workspace != workspace:
+        continue
+    remote_spec = payload.get("remote_spec")
+    if not isinstance(remote_spec, str) or not remote_spec:
+        continue
+    run_kind = payload.get("run_kind")
+    plan_name = payload.get("plan_name")
+    print("\t".join([
+        other_session,
+        other_workspace,
+        remote_spec,
+        run_kind if isinstance(run_kind, str) and run_kind else "chain",
+        plan_name if isinstance(plan_name, str) else "",
+    ]))
+PY
+)"
+  while IFS=$'\t' read -r other_session other_workspace other_remote_spec other_run_kind other_plan_name; do
+    [[ -n "${other_session:-}" ]] || continue
+    other_health="$(session_health_status "$other_session" "$other_workspace" "$other_remote_spec" "${other_run_kind:-chain}" "${other_plan_name:-}")"
+    if [[ "$other_health" == "alive" || "$other_health" == "awaiting_pr_merge" ]]; then
+      printf '%s:%s\n' "$other_session" "$other_health"
+      return 0
+    fi
+  done <<< "$candidates"
+  return 1
+}
+
 chain_health_status() {
   local session="$1"
   local workspace="$2"
@@ -3822,6 +3872,9 @@ launch_chain_tick() {
     elif ! repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" >/dev/null 2>&1; then
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
       log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
+    elif sibling_alive="$(workspace_has_other_alive_session "$session" "$workspace" 2>/dev/null)"; then
+      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+      log "stale repair needs-human marker cleared; sibling session is alive session=$session sibling=$sibling_alive"
     else
       local repair_summary
       repair_summary="$(repair_needs_human_summary "$session")"

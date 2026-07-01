@@ -3837,6 +3837,7 @@ def test_watchdog_repair_loop_needs_human_sidecar_short_circuits_relaunch(tmp_pa
             _extract_wrapper_function("repair_needs_human_path"),
             _extract_wrapper_function("repair_needs_human_summary"),
             _extract_wrapper_function("repair_needs_human_matches_current_plan"),
+            _extract_wrapper_function("workspace_has_other_alive_session"),
             _extract_wrapper_function("launch_chain_tick"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
@@ -3854,6 +3855,7 @@ dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
+chain_current_pr_merged() { echo none; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
             f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
@@ -3868,6 +3870,101 @@ tmux() { echo TMUX >&2; return 1; }
     assert "discord=delivered" in report
     assert "DISPATCH" not in result.stderr
     assert "TMUX" not in result.stderr
+
+
+def test_watchdog_clears_stale_parent_sidecar_when_child_session_alive(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    parent_spec = workspace / ".megaplan" / "initiatives" / "demo" / "assets" / "epic-chain.yaml"
+    child_spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    parent_spec.parent.mkdir(parents=True)
+    child_spec.parent.mkdir(parents=True, exist_ok=True)
+    parent_spec.write_text("chains: []\n", encoding="utf-8")
+    child_spec.write_text("milestones: []\n", encoding="utf-8")
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    sidecar_path = repair_data_dir / "parent-session.needs-human.json"
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "summary": "old parent repair exhaustion",
+                "repair_data_path": str(repair_data_dir / "parent-session.repair-data.json"),
+                "discord_status": "delivered",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (marker_dir / "child-session.json").write_text(
+        json.dumps(
+            {
+                "session": "child-session",
+                "workspace": str(workspace),
+                "remote_spec": str(child_spec),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_needs_human_path"),
+            _extract_wrapper_function("repair_needs_human_summary"),
+            _extract_wrapper_function("repair_needs_human_matches_current_plan"),
+            _extract_wrapper_function("workspace_has_other_alive_session"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
+}
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_health_status() {
+  if [[ "$1" == "child-session" ]]; then
+    echo alive
+  else
+    echo stopped
+  fi
+}
+plan_attention_status_env() { return 0; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+chain_current_pr_merged() { echo none; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+mechanical_relaunch_attempted_previously() { return 0; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\n' "$1"; }
+tmux() { echo TMUX >&2; return 1; }
+""".strip(),
+            f"launch_chain_tick parent-session {str(workspace)!r} {str(parent_spec)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    log = log_path.read_text(encoding="utf-8")
+    assert "\tobserve\tneeds_human\told parent repair exhaustion" not in report
+    assert "\trepair\trepair_dispatched\trepair loop dispatched after mechanical relaunch\t" in report
+    assert "stale repair needs-human marker cleared; sibling session is alive" in log
+    assert not sidecar_path.exists()
+    assert "DISPATCH" in result.stderr
 
 
 def test_watchdog_clears_stale_needs_human_sidecar_for_superseded_plan(tmp_path: Path) -> None:
