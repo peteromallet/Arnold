@@ -318,6 +318,55 @@ def build_parser() -> argparse.ArgumentParser:
     initiative_search.add_argument("--keywords-all", action="store_true")
     initiative_search.add_argument("--limit", type=int)
 
+    for command in ("status", "progress", "watch"):
+        sub = subparsers.add_parser(command)
+        sub.add_argument("--project-dir", default=None)
+        sub.add_argument("--plan")
+        if command == "status":
+            sub.add_argument(
+                "--pending-human",
+                action="store_true",
+                default=False,
+            )
+
+    audit_parser = subparsers.add_parser("audit")
+    audit_parser.add_argument("--project-dir", default=None)
+    audit_parser.add_argument("--plan")
+    audit_sub = audit_parser.add_subparsers(dest="audit_action", required=False)
+    audit_query = audit_sub.add_parser("query")
+    audit_query.add_argument("--model")
+    audit_query.add_argument("--phase")
+    audit_query.add_argument("--profile")
+    audit_query.add_argument("--since")
+    audit_query.add_argument("--agg", default="")
+    audit_query.add_argument("--json", action="store_true", default=False)
+    audit_query.add_argument("--audit-dir", default=None)
+    audit_report = audit_sub.add_parser("report")
+    audit_report.add_argument("--plan")
+    audit_report.add_argument("--compare")
+    audit_report.add_argument("--output")
+    audit_report.add_argument("--json-output")
+    audit_report.add_argument("--format", choices=("markdown", "json"), default="markdown")
+
+    resume_parser = subparsers.add_parser("resume")
+    resume_parser.add_argument("--project-dir", default=None)
+    resume_parser.add_argument("--plan", required=True)
+    resume_parser.add_argument("--choice", default=None)
+
+    verify_human = subparsers.add_parser("verify-human")
+    verify_human.add_argument("--project-dir", default=None)
+    verify_human.add_argument("--plan")
+    verify_human.add_argument("--list", dest="list_flag", action="store_true", default=False)
+    verify_human.add_argument("--json", dest="json_flag", action="store_true", default=False)
+    verify_human.add_argument("--criterion", default=None)
+    verify_human.add_argument("--pass", dest="pass_flag", action="store_true", default=False)
+    verify_human.add_argument("--fail", dest="fail_flag", action="store_true", default=False)
+    verify_human.add_argument("--evidence", default=None)
+
+    audit_verifiability = subparsers.add_parser("audit-verifiability")
+    audit_verifiability.add_argument("--project-dir", default=None)
+    audit_verifiability.add_argument("--plan")
+
     migrate_layout = subparsers.add_parser("migrate-layout")
     migrate_layout.add_argument("--apply", action="store_true")
 
@@ -1876,21 +1925,15 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
 
         from arnold_pipelines.megaplan.registry import (
             get_pipeline,
+            pipeline_metadata,
         )
         from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
         from arnold_pipelines.megaplan.runtime.discovery import scan_python_pipelines
+        from arnold.workflow.discovery.manifest import Manifest, read_manifest
         from arnold.workflow.validator import ValidationOptions, validate
 
         canonical_name = canonical_pipeline_name(name)
-        original_manifest_discovery = os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
-        os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = "1"
-        try:
-            dispositions = scan_python_pipelines()
-        finally:
-            if original_manifest_discovery is None:
-                os.environ.pop("MEGAPLAN_M6_MANIFEST_DISCOVERY", None)
-            else:
-                os.environ["MEGAPLAN_M6_MANIFEST_DISCOVERY"] = original_manifest_discovery
+        dispositions = scan_python_pipelines()
         for disposition in dispositions:
             if disposition.cli_name == canonical_name and disposition.status == "rejected":
                 print(
@@ -1906,6 +1949,19 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         if pipeline is None:
             print(f"pipelines check: {canonical_name!r} is not executable", file=sys.stderr)
             return 1
+
+        context = None
+        metadata = pipeline_metadata(canonical_name)
+        manifest_path = metadata.get("manifest_source_path") or metadata.get("source_path")
+        if isinstance(manifest_path, str) and manifest_path:
+            manifest = read_manifest(Path(manifest_path))
+            if isinstance(manifest, Manifest):
+                context = manifest.validation_context(
+                    package=canonical_name,
+                    compatibility_classification=str(
+                        metadata.get("compatibility_classification") or "native"
+                    ),
+                )
         diag = validate(
             pipeline,
             ValidationOptions(
@@ -1913,6 +1969,7 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
                     {"proceed", "iterate", "tiebreaker", "escalate"}
                 ),
             ),
+            context=context,
         )
         if diag.ok:
             print(name)
@@ -2512,6 +2569,7 @@ def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
 
 def handle_describe(args: argparse.Namespace) -> StepResponse:
     """Handle ``megaplan describe <pipeline>`` command."""
+    from arnold_pipelines.megaplan.cli.run import render_pipeline_description
     from arnold_pipelines.megaplan.registry import (
         describe_pipeline,
         pipeline_metadata,
@@ -2529,27 +2587,18 @@ def handle_describe(args: argparse.Namespace) -> StepResponse:
 
     meta = pipeline_metadata(name)
     desc = describe_pipeline(name) or str(meta.get("description") or "")
-    lines: list[str] = [f"Pipeline: {name}"]
-    if desc:
-        lines.append("")
-        lines.append(desc)
-    default_profile = meta.get("default_profile")
-    if default_profile:
-        lines.append(f"Default profile: {default_profile}")
-    recommended = meta.get("recommended_profiles") or ()
-    if recommended:
-        lines.append("Recommended profiles: " + ", ".join(recommended))
-    modes = meta.get("supported_modes") or ()
-    if modes:
-        lines.append("Modes: " + ", ".join(modes))
-    skill_md = read_pipeline_skill_md(name)
-    if skill_md:
-        lines.append("")
-        lines.append("SKILL.md:")
-        lines.append(skill_md.rstrip())
+    rendered_meta = dict(meta)
+    if desc and not rendered_meta.get("description"):
+        rendered_meta["description"] = desc
 
     # For CLI rendering, print directly (descriptions are long-form text)
-    print("\n".join(lines))
+    print(
+        render_pipeline_description(
+            name,
+            rendered_meta,
+            skill_md=read_pipeline_skill_md(name),
+        )
+    )
     return {
         "success": True,
         "step": "describe",

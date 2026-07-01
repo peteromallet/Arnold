@@ -84,7 +84,10 @@ class Manifest:
             manifest_path=self.path,
             compatibility_classification=compatibility_classification,
             source_entrypoint=self.entrypoint,
+            default_profile=self.default_profile,
+            supported_modes=self.supported_modes,
             source_entrypoint_metadata={
+                "symbol": self.entrypoint,
                 "arnold_api_version": self.arnold_api_version,
                 "capabilities": self.capabilities,
                 "manifest_hash": self.manifest_hash,

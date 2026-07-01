@@ -1,0 +1,1295 @@
+[megaplan-refresh] 2026-07-01T01:56:16+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+   4142b689..d243132a  editible-install -> origin/editible-install
+[megaplan-refresh] refusing editable install refresh: dirty source checkout at /workspace/arnold
+[megaplan-refresh] 2026-07-01T01:58:49+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+ + d243132a...906bf632 editible-install -> origin/editible-install  (forced update)
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+Updating 4142b689..906bf632
+Fast-forward
+ arnold_pipelines/megaplan/cloud/cli.py             | 488 ++++++++++++++++++++-
+ .../megaplan/cloud/wrappers/arnold-watchdog        |  21 +
+ cloud.native-representation-epic-chain.yaml        |  33 ++
+ tests/cloud/test_editable_install_sync.py          |   2 +-
+ 4 files changed, 541 insertions(+), 3 deletions(-)
+ create mode 100644 cloud.native-representation-epic-chain.yaml
+Obtaining file:///workspace/arnold
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: anthropic>=0.39.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.112.0)
+Requirement already satisfied: edge-tts in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.8)
+Requirement already satisfied: fal-client in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.0.0)
+Requirement already satisfied: faster-whisper>=1.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.1)
+Requirement already satisfied: fire in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.7.1)
+Requirement already satisfied: firecrawl-py in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (4.30.3)
+Requirement already satisfied: httpx in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.28.1)
+Requirement already satisfied: openai in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.44.0)
+Requirement already satisfied: prompt-toolkit in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.0.52)
+Requirement already satisfied: psutil>=5.9 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.2)
+Requirement already satisfied: pydantic>=2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.4)
+Requirement already satisfied: pyjwt[crypto] in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.0)
+Requirement already satisfied: python-dotenv in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.2)
+Requirement already satisfied: python-ulid>=3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.1.0)
+Requirement already satisfied: pyyaml>=6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (6.0.3)
+Requirement already satisfied: requests in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.34.2)
+Requirement already satisfied: rich in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (15.0.0)
+Requirement already satisfied: anyio<5,>=3.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.14.1)
+Requirement already satisfied: distro<2,>=1.7.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.9.0)
+Requirement already satisfied: docstring-parser<1,>=0.15 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.18.0)
+Requirement already satisfied: jiter<1,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.15.0)
+Requirement already satisfied: sniffio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.3.1)
+Requirement already satisfied: typing-extensions<5,>=4.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.15.0)
+Requirement already satisfied: idna>=2.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anyio<5,>=3.5.0->anthropic>=0.39.0->arnold==0.23.0) (3.18)
+Requirement already satisfied: certifi in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (2026.6.17)
+Requirement already satisfied: httpcore==1.* in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (1.0.9)
+Requirement already satisfied: h11>=0.16 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpcore==1.*->httpx->arnold==0.23.0) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.4.2)
+Requirement already satisfied: ctranslate2<5,>=4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.8.0)
+Requirement already satisfied: huggingface-hub>=0.21 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.21.0)
+Requirement already satisfied: tokenizers<1,>=0.13 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (0.23.1)
+Requirement already satisfied: onnxruntime<2,>=1.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.27.0)
+Requirement already satisfied: av>=11 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (17.1.0)
+Requirement already satisfied: tqdm in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.68.3)
+Requirement already satisfied: setuptools in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (82.0.1)
+Requirement already satisfied: numpy in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (2.4.6)
+Requirement already satisfied: flatbuffers in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (25.12.19)
+Requirement already satisfied: packaging in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (26.2)
+Requirement already satisfied: protobuf>=4.25.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (7.35.1)
+Requirement already satisfied: click>=8.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (8.4.2)
+Requirement already satisfied: filelock>=3.10.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (3.29.4)
+Requirement already satisfied: fsspec>=2023.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (2026.6.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.5.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.1)
+Requirement already satisfied: typer<0.26.0,>=0.20.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.25.1)
+Requirement already satisfied: shellingham>=1.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.0.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from markdown-it-py>=2.2.0->rich->arnold==0.23.0) (0.1.2)
+Requirement already satisfied: aiohttp<4.0.0,>=3.8.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (3.14.1)
+Requirement already satisfied: tabulate<1.0.0,>=0.4.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (0.10.0)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (2.6.2)
+Requirement already satisfied: aiosignal>=1.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (26.1.0)
+Requirement already satisfied: frozenlist>=1.1.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (0.5.2)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.24.2)
+Requirement already satisfied: aiofiles<26,>=24.1.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (25.1.0)
+Requirement already satisfied: asyncstdlib<4,>=3.12.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (3.14.0)
+Requirement already satisfied: httpx-sse<0.5,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (0.4.3)
+Requirement already satisfied: msgpack<2,>=1.0.7 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (1.2.1)
+Requirement already satisfied: websockets>=12.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (16.0)
+Requirement already satisfied: termcolor in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fire->arnold==0.23.0) (3.3.0)
+Requirement already satisfied: nest-asyncio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from firecrawl-py->arnold==0.23.0) (1.6.0)
+Requirement already satisfied: wcwidth in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from prompt-toolkit->arnold==0.23.0) (0.8.1)
+Requirement already satisfied: cryptography>=3.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pyjwt[crypto]->arnold==0.23.0) (49.0.0)
+Requirement already satisfied: cffi>=2.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (2.0.0)
+Requirement already satisfied: pycparser in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cffi>=2.0.0->cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (3.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (3.4.7)
+Requirement already satisfied: urllib3<3,>=1.26 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (2.7.0)
+Building wheels for collected packages: arnold
+  Building editable for arnold (pyproject.toml): started
+  Building editable for arnold (pyproject.toml): finished with status 'done'
+  Created wheel for arnold: filename=arnold-0.23.0-py3-none-any.whl size=5013 sha256=3c4b7d7279f941125a7e5585c09235baf79f308937d4c3ef4bce58d2f8026a38
+  Stored in directory: /tmp/pip-ephem-wheel-cache-iyokvvtw/wheels/10/78/b0/ecaeecda1ba1f0d87f6a1902022016be70f97e7c16cb098e57
+Successfully built arnold
+Installing collected packages: arnold
+  Attempting uninstall: arnold
+    Found existing installation: arnold 0.23.0
+    Uninstalling arnold-0.23.0:
+      Successfully uninstalled arnold-0.23.0
+Successfully installed arnold-0.23.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+[megaplan-refresh] done
+[epic-chain] launching child epic native-python-pipelines-completion
+{
+  "success": false,
+  "error": "epic_chain_child_launch_failed",
+  "message": "child epic 'native-python-pipelines-completion' failed to launch with rc=1: {\n  \"success\": false,\n  \"error\": \"launch_precondition_failed\",\n  \"message\": \"launch_preconditions[6] 'completion initiative source is committed and clean' failed for /workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml: required directory has uncommitted changes under .megaplan/initiatives/native-python-pipelines-completion: ?? .megaplan/initiatives/native-python-pipelines-completion/assets/.megaplan/plans/.epic_chains/epic-chain-76ca52371ccc.json\"\n}"
+}
+[megaplan-refresh] 2026-07-01T02:00:54+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+ + 906bf632...03a0b410 editible-install -> origin/editible-install  (forced update)
+[megaplan-refresh] refusing editable install refresh: /workspace/arnold has local commits not contained in origin/editible-install
+906bf632 feat(cloud): launch epic-chain parents
+[megaplan-refresh] 2026-07-01T02:02:17+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+Already up to date.
+Obtaining file:///workspace/arnold
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: anthropic>=0.39.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.112.0)
+Requirement already satisfied: edge-tts in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.8)
+Requirement already satisfied: fal-client in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.0.0)
+Requirement already satisfied: faster-whisper>=1.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.1)
+Requirement already satisfied: fire in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.7.1)
+Requirement already satisfied: firecrawl-py in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (4.30.3)
+Requirement already satisfied: httpx in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.28.1)
+Requirement already satisfied: openai in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.44.0)
+Requirement already satisfied: prompt-toolkit in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.0.52)
+Requirement already satisfied: psutil>=5.9 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.2)
+Requirement already satisfied: pydantic>=2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.4)
+Requirement already satisfied: pyjwt[crypto] in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.0)
+Requirement already satisfied: python-dotenv in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.2)
+Requirement already satisfied: python-ulid>=3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.1.0)
+Requirement already satisfied: pyyaml>=6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (6.0.3)
+Requirement already satisfied: requests in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.34.2)
+Requirement already satisfied: rich in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (15.0.0)
+Requirement already satisfied: anyio<5,>=3.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.14.1)
+Requirement already satisfied: distro<2,>=1.7.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.9.0)
+Requirement already satisfied: docstring-parser<1,>=0.15 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.18.0)
+Requirement already satisfied: jiter<1,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.15.0)
+Requirement already satisfied: sniffio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.3.1)
+Requirement already satisfied: typing-extensions<5,>=4.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.15.0)
+Requirement already satisfied: idna>=2.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anyio<5,>=3.5.0->anthropic>=0.39.0->arnold==0.23.0) (3.18)
+Requirement already satisfied: certifi in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (2026.6.17)
+Requirement already satisfied: httpcore==1.* in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (1.0.9)
+Requirement already satisfied: h11>=0.16 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpcore==1.*->httpx->arnold==0.23.0) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.4.2)
+Requirement already satisfied: ctranslate2<5,>=4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.8.0)
+Requirement already satisfied: huggingface-hub>=0.21 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.21.0)
+Requirement already satisfied: tokenizers<1,>=0.13 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (0.23.1)
+Requirement already satisfied: onnxruntime<2,>=1.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.27.0)
+Requirement already satisfied: av>=11 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (17.1.0)
+Requirement already satisfied: tqdm in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.68.3)
+Requirement already satisfied: setuptools in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (82.0.1)
+Requirement already satisfied: numpy in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (2.4.6)
+Requirement already satisfied: flatbuffers in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (25.12.19)
+Requirement already satisfied: packaging in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (26.2)
+Requirement already satisfied: protobuf>=4.25.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (7.35.1)
+Requirement already satisfied: click>=8.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (8.4.2)
+Requirement already satisfied: filelock>=3.10.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (3.29.4)
+Requirement already satisfied: fsspec>=2023.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (2026.6.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.5.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.1)
+Requirement already satisfied: typer<0.26.0,>=0.20.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.25.1)
+Requirement already satisfied: shellingham>=1.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.0.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from markdown-it-py>=2.2.0->rich->arnold==0.23.0) (0.1.2)
+Requirement already satisfied: aiohttp<4.0.0,>=3.8.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (3.14.1)
+Requirement already satisfied: tabulate<1.0.0,>=0.4.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (0.10.0)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (2.6.2)
+Requirement already satisfied: aiosignal>=1.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (26.1.0)
+Requirement already satisfied: frozenlist>=1.1.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (0.5.2)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.24.2)
+Requirement already satisfied: aiofiles<26,>=24.1.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (25.1.0)
+Requirement already satisfied: asyncstdlib<4,>=3.12.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (3.14.0)
+Requirement already satisfied: httpx-sse<0.5,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (0.4.3)
+Requirement already satisfied: msgpack<2,>=1.0.7 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (1.2.1)
+Requirement already satisfied: websockets>=12.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (16.0)
+Requirement already satisfied: termcolor in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fire->arnold==0.23.0) (3.3.0)
+Requirement already satisfied: nest-asyncio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from firecrawl-py->arnold==0.23.0) (1.6.0)
+Requirement already satisfied: wcwidth in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from prompt-toolkit->arnold==0.23.0) (0.8.1)
+Requirement already satisfied: cryptography>=3.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pyjwt[crypto]->arnold==0.23.0) (49.0.0)
+Requirement already satisfied: cffi>=2.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (2.0.0)
+Requirement already satisfied: pycparser in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cffi>=2.0.0->cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (3.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (3.4.7)
+Requirement already satisfied: urllib3<3,>=1.26 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (2.7.0)
+Building wheels for collected packages: arnold
+  Building editable for arnold (pyproject.toml): started
+  Building editable for arnold (pyproject.toml): finished with status 'done'
+  Created wheel for arnold: filename=arnold-0.23.0-py3-none-any.whl size=5013 sha256=3c4b7d7279f941125a7e5585c09235baf79f308937d4c3ef4bce58d2f8026a38
+  Stored in directory: /tmp/pip-ephem-wheel-cache-56f8u63_/wheels/10/78/b0/ecaeecda1ba1f0d87f6a1902022016be70f97e7c16cb098e57
+Successfully built arnold
+Installing collected packages: arnold
+  Attempting uninstall: arnold
+    Found existing installation: arnold 0.23.0
+    Uninstalling arnold-0.23.0:
+      Successfully uninstalled arnold-0.23.0
+Successfully installed arnold-0.23.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+[megaplan-refresh] done
+[epic-chain] launching child epic native-python-pipelines-completion
+{
+  "success": false,
+  "error": "epic_chain_child_launch_failed",
+  "message": "child epic 'native-python-pipelines-completion' failed to launch with rc=1: [chain] reconciled cursor index: -1 -> 0 from completed milestones\n[chain] milestone m1-platform-contract starting\n[chain] git ls-remote --exit-code --heads origin main -> rc=0\n[chain] git fetch origin main -> rc=0\n[chain] git rev-parse --verify refs/remotes/origin/main^{commit} -> rc=0\n[chain] git symbolic-ref --short HEAD -> rc=0\n[chain] git pull --ff-only origin main -> rc=128\n[chain] git pull --ff-only origin main output:\nFrom https://github.com/peteromallet/Arnold\n * branch              main       -> FETCH_HEAD\nfatal: Not possible to fast-forward, aborting.\n[chain] warning: fast-forward refresh failed; falling back to hard reset to refreshed origin/main so the working tree (chain spec + idea files) matches the latest base. Safe before milestone work starts; discards uncommitted local edits (committed briefs are preserved).\n[chain] git reset --hard origin/main -> rc=0\n[chain] initializing plan from /workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/briefs/m1-platform-contract.md\n[chain] launched plan=m1-platform-contract-20260701-0202\n[auto m1-platform-contract-20260701-0202] iter 1 state=initialized next=prep valid_next=['prep', 'prep']\n[auto m1-platform-contract-20260701-0202] running: megaplan prep --plan m1-platform-contract-20260701-0202\n[auto m1-platform-contract-20260701-0202] iter 2 state=awaiting_human_verify next=verify-human valid_next=['verify-human', 'resume-clarify']\n[auto m1-platform-contract-20260701-0202] plan awaiting human clarification (3 blocking questions) \u2014 automation stopping\n[chain] synced last_state for m1-platform-contract-20260701-0202: awaiting_human -> awaiting_human_verify\n[chain] plan m1-platform-contract-20260701-0202 paused awaiting human action: prep surfaced 3 blocking ambiguities; a human may judge a flagged blocker a non-issue.\nblocking questions:\n  - [blocking] The task spec instructs modifying arnold/pipeline/registry.py, validator.py, builder.py, arnold/pipelines/megaplan/cli/arnold.py, and parser.py \u2014 all M6-deleted files. Should M1 target the surviving arnold/workflow/ modules and arnold_pipelines/megaplan/cli/__init__.py instead, or should it recreate shims at the deleted paths?\n  - [blocking] Should arnold.pipeline.legacy be created in M1? Task says 'if arnold.pipeline.legacy does not exist yet, create a compatibility namespace and re-export graph-era symbols through it.' It doesn't exist. The sense-check analysis recommends creating it only if import inventory shows real callers. Which rule governs?\n  - [blocking] arnold/pipeline/discovery/__init__.py has a broken import from arnold.pipeline.discovery.manifest (the manifest module lives at arnold/workflow/discovery/manifest.py). Should M1 fix this by (a) creating a shim manifest.py at arnold/pipeline/discovery/manifest.py that re-exports from arnold/workflow/, or (b) changing the import in __init__.py to point directly at arnold.workflow.discovery.manifest?\nanswer via `megaplan override add-note \"\u2026\"` and resume via `megaplan override resume-clarify`\n{\n  \"status\": \"stopped\",\n  \"reason\": \"milestone m1-platform-contract ended awaiting_human\",\n  \"chain_state\": {\n    \"schema_version\": 0,\n    \"current_milestone_index\": 0,\n    \"current_plan_name\": \"m1-platform-contract-20260701-0202\",\n    \"current_milestone_base_sha\": null,\n    \"target_base_ref\": \"03a0b4101a15099c12020ca4cfd822ed5284461c\",\n    \"last_state\": \"awaiting_human_verify\",\n    \"pr_number\": null,\n    \"pr_state\": null,\n    \"completed\": [],\n    \"branch_head\": null,\n    \"pr_head\": null,\n    \"last_pushed_commit\": null,\n    \"dirty_flag\": false,\n    \"sync_state\": null,\n    \"extra_repos\": [],\n    \"chain_session\": null,\n    \"resolved_workspace\": null,\n    \"extra_repo_sync\": [],\n    \"completion_contract_mode\": \"shadow\",\n    \"full_suite_backstop_mode\": \"shadow\",\n    \"retry_counts\": {},\n    \"ladder_stage\": {},\n    \"profile_bumps\": {},\n    \"robustness_bumps\": {},\n    \"depth_bumps\": {},\n    \"enforce_revise_counts\": {},\n    \"metadata\": {\n      \"execution_environment\": {\n        \"schema_version\": 1,\n        \"created_phase\": \"chain_start\",\n        \"last_observed_phase\": \"chain_start\",\n        \"project_root\": \"/workspace/native-python-pipelines-completion-parent-22937539/arnold\",\n        \"target_root\": \"/workspace/native-python-pipelines-completion-parent-22937539/arnold\",\n        \"work_dir\": \"/workspace/native-python-pipelines-completion-parent-22937539/arnold\",\n        \"engine_root\": \"/workspace/arnold\",\n        \"target_head\": \"d243132a40ad88a29de4b7ea459d701a8174da8c\",\n        \"target_base\": \"d243132a40ad88a29de4b7ea459d701a8174da8c\",\n        \"target_base_ref\": \"main\",\n        \"target_fallback_reason\": null\n      },\n      \"chain_spec_path\": \"/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml\",\n      \"chain_spec_sha256\": \"9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b\",\n      \"ground_truth_reconciliation\": {\n        \"reconciled_at\": \"2026-07-01T02:02:23Z\",\n        \"plan\": null,\n        \"current_state\": null,\n        \"latest_failure\": null,\n        \"last_gate\": null,\n        \"active_step\": null,\n        \"pr_number\": null,\n        \"pr_state\": null\n      }\n    }\n  },\n  \"events\": [\n    {\n      \"msg\": \"milestone m1-platform-contract starting\"\n    }\n  ],\n  \"base_branch\": \"main\"\n}"
+}
+[megaplan-refresh] 2026-07-01T03:03:14+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+Already up to date.
+Obtaining file:///workspace/arnold
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: anthropic>=0.39.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.112.0)
+Requirement already satisfied: edge-tts in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.8)
+Requirement already satisfied: fal-client in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.0.0)
+Requirement already satisfied: faster-whisper>=1.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.1)
+Requirement already satisfied: fire in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.7.1)
+Requirement already satisfied: firecrawl-py in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (4.30.3)
+Requirement already satisfied: httpx in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.28.1)
+Requirement already satisfied: openai in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.44.0)
+Requirement already satisfied: prompt-toolkit in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.0.52)
+Requirement already satisfied: psutil>=5.9 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.2)
+Requirement already satisfied: pydantic>=2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.4)
+Requirement already satisfied: pyjwt[crypto] in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.0)
+Requirement already satisfied: python-dotenv in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.2)
+Requirement already satisfied: python-ulid>=3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.1.0)
+Requirement already satisfied: pyyaml>=6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (6.0.3)
+Requirement already satisfied: requests in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.34.2)
+Requirement already satisfied: rich in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (15.0.0)
+Requirement already satisfied: anyio<5,>=3.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.14.1)
+Requirement already satisfied: distro<2,>=1.7.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.9.0)
+Requirement already satisfied: docstring-parser<1,>=0.15 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.18.0)
+Requirement already satisfied: jiter<1,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.15.0)
+Requirement already satisfied: sniffio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.3.1)
+Requirement already satisfied: typing-extensions<5,>=4.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.15.0)
+Requirement already satisfied: idna>=2.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anyio<5,>=3.5.0->anthropic>=0.39.0->arnold==0.23.0) (3.18)
+Requirement already satisfied: certifi in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (2026.6.17)
+Requirement already satisfied: httpcore==1.* in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (1.0.9)
+Requirement already satisfied: h11>=0.16 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpcore==1.*->httpx->arnold==0.23.0) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.4.2)
+Requirement already satisfied: ctranslate2<5,>=4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.8.0)
+Requirement already satisfied: huggingface-hub>=0.21 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.21.0)
+Requirement already satisfied: tokenizers<1,>=0.13 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (0.23.1)
+Requirement already satisfied: onnxruntime<2,>=1.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.27.0)
+Requirement already satisfied: av>=11 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (17.1.0)
+Requirement already satisfied: tqdm in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.68.3)
+Requirement already satisfied: setuptools in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (82.0.1)
+Requirement already satisfied: numpy in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (2.4.6)
+Requirement already satisfied: flatbuffers in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (25.12.19)
+Requirement already satisfied: packaging in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (26.2)
+Requirement already satisfied: protobuf>=4.25.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (7.35.1)
+Requirement already satisfied: click>=8.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (8.4.2)
+Requirement already satisfied: filelock>=3.10.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (3.29.4)
+Requirement already satisfied: fsspec>=2023.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (2026.6.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.5.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.1)
+Requirement already satisfied: typer<0.26.0,>=0.20.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.25.1)
+Requirement already satisfied: shellingham>=1.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.0.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from markdown-it-py>=2.2.0->rich->arnold==0.23.0) (0.1.2)
+Requirement already satisfied: aiohttp<4.0.0,>=3.8.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (3.14.1)
+Requirement already satisfied: tabulate<1.0.0,>=0.4.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (0.10.0)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (2.6.2)
+Requirement already satisfied: aiosignal>=1.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (26.1.0)
+Requirement already satisfied: frozenlist>=1.1.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (0.5.2)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.24.2)
+Requirement already satisfied: aiofiles<26,>=24.1.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (25.1.0)
+Requirement already satisfied: asyncstdlib<4,>=3.12.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (3.14.0)
+Requirement already satisfied: httpx-sse<0.5,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (0.4.3)
+Requirement already satisfied: msgpack<2,>=1.0.7 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (1.2.1)
+Requirement already satisfied: websockets>=12.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (16.0)
+Requirement already satisfied: termcolor in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fire->arnold==0.23.0) (3.3.0)
+Requirement already satisfied: nest-asyncio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from firecrawl-py->arnold==0.23.0) (1.6.0)
+Requirement already satisfied: wcwidth in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from prompt-toolkit->arnold==0.23.0) (0.8.1)
+Requirement already satisfied: cryptography>=3.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pyjwt[crypto]->arnold==0.23.0) (49.0.0)
+Requirement already satisfied: cffi>=2.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (2.0.0)
+Requirement already satisfied: pycparser in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cffi>=2.0.0->cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (3.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (3.4.7)
+Requirement already satisfied: urllib3<3,>=1.26 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (2.7.0)
+Building wheels for collected packages: arnold
+  Building editable for arnold (pyproject.toml): started
+  Building editable for arnold (pyproject.toml): finished with status 'done'
+  Created wheel for arnold: filename=arnold-0.23.0-py3-none-any.whl size=5013 sha256=3c4b7d7279f941125a7e5585c09235baf79f308937d4c3ef4bce58d2f8026a38
+  Stored in directory: /tmp/pip-ephem-wheel-cache-h3rmwvx1/wheels/10/78/b0/ecaeecda1ba1f0d87f6a1902022016be70f97e7c16cb098e57
+Successfully built arnold
+Installing collected packages: arnold
+  Attempting uninstall: arnold
+    Found existing installation: arnold 0.23.0
+    Uninstalling arnold-0.23.0:
+      Successfully uninstalled arnold-0.23.0
+Successfully installed arnold-0.23.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+[megaplan-refresh] done
+[epic-chain] child epic native-python-pipelines-completion is awaiting_human_verify; waiting
+{
+  "success": true,
+  "status": "awaiting_human_verify",
+  "reason": "child epic native-python-pipelines-completion is awaiting_human_verify",
+  "epic_chain_state": {
+    "schema_version": 1,
+    "current_epic_index": 0,
+    "current_epic_id": "native-python-pipelines-completion",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "last_state": "awaiting_human_verify",
+    "pr_number": null,
+    "pr_state": null,
+    "completed": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "metadata": {}
+  },
+  "base_branch": "main",
+  "summary": {
+    "current_epic": {
+      "id": "native-python-pipelines-completion",
+      "index": 0,
+      "spec": "../chain.yaml"
+    },
+    "completed": [],
+    "remaining": [
+      {
+        "id": "native-python-pipelines-completion",
+        "index": 0
+      },
+      {
+        "id": "native-composition-followup",
+        "index": 1
+      },
+      {
+        "id": "native-platform-followup",
+        "index": 2
+      }
+    ],
+    "base_branch": "main",
+    "last_state": "awaiting_human_verify",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "pr_number": null,
+    "pr_state": null
+  },
+  "active_child": {
+    "effective_status": "awaiting_human_verify",
+    "reason": "latest_verdict_human_verification_pending",
+    "spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "observed_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "state_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/.megaplan/plans/.chains/chain-7a38aae0a128.json",
+    "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+    "plan_status": {
+      "status": "awaiting_human_verify",
+      "plan": "m1-platform-contract-20260701-0202",
+      "plan_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/plans/m1-platform-contract-20260701-0202"
+    },
+    "classification": {
+      "operation_state": "awaiting_approval",
+      "effective_status": "awaiting_human_verify",
+      "reason": "latest_verdict_human_verification_pending",
+      "metadata": {
+        "source_operation_state": "running",
+        "launch_state": null,
+        "runner_status": "unknown",
+        "plan_status": "awaiting_human_verify",
+        "sync_state": null
+      }
+    },
+    "chain_state": {
+      "schema_version": 0,
+      "current_milestone_index": 0,
+      "current_plan_name": "m1-platform-contract-20260701-0202",
+      "current_milestone_base_sha": null,
+      "target_base_ref": "03a0b4101a15099c12020ca4cfd822ed5284461c",
+      "last_state": "awaiting_human_verify",
+      "pr_number": null,
+      "pr_state": null,
+      "completed": [],
+      "branch_head": null,
+      "pr_head": null,
+      "last_pushed_commit": null,
+      "dirty_flag": false,
+      "sync_state": null,
+      "extra_repos": [],
+      "chain_session": null,
+      "resolved_workspace": null,
+      "extra_repo_sync": [],
+      "completion_contract_mode": "shadow",
+      "full_suite_backstop_mode": "shadow",
+      "retry_counts": {},
+      "ladder_stage": {},
+      "profile_bumps": {},
+      "robustness_bumps": {},
+      "depth_bumps": {},
+      "enforce_revise_counts": {},
+      "metadata": {
+        "execution_environment": {
+          "schema_version": 1,
+          "created_phase": "chain_start",
+          "last_observed_phase": "chain_start",
+          "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "target_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "work_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "engine_root": "/workspace/arnold",
+          "target_head": "d243132a40ad88a29de4b7ea459d701a8174da8c",
+          "target_base": "d243132a40ad88a29de4b7ea459d701a8174da8c",
+          "target_base_ref": "main",
+          "target_fallback_reason": null
+        },
+        "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+        "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
+        "ground_truth_reconciliation": {
+          "reconciled_at": "2026-07-01T02:02:23Z",
+          "plan": null,
+          "current_state": null,
+          "latest_failure": null,
+          "last_gate": null,
+          "active_step": null,
+          "pr_number": null,
+          "pr_state": null
+        }
+      }
+    }
+  }
+}
+[megaplan-refresh] 2026-07-01T03:13:50+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at /workspace/arnold
+logout
+[epic-chain] child epic native-python-pipelines-completion is awaiting_human_verify; waiting
+{
+  "success": true,
+  "status": "awaiting_human_verify",
+  "reason": "child epic native-python-pipelines-completion is awaiting_human_verify",
+  "epic_chain_state": {
+    "schema_version": 1,
+    "current_epic_index": 0,
+    "current_epic_id": "native-python-pipelines-completion",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "last_state": "awaiting_human_verify",
+    "pr_number": null,
+    "pr_state": null,
+    "completed": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "metadata": {}
+  },
+  "base_branch": "main",
+  "summary": {
+    "current_epic": {
+      "id": "native-python-pipelines-completion",
+      "index": 0,
+      "spec": "../chain.yaml"
+    },
+    "completed": [],
+    "remaining": [
+      {
+        "id": "native-python-pipelines-completion",
+        "index": 0
+      },
+      {
+        "id": "native-composition-followup",
+        "index": 1
+      },
+      {
+        "id": "native-platform-followup",
+        "index": 2
+      }
+    ],
+    "base_branch": "main",
+    "last_state": "awaiting_human_verify",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "pr_number": null,
+    "pr_state": null
+  },
+  "active_child": {
+    "effective_status": "awaiting_human_verify",
+    "reason": "latest_verdict_human_verification_pending",
+    "spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "observed_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "state_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/.megaplan/plans/.chains/chain-7a38aae0a128.json",
+    "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+    "plan_status": {
+      "status": "awaiting_human_verify",
+      "plan": "m1-platform-contract-20260701-0202",
+      "plan_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/plans/m1-platform-contract-20260701-0202"
+    },
+    "classification": {
+      "operation_state": "awaiting_approval",
+      "effective_status": "awaiting_human_verify",
+      "reason": "latest_verdict_human_verification_pending",
+      "metadata": {
+        "source_operation_state": "running",
+        "launch_state": null,
+        "runner_status": "unknown",
+        "plan_status": "awaiting_human_verify",
+        "sync_state": null
+      }
+    },
+    "chain_state": {
+      "schema_version": 0,
+      "current_milestone_index": 0,
+      "current_plan_name": "m1-platform-contract-20260701-0202",
+      "current_milestone_base_sha": null,
+      "target_base_ref": "03a0b4101a15099c12020ca4cfd822ed5284461c",
+      "last_state": "awaiting_human_verify",
+      "pr_number": null,
+      "pr_state": null,
+      "completed": [],
+      "branch_head": null,
+      "pr_head": null,
+      "last_pushed_commit": null,
+      "dirty_flag": false,
+      "sync_state": null,
+      "extra_repos": [],
+      "chain_session": null,
+      "resolved_workspace": null,
+      "extra_repo_sync": [],
+      "completion_contract_mode": "shadow",
+      "full_suite_backstop_mode": "shadow",
+      "retry_counts": {},
+      "ladder_stage": {},
+      "profile_bumps": {},
+      "robustness_bumps": {},
+      "depth_bumps": {},
+      "enforce_revise_counts": {},
+      "metadata": {
+        "execution_environment": {
+          "schema_version": 1,
+          "created_phase": "chain_start",
+          "last_observed_phase": "chain_start",
+          "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "target_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "work_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "engine_root": "/workspace/arnold",
+          "target_head": "d243132a40ad88a29de4b7ea459d701a8174da8c",
+          "target_base": "d243132a40ad88a29de4b7ea459d701a8174da8c",
+          "target_base_ref": "main",
+          "target_fallback_reason": null
+        },
+        "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+        "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
+        "ground_truth_reconciliation": {
+          "reconciled_at": "2026-07-01T02:02:23Z",
+          "plan": null,
+          "current_state": null,
+          "latest_failure": null,
+          "last_gate": null,
+          "active_step": null,
+          "pr_number": null,
+          "pr_state": null
+        }
+      }
+    }
+  }
+}
+[megaplan-refresh] 2026-07-01T03:21:56+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+Already up to date.
+Obtaining file:///workspace/arnold
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: anthropic>=0.39.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.112.0)
+Requirement already satisfied: edge-tts in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.8)
+Requirement already satisfied: fal-client in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.0.0)
+Requirement already satisfied: faster-whisper>=1.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.1)
+Requirement already satisfied: fire in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.7.1)
+Requirement already satisfied: firecrawl-py in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (4.30.3)
+Requirement already satisfied: httpx in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.28.1)
+Requirement already satisfied: openai in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.44.0)
+Requirement already satisfied: prompt-toolkit in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.0.52)
+Requirement already satisfied: psutil>=5.9 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.2)
+Requirement already satisfied: pydantic>=2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.4)
+Requirement already satisfied: pyjwt[crypto] in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.0)
+Requirement already satisfied: python-dotenv in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.2)
+Requirement already satisfied: python-ulid>=3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.1.0)
+Requirement already satisfied: pyyaml>=6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (6.0.3)
+Requirement already satisfied: requests in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.34.2)
+Requirement already satisfied: rich in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (15.0.0)
+Requirement already satisfied: anyio<5,>=3.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.14.1)
+Requirement already satisfied: distro<2,>=1.7.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.9.0)
+Requirement already satisfied: docstring-parser<1,>=0.15 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.18.0)
+Requirement already satisfied: jiter<1,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.15.0)
+Requirement already satisfied: sniffio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.3.1)
+Requirement already satisfied: typing-extensions<5,>=4.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.15.0)
+Requirement already satisfied: idna>=2.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anyio<5,>=3.5.0->anthropic>=0.39.0->arnold==0.23.0) (3.18)
+Requirement already satisfied: certifi in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (2026.6.17)
+Requirement already satisfied: httpcore==1.* in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (1.0.9)
+Requirement already satisfied: h11>=0.16 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpcore==1.*->httpx->arnold==0.23.0) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.4.2)
+Requirement already satisfied: ctranslate2<5,>=4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.8.0)
+Requirement already satisfied: huggingface-hub>=0.21 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.21.0)
+Requirement already satisfied: tokenizers<1,>=0.13 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (0.23.1)
+Requirement already satisfied: onnxruntime<2,>=1.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.27.0)
+Requirement already satisfied: av>=11 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (17.1.0)
+Requirement already satisfied: tqdm in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.68.3)
+Requirement already satisfied: setuptools in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (82.0.1)
+Requirement already satisfied: numpy in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (2.4.6)
+Requirement already satisfied: flatbuffers in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (25.12.19)
+Requirement already satisfied: packaging in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (26.2)
+Requirement already satisfied: protobuf>=4.25.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (7.35.1)
+Requirement already satisfied: click>=8.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (8.4.2)
+Requirement already satisfied: filelock>=3.10.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (3.29.4)
+Requirement already satisfied: fsspec>=2023.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (2026.6.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.5.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.1)
+Requirement already satisfied: typer<0.26.0,>=0.20.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.25.1)
+Requirement already satisfied: shellingham>=1.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.0.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from markdown-it-py>=2.2.0->rich->arnold==0.23.0) (0.1.2)
+Requirement already satisfied: aiohttp<4.0.0,>=3.8.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (3.14.1)
+Requirement already satisfied: tabulate<1.0.0,>=0.4.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (0.10.0)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (2.6.2)
+Requirement already satisfied: aiosignal>=1.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (26.1.0)
+Requirement already satisfied: frozenlist>=1.1.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (0.5.2)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.24.2)
+Requirement already satisfied: aiofiles<26,>=24.1.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (25.1.0)
+Requirement already satisfied: asyncstdlib<4,>=3.12.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (3.14.0)
+Requirement already satisfied: httpx-sse<0.5,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (0.4.3)
+Requirement already satisfied: msgpack<2,>=1.0.7 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (1.2.1)
+Requirement already satisfied: websockets>=12.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (16.0)
+Requirement already satisfied: termcolor in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fire->arnold==0.23.0) (3.3.0)
+Requirement already satisfied: nest-asyncio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from firecrawl-py->arnold==0.23.0) (1.6.0)
+Requirement already satisfied: wcwidth in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from prompt-toolkit->arnold==0.23.0) (0.8.1)
+Requirement already satisfied: cryptography>=3.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pyjwt[crypto]->arnold==0.23.0) (49.0.0)
+Requirement already satisfied: cffi>=2.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (2.0.0)
+Requirement already satisfied: pycparser in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cffi>=2.0.0->cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (3.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (3.4.7)
+Requirement already satisfied: urllib3<3,>=1.26 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (2.7.0)
+Building wheels for collected packages: arnold
+  Building editable for arnold (pyproject.toml): started
+  Building editable for arnold (pyproject.toml): finished with status 'done'
+  Created wheel for arnold: filename=arnold-0.23.0-py3-none-any.whl size=5013 sha256=3c4b7d7279f941125a7e5585c09235baf79f308937d4c3ef4bce58d2f8026a38
+  Stored in directory: /tmp/pip-ephem-wheel-cache-5sxilmff/wheels/10/78/b0/ecaeecda1ba1f0d87f6a1902022016be70f97e7c16cb098e57
+Successfully built arnold
+Installing collected packages: arnold
+  Attempting uninstall: arnold
+    Found existing installation: arnold 0.23.0
+    Uninstalling arnold-0.23.0:
+      Successfully uninstalled arnold-0.23.0
+Successfully installed arnold-0.23.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+[megaplan-refresh] done
+[epic-chain] child epic native-python-pipelines-completion is awaiting_human_verify; waiting
+{
+  "success": true,
+  "status": "awaiting_human_verify",
+  "reason": "child epic native-python-pipelines-completion is awaiting_human_verify",
+  "epic_chain_state": {
+    "schema_version": 1,
+    "current_epic_index": 0,
+    "current_epic_id": "native-python-pipelines-completion",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "last_state": "awaiting_human_verify",
+    "pr_number": null,
+    "pr_state": null,
+    "completed": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "metadata": {}
+  },
+  "base_branch": "main",
+  "summary": {
+    "current_epic": {
+      "id": "native-python-pipelines-completion",
+      "index": 0,
+      "spec": "../chain.yaml"
+    },
+    "completed": [],
+    "remaining": [
+      {
+        "id": "native-python-pipelines-completion",
+        "index": 0
+      },
+      {
+        "id": "native-composition-followup",
+        "index": 1
+      },
+      {
+        "id": "native-platform-followup",
+        "index": 2
+      }
+    ],
+    "base_branch": "main",
+    "last_state": "awaiting_human_verify",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "pr_number": null,
+    "pr_state": null
+  },
+  "active_child": {
+    "effective_status": "awaiting_human_verify",
+    "reason": "latest_verdict_human_verification_pending",
+    "spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "observed_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "state_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/.megaplan/plans/.chains/chain-7a38aae0a128.json",
+    "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+    "plan_status": {
+      "status": "awaiting_human_verify",
+      "plan": "m1-platform-contract-20260701-0202",
+      "plan_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/plans/m1-platform-contract-20260701-0202"
+    },
+    "classification": {
+      "operation_state": "awaiting_approval",
+      "effective_status": "awaiting_human_verify",
+      "reason": "latest_verdict_human_verification_pending",
+      "metadata": {
+        "source_operation_state": "running",
+        "launch_state": null,
+        "runner_status": "unknown",
+        "plan_status": "awaiting_human_verify",
+        "sync_state": null
+      }
+    },
+    "chain_state": {
+      "schema_version": 0,
+      "current_milestone_index": 0,
+      "current_plan_name": "m1-platform-contract-20260701-0202",
+      "current_milestone_base_sha": null,
+      "target_base_ref": "03a0b4101a15099c12020ca4cfd822ed5284461c",
+      "last_state": "awaiting_human_verify",
+      "pr_number": null,
+      "pr_state": null,
+      "completed": [],
+      "branch_head": null,
+      "pr_head": null,
+      "last_pushed_commit": null,
+      "dirty_flag": false,
+      "sync_state": null,
+      "extra_repos": [],
+      "chain_session": null,
+      "resolved_workspace": null,
+      "extra_repo_sync": [],
+      "completion_contract_mode": "shadow",
+      "full_suite_backstop_mode": "shadow",
+      "retry_counts": {},
+      "ladder_stage": {},
+      "profile_bumps": {},
+      "robustness_bumps": {},
+      "depth_bumps": {},
+      "enforce_revise_counts": {},
+      "metadata": {
+        "execution_environment": {
+          "schema_version": 1,
+          "created_phase": "chain_start",
+          "last_observed_phase": "chain_start",
+          "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "target_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "work_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "engine_root": "/workspace/arnold",
+          "target_head": "d243132a40ad88a29de4b7ea459d701a8174da8c",
+          "target_base": "d243132a40ad88a29de4b7ea459d701a8174da8c",
+          "target_base_ref": "main",
+          "target_fallback_reason": null
+        },
+        "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+        "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
+        "ground_truth_reconciliation": {
+          "reconciled_at": "2026-07-01T02:02:23Z",
+          "plan": null,
+          "current_state": null,
+          "latest_failure": null,
+          "last_gate": null,
+          "active_step": null,
+          "pr_number": null,
+          "pr_state": null
+        }
+      }
+    }
+  }
+}
+[megaplan-refresh] 2026-07-01T04:06:20+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+Already up to date.
+Obtaining file:///workspace/arnold
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: anthropic>=0.39.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.112.0)
+Requirement already satisfied: edge-tts in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.8)
+Requirement already satisfied: fal-client in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.0.0)
+Requirement already satisfied: faster-whisper>=1.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.1)
+Requirement already satisfied: fire in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.7.1)
+Requirement already satisfied: firecrawl-py in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (4.30.3)
+Requirement already satisfied: httpx in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.28.1)
+Requirement already satisfied: openai in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.44.0)
+Requirement already satisfied: prompt-toolkit in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.0.52)
+Requirement already satisfied: psutil>=5.9 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.2)
+Requirement already satisfied: pydantic>=2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.4)
+Requirement already satisfied: pyjwt[crypto] in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.0)
+Requirement already satisfied: python-dotenv in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.2)
+Requirement already satisfied: python-ulid>=3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.1.0)
+Requirement already satisfied: pyyaml>=6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (6.0.3)
+Requirement already satisfied: requests in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.34.2)
+Requirement already satisfied: rich in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (15.0.0)
+Requirement already satisfied: anyio<5,>=3.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.14.1)
+Requirement already satisfied: distro<2,>=1.7.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.9.0)
+Requirement already satisfied: docstring-parser<1,>=0.15 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.18.0)
+Requirement already satisfied: jiter<1,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.15.0)
+Requirement already satisfied: sniffio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.3.1)
+Requirement already satisfied: typing-extensions<5,>=4.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.15.0)
+Requirement already satisfied: idna>=2.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anyio<5,>=3.5.0->anthropic>=0.39.0->arnold==0.23.0) (3.18)
+Requirement already satisfied: certifi in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (2026.6.17)
+Requirement already satisfied: httpcore==1.* in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (1.0.9)
+Requirement already satisfied: h11>=0.16 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpcore==1.*->httpx->arnold==0.23.0) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.4.2)
+Requirement already satisfied: ctranslate2<5,>=4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.8.0)
+Requirement already satisfied: huggingface-hub>=0.21 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.21.0)
+Requirement already satisfied: tokenizers<1,>=0.13 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (0.23.1)
+Requirement already satisfied: onnxruntime<2,>=1.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.27.0)
+Requirement already satisfied: av>=11 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (17.1.0)
+Requirement already satisfied: tqdm in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.68.3)
+Requirement already satisfied: setuptools in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (82.0.1)
+Requirement already satisfied: numpy in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (2.4.6)
+Requirement already satisfied: flatbuffers in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (25.12.19)
+Requirement already satisfied: packaging in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (26.2)
+Requirement already satisfied: protobuf>=4.25.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (7.35.1)
+Requirement already satisfied: click>=8.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (8.4.2)
+Requirement already satisfied: filelock>=3.10.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (3.29.4)
+Requirement already satisfied: fsspec>=2023.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (2026.6.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.5.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.1)
+Requirement already satisfied: typer<0.26.0,>=0.20.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.25.1)
+Requirement already satisfied: shellingham>=1.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.0.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from markdown-it-py>=2.2.0->rich->arnold==0.23.0) (0.1.2)
+Requirement already satisfied: aiohttp<4.0.0,>=3.8.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (3.14.1)
+Requirement already satisfied: tabulate<1.0.0,>=0.4.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (0.10.0)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (2.6.2)
+Requirement already satisfied: aiosignal>=1.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (26.1.0)
+Requirement already satisfied: frozenlist>=1.1.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (0.5.2)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.24.2)
+Requirement already satisfied: aiofiles<26,>=24.1.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (25.1.0)
+Requirement already satisfied: asyncstdlib<4,>=3.12.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (3.14.0)
+Requirement already satisfied: httpx-sse<0.5,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (0.4.3)
+Requirement already satisfied: msgpack<2,>=1.0.7 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (1.2.1)
+Requirement already satisfied: websockets>=12.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (16.0)
+Requirement already satisfied: termcolor in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fire->arnold==0.23.0) (3.3.0)
+Requirement already satisfied: nest-asyncio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from firecrawl-py->arnold==0.23.0) (1.6.0)
+Requirement already satisfied: wcwidth in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from prompt-toolkit->arnold==0.23.0) (0.8.1)
+Requirement already satisfied: cryptography>=3.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pyjwt[crypto]->arnold==0.23.0) (49.0.0)
+Requirement already satisfied: cffi>=2.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (2.0.0)
+Requirement already satisfied: pycparser in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cffi>=2.0.0->cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (3.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (3.4.7)
+Requirement already satisfied: urllib3<3,>=1.26 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (2.7.0)
+Building wheels for collected packages: arnold
+  Building editable for arnold (pyproject.toml): started
+  Building editable for arnold (pyproject.toml): finished with status 'done'
+  Created wheel for arnold: filename=arnold-0.23.0-py3-none-any.whl size=5013 sha256=3c4b7d7279f941125a7e5585c09235baf79f308937d4c3ef4bce58d2f8026a38
+  Stored in directory: /tmp/pip-ephem-wheel-cache-sf4k2nej/wheels/10/78/b0/ecaeecda1ba1f0d87f6a1902022016be70f97e7c16cb098e57
+Successfully built arnold
+Installing collected packages: arnold
+  Attempting uninstall: arnold
+    Found existing installation: arnold 0.23.0
+    Uninstalling arnold-0.23.0:
+      Successfully uninstalled arnold-0.23.0
+Successfully installed arnold-0.23.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+[megaplan-refresh] done
+[epic-chain] child epic native-python-pipelines-completion is running; waiting
+{
+  "success": true,
+  "status": "running",
+  "reason": "child epic native-python-pipelines-completion is running",
+  "epic_chain_state": {
+    "schema_version": 1,
+    "current_epic_index": 0,
+    "current_epic_id": "native-python-pipelines-completion",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "last_state": "running",
+    "pr_number": null,
+    "pr_state": null,
+    "completed": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "metadata": {}
+  },
+  "base_branch": "main",
+  "summary": {
+    "current_epic": {
+      "id": "native-python-pipelines-completion",
+      "index": 0,
+      "spec": "../chain.yaml"
+    },
+    "completed": [],
+    "remaining": [
+      {
+        "id": "native-python-pipelines-completion",
+        "index": 0
+      },
+      {
+        "id": "native-composition-followup",
+        "index": 1
+      },
+      {
+        "id": "native-platform-followup",
+        "index": 2
+      }
+    ],
+    "base_branch": "main",
+    "last_state": "running",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "pr_number": null,
+    "pr_state": null
+  },
+  "active_child": {
+    "effective_status": "running",
+    "reason": "active_child_cursor_unfinished",
+    "spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "observed_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "state_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/.megaplan/plans/.chains/chain-7a38aae0a128.json",
+    "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+    "plan_status": {
+      "status": "prepped",
+      "plan": "m1-platform-contract-20260701-0337",
+      "plan_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/plans/m1-platform-contract-20260701-0337"
+    },
+    "classification": {
+      "operation_state": "suspended",
+      "effective_status": "stale_bookkeeping",
+      "reason": "active_plan_without_live_runner",
+      "metadata": {
+        "source_operation_state": "running",
+        "launch_state": null,
+        "runner_status": "unknown",
+        "plan_status": "prepped",
+        "sync_state": null
+      }
+    },
+    "chain_state": {
+      "schema_version": 0,
+      "current_milestone_index": 0,
+      "current_plan_name": "m1-platform-contract-20260701-0337",
+      "current_milestone_base_sha": null,
+      "target_base_ref": "85fd67f0389f4396682f8b999e8df62786b9b299",
+      "last_state": "prepped",
+      "pr_number": null,
+      "pr_state": null,
+      "completed": [],
+      "branch_head": null,
+      "pr_head": null,
+      "last_pushed_commit": null,
+      "dirty_flag": false,
+      "sync_state": null,
+      "extra_repos": [],
+      "chain_session": null,
+      "resolved_workspace": null,
+      "extra_repo_sync": [],
+      "completion_contract_mode": "shadow",
+      "full_suite_backstop_mode": "shadow",
+      "retry_counts": {},
+      "ladder_stage": {},
+      "profile_bumps": {},
+      "robustness_bumps": {},
+      "depth_bumps": {},
+      "enforce_revise_counts": {},
+      "metadata": {
+        "execution_environment": {
+          "schema_version": 1,
+          "created_phase": "chain_start",
+          "last_observed_phase": "chain_start",
+          "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "target_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "work_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "engine_root": "/workspace/arnold",
+          "target_head": "03a0b4101a15099c12020ca4cfd822ed5284461c",
+          "target_base": "03a0b4101a15099c12020ca4cfd822ed5284461c",
+          "target_base_ref": "main",
+          "target_fallback_reason": null
+        },
+        "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+        "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
+        "ground_truth_reconciliation": {
+          "reconciled_at": "2026-07-01T03:37:48Z",
+          "plan": "m1-platform-contract-20260701-0202",
+          "current_state": "prepped",
+          "latest_failure": null,
+          "last_gate": {},
+          "active_step": null,
+          "pr_number": null,
+          "pr_state": null
+        }
+      }
+    }
+  }
+}
+[megaplan-refresh] 2026-07-01T04:11:06+00:00 starting
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+From https://github.com/peteromallet/Arnold
+ * branch              editible-install -> FETCH_HEAD
+Already up to date.
+Obtaining file:///workspace/arnold
+  Installing build dependencies: started
+  Installing build dependencies: finished with status 'done'
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Getting requirements to build editable: started
+  Getting requirements to build editable: finished with status 'done'
+  Installing backend dependencies: started
+  Installing backend dependencies: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Requirement already satisfied: anthropic>=0.39.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.112.0)
+Requirement already satisfied: edge-tts in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.8)
+Requirement already satisfied: fal-client in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.0.0)
+Requirement already satisfied: faster-whisper>=1.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.1)
+Requirement already satisfied: fire in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.7.1)
+Requirement already satisfied: firecrawl-py in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (4.30.3)
+Requirement already satisfied: httpx in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (0.28.1)
+Requirement already satisfied: openai in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.44.0)
+Requirement already satisfied: prompt-toolkit in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.0.52)
+Requirement already satisfied: psutil>=5.9 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (7.2.2)
+Requirement already satisfied: pydantic>=2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.4)
+Requirement already satisfied: pyjwt[crypto] in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.13.0)
+Requirement already satisfied: python-dotenv in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (1.2.2)
+Requirement already satisfied: python-ulid>=3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (3.1.0)
+Requirement already satisfied: pyyaml>=6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (6.0.3)
+Requirement already satisfied: requests in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (2.34.2)
+Requirement already satisfied: rich in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from arnold==0.23.0) (15.0.0)
+Requirement already satisfied: anyio<5,>=3.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.14.1)
+Requirement already satisfied: distro<2,>=1.7.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.9.0)
+Requirement already satisfied: docstring-parser<1,>=0.15 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.18.0)
+Requirement already satisfied: jiter<1,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (0.15.0)
+Requirement already satisfied: sniffio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (1.3.1)
+Requirement already satisfied: typing-extensions<5,>=4.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anthropic>=0.39.0->arnold==0.23.0) (4.15.0)
+Requirement already satisfied: idna>=2.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from anyio<5,>=3.5.0->anthropic>=0.39.0->arnold==0.23.0) (3.18)
+Requirement already satisfied: certifi in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (2026.6.17)
+Requirement already satisfied: httpcore==1.* in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpx->arnold==0.23.0) (1.0.9)
+Requirement already satisfied: h11>=0.16 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from httpcore==1.*->httpx->arnold==0.23.0) (0.16.0)
+Requirement already satisfied: annotated-types>=0.6.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pydantic>=2.0->arnold==0.23.0) (0.4.2)
+Requirement already satisfied: ctranslate2<5,>=4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.8.0)
+Requirement already satisfied: huggingface-hub>=0.21 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.21.0)
+Requirement already satisfied: tokenizers<1,>=0.13 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (0.23.1)
+Requirement already satisfied: onnxruntime<2,>=1.14 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (1.27.0)
+Requirement already satisfied: av>=11 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (17.1.0)
+Requirement already satisfied: tqdm in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from faster-whisper>=1.0.0->arnold==0.23.0) (4.68.3)
+Requirement already satisfied: setuptools in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (82.0.1)
+Requirement already satisfied: numpy in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from ctranslate2<5,>=4.0->faster-whisper>=1.0.0->arnold==0.23.0) (2.4.6)
+Requirement already satisfied: flatbuffers in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (25.12.19)
+Requirement already satisfied: packaging in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (26.2)
+Requirement already satisfied: protobuf>=4.25.8 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from onnxruntime<2,>=1.14->faster-whisper>=1.0.0->arnold==0.23.0) (7.35.1)
+Requirement already satisfied: click>=8.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (8.4.2)
+Requirement already satisfied: filelock>=3.10.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (3.29.4)
+Requirement already satisfied: fsspec>=2023.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (2026.6.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.5.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.1)
+Requirement already satisfied: typer<0.26.0,>=0.20.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.25.1)
+Requirement already satisfied: shellingham>=1.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (1.5.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub>=0.21->faster-whisper>=1.0.0->arnold==0.23.0) (0.0.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from rich->arnold==0.23.0) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from markdown-it-py>=2.2.0->rich->arnold==0.23.0) (0.1.2)
+Requirement already satisfied: aiohttp<4.0.0,>=3.8.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (3.14.1)
+Requirement already satisfied: tabulate<1.0.0,>=0.4.4 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from edge-tts->arnold==0.23.0) (0.10.0)
+Requirement already satisfied: aiohappyeyeballs>=2.5.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (2.6.2)
+Requirement already satisfied: aiosignal>=1.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.4.0)
+Requirement already satisfied: attrs>=17.3.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (26.1.0)
+Requirement already satisfied: frozenlist>=1.1.1 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.8.0)
+Requirement already satisfied: multidict<7.0,>=4.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (6.7.1)
+Requirement already satisfied: propcache>=0.2.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (0.5.2)
+Requirement already satisfied: yarl<2.0,>=1.17.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from aiohttp<4.0.0,>=3.8.0->edge-tts->arnold==0.23.0) (1.24.2)
+Requirement already satisfied: aiofiles<26,>=24.1.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (25.1.0)
+Requirement already satisfied: asyncstdlib<4,>=3.12.5 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (3.14.0)
+Requirement already satisfied: httpx-sse<0.5,>=0.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (0.4.3)
+Requirement already satisfied: msgpack<2,>=1.0.7 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (1.2.1)
+Requirement already satisfied: websockets>=12.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fal-client->arnold==0.23.0) (16.0)
+Requirement already satisfied: termcolor in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from fire->arnold==0.23.0) (3.3.0)
+Requirement already satisfied: nest-asyncio in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from firecrawl-py->arnold==0.23.0) (1.6.0)
+Requirement already satisfied: wcwidth in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from prompt-toolkit->arnold==0.23.0) (0.8.1)
+Requirement already satisfied: cryptography>=3.4.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from pyjwt[crypto]->arnold==0.23.0) (49.0.0)
+Requirement already satisfied: cffi>=2.0.0 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (2.0.0)
+Requirement already satisfied: pycparser in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from cffi>=2.0.0->cryptography>=3.4.0->pyjwt[crypto]->arnold==0.23.0) (3.0)
+Requirement already satisfied: charset_normalizer<4,>=2 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (3.4.7)
+Requirement already satisfied: urllib3<3,>=1.26 in /root/.pyenv/versions/3.11.11/lib/python3.11/site-packages (from requests->arnold==0.23.0) (2.7.0)
+Building wheels for collected packages: arnold
+  Building editable for arnold (pyproject.toml): started
+  Building editable for arnold (pyproject.toml): finished with status 'done'
+  Created wheel for arnold: filename=arnold-0.23.0-py3-none-any.whl size=5013 sha256=3c4b7d7279f941125a7e5585c09235baf79f308937d4c3ef4bce58d2f8026a38
+  Stored in directory: /tmp/pip-ephem-wheel-cache-uxdkybs0/wheels/10/78/b0/ecaeecda1ba1f0d87f6a1902022016be70f97e7c16cb098e57
+Successfully built arnold
+Installing collected packages: arnold
+  Attempting uninstall: arnold
+    Found existing installation: arnold 0.23.0
+    Uninstalling arnold-0.23.0:
+      Successfully uninstalled arnold-0.23.0
+Successfully installed arnold-0.23.0
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
+[megaplan-refresh] done
+[epic-chain] child epic native-python-pipelines-completion is running; waiting
+{
+  "success": true,
+  "status": "running",
+  "reason": "child epic native-python-pipelines-completion is running",
+  "epic_chain_state": {
+    "schema_version": 1,
+    "current_epic_index": 0,
+    "current_epic_id": "native-python-pipelines-completion",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "last_state": "running",
+    "pr_number": null,
+    "pr_state": null,
+    "completed": [],
+    "chain_session": null,
+    "resolved_workspace": null,
+    "metadata": {}
+  },
+  "base_branch": "main",
+  "summary": {
+    "current_epic": {
+      "id": "native-python-pipelines-completion",
+      "index": 0,
+      "spec": "../chain.yaml"
+    },
+    "completed": [],
+    "remaining": [
+      {
+        "id": "native-python-pipelines-completion",
+        "index": 0
+      },
+      {
+        "id": "native-composition-followup",
+        "index": 1
+      },
+      {
+        "id": "native-platform-followup",
+        "index": 2
+      }
+    ],
+    "base_branch": "main",
+    "last_state": "running",
+    "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "pr_number": null,
+    "pr_state": null
+  },
+  "active_child": {
+    "effective_status": "running",
+    "reason": "active_child_cursor_unfinished",
+    "spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "observed_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "state_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/.megaplan/plans/.chains/chain-7a38aae0a128.json",
+    "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+    "plan_status": {
+      "status": "prepped",
+      "plan": "m1-platform-contract-20260701-0337",
+      "plan_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/plans/m1-platform-contract-20260701-0337"
+    },
+    "classification": {
+      "operation_state": "suspended",
+      "effective_status": "stale_bookkeeping",
+      "reason": "active_plan_without_live_runner",
+      "metadata": {
+        "source_operation_state": "running",
+        "launch_state": null,
+        "runner_status": "unknown",
+        "plan_status": "prepped",
+        "sync_state": null
+      }
+    },
+    "chain_state": {
+      "schema_version": 0,
+      "current_milestone_index": 0,
+      "current_plan_name": "m1-platform-contract-20260701-0337",
+      "current_milestone_base_sha": null,
+      "target_base_ref": "85fd67f0389f4396682f8b999e8df62786b9b299",
+      "last_state": "prepped",
+      "pr_number": null,
+      "pr_state": null,
+      "completed": [],
+      "branch_head": null,
+      "pr_head": null,
+      "last_pushed_commit": null,
+      "dirty_flag": false,
+      "sync_state": null,
+      "extra_repos": [],
+      "chain_session": null,
+      "resolved_workspace": null,
+      "extra_repo_sync": [],
+      "completion_contract_mode": "shadow",
+      "full_suite_backstop_mode": "shadow",
+      "retry_counts": {},
+      "ladder_stage": {},
+      "profile_bumps": {},
+      "robustness_bumps": {},
+      "depth_bumps": {},
+      "enforce_revise_counts": {},
+      "metadata": {
+        "execution_environment": {
+          "schema_version": 1,
+          "created_phase": "chain_start",
+          "last_observed_phase": "chain_start",
+          "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "target_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "work_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+          "engine_root": "/workspace/arnold",
+          "target_head": "03a0b4101a15099c12020ca4cfd822ed5284461c",
+          "target_base": "03a0b4101a15099c12020ca4cfd822ed5284461c",
+          "target_base_ref": "main",
+          "target_fallback_reason": null
+        },
+        "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+        "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
+        "ground_truth_reconciliation": {
+          "reconciled_at": "2026-07-01T03:37:48Z",
+          "plan": "m1-platform-contract-20260701-0202",
+          "current_state": "prepped",
+          "latest_failure": null,
+          "last_gate": {},
+          "active_step": null,
+          "pr_number": null,
+          "pr_state": null
+        }
+      }
+    }
+  }
+}

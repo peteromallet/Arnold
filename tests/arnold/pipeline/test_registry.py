@@ -11,6 +11,7 @@ from arnold.workflow.registry import (
     ResourcePathPolicy,
     TrustPolicy,
 )
+from arnold.pipeline import registry as pipeline_registry_shim
 from arnold.pipeline.native.ir import NativeProgram
 from arnold.pipeline.types import (
     Pipeline,
@@ -153,6 +154,105 @@ class TestRegister:
         assert pipeline is not None
         assert callable(pipeline.resource_bundles[0].run_native_pipeline)
         assert reg.registration_kind_for("compat") == "graph_compatibility"
+
+    def test_registration_kind_infers_native_from_projected_shell_build(self) -> None:
+        program = NativeProgram(name="projected-shell")
+        reg = PipelineRegistry()
+        reg.register(
+            "projected",
+            lambda: Pipeline(
+                stages=_make_pipeline("projected").stages,
+                entry="projected",
+                native_program=program,
+            ),
+        )
+
+        assert reg.registration_kind_for("projected") == "unknown"
+        pipeline = reg.get("projected")
+
+        assert pipeline is not None
+        assert pipeline.native_program is program
+        assert reg.registration_kind_for("projected") == "native"
+        assert reg.metadata_for("projected")["registration_kind"] == "native"
+
+    def test_m1_dispatch_substrate_proof_projected_shells_register_as_native(self) -> None:
+        program = NativeProgram(name="m1-projected-shell")
+        reg = PipelineRegistry()
+        reg.register(
+            "m1-projected",
+            lambda: Pipeline(
+                stages=_make_pipeline("m1-projected").stages,
+                entry="m1-projected",
+                native_program=program,
+            ),
+        )
+
+        pipeline = reg.get("m1-projected")
+
+        assert pipeline is not None
+        assert pipeline.native_program is program
+        assert reg.registration_kind_for("m1-projected") == "native", (
+            "M1 dispatch substrate proof: projected shells with native_program must "
+            "register as native, not as final report conformance."
+        )
+
+    def test_registration_kind_infers_graph_compatibility_from_metadata(self) -> None:
+        class _Runner:
+            def run_native_pipeline(self, **kwargs):
+                return {"ok": True, "kwargs": kwargs}
+
+        reg = PipelineRegistry()
+        reg.register(
+            "graph-only",
+            lambda: Pipeline(stages={}, entry="", resource_bundles=(_Runner(),)),
+            metadata={
+                "driver": ("graph", "compat"),
+                "supported_modes": ("graph",),
+                "default_profile": None,
+            },
+        )
+
+        assert reg.registration_kind_for("graph-only") == "graph_compatibility"
+        assert (
+            reg.metadata_for("graph-only")["registration_kind"]
+            == "graph_compatibility"
+        )
+
+    def test_m1_dispatch_substrate_proof_unmigrated_packages_register_as_compatibility(self) -> None:
+        class _Runner:
+            def run_native_pipeline(self, **kwargs):
+                return {"ok": True, "kwargs": kwargs}
+
+        reg = PipelineRegistry()
+        reg.register(
+            "m1-compatibility",
+            lambda: Pipeline(stages={}, entry="", resource_bundles=(_Runner(),)),
+            metadata={
+                "driver": ("graph", "compat"),
+                "supported_modes": ("graph",),
+            },
+        )
+
+        assert reg.registration_kind_for("m1-compatibility") == "graph_compatibility", (
+            "M1 dispatch substrate proof: unmigrated graph packages must stay "
+            "explicit compatibility entries, not final report conformance."
+        )
+
+    def test_pipeline_registry_shim_reexports_updated_surface(self) -> None:
+        assert pipeline_registry_shim.PipelineBuilder is PipelineBuilder
+        reg = pipeline_registry_shim.PipelineRegistry()
+        reg.register(
+            "shim-native",
+            lambda: Pipeline(
+                stages=_make_pipeline("shim-native").stages,
+                entry="shim-native",
+                native_program=NativeProgram(name="shim-native"),
+            ),
+            metadata={"driver": ("native", "shim"), "supported_modes": ("native",)},
+        )
+
+        assert reg.registration_kind_for("shim-native") == "native"
+        assert reg.metadata_for("shim-native")["registration_kind"] == "native"
 
 
 # ---------------------------------------------------------------------------

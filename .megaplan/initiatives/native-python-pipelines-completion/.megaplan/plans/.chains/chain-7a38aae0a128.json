@@ -1,0 +1,117 @@
+{
+  "schema_version": 0,
+  "current_milestone_index": 0,
+  "current_plan_name": "m1-platform-contract-20260701-0939",
+  "current_milestone_base_sha": null,
+  "target_base_ref": "b80fab5ec768d93b448d0594003d029aa1db50f6",
+  "last_state": "finalized",
+  "pr_number": null,
+  "pr_state": null,
+  "completed": [],
+  "branch_head": null,
+  "pr_head": null,
+  "last_pushed_commit": null,
+  "dirty_flag": false,
+  "sync_state": null,
+  "extra_repos": [],
+  "chain_session": null,
+  "resolved_workspace": null,
+  "extra_repo_sync": [],
+  "completion_contract_mode": "shadow",
+  "full_suite_backstop_mode": "shadow",
+  "retry_counts": {},
+  "ladder_stage": {},
+  "profile_bumps": {},
+  "robustness_bumps": {},
+  "depth_bumps": {},
+  "enforce_revise_counts": {},
+  "metadata": {
+    "execution_environment": {
+      "schema_version": 1,
+      "created_phase": "chain_start",
+      "last_observed_phase": "chain_start",
+      "project_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+      "target_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+      "work_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
+      "engine_root": "/workspace/arnold",
+      "target_head": "b80fab5ec768d93b448d0594003d029aa1db50f6",
+      "target_base": "b80fab5ec768d93b448d0594003d029aa1db50f6",
+      "target_base_ref": "main",
+      "target_fallback_reason": null
+    },
+    "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
+    "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
+    "ground_truth_reconciliation": {
+      "reconciled_at": "2026-07-01T12:52:17Z",
+      "plan": "m1-platform-contract-20260701-0939",
+      "current_state": "finalized",
+      "latest_failure": null,
+      "last_gate": {
+        "recommendation": "PROCEED",
+        "rationale": "The plan is clean across all critique dimensions after two iterations. No blocking, unresolved, or addressed-but-unverified flags remain. The 46.49% plan delta in iteration 2 resolved all eight original flags (conformance-inventory ordering, deleted-test-path avoidance, step splitting, export assignment clarity, verification strengthening, and __all__ audit dependency). The plan correctly aligns with the epic North Star: it provides substrate proof (native_program propagation, executor preference, manifest discovery default, registry/validator contract) without claiming final Megaplan report conformance. Compatibility shims are minimal delegations to existing implementations, graph-era symbols are pushed to arnold.pipeline.legacy, and deleted surfaces remain enforced for unrelated modules. Preflight checks all pass. No anchor conflicts detected. Execution can proceed.",
+        "reprompted": false,
+        "signals_assessment": "Score stable at 0 across 2 iterations. Zero significant flags, zero unresolved flags, zero addressed-but-unverified flags. All five critique categories (issue_hints, correctness, scope, verification, prerequisite_ordering, north_star_alignment) are clear. No recurring critiques. Preflight posture is clean with all checks passing. Robustness level is thorough. The iteration pressure groups (FG-001, FG-002) concern success-criterion verification methods (observe_runtime_logs, subjective_judgment) rather than plan-quality defects and are appropriate for the execution stage to handle.",
+        "warnings": [
+          "Success criteria 5 and 11 require human verification (observe_runtime_logs, subjective_judgment) during execution \u2014 these cannot be fully automated in CI and should be explicitly checked during the exec phase.",
+          "The test blast radius includes 243 import-graph-dependent tests; a full-suite fallback run will be needed after scoped checks to catch regressions in dependent surfaces."
+        ],
+        "settled_decisions": [
+          {
+            "id": "SD1",
+            "decision": "arnold.pipeline.builder, arnold.pipeline.registry, and arnold.pipeline.validator are re-export shims delegating to arnold.workflow.*, not physical relocations",
+            "rationale": "Prep clarification confirmed this avoids M7's physical relocation scope. M1 provides public-surface compatibility without moving implementation files."
+          },
+          {
+            "id": "SD2",
+            "decision": "Discover test coverage goes under tests/arnold/pipeline/, not the deleted tests/_pipeline/ path",
+            "rationale": "tests/_pipeline/ remains a deleted legacy path. All new M1 discovery test coverage must land in active test directories to avoid resurrecting a path marked for deletion."
+          },
+          {
+            "id": "SD3",
+            "decision": "Graph-era construction/execution symbols (Builder, Registry, validate, Edge, Stage, etc.) are legacy-only exports via arnold.pipeline.legacy",
+            "rationale": "The primary arnold.pipeline.__all__ surface contains only native-first or neutral substrate names. Graph-era symbols remain available for compatibility through arnold.pipeline.legacy until M7 purge."
+          },
+          {
+            "id": "SD4",
+            "decision": "MEGAPLAN_M6_MANIFEST_DISCOVERY and ARNOLD_NATIVE_RUNTIME become no-op compatibility aliases in M1",
+            "rationale": "Manifest discovery and native runtime become unconditional defaults. Old env vars remain parseable as compatibility surfaces but do not gate behavior. ARNOLD_PIPELINE_RUNTIME retains its documented transitional global override role."
+          },
+          {
+            "id": "SD5",
+            "decision": "The active monolithic CLI module is arnold_pipelines/megaplan/cli/__init__.py; no file splits to arnold.py/parser.py occur in M1",
+            "rationale": "References to split CLI files are aspirational. M1 works within the existing monolithic CLI structure to avoid scope creep into CLI refactoring."
+          },
+          {
+            "id": "SD6",
+            "decision": "M1 delivers substrate proof only \u2014 native_program, projected shells, route labels, and native traces are dispatch/compatibility substrate, not final Megaplan authoring conformance",
+            "rationale": "This aligns with the epic North Star and the megaplan-native-representation-report.md doctrine. Visible Megaplan product semantics in canonical workflow source remain owned by the composition follow-up."
+          }
+        ],
+        "passed": true,
+        "preflight_results": {
+          "project_dir_exists": true,
+          "project_dir_writable": true,
+          "success_criteria_present": true,
+          "claude_available": true,
+          "codex_available": true
+        },
+        "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize."
+      },
+      "active_step": {
+        "phase": "execute",
+        "agent": "hermes",
+        "mode": "persistent",
+        "run_id": "05ba9ca3-3cc6-4b0e-bbc3-cc2b0b52da8d",
+        "worker_pid": 2119945,
+        "started_at": "2026-07-01T12:49:37Z",
+        "attempt": 1,
+        "last_activity_at": "2026-07-01T12:52:07Z",
+        "last_activity_kind": "llm_stream",
+        "model": "deepseek:deepseek-v4-pro",
+        "last_activity_detail": "49 chunks, 7984 reasoning"
+      },
+      "pr_number": null,
+      "pr_state": null
+    }
+  }
+}

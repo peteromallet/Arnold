@@ -55,6 +55,7 @@ PLACEHOLDER_EXECUTION_RESOURCE_CODE = "execution.placeholder_resource"
 NATIVE_MANIFEST_MISSING_EXECUTION_CODE = "manifest.native_execution_missing"
 NATIVE_MANIFEST_GRAPH_COMPAT_CODE = "manifest.native_graph_compatibility"
 DIRECT_NATIVE_DRIVER_CLAIM_CODE = "manifest.direct_native_driver_claim"
+NATIVE_MANIFEST_INVALID_METADATA_CODE = "manifest.native_metadata_invalid"
 
 
 def contract_diagnostic_code(error_kind: str) -> str:
@@ -172,6 +173,8 @@ class ManifestValidationContext:
     manifest_path: Path | str
     compatibility_classification: str = "native"
     source_entrypoint: str | None = None
+    default_profile: str | None = None
+    supported_modes: tuple[str, ...] = ()
     source_entrypoint_metadata: Mapping[str, Any] = field(default_factory=dict)
 
     @property
@@ -634,6 +637,71 @@ def _native_dispatch_evidence(pipeline: Any) -> bool:
     return False
 
 
+_PLACEHOLDER_STRINGS: frozenset[str] = frozenset(
+    {"todo", "tbd", "placeholder", "changeme", "fill-me", "fill_me", "example"}
+)
+
+
+def _is_placeholder_string(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().lower() in _PLACEHOLDER_STRINGS
+
+
+def _coerce_context_str_tuple(value: Any) -> tuple[str, ...] | None:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
+        return None
+    result: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            return None
+        normalized = item.strip()
+        if not normalized or _is_placeholder_string(normalized):
+            return None
+        result.append(normalized)
+    return tuple(result)
+
+
+def _context_claims_native_driver(context: ManifestValidationContext) -> bool:
+    raw_driver = context.manifest_driver
+    if isinstance(raw_driver, str):
+        return raw_driver.strip().lower() == "native"
+    driver = _coerce_context_str_tuple(raw_driver)
+    return bool(driver and driver[0] == "native")
+
+
+def _validate_native_manifest_metadata(
+    context: ManifestValidationContext,
+) -> tuple[list[str], dict[str, Any]]:
+    reasons: list[str] = []
+    detail_overrides: dict[str, Any] = {}
+
+    driver = _coerce_context_str_tuple(context.manifest_driver)
+    if driver is None or len(driver) < 2 or driver[0] != "native":
+        reasons.append(
+            "driver must be a non-placeholder sequence of strings beginning with 'native'"
+        )
+        detail_overrides["manifest_driver"] = context.manifest_driver
+
+    default_profile = context.default_profile
+    if not isinstance(default_profile, str) or not default_profile.strip():
+        reasons.append("default_profile must be a non-empty string for native manifests")
+        detail_overrides["default_profile"] = default_profile
+    elif _is_placeholder_string(default_profile):
+        reasons.append("default_profile must not be a placeholder string")
+        detail_overrides["default_profile"] = default_profile
+
+    supported_modes = _coerce_context_str_tuple(context.supported_modes)
+    if not supported_modes or "native" not in supported_modes:
+        reasons.append("supported_modes must include 'native' for native manifests")
+        detail_overrides["supported_modes"] = context.supported_modes
+
+    source_entrypoint = context.source_entrypoint
+    if source_entrypoint != "build_pipeline":
+        reasons.append("native manifests must declare build_pipeline as the entrypoint")
+        detail_overrides["source_entrypoint"] = source_entrypoint
+
+    return reasons, detail_overrides
+
+
 def _looks_like_placeholder_execution_resource(bundle: Any) -> bool:
     if not hasattr(bundle, "run_native_pipeline"):
         return False
@@ -704,15 +772,30 @@ def validate_manifest_context(
 
     diag = Diagnostics()
     details = {
-        "manifest_driver": list(context.manifest_driver),
+        "manifest_driver": (
+            list(context.manifest_driver)
+            if isinstance(context.manifest_driver, Sequence)
+            and not isinstance(context.manifest_driver, (str, bytes))
+            else context.manifest_driver
+        ),
         "package": context.package,
         "name": context.name,
         "manifest_path": str(context.manifest_path),
         "compatibility_classification": context.compatibility_classification,
         "source_entrypoint": context.source_entrypoint,
+        "default_profile": context.default_profile,
+        "supported_modes": list(context.supported_modes),
         "source_entrypoint_metadata": dict(context.source_entrypoint_metadata),
     }
-    if context.driver_family == "native":
+    if _context_claims_native_driver(context):
+        reasons, detail_overrides = _validate_native_manifest_metadata(context)
+        if reasons:
+            diag.add_defect(
+                f"manifest for {context.package}/{context.name} declares native driver "
+                "but native metadata is incomplete or malformed",
+                code=NATIVE_MANIFEST_INVALID_METADATA_CODE,
+                details={**details, **detail_overrides, "reasons": reasons},
+            )
         if context.is_graph_compatible:
             diag.add_defect(
                 f"manifest for {context.package}/{context.name} declares native driver "
