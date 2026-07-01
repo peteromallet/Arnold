@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
-
-import pytest
 
 from arnold_pipelines.megaplan.resident.discord import (
     DISCORD_MESSAGE_LIMIT,
@@ -23,8 +22,25 @@ def test_split_discord_message_keeps_chunks_under_limit() -> None:
     assert "beta" in chunks[-1]
 
 
-@pytest.mark.asyncio
-async def test_discord_outbound_sink_sends_long_messages_in_chunks() -> None:
+def test_discord_outbound_sink_sends_long_messages_in_chunks() -> None:
+    async def run_case() -> None:
+        channel = FakeChannel()
+        sink = DiscordOutboundSink(FakeClient(channel))
+        metadata: dict[str, object] = {}
+
+        await sink.send(
+            OutboundMessage(
+                conversation_key="discord:dm:123",
+                content="x" * 4500,
+                metadata=metadata,
+            )
+        )
+
+        assert len(channel.sent) == 3
+        assert all(len(content) <= DISCORD_MESSAGE_LIMIT for content in channel.sent)
+        assert metadata["discord_message_id"] == "discord-1"
+        assert metadata["discord_message_ids"] == ["discord-1", "discord-2", "discord-3"]
+
     class FakeChannel:
         def __init__(self) -> None:
             self.sent: list[str] = []
@@ -48,19 +64,4 @@ async def test_discord_outbound_sink_sends_long_messages_in_chunks() -> None:
             assert user_id == 123
             return self.user
 
-    channel = FakeChannel()
-    sink = DiscordOutboundSink(FakeClient(channel))
-    metadata: dict[str, object] = {}
-
-    await sink.send(
-        OutboundMessage(
-            conversation_key="discord:dm:123",
-            content="x" * 4500,
-            metadata=metadata,
-        )
-    )
-
-    assert len(channel.sent) == 3
-    assert all(len(content) <= DISCORD_MESSAGE_LIMIT for content in channel.sent)
-    assert metadata["discord_message_id"] == "discord-1"
-    assert metadata["discord_message_ids"] == ["discord-1", "discord-2", "discord-3"]
+    asyncio.run(run_case())
