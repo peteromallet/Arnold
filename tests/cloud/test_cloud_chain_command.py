@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import tarfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,8 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _chain_anchor_uploads,
     _chain_project_root,
     _chain_start_command,
+    _derive_chain_launch_context,
+    _durable_megaplan_uploads,
     _derive_bootstrap_session_name,
     _latest_failure_from_plan_status,
     _normalized_chain_upload_spec,
@@ -22,8 +25,10 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _remote_chain_upload_path,
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
+    _run_sync_megaplan,
     _run_bootstrap_wrapper,
     _status_should_use_chain,
+    _validate_chain_spec_location,
     cloud_chain_status_payload,
 )
 from arnold_pipelines.megaplan.cloud.spec import (
@@ -36,11 +41,12 @@ from arnold_pipelines.megaplan.cloud.spec import (
     SshSpec,
 )
 from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
+from arnold_pipelines.megaplan.types import CliError
 
 
 def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     command = _chain_start_command(
-        "/workspace/project/.megaplan/briefs/demo/chain.yaml",
+        "/workspace/project/.megaplan/initiatives/demo/chain.yaml",
         project_dir="/workspace/project",
         engine_dir="/workspace/arnold",
     )
@@ -50,24 +56,24 @@ def test_chain_start_command_sources_cloud_hot_env_before_launch() -> None:
     assert "MEGAPLAN_TRUSTED_CONTAINER=1 python -P -m arnold_pipelines.megaplan chain start" in command
 
 
-def test_remote_chain_upload_path_anchors_relative_briefs_to_workspace() -> None:
+def test_remote_chain_upload_path_anchors_relative_initiatives_to_workspace() -> None:
     path = _remote_chain_upload_path(
-        ".megaplan/briefs/god-file-splits/m1.md",
+        ".megaplan/initiatives/god-file-splits/briefs/m1.md",
         source_workspace="/workspace",
         target_workspace="/workspace/vibecomfy-god-file-splits",
     )
 
-    assert path == "/workspace/vibecomfy-god-file-splits/.megaplan/briefs/god-file-splits/m1.md"
+    assert path == "/workspace/vibecomfy-god-file-splits/.megaplan/initiatives/god-file-splits/briefs/m1.md"
 
 
 def test_remote_chain_workspace_path_preserves_spec_relative_path() -> None:
     path = _remote_chain_workspace_path(
-        Path("/workspace/.megaplan/briefs/god-file-splits/chain.yaml"),
+        Path("/workspace/.megaplan/initiatives/god-file-splits/chain.yaml"),
         local_root=Path("/workspace"),
         target_workspace="/workspace/vibecomfy-god-file-splits",
     )
 
-    assert path == "/workspace/vibecomfy-god-file-splits/.megaplan/briefs/god-file-splits/chain.yaml"
+    assert path == "/workspace/vibecomfy-god-file-splits/.megaplan/initiatives/god-file-splits/chain.yaml"
 
 
 def test_bootstrap_launch_command_writes_plan_marker_and_relaunch_command() -> None:
@@ -93,10 +99,16 @@ def test_run_bootstrap_wrapper_writes_marker_using_repo_named_session(tmp_path: 
     idea_file.write_text("Per workflow window chat", encoding="utf-8")
     commands: list[str] = []
     uploads: list[tuple[Path, str]] = []
+    archive_names: list[str] = []
 
     class CaptureProvider:
         def upload_file(self, src: Path, dest: str) -> None:
             uploads.append((src, dest))
+
+        def upload_archive(self, src: Path, dest_dir: str) -> None:
+            uploads.append((src, dest_dir))
+            with tarfile.open(src, "r:gz") as tar:
+                archive_names.extend(sorted(tar.getnames()))
 
         def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
             commands.append(command)
@@ -126,7 +138,7 @@ def test_run_bootstrap_wrapper_writes_marker_using_repo_named_session(tmp_path: 
 
 
 def test_chain_anchor_uploads_follow_chain_spec_directory(tmp_path: Path) -> None:
-    spec_dir = tmp_path / ".megaplan" / "briefs" / "demo"
+    spec_dir = tmp_path / ".megaplan" / "initiatives" / "demo"
     spec_dir.mkdir(parents=True)
     (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
     (spec_dir / "m1-northstar.md").write_text("milestone star\n", encoding="utf-8")
@@ -146,13 +158,13 @@ def test_chain_anchor_uploads_follow_chain_spec_directory(tmp_path: Path) -> Non
     chain_spec = chain_module.load_spec(spec_path)
     uploads = _chain_anchor_uploads(
         spec_path,
-        "/workspace/chain-123/app/.megaplan/briefs/demo/chain.yaml",
+        "/workspace/chain-123/app/.megaplan/initiatives/demo/chain.yaml",
         chain_spec,
     )
 
     assert uploads == [
-        (spec_dir / "NORTHSTAR.md", "/workspace/chain-123/app/.megaplan/briefs/demo/NORTHSTAR.md"),
-        (spec_dir / "m1-northstar.md", "/workspace/chain-123/app/.megaplan/briefs/demo/m1-northstar.md"),
+        (spec_dir / "NORTHSTAR.md", "/workspace/chain-123/app/.megaplan/initiatives/demo/NORTHSTAR.md"),
+        (spec_dir / "m1-northstar.md", "/workspace/chain-123/app/.megaplan/initiatives/demo/m1-northstar.md"),
     ]
 
 
@@ -161,7 +173,7 @@ def test_normalized_chain_upload_spec_materializes_preflight_phase_map(tmp_path:
     spec_path.write_text(
         "milestones:\n"
         "  - label: m1\n"
-        "    idea: .megaplan/briefs/demo/m1.md\n",
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
         encoding="utf-8",
     )
     preflight = {
@@ -190,7 +202,7 @@ def test_normalized_chain_upload_spec_materializes_preflight_phase_map(tmp_path:
         upload_path.unlink(missing_ok=True)
 
     milestone = normalized["milestones"][0]
-    assert milestone["idea"] == ".megaplan/briefs/demo/m1.md"
+    assert milestone["idea"] == ".megaplan/initiatives/demo/briefs/m1.md"
     assert milestone["phase_model"] == [
         "plan=codex",
         "revise=codex",
@@ -235,6 +247,115 @@ def test_chain_project_root_uses_spec_git_repo_not_caller_root(tmp_path: Path) -
     spec_path.write_text("milestones: []\n", encoding="utf-8")
 
     assert _chain_project_root(spec_path, caller_root) == app_root.resolve()
+
+
+def test_cloud_chain_spec_location_requires_durable_initiatives_tree(tmp_path: Path) -> None:
+    project = tmp_path / "app"
+    valid = project / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    loose = project / "chain.yaml"
+    valid.parent.mkdir(parents=True)
+    valid.write_text("milestones: []\n", encoding="utf-8")
+    loose.write_text("milestones: []\n", encoding="utf-8")
+
+    _validate_chain_spec_location(valid, project)
+    with pytest.raises(CliError) as excinfo:
+        _validate_chain_spec_location(loose, project)
+
+    assert excinfo.value.code == "chain_spec_layout_violation"
+
+
+def test_durable_megaplan_uploads_exclude_runtime_state(tmp_path: Path) -> None:
+    project = tmp_path / "app"
+    (project / ".megaplan" / "initiatives" / "demo").mkdir(parents=True)
+    (project / ".megaplan" / "tickets").mkdir(parents=True)
+    (project / ".megaplan" / "ideas").mkdir(parents=True)
+    (project / ".megaplan" / "plans" / "run").mkdir(parents=True)
+    (project / ".megaplan" / "initiatives" / "demo" / "chain.yaml").write_text("milestones: []\n", encoding="utf-8")
+    (project / ".megaplan" / "tickets" / "T.md").write_text("ticket\n", encoding="utf-8")
+    (project / ".megaplan" / "ideas" / "idea.md").write_text("idea\n", encoding="utf-8")
+    (project / ".megaplan" / "plans" / "run" / "state.json").write_text("{}\n", encoding="utf-8")
+
+    uploads = _durable_megaplan_uploads(project, "/workspace/demo/app")
+    remotes = [remote for _local, remote in uploads]
+
+    assert "/workspace/demo/app/.megaplan/initiatives/demo/chain.yaml" in remotes
+    assert "/workspace/demo/app/.megaplan/tickets/T.md" in remotes
+    assert "/workspace/demo/app/.megaplan/ideas/idea.md" in remotes
+    assert all("/.megaplan/plans/" not in remote for remote in remotes)
+
+
+def test_sync_megaplan_uses_derived_chain_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    spec_path = spec_dir / "chain.yaml"
+    idea_path = spec_dir / "briefs" / "m1.md"
+    idea_path.parent.mkdir()
+    spec_path.write_text(
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+    idea_path.write_text("idea\n", encoding="utf-8")
+    (project / ".megaplan" / "tickets").mkdir()
+    (project / ".megaplan" / "tickets" / "ticket.md").write_text("ticket\n", encoding="utf-8")
+
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    chain_spec = chain_module.load_spec(spec_path)
+    cloud_spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+        ssh=SshSpec(host="testhost"),
+    )
+    expected = _derive_chain_launch_context(
+        root=project,
+        spec=cloud_spec,
+        local_spec_path=spec_path,
+        chain_spec=chain_spec,
+    )
+    commands: list[str] = []
+    uploads: list[tuple[Path, str]] = []
+    archive_names: list[str] = []
+
+    class CaptureProvider:
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            return subprocess.CompletedProcess([], 0, "", "")
+
+        def upload_file(self, src: Path, dest: str) -> None:
+            uploads.append((src, dest))
+
+        def upload_archive(self, src: Path, dest_dir: str) -> None:
+            uploads.append((src, dest_dir))
+            with tarfile.open(src, "r:gz") as tar:
+                archive_names.extend(sorted(tar.getnames()))
+
+    monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._ensure_repo_checkout", lambda *_args, **_kwargs: None)
+
+    result = _run_sync_megaplan(
+        project,
+        argparse.Namespace(
+            spec=str(spec_path),
+            workspace=None,
+            clean=True,
+            allow_loose_chain_spec=False,
+        ),
+        cloud_spec,
+        CaptureProvider(),
+    )
+
+    assert result == 0
+    assert commands and "rm -rf" in commands[0]
+    assert uploads and uploads[0][1] == expected.workspace
+    assert ".megaplan/initiatives/demo/chain.yaml" in archive_names
+    assert ".megaplan/tickets/ticket.md" in archive_names
 
 
 def test_status_auto_uses_chain_for_chain_mode() -> None:
@@ -299,7 +420,7 @@ def test_cloud_resume_uses_chain_marker_workspace(monkeypatch: pytest.MonkeyPatc
     )
     marker = {
         "workspace": "/workspace/chain-51d959cf/vibecomfy",
-        "remote_spec": "/workspace/chain-51d959cf/vibecomfy/.megaplan/briefs/demo/chain.yaml",
+        "remote_spec": "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml",
     }
     chain_state = chain_module.ChainState(
         current_plan_name="milestone-demo",
@@ -375,7 +496,7 @@ class _StatusProvider:
 
 
 def test_cloud_chain_status_payload_exposes_plan_latest_failure() -> None:
-    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/briefs/demo/chain.yaml"
+    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
     chain_yaml = (
         "milestones:\n"
         "  - label: m1\n"

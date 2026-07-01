@@ -489,15 +489,15 @@ transplanting into the clean branch:
 
 The extraction branch is now a full-suite-green base. The next work is no
 longer "port more useful quarry"; it is a post-extraction epic captured at
-`.megaplan/briefs/arnold-post-extraction-next/chain.yaml`.
+`.megaplan/initiatives/arnold-post-extraction-next/chain.yaml`.
 
 | Milestone | Brief | Size | Recommended run |
 | --- | --- | --- | --- |
-| M1: Megaplan canonical executor bridge | `.megaplan/briefs/arnold-post-extraction-next/m1-megaplan-canonical-executor-bridge.md` | One sprint | `partnered/full/high +prep` |
-| M2: Package authoring surface | `.megaplan/briefs/arnold-post-extraction-next/m2-package-authoring-surface.md` | One sprint | `partnered/full/medium` |
-| M3: Human interaction and deliberation package | `.megaplan/briefs/arnold-post-extraction-next/m3-human-interaction-and-deliberation-package.md` | One sprint | `partnered/full/medium` |
-| M4: Megaplan package hardening | `.megaplan/briefs/arnold-post-extraction-next/m4-megaplan-package-hardening.md` | One sprint | `directed/full/medium` |
-| M5: Branch retirement and compatibility cutover | `.megaplan/briefs/arnold-post-extraction-next/m5-branch-retirement-and-compatibility-cutover.md` | Small sprint | `solo/light/low` |
+| M1: Megaplan canonical executor bridge | `.megaplan/initiatives/arnold-post-extraction-next/briefs/m1-megaplan-canonical-executor-bridge.md` | One sprint | `partnered/full/high +prep` |
+| M2: Package authoring surface | `.megaplan/initiatives/arnold-post-extraction-next/briefs/m2-package-authoring-surface.md` | One sprint | `partnered/full/medium` |
+| M3: Human interaction and deliberation package | `.megaplan/initiatives/arnold-post-extraction-next/briefs/m3-human-interaction-and-deliberation-package.md` | One sprint | `partnered/full/medium` |
+| M4: Megaplan package hardening | `.megaplan/initiatives/arnold-post-extraction-next/briefs/m4-megaplan-package-hardening.md` | One sprint | `directed/full/medium` |
+| M5: Branch retirement and compatibility cutover | `.megaplan/initiatives/arnold-post-extraction-next/briefs/m5-branch-retirement-and-compatibility-cutover.md` | Small sprint | `solo/light/low` |
 
 Run M1 first. It is the load-bearing next step because it proves Megaplan can
 consume the neutral Arnold substrate through package-owned adapters/hooks. M2
@@ -511,7 +511,7 @@ after useful payloads are landed or rejected.
 Suggested M1 command:
 
 ```text
-megaplan init .megaplan/briefs/arnold-post-extraction-next/m1-megaplan-canonical-executor-bridge.md --profile partnered --robustness full --depth high --with-prep --prep-direction "Start from the full-suite-green Slices 1-32. Focus on the smallest representative Megaplan path that can run through arnold.pipeline.run_pipeline via package-owned adapters/hooks. Compare existing Megaplan executor behavior to the neutral executor hook surface before proposing replacements. Do not copy quarry bridge files wholesale."
+megaplan init .megaplan/initiatives/arnold-post-extraction-next/briefs/m1-megaplan-canonical-executor-bridge.md --profile partnered --robustness full --depth high --with-prep --prep-direction "Start from the full-suite-green Slices 1-32. Focus on the smallest representative Megaplan path that can run through arnold.pipeline.run_pipeline via package-owned adapters/hooks. Compare existing Megaplan executor behavior to the neutral executor hook surface before proposing replacements. Do not copy quarry bridge files wholesale."
 ```
 
 Megaplan-prep sizing rationale:
@@ -566,7 +566,7 @@ Target:
 
 Use these for shape, tests, and regression coverage, not as final source layout:
 
-- `.megaplan/briefs/*` and archived plan docs from Arnold branches;
+- `.megaplan/initiatives/*` planning inputs and archived plan docs from Arnold branches;
 - existing `PipelineBuilder` examples that show useful agent-authored workflows
   but expose the wrong public layer;
 - `mp-test-blast-radius` and `mp-tbr-merge`, which are useful Megaplan package

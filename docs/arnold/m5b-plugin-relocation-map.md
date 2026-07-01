@@ -443,4 +443,4 @@ Direct imports of moved audit modules were updated to canonical
 - Authoritative YAML: `docs/arnold/package-disposition.yaml`
 - Validator: `scripts/validate_package_disposition.py`
 - Renderer: `scripts/render_package_disposition_md.py`
-- M5b Brief: `.megaplan/briefs/arnold-megaplan-cleanup/m5b-execute-review-orchestration-policy.md`
+- M5b Brief: `.megaplan/initiatives/arnold-megaplan-cleanup/briefs/m5b-execute-review-orchestration-policy.md`

@@ -11,7 +11,7 @@ from uuid import uuid4
 from arnold_pipelines.megaplan.schemas import CloudRun, ResidentConversation, ScheduledJob
 from arnold_pipelines.megaplan.store import ProgressEventInput, ScheduledJobInput, Store, deterministic_idempotency_key
 
-from .auth import ConfirmationManager
+from .auth import AuthorizationSubject, ConfirmationManager
 from .cloud import (
     CloudClassification,
     CloudToolBackend,
@@ -21,7 +21,8 @@ from .cloud import (
     progress_kind_for_classification,
 )
 from .config import ResidentConfig
-from .runtime import EmitProtocol, OutboundMessage, OutboundSink
+from .runtime import EmitProtocol, InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
+from . import vp_todo
 
 JobHandler = Callable[[dict[str, Any]], Awaitable[None]]
 TERMINAL_OR_INPUT_NEEDED: frozenset[CloudClassification] = frozenset(
@@ -164,6 +165,7 @@ class ResidentJobHandlers:
     outbound: OutboundSink | None = None
     confirmation_manager: ConfirmationManager | None = None
     runtime_flush: Callable[[], Awaitable[None]] | None = None
+    runtime: ResidentRuntime | None = None
     worker_id: str = "resident-scheduler"
     reschedule_interval_s: int | None = None
 
@@ -173,6 +175,7 @@ class ResidentJobHandlers:
             "deferred_turn": self.handle_deferred_turn,
             "heartbeat": self.handle_heartbeat,
             "confirmation_expiry": self.handle_confirmation_expiry,
+            "vp_todo_sweep": self.handle_vp_todo_sweep,
         }
 
     async def handle_cloud_check(self, job_payload: dict[str, Any]) -> None:
@@ -192,6 +195,14 @@ class ResidentJobHandlers:
         previous_status = run.status
         updated = self._persist_cloud_result(run, result)
         classification = result.classification
+        if bool(job.payload.get("notify_every_check", False)):
+            await self._notify_cloud_check_fire(
+                conversation=conversation,
+                job=job,
+                run=updated,
+                classification=classification,
+                summary=result.summary,
+            )
         if classification == "running":
             self._reschedule_cloud_check(job, updated)
         elif classification in TERMINAL_OR_INPUT_NEEDED:
@@ -237,6 +248,107 @@ class ResidentJobHandlers:
             message="Expired resident confirmation requests",
             details={"job_id": job.id, "expired_request_ids": [request.id for request in expired]},
             idempotency_key=deterministic_idempotency_key("resident-confirmation-expiry", job.id, job.attempt_count),
+        )
+
+    async def handle_vp_todo_sweep(self, job_payload: dict[str, Any]) -> None:
+        job = _job_from_payload(job_payload)
+        todo_path = self.config.special_requests_todo_path
+        pending = vp_todo.pending_items(todo_path)
+        if self.runtime is None or not self.config.special_requests_enabled:
+            self._emit_sink().log_system_event(
+                level="info",
+                category="system",
+                event_type="resident_vp_todo_sweep",
+                message="VP to-do sweep skipped (disabled or no runtime)",
+                details={"job_id": job.id, "pending": len(pending)},
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-vp-todo-sweep-skip", job.id, job.attempt_count
+                ),
+            )
+            self._reschedule_vp_todo_sweep(job)
+            return
+        if not pending:
+            self._emit_sink().log_system_event(
+                level="info",
+                category="system",
+                event_type="resident_vp_todo_sweep",
+                message="VP to-do sweep had no pending items",
+                details={"job_id": job.id, "pending": 0},
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-vp-todo-sweep-empty", job.id, job.attempt_count
+                ),
+            )
+            self._reschedule_vp_todo_sweep(job)
+            return
+
+        subject_user_id = str(
+            job.payload.get("subject_user_id")
+            or self.config.special_requests_subject_user_id
+            or self._first_user_id()
+        )
+        conversation_key = str(
+            job.payload.get("conversation_key")
+            or self.config.special_requests_conversation_key
+            or f"discord:dm:{subject_user_id}"
+        )
+        subject = AuthorizationSubject(
+            user_id=subject_user_id,
+            guild_id=_optional_str(job.payload.get("guild_id")),
+            channel_id=_optional_str(job.payload.get("channel_id")),
+        )
+        event = InboundEvent(
+            idempotency_key=deterministic_idempotency_key(
+                "resident-vp-todo-sweep", job.id, job.attempt_count
+            ),
+            conversation_key=conversation_key,
+            subject=subject,
+            content=_vp_todo_sweep_prompt(todo_path, pending),
+            raw={"vp_todo_sweep": True, "job_id": job.id, "pending_count": len(pending)},
+        )
+        await self.runtime.receive(event)
+        self._emit_sink().log_system_event(
+            level="info",
+            category="system",
+            event_type="resident_vp_todo_sweep",
+            message="VP to-do sweep dispatched to resident agent",
+            details={
+                "job_id": job.id,
+                "pending": len(pending),
+                "conversation_key": conversation_key,
+            },
+            idempotency_key=deterministic_idempotency_key(
+                "resident-vp-todo-sweep-fire", job.id, job.attempt_count
+            ),
+        )
+        self._reschedule_vp_todo_sweep(job)
+
+    def _first_user_id(self) -> str:
+        ids = self.config.allowed_user_ids or self.config.admin_user_ids
+        if not ids:
+            raise ValueError(
+                "vp_todo_sweep requires a user id (configure allowed_user_ids "
+                "or admin_user_ids, or special_requests_subject_user_id)"
+            )
+        return ids[0]
+
+    def _reschedule_vp_todo_sweep(self, job: ScheduledJob) -> None:
+        pending = self.store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1)
+        if pending:
+            return
+        interval = int(
+            job.payload.get("interval_s") or self.config.special_requests_interval_s
+        )
+        self.store.create_scheduled_job(
+            ScheduledJobInput(
+                job_type="vp_todo_sweep",
+                conversation_id=job.conversation_id,
+                payload=dict(job.payload),
+                scheduled_for=utc_now() + timedelta(seconds=max(1, interval)),
+                max_attempts=job.max_attempts,
+            ),
+            idempotency_key=deterministic_idempotency_key(
+                "resident-vp-todo-sweep-reschedule", job.id, job.attempt_count
+            ),
         )
 
     def _persist_cloud_result(
@@ -293,6 +405,47 @@ class ResidentJobHandlers:
                 ),
             )
         return updated
+
+    async def _notify_cloud_check_fire(
+        self,
+        *,
+        conversation: ResidentConversation,
+        job: ScheduledJob,
+        run: CloudRun,
+        classification: CloudClassification,
+        summary: str,
+    ) -> None:
+        content = _cloud_check_notification_text(job, run, classification, summary)
+        idempotency_key = deterministic_idempotency_key("resident-cloud-check-notification", job.id, job.attempt_count)
+        message = self.store.create_message(
+            epic_id=run.epic_id,
+            conversation_id=conversation.id,
+            direction="outbound",
+            content=content,
+            idempotency_key=idempotency_key,
+        )
+        self.store.update_resident_conversation(
+            conversation.id,
+            last_outbound_message_id=message.id,
+            delivery_cursor=message.id,
+            last_active_at=utc_now(),
+            idempotency_key=deterministic_idempotency_key("resident-cloud-check-notification-pointer", conversation.id, message.id),
+        )
+        if self.outbound is not None:
+            await self.outbound.send(
+                OutboundMessage(
+                    conversation_key=conversation.conversation_key,
+                    content=content,
+                    idempotency_key=idempotency_key,
+                    metadata={
+                        "conversation_id": conversation.id,
+                        "message_id": message.id,
+                        "scheduled_job_id": job.id,
+                        "cloud_run_id": run.id,
+                        "cloud_status": classification,
+                    },
+                )
+            )
 
     def _reschedule_cloud_check(self, job: ScheduledJob, run: CloudRun) -> None:
         pending = self.store.list_scheduled_jobs(
@@ -410,6 +563,7 @@ def make_store_scheduler(
     outbound: OutboundSink | None = None,
     confirmation_manager: ConfirmationManager | None = None,
     runtime_flush: Callable[[], Awaitable[None]] | None = None,
+    runtime: ResidentRuntime | None = None,
     worker_id: str | None = None,
 ) -> ScheduledJobWorker:
     worker_name = worker_id or f"resident-scheduler-{uuid4()}"
@@ -420,6 +574,7 @@ def make_store_scheduler(
         outbound=outbound,
         confirmation_manager=confirmation_manager,
         runtime_flush=runtime_flush,
+        runtime=runtime,
         worker_id=worker_name,
     )
     backend = StoreScheduledJobBackend(
@@ -458,3 +613,50 @@ def _job_from_payload(payload: dict[str, Any]) -> ScheduledJob:
 def _cloud_notification_text(run: CloudRun, classification: CloudClassification, summary: str) -> str:
     target = run.target_id or run.plan_id or run.sprint_id or run.id
     return f"Cloud run {target} is {classification}: {summary}"
+
+
+def _cloud_check_notification_text(
+    job: ScheduledJob,
+    run: CloudRun,
+    classification: CloudClassification,
+    summary: str,
+) -> str:
+    target = run.target_id or run.plan_id or run.sprint_id or run.id
+    interval = int(job.payload.get("check_interval_s") or 0)
+    cadence = f" every {interval // 3600}h" if interval and interval % 3600 == 0 else (f" every {interval}s" if interval else "")
+    return f"Cloud check{cadence} ran for {target}: {classification}. {summary}"
+
+
+def _vp_todo_sweep_prompt(todo_path: object, pending: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for item in pending:
+        line = f"- id={item['id']}: {item['task']}"
+        if item.get("when"):
+            line += f"  (when: {item['when']})"
+        lines.append(line)
+    bullets = "\n".join(lines)
+    return (
+        f"The VP special-requests sweep just fired. There are {len(pending)} pending "
+        f"item(s) in the to-do list at `{todo_path}`:\n{bullets}\n\n"
+        "Work through each pending item:\n"
+        "1. If the item has a `when` condition, first verify it is satisfied using your "
+        "tools (e.g. `read_epic` to check an epic is done, `cloud_status` to check a run). "
+        "If the condition is NOT yet satisfied, skip that item for now (leave it pending) "
+        "and move to the next one.\n"
+        "2. Call `launch_subagent` with the item's task to execute it with a sub-agent.\n"
+        "3. On success, call `complete_todo_item` with the item id and the result "
+        "(this clears it from the list).\n"
+        "4. On failure, call `fail_todo_item` with the item id and the reason "
+        "(it is retained for retry).\n\n"
+        "Your reply to the channel must contain each completed task's ACTUAL result — "
+        "the sub-agent's full output, quoted near-verbatim under the task — not a "
+        "paraphrase or a one-line summary. Also list any items you skipped because their "
+        "`when` condition was not yet met."
+    )
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    return text if text else None

@@ -461,7 +461,7 @@ def _chain_log_summary(workspace, session, entry):
 def _chain_state_paths(workspace):
     candidates = set()
     candidates.update((workspace / ".megaplan" / "plans" / ".chains").glob("*.json"))
-    candidates.update(workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"))
+    candidates.update(workspace.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"))
     candidates.update((workspace / ".megaplan").glob("**/chain_state.json"))
     ordered = []
     for path in candidates:

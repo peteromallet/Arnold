@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 from datetime import datetime, timezone
 from dataclasses import dataclass, replace
 from importlib import resources
@@ -30,6 +31,7 @@ from arnold_pipelines.megaplan.cloud.providers.base import (
 from arnold_pipelines.megaplan.cloud.redact import redact
 from arnold_pipelines.megaplan.cloud.spec import CloudSpec, apply_repo_overrides, load_spec as load_cloud_spec
 from arnold_pipelines.megaplan.cloud.template import materialize_deploy_dir, render_ensure_repos_block
+from arnold_pipelines.megaplan.layout import is_canonical_chain_spec
 from arnold_pipelines.megaplan.types import CliError
 
 
@@ -99,7 +101,45 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
             "the cloud editable install branch."
         ),
     )
+    chain_parser.add_argument(
+        "--allow-loose-chain-spec",
+        action="store_true",
+        help=(
+            "Allow launching a chain spec outside .megaplan/initiatives/<initiative>/chain.yaml. "
+            "Intended only for temporary compatibility."
+        ),
+    )
     _add_repo_override_args(chain_parser)
+
+    sync_parser = cloud_sub.add_parser(
+        "sync-megaplan",
+        parents=[shared],
+        help="Upload durable .megaplan planning artifacts to the cloud workspace",
+    )
+    sync_parser.add_argument(
+        "spec",
+        nargs="?",
+        help=(
+            "Optional local .megaplan/initiatives/<initiative>/chain.yaml. When supplied, "
+            "uses the same derived cloud workspace as `cloud chain`."
+        ),
+    )
+    sync_parser.add_argument(
+        "--workspace",
+        default=None,
+        help="Explicit remote workspace override. Use only for manual migration.",
+    )
+    sync_parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Remove remote durable .megaplan/initiatives, tickets, and ideas before upload.",
+    )
+    sync_parser.add_argument(
+        "--allow-loose-chain-spec",
+        action="store_true",
+        help="Allow a sync target chain spec outside .megaplan/initiatives/<initiative>/chain.yaml.",
+    )
+    _add_repo_override_args(sync_parser)
 
     bootstrap_parser = cloud_sub.add_parser(
         "bootstrap",
@@ -230,6 +270,9 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         if action == "chain":
             with _materialized_deploy_dir(spec):
                 return _run_chain_wrapper(root, args, spec, provider)
+
+        if action == "sync-megaplan":
+            return _run_sync_megaplan(root, args, spec, provider)
 
         if action == "bootstrap":
             with _materialized_deploy_dir(spec):
@@ -550,6 +593,48 @@ def _chain_project_root(local_spec_path: Path, fallback_root: Path) -> Path:
     spec's repository root, not the caller's current working directory.
     """
     return _git_repo_root(local_spec_path) or fallback_root.expanduser().resolve()
+
+
+def _validate_chain_spec_location(
+    local_spec_path: Path,
+    project_root: Path,
+    *,
+    allow_loose: bool = False,
+) -> None:
+    """Require durable chain specs to live under .megaplan/initiatives/<initiative>/.
+
+    Cloud launches upload the spec and its idea files into a long-lived remote
+    checkout. Keeping the local source in the durable initiatives tree is what
+    makes the remote copy auditable instead of another loose cloud-only artifact.
+    """
+    if allow_loose:
+        return
+    try:
+        relative = local_spec_path.expanduser().resolve().relative_to(
+            project_root.expanduser().resolve()
+        )
+    except ValueError as exc:
+        raise CliError(
+            "chain_spec_outside_project",
+            (
+                f"chain spec {local_spec_path} is outside project root {project_root}. "
+                "Move it under .megaplan/initiatives/<initiative>/chain.yaml or pass "
+                "--allow-loose-chain-spec for a temporary compatibility launch."
+            ),
+        ) from exc
+    if is_canonical_chain_spec(local_spec_path, project_root):
+        return
+    raise CliError(
+        "chain_spec_layout_violation",
+        (
+            "cloud chain specs must live at "
+            ".megaplan/initiatives/<initiative>/chain.yaml; got "
+            f"{relative.as_posix()}. Move the chain and milestone briefs into "
+            "that durable initiative folder or pass --allow-loose-chain-spec "
+            "for a temporary compatibility launch."
+        ),
+        extra={"chain_spec": relative.as_posix()},
+    )
 
 
 def _arnold_engine_repo_root() -> Path:
@@ -1582,6 +1667,114 @@ else:
     )
 
 
+_DURABLE_MEGAPLAN_DIRS = ("initiatives", "tickets", "ideas")
+
+
+def _durable_megaplan_uploads(project_root: Path, workspace: str) -> list[tuple[Path, str]]:
+    """Return local durable .megaplan files and their remote workspace paths."""
+    root = project_root.expanduser().resolve()
+    uploads: list[tuple[Path, str]] = []
+    for name in _DURABLE_MEGAPLAN_DIRS:
+        local_dir = root / ".megaplan" / name
+        if not local_dir.exists():
+            continue
+        for path in sorted(local_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            if path.name == ".DS_Store":
+                continue
+            relative = path.relative_to(root)
+            remote = str(PurePosixPath(workspace).joinpath(*relative.parts))
+            uploads.append((path, remote))
+    return uploads
+
+
+def _write_durable_megaplan_archive(project_root: Path, uploads: list[tuple[Path, str]]) -> Path:
+    """Write a tar.gz containing uploads at repo-relative archive names."""
+    root = project_root.expanduser().resolve()
+    handle = NamedTemporaryFile(suffix=".megaplan-durable.tar.gz", delete=False)
+    archive_path = Path(handle.name)
+    handle.close()
+    with tarfile.open(archive_path, "w:gz") as tar:
+        for local_source, _remote_path in uploads:
+            arcname = local_source.expanduser().resolve().relative_to(root).as_posix()
+            tar.add(local_source, arcname=arcname, recursive=False)
+    return archive_path
+
+
+def _clean_remote_durable_megaplan_command(workspace: str) -> str:
+    roots = " ".join(
+        shlex.quote(str(PurePosixPath(workspace) / ".megaplan" / name))
+        for name in _DURABLE_MEGAPLAN_DIRS
+    )
+    return f"rm -rf {roots} && mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))}"
+
+
+def _resolve_sync_megaplan_context(root: Path, args: argparse.Namespace, spec: CloudSpec):
+    from arnold_pipelines.megaplan import chain as chain_module
+
+    explicit_workspace = getattr(args, "workspace", None)
+    raw_spec = getattr(args, "spec", None)
+    if raw_spec:
+        local_spec_path = Path(raw_spec).expanduser().resolve()
+        project_root = _chain_project_root(local_spec_path, root)
+        _validate_chain_spec_location(
+            local_spec_path,
+            project_root,
+            allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
+        )
+        chain_spec = chain_module.load_spec(local_spec_path)
+        ctx = _derive_chain_launch_context(
+            root=project_root,
+            spec=spec,
+            local_spec_path=local_spec_path,
+            chain_spec=chain_spec,
+        )
+        workspace = explicit_workspace or ctx.workspace
+        return project_root, workspace, ctx.remote_spec_path, ctx.session_name
+    project_root = root.expanduser().resolve()
+    workspace = explicit_workspace or spec.repo.workspace
+    return project_root, workspace, None, None
+
+
+def _run_sync_megaplan(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
+    project_root, workspace, remote_spec, session_name = _resolve_sync_megaplan_context(
+        root,
+        args,
+        spec,
+    )
+    sync_spec = replace(spec, repo=replace(spec.repo, workspace=workspace))
+    _ensure_repo_checkout(sync_spec, provider, relay=False)
+    uploads = _durable_megaplan_uploads(project_root, workspace)
+    if bool(getattr(args, "clean", False)):
+        result = provider.ssh_exec(_clean_remote_durable_megaplan_command(workspace))
+        if result.returncode != 0:
+            _relay_output(result, secret_names=spec.secrets, env=os.environ)
+            raise CliError(
+                "provider_failed",
+                f"remote .megaplan durable clean failed (exit {result.returncode})",
+            )
+    archive_path: Path | None = None
+    try:
+        archive_path = _write_durable_megaplan_archive(project_root, uploads)
+        provider.upload_archive(archive_path, workspace)
+    finally:
+        if archive_path is not None:
+            archive_path.unlink(missing_ok=True)
+    payload = {
+        "success": True,
+        "project_root": str(project_root),
+        "workspace": workspace,
+        "remote_spec": remote_spec,
+        "chain_session": session_name,
+        "uploaded_files": len(uploads),
+        "uploaded_roots": list(_DURABLE_MEGAPLAN_DIRS),
+        "cleaned": bool(getattr(args, "clean", False)),
+    }
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0
+
+
 def _chain_launch_verification_command(
     *,
     workspace: str,
@@ -1686,6 +1879,11 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
 
     local_spec_path = Path(args.spec).expanduser().resolve()
     project_root = _chain_project_root(local_spec_path, root)
+    _validate_chain_spec_location(
+        local_spec_path,
+        project_root,
+        allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
+    )
     chain_spec = chain_module.load_spec(local_spec_path)
     chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
     chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)

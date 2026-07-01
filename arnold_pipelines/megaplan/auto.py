@@ -23,6 +23,7 @@ import os
 import re
 import shlex
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -196,6 +197,7 @@ class DriverOutcome:
     blocking_reasons: list[str] = field(default_factory=list)
     tier_escalations_used: int = 0
     escalation_tier_pin: int | None = None
+    publish: dict[str, Any] | None = None
 
     def to_json(self) -> str:
         return json.dumps(
@@ -218,6 +220,7 @@ class DriverOutcome:
                 "blocking_reasons": self.blocking_reasons,
                 "tier_escalations_used": self.tier_escalations_used,
                 "escalation_tier_pin": self.escalation_tier_pin,
+                "publish": self.publish,
             },
             indent=2,
         )
@@ -2432,6 +2435,126 @@ def _stall_event_progress_snapshot(
     )
 
 
+def _auto_publish_branch_name(plan: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9._/-]+", "-", plan.strip()).strip("-./")
+    slug = slug[:80] or "plan"
+    return f"megaplan/{slug}"
+
+
+def _git_text(root: Path, argv: list[str], *, timeout: int = 120) -> str:
+    result = subprocess.run(
+        argv,
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=timeout,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise CliError(
+            "git_publish_failed",
+            f"{shlex.join(argv)} failed with rc={result.returncode}"
+            f"{(': ' + detail) if detail else ''}",
+            extra={"argv": argv, "stdout": result.stdout, "stderr": result.stderr},
+        )
+    return result.stdout.strip()
+
+
+def _git_has_changes(root: Path) -> bool:
+    return bool(_git_text(root, ["git", "status", "--porcelain"]))
+
+
+def _publish_done_plan(
+    *,
+    plan: str,
+    plan_dir: Path | None,
+    root: Path,
+    branch: str | None,
+    writer: Callable[[str], Any],
+) -> dict[str, Any] | None:
+    if plan_dir is None:
+        return None
+    if not _git_has_changes(root):
+        payload = {
+            "schema": "megaplan.auto_publish",
+            "schema_version": 1,
+            "status": "skipped",
+            "reason": "clean_worktree",
+            "plan": plan,
+        }
+        _atomic_write_text(plan_dir / "publish.json", json.dumps(payload, indent=2) + "\n")
+        return payload
+
+    target_branch = branch or _auto_publish_branch_name(plan)
+    base_ref = _git_text(root, ["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    head_sha_before = _git_text(root, ["git", "rev-parse", "HEAD"])
+    existing_branch = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", f"refs/heads/{target_branch}"],
+        cwd=str(root),
+        check=False,
+        timeout=60,
+    )
+    if existing_branch.returncode == 0:
+        _git_text(root, ["git", "switch", target_branch])
+    else:
+        _git_text(root, ["git", "switch", "-c", target_branch])
+
+    _git_text(root, ["git", "add", "-A"])
+    if not _git_has_changes(root):
+        status = "skipped"
+        reason = "nothing_staged_after_add"
+    else:
+        _git_text(
+            root,
+            [
+                "git",
+                "commit",
+                "--no-verify",
+                "-m",
+                f"megaplan: {plan} auto publish",
+            ],
+        )
+        status = "pushed"
+        reason = ""
+
+    commit_sha = _git_text(root, ["git", "rev-parse", "HEAD"])
+    remote_url = ""
+    push_result = None
+    if status == "pushed":
+        push_result = _git_text(
+            root,
+            ["git", "push", "--no-verify", "-u", "origin", f"HEAD:{target_branch}"],
+            timeout=180,
+        )
+        try:
+            remote_url = _git_text(root, ["git", "remote", "get-url", "origin"])
+        except CliError:
+            remote_url = ""
+    payload = {
+        "schema": "megaplan.auto_publish",
+        "schema_version": 1,
+        "status": status,
+        "reason": reason,
+        "plan": plan,
+        "branch": target_branch,
+        "base_branch": base_ref,
+        "base_sha": head_sha_before,
+        "commit_sha": commit_sha,
+        "remote": "origin",
+        "remote_url": remote_url,
+        "push_output": push_result,
+        "host": socket.gethostname(),
+        "published_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _atomic_write_text(plan_dir / "publish.json", json.dumps(payload, indent=2) + "\n")
+    writer(
+        f"[auto {plan}] publish {payload['status']}: "
+        f"branch={target_branch} commit={commit_sha[:12]}\n"
+    )
+    return payload
+
+
 def drive(
     plan: str,
     *,
@@ -2450,6 +2573,8 @@ def drive(
     phase_timeout: float = DEFAULT_PHASE_TIMEOUT_SECONDS,
     phase_idle_timeout: float = DEFAULT_PHASE_IDLE_TIMEOUT_SECONDS,
     status_timeout: float = DEFAULT_STATUS_TIMEOUT_SECONDS,
+    push: bool = True,
+    publish_branch: str | None = None,
     on_phase_complete: Callable[[str, int, str, str], None] | None = None,
     progress_env: dict[str, str] | None = None,
     writer=sys.stdout.write,
@@ -2463,6 +2588,7 @@ def drive(
     if on_escalate not in ESCALATE_ACTIONS:
         raise ValueError(f"on_escalate must be one of {ESCALATE_ACTIONS}")
 
+    cwd = Path(cwd or Path.cwd())
     events: list[dict[str, Any]] = []
     last_state: str | None = None
     stall_count = 0
@@ -2610,6 +2736,7 @@ def drive(
         reason: str = "",
         last_phase: str | None = None,
         blocking_reasons: list[str] | None = None,
+        publish: dict[str, Any] | None = None,
     ) -> DriverOutcome:
         return DriverOutcome(
             status=status,
@@ -2630,6 +2757,7 @@ def drive(
             blocking_reasons=list(blocking_reasons or []),
             tier_escalations_used=tier_escalations_used,
             escalation_tier_pin=escalation_tier_pin,
+            publish=publish,
         )
 
     iteration = 0
@@ -2804,6 +2932,7 @@ def drive(
                 STATE_CANCELLED: "cancelled",
             }.get(state, state)
             log(f"terminal state reached: {state}")
+            publish_result: dict[str, Any] | None = None
             if terminal_status == "done":
                 ok, reasons = _execute_completion_authority(plan_dir)
                 if not ok:
@@ -2856,6 +2985,14 @@ def drive(
                         ),
                         last_phase=last_phase,
                     )
+                if push:
+                    publish_result = _publish_done_plan(
+                        plan=plan,
+                        plan_dir=plan_dir,
+                        root=cwd,
+                        branch=publish_branch,
+                        writer=writer,
+                    )
             # Emit plan_finished or plan_aborted
             if plan_dir is not None:
                 if terminal_status == "done":
@@ -2881,6 +3018,7 @@ def drive(
                 iterations=iteration,
                 reason=f"plan entered terminal state '{state}'",
                 last_phase=last_phase,
+                publish=publish_result,
             )
 
         active_step = status.get("active_step")
@@ -4381,6 +4519,22 @@ def build_auto_parser(subparsers: Any) -> None:
         default=None,
         help="Write the final DriverOutcome JSON to this path atomically before stdout.",
     )
+    auto_parser.add_argument(
+        "--no-push",
+        action="store_true",
+        help=(
+            "Disable the default post-done branch commit/push publish step. "
+            "Use for local/no-network runs."
+        ),
+    )
+    auto_parser.add_argument(
+        "--publish-branch",
+        default=None,
+        help=(
+            "Branch name for the post-done publish step. Defaults to "
+            "`megaplan/<plan>`."
+        ),
+    )
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -4476,6 +4630,8 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
             phase_timeout=args.phase_timeout,
             phase_idle_timeout=(None if raw_phase_idle_timeout == 0 else raw_phase_idle_timeout),
             status_timeout=args.status_timeout,
+            push=not getattr(args, "no_push", False),
+            publish_branch=getattr(args, "publish_branch", None),
             progress_env=progress_env,
         )
     finally:

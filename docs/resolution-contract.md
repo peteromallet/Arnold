@@ -283,7 +283,7 @@ Functions that stay domain-specific:
 
 ## References
 
-- Brief: `.megaplan/briefs/hardening-epic/m1-resolution-unification.md`
+- Brief: `.megaplan/initiatives/hardening-epic/briefs/m1-resolution-unification.md`
 - Disk module: `megaplan/resolutions.py`
 - Memory module: `megaplan/user_actions.py`
 - Quality module: `megaplan/quality_resolutions.py`

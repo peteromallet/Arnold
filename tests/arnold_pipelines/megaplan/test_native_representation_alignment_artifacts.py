@@ -6,6 +6,7 @@ from typing import Any
 
 import yaml
 
+from arnold_pipelines.megaplan.chain import ChainSpec
 from scripts.validate_native_representation_conformance import validate_conformance_ledger
 
 
@@ -198,7 +199,7 @@ def test_chain_handoff_gates_are_executable_and_closeout_owned() -> None:
         assert "megaplan chain manifest" in closeout_text, gate["id"]
 
 
-def test_final_conformance_gate_is_closeout_owned() -> None:
+def test_final_conformance_gate_is_milestone_validation_stage() -> None:
     payload = _load_yaml(TRACEABILITY_PATH)
     gate = payload.get("final_conformance_gate")
     assert isinstance(gate, dict)
@@ -210,6 +211,33 @@ def test_final_conformance_gate_is_closeout_owned() -> None:
     closeout_brief = ROOT / gate["closeout_brief"]
     assert chain.is_file()
     assert closeout_brief.is_file()
+    machine_report = gate["machine_readable_report"]
+    assert isinstance(machine_report, dict)
+    chain_payload = _load_yaml(chain)
+    closeout_label = gate["closeout_brief"].split("/")[-1].removesuffix(".md")
+    matching_milestones = [
+        milestone
+        for milestone in chain_payload["milestones"]
+        if milestone["label"] == closeout_label
+    ]
+    assert matching_milestones
+    validation_stages = matching_milestones[0].get("validate")
+    assert isinstance(validation_stages, list)
+    assert validation_stages == [
+        {
+            "kind": "final_conformance_gate",
+            "traceability": "docs/arnold/megaplan-native-representation-traceability.yaml",
+            "conformance": machine_report["path"],
+            "validator": machine_report["validator"],
+            "proof_map": ".megaplan/initiatives/native-platform-followup/proof-map.json",
+        }
+    ]
+    parsed_chain = ChainSpec.from_dict(chain_payload)
+    parsed_milestone = next(
+        milestone for milestone in parsed_chain.milestones if milestone.label == closeout_label
+    )
+    assert parsed_milestone.validate[0].kind == "final_conformance_gate"
+    assert parsed_milestone.validate[0].conformance == machine_report["path"]
 
     closeout_text = closeout_brief.read_text(encoding="utf-8")
     assert gate["closeout_milestone"] in {
@@ -219,8 +247,6 @@ def test_final_conformance_gate_is_closeout_owned() -> None:
     }
     for deliverable in gate["closeout_deliverables"]:
         assert deliverable in closeout_text, deliverable
-    machine_report = gate["machine_readable_report"]
-    assert isinstance(machine_report, dict)
     assert machine_report["path"] in gate["closeout_deliverables"]
     assert machine_report["path"] in closeout_text
     assert machine_report["schema"] in closeout_text

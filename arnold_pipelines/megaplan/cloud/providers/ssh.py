@@ -160,6 +160,14 @@ class SshProvider(Provider):
             input=payload,
         )
 
+    def upload_archive(self, src: Path, dest_dir: str) -> None:
+        payload = base64.b64encode(src.read_bytes()).decode("ascii")
+        inner = f"mkdir -p {shlex.quote(dest_dir)} && base64 -d | tar -xzf - -C {shlex.quote(dest_dir)}"
+        self._remote_run(
+            f"docker exec -i {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(inner)}",
+            input=payload,
+        )
+
     def read_remote_file(self, path: str) -> str:
         result = self._remote_run(
             f"docker exec {shlex.quote(self._ssh.container)} bash -lc {shlex.quote(f'cat {shlex.quote(path)}')}"

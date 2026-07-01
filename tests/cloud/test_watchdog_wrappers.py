@@ -661,7 +661,7 @@ def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_resu
 
 def test_repair_loop_clear_stale_state_syncs_plan_chain_mismatch(tmp_path: Path) -> None:
     plan_dir = tmp_path / ".megaplan" / "plans" / "demo-plan"
-    chain_dir = tmp_path / ".megaplan" / "briefs" / "demo" / ".megaplan" / "plans" / ".chains"
+    chain_dir = tmp_path / ".megaplan" / "initiatives" / "demo" / ".megaplan" / "plans" / ".chains"
     plan_dir.mkdir(parents=True)
     chain_dir.mkdir(parents=True)
     state_path = plan_dir / "state.json"
@@ -987,7 +987,7 @@ def test_repair_loop_classifies_completed_chain_as_chain_completed(tmp_path: Pat
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     import hashlib
@@ -1024,7 +1024,7 @@ def test_repair_loop_classifies_completed_chain_with_null_current_fields(tmp_pat
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     import hashlib
@@ -1115,7 +1115,7 @@ def test_repair_loop_exits_immediately_for_completed_chain(tmp_path: Path) -> No
     )
     timeout_path.chmod(timeout_path.stat().st_mode | stat.S_IXUSR)
 
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     marker_path = marker_dir / "demo-session.json"
@@ -1839,7 +1839,7 @@ def test_watchdog_stopped_tmux_reports_awaiting_pr_merge_from_chain_state(tmp_pa
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True)
     spec_path.write_text("merge_policy: review\n", encoding="utf-8")
     (chain_dir / "demo-chain.json").write_text(
@@ -1874,7 +1874,7 @@ def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     workspace = tmp_path / "ws"
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
     chain_dir.mkdir(parents=True)
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True)
     spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
     (chain_dir / "demo-chain.json").write_text(
@@ -1958,7 +1958,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
         "cd "
         f"{workspace}"
         " && MEGAPLAN_TRUSTED_CONTAINER=1 python3 -m arnold_pipelines.megaplan init "
-        "--project-dir . --idea-file .megaplan/briefs/per-workflow-window-chat.md "
+        "--project-dir . --idea-file .megaplan/initiatives/per-workflow-window-chat/briefs/per-workflow-window-chat.md "
         "--name per-workflow-window-chat-cloud-20260628 --auto-start\n"
         "EOF\n",
         encoding="utf-8",
@@ -1971,7 +1971,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
         "cat <<'EOF'\n"
         "4000 1 bash -lc bootstrap\n"
         "4001 4000 /root/.pyenv/versions/3.11.11/bin/python3 -m arnold_pipelines.megaplan init "
-        "--project-dir . --idea-file .megaplan/briefs/per-workflow-window-chat.md "
+        "--project-dir . --idea-file .megaplan/initiatives/per-workflow-window-chat/briefs/per-workflow-window-chat.md "
         "--name per-workflow-window-chat-cloud-20260628 --auto-start\n"
         "4002 4001 /root/.pyenv/versions/3.11.11/bin/python3 -m arnold_pipelines.megaplan critique "
         "--plan per-workflow-window-chat-cloud-20260628\n"
@@ -2000,7 +2000,7 @@ def test_watchdog_adopts_markerless_bootstrap_tmux_run(tmp_path: Path) -> None:
     assert payload["workspace"] == str(workspace)
     assert payload["run_kind"] == "plan"
     assert payload["plan_name"] == "per-workflow-window-chat-cloud-20260628"
-    assert payload["remote_spec"] == ".megaplan/briefs/per-workflow-window-chat.md"
+    assert payload["remote_spec"] == ".megaplan/initiatives/per-workflow-window-chat/briefs/per-workflow-window-chat.md"
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan per-workflow-window-chat-cloud-20260628" in payload["relaunch_command"]
 
 
@@ -2063,7 +2063,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
         "cd "
         f"{workspace}"
         " && python3 -m arnold_pipelines.megaplan init --project-dir . "
-        "--idea-file .megaplan/briefs/shared.md --name shared-discover-plan --auto-start\n"
+        "--idea-file .megaplan/initiatives/shared/briefs/shared.md --name shared-discover-plan --auto-start\n"
         f"watchdog-demo\t5000\t{workspace}\tbash -lc '/usr/local/bin/arnold-watchdog --once'\n"
         f"kimi-helper\t6000\t{workspace}\tbash -lc '/usr/local/bin/arnold-kimi-goal-operator demo'\n"
         "EOF\n",
@@ -2077,7 +2077,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
         "cat <<'EOF'\n"
         "4000 1 bash -lc bootstrap\n"
         "4001 4000 python3 -m arnold_pipelines.megaplan init --project-dir . "
-        "--idea-file .megaplan/briefs/shared.md --name shared-discover-plan --auto-start\n"
+        "--idea-file .megaplan/initiatives/shared/briefs/shared.md --name shared-discover-plan --auto-start\n"
         "5000 1 bash -lc /usr/local/bin/arnold-watchdog --once\n"
         "6000 1 bash -lc /usr/local/bin/arnold-kimi-goal-operator demo\n"
         "EOF\n",
@@ -2092,7 +2092,7 @@ def test_shared_cloud_discover_finds_markerless_arnold_tmux_session_and_skips_su
     fields = lines[0].split("\t")
     assert fields[0] == "vibecomfy-shared-discover"
     assert fields[1] == str(workspace)
-    assert fields[2] == ".megaplan/briefs/shared.md"
+    assert fields[2] == ".megaplan/initiatives/shared/briefs/shared.md"
     assert fields[3] == "plan"
     assert fields[4] == "shared-discover-plan"
     assert "python3 -P -m arnold_pipelines.megaplan auto --plan shared-discover-plan" in fields[5]
@@ -2175,7 +2175,7 @@ PLAN_STATUS_MANUAL_REVIEW='0'
 EOF
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2242,7 +2242,7 @@ PLAN_STATUS_MANUAL_REVIEW='0'
 EOF
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan '' ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2297,7 +2297,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2362,7 +2362,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2428,7 +2428,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2490,7 +2490,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2555,7 +2555,7 @@ tmux() {
   return 0
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} plan {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2574,7 +2574,7 @@ def test_watchdog_chain_session_is_not_short_circuited_by_done_plan_state(tmp_pa
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     _write_plan(
@@ -2634,7 +2634,7 @@ PLAN_STATUS_MANUAL_REVIEW='0'
 EOF
 }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2694,7 +2694,7 @@ tmux() {
   return 0
 }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2746,7 +2746,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
+            f"launch_chain_tick demo-session {str(workspace)!r} .megaplan/initiatives/demo/briefs/demo.md {str(report_path)!r} chain {plan_name!r} ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2765,7 +2765,7 @@ def test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     _write_plan(
@@ -2829,7 +2829,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2851,7 +2851,7 @@ def test_watchdog_awaiting_human_chain_state_dispatches_repair_before_needs_huma
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
     plan_name = "demo-plan"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     plan_dir = workspace / ".megaplan" / "plans" / plan_name
@@ -2926,7 +2926,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -2945,7 +2945,7 @@ def test_watchdog_completed_chain_state_reports_complete_without_repair(tmp_path
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -2991,7 +2991,7 @@ resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -3010,7 +3010,7 @@ def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -3062,7 +3062,7 @@ resolve_relaunch_command() { echo RELAUNCH; }
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -3082,7 +3082,7 @@ def test_watchdog_normal_chain_state_does_not_force_missing_base_ref_manual_revi
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -3118,7 +3118,7 @@ def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: P
     marker_dir = tmp_path / "markers"
     marker_dir.mkdir()
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     chain_dir = workspace / ".megaplan" / "plans" / ".chains"
@@ -3129,7 +3129,7 @@ def test_watchdog_scan_once_completes_when_chain_state_is_unreadable(tmp_path: P
             {
                 "session": "demo-session",
                 "workspace": str(workspace),
-                "remote_spec": ".megaplan/briefs/demo-chain.yaml",
+                "remote_spec": ".megaplan/initiatives/demo-chain/chain.yaml",
                 "run_kind": "chain",
             }
         ),
@@ -3217,7 +3217,7 @@ def test_watchdog_needs_human_webhook_posts_once_when_configured(tmp_path: Path)
     log_path = tmp_path / "watchdog.log"
     notify_line = (
         f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws "
-        ".megaplan/briefs/demo.md chain stopped 'manual_review halt'"
+        ".megaplan/initiatives/demo/briefs/demo.md chain stopped 'manual_review halt'"
     )
     script = "\n\n".join(
         [
@@ -3292,7 +3292,7 @@ PLAN_STATUS_FAILURE_RECORDED_AT='2026-06-28T11:29:34Z'
 PLAN_STATUS_TIERS_TRIED='deepseek:flash, codex:gpt-5.4, codex:gpt-5.5'
 PLAN_STATUS_PUSHED_COMMITS='abc123def456, fedcba654321'
 """.strip(),
-            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/briefs/demo.md chain stopped 'manual_review halt'",
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/initiatives/demo/briefs/demo.md chain stopped 'manual_review halt'",
         ]
     )
 
@@ -3341,7 +3341,7 @@ report_item() {
 log() { printf '%s\n' "$*" >> "$LOG"; }
 PLAN_STATUS_PLAN_NAME='demo-plan'
 """.strip(),
-            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/briefs/demo.md chain stopped 'manual_review halt'",
+            f"notify_needs_human {str(report_path)!r} demo-session /tmp/ws .megaplan/initiatives/demo/briefs/demo.md chain stopped 'manual_review halt'",
         ]
     )
 
@@ -3355,7 +3355,7 @@ PLAN_STATUS_PLAN_NAME='demo-plan'
 
 def test_watchdog_resolves_relative_chain_specs_against_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / "ws"
-    spec_path = workspace / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     report_path = tmp_path / "report.tsv"
@@ -3373,7 +3373,7 @@ plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_dispatch_marker_clear() { :; }
 """.strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/briefs/demo-chain.yaml {str(report_path)!r} chain '' ''",
+            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
         ]
     )
     result = _run_watchdog_shell(script)
@@ -3851,7 +3851,7 @@ def test_chain_health_status_detects_repeating_merged_pr_completion_guard_cycle(
     ws = tmp / "ws"
     marker = tmp / "markers"
     repair_dir = tmp / "repair-data"
-    spec_path = ws / ".megaplan" / "briefs" / "demo-chain.yaml"
+    spec_path = ws / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.write_text("milestones: []\n", encoding="utf-8")
     digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
@@ -4492,7 +4492,7 @@ def test_auditor_worklist_unions_marker_tmux_and_workspace_activity_and_skips_ar
     discover_bin.write_text(
         "#!/usr/bin/env bash\n"
         "cat <<'EOF'\n"
-        f"bootstrap-session\t{bootstrap_ws}\t.megaplan/briefs/bootstrap.md\tplan\tm1-bootstrap\tignored\n"
+        f"bootstrap-session\t{bootstrap_ws}\t.megaplan/initiatives/bootstrap/briefs/bootstrap.md\tplan\tm1-bootstrap\tignored\n"
         f"chain-session-live\t{chain_ws}\t/tmp/spec.yaml\tchain\t\tignored\n"
         "EOF\n",
         encoding="utf-8",
@@ -4782,7 +4782,7 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
                 "plan": plan_name,
                 "session": "demo-session",
                 "kind": "chain",
-                "remote_spec": str(workspace / ".megaplan" / "briefs" / "demo" / "chain.yaml"),
+                "remote_spec": str(workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"),
                 "launch_command": "python3 -P -m arnold_pipelines.megaplan chain start --spec demo",
                 "log": str(workspace / ".megaplan" / "cloud-chain-demo-session.log"),
                 "sources": ["marker"],

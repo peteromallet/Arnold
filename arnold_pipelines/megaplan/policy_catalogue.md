@@ -59,7 +59,7 @@
 | Policy | Legacy reference | M4 preservation rule |
 | --- | --- | --- |
 | Supervisor promotion rules | `arnold_pipelines/megaplan/supervisor/` | Supervisor heuristics decide when to promote a subagent result to the main plan. |
-| Live watchdog supervisor | `arnold_pipelines/megaplan/supervisor/`, `.megaplan/briefs/megaplan-live-watchdog-supervisor.md` | Watchdog logs are archived; promotion logic moves to a manifest node in M5+. |
+| Live watchdog supervisor | `arnold_pipelines/megaplan/supervisor/`, `.megaplan/initiatives/megaplan-maintenance/research/megaplan-live-watchdog-supervisor.md` | Watchdog logs are archived; promotion logic moves to a manifest node in M5+. |
 | Full-suite backstop | `arnold_pipelines/megaplan/orchestration/full_suite_backstop.py` | Determines when the full test suite must run before promotion. |
 
 ## 7. Robustness overlays

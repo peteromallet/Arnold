@@ -140,7 +140,7 @@ watchdogs, baseline gate). They remain load-bearing under the new channel.
 
 ## 5. Execution sequence — 4 milestones (an epic)
 
-Sized as four ~2-week milestones. Briefs: `.megaplan/briefs/shannon-stream/`.
+Sized as four ~2-week milestones. Briefs: `.megaplan/initiatives/shannon-stream/briefs/`.
 
 - **M1 — The seam.** Define `run_step -> WorkerResult`; add the typed `rate_limit` field; route existing
   Hermes + Codex through it unchanged; retry-path is the only engine-aware spot. Behavior-preserving; the

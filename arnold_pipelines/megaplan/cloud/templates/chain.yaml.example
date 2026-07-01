@@ -1,6 +1,6 @@
 # Example chain spec consumed by `megaplan chain --spec`.
 # For committed source artifacts, keep this at
-# .megaplan/briefs/<epic-slug>/chain.yaml beside the milestone briefs.
+# .megaplan/initiatives/<epic-slug>/chain.yaml with milestone briefs under briefs/.
 # Progress is persisted under .megaplan/plans/.chains/.
 
 # Required by default durable alignment anchor for epics.
@@ -17,7 +17,7 @@ seed:
 
 milestones:
   - label: m1
-    idea: .megaplan/briefs/foundation-store/M1-foundation-store.txt
+    idea: .megaplan/initiatives/foundation-store/briefs/M1-foundation-store.txt
     branch: megaplan/m1-foundation-store
     # Optional per-milestone init rubric knobs. Omit any of these to keep
     # existing profile/default behavior.
@@ -33,13 +33,13 @@ milestones:
     # anchors:
     #   north_star: M1-northstar.md
   - label: m1a
-    idea: .megaplan/briefs/foundation-store/M1a-settings-store.txt
+    idea: .megaplan/initiatives/foundation-store/briefs/M1a-settings-store.txt
     branch: megaplan/m1a-settings-store
   - label: m1b
-    idea: .megaplan/briefs/foundation-store/M1b-selection-store.txt
+    idea: .megaplan/initiatives/foundation-store/briefs/M1b-selection-store.txt
     branch: megaplan/m1b-selection-store
   - label: m1c
-    idea: .megaplan/briefs/foundation-store/M1c-timeline-store.txt
+    idea: .megaplan/initiatives/foundation-store/briefs/M1c-timeline-store.txt
     branch: megaplan/m1c-timeline-store
   # M2 (overlay stack) is CONDITIONAL on M1a's gate — do NOT auto-queue.
 

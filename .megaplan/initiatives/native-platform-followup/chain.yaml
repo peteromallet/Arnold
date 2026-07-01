@@ -114,6 +114,12 @@ milestones:
     robustness: thorough
     depth: high
     depends_on: [m5-worker-fleet-supervision-and-cancellation]
+    validate:
+      - kind: final_conformance_gate
+        traceability: docs/arnold/megaplan-native-representation-traceability.yaml
+        conformance: docs/arnold/megaplan-native-representation-conformance.yaml
+        validator: scripts/validate_native_representation_conformance.py
+        proof_map: .megaplan/initiatives/native-platform-followup/proof-map.json
 
 on_failure:
   retry: retry_milestone

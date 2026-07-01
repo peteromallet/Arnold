@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime
 import logging
 import os
 from typing import Any
 
+from arnold_pipelines.megaplan.store import ScheduledJobInput, deterministic_idempotency_key
+
 from .auth import AuthorizationSubject
 from .runtime import InboundEvent, OutboundMessage, OutboundSink, ResidentRuntime
+from .scheduler import ScheduledJobWorker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -128,11 +132,21 @@ class DiscordOutboundSink(OutboundSink):
 class ResidentDiscordService:
     """Thin discord.py service that feeds Discord events into ResidentRuntime."""
 
-    def __init__(self, *, runtime: ResidentRuntime, token: str) -> None:
+    def __init__(
+        self,
+        *,
+        runtime: ResidentRuntime,
+        token: str,
+        scheduler: ScheduledJobWorker | None = None,
+        scheduler_interval_s: float = 10.0,
+    ) -> None:
         if not token:
             raise ValueError("Discord token is required")
         self.runtime = runtime
         self.token = token
+        self.scheduler = scheduler
+        self.scheduler_interval_s = scheduler_interval_s
+        self._scheduler_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         try:
@@ -151,6 +165,8 @@ class ResidentDiscordService:
             if isinstance(outbound, DiscordOutboundSink):
                 outbound.bind_client(client)
             recovered = await self.runtime.recover_abandoned_turns()
+            self._ensure_scheduler_started(client)
+            self._seed_special_requests_job()
             user = getattr(client, "user", None)
             guilds = getattr(client, "guilds", ())
             LOGGER.info(
@@ -185,6 +201,83 @@ class ResidentDiscordService:
 
     def run(self) -> None:
         asyncio.run(self.start())
+
+    def _ensure_scheduler_started(self, client: Any) -> None:
+        if self.scheduler is None:
+            return
+        if self._scheduler_task is not None and not self._scheduler_task.done():
+            return
+        self._scheduler_task = client.loop.create_task(self._scheduler_loop(client))
+
+    def _seed_special_requests_job(self) -> None:
+        config = self.runtime.config
+        if not config.special_requests_enabled:
+            return
+        subject_user_id = (
+            config.special_requests_subject_user_id
+            or (config.allowed_user_ids[0] if config.allowed_user_ids else None)
+            or (config.admin_user_ids[0] if config.admin_user_ids else None)
+        )
+        if not subject_user_id:
+            LOGGER.warning(
+                "VP to-do sweep enabled but no user id configured "
+                "(allowed_user_ids or admin_user_ids); skipping seed"
+            )
+            return
+        # Default target is a DM to the admin user; a conversation_key override
+        # (e.g. a guild channel) may be set for non-DM delivery.
+        conversation_key = (
+            config.special_requests_conversation_key
+            or f"discord:dm:{subject_user_id}"
+        )
+        store = self.runtime.store
+        if store.list_scheduled_jobs(job_type="vp_todo_sweep", status="pending", limit=1):
+            return
+        target = DiscordDeliveryTarget.from_conversation_key(conversation_key)
+        interval_s = int(config.special_requests_interval_s)
+        payload = {
+            "conversation_key": conversation_key,
+            "subject_user_id": subject_user_id,
+            "guild_id": target.guild_id,
+            # A DM has no channel id; leave it unset so the inbound channel
+            # allowlist (if any) doesn't block the system-generated turn.
+            "channel_id": None if target.dm_user_id else target.channel_id,
+            "dm_user_id": target.dm_user_id,
+            "interval_s": interval_s,
+        }
+        store.create_scheduled_job(
+            ScheduledJobInput(
+                job_type="vp_todo_sweep",
+                payload=payload,
+                scheduled_for=datetime.now(UTC),
+                max_attempts=3,
+            ),
+            idempotency_key=deterministic_idempotency_key(
+                "resident-vp-todo-sweep-seed", conversation_key
+            ),
+        )
+        LOGGER.info(
+            "VP to-do sweep job seeded target=%s interval_s=%s",
+            conversation_key,
+            interval_s,
+        )
+
+    async def _scheduler_loop(self, client: Any) -> None:
+        LOGGER.info("Resident scheduler loop started interval_s=%s", self.scheduler_interval_s)
+        while not client.is_closed():
+            try:
+                result = await self.scheduler.run_due_once()
+                if result.claimed:
+                    LOGGER.info(
+                        "Resident scheduler processed claimed=%s fired=%s retried=%s cancelled=%s",
+                        result.claimed,
+                        result.fired,
+                        result.retried,
+                        result.cancelled,
+                    )
+            except Exception:
+                LOGGER.exception("Resident scheduler loop failed")
+            await asyncio.sleep(max(1.0, self.scheduler_interval_s))
 
 
 def discord_token_from_env(env_name: str) -> str | None:

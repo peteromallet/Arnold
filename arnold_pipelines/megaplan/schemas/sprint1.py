@@ -64,7 +64,7 @@ PlanArtifactRole = Literal[
 ]
 WorkerKind = Literal["local_cli", "cloud_worker", "auto_driver"]
 ScheduledJobStatus = Literal["pending", "claimed", "fired", "cancelled", "failed"]
-ScheduledJobType = Literal["cloud_check", "deferred_turn", "heartbeat", "confirmation_expiry"]
+ScheduledJobType = Literal["cloud_check", "deferred_turn", "heartbeat", "confirmation_expiry", "vp_todo_sweep"]
 CloudRunStatus = Literal["queued", "starting", "running", "blocked", "failed", "gate-needed", "completed", "cancelled", "unknown"]
 CloudRunOperation = Literal["chain", "bootstrap", "resume", "sprint", "status"]
 ControlIntent = Literal[

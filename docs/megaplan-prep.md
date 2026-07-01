@@ -51,7 +51,7 @@ When you split, structure the dependency graph explicitly. Each handoff is a wri
 
 **The brief must be locked in before init** — fully self-contained so the model can run end-to-end without coming back for clarification. The harness snapshots the brief at `init`; later edits to the idea-file are not re-read. If you find yourself wanting to "ask the model" what to do, write that decision down first.
 
-**Store durable briefs in `.megaplan/briefs/`.** Single-plan ideas live at `.megaplan/briefs/<slug>.md`. Epics live at `.megaplan/briefs/<epic-slug>/chain.yaml` with their milestone briefs in the same directory. `.megaplan/plans/` is generated run state; `.megaplan/briefs/` is the committed input material you hand to `python -m arnold_pipelines.megaplan init` or `python -m arnold_pipelines.megaplan chain start`. Use `python -m arnold_pipelines.megaplan brief new` or `python -m arnold_pipelines.megaplan brief epic` to create the canonical files.
+**Store durable briefs in `.megaplan/initiatives/<slug>/`.** Single-plan ideas live at `.megaplan/initiatives/<slug>/briefs/<slug>.md`. Epics live at `.megaplan/initiatives/<epic-slug>/chain.yaml` with milestone briefs under `briefs/`. `.megaplan/plans/` is generated run state; `.megaplan/initiatives/` is the committed input material you hand to `python -m arnold_pipelines.megaplan init` or `python -m arnold_pipelines.megaplan chain start`. Use `python -m arnold_pipelines.megaplan brief new` or `python -m arnold_pipelines.megaplan brief epic` to create the canonical files.
 
 A good brief covers:
 

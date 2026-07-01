@@ -9,7 +9,7 @@ A North Star captures the end state that should remain true across planning, cri
 ## Standalone Plans
 
 ```bash
-megaplan init --project-dir . --idea-file .megaplan/briefs/my-plan.md --north-star docs/NORTHSTAR.md
+megaplan init --project-dir . --idea-file .megaplan/initiatives/my-plan/briefs/my-plan.md --north-star docs/NORTHSTAR.md
 ```
 
 `--north-star` resolves relative to `--project-dir` unless an absolute path is provided.

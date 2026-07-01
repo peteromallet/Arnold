@@ -17,6 +17,7 @@ from arnold.conformance import (
 from arnold.conformance.checks import (
     ACTIVE_MEGAPLAN_PACKAGE_NAMES,
     check_import_coupling,
+    check_megaplan_artifact_layout,
     check_never_port_artifacts,
     check_package_name_staleness,
     check_public_workflow_layering,
@@ -73,6 +74,7 @@ def test_current_tree_wires_conformance_suite_and_legacy_reference_gate() -> Non
         "semantic-coupling",
         "public-workflow-layering",
         "never-port-artifacts",
+        "megaplan-artifact-layout",
         "legacy-reference-allowlist",
     }.issubset(checks_by_id)
 
@@ -249,6 +251,50 @@ def test_active_megaplan_runtime_dirs_are_not_source_artifacts(tmp_path: Path) -
     assert result.passed is False
     assert result.details["unexpected"] == {
         ".megaplan/_archived-plans/old/state.json": (".megaplan archived plan",)
+    }
+
+
+def test_megaplan_artifact_layout_fails_on_loose_planning_files(tmp_path: Path) -> None:
+    _write(tmp_path, "briefs/demo/chain.yaml", "milestones: []\n")
+    _write(tmp_path, "chain.yaml", "milestones: []\n")
+    _write(tmp_path, ".megaplan/plan_v4.md", "plan\n")
+    _write(tmp_path, ".megaplan/briefs/demo/chain.yaml", "milestones: []\n")
+
+    result = check_megaplan_artifact_layout(repo_root=tmp_path, allowlist=set())
+
+    assert result.passed is False
+    assert result.details["unexpected"] == {
+        ".megaplan/briefs/demo/chain.yaml": ("legacy .megaplan/briefs tree",),
+        ".megaplan/plan_v4.md": ("loose plan version outside .megaplan/plans",),
+        "briefs/demo/chain.yaml": ("legacy top-level briefs tree",),
+        "chain.yaml": ("root chain spec",),
+    }
+
+
+def test_megaplan_artifact_layout_accepts_initiative_docs(tmp_path: Path) -> None:
+    _write(tmp_path, ".megaplan/initiatives/demo/chain.yaml", "milestones: []\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/NORTHSTAR.md", "# North Star\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/briefs/m1.md", "# M1\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/research/audit.md", "# Audit\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/decisions/route.md", "# Decision\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/notes/status.md", "# Status\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/assets/data.json", "{}\n")
+    _write(tmp_path, ".megaplan/initiatives/demo/handoff/subagent.md", "# Handoff\n")
+
+    result = check_megaplan_artifact_layout(repo_root=tmp_path, allowlist=set())
+
+    assert result.passed is True
+    assert result.details["unexpected"] == {}
+
+
+def test_megaplan_artifact_layout_rejects_loose_initiative_doc(tmp_path: Path) -> None:
+    _write(tmp_path, ".megaplan/initiatives/demo/random.md", "# Loose\n")
+
+    result = check_megaplan_artifact_layout(repo_root=tmp_path, allowlist=set())
+
+    assert result.passed is False
+    assert result.details["unexpected"] == {
+        ".megaplan/initiatives/demo/random.md": ("initiative artifact outside canonical subdirectories",)
     }
 
 

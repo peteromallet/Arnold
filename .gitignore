@@ -6,9 +6,13 @@ __pycache__/
 .claude/
 .megaplan/
 !.megaplan/
-!.megaplan/briefs/
-!.megaplan/briefs/**
-.megaplan/briefs/**/.megaplan/
+!.megaplan/initiatives/
+!.megaplan/initiatives/**
+!.megaplan/tickets/
+!.megaplan/tickets/**
+!.megaplan/ideas/
+!.megaplan/ideas/**
+.megaplan/**/.DS_Store
 .megaplan/worker_tmp/
 .megaplan/.state-locks/
 .megaplan/cloud-chain.log
@@ -40,7 +44,7 @@ arnold_pipelines/megaplan/data/_codex_skills/
 # Local/generated planning inputs and cloud runner specs.
 cloud.yaml
 chain.yaml
-!.megaplan/briefs/**/chain.yaml
+!.megaplan/initiatives/**/chain.yaml
 plan.md
 /plan_v*.md
 /.plan_v*.md

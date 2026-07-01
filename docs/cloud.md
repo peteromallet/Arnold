@@ -43,9 +43,27 @@ python -m arnold_pipelines.megaplan cloud deploy
 5. Start work remotely:
 
 ```bash
-python -m arnold_pipelines.megaplan cloud bootstrap .megaplan/briefs/tiny-plan.md
-python -m arnold_pipelines.megaplan cloud chain .megaplan/briefs/my-epic/chain.yaml
+python -m arnold_pipelines.megaplan cloud bootstrap .megaplan/initiatives/tiny-plan/briefs/tiny-plan.md
+python -m arnold_pipelines.megaplan cloud chain .megaplan/initiatives/my-epic/chain.yaml
 ```
+
+Durable chain specs are expected at `.megaplan/initiatives/<initiative>/chain.yaml`.
+Milestone briefs, north-star anchors, research notes, and related durable
+planning inputs belong in the same initiative directory. Runtime state stays
+under `.megaplan/plans/` and `.megaplan/epics/` and is not uploaded as planning
+source.
+
+To seed a cloud checkout with the local durable planning state before or after a
+chain launch:
+
+```bash
+python -m arnold_pipelines.megaplan cloud sync-megaplan .megaplan/initiatives/my-epic/chain.yaml --clean
+```
+
+When a chain spec is supplied, `sync-megaplan` uses the same derived per-chain
+workspace as `cloud chain`, then uploads `.megaplan/initiatives/`, `.megaplan/tickets/`,
+and `.megaplan/ideas/`. It deliberately does not upload generated plans, epics,
+locks, logs, telemetry, or verification state.
 
 6. Inspect and connect:
 
@@ -171,10 +189,14 @@ python -m arnold_pipelines.megaplan init --project-dir <workspace> --idea-file <
 `cloud chain` is the preferred path for remote chain runs. It:
 
 1. Parses the local chain spec with core `megaplan.chain.load_spec(...)`.
-2. Resolves each milestone idea file from `--idea-dir` or, by default, the local spec's parent directory.
-3. Uploads each idea file to the remote path named in the chain spec.
-4. Uploads the chain spec to `<repo.workspace>/chain.yaml`.
-5. Starts remote `python -m arnold_pipelines.megaplan chain start --spec <repo.workspace>/chain.yaml` in tmux session `megaplan-chain`, logging to `<repo.workspace>/.megaplan/cloud-chain.log`.
+2. Requires the spec to live at `.megaplan/initiatives/<initiative>/chain.yaml` unless
+   `--allow-loose-chain-spec` is passed for a temporary compatibility launch.
+3. Derives an isolated workspace and tmux session from the chain identity when
+   `repo.workspace` and `chain_session` are omitted from `cloud.yaml`.
+4. Resolves each milestone idea file from `--idea-dir` or, by default, the local spec's parent directory.
+5. Uploads each idea file to the remote path named in the chain spec.
+6. Uploads the chain spec to the matching repo-relative path in the remote workspace.
+7. Starts remote `python -m arnold_pipelines.megaplan chain start --spec <remote-spec>` in the derived tmux session, logging to `<workspace>/.megaplan/cloud-chain-<session>.log`.
 
 After upload + dispatch, cloud writes a provider-independent marker:
 
@@ -382,7 +404,7 @@ This redaction applies to:
 
 - **Cloud chain smoke**: [docs/ops/cloud-chain-smoke.md](ops/cloud-chain-smoke.md) — end-to-end smoke tests for cloud chain operations.
 - **Recovery runbooks**: [docs/ops/recovery-runbooks.md](ops/recovery-runbooks.md) — operational procedures for recovering cloud deployments.
-- **Cloud prerequisite resolution**: Active milestone briefs live under [.megaplan/briefs/cloud-prerequisite-resolution/](../.megaplan/briefs/cloud-prerequisite-resolution/) — these are the source of truth for structured prerequisite/quality resolution metadata, auto recovery, chain policy/status, cloud supervision, and slot-first watchdog hardening.
+- **Cloud prerequisite resolution**: Active milestone briefs live under `.megaplan/initiatives/<initiative>/briefs/` — these are the source of truth for structured prerequisite/quality resolution metadata, auto recovery, chain policy/status, cloud supervision, and slot-first watchdog hardening.
 - **Slot-first watchdog**: The watchdog operates from the assigned slot/workspace first, verifies provider and session consistency, lists available human-verification actions, and only restarts or wakes chains when the status payload shows the chain is recoverable. Continuous branch and PR synchronization is required after stops and recoveries so status reflects what code reviewers and operators see.
 
 ## Migration From `reigh-megaplan-dev`

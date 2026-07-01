@@ -6,7 +6,9 @@ import asyncio
 import contextvars
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 from time import perf_counter
 from typing import Any, Mapping, Protocol
 
@@ -284,6 +286,97 @@ class OpenAICompatibleAgentRunner(DispatchProtocol):
         return messages
 
 
+class CodexCliAgentRunner(DispatchProtocol):
+    """Resident runner backed by the local ``codex exec`` CLI and OAuth auth."""
+
+    def __init__(
+        self,
+        config: ResidentConfig,
+        *,
+        cwd: str | Path,
+        sandbox: str = "workspace-write",
+    ) -> None:
+        self.config = config
+        self.cwd = Path(cwd)
+        self.sandbox = sandbox
+
+    async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
+        model_name = _request_model_name(request, self.config.model_name)
+        prompt = self._prompt(request, tools)
+        with tempfile.NamedTemporaryFile(prefix="resident-codex-", suffix=".txt") as output:
+            cmd = [
+                "codex",
+                "exec",
+                "--model",
+                model_name,
+                "-c",
+                f'model_reasoning_effort="{self.config.codex_reasoning_effort}"',
+                "-c",
+                'approval_policy="never"',
+                "--sandbox",
+                self.sandbox,
+                "--skip-git-repo-check",
+                "--output-last-message",
+                output.name,
+                "-C",
+                str(self.cwd),
+                "-",
+            ]
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                raise AgentLoopError("codex CLI is required for resident model_provider=codex") from exc
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(prompt.encode("utf-8")),
+                    timeout=self.config.model_timeout_s,
+                )
+            except asyncio.TimeoutError as exc:
+                proc.kill()
+                await proc.wait()
+                raise AgentLoopError(f"codex exec timed out after {self.config.model_timeout_s:g}s") from exc
+            stdout_text = stdout.decode("utf-8", errors="replace")
+            stderr_text = stderr.decode("utf-8", errors="replace")
+            output.seek(0)
+            final_text = output.read().decode("utf-8", errors="replace").strip()
+        if proc.returncode != 0:
+            detail = (stderr_text or stdout_text).strip()
+            raise AgentLoopError(f"codex exec failed with exit {proc.returncode}: {detail[-2000:]}")
+        if not final_text:
+            final_text = _last_nonempty_line(stdout_text)
+        return AgentResponse(
+            final_text=final_text,
+            tool_calls=(),
+            metadata={
+                "runner": "codex_cli",
+                "model": model_name,
+                "reasoning_effort": self.config.codex_reasoning_effort,
+                "sandbox": self.sandbox,
+            },
+        )
+
+    def _prompt(self, request: AgentRequest, tools: ToolRegistry) -> str:
+        payload = {
+            "hot_context": request.hot_context,
+            "messages": request.messages,
+            "available_resident_tools": tools.as_schema_catalog(),
+        }
+        return (
+            f"{request.system_prompt}\n\n"
+            "You are running through the Codex CLI resident runner in the project repository. "
+            "Use the local filesystem and Megaplan CLI for durable project actions. "
+            "For initiatives, prefer `python -m arnold_pipelines.megaplan initiative ...`; "
+            "initiative creation requires a non-empty description. Keep final Discord replies concise.\n\n"
+            "Resident request JSON:\n"
+            + json.dumps(payload, sort_keys=True, default=str)
+        )
+
+
 async def _await_maybe(value: Any) -> Any:
     if hasattr(value, "__await__"):
         return await value
@@ -459,3 +552,11 @@ def _tool_call_arguments(tool_call: Any) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise AgentLoopError(f"tool call {tool_call.id} arguments must be a JSON object")
     return parsed
+
+
+def _last_nonempty_line(text: str) -> str:
+    for line in reversed(text.splitlines()):
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""

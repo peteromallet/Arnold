@@ -373,6 +373,50 @@ def _optional_bool(raw: dict[str, Any], key: str, *, index: int) -> bool:
     return value
 
 
+@dataclass(frozen=True)
+class MilestoneValidationSpec:
+    kind: str
+    traceability: str | None = None
+    conformance: str | None = None
+    validator: str | None = None
+    proof_map: str | None = None
+
+    @classmethod
+    def from_yaml(
+        cls, value: Any, *, milestone_index: int, validation_index: int
+    ) -> "MilestoneValidationSpec":
+        section = f"milestones[{milestone_index}].validate[{validation_index}]"
+        if not isinstance(value, dict):
+            raise CliError("invalid_spec", f"{section} must be a mapping")
+        allowed = {"kind", "traceability", "conformance", "validator", "proof_map"}
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            raise CliError("invalid_spec", f"{section} unknown key `{unknown[0]}`")
+        kind = value.get("kind")
+        if not isinstance(kind, str) or not kind.strip():
+            raise CliError("invalid_spec", f"{section}.kind is required")
+        kind = kind.strip()
+        if kind != "final_conformance_gate":
+            raise CliError(
+                "invalid_spec",
+                f"{section}.kind must be `final_conformance_gate`; got {kind!r}",
+            )
+
+        def _required_path(key: str) -> str:
+            raw = value.get(key)
+            if not isinstance(raw, str) or not raw.strip():
+                raise CliError("invalid_spec", f"{section}.{key} is required")
+            return raw.strip()
+
+        return cls(
+            kind=kind,
+            traceability=_required_path("traceability"),
+            conformance=_required_path("conformance"),
+            validator=_required_path("validator"),
+            proof_map=_required_path("proof_map"),
+        )
+
+
 @dataclass
 class MilestoneSpec:
     label: str
@@ -401,6 +445,7 @@ class MilestoneSpec:
     # hand-edited chain.yaml. ``∥`` parallel tracks stay prose — concurrency is
     # never introduced here.
     depends_on: list[str] = field(default_factory=list)
+    validate: list[MilestoneValidationSpec] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any], index: int) -> "MilestoneSpec":
@@ -483,6 +528,22 @@ class MilestoneSpec:
                 "invalid_spec",
                 f"milestones[{index}].depends_on must be a label or list of non-empty labels",
             )
+        validate_raw = raw.get("validate") or []
+        if isinstance(validate_raw, dict):
+            validate_values = [validate_raw]
+        elif isinstance(validate_raw, list):
+            validate_values = validate_raw
+        else:
+            raise CliError(
+                "invalid_spec",
+                f"milestones[{index}].validate must be a mapping or list of mappings",
+            )
+        validate = [
+            MilestoneValidationSpec.from_yaml(
+                item, milestone_index=index, validation_index=validation_index
+            )
+            for validation_index, item in enumerate(validate_values)
+        ]
         return cls(
             label=label,
             idea=idea,
@@ -502,6 +563,7 @@ class MilestoneSpec:
             notes=notes,
             anchors=anchors,
             depends_on=depends_on,
+            validate=validate,
         )
 
 
@@ -576,6 +638,11 @@ class ChainSpec:
         seen_labels: set[str] = set()
         all_labels = {m.label for m in milestones}
         for i, milestone in enumerate(milestones):
+            if milestone.validate and i != len(milestones) - 1:
+                raise CliError(
+                    "invalid_spec",
+                    f"milestones[{i}] ({milestone.label!r}) declares final_conformance_gate validation but is not the final milestone",
+                )
             for dep in milestone.depends_on:
                 if dep == milestone.label:
                     raise CliError(
@@ -1322,6 +1389,86 @@ def _sha256_file(path: Path) -> str:
         ) from exc
 
 
+def _validation_receipt_rel_path(
+    root: Path, chain_path: Path, *, milestone_label: str, validation_kind: str
+) -> str:
+    safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", milestone_label).strip("-")
+    safe_kind = re.sub(r"[^A-Za-z0-9_.-]+", "-", validation_kind).strip("-")
+    return _pathspec_for_git(chain_path.with_name(f"validation-{safe_label}-{safe_kind}.json"), root)
+
+
+def _validate_manifest_validation_receipt(
+    *,
+    root: Path,
+    chain_path: Path,
+    spec_path: Path,
+    label: str,
+    milestone: MilestoneSpec,
+    validation: MilestoneValidationSpec,
+    seen_proofs: set[str],
+) -> None:
+    receipt_rel = _validation_receipt_rel_path(
+        root,
+        chain_path,
+        milestone_label=milestone.label,
+        validation_kind=validation.kind,
+    )
+    if receipt_rel not in seen_proofs:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: completion manifest missing validation receipt {receipt_rel} for {milestone.label!r}",
+        )
+    receipt_path = (root / receipt_rel).resolve()
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: validation receipt missing at {receipt_path}",
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: validation receipt {receipt_rel} is invalid JSON: {exc}",
+        ) from exc
+    if not isinstance(receipt, dict):
+        raise CliError(
+            "launch_precondition_failed",
+            f"{label} failed for {spec_path}: validation receipt {receipt_rel} must be an object",
+        )
+    expected = {
+        "schema": "arnold.megaplan.milestone_validation_receipt.v1",
+        "milestone": milestone.label,
+        "kind": validation.kind,
+        "returncode": 0,
+        "conformance": validation.conformance,
+        "traceability": validation.traceability,
+        "proof_map": validation.proof_map,
+    }
+    for key, expected_value in expected.items():
+        if receipt.get(key) != expected_value:
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: validation receipt {receipt_rel} has invalid {key}; expected {expected_value!r}",
+            )
+    for key, rel_path in (
+        ("validator_sha256", validation.validator),
+        ("conformance_sha256", validation.conformance),
+        ("traceability_sha256", validation.traceability),
+    ):
+        if not isinstance(rel_path, str):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: validation receipt {receipt_rel} missing path for {key}",
+            )
+        target = (root / rel_path).resolve()
+        if not target.is_file() or receipt.get(key) != _sha256_file(target):
+            raise CliError(
+                "launch_precondition_failed",
+                f"{label} failed for {spec_path}: validation receipt {receipt_rel} has stale {key}",
+            )
+
+
 def _require_manifest_string(
     obj: dict[str, Any],
     key: str,
@@ -1561,6 +1708,16 @@ def _validate_completion_manifest(
                 dependent_spec_path=spec_path,
             )
             seen_proofs.add(_pathspec_for_git(proof_path, root))
+        for validation in spec_milestone.validate:
+            _validate_manifest_validation_receipt(
+                root=root,
+                chain_path=chain_path,
+                spec_path=spec_path,
+                label=label,
+                milestone=spec_milestone,
+                validation=validation,
+                seen_proofs=seen_proofs,
+            )
     if not seen_proofs:
         raise CliError(
             "launch_precondition_failed",

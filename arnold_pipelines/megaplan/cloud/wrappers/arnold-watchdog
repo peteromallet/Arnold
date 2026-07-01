@@ -1348,7 +1348,7 @@ def resolve_chain_state_path() -> Path | None:
     fallback: list[Path] = []
     for glob_pat in (
         ".megaplan/plans/.chains/*.json",
-        ".megaplan/briefs/*/.megaplan/plans/.chains/*.json",
+        ".megaplan/initiatives/*/.megaplan/plans/.chains/*.json",
         ".megaplan/**/chain_state.json",
     ):
         try:
@@ -2524,7 +2524,7 @@ plans_dir = workspace / ".megaplan" / "plans"
 chain_paths = sorted(
     {
         *plans_dir.glob(".chains/*.json"),
-        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *workspace.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"),
         *(workspace / ".megaplan").glob("**/chain_state.json"),
     },
     key=lambda path: path.stat().st_mtime,
@@ -2574,7 +2574,7 @@ plans_dir = workspace / ".megaplan" / "plans"
 chain_paths = sorted(
     {
         *plans_dir.glob(".chains/*.json"),
-        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *workspace.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"),
         *(workspace / ".megaplan").glob("**/chain_state.json"),
     },
     key=lambda path: path.stat().st_mtime,
