@@ -53,3 +53,14 @@ def test_codex_cli_runner_uses_output_last_message_and_medium_effort(
     assert "--model\ngpt-5.5" in call_text
     assert 'model_reasoning_effort="medium"' in call_text
     assert "--sandbox\nworkspace-write" in call_text
+
+
+def test_codex_cli_runner_uses_configured_sandbox(tmp_path: Path) -> None:
+    config = ResidentConfig(
+        model_provider="codex",
+        model_name="gpt-5.5",
+        codex_sandbox="danger-full-access",
+    )
+    runner = CodexCliAgentRunner(config, cwd=tmp_path)
+
+    assert runner.sandbox == "danger-full-access"
