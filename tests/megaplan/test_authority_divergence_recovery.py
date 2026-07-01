@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -10,7 +13,7 @@ import pytest
 from arnold_pipelines.megaplan._core.io import plans_root
 from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.cli.parser import build_parser
-from arnold_pipelines.megaplan.cli.status_view import handle_status
+from arnold_pipelines.megaplan.cli.status_view import handle_progress, handle_status
 from arnold_pipelines.megaplan.handlers import override as override_handler
 from arnold_pipelines.megaplan.handlers.init import handle_init
 from arnold_pipelines.megaplan.orchestration.phase_result import (
@@ -69,6 +72,72 @@ def _set_authority_divergence_blocked_state(fixture: LocalPlanFixture) -> None:
         "state": STATE_BLOCKED,
     }
     write_plan_state(fixture.plan_dir, mode="replace", state=state)
+
+
+def _seed_live_execute_with_stale_finalize_blockers(
+    fixture: LocalPlanFixture,
+) -> None:
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+    state = load_state(fixture.plan_dir)
+    state["current_state"] = "finalized"
+    state["active_step"] = {
+        "phase": "execute",
+        "agent": "hermes",
+        "worker_pid": os.getpid(),
+        "started_at": now,
+        "last_activity_at": now,
+    }
+    write_plan_state(fixture.plan_dir, mode="replace", state=state)
+    (fixture.plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {
+                        "id": "T1",
+                        "status": "done",
+                        "commands_run": ["pytest tests/test_example.py -q"],
+                    },
+                    {
+                        "id": "T2",
+                        "status": "pending",
+                    },
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (fixture.plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T1",
+                        "status": "done",
+                        "commands_run": ["pytest tests/test_example.py -q"],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    atomic_write_phase_result(
+        fixture.plan_dir,
+        PhaseResult(
+            phase="finalize",
+            invocation_id="fixture-invocation",
+            exit_kind=ExitKind.success.value,
+            deviations=(
+                Deviation(
+                    kind="quality_gate",
+                    message="Success criteria require human verification during execution.",
+                ),
+            ),
+        ),
+    )
 
 
 def test_status_projects_execute_for_authority_divergence_block(
@@ -230,3 +299,37 @@ def test_recover_blocked_allows_fixed_quality_rerun(
     assert response["state"] == "finalized"
     assert response["next_step"] == "execute"
     assert updated["current_state"] == "finalized"
+
+
+def test_status_hides_recovery_blockers_while_execute_step_is_live(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    _seed_live_execute_with_stale_finalize_blockers(local_plan_fixture)
+
+    response = handle_status(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name, pending_human=False),
+    )
+
+    assert response["state"] == "finalized"
+    assert response["active_step"]["recommended_action"] == "wait"
+    assert "blocker_recovery" not in response
+    assert "quality_blockers" not in response
+    assert "suggested_recovery_commands" not in response
+
+
+def test_progress_hides_recovery_blockers_while_execute_step_is_live(
+    local_plan_fixture: LocalPlanFixture,
+) -> None:
+    _seed_live_execute_with_stale_finalize_blockers(local_plan_fixture)
+
+    response = handle_progress(
+        local_plan_fixture.root,
+        argparse.Namespace(plan=local_plan_fixture.plan_name),
+    )
+
+    assert response["tasks_done"] == 1
+    assert response["tasks_pending"] == 1
+    assert "blocker_recovery" not in response
+    assert "quality_blockers" not in response
+    assert "suggested_recovery_commands" not in response
