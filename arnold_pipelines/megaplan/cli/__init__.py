@@ -206,6 +206,11 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--persist", action="store_true", default=False)
         sub.add_argument("--ephemeral", action="store_true", default=False)
 
+    status_parser = subparsers.add_parser("status")
+    status_parser.add_argument("--plan", required=False)
+    status_parser.add_argument("--project-dir", dest="project_dir")
+    status_parser.add_argument("--pending-human", action="store_true", default=False)
+
     override_parser = subparsers.add_parser("override")
     override_parser.add_argument(
         "override_action",
