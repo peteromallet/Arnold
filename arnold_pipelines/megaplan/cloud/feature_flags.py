@@ -21,6 +21,11 @@ resolver-enforcement  ARNOLD_RESOLVER_ENFORCEMENT   0 (off)    Make resolver out
 escalation-ledger     ARNOLD_ESCALATION_LEDGER      0 (off)    Enable append-only
                                                                 escalation ledger
                                                                 writes.
+repair-request-queue  ARNOLD_REPAIR_REQUEST_QUEUE   1 (on)     Persist observe-only
+                                                                repair request
+                                                                markers.
+repair-trigger        ARNOLD_REPAIR_TRIGGER_ENABLED 0 (off)    Dispatch queued
+                                                                repair requests.
 autonomy              ARNOLD_AUTONOMY               0 (off)    Enable autonomous
                                                                 trigger / meta /
                                                                 auditor actions.
@@ -84,6 +89,17 @@ def redaction_enabled() -> bool:
     return _impl()
 
 
+def repair_request_queue_enabled() -> bool:
+    """Return ``True`` when observe-only repair queue markers should be written.
+
+    Controlled by ``ARNOLD_REPAIR_REQUEST_QUEUE`` — defaults to ON (``"1"``).
+
+    This gate only controls immutable marker production.  It does not dispatch
+    repair work.
+    """
+    return _is_enabled("ARNOLD_REPAIR_REQUEST_QUEUE", True)
+
+
 # ---------------------------------------------------------------------------
 # Public API — behavior-changing flags (default OFF)
 # ---------------------------------------------------------------------------
@@ -125,6 +141,14 @@ def autonomy_enabled() -> bool:
     return _is_enabled("ARNOLD_AUTONOMY", False)
 
 
+def repair_trigger_enabled() -> bool:
+    """Return ``True`` when queued failure-triggered repair may dispatch.
+
+    Controlled by ``ARNOLD_REPAIR_TRIGGER_ENABLED`` — defaults to OFF (``"0"``).
+    """
+    return _is_enabled("ARNOLD_REPAIR_TRIGGER_ENABLED", False)
+
+
 # ---------------------------------------------------------------------------
 # Convenience re-exports for callers that want a single import
 # ---------------------------------------------------------------------------
@@ -155,6 +179,16 @@ def redaction_on() -> bool:
     return redaction_enabled()
 
 
+def repair_request_queue_on() -> bool:
+    """Alias for :func:`repair_request_queue_enabled`."""
+    return repair_request_queue_enabled()
+
+
+def repair_trigger_on() -> bool:
+    """Alias for :func:`repair_trigger_enabled`."""
+    return repair_trigger_enabled()
+
+
 __all__ = [
     "autonomy_enabled",
     "autonomy_on",
@@ -162,6 +196,10 @@ __all__ = [
     "escalation_ledger_on",
     "redaction_enabled",
     "redaction_on",
+    "repair_request_queue_enabled",
+    "repair_request_queue_on",
+    "repair_trigger_enabled",
+    "repair_trigger_on",
     "resolver_enforcement_enabled",
     "resolver_enforcement_on",
     "resolver_observe_enabled",

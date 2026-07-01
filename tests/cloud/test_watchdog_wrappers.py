@@ -2711,7 +2711,8 @@ def test_watchdog_skips_relaunch_while_review_pr_is_still_open() -> None:
     assert "chain_wait_status()" in text
     assert 'wait_status="$(chain_wait_status "$workspace" "$remote_spec")"' in text
     assert 'if [[ "$health" == "awaiting_pr_merge" ]]; then' in text
-    assert 'report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge"' in text
+    assert "reconcile_awaiting_pr_merge" in text
+    assert 'report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge: ${pr_reconcile_message:-$pr_reconcile_status}"' in text
     assert '["gh", "pr", "view", str(pr_number), "--json", "state"]' in text
     assert '["gh", "pr", "merge", str(pr_number), *flags]' in text
 
@@ -2733,6 +2734,7 @@ def test_watchdog_stopped_tmux_reports_awaiting_pr_merge_from_chain_state(tmp_pa
             _extract_wrapper_function("chain_wait_status"),
             _extract_wrapper_function("session_health_status"),
             """
+matching_runner_process_alive() { return 1; }
 tmux() {
   if [[ "$1" == "has-session" ]]; then
     return 1
@@ -2766,6 +2768,7 @@ def test_watchdog_stopped_tmux_prefers_live_chain_process_over_wait_state(tmp_pa
             _extract_wrapper_function("chain_wait_status"),
             _extract_wrapper_function("session_health_status"),
             f"""
+matching_runner_process_alive() {{ return 0; }}
 tmux() {{
   if [[ "$1" == "has-session" ]]; then
     return 1
@@ -2843,6 +2846,161 @@ def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     gh_calls = gh_log.read_text(encoding="utf-8").splitlines()
     assert "pr ready 42" in gh_calls
     assert "pr merge 42 --auto --squash --delete-branch" in gh_calls
+
+
+def test_watchdog_auto_policy_merged_pr_fetches_origin_before_relaunch(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    repair_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "demo-chain.json"
+    _write_chain_state(
+        chain_path,
+        {"last_state": "awaiting_pr_merge", "pr_number": 42, "pr_state": "open"},
+    )
+    report_path = tmp_path / "report.tsv"
+    call_log = tmp_path / "calls.log"
+    gh_path = tmp_path / "gh"
+    gh_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf 'gh %s\\n' \"$*\" >> {str(call_log)!r}\n"
+        "if [[ \"$1 $2 $3\" == \"pr view 42\" ]]; then\n"
+        "  printf '%s\\n' '{\"state\":\"MERGED\",\"mergeCommit\":{\"oid\":\"abc123\"}}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+    git_path = tmp_path / "git"
+    git_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf 'git %s\\n' \"$*\" >> {str(call_log)!r}\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    git_path.chmod(git_path.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("json_field"),
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("reconcile_awaiting_pr_merge"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$CALL_LOG"; }
+report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
+session_health_status() { echo awaiting_pr_merge; }
+chain_health_status() { CHAIN_HEALTH_STATUS=ok; }
+plan_terminal_status() { echo none; }
+plan_attention_status_env() { :; }
+repair_needs_human_path() { printf '%s/%s.needs-human.json\n' "$REPAIR_DATA_DIR" "$1"; }
+workspace_has_other_alive_session() { return 1; }
+repair_loop_busy_state() { echo none; }
+mechanical_relaunch_attempted_previously() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+tmux() { printf 'tmux %s\n' "$*" >> "$CALL_LOG"; return 0; }
+mktemp() { printf '%s\n' "$LAUNCH_SCRIPT"; }
+chmod() { :; }
+""".strip(),
+            f"CALL_LOG={str(call_log)!r}",
+            f"LAUNCH_SCRIPT={str(tmp_path / 'launch.sh')!r}",
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    calls = call_log.read_text(encoding="utf-8")
+    assert "gh pr view 42 --json state,mergeCommit" in calls
+    assert "git fetch origin --prune" in calls
+    assert "git cat-file -e abc123^{commit}" in calls
+    assert "session awaiting PR merge reconciled merged; falling through to relaunch" in calls
+    assert "tmux new-session -d -s demo-session" in calls
+
+
+def test_watchdog_auto_policy_open_pr_queues_evidence_and_preserves_wait(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("ARNOLD_REPAIR_REQUEST_QUEUE", "1")
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    repair_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_dir.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: auto\n", encoding="utf-8")
+    chain_path = workspace / ".megaplan" / "plans" / ".chains" / "demo-chain.json"
+    _write_chain_state(
+        chain_path,
+        {"last_state": "awaiting_pr_merge", "pr_number": 43, "pr_state": "open"},
+    )
+    report_path = tmp_path / "report.tsv"
+    call_log = tmp_path / "calls.log"
+    gh_path = tmp_path / "gh"
+    gh_path.write_text(
+        "#!/usr/bin/env bash\n"
+        f"printf 'gh %s\\n' \"$*\" >> {str(call_log)!r}\n"
+        "if [[ \"$1 $2 $3\" == \"pr view 43\" ]]; then\n"
+        "  printf '%s\\n' '{\"state\":\"OPEN\"}'\n"
+        "  exit 0\n"
+        "fi\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    gh_path.chmod(gh_path.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("reconcile_awaiting_pr_merge"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$CALL_LOG"; }
+report_item() { printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"; }
+session_health_status() { echo awaiting_pr_merge; }
+chain_health_status() { CHAIN_HEALTH_STATUS=ok; }
+repair_needs_human_path() { printf '%s/%s.needs-human.json\n' "$REPAIR_DATA_DIR" "$1"; }
+tmux() { printf 'TMUX %s\n' "$*" >> "$CALL_LOG"; return 0; }
+""".strip(),
+            f"CALL_LOG={str(call_log)!r}",
+            f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script, path_prefix=tmp_path)
+    assert result.returncode == 0, result.stderr
+    calls = call_log.read_text(encoding="utf-8")
+    assert "gh pr view 43 --json state,mergeCommit" in calls
+    assert "session awaiting PR merge: demo-session detail=PR #43 state=open evidence=queued" in calls
+    assert "TMUX" not in calls
+    report = report_path.read_text(encoding="utf-8")
+    assert "\tobserve\tawaiting_pr_merge\tsession waiting on PR merge: PR #43 state=open evidence=queued\t" in report
+    queued = list((tmp_path / "repair-queue" / "requests").glob("*.json"))
+    assert len(queued) == 1
+    payload = json.loads(queued[0].read_text(encoding="utf-8"))
+    assert payload["source"] == "watchdog_pr_merge_reconciliation"
+    assert payload["target"]["pr_number"] == 43
 
 
 def test_watchdog_relaunch_runs_editable_install_code_against_active_workspace() -> None:
@@ -5496,6 +5654,95 @@ def test_chain_health_status_is_wired_into_launch_chain_tick() -> None:
     assert 'report_item "$report_items" "$session" "observe" "${CHAIN_HEALTH_STATUS:-chain_issue}"' in text
 
 
+def test_watchdog_scan_once_runs_repair_trigger_before_marker_scan() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert "repair_trigger_scan()" in text
+    assert text.index("repair_trigger_scan") < text.index('sync_editable_source_branch "$report_items" || true')
+
+
+def test_watchdog_scan_once_tolerates_repair_trigger_observe_only_without_systemd(tmp_path: Path) -> None:
+    trigger = tmp_path / "arnold-repair-trigger"
+    trigger.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' '{\"event\":\"repair_trigger\",\"status\":\"busy\"}'\n",
+        encoding="utf-8",
+    )
+    trigger.chmod(trigger.stat().st_mode | stat.S_IXUSR)
+    marker_dir = tmp_path / "missing-markers"
+    order_path = tmp_path / "order.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_trigger_scan"),
+            _extract_wrapper_function("scan_once"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+            f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$ORDER_PATH"; }
+maybe_reexec_updated_watchdog() { :; }
+sync_editable_source_branch() { printf '%s\n' sync >> "$ORDER_PATH"; }
+adopt_unmarked_tmux_sessions() { :; }
+emit_report() { printf '%s\n' "emit:$2" >> "$ORDER_PATH"; }
+reap_stale_repairs() { printf '%s\n' reap >> "$ORDER_PATH"; }
+""".strip(),
+            f"ORDER_PATH={str(order_path)!r}",
+            "scan_once",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    lines = order_path.read_text(encoding="utf-8").splitlines()
+    assert any("repair-trigger {\"event\":\"repair_trigger\",\"status\":\"busy\"}" in line for line in lines)
+    assert lines.index("sync") > next(
+        idx for idx, line in enumerate(lines) if "repair-trigger" in line
+    )
+    assert "emit:0" in lines
+
+
+def test_watchdog_session_health_status_treats_live_worker_process_as_alive_without_tmux(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_name = "m3-demo-plan"
+
+    worker = subprocess.Popen(["sleep", "30"])
+    try:
+        chain_state_path.write_text(json.dumps({"current_plan_name": plan_name}), encoding="utf-8")
+        plan_dir = workspace / ".megaplan" / "plans" / plan_name
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps({"active_step": {"phase": "execute", "worker_pid": worker.pid}}),
+            encoding="utf-8",
+        )
+
+        script = "\n\n".join(
+            [
+                _extract_wrapper_function("matching_runner_process_alive"),
+                _extract_wrapper_function("session_health_status"),
+                """
+tmux() { return 1; }
+chain_wait_status() { echo none; }
+""".strip(),
+                f"session_health_status demo-session {shlex.quote(str(workspace))} {shlex.quote(str(spec_path))} chain ''",
+            ]
+        )
+
+        result = _run_watchdog_shell(script)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "alive"
+    finally:
+        worker.terminate()
+        worker.wait(timeout=5)
+
+
 def test_watchdog_chain_health_short_circuits_plan_repair_dispatch(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_dir = tmp_path / "repair-data"
@@ -7079,3 +7326,487 @@ def test_arnold_progress_auditor_produces_evidence_cited_report_via_mocked_deeps
     assert "plan_v refreshed" in combined
     assert "gate=ITERATE/blocked" in combined
     assert "hypothesis:" in finding["hypothesis"]
+
+
+# ── T9: repair-trigger / watchdog integration tests ──────────────────────
+
+
+def test_watchdog_scan_once_disabled_dispatch_observe_only_non_fatal(
+    tmp_path: Path,
+) -> None:
+    """The trigger's disabled-by-default observe-only path must not abort the scan."""
+    trigger = tmp_path / "arnold-repair-trigger"
+    trigger.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo '{\"event\":\"repair_trigger\",\"status\":\"empty\",\"enabled\":false}'\n",
+        encoding="utf-8",
+    )
+    trigger.chmod(trigger.stat().st_mode | stat.S_IXUSR)
+    marker_dir = tmp_path / "empty-markers"
+    marker_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_trigger_scan"),
+            _extract_wrapper_function("scan_once"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+            f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+            """
+log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
+maybe_reexec_updated_watchdog() { :; }
+sync_editable_source_branch() { return 0; }
+adopt_unmarked_tmux_sessions() { :; }
+emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }
+reap_stale_repairs() { :; }
+""".strip(),
+            f"LOG_PATH={str(tmp_path / 'scan.log')!r}",
+            "scan_once",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    log_text = (tmp_path / "scan.log").read_text(encoding="utf-8")
+    # Observe-only trigger output logged but scan completes normally.
+    assert "repair-trigger" in log_text
+    assert '"event":"repair_trigger"' in log_text
+    assert '"status":"empty"' in log_text
+    assert '"enabled":false' in log_text
+    assert "scan complete markers=0" in log_text
+
+
+def test_watchdog_scan_once_lock_contention_is_non_fatal(tmp_path: Path) -> None:
+    """When the trigger reports lock contention (busy), the watchdog scan must continue."""
+    trigger = tmp_path / "arnold-repair-trigger"
+    trigger.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo '{\"event\":\"repair_trigger\",\"status\":\"busy\",\"lock_status\":\"contended\"}'\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    trigger.chmod(trigger.stat().st_mode | stat.S_IXUSR)
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_trigger_scan"),
+            _extract_wrapper_function("scan_once"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+            f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+            """
+log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
+maybe_reexec_updated_watchdog() { :; }
+sync_editable_source_branch() { return 0; }
+adopt_unmarked_tmux_sessions() { :; }
+emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }
+reap_stale_repairs() { :; }
+""".strip(),
+            f"LOG_PATH={str(tmp_path / 'scan.log')!r}",
+            "scan_once",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    log_text = (tmp_path / "scan.log").read_text(encoding="utf-8")
+    # Lock contention is logged but scan finishes — it is never fatal.
+    assert "busy" in log_text
+    assert "scan complete markers=0" in log_text
+
+
+def test_watchdog_scan_once_queued_request_triggers_observe_then_continues(
+    tmp_path: Path,
+) -> None:
+    """A queued repair request produces observe-only trigger output; the scan proceeds."""
+    trigger = tmp_path / "arnold-repair-trigger"
+    trigger.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo '{\"event\":\"repair_trigger_observe\",\"status\":\"would_dispatch\","
+        "\"request_id\":\"req-1\",\"enabled\":false}'\n"
+        "echo '{\"event\":\"repair_trigger\",\"status\":\"no_actionable_requests\",\"enabled\":false}'\n",
+        encoding="utf-8",
+    )
+    trigger.chmod(trigger.stat().st_mode | stat.S_IXUSR)
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_trigger_scan"),
+            _extract_wrapper_function("scan_once"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+            f"REPAIR_TRIGGER_BIN={str(trigger)!r}",
+            """
+log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }
+maybe_reexec_updated_watchdog() { :; }
+sync_editable_source_branch() { return 0; }
+adopt_unmarked_tmux_sessions() { :; }
+emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }
+reap_stale_repairs() { :; }
+""".strip(),
+            f"LOG_PATH={str(tmp_path / 'scan.log')!r}",
+            "scan_once",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    log_text = (tmp_path / "scan.log").read_text(encoding="utf-8")
+    assert "would_dispatch" in log_text
+    assert "no_actionable_requests" in log_text
+    assert "scan complete markers=0" in log_text
+
+
+def test_watchdog_chain_runner_detected_as_alive_without_tmux(
+    tmp_path: Path,
+) -> None:
+    """When ``matching_runner_process_alive`` confirms a live chain runner,
+    ``session_health_status`` returns *alive* even without tmux."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_health_status"),
+            """
+matching_runner_process_alive() { return 0; }
+chain_wait_status() { echo none; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  return 0
+}
+""".strip(),
+            f"session_health_status demo-session {str(workspace)!r} {str(spec_path)!r} chain ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "alive"
+
+
+def test_watchdog_epic_chain_runner_detected_as_alive_without_tmux(
+    tmp_path: Path,
+) -> None:
+    """When ``matching_runner_process_alive`` confirms a live epic-chain runner,
+    ``session_health_status`` returns *alive* even without tmux."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "epic-demo" / "epic-chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("session_health_status"),
+            """
+matching_runner_process_alive() { return 0; }
+chain_wait_status() { echo none; }
+tmux() {
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  return 0
+}
+""".strip(),
+            f"session_health_status epic-session {str(workspace)!r} {str(spec_path)!r} epic_chain ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "alive"
+
+
+def test_watchdog_alive_by_process_prevents_relaunch(
+    tmp_path: Path,
+) -> None:
+    """When ``session_health_status`` returns *alive* via process detection the
+    watchdog must skip relaunch for that session."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "alive-session.json").write_text(
+        json.dumps(
+            {
+                "session": "alive-session",
+                "workspace": str(workspace),
+                "remote_spec": str(spec_path),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("json_field"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+            f"LOG={str(log_path)!r}",
+            """
+report_item() {
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"$1\" \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" \"$7\" >> \"$1\"
+}
+log() { printf '%s\\n' \"$*\" >> \"$LOG\"; }
+maybe_reexec_updated_watchdog() { :; }
+sync_editable_source_branch() { return 0; }
+adopt_unmarked_tmux_sessions() { :; }
+reap_stale_repairs() { :; }
+emit_report() { cp \"$1\" REPORT_PATH_PLACEHOLDER; }
+# session is alive via process detection (no tmux needed).
+session_health_status() { echo alive; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() { CHAIN_HEALTH_STATUS=ok; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo SHOULD_NOT_DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo SHOULD_NOT_REPAIR >&2; return 0; }
+mechanical_relaunch_attempted_previously() { return 0; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\\n' \"$1\"; }
+tmux() { return 1; }
+""".replace("REPORT_PATH_PLACEHOLDER", str(report_path)).strip(),
+            f"launch_chain_tick alive-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    report = report_path.read_text(encoding="utf-8")
+    # Alive sessions get an observe report, not a relaunch.
+    assert "alive" in report
+    assert "restart" not in report
+    assert "SHOULD_NOT_DISPATCH" not in result.stderr
+    assert "SHOULD_NOT_REPAIR" not in result.stderr
+
+
+def test_watchdog_marker_only_live_worker_session_prevents_duplicate_repair(
+    tmp_path: Path,
+) -> None:
+    """A session with only a marker (no tmux) whose live worker PID is found
+    must be classified alive, preventing duplicate repair dispatch."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
+    chain_state_path = workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+    chain_state_path.parent.mkdir(parents=True, exist_ok=True)
+    plan_name = "m3-demo-plan"
+    chain_state_path.write_text(
+        json.dumps({"current_plan_name": plan_name}),
+        encoding="utf-8",
+    )
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True, exist_ok=True)
+
+    worker = subprocess.Popen(["sleep", "30"])
+    try:
+        (plan_dir / "state.json").write_text(
+            json.dumps({"active_step": {"phase": "execute", "worker_pid": worker.pid}}),
+            encoding="utf-8",
+        )
+        marker_dir = tmp_path / "markers"
+        marker_dir.mkdir()
+        (marker_dir / "demo-session.json").write_text(
+            json.dumps(
+                {
+                    "session": "demo-session",
+                    "workspace": str(workspace),
+                    "remote_spec": str(spec_path),
+                    "run_kind": "chain",
+                }
+            ),
+            encoding="utf-8",
+        )
+        report_path = tmp_path / "report.tsv"
+        log_path = tmp_path / "watchdog.log"
+
+        script = "\n\n".join(
+            [
+                _extract_wrapper_function("json_field"),
+                _extract_wrapper_function("matching_runner_process_alive"),
+                _extract_wrapper_function("session_health_status"),
+                _extract_wrapper_function("launch_chain_tick"),
+                f"MARKER_DIR={str(marker_dir)!r}",
+                f"REPAIR_DATA_DIR={str(tmp_path / 'repair-data')!r}",
+                f"LOG={str(log_path)!r}",
+                """
+report_item() {
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"$1\" \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" \"$7\" >> \"$1\"
+}
+log() { printf '%s\\n' \"$*\" >> \"$LOG\"; }
+maybe_reexec_updated_watchdog() { :; }
+sync_editable_source_branch() { return 0; }
+adopt_unmarked_tmux_sessions() { :; }
+reap_stale_repairs() { :; }
+emit_report() { cp \"$1\" REPORT_PATH_PLACEHOLDER; }
+chain_wait_status() { echo none; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() { CHAIN_HEALTH_STATUS=ok; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo SHOULD_NOT_DISPATCH >&2; return 0; }
+repair_unhealthy_session() { echo SHOULD_NOT_REPAIR >&2; return 0; }
+mechanical_relaunch_attempted_previously() { return 0; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+ensure_install_or_repair() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+safe_name() { printf '%s\\n' \"$1\"; }
+tmux() {
+  if [[ \"$1\" == \"has-session\" ]]; then
+    return 1
+  fi
+  return 0
+}
+""".replace("REPORT_PATH_PLACEHOLDER", str(report_path)).strip(),
+                f"launch_chain_tick demo-session {str(workspace)!r} {str(spec_path)!r} {str(report_path)!r} chain '' ''",
+            ]
+        )
+
+        result = _run_watchdog_shell(script)
+        assert result.returncode == 0, result.stderr
+        report = report_path.read_text(encoding="utf-8")
+        # The worker is alive, so session is alive — no relaunch, no repair.
+        assert "alive" in report
+        assert "restart" not in report
+        assert "SHOULD_NOT_DISPATCH" not in result.stderr
+        assert "SHOULD_NOT_REPAIR" not in result.stderr
+    finally:
+        worker.terminate()
+        worker.wait(timeout=5)
+
+
+# ── T11: scan_once session-marker sidecar filtering ─────────────────────
+
+
+def test_watchdog_scan_once_filters_canonical_sidecar_jsons(tmp_path: Path) -> None:
+    """``scan_once`` must use ``is_canonical_session_marker_path`` to exclude
+    canonical sidecar JSONs, scanning only real session markers."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "real-session.json").write_text(
+        json.dumps(
+            {
+                "session": "real-session",
+                "workspace": str(tmp_path / "ws"),
+                "remote_spec": str(tmp_path / "ws" / "chain.yaml"),
+                "run_kind": "chain",
+            }
+        ),
+        encoding="utf-8",
+    )
+    # Canonical sidecars that must be skipped
+    for suffix in (
+        ".repair-progress.json",
+        ".reap-progress.json",
+        ".chain-health.progress.json",
+        ".progress.json",
+    ):
+        (marker_dir / f"real-session{suffix}").write_text("{}", encoding="utf-8")
+        (marker_dir / f"other{suffix}").write_text("{}", encoding="utf-8")
+
+    trigger = tmp_path / "fake-trigger"
+    trigger.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo '{\"event\":\"repair_trigger\",\"status\":\"empty\",\"enabled\":false}'\n",
+        encoding="utf-8",
+    )
+    trigger.chmod(trigger.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_trigger_scan"),
+            _extract_wrapper_function("scan_once"),
+            f"MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"REPAIR_DATA_DIR={shlex.quote(str(tmp_path / 'repair-data'))}",
+            f"REPAIR_TRIGGER_BIN={shlex.quote(str(trigger))}",
+            (
+                "log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }\n"
+                "maybe_reexec_updated_watchdog() { :; }\n"
+                "sync_editable_source_branch() { return 0; }\n"
+                "adopt_unmarked_tmux_sessions() { :; }\n"
+                "emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }\n"
+                "reap_stale_repairs() { :; }\n"
+                "json_field() { python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); print(d.get(sys.argv[2],''))\" \"$1\" \"$2\"; }\n"
+                "launch_chain_tick() { echo \"tick:$1\" >> \"$LOG_PATH\"; }\n"
+            ),
+            f"LOG_PATH={shlex.quote(str(tmp_path / 'scan.log'))}",
+            "scan_once",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    log_text = (tmp_path / "scan.log").read_text(encoding="utf-8")
+    # Only the real session should be ticked
+    assert "tick:real-session" in log_text
+    # Should report exactly 1 marker found (only the canonical session marker)
+    assert "scan complete markers=1" in log_text
+
+
+def test_watchdog_scan_once_excludes_sidecar_only_entries(tmp_path: Path) -> None:
+    """When only canonical sidecar files exist (no real session markers),
+    the scan must report 0 markers."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    # Only sidecar files, no real session markers
+    for suffix in (".repair-progress.json", ".progress.json"):
+        (marker_dir / f"phantom{suffix}").write_text("{}", encoding="utf-8")
+
+    trigger = tmp_path / "fake-trigger"
+    trigger.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo '{\"event\":\"repair_trigger\",\"status\":\"empty\",\"enabled\":false}'\n",
+        encoding="utf-8",
+    )
+    trigger.chmod(trigger.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("repair_trigger_scan"),
+            _extract_wrapper_function("scan_once"),
+            f"MARKER_DIR={shlex.quote(str(marker_dir))}",
+            f"REPAIR_DATA_DIR={shlex.quote(str(tmp_path / 'repair-data'))}",
+            f"REPAIR_TRIGGER_BIN={shlex.quote(str(trigger))}",
+            (
+                "log() { printf '%s\\n' \"$*\" >> \"$LOG_PATH\"; }\n"
+                "maybe_reexec_updated_watchdog() { :; }\n"
+                "sync_editable_source_branch() { return 0; }\n"
+                "adopt_unmarked_tmux_sessions() { :; }\n"
+                "emit_report() { echo \"emit:$2\" >> \"$LOG_PATH\"; }\n"
+                "reap_stale_repairs() { :; }\n"
+                "json_field() { python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); print(d.get(sys.argv[2],''))\" \"$1\" \"$2\"; }\n"
+                "launch_chain_tick() { echo \"tick:$1\" >> \"$LOG_PATH\"; }\n"
+            ),
+            f"LOG_PATH={shlex.quote(str(tmp_path / 'scan.log'))}",
+            "scan_once",
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    log_text = (tmp_path / "scan.log").read_text(encoding="utf-8")
+    assert "scan complete markers=0" in log_text

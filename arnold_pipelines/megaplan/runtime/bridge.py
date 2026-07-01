@@ -439,6 +439,11 @@ def run_pipeline_bridged(
     # Pack megaplan-specific context into hook_extensions so _BridgeStep and
     # _neutral_join can reconstruct the mp StepContext at dispatch time without
     # coupling to the neutral StepContext field layout.
+    pipeline_name = ""
+    pipeline_key = getattr(ctx.inputs, "get", lambda *_args, **_kwargs: None)("_pipeline")
+    if isinstance(pipeline_key, str):
+        pipeline_name = pipeline_key
+
     hook_extensions: dict = {
         "_mp_inputs": {
             k: str(v) if isinstance(v, Path) else v for k, v in ctx.inputs.items()
@@ -447,6 +452,12 @@ def run_pipeline_bridged(
         "_mp_mode": ctx.mode,
         "_mp_budget": ctx.budget,
         "_mp_envelope": ctx.envelope,
+        "plan_dir": str(artifact_root),
+        "workspace_path": str(_workspace_path_for_plan_dir(artifact_root)),
+        "plan_name": artifact_root.name,
+        "pipeline_name": pipeline_name,
+        "run_kind": "plan",
+        "session": _repair_request_session_name(ctx, artifact_root),
     }
 
     neutral_pipeline = _translate_pipeline(pipeline)
@@ -477,6 +488,28 @@ def run_pipeline_bridged(
         "status": "completed",
         "contract_result": None,
     }
+
+
+def _workspace_path_for_plan_dir(plan_dir: Path) -> Path:
+    if plan_dir.parent.name == "plans" and plan_dir.parent.parent.name == ".megaplan":
+        return plan_dir.parent.parent.parent
+    return plan_dir
+
+
+def _repair_request_session_name(ctx: Any, artifact_root: Path) -> str:
+    state = getattr(ctx, "state", None)
+    if isinstance(state, dict):
+        for key in ("chain_session", "session", "plan_name"):
+            value = state.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        meta = state.get("meta")
+        if isinstance(meta, dict):
+            for key in ("chain_session", "session", "plan_name"):
+                value = meta.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    return artifact_root.name
 
 
 def run_pipeline_dispatch(

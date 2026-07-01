@@ -47,6 +47,7 @@ KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
 PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"
 KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
+REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
 PRIMARY_REPAIR_BASENAME="$(basename "$PRIMARY_REPAIR_BIN")"
@@ -1121,6 +1122,130 @@ ensure_install_or_repair() {
   codex_repair_editable_install "$reason"
 }
 
+matching_runner_process_alive() {
+  local workspace="$1"
+  local remote_spec="$2"
+  local run_kind="${3:-chain}"
+  local plan_name="${4:-}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$workspace" "$remote_spec" "$run_kind" "$plan_name" <<'PY'
+import hashlib
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1])
+remote_spec_raw = sys.argv[2]
+run_kind = sys.argv[3]
+plan_name = sys.argv[4]
+
+
+def pid_alive(value: object) -> bool:
+    try:
+        pid = int(value)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def add_unique(values: list[str], value: object) -> None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned and cleaned not in values:
+            values.append(cleaned)
+
+
+def load_json(path: Path) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def process_matches() -> bool:
+    if run_kind not in {"chain", "epic_chain"} or not remote_spec_raw:
+        return False
+    try:
+        proc = subprocess.run(
+            ["ps", "-eww", "-o", "pid=", "-o", "args="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except Exception:
+        return False
+    if proc.returncode != 0:
+        return False
+    ignored_pids = {os.getpid(), os.getppid()}
+    command = "arnold_pipelines.megaplan chain start" if run_kind == "chain" else "arnold_pipelines.megaplan epic-chain start"
+    for line in proc.stdout.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            pid_text, args = stripped.split(None, 1)
+            pid = int(pid_text)
+        except (ValueError, TypeError):
+            continue
+        if pid in ignored_pids:
+            continue
+        if command in args and "--spec" in args and remote_spec_raw in args:
+            return True
+    return False
+
+
+if process_matches():
+    raise SystemExit(0)
+
+candidate_plans: list[str] = []
+add_unique(candidate_plans, plan_name)
+
+if remote_spec_raw:
+    try:
+        spec_path = Path(remote_spec_raw)
+        try:
+            spec_resolved = spec_path.resolve()
+        except Exception:
+            spec_resolved = spec_path
+        digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+        chain_state_candidates = (
+            workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+            workspace / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+            spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+            spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+            spec_resolved.with_name("chain_state.json"),
+        )
+        for candidate in chain_state_candidates:
+            if not candidate.exists():
+                continue
+            chain_state = load_json(candidate)
+            add_unique(candidate_plans, chain_state.get("current_plan_name"))
+            add_unique(candidate_plans, chain_state.get("plan_name"))
+            break
+    except Exception:
+        pass
+
+for current_plan in candidate_plans:
+    state_path = workspace / ".megaplan" / "plans" / current_plan / "state.json"
+    if not state_path.exists():
+        continue
+    state = load_json(state_path)
+    active = state.get("active_step")
+    if isinstance(active, dict) and pid_alive(active.get("worker_pid")):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
 session_health_status() {
   local session="$1"
   local workspace="$2"
@@ -1129,19 +1254,14 @@ session_health_status() {
   local plan_name="${5:-}"
   local wait_status
   if ! tmux has-session -t "$session" 2>/dev/null; then
+    if matching_runner_process_alive "$workspace" "$remote_spec" "$run_kind" "$plan_name"; then
+      echo "alive"
+      return 0
+    fi
     if [[ "$run_kind" == "chain" ]]; then
-      if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
-        echo "alive"
-        return 0
-      fi
       wait_status="$(chain_wait_status "$workspace" "$remote_spec")"
       if [[ "$wait_status" != "none" ]]; then
         echo "$wait_status"
-        return 0
-      fi
-    elif [[ "$run_kind" == "epic_chain" ]]; then
-      if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan epic-chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
-        echo "alive"
         return 0
       fi
     fi
@@ -1204,6 +1324,35 @@ session_health_status() {
   fi
 
   echo "stopped"
+}
+
+repair_trigger_scan() {
+  local trigger_bin="${REPAIR_TRIGGER_BIN:-}"
+  local output rc
+  if [[ -z "$trigger_bin" ]]; then
+    return 0
+  fi
+  if [[ ! -x "$trigger_bin" ]]; then
+    log "repair-trigger unavailable path=$trigger_bin"
+    return 0
+  fi
+  output="$(
+    PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" \
+      "$trigger_bin" \
+      --marker-dir "$MARKER_DIR" \
+      --repair-data-dir "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" 2>&1
+  )"
+  rc=$?
+  if [[ -n "$output" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      log "repair-trigger $line"
+    done <<< "$output"
+  fi
+  if [[ $rc -ne 0 ]]; then
+    log "repair-trigger exited rc=$rc; continuing watchdog scan"
+  fi
+  return 0
 }
 
 kimi_operator_running() {
@@ -1441,16 +1590,18 @@ workspace_has_other_alive_session() {
   local session="$1"
   local workspace="$2"
   local candidates other_session other_workspace other_remote_spec other_run_kind other_plan_name other_health
-  candidates="$(python3 - "$MARKER_DIR" "$session" "$workspace" <<'PY'
+  candidates="$(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$MARKER_DIR" "$session" "$workspace" <<'PY'
 import json
 import pathlib
 import sys
+
+from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path
 
 marker_dir = pathlib.Path(sys.argv[1])
 session = sys.argv[2]
 workspace = sys.argv[3]
 for path in sorted(marker_dir.glob("*.json")):
-    if path.name.endswith((".repair-progress.json", ".chain-health.progress.json")):
+    if not is_canonical_session_marker_path(path):
         continue
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -3184,6 +3335,180 @@ print("none")
 PY
 }
 
+reconcile_awaiting_pr_merge() {
+  local session="$1" workspace="$2" remote_spec="${3:-}"
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$MARKER_DIR" <<'PY'
+import json
+import pathlib
+import subprocess
+import sys
+import time
+
+session, workspace_raw, remote_spec_raw, marker_dir = sys.argv[1:]
+workspace = pathlib.Path(workspace_raw)
+remote_spec = pathlib.Path(remote_spec_raw) if remote_spec_raw else None
+if remote_spec is not None and not remote_spec.is_absolute():
+    remote_spec = workspace / remote_spec
+plans_dir = workspace / ".megaplan" / "plans"
+
+
+def emit(status: str, message: str = "") -> None:
+    print(f"{status}\t{message}")
+
+
+def load_json(path: pathlib.Path) -> dict:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def merge_policy() -> str:
+    if remote_spec is None:
+        return ""
+    try:
+        for raw_line in remote_spec.read_text(encoding="utf-8").splitlines():
+            line = raw_line.split("#", 1)[0].strip()
+            if line.startswith("merge_policy:"):
+                value = line.split(":", 1)[1].strip().strip("'\"")
+                return "review" if value == "manual" else value
+    except Exception:
+        return ""
+    return ""
+
+
+def chain_state_paths() -> list[pathlib.Path]:
+    paths = {
+        *plans_dir.glob(".chains/*.json"),
+        *workspace.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"),
+        *(workspace / ".megaplan").glob("**/chain_state.json"),
+    }
+    if remote_spec is not None:
+        sibling = remote_spec.with_name("chain_state.json")
+        if sibling.exists():
+            paths.add(sibling)
+    return sorted(paths, key=lambda path: path.stat().st_mtime, reverse=True)
+
+
+def gh_pr_state(pr_number: int) -> tuple[str, str]:
+    proc = subprocess.run(
+        ["gh", "pr", "view", str(pr_number), "--json", "state,mergeCommit"],
+        cwd=workspace,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        return "", ""
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception:
+        return "", ""
+    state = payload.get("state")
+    merge_commit = payload.get("mergeCommit")
+    oid = ""
+    if isinstance(merge_commit, dict):
+        raw_oid = merge_commit.get("oid")
+        oid = raw_oid if isinstance(raw_oid, str) else ""
+    return (state.lower() if isinstance(state, str) else "", oid)
+
+
+def enqueue_wait_evidence(path: pathlib.Path, pr_number: int, pr_state: str) -> str:
+    try:
+        from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
+        from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+
+        if not repair_request_queue_enabled():
+            return "queue_disabled"
+        result = enqueue_repair_request(
+            marker_dir=marker_dir,
+            session=session,
+            source="watchdog_pr_merge_reconciliation",
+            workspace=str(workspace),
+            run_kind="chain",
+            target={
+                "chain_state_path": str(path),
+                "remote_spec": str(remote_spec or ""),
+                "pr_number": pr_number,
+                "pr_state": pr_state or "unknown",
+            },
+            problem_signature={
+                "failure_kind": "awaiting_pr_merge",
+                "current_state": pr_state or "unknown",
+                "phase_or_step": "watchdog_pr_merge_reconciliation",
+                "milestone_or_plan": str(path),
+                "gate_recommendation": "",
+                "blocked_task_id": f"pr:{pr_number}",
+            },
+            root_cause_hint={
+                "reason": "auto-policy chain is still awaiting PR merge",
+                "pr_number": pr_number,
+                "pr_state": pr_state or "unknown",
+            },
+        )
+        return str(result.get("status") or "queued")
+    except Exception as exc:
+        return f"queue_error:{exc}"
+
+
+if merge_policy() != "auto":
+    emit("review_policy", "merge policy is not auto")
+    raise SystemExit(0)
+
+for path in chain_state_paths():
+    payload = load_json(path)
+    if payload.get("last_state") != "awaiting_pr_merge":
+        continue
+    pr_number = payload.get("pr_number")
+    try:
+        pr_number_int = int(pr_number)
+    except Exception:
+        emit("missing_pr", f"{path} has no PR number")
+        raise SystemExit(0)
+    pr_state, merge_oid = gh_pr_state(pr_number_int)
+    payload["pr_state"] = pr_state or payload.get("pr_state")
+    payload.setdefault("metadata", {})
+    if isinstance(payload["metadata"], dict):
+        payload["metadata"]["watchdog_pr_merge_reconciliation"] = {
+            "checked_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "pr_number": pr_number_int,
+            "pr_state": pr_state or "unknown",
+            "merge_commit": merge_oid,
+        }
+    try:
+        path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    except Exception:
+        pass
+    if pr_state == "merged":
+        subprocess.run(
+            ["git", "fetch", "origin", "--prune"],
+            cwd=workspace,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if merge_oid:
+            subprocess.run(
+                ["git", "cat-file", "-e", f"{merge_oid}^{{commit}}"],
+                cwd=workspace,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        emit("merged", f"PR #{pr_number_int} merged; fetched origin for chain relaunch")
+        raise SystemExit(0)
+    evidence_status = enqueue_wait_evidence(path, pr_number_int, pr_state)
+    emit("waiting", f"PR #{pr_number_int} state={pr_state or 'unknown'} evidence={evidence_status}")
+    raise SystemExit(0)
+
+emit("none", "no awaiting auto-policy PR merge state")
+PY
+}
+
 plan_phase_health_status() {
   local workspace="$1"
   local run_kind="${2:-chain}"
@@ -3641,13 +3966,17 @@ PY
   fi
 
   if [[ "$health" == "awaiting_pr_merge" ]]; then
-    # The chain is waiting on a (human-gated) PR merge. A prior repair-loop
-    # exhaustion marker is stale here -- clear it so we do not keep re-emitting a
-    # needs_human verdict after the chain advanced to the merge wait state.
-    rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
-    log "session awaiting PR merge: $session"
-    report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge" "$workspace" "$remote_spec"
-    return 0
+    local pr_reconcile pr_reconcile_status pr_reconcile_message
+    pr_reconcile="$(reconcile_awaiting_pr_merge "$session" "$workspace" "$remote_spec" 2>/dev/null || true)"
+    IFS=$'\t' read -r pr_reconcile_status pr_reconcile_message <<< "$pr_reconcile"
+    if [[ "$pr_reconcile_status" == "merged" ]]; then
+      rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+      log "session awaiting PR merge reconciled merged; falling through to relaunch session=$session detail=$pr_reconcile_message"
+    else
+      log "session awaiting PR merge: $session detail=${pr_reconcile_message:-$pr_reconcile_status}"
+      report_item "$report_items" "$session" "observe" "awaiting_pr_merge" "session waiting on PR merge: ${pr_reconcile_message:-$pr_reconcile_status}" "$workspace" "$remote_spec"
+      return 0
+    fi
   fi
 
   if [[ "$run_kind" == "plan" ]]; then
@@ -3976,6 +4305,7 @@ scan_once() {
   maybe_reexec_updated_watchdog
   local report_items
   report_items="$(mktemp)"
+  repair_trigger_scan
   sync_editable_source_branch "$report_items" || true
   maybe_reexec_updated_watchdog
   while IFS=$'\t' read -r adopted_session adopted_workspace adopted_remote_spec adopted_kind adopted_plan_name; do
@@ -3991,13 +4321,9 @@ scan_once() {
   fi
 
   local found=0
-  shopt -s nullglob
-  for marker in "$MARKER_DIR"/*.json; do
-    case "$marker" in
-      *.progress.json|*.reap-progress.json|*.repair-progress.json|*.chain-health.progress.json)
-        continue
-        ;;
-    esac
+  # Canonical sidecars ignored here: *.progress.json|*.reap-progress.json|*.repair-progress.json|*.chain-health.progress.json
+  while IFS= read -r marker; do
+    [[ -n "$marker" ]] || continue
     found=$((found + 1))
     local session workspace remote_spec run_kind plan_name relaunch_command
     session="$(json_field "$marker" session 2>/dev/null)" || {
@@ -4019,8 +4345,18 @@ scan_once() {
     plan_name="$(json_field "$marker" plan_name 2>/dev/null || true)"
     relaunch_command="$(json_field "$marker" relaunch_command 2>/dev/null || true)"
     launch_chain_tick "$session" "$workspace" "$remote_spec" "$report_items" "${run_kind:-chain}" "$plan_name" "$relaunch_command" || true
-  done
-  shopt -u nullglob
+  done < <(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$MARKER_DIR" <<'PY'
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path
+
+marker_dir = pathlib.Path(sys.argv[1])
+for path in sorted(marker_dir.glob("*.json")):
+    if is_canonical_session_marker_path(path):
+        print(path)
+PY
+)
   reap_stale_repairs "$report_items"
   log "scan complete markers=$found"
   emit_report "$report_items" "$found"

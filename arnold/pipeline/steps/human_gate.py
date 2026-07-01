@@ -16,6 +16,7 @@ No ``typed_ports_on``.  Uses ``ctx.artifact_root``.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -27,6 +28,8 @@ from arnold.pipeline.types import (
     StepResult,
 )
 from arnold.runtime.state_persistence import atomic_write_json
+
+_LOG = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +295,13 @@ class HumanGateStep:
                 f"{', '.join(self._choices)}"
             ),
         )
+        _enqueue_human_gate_repair_request(
+            ctx,
+            pipeline_name=self._pipeline_name,
+            artifact_stage=self._artifact_stage,
+            step_name=self.name,
+            prompt=self._prompt,
+        )
         return StepResult(
             outputs={"awaiting_user": str(checkpoint_path)},
             next="halt",
@@ -299,4 +309,59 @@ class HumanGateStep:
                 "_pipeline_paused": True,
                 "_pipeline_paused_stage": self.name,
             },
+        )
+
+
+def _enqueue_human_gate_repair_request(
+    ctx: StepContext,
+    *,
+    pipeline_name: str,
+    artifact_stage: str,
+    step_name: str,
+    prompt: str,
+) -> None:
+    hook_extensions = ctx.hook_extensions if isinstance(ctx.hook_extensions, Mapping) else {}
+    plan_dir = str(hook_extensions.get("plan_dir") or "").strip()
+    workspace_path = str(hook_extensions.get("workspace_path") or "").strip()
+    session = str(
+        hook_extensions.get("chain_session")
+        or hook_extensions.get("session")
+        or ""
+    ).strip()
+    if not plan_dir or not workspace_path or not session:
+        return
+    try:
+        from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
+        from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+
+        if not repair_request_queue_enabled():
+            return
+        enqueue_repair_request(
+            marker_dir=plan_dir,
+            session=session,
+            source="human_gate",
+            workspace=workspace_path,
+            run_kind=str(hook_extensions.get("run_kind") or "plan"),
+            target={
+                "plan_dir": plan_dir,
+                "plan_name": str(hook_extensions.get("plan_name") or ""),
+                "pipeline_name": pipeline_name,
+                "workspace_path": workspace_path,
+            },
+            problem_signature={
+                "failure_kind": "human_gate",
+                "current_state": pipeline_name,
+                "phase_or_step": artifact_stage,
+                "milestone_or_plan": step_name,
+                "gate_recommendation": "",
+                "blocked_task_id": "",
+            },
+            root_cause_hint=prompt,
+        )
+    except Exception:
+        _LOG.warning(
+            "Best-effort human-gate repair enqueue failed for plan_dir=%s session=%s",
+            plan_dir,
+            session,
+            exc_info=True,
         )

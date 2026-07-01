@@ -2163,6 +2163,14 @@ def _semantic_diff_nonempty_from_base(
 def _diff_name_only_between_refs(
     root: Path, base_sha: str, target_ref: str
 ) -> subprocess.CompletedProcess[str]:
+    """Run ``git diff --name-only`` between two refs with one fetch-and-retry.
+
+    If the initial diff fails with a ref-resolution error (bad object, unknown
+    revision, bad revision, could not resolve, etc.), ``git fetch origin
+    --prune`` is executed once and the diff is retried.  If the retry still
+    fails, the real error is surfaced unchanged — there is no silent swallowing
+    or second fetch attempt.
+    """
     proc = subprocess.run(
         ["git", "diff", "--name-only", base_sha, target_ref, "--"],
         cwd=str(root),
@@ -2174,7 +2182,7 @@ def _diff_name_only_between_refs(
     if proc.returncode == 0:
         return proc
     combined = f"{proc.stderr or ''}\n{proc.stdout or ''}".lower()
-    if "bad object" not in combined and "unknown revision" not in combined:
+    if not _is_git_ref_resolution_error(combined):
         return proc
     subprocess.run(
         ["git", "fetch", "origin", "--prune"],
@@ -2192,6 +2200,29 @@ def _diff_name_only_between_refs(
         check=False,
         timeout=60,
     )
+
+
+def _is_git_ref_resolution_error(combined_lower: str) -> bool:
+    """Return *True* when *combined_lower* matches a known ref-resolution error.
+
+    These are fatal errors that ``git fetch origin --prune`` can potentially
+    resolve (stale remote-tracking branches, missing objects, race conditions
+    after upstream force-pushes, etc.).
+    """
+    _REF_RESOLUTION_ERROR_PATTERNS: tuple[str, ...] = (
+        "bad object",
+        "unknown revision",
+        "bad revision",
+        "could not resolve",
+        "does not point to a valid object",
+        "not a valid object name",
+        "not our ref",
+        "could not read",
+        "fatal: ambiguous argument",
+        "fatal: not a commit",
+        "fatal: not a tree",
+    )
+    return any(pattern in combined_lower for pattern in _REF_RESOLUTION_ERROR_PATTERNS)
 
 
 def _string_value(value: Any) -> str | None:
