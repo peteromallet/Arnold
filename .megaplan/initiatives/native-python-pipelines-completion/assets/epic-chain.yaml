@@ -1,20 +1,31 @@
-base_branch: native-python-working-tree
+base_branch: main
 
 anchors:
-  north_star: NORTHSTAR.md
+  north_star: ../NORTHSTAR.md
 
 epics:
-  - id: python-shaped-workflow-authoring
-    spec: ../python-shaped-workflow-authoring/chain.yaml
-    observe_spec: /workspace/python-shaped-workflow-authoring/.megaplan/initiatives/python-shaped-workflow-authoring/briefs/chain.yaml
-
   - id: native-python-pipelines-completion
-    spec: chain.yaml
+    spec: ../chain.yaml
+
+  - id: native-composition-followup
+    spec: ../../native-composition-followup/chain.yaml
     handoff_from_previous:
       require_merged_base: true
       artifacts:
-        - path: docs/arnold/python-shaped-authoring-contract.md
+        - path: .megaplan/initiatives/native-python-pipelines-completion/completion-manifest.json
           check: exists
+
+  - id: native-platform-followup
+    spec: ../../native-platform-followup/chain.yaml
+    handoff_from_previous:
+      require_merged_base: true
+      artifacts:
+        - path: .megaplan/initiatives/native-composition-followup/completion-manifest.json
+          check: exists
+        - path: docs/arnold/megaplan-composition-conformance-report.md
+          check:
+            kind: contains_text
+            text: "Megaplan composition conformance"
 
 on_failure:
   abort: stop_epic_chain

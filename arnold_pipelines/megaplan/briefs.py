@@ -11,12 +11,17 @@ from typing import Any, Sequence
 import yaml
 
 from arnold_pipelines.megaplan.artifacts import (
-    artifact_dir,
     artifact_title,
     filter_keyword_artifacts,
-    iter_markdown_artifacts,
+    parse_markdown_artifact,
     slugify as artifact_slugify,
     write_markdown_artifact,
+)
+from arnold_pipelines.megaplan.layout import (
+    INITIATIVES_DIR,
+    initiative_doc_dir,
+    initiative_root,
+    initiatives_dir,
 )
 
 
@@ -26,8 +31,8 @@ def slugify(value: str) -> str:
 
 
 def briefs_dir(repo_root: str | Path) -> Path:
-    """Return and create ``.megaplan/briefs/`` inside *repo_root*."""
-    return artifact_dir(repo_root, "briefs")
+    """Return and create canonical initiative root inside *repo_root*."""
+    return initiatives_dir(repo_root)
 
 
 def brief_path(repo_root: str | Path, slug: str) -> Path:
@@ -35,7 +40,7 @@ def brief_path(repo_root: str | Path, slug: str) -> Path:
     normalized = slugify(slug)
     if not normalized:
         raise ValueError("brief slug must not be empty")
-    return briefs_dir(repo_root) / f"{normalized}.md"
+    return initiative_doc_dir(repo_root, normalized, "briefs") / f"{normalized}.md"
 
 
 def epic_dir(repo_root: str | Path, slug: str) -> Path:
@@ -43,7 +48,7 @@ def epic_dir(repo_root: str | Path, slug: str) -> Path:
     normalized = slugify(slug)
     if not normalized:
         raise ValueError("epic slug must not be empty")
-    return briefs_dir(repo_root) / normalized
+    return initiative_root(repo_root, normalized)
 
 
 def write_single_brief(
@@ -53,7 +58,7 @@ def write_single_brief(
     *,
     force: bool = False,
 ) -> Path:
-    """Write a single-plan brief to ``.megaplan/briefs/<slug>.md``."""
+    """Write a single-plan brief under ``.megaplan/initiatives/<slug>/briefs``."""
     body = body.strip()
     if not body:
         raise ValueError("brief body must not be empty")
@@ -92,7 +97,7 @@ def scaffold_epic(
     base_branch: str = "main",
     force: bool = False,
 ) -> tuple[Path, list[Path]]:
-    """Create ``.megaplan/briefs/<epic>/chain.yaml`` and milestone stubs."""
+    """Create ``.megaplan/initiatives/<epic>/chain.yaml`` and milestone stubs."""
     if not milestones:
         raise ValueError("at least one --milestone is required")
     directory = epic_dir(repo_root, slug)
@@ -117,7 +122,7 @@ def scaffold_epic(
     written.append(north_star_path)
     chain_milestones: list[dict[str, str]] = []
     for label, title in parsed:
-        path = directory / f"{label}.md"
+        path = directory / "briefs" / f"{label}.md"
         if path.exists() and not force:
             raise FileExistsError(path)
         write_markdown_artifact(
@@ -189,23 +194,28 @@ def _default_north_star_template(slug: str) -> str:
 
 
 def list_briefs(repo_root: str | Path) -> list[dict[str, Any]]:
-    """Return canonical brief records under ``.megaplan/briefs``."""
-    root = briefs_dir(repo_root)
+    """Return canonical brief records under ``.megaplan/initiatives``."""
+    root = Path(repo_root) / INITIATIVES_DIR
     records: list[dict[str, Any]] = []
-    for artifact in iter_markdown_artifacts(repo_root, "briefs", recursive=True):
-        rel = artifact.path.relative_to(root)
+    if not root.exists():
+        return records
+    for artifact in sorted(root.rglob("briefs/*.md")):
+        parsed = parse_markdown_artifact(artifact)
+        if parsed is None:
+            continue
+        rel = artifact.relative_to(root)
         identifier = rel.with_suffix("").as_posix()
         records.append(
             {
                 "id": identifier,
-                "title": artifact_title(artifact.path, artifact),
-                "path": str(artifact.path),
-                "relative_path": str(Path(".megaplan") / "briefs" / rel),
-                "slug": artifact.path.stem,
+                "title": artifact_title(parsed.path, parsed),
+                "path": str(parsed.path),
+                "relative_path": str(INITIATIVES_DIR / rel),
+                "slug": parsed.path.stem,
                 "epic": rel.parts[0] if len(rel.parts) > 1 else None,
-                "tags": artifact.metadata.get("tags", []),
-                "body": artifact.body,
-                "metadata": artifact.metadata,
+                "tags": parsed.metadata.get("tags", []),
+                "body": parsed.body,
+                "metadata": parsed.metadata,
             }
         )
     return records

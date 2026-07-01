@@ -68,7 +68,7 @@ def _resolve_project_root(args: argparse.Namespace) -> Path:
                 f"--project-dir does not exist or is not a directory: {project_dir}",
             )
         return resolved
-    if getattr(args, "command", None) == "brief":
+    if getattr(args, "command", None) in {"brief", "initiative"}:
         return Path.cwd().resolve()
     import arnold_pipelines.megaplan.cli as cli_mod
 

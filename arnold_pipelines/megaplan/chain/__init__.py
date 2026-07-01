@@ -51,6 +51,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -749,6 +750,423 @@ def _load_manifest_proof_map(path: Path) -> dict[str, list[str]]:
     return proof_map
 
 
+def _validation_receipt_path(
+    spec_path: Path, *, milestone_label: str, validation_kind: str
+) -> Path:
+    safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", milestone_label).strip("-")
+    safe_kind = re.sub(r"[^A-Za-z0-9_.-]+", "-", validation_kind).strip("-")
+    return spec_path.with_name(f"validation-{safe_label}-{safe_kind}.json")
+
+
+def _validation_receipt_rel_path(
+    root: Path, spec_path: Path, *, milestone_label: str, validation_kind: str
+) -> str:
+    return _project_relative_path(
+        root,
+        _validation_receipt_path(
+            spec_path,
+            milestone_label=milestone_label,
+            validation_kind=validation_kind,
+        ),
+    )
+
+
+def _append_validation_receipt_to_proof_map(
+    *,
+    root: Path,
+    proof_map_path: Path,
+    milestone_label: str,
+    receipt_path: Path,
+) -> None:
+    try:
+        raw = json.loads(proof_map_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise CliError("validation_failed", f"proof map not found: {proof_map_path}") from exc
+    except json.JSONDecodeError as exc:
+        raise CliError("validation_failed", f"proof map is invalid JSON: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise CliError("validation_failed", "proof map must be a JSON object")
+    if isinstance(raw.get("milestones"), dict):
+        target = raw["milestones"]
+    else:
+        target = raw
+    existing = target.get(milestone_label)
+    if existing is None:
+        target[milestone_label] = []
+        existing = target[milestone_label]
+    if not isinstance(existing, list):
+        raise CliError(
+            "validation_failed",
+            f"proof map for milestone {milestone_label!r} must be a list",
+        )
+    receipt_rel = _project_relative_path(root, receipt_path)
+    existing_paths: set[str] = set()
+    for item in existing:
+        if isinstance(item, str):
+            existing_paths.add(item)
+        elif isinstance(item, dict) and isinstance(item.get("path"), str):
+            existing_paths.add(item["path"])
+    if receipt_rel not in existing_paths:
+        existing.append(receipt_rel)
+        proof_map_path.write_text(json.dumps(raw, indent=2) + "\n", encoding="utf-8")
+
+
+def _validation_receipt_artifact(
+    *,
+    root: Path,
+    spec_path: Path,
+    milestone: MilestoneSpec,
+    validation: Any,
+    proof_map: dict[str, list[str]],
+) -> tuple[Path, str]:
+    receipt_rel = _validation_receipt_rel_path(
+        root,
+        spec_path,
+        milestone_label=milestone.label,
+        validation_kind=validation.kind,
+    )
+    if receipt_rel not in proof_map.get(milestone.label, []):
+        raise CliError(
+            "invalid_args",
+            f"proof map for milestone {milestone.label!r} missing validation receipt {receipt_rel}",
+        )
+    receipt_path = (root / receipt_rel).resolve()
+    if not receipt_path.is_file():
+        raise CliError(
+            "invalid_args",
+            f"validation receipt for milestone {milestone.label!r} not found: {receipt_path}",
+        )
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            "invalid_args",
+            f"validation receipt for milestone {milestone.label!r} is invalid JSON: {exc}",
+        ) from exc
+    if not isinstance(receipt, dict):
+        raise CliError("invalid_args", f"validation receipt {receipt_path} must be an object")
+    expected = {
+        "schema": "arnold.megaplan.milestone_validation_receipt.v1",
+        "milestone": milestone.label,
+        "kind": validation.kind,
+        "returncode": 0,
+        "conformance": validation.conformance,
+        "traceability": validation.traceability,
+        "proof_map": validation.proof_map,
+    }
+    for key, expected_value in expected.items():
+        if receipt.get(key) != expected_value:
+            raise CliError(
+                "invalid_args",
+                f"validation receipt {receipt_rel} has invalid {key}; expected {expected_value!r}",
+            )
+    for key, rel_path in (
+        ("validator_sha256", validation.validator),
+        ("conformance_sha256", validation.conformance),
+        ("traceability_sha256", validation.traceability),
+    ):
+        if not isinstance(rel_path, str):
+            raise CliError("invalid_args", f"validation receipt {receipt_rel} missing source path for {key}")
+        path = (root / rel_path).resolve()
+        if not path.is_file() or receipt.get(key) != _sha256_path(path):
+            raise CliError(
+                "invalid_args",
+                f"validation receipt {receipt_rel} has stale {key}",
+            )
+    return receipt_path, receipt_rel
+
+
+def _ensure_validation_receipts_in_proof_map(
+    *,
+    root: Path,
+    spec_path: Path,
+    milestone: MilestoneSpec,
+    proof_map: dict[str, list[str]],
+) -> None:
+    for validation in milestone.validate:
+        _validation_receipt_artifact(
+            root=root,
+            spec_path=spec_path,
+            milestone=milestone,
+            validation=validation,
+            proof_map=proof_map,
+        )
+
+
+def _current_git_head(root: Path) -> str | None:
+    proc = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _require_validation_checkout_at_ref(
+    *,
+    root: Path,
+    spec: ChainSpec,
+    expected_sha: str,
+) -> None:
+    head = _current_git_head(root)
+    if head != expected_sha:
+        raise CliError(
+            "validation_failed",
+            f"validation requires local HEAD to match refreshed origin/{spec.base_branch} "
+            f"after merge sync; expected {expected_sha}, got {head or 'unknown'}",
+        )
+
+
+def _run_milestone_validations(
+    *,
+    root: Path,
+    spec_path: Path,
+    milestone: MilestoneSpec,
+    writer: Callable[[str], None],
+) -> None:
+    if not milestone.validate:
+        return
+    for validation in milestone.validate:
+        if validation.kind != "final_conformance_gate":
+            raise CliError(
+                "validation_failed",
+                f"unsupported validation kind {validation.kind!r} for {milestone.label}",
+            )
+        assert validation.validator is not None
+        assert validation.conformance is not None
+        assert validation.traceability is not None
+        assert validation.proof_map is not None
+        validator_path = (root / validation.validator).resolve()
+        conformance_path = (root / validation.conformance).resolve()
+        traceability_path = (root / validation.traceability).resolve()
+        proof_map_path = (root / validation.proof_map).resolve()
+        for label, path in (
+            ("validator", validator_path),
+            ("conformance", conformance_path),
+            ("traceability", traceability_path),
+            ("proof_map", proof_map_path),
+        ):
+            if not path.is_file():
+                raise CliError(
+                    "validation_failed",
+                    f"{validation.kind} for {milestone.label} missing {label}: {path}",
+                )
+        receipt_path = _validation_receipt_path(
+            spec_path,
+            milestone_label=milestone.label,
+            validation_kind=validation.kind,
+        )
+        started_at = datetime.now(timezone.utc).isoformat()
+        cmd = [
+            sys.executable,
+            _project_relative_path(root, validator_path),
+            "--conformance",
+            _project_relative_path(root, conformance_path),
+            "--traceability",
+            _project_relative_path(root, traceability_path),
+            "--repo-root",
+            str(root),
+        ]
+        writer(f"[chain] validating {milestone.label}: {' '.join(cmd)}\n")
+        proc_returncode: int
+        stdout = ""
+        stderr = ""
+        runner_status = "completed"
+        try:
+            proc = subprocess.run(
+                cmd,
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=300,
+                env=megaplan_engine_env(),
+            )
+            proc_returncode = proc.returncode
+            stdout = proc.stdout
+            stderr = proc.stderr
+        except subprocess.TimeoutExpired as exc:
+            proc_returncode = 124
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else str(exc)
+            runner_status = "timeout"
+        except OSError as exc:
+            proc_returncode = 127
+            stderr = str(exc)
+            runner_status = "runner_error"
+        finished_at = datetime.now(timezone.utc).isoformat()
+        receipt = {
+            "schema": "arnold.megaplan.milestone_validation_receipt.v1",
+            "milestone": milestone.label,
+            "kind": validation.kind,
+            "command": cmd,
+            "returncode": proc_returncode,
+            "runner_status": runner_status,
+            "stdout": stdout,
+            "stderr": stderr,
+            "conformance": _project_relative_path(root, conformance_path),
+            "traceability": _project_relative_path(root, traceability_path),
+            "proof_map": _project_relative_path(root, proof_map_path),
+            "validator": _project_relative_path(root, validator_path),
+            "validator_sha256": _sha256_path(validator_path),
+            "conformance_sha256": _sha256_path(conformance_path),
+            "traceability_sha256": _sha256_path(traceability_path),
+            "proof_map_sha256_before": _sha256_path(proof_map_path),
+            "git_head": _current_git_head(root),
+            "started_at": started_at,
+            "finished_at": finished_at,
+        }
+        receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+        if proc_returncode != 0:
+            detail = (stderr or stdout or "").strip()
+            raise CliError(
+                "validation_failed",
+                f"{validation.kind} for {milestone.label} failed; receipt={receipt_path}"
+                + (f"; {detail}" if detail else ""),
+            )
+
+
+def _finalize_validation_artifacts_after_done_append(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    writer: Callable[[str], None],
+) -> str | None:
+    if not milestone.validate:
+        return None
+    proof_map_paths: dict[Path, bytes] = {}
+    for validation in milestone.validate:
+        if validation.proof_map is None:
+            continue
+        proof_map_path = (root / validation.proof_map).resolve()
+        if proof_map_path not in proof_map_paths:
+            proof_map_paths[proof_map_path] = proof_map_path.read_bytes()
+    rolled_back_record: dict[str, Any] | None = None
+    try:
+        for validation in milestone.validate:
+            if validation.proof_map is None:
+                continue
+            receipt_path = _validation_receipt_path(
+                spec_path,
+                milestone_label=milestone.label,
+                validation_kind=validation.kind,
+            )
+            _append_validation_receipt_to_proof_map(
+                root=root,
+                proof_map_path=(root / validation.proof_map).resolve(),
+                milestone_label=milestone.label,
+                receipt_path=receipt_path,
+            )
+        if state.current_milestone_index >= len(spec.milestones):
+            proof_map = milestone.validate[-1].proof_map
+            if proof_map is not None:
+                proof_map_path = (root / proof_map).resolve()
+                writer(
+                    "[chain] writing completion manifest after validated final milestone "
+                    f"{milestone.label}\n"
+                )
+                result = _write_completion_manifest(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    proof_map_path=proof_map_path,
+                    output_path=None,
+                )
+                writer(
+                    "[chain] completion manifest written "
+                    f"{result['manifest']} sha256={result['manifest_sha256']}\n"
+                )
+    except CliError as exc:
+        for proof_map_path, original in proof_map_paths.items():
+            proof_map_path.write_bytes(original)
+        kept: list[dict[str, Any]] = []
+        for record in state.completed:
+            if isinstance(record, dict) and record.get("label") == milestone.label:
+                rolled_back_record = record
+                continue
+            kept.append(record)
+        state.completed = kept
+        state.current_milestone_index = max(len(spec.milestones) - 1, 0)
+        if rolled_back_record is not None:
+            plan = rolled_back_record.get("plan")
+            state.current_plan_name = plan if isinstance(plan, str) else None
+            pr_number = rolled_back_record.get("pr_number")
+            state.pr_number = pr_number if isinstance(pr_number, int) else None
+            pr_state = rolled_back_record.get("pr_state")
+            state.pr_state = pr_state if isinstance(pr_state, str) else None
+        state.last_state = "validation_failed"
+        chain_spec.save_chain_state(spec_path, state)
+        return (
+            f"milestone {milestone.label} validation finalization failed: "
+            f"{exc.message}"
+        )
+    state.metadata.pop("pending_validation", None)
+    chain_spec.save_chain_state(spec_path, state)
+    return None
+
+
+def _run_milestone_validations_blocking(
+    *,
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    writer: Callable[[str], None],
+    refresh_base: bool,
+    no_git_refresh: bool,
+) -> str | None:
+    if not milestone.validate:
+        return None
+    try:
+        if refresh_base:
+            refreshed = _refresh_base_branch(
+                root,
+                spec.base_branch,
+                writer=writer,
+                no_git_refresh=no_git_refresh,
+                expected_sha=None,
+            )
+            if isinstance(refreshed, str) and refreshed:
+                state.target_base_ref = refreshed
+                chain_spec.save_chain_state(spec_path, state)
+            if not no_git_refresh:
+                expected_sha = refreshed or _remote_branch_head(root, spec.base_branch)
+                if expected_sha:
+                    _require_validation_checkout_at_ref(
+                        root=root,
+                        spec=spec,
+                        expected_sha=expected_sha,
+                    )
+                    state.target_base_ref = expected_sha
+                    chain_spec.save_chain_state(spec_path, state)
+        _run_milestone_validations(
+            root=root,
+            spec_path=spec_path,
+            milestone=milestone,
+            writer=writer,
+        )
+    except CliError as exc:
+        state.last_state = "validation_failed"
+        state.metadata["pending_validation"] = {
+            "milestone": milestone.label,
+            "phase": "validator_failed",
+            "reason": exc.message,
+        }
+        chain_spec.save_chain_state(spec_path, state)
+        return f"milestone {milestone.label} validation failed: {exc.message}"
+    return None
+
+
 def _completion_records_by_label_strict(state: ChainState) -> dict[str, dict[str, Any]]:
     records: dict[str, dict[str, Any]] = {}
     duplicates: set[str] = set()
@@ -864,6 +1282,12 @@ def _build_completion_manifest(
                     "sha256": _sha256_path(proof_path),
                 }
             )
+        _ensure_validation_receipts_in_proof_map(
+            root=root,
+            spec_path=spec_path,
+            milestone=milestone,
+            proof_map=proof_map,
+        )
         if not proof_entries:
             raise CliError(
                 "invalid_args",
@@ -3319,6 +3743,24 @@ def run_chain(
                 state.pr_state = "merged"
                 chain_spec.save_chain_state(spec_path, state)
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
+                validation_reason = _run_milestone_validations_blocking(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    milestone=milestone,
+                    writer=writer,
+                    refresh_base=True,
+                    no_git_refresh=no_git_refresh,
+                )
+                if validation_reason is not None:
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=validation_reason,
+                    )
                 appended, reason = _append_completed_with_guard(
                     root,
                     state,
@@ -3356,6 +3798,22 @@ def run_chain(
                 state.pr_number = None
                 state.pr_state = None
                 chain_spec.save_chain_state(spec_path, state)
+                manifest_reason = _finalize_validation_artifacts_after_done_append(
+                    root=root,
+                    spec_path=spec_path,
+                    spec=spec,
+                    state=state,
+                    milestone=milestone,
+                    writer=writer,
+                )
+                if manifest_reason is not None:
+                    return _result(
+                        "blocked",
+                        state,
+                        events,
+                        spec=spec,
+                        reason=manifest_reason,
+                    )
                 continue
 
         if (
@@ -3443,6 +3901,24 @@ def run_chain(
                         reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
+            validation_reason = _run_milestone_validations_blocking(
+                root=root,
+                spec_path=spec_path,
+                spec=spec,
+                state=state,
+                milestone=milestone,
+                writer=writer,
+                refresh_base=True,
+                no_git_refresh=no_git_refresh,
+            )
+            if validation_reason is not None:
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=validation_reason,
+                )
             appended, reason = _append_completed_with_guard(
                 root,
                 state,
@@ -3480,6 +3956,22 @@ def run_chain(
             state.pr_number = None
             state.pr_state = None
             chain_spec.save_chain_state(spec_path, state)
+            manifest_reason = _finalize_validation_artifacts_after_done_append(
+                root=root,
+                spec_path=spec_path,
+                spec=spec,
+                state=state,
+                milestone=milestone,
+                writer=writer,
+            )
+            if manifest_reason is not None:
+                return _result(
+                    "blocked",
+                    state,
+                    events,
+                    spec=spec,
+                    reason=manifest_reason,
+                )
             continue
 
         # Resume mid-milestone if we already have a plan name recorded.
@@ -3936,6 +4428,24 @@ def run_chain(
             completed_record["plan_branch"] = spec.base_branch
         if full_suite_backstop_summary is not None:
             completed_record["full_suite_backstop"] = full_suite_backstop_summary
+        validation_reason = _run_milestone_validations_blocking(
+            root=root,
+            spec_path=spec_path,
+            spec=spec,
+            state=state,
+            milestone=milestone,
+            writer=writer,
+            refresh_base=False,
+            no_git_refresh=no_git_refresh,
+        )
+        if validation_reason is not None:
+            return _result(
+                "blocked",
+                state,
+                events,
+                spec=spec,
+                reason=validation_reason,
+            )
         appended, reason = _append_completed_with_guard(
             root,
             state,
@@ -3966,6 +4476,22 @@ def run_chain(
         state.pr_number = None
         state.pr_state = None
         chain_spec.save_chain_state(spec_path, state)
+        manifest_reason = _finalize_validation_artifacts_after_done_append(
+            root=root,
+            spec_path=spec_path,
+            spec=spec,
+            state=state,
+            milestone=milestone,
+            writer=writer,
+        )
+        if manifest_reason is not None:
+            return _result(
+                "blocked",
+                state,
+                events,
+                spec=spec,
+                reason=manifest_reason,
+            )
         if one:
             log(f"paused after milestone {milestone.label}")
             return _result(

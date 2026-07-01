@@ -113,7 +113,11 @@ class ResidentAuthorizer:
     def authorize_inbound(self, subject: AuthorizationSubject) -> AuthorizationDecision:
         if self.config.allowed_user_ids and subject.user_id not in self.config.allowed_user_ids:
             return self._deny(subject, "inbound", "user_not_allowed")
-        if self.config.allowed_guild_ids and subject.guild_id not in self.config.allowed_guild_ids:
+        if (
+            self.config.allowed_guild_ids
+            and subject.guild_id is not None
+            and subject.guild_id not in self.config.allowed_guild_ids
+        ):
             return self._deny(subject, "inbound", "guild_not_allowed")
         if self.config.allowed_channel_ids and subject.channel_id not in self.config.allowed_channel_ids:
             return self._deny(subject, "inbound", "channel_not_allowed")

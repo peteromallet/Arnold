@@ -32,6 +32,7 @@ class ResidentConfig(BaseModel):
     model_name: str = "gpt-5.4"
     model_api_key_env: str | None = None
     model_base_url: str | None = None
+    codex_reasoning_effort: str = "medium"
     model_timeout_s: float = Field(default=120.0, gt=0)
     max_tool_calls_per_turn: int = Field(default=8, gt=0)
     scheduler_poll_interval_s: float = Field(default=10.0, gt=0)
@@ -49,6 +50,14 @@ class ResidentConfig(BaseModel):
     subagent_model_name: str = "deepseek:deepseek-v4-pro"
     subagent_models: tuple[str, ...] = Field(default_factory=tuple)
     subagent_max_tool_calls: int = Field(default=4, gt=0)
+    special_requests_enabled: bool = True
+    special_requests_interval_s: int = Field(default=21600, gt=0)
+    special_requests_todo_path: Path = Path(".megaplan/resident/vp_todo_list.json")
+    special_requests_conversation_key: str | None = None
+    special_requests_subject_user_id: str | None = None
+    special_requests_subagent_toolsets: str = "file,web,terminal"
+    special_requests_subagent_timeout_s: float = Field(default=600.0, gt=0)
+    special_requests_subagent_max_tokens: int = Field(default=65536, gt=0)
 
     @field_validator(
         "allowed_guild_ids",
@@ -83,6 +92,7 @@ class ResidentConfig(BaseModel):
             model_name=env.get("MEGAPLAN_RESIDENT_MODEL", "gpt-5.4"),
             model_api_key_env=env.get("MEGAPLAN_RESIDENT_MODEL_API_KEY_ENV"),
             model_base_url=env.get("MEGAPLAN_RESIDENT_MODEL_BASE_URL") or env.get("OPENAI_BASE_URL"),
+            codex_reasoning_effort=env.get("MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT", "medium"),
             model_timeout_s=_env_float(env, "MEGAPLAN_RESIDENT_MODEL_TIMEOUT_S", 120.0),
             max_tool_calls_per_turn=_env_int(env, "MEGAPLAN_RESIDENT_MAX_TOOL_CALLS", 8),
             scheduler_poll_interval_s=_env_float(env, "MEGAPLAN_RESIDENT_SCHEDULER_POLL_S", 10.0),
@@ -104,6 +114,22 @@ class ResidentConfig(BaseModel):
             subagent_model_name=env.get("MEGAPLAN_RESIDENT_SUBAGENT_MODEL", "deepseek:deepseek-v4-pro"),
             subagent_models=_split_csv(env.get("MEGAPLAN_RESIDENT_SUBAGENT_MODELS")),
             subagent_max_tool_calls=_env_int(env, "MEGAPLAN_RESIDENT_SUBAGENT_MAX_TOOL_CALLS", 4),
+            special_requests_enabled=_env_bool(env, "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_ENABLED", True),
+            special_requests_interval_s=_env_int(env, "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_INTERVAL_S", 21600),
+            special_requests_todo_path=Path(
+                env.get("MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_TODO_PATH", ".megaplan/resident/vp_todo_list.json")
+            ),
+            special_requests_conversation_key=env.get("MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_CONVERSATION_KEY") or None,
+            special_requests_subject_user_id=env.get("MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBJECT_USER_ID") or None,
+            special_requests_subagent_toolsets=env.get(
+                "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_TOOLSETS", "file,web,terminal"
+            ),
+            special_requests_subagent_timeout_s=_env_float(
+                env, "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_TIMEOUT_S", 600.0
+            ),
+            special_requests_subagent_max_tokens=_env_int(
+                env, "MEGAPLAN_RESIDENT_SPECIAL_REQUESTS_SUBAGENT_MAX_TOKENS", 65536
+            ),
         )
 
     @property

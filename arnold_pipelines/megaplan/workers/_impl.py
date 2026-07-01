@@ -2919,6 +2919,7 @@ def _run_codex_step_uncapped(
         else ModelTier.ENFORCED
     )
     schema = read_json(schema_file)
+    capture_schema = SCHEMAS.get(codex_schema_name, schema)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -3180,6 +3181,7 @@ def _run_codex_step_uncapped(
                             "validation_step": step,
                             "compatibility_validation_step": step,
                             "schema": schema,
+                            "capture_schema": capture_schema,
                             "capture_recovery": {
                                 "step": step,
                                 "plan_dir": str(plan_dir),
@@ -3362,6 +3364,7 @@ def _run_codex_step_uncapped(
                     "validation_step": step,
                     "compatibility_validation_step": step,
                     "schema": schema,
+                    "capture_schema": capture_schema,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),
@@ -3582,6 +3585,7 @@ def run_codex_prep_step(
     output_path = Path(out_handle.name)
     schema_file = schemas_root(root) / STEP_SCHEMA_FILENAMES[step]
     schema = read_json(schema_file)
+    capture_schema = SCHEMAS.get(STEP_SCHEMA_FILENAMES[step], schema)
     rendered_prompt = render_prompt_for_dispatch(
         "codex",
         step,
@@ -3642,6 +3646,7 @@ def run_codex_prep_step(
                     "validation_step": step,
                     "compatibility_validation_step": step,
                     "schema": schema,
+                    "capture_schema": capture_schema,
                     "capture_recovery": {
                         "step": step,
                         "plan_dir": str(plan_dir),

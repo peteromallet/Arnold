@@ -45,30 +45,39 @@ ssh:
 secrets: []   # leave empty if pre-set on the box; listing would overwrite box values with local env
 ```
 
-### Recommended launch: direct `chain start` on the box (bypass the local orchestrator)
+### Recommended launch: `cloud chain` with derived workspace/session
 
-The local `megaplan cloud chain` orchestrator works but has several sharp edges (see Gotchas below). The most reliable launch is to SSH in and run `chain start` directly in a tmux session on the box:
+The working path is now the local `megaplan cloud chain` orchestrator. Keep
+`repo.workspace` and `chain_session` omitted in `cloud.yaml` unless you truly
+need a fixed slot. `cloud chain` derives a per-chain workspace like
+`/workspace/<chain-slug>-<digest>/<repo>` and a matching tmux session, uploads
+the chain spec and milestone briefs to the same repo-relative paths, writes a
+session marker under `/workspace/.megaplan/cloud-sessions/`, and refuses to
+disturb an existing session for a different chain.
+
+Durable chain specs must live at `.megaplan/initiatives/<initiative>/chain.yaml`.
+Milestone briefs, North Star anchors, research notes, and supporting docs belong under
+`.megaplan/initiatives/`; tickets and ideas stay under `.megaplan/tickets/` or `.megaplan/ideas/`. Runtime state
+stays under `.megaplan/plans/` and `.megaplan/epics/`.
+
+Before launching, or when preparing a shared cloud checkout, seed the durable
+planning state:
 
 ```bash
-ssh root@<box-ip> 'docker exec megaplan-cloud-agent bash -lc "
-  cd /workspace/<unique-per-chain>
-  # ensure the clone is at the latest base branch (the orchestrator refresh fetches but doesn't ff)
-  git fetch origin <base-branch> && git reset --hard origin/<base-branch>
-  # chain.yaml anchor must be BARE (chain.yaml-dir-relative for direct chain start)
-  tmux kill-session -t <chain-session> 2>/dev/null
-  tmux new-session -d -s <chain-session> \"python -m arnold_pipelines.megaplan chain start \
-    --spec <chain.yaml-path-in-clone> --project-dir . --fresh --no-git-refresh \
-    2>&1 | tee .megaplan/cloud-chain-direct.log\""
-'
+megaplan cloud sync-megaplan .megaplan/initiatives/<initiative>/chain.yaml --clean
+megaplan cloud chain .megaplan/initiatives/<initiative>/chain.yaml
 ```
 
-Observe: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tmux ls'` and `tail -f /workspace/<unique-per-chain>/.megaplan/cloud-chain-direct.log`. Milestone plan state lives under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
+`sync-megaplan` uploads `.megaplan/initiatives/`, `.megaplan/tickets/`, and
+`.megaplan/ideas/` as one archive to the target workspace. It deliberately does
+not upload generated plans, epics, locks, logs, telemetry, or verification
+state.
 
 ### Gotchas specific to the ssh/Hetzner path (learned the hard way)
 
 1. **Chain spec requires a `north_star` anchor** — `megaplan init`/`chain` rejects the spec without `anchors: north_star: <path>`. Not documented in `megaplan-prep`; add it.
-2. **Anchor-path resolution is inconsistent between the orchestrator and `chain start`.** The `megaplan cloud chain` orchestrator places the spec at the repo root and resolves the anchor **repo-root-relative**; `chain start` resolves it **chain.yaml-dir-relative**. Idea (`m*.md`) paths are repo-root-relative in both. So: for direct `chain start` with the spec at `.megaplan/briefs/<epic>/chain.yaml`, use a BARE `north_star: NORTHSTAR.md` (sits next to chain.yaml). For the orchestrator, use the full repo-root-relative path. There is no single anchor path that satisfies both — a real bug to fix in `arnold_pipelines.megaplan.cloud`.
-3. **`--idea-dir` does NOT deliver gitignored `.megaplan/briefs/` to the box clone.** The box clones the repo; if briefs are gitignored (the default `.megaplan/*` policy), the clone lacks them and `chain start` fails `missing_idea_file`. Either commit the briefs to the branch (force-add) before launching, or stop gitignoring briefs. `--idea-dir` uploads idea files but not to the path the runner checks.
+2. **Anchor paths are chain.yaml-dir-relative.** Put `NORTHSTAR.md` next to `.megaplan/initiatives/<initiative>/chain.yaml` and set `anchors.north_star: NORTHSTAR.md`.
+3. **Durable `.megaplan` inputs must be synced or committed.** The cloud runner ignores generated state, but it needs the durable source artifacts. Use `megaplan cloud sync-megaplan <chain.yaml> --clean` to upload `.megaplan/initiatives/`, `.megaplan/tickets/`, and `.megaplan/ideas/` to the exact derived workspace before launch.
 4. **The base-branch refresh fetches but does NOT fast-forward the box clone's local branch.** If the clone's `<base-branch>` is already checked out, `git checkout <base-branch>` is a no-op and the clone stays at the old commit. Force it: `git fetch origin <base-branch> && git reset --hard origin/<base-branch>` before launching (or after any push to the base branch).
 5. **The editable arnold `.pth` can get disabled mid-run** (renamed `*.pth.disabled`) by a cloud-chain editable-install-sync side-effect, breaking `import arnold`/`import arnold_pipelines` locally + any local tooling that uses it. Re-enable: `mv <site-packages>/_editable_impl_arnold.pth.disabled <site-packages>/_editable_impl_arnold.pth`. (Also: keep the local venv on an editable install of `~/Documents/Arnold` — a stale non-editable copy shadows the live code and lags the path migration.)
 6. **arnold path migration: `arnold.pipelines.megaplan` → `arnold_pipelines.megaplan`.** Live arnold moved megaplan to the top-level `arnold_pipelines` package and dropped `arnold.pipelines.megaplan`. Older tooling (e.g. the hermes subagent launcher, watchdog scripts) may still use the old dotted path and depend on a stale site-packages copy as a bridge. When you editable-install live arnold, update those tools to `arnold_pipelines.megaplan` too, or they break.
@@ -76,7 +85,7 @@ Observe: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tmux ls'` and `tai
 
 ## Subcommands
 
-`init`, `build`, `deploy`, `chain`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
+`init`, `build`, `deploy`, `chain`, `sync-megaplan`, `status`, `attach`, `logs`, `exec`, `resume`, `down`, `destroy`.
 
 Typical flow:
 
@@ -84,7 +93,7 @@ Typical flow:
 2. Edit it (set the provider, primary `repo:`, any `extra_repos:`, the secret names, etc.).
 3. Export the secret values into your local env (the names listed under `secrets:` in `cloud.yaml`).
 4. `megaplan cloud deploy` to build the image and start the runner.
-5. `megaplan cloud chain <chain.yaml>` for a multi-milestone run, or `megaplan cloud bootstrap <idea.md>` for a single plan.
+5. `megaplan cloud sync-megaplan <chain.yaml> --clean` to seed durable initiatives/tickets/ideas, then `megaplan cloud chain <chain.yaml>` for a multi-milestone run, or `megaplan cloud bootstrap <idea.md>` for a single plan.
 6. Use `status`, `logs`, `attach` to observe; `down` to pause, `destroy` to tear the volume.
 
 See `docs/cloud.md` for the full reference, including `cloud.yaml` fields, mode behavior (`auto`/`chain`/`idle`), and provider-specific troubleshooting.

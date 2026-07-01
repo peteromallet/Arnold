@@ -39,6 +39,7 @@ from arnold.conformance.checks import (
     check_generic_arnold_megaplan_coupling,
     check_import_coupling,
     check_legacy_reference_allowlist,
+    check_megaplan_artifact_layout,
     check_never_port_artifacts,
     check_package_name_staleness,
     check_public_workflow_layering,
@@ -198,6 +199,11 @@ def run_conformance_suite(
     results.append(
         check_never_port_artifacts(allowlist=allowlist["never-port-artifacts"])
     )
+    results.append(
+        check_megaplan_artifact_layout(
+            allowlist=allowlist["megaplan-artifact-layout"]
+        )
+    )
     results.append(check_legacy_reference_allowlist())
 
     return ConformanceSuiteResult(
@@ -213,6 +219,7 @@ def _read_check_allowlist(path: Path) -> dict[str, set[str]]:
         "semantic-coupling": set(),
         "public-workflow-layering": set(),
         "never-port-artifacts": set(),
+        "megaplan-artifact-layout": set(),
     }
     if not path.exists():
         return allowlist

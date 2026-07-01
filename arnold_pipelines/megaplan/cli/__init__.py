@@ -199,10 +199,61 @@ def build_parser() -> argparse.ArgumentParser:
     for command in ("prep", "plan", "critique", "gate", "revise", "finalize", "execute", "review"):
         sub = subparsers.add_parser(command)
         sub.add_argument("--plan", required=False)
+        sub.add_argument("--fresh", action="store_true", default=False)
+        sub.add_argument("--persist", action="store_true", default=False)
+        sub.add_argument("--ephemeral", action="store_true", default=False)
 
     build_auto_parser(subparsers)
     build_chain_parser(subparsers)
     build_epic_chain_parser(subparsers)
+
+    brief_parser = subparsers.add_parser("brief")
+    brief_sub = brief_parser.add_subparsers(dest="brief_action", required=True)
+    brief_new = brief_sub.add_parser("new")
+    brief_new.add_argument("slug")
+    brief_new.add_argument("body", nargs="?")
+    brief_new.add_argument("-b", "--body", dest="body_flag")
+    brief_new.add_argument("--stdin-body", action="store_true")
+    brief_new.add_argument("--from-file")
+    brief_new.add_argument("--force", action="store_true")
+    brief_new.add_argument("--init", action="store_true")
+    brief_list = brief_sub.add_parser("list")
+    brief_show = brief_sub.add_parser("show")
+    brief_show.add_argument("brief_id")
+    brief_search = brief_sub.add_parser("search")
+    brief_search.add_argument("keywords", nargs="*")
+    brief_search.add_argument("--keywords-all", action="store_true")
+    brief_search.add_argument("--sort", default="path")
+    brief_search.add_argument("--desc", action="store_true")
+    brief_search.add_argument("--limit", type=int)
+    brief_search.add_argument("--snippet", action="store_true", default=True)
+    brief_epic = brief_sub.add_parser("epic")
+    brief_epic.add_argument("slug")
+    brief_epic.add_argument("--milestone", action="append", default=[])
+    brief_epic.add_argument("--base-branch", default="main")
+    brief_epic.add_argument("--force", action="store_true")
+
+    initiative_parser = subparsers.add_parser("initiative")
+    initiative_sub = initiative_parser.add_subparsers(dest="initiative_action", required=True)
+    initiative_new = initiative_sub.add_parser("new")
+    initiative_new.add_argument("slug")
+    initiative_new.add_argument("--title")
+    description_group = initiative_new.add_mutually_exclusive_group(required=True)
+    description_group.add_argument("--description")
+    description_group.add_argument("--description-file")
+    initiative_new.add_argument("--north-star")
+    initiative_new.add_argument("--north-star-file")
+    initiative_new.add_argument("--chain", action="store_true")
+    initiative_new.add_argument("--force", action="store_true")
+    initiative_list = initiative_sub.add_parser("list")
+    initiative_list.add_argument("--limit", type=int)
+    initiative_search = initiative_sub.add_parser("search")
+    initiative_search.add_argument("keywords", nargs="*")
+    initiative_search.add_argument("--keywords-all", action="store_true")
+    initiative_search.add_argument("--limit", type=int)
+
+    migrate_layout = subparsers.add_parser("migrate-layout")
+    migrate_layout.add_argument("--apply", action="store_true")
 
     return parser
 from .status_view import (
@@ -1091,7 +1142,7 @@ def handle_brief(root: Path, args: argparse.Namespace) -> StepResponse:
             except OSError as exc:
                 raise CliError("invalid_args", f"Unable to read brief source {source}: {exc}") from exc
         else:
-            body = args.body
+            body = getattr(args, "body_flag", None) or args.body
         try:
             path = write_single_brief(root, args.slug, body, force=bool(args.force))
         except FileExistsError as exc:
@@ -1205,6 +1256,100 @@ def _brief_cli_record(record: dict[str, Any], *, include_body: bool = False) -> 
 
 def _brief_cli_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [_brief_cli_record(record) for record in records]
+
+
+def handle_initiative(root: Path, args: argparse.Namespace) -> StepResponse:
+    """Dispatch ``megaplan initiative ...`` subcommands."""
+    from arnold_pipelines.megaplan.layout import (
+        ALLOWED_INITIATIVE_SUBDIRS,
+        initiative_metadata,
+        initiative_root,
+        initiatives_dir,
+        search_initiatives,
+        slugify_initiative,
+    )
+
+    action = args.initiative_action
+    if action == "new":
+        slug = slugify_initiative(args.slug)
+        if not slug:
+            raise CliError("invalid_args", "initiative slug must not be empty")
+        initiative = initiative_root(root, slug)
+        if initiative.exists() and any(initiative.iterdir()) and not args.force:
+            raise CliError(
+                "initiative_exists",
+                f"Initiative already exists: {initiative}. Pass --force to add missing scaffold files.",
+            )
+        for name in ALLOWED_INITIATIVE_SUBDIRS:
+            (initiative / name).mkdir(parents=True, exist_ok=True)
+        description = args.description
+        if args.description_file:
+            source = Path(args.description_file).expanduser()
+            try:
+                description = source.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise CliError("invalid_args", f"Unable to read description source {source}: {exc}") from exc
+        description = (description or "").strip()
+        if not description:
+            raise CliError("invalid_args", "initiative description must not be empty")
+        readme = initiative / "README.md"
+        if args.force or not readme.exists():
+            title = (args.title or slug.replace("-", " ").title()).strip()
+            readme.write_text(f"# {title}\n\n{description}\n", encoding="utf-8")
+        north_star = args.north_star
+        if args.north_star_file:
+            source = Path(args.north_star_file).expanduser()
+            try:
+                north_star = source.read_text(encoding="utf-8")
+            except OSError as exc:
+                raise CliError("invalid_args", f"Unable to read north star source {source}: {exc}") from exc
+        if north_star is not None:
+            north_star_path = initiative / "NORTHSTAR.md"
+            if args.force or not north_star_path.exists():
+                north_star_path.write_text(north_star.rstrip() + "\n", encoding="utf-8")
+        if args.chain:
+            chain = initiative / "chain.yaml"
+            if args.force or not chain.exists():
+                chain.write_text("milestones: []\n", encoding="utf-8")
+        return {
+            "success": True,
+            "step": "initiative",
+            "action": "new",
+            "initiative": initiative_metadata(root, slug),
+        }
+    if action == "list":
+        base = initiatives_dir(root)
+        rows = [
+            initiative_metadata(root, path.name)
+            for path in sorted(base.iterdir())
+            if path.is_dir()
+        ]
+        if args.limit is not None:
+            rows = rows[: args.limit]
+        return {
+            "success": True,
+            "step": "initiative",
+            "action": "list",
+            "initiatives": rows,
+        }
+    if action == "search":
+        keywords = [keyword for keyword in (args.keywords or []) if keyword.strip()]
+        if not keywords:
+            raise CliError("invalid_args", "initiative search requires at least one keyword")
+        rows = search_initiatives(
+            root,
+            keywords,
+            keywords_all=args.keywords_all,
+            limit=args.limit or 25,
+        )
+        return {
+            "success": True,
+            "step": "initiative",
+            "action": "search",
+            "keywords": keywords,
+            "initiatives": rows,
+        }
+    raise CliError("invalid_args", f"Unknown initiative action: {action}")
 
 
 def handle_epic(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -1335,6 +1480,18 @@ def handle_migrate_local_plans(root: Path, args: argparse.Namespace) -> StepResp
         )
     except ValueError as exc:
         raise CliError("invalid_args", str(exc)) from exc
+
+
+def handle_migrate_layout(root: Path, args: argparse.Namespace) -> StepResponse:
+    from arnold_pipelines.megaplan.layout import migrate_legacy_briefs_layout
+
+    result = migrate_legacy_briefs_layout(root, apply=bool(args.apply))
+    return {
+        "success": True,
+        "step": "migrate-layout",
+        "action": "apply" if args.apply else "dry-run",
+        **result,
+    }
 
 
 def handle_resume(root: Path, args: argparse.Namespace) -> StepResponse:
@@ -1857,10 +2014,12 @@ COMMAND_HANDLERS: dict[str, Callable[..., StepResponse]] = {
     "debt": handle_debt,
     "user-action": handle_user_action,
     "brief": handle_brief,
+    "initiative": handle_initiative,
     "contract": handle_contract,
     "ticket": handle_ticket,
     "epic": handle_epic,
     "migrate-local-plans": handle_migrate_local_plans,
+    "migrate-layout": handle_migrate_layout,
     "step": handle_step,
     "override": handle_override,
     "verify-human": handle_verify_human,

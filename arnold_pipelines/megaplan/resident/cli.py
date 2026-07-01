@@ -10,7 +10,7 @@ from typing import Any
 from arnold_pipelines.megaplan.store import DBStore, FileStore, Store
 from arnold_pipelines.megaplan.types import CliError
 
-from .agent_loop import OpenAICompatibleAgentRunner
+from .agent_loop import CodexCliAgentRunner, OpenAICompatibleAgentRunner
 from .auth import StoreBackedConfirmationManager, ResidentAuthorizer
 from .cloud import CloudCliBackend
 from .config import ResidentConfig
@@ -152,21 +152,53 @@ def _resident_discord(root: Path, store: Store, config: ResidentConfig, *, dry_r
         raise CliError("missing_discord_token", f"{config.discord_bot_token_env} is required")
     authorizer = ResidentAuthorizer(config)
     outbound = DiscordOutboundSink()
+    confirmation_manager = StoreBackedConfirmationManager(config, store)
     runtime = ResidentRuntime(
         config=config,
         authorizer=authorizer,
         store=store,
-        profile=_resident_profile(store=store, authorizer=authorizer, config=config),
-        runner=OpenAICompatibleAgentRunner(config),
+        profile=_resident_profile(
+            store=store,
+            authorizer=authorizer,
+            config=config,
+            confirmation_manager=confirmation_manager,
+        ),
+        runner=_resident_runner(config, root),
         outbound=outbound,
     )
-    service = ResidentDiscordService(runtime=runtime, token=token)
+    scheduler = make_store_scheduler(
+        store=store,
+        config=config,
+        cloud_backend=CloudCliBackend(),
+        outbound=outbound,
+        confirmation_manager=confirmation_manager,
+        runtime=runtime,
+        worker_id="resident-discord-scheduler",
+    )
+    service = ResidentDiscordService(
+        runtime=runtime,
+        token=token,
+        scheduler=scheduler,
+        scheduler_interval_s=config.scheduler_poll_interval_s,
+    )
     service.run()
     return {"success": True, "step": "resident", "action": "discord", "stopped": True, "project_root": str(root)}
 
 
-def _resident_profile(*, store: Store, authorizer: ResidentAuthorizer, config: ResidentConfig):
-    confirmation_manager = StoreBackedConfirmationManager(config, store)
+def _resident_runner(config: ResidentConfig, root: Path):
+    if config.model_provider == "codex":
+        return CodexCliAgentRunner(config, cwd=root)
+    return OpenAICompatibleAgentRunner(config)
+
+
+def _resident_profile(
+    *,
+    store: Store,
+    authorizer: ResidentAuthorizer,
+    config: ResidentConfig,
+    confirmation_manager: StoreBackedConfirmationManager | None = None,
+):
+    confirmation_manager = confirmation_manager or StoreBackedConfirmationManager(config, store)
     if config.profile == "agentbox_operator":
         from agentbox.resident_profile import AgentBoxOperatorProfile
 

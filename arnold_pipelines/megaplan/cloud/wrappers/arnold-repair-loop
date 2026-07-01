@@ -267,7 +267,7 @@ plans_dir = workspace / ".megaplan" / "plans"
 chain_paths = sorted(
     {
         *plans_dir.glob(".chains/*.json"),
-        *workspace.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"),
+        *workspace.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"),
         *(workspace / ".megaplan").glob("**/chain_state.json"),
     },
     key=lambda path: path.stat().st_mtime,
@@ -445,7 +445,7 @@ def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
     candidates: list[tuple[float, pathlib.Path]] = []
     for pattern in (
         ".megaplan/plans/*/state.json",
-        ".megaplan/briefs/*/.megaplan/plans/*/state.json",
+        ".megaplan/initiatives/*/.megaplan/plans/*/state.json",
     ):
         for path in root.glob(pattern):
             try:
@@ -458,7 +458,7 @@ def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
 def latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
     candidates = set()
     candidates.update((root / ".megaplan" / "plans" / ".chains").glob("*.json"))
-    candidates.update(root.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"))
+    candidates.update(root.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"))
     candidates.update((root / ".megaplan").glob("**/chain_state.json"))
     ordered: list[tuple[float, pathlib.Path]] = []
     for path in candidates:
@@ -865,7 +865,7 @@ def _candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
     candidates = []
     for pattern in (
         ".megaplan/plans/*/state.json",
-        ".megaplan/briefs/*/.megaplan/plans/*/state.json",
+        ".megaplan/initiatives/*/.megaplan/plans/*/state.json",
     ):
         for path in root.glob(pattern):
             try:
@@ -880,7 +880,7 @@ def _latest_chain_state(root: pathlib.Path) -> pathlib.Path | None:
     chains_root = root / ".megaplan"
     candidates = set()
     candidates.update((root / ".megaplan" / "plans" / ".chains").glob("*.json"))
-    candidates.update(root.glob(".megaplan/briefs/*/.megaplan/plans/.chains/*.json"))
+    candidates.update(root.glob(".megaplan/initiatives/*/.megaplan/plans/.chains/*.json"))
     candidates.update(chains_root.glob("**/chain_state.json"))
     ordered = []
     for path in candidates:

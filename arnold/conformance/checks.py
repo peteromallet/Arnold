@@ -32,6 +32,10 @@ ACTIVE_MEGAPLAN_PACKAGE_NAMES = (
     "megaplan",
     "arnold_pipelines.megaplan",
 )
+_MEGAPLAN_INITIATIVE_SUBDIRS = frozenset(
+    {"briefs", "research", "decisions", "notes", "assets", "handoff"}
+)
+_MEGAPLAN_INITIATIVE_ROOT_FILES = frozenset({"README.md", "NORTHSTAR.md", "chain.yaml"})
 LEGACY_REFERENCE_PATTERNS = (
     "arnold.pipelines.megaplan",
     "arnold/pipelines/megaplan",
@@ -614,6 +618,66 @@ def check_never_port_artifacts(
         check_id="never-port-artifacts",
         passed=not unexpected,
         message="" if not unexpected else "runtime artifacts present: " + ", ".join(sorted(unexpected)),
+        details=details,
+    )
+
+
+def check_megaplan_artifact_layout(
+    *,
+    repo_root: Path | None = None,
+    allowlist: Collection[str] | None = None,
+) -> ConformanceCheckResult:
+    """Validate durable planning artifacts live in the canonical tree."""
+    root = repo_root or _DEFAULT_ARNOLD_ROOT.parent
+    allowed = set(allowlist or set())
+    unexpected: dict[str, tuple[str, ...]] = {}
+
+    def _is_allowed(rel: str) -> bool:
+        for pattern in allowed:
+            if pattern == rel:
+                return True
+            if pattern.endswith("/**") and rel.startswith(pattern[:-3] + "/"):
+                return True
+            if fnmatch.fnmatch(rel, pattern):
+                return True
+        return False
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if _is_allowed(rel):
+            continue
+        reason: str | None = None
+        if rel == "chain.yaml":
+            reason = "root chain spec"
+        elif rel == "cloud.yaml":
+            reason = "root cloud runner spec"
+        elif rel.startswith("briefs/"):
+            reason = "legacy top-level briefs tree"
+        elif rel.startswith(".megaplan/briefs/"):
+            reason = "legacy .megaplan/briefs tree"
+        elif rel.startswith(".megaplan/") and len(Path(rel).parts) == 2 and Path(rel).name.startswith("plan_v"):
+            reason = "loose plan version outside .megaplan/plans"
+        elif rel.startswith(".megaplan/initiatives/"):
+            parts = Path(rel).parts
+            if len(parts) < 4 or not parts[2]:
+                reason = "invalid initiative path"
+            elif len(parts) == 4 and parts[3] in _MEGAPLAN_INITIATIVE_ROOT_FILES:
+                reason = None
+            elif len(parts) >= 5 and parts[3] in _MEGAPLAN_INITIATIVE_SUBDIRS:
+                reason = None
+            else:
+                reason = "initiative artifact outside canonical subdirectories"
+        elif rel.endswith("/chain.yaml"):
+            reason = "chain spec outside .megaplan/initiatives/<initiative>/chain.yaml"
+        if reason:
+            unexpected[rel] = (reason,)
+    details = {"unexpected": unexpected}
+    return ConformanceCheckResult(
+        check_id="megaplan-artifact-layout",
+        passed=not unexpected,
+        message="" if not unexpected else "misplaced megaplan artifacts: " + ", ".join(sorted(unexpected)),
         details=details,
     )
 
