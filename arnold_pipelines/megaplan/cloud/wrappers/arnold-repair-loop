@@ -3187,7 +3187,6 @@ user_action_context = failure_context.get("user_action_context") if isinstance(f
 unresolved = user_action_context.get("unresolved_user_actions") if isinstance(user_action_context.get("unresolved_user_actions"), list) else []
 current_state = str(plan_runtime.get("current_state") or "").strip().lower()
 manual_review_origin = str(plan_runtime.get("manual_review_origin") or "").strip()
-clarification_source = str(plan_runtime.get("clarification_source") or "").strip().lower()
 human_gate = bool(unresolved) or (
     current_state == "manual_review"
     and manual_review_origin not in {"", "auto_stall", "auto_stall_legacy"}
