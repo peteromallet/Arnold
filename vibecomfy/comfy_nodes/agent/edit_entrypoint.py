@@ -134,6 +134,10 @@ def handle_agent_edit(
         plan_evaluation_path=turn_dir / "plan_evaluation.json",
         projection_path=turn_dir / "projection.txt",
         messages_path=turn_dir / "messages.jsonl",
+        narrative_context_path=turn_dir / "narrative_context.json",
+        narrative_request_path=turn_dir / "narrative_request.json",
+        narrative_response_path=turn_dir / "narrative_response.json",
+        narrative_validation_path=turn_dir / "narrative_validation.json",
     )
     research_summary = payload.get("research_summary")
     if isinstance(research_summary, str) and research_summary.strip():

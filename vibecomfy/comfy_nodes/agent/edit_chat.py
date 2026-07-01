@@ -75,6 +75,25 @@ def _write_turn_chat_artifact(
         ],
     }
 
+    # Record narrative artifact paths when present (best-effort, non-failing).
+    _narrative_artifact_keys = (
+        ("narrative_context_path", "narrative_context"),
+        ("narrative_request_path", "narrative_request"),
+        ("narrative_response_path", "narrative_response"),
+        ("narrative_validation_path", "narrative_validation"),
+    )
+    _narrative_paths: dict[str, str] = {}
+    for _attr_name, _key_name in _narrative_artifact_keys:
+        _path = getattr(state, _attr_name, None)
+        if isinstance(_path, Path):
+            try:
+                if _path.is_file():
+                    _narrative_paths[_key_name] = str(_path)
+            except OSError:
+                pass
+    if _narrative_paths:
+        chat_record["narrative_artifacts"] = _narrative_paths
+
     try:
         turn_dir.mkdir(parents=True, exist_ok=True)
         chat_path.write_text(

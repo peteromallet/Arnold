@@ -19,6 +19,7 @@ _SOURCE_GROUPS: tuple[tuple[str, ...], ...] = (
     ('edit_revision_stages',),
     ('edit_batch_loop_intro', 'edit_batch_loop_apply', 'edit_batch_loop_finish'),
     ('edit_transform_stages',),
+    ('edit_narrator',),
     ('edit_response_contract',),
     ('edit_orchestration',),
     ('edit_entrypoint',),

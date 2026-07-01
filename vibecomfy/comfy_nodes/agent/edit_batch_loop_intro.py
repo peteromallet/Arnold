@@ -692,6 +692,10 @@ def _stage_agent_batch_repl(
 
         state.provider_metadata = dict(turn_result.audit_metadata or {})
         state.user_message = turn_result.message
+        # Preserve the first non-empty executor message before any clarify splitting
+        # or normalization so it remains available as a debug/input artifact.
+        if turn_result.message and not state.raw_executor_message:
+            state.raw_executor_message = turn_result.message
         previous_model_message = turn_result.message
         clarify_split = split_terminal_clarify(turn_result.batch)
         clarify_message = clarify_split.message

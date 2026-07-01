@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.live_agentic_harness.assessor import _collect_message_artifact_contradictions
 from tests.live_agentic_harness.guard import guard_output_dir
 from tests.harness_common import (
     DISPATCHER_FAKE,
@@ -482,6 +483,98 @@ def test_agentic_guard_accepts_linked_source_edit_that_changes_effective_value(t
 
     assert verdict["live_agentic_success"] is True
     assert verdict["assessment"]["passed"] is True
+
+
+def test_collect_message_artifact_contradictions_flags_graph_and_outcome_mismatch() -> None:
+    contradictions = _collect_message_artifact_contradictions(
+        {
+            "message": "Applied 1 edit and updated the workflow.",
+            "graph_unchanged": True,
+            "outcome": {"kind": "noop"},
+            "internal_outcome": {"kind": "noop"},
+            "change_details": {"landed_operation_count": 0},
+        }
+    )
+
+    assert "message claims edits even though response.graph_unchanged is True" in contradictions
+    assert "message claims edits even though outcome.kind='noop'" in contradictions
+    assert "message claims edits even though internal_outcome.kind='noop'" in contradictions
+    assert "message claims landed edits even though landed_operation_count=0" in contradictions
+
+
+def test_collect_message_artifact_contradictions_flags_missing_clarify_question() -> None:
+    contradictions = _collect_message_artifact_contradictions(
+        {
+            "message": "Applied 1 edit. I need one more detail before continuing.",
+            "graph_unchanged": False,
+            "outcome": {"kind": "candidate"},
+            "internal_outcome": {"kind": "edit+clarify"},
+            "change_details": {"landed_operation_count": 1},
+        }
+    )
+
+    assert contradictions == [
+        "message omits a direct question for internal_outcome.kind='edit+clarify'"
+    ]
+
+
+def test_collect_message_artifact_contradictions_flags_landed_count_mismatch() -> None:
+    contradictions = _collect_message_artifact_contradictions(
+        {
+            "message": "Applied 2 edits to the workflow.",
+            "graph_unchanged": False,
+            "outcome": {"kind": "candidate"},
+            "internal_outcome": {"kind": "edit"},
+            "change_details": {"landed_operation_count": 1},
+        }
+    )
+
+    assert contradictions == [
+        "message claims a landed operation count that disagrees with change_details"
+    ]
+
+
+def test_collect_message_artifact_contradictions_flags_validation_diagnostic_mismatch() -> None:
+    contradictions = _collect_message_artifact_contradictions(
+        {
+            "message": "Applied 1 edit and it is ready to apply.",
+            "graph_unchanged": False,
+            "outcome": {"kind": "candidate"},
+            "internal_outcome": {"kind": "edit"},
+            "change_details": {"landed_operation_count": 1},
+            "gates": {
+                "python_load_ok": True,
+                "ir_validate_ok": False,
+                "ui_load_safe_ok": True,
+            },
+        }
+    )
+
+    assert contradictions == [
+        "message claims validation success even though diagnostics or gates show failure"
+    ]
+
+
+def test_collect_message_artifact_contradictions_ignores_grounded_non_contradiction() -> None:
+    contradictions = _collect_message_artifact_contradictions(
+        {
+            "message": "Applied 1 edit. Should I also rename the file stem?",
+            "graph_unchanged": False,
+            "outcome": {"kind": "candidate"},
+            "internal_outcome": {"kind": "edit+clarify"},
+            "change_details": {"landed_operation_count": 1},
+            "gates": {
+                "python_load_ok": True,
+                "ir_validate_ok": True,
+                "ui_load_safe_ok": True,
+                "queue_validate_ok": True,
+                "plan_validate_ok": True,
+                "state_match_ok": True,
+            },
+        }
+    )
+
+    assert contradictions == []
 
 
 def test_agentic_guard_rejects_shared_linked_source_edit_by_default(tmp_path: Path) -> None:

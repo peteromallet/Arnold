@@ -70,6 +70,7 @@ from .provider import (
     BatchTurnResult,
     MalformedModelJSON,
     MissingRequiredField,
+    ProviderError,
     _latest_clarification_context,
     build_batch_messages,
     build_delta_messages,
@@ -78,6 +79,7 @@ from .provider import (
     run_agent_turn,
     run_agent_turn_batch,
     run_agent_turn_delta,
+    run_model_turn,
 )
 from .diagnostics import lower_stage_result, queue_stage_result
 from .execution_plan import (
@@ -208,6 +210,13 @@ class AgentEditState:
     # T15: route label carried on state so response builders can apply route-aware
     # validation/reporting without changing their call signatures.
     route: str | None = None
+    # Narrative/debug fields: the first non-empty executor message is preserved as a
+    # debug/input artifact and never overwritten by deterministic finish text.
+    raw_executor_message: str = ""
+    narrative_context_path: Path = Path("narrative_context.json")
+    narrative_request_path: Path = Path("narrative_request.json")
+    narrative_response_path: Path = Path("narrative_response.json")
+    narrative_validation_path: Path = Path("narrative_validation.json")
 
 
 def _hydrate_execution_plan_from_protocol_notes(

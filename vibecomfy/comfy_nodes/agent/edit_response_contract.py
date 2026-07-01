@@ -2,6 +2,13 @@
 # Contents: Failure/success response shaping and batch/dev response contracts.
 
 SOURCE = r'''
+import logging
+
+LOGGER = logging.getLogger("vibecomfy.comfy_nodes.agent.edit_response_contract")
+
+from .contracts import _clarification_payload
+
+
 def _failure_response(
     state: AgentEditState,
     context: TurnContext,
@@ -135,6 +142,154 @@ def _execution_plan_debug_fields(state: AgentEditState) -> dict[str, Any]:
         return {}
     fields["execution_plan_artifacts"] = _execution_plan_artifact_refs(state)
     return fields
+
+
+def _narrative_artifact_refs(state: AgentEditState) -> dict[str, dict[str, Any]]:
+    refs: dict[str, dict[str, Any]] = {}
+    artifact_paths = {
+        "narrative_context": state.narrative_context_path,
+        "narrative_request": state.narrative_request_path,
+        "narrative_response": state.narrative_response_path,
+        "narrative_validation": state.narrative_validation_path,
+    }
+    for name, path in artifact_paths.items():
+        if path.is_file():
+            refs[name] = _artifact(path).to_dict()
+    return refs
+
+
+def _narrative_debug_fields(state: AgentEditState) -> dict[str, Any]:
+    narrative: dict[str, Any] = {}
+    refs = _narrative_artifact_refs(state)
+    if refs:
+        narrative["artifacts"] = refs
+    if state.narrative_validation_path.is_file():
+        try:
+            payload = json.loads(state.narrative_validation_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            payload = None
+        if isinstance(payload, Mapping):
+            narrative["attempted"] = bool(payload.get("attempted"))
+            selected_source = payload.get("selected_source")
+            if isinstance(selected_source, str) and selected_source.strip():
+                narrative["selected_source"] = selected_source.strip()
+            fallback_reason = payload.get("fallback_reason")
+            if isinstance(fallback_reason, str) and fallback_reason.strip():
+                narrative["fallback_reason"] = fallback_reason.strip()
+            final_validation = payload.get("final_validation")
+            if isinstance(final_validation, Mapping):
+                narrative["final_validation_ok"] = bool(final_validation.get("ok"))
+    return {"narrative": narrative} if narrative else {}
+
+
+def _record_narrative_artifacts(state: AgentEditState) -> None:
+    artifacts = {
+        name: str(path)
+        for name, path in (
+            ("narrative_context", state.narrative_context_path),
+            ("narrative_request", state.narrative_request_path),
+            ("narrative_response", state.narrative_response_path),
+            ("narrative_validation", state.narrative_validation_path),
+        )
+        if path.is_file()
+    }
+    if artifacts:
+        state.artifacts = {**(state.artifacts or {}), **artifacts}
+
+
+def _has_enough_grounded_facts_for_dev_narrative(state: AgentEditState) -> bool:
+    """Return True when the dev success path has batch-repl-style grounded facts.
+
+    Without landed batch field changes or batch exit state, the helper cannot
+    produce a meaningful grounded message and the deterministic executor
+    message (state.user_message) is preserved.
+    """
+    return bool(
+        state.batch_field_changes
+        or state.batch_exit_mode
+        or state.batch_done_summary
+    )
+
+
+def _legacy_narrative_debug_status(
+    fallback_reason: str,
+    *,
+    attempted: bool = False,
+) -> dict[str, Any]:
+    return {
+        "narrative": {
+            "attempted": attempted,
+            "selected_source": "legacy",
+            "fallback_reason": fallback_reason,
+        }
+    }
+
+
+def _prepare_narrative_artifact_paths(state: AgentEditState) -> None:
+    state.narrative_context_path = _narrative_artifact_path(
+        state,
+        state.narrative_context_path,
+    )
+    state.narrative_request_path = _narrative_artifact_path(
+        state,
+        state.narrative_request_path,
+    )
+    state.narrative_response_path = _narrative_artifact_path(
+        state,
+        state.narrative_response_path,
+    )
+    state.narrative_validation_path = _narrative_artifact_path(
+        state,
+        state.narrative_validation_path,
+    )
+
+
+def _response_apply_eligibility(value: Any) -> ApplyEligibility | None:
+    if not isinstance(value, Mapping):
+        return None
+    warnings = value.get("warnings")
+    try:
+        return ApplyEligibility(
+            applyable=bool(value.get("applyable")),
+            reason=str(value.get("reason") or ""),
+            message=str(value.get("message") or ""),
+            warnings=tuple(
+                item for item in warnings if isinstance(item, str)
+            ) if isinstance(warnings, list) else (),
+        )
+    except ValueError:
+        return None
+
+
+def _sync_narrated_clarify_outcome(
+    message: str,
+    *,
+    internal_outcome: TurnOutcome,
+    public_outcome: Mapping[str, Any],
+) -> tuple[TurnOutcome, dict[str, Any]]:
+    if internal_outcome.kind not in {"clarify", "edit+clarify"}:
+        return internal_outcome, dict(public_outcome)
+    if internal_outcome.kind == "edit+clarify":
+        # For edit+clarify the public message includes the edit lead; the
+        # clarify question must remain the original question, not the full
+        # narrated message.
+        question = _format_clarify_markdown_message(
+            internal_outcome.question
+            if isinstance(internal_outcome.question, str) and internal_outcome.question.strip()
+            else message
+        )
+    else:
+        question = _format_clarify_markdown_message(message)
+    if internal_outcome.kind == "clarify":
+        synced_internal = TurnOutcome.clarify(question=question)
+    else:
+        synced_internal = TurnOutcome.edit_and_clarify(
+            changes=internal_outcome.changes,
+            question=question,
+        )
+    synced_public = dict(public_outcome)
+    synced_public.update(_clarification_payload(question))
+    return synced_internal, synced_public
 
 
 def _execution_plan_task_satisfaction_entries(state: AgentEditState) -> list[dict[str, Any]]:
@@ -394,11 +549,44 @@ def _build_batch_repl_failure_response(
     response.update(compatibility_fields)
     response.update(_session_artifact_response_fields(state))
     response["eligibility"] = response["apply_eligibility"]
-    response["message"] = _synthesize_batch_repl_message(state, failure=failure)
+    apply_eligibility = _response_apply_eligibility(response.get("apply_eligibility"))
+    public_outcome_kind = (
+        response["outcome"].get("kind")
+        if isinstance(response.get("outcome"), Mapping)
+        else None
+    )
+    _prepare_narrative_artifact_paths(state)
+    try:
+        message = _narrate_final_message(
+            state,
+            context,
+            failure=failure,
+            public_outcome=public_outcome_kind,
+            apply_eligibility=apply_eligibility,
+        )
+        narrative_debug = _narrative_debug_fields(state)
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        LOGGER.warning("Narrative synthesis failed for batch failure response: %s", exc)
+        message = _fallback_narrative_message(state, failure=failure) or failure.user_facing_message
+        narrative_debug = _legacy_narrative_debug_status(
+            "narrative_synthesis_error",
+            attempted=True,
+        )
+        narrative_debug["narrative"]["error"] = {
+            "type": type(exc).__name__,
+            "message": str(exc),
+        }
+    response["message"] = message
+    _record_narrative_artifacts(state)
+    response["artifacts"] = {
+        **dict(response.get("artifacts") or {}),
+        **_response_artifacts_with_execution_plan(state),
+    }
     response["debug"] = {
         **response["debug"],
         "gates": context.gate_snapshot(),
         "hashes": dict(compatibility_fields),
+        **narrative_debug,
     }
     return response
 
@@ -464,16 +652,6 @@ def _build_batch_repl_response(
             reason="no_candidate",
             message=f"Apply is not available for {state.route} routes.",
         )
-    response = success_envelope(
-        context,
-        message=state.user_message,
-        graph=state.ui_payload,
-        report=state.report,
-        artifacts=_response_artifacts_with_execution_plan(state),
-        apply_eligibility=response_apply_eligibility,
-        canvas_apply_allowed=context.canvas_apply_allowed if has_candidate else False,
-        queue_allowed=context.queue_allowed if has_candidate else False,
-    )
     candidate_payload = _build_candidate_payload(
         state,
         compatibility_fields=compatibility_fields,
@@ -521,14 +699,32 @@ def _build_batch_repl_response(
         internal_outcome,
         response={"candidate": candidate_payload},
     )
-    if internal_outcome.kind == "edit":
-        message = ensure_sentence_message(
-            state.user_message,
-            fallback="I made the requested workflow changes.",
-        )
-    else:
-        message = _synthesize_batch_repl_message(state, outcome=internal_outcome)
     change_details = _change_details_payload(state, context)
+    _prepare_narrative_artifact_paths(state)
+    message = _narrate_final_message(
+        state,
+        context,
+        outcome=internal_outcome,
+        public_outcome=public_outcome.get("kind") if isinstance(public_outcome, Mapping) else None,
+        apply_eligibility=response_apply_eligibility,
+    )
+    _record_narrative_artifacts(state)
+    internal_outcome, public_outcome = _sync_narrated_clarify_outcome(
+        message,
+        internal_outcome=internal_outcome,
+        public_outcome=public_outcome,
+    )
+    gate_snapshot = context.gate_snapshot()
+    response = success_envelope(
+        context,
+        message=message,
+        graph=state.ui_payload,
+        report=state.report,
+        artifacts=_response_artifacts_with_execution_plan(state),
+        apply_eligibility=response_apply_eligibility,
+        canvas_apply_allowed=context.canvas_apply_allowed if has_candidate else False,
+        queue_allowed=context.queue_allowed if has_candidate else False,
+    )
     response.update(
         turn_envelope(
             message=message,
@@ -537,7 +733,7 @@ def _build_batch_repl_response(
             eligibility=response_apply_eligibility,
             audit_ref=None,
             debug={
-                "gates": context.gate_snapshot(),
+                "gates": gate_snapshot,
                 "hashes": dict(compatibility_fields),
                 "turn_identity": turn_identity.to_dict(),
                 "stage_snapshots": stage_snapshots,
@@ -548,6 +744,7 @@ def _build_batch_repl_response(
                     "final_summary": state.batch_final_summary,
                     "budget_state": _json_safe(state.batch_budget_state),
                 },
+                **_narrative_debug_fields(state),
                 **_execution_plan_debug_fields(state),
             },
         )
@@ -622,18 +819,6 @@ def _build_dev_success_response(
             reason="no_candidate",
             message=f"Apply is not available for {state.route} routes.",
         )
-    response = success_envelope(
-        context,
-        message=state.user_message,
-        graph=state.ui_payload,
-        report=state.report,
-        artifacts=_response_artifacts_with_execution_plan(state),
-        apply_eligibility=eligibility,
-        canvas_apply_allowed=context.canvas_apply_allowed if plan_allows_candidate else False,
-        queue_allowed=context.queue_allowed if plan_allows_candidate else False,
-    )
-    response.update(compatibility_fields)
-    response.update(_session_artifact_response_fields(state))
     # No-candidate routes (inspect, clarify) must not produce a
     # candidate outcome or candidate payload even in dev/delta paths.
     if _route_blocks_apply(state.route):
@@ -650,19 +835,68 @@ def _build_dev_success_response(
     else:
         has_candidate = True
         internal_outcome = TurnOutcome.edit()
+    public_outcome = public_outcome_from_turn_outcome(
+        internal_outcome,
+        response=None,
+    )
+    public_outcome_kind = public_outcome.get("kind") if isinstance(public_outcome, Mapping) else None
+    if _has_enough_grounded_facts_for_dev_narrative(state):
+        _prepare_narrative_artifact_paths(state)
+        try:
+            message = _narrate_final_message(
+                state,
+                context,
+                outcome=internal_outcome,
+                public_outcome=public_outcome_kind,
+                apply_eligibility=eligibility,
+            )
+            narrative_debug = _narrative_debug_fields(state)
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            LOGGER.warning("Narrative synthesis failed for dev success response: %s", exc)
+            message = state.user_message
+            narrative_debug = _legacy_narrative_debug_status(
+                "narrative_synthesis_error",
+                attempted=True,
+            )
+            narrative_debug["narrative"]["error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+    else:
+        message = state.user_message
+        narrative_debug = _legacy_narrative_debug_status("insufficient_grounded_facts")
+    _record_narrative_artifacts(state)
+    internal_outcome, public_outcome = _sync_narrated_clarify_outcome(
+        message,
+        internal_outcome=internal_outcome,
+        public_outcome=public_outcome,
+    )
+    response = success_envelope(
+        context,
+        message=message,
+        graph=state.ui_payload,
+        report=state.report,
+        artifacts=_response_artifacts_with_execution_plan(state),
+        apply_eligibility=eligibility,
+        canvas_apply_allowed=context.canvas_apply_allowed if plan_allows_candidate else False,
+        queue_allowed=context.queue_allowed if plan_allows_candidate else False,
+    )
+    response.update(compatibility_fields)
+    response.update(_session_artifact_response_fields(state))
     candidate_payload = _build_candidate_payload(
         state,
         compatibility_fields=compatibility_fields,
         has_candidate=has_candidate,
         turn_identity=turn_identity,
     )
+    public_outcome = public_outcome_from_turn_outcome(
+        internal_outcome,
+        response={"candidate": candidate_payload} if has_candidate else None,
+    )
     response.update(
         turn_envelope(
-            message=state.user_message,
-            outcome=public_outcome_from_turn_outcome(
-                internal_outcome,
-                response={"candidate": candidate_payload} if has_candidate else None,
-            ),
+            message=message,
+            outcome=public_outcome,
             candidate=candidate_payload,
             eligibility=eligibility,
             audit_ref=None,
@@ -672,6 +906,7 @@ def _build_dev_success_response(
                 "turn_identity": turn_identity.to_dict(),
                 "stage_snapshots": stage_snapshots,
                 "contract": contract,
+                **narrative_debug,
                 **_execution_plan_debug_fields(state),
             },
         )

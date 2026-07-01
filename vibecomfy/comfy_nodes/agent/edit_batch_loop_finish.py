@@ -3,6 +3,9 @@
 
 SOURCE = r'''
 
+        # Finish branches set the public state.user_message (deterministic text or
+        # a per-turn response), but the raw executor message is preserved in
+        # state.raw_executor_message from the intro and must not be overwritten.
         if clarify_message is not None:
             state.batch_exit_mode = (
                 _BATCH_EXIT_EDIT_CLARIFY

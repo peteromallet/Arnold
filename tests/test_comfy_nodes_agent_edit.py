@@ -31,7 +31,9 @@ from vibecomfy.comfy_nodes.agent.edit import (
     _safe_session_id,
     _stamped_message_outcome,
     _stamped_turn_response_outcome,
+    _synthesize_post_validation_narrative,
     _synthesize_batch_repl_message,
+    _validate_narrative_message,
     _write_turn_chat_artifact,
     _ws_send,
     handle_agent_edit,
@@ -6131,7 +6133,7 @@ def test_handle_agent_edit_batch_repl_done_commits_and_exposes_gate_c_summary(
     assert result["debug"]["turn_identity"] == result["candidate"]["turn_identity"]
     assert "audit_ref" not in result["debug"]
     assert result["debug"]["batch_repl"]["exit_mode"] == "done"
-    assert result["message"] == "Ready to commit the candidate."
+    assert result["message"] == "Updated SaveImage filename_prefix from before to after."
     assert result["done_summary"] not in result["message"]
     assert result["done_summary"].startswith("Gate A passed:")
     assert "Gate B passed:" in result["done_summary"]
@@ -6850,6 +6852,242 @@ def test_batch_repl_response_passing_execution_plan_keeps_queue_warning_candidat
     plan_entry = response["task_satisfaction"][0]
     assert plan_entry["check"] == "execution_plan"
     assert plan_entry["satisfaction"] == "pass"
+
+
+def test_batch_repl_response_uses_post_validation_narrative_and_exposes_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vibecomfy.comfy_nodes.agent import edit as agent_edit_module
+
+    state = _make_state(
+        graph={"nodes": []},
+        ui_payload={"nodes": [{"id": 1}]},
+        batch_exit_mode="done",
+        user_message="executor prose should stay non-public",
+        session_dir=tmp_path / "session",
+        turn_dir=tmp_path,
+        narrative_context_path=tmp_path / "narrative_context.json",
+        narrative_request_path=tmp_path / "narrative_request.json",
+        narrative_response_path=tmp_path / "narrative_response.json",
+        narrative_validation_path=tmp_path / "narrative_validation.json",
+        artifacts={},
+    )
+    context = TurnContext(session_id="narrative-batch", turn_id="0001")
+    for gate_name in context.gate_results:
+        context.set_gate(gate_name, True)
+
+    captured: dict[str, Any] = {}
+
+    def _fake_narrative(
+        state: AgentEditState,
+        context: TurnContext,
+        *,
+        outcome: TurnOutcome | None = None,
+        failure: FailureEnvelope | None = None,
+        public_outcome: str | None = None,
+        apply_eligibility: ApplyEligibility | None = None,
+    ) -> str:
+        del context, failure
+        captured["outcome_kind"] = outcome.kind if outcome is not None else None
+        captured["public_outcome"] = public_outcome
+        captured["apply_eligibility"] = (
+            apply_eligibility.to_dict() if apply_eligibility is not None else None
+        )
+        state.narrative_context_path.write_text("{}", encoding="utf-8")
+        state.narrative_request_path.write_text(
+            json.dumps({"attempted": False}, sort_keys=True),
+            encoding="utf-8",
+        )
+        state.narrative_response_path.write_text(
+            json.dumps({"selected_source": "fallback"}, sort_keys=True),
+            encoding="utf-8",
+        )
+        state.narrative_validation_path.write_text(
+            json.dumps(
+                {
+                    "attempted": False,
+                    "selected_source": "fallback",
+                    "fallback_reason": "deterministic_only",
+                    "final_validation": {"ok": True},
+                },
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        state.artifacts = {
+            **(state.artifacts or {}),
+            "narrative_context": str(state.narrative_context_path),
+            "narrative_request": str(state.narrative_request_path),
+            "narrative_response": str(state.narrative_response_path),
+            "narrative_validation": str(state.narrative_validation_path),
+        }
+        return "Narrated final message."
+
+    monkeypatch.setattr(
+        agent_edit_module,
+        "_narrate_final_message",
+        _fake_narrative,
+    )
+
+    response = agent_edit_module._build_batch_repl_response(state, context)
+
+    assert response["message"] == "Narrated final message."
+    assert response["internal_outcome"]["kind"] == "edit"
+    assert captured["outcome_kind"] == "edit"
+    assert captured["public_outcome"] == response["outcome"]["kind"]
+    assert captured["apply_eligibility"] == response["apply_eligibility"]
+    assert response["artifacts"]["narrative_context"] == str(state.narrative_context_path)
+    assert response["artifacts"]["narrative_request"] == str(state.narrative_request_path)
+    narrative_debug = response["debug"]["narrative"]
+    assert narrative_debug["attempted"] is False
+    assert narrative_debug["selected_source"] == "fallback"
+    assert narrative_debug["fallback_reason"] == "deterministic_only"
+    assert narrative_debug["final_validation_ok"] is True
+    assert (
+        narrative_debug["artifacts"]["narrative_validation"]["path"]
+        == str(state.narrative_validation_path)
+    )
+
+
+def test_validate_narrative_message_rejects_edit_contradictions() -> None:
+    validation = _validate_narrative_message(
+        "The graph is unchanged.",
+        narrative_context={
+            "outcome": {"internal_kind": "edit"},
+            "change": {"landed_operation_count": 1, "graph_changed": True},
+            "validation": {"passed": True},
+        },
+    )
+
+    assert validation["ok"] is False
+    assert "contradicts_edit_outcome" in validation["issues"]
+    assert "claims_no_edit_when_edits_landed" in validation["issues"]
+
+
+def test_validate_narrative_message_requires_clarify_question_shape() -> None:
+    validation = _validate_narrative_message(
+        "I need one more detail before continuing.",
+        narrative_context={
+            "outcome": {
+                "internal_kind": "clarify",
+                "clarification_question": "Which node should I change?",
+            },
+            "change": {"landed_operation_count": 0, "graph_changed": False},
+            "validation": {"passed": False},
+        },
+    )
+
+    assert validation["ok"] is False
+    assert "clarify_without_question" in validation["issues"]
+    assert "clarify_question_missing" in validation["issues"]
+
+
+def test_synthesize_post_validation_narrative_provider_failure_falls_back_and_persists_artifacts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_NARRATOR_ROUTE", "test-route")
+    monkeypatch.setenv("VIBECOMFY_NARRATOR_MODEL", "test-model")
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent.edit.run_model_turn",
+        lambda **_kwargs: (_ for _ in ()).throw(ProviderError("narrator provider offline")),
+    )
+
+    state = _make_state(
+        graph={"nodes": [{"id": 1, "type": "SaveImage"}]},
+        ui_payload={"nodes": [{"id": 1, "type": "SaveImage"}]},
+        batch_field_changes=(
+            FieldChange(uid="1", field_path="filename_prefix", old="before", new="after"),
+        ),
+        batch_exit_mode="done",
+        raw_executor_message="Executor raw success line that must stay non-public.",
+        session_dir=tmp_path / "session",
+        turn_dir=tmp_path / "turns" / "0001",
+        narrative_context_path=Path("narrative_context.json"),
+        narrative_request_path=Path("narrative_request.json"),
+        narrative_response_path=Path("narrative_response.json"),
+        narrative_validation_path=Path("narrative_validation.json"),
+        artifacts={},
+    )
+    state.turn_dir.mkdir(parents=True, exist_ok=True)
+    context = TurnContext(session_id="narrative-provider-failure", turn_id="0001")
+    for gate_name in context.gate_results:
+        context.set_gate(gate_name, True)
+
+    message = _synthesize_post_validation_narrative(
+        state,
+        context,
+        outcome=TurnOutcome.edit(changes=state.batch_field_changes),
+        public_outcome="candidate",
+    )
+
+    assert "after" in message
+    assert message != state.raw_executor_message
+    assert state.artifacts == {
+        "narrative_context": str(state.turn_dir / "narrative_context.json"),
+        "narrative_request": str(state.turn_dir / "narrative_request.json"),
+        "narrative_response": str(state.turn_dir / "narrative_response.json"),
+        "narrative_validation": str(state.turn_dir / "narrative_validation.json"),
+    }
+
+    request_payload = json.loads((state.turn_dir / "narrative_request.json").read_text(encoding="utf-8"))
+    validation_payload = json.loads(
+        (state.turn_dir / "narrative_validation.json").read_text(encoding="utf-8")
+    )
+    assert request_payload["attempted"] is True
+    assert request_payload["raw_executor_message"] == state.raw_executor_message
+    assert validation_payload["fallback_reason"] == "provider_failure"
+    assert validation_payload["selected_source"] == "fallback"
+    assert validation_payload["final_validation"]["ok"] is True
+
+
+def test_synthesize_post_validation_narrative_malformed_response_falls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_NARRATOR_ROUTE", "test-route")
+    monkeypatch.setattr(
+        "vibecomfy.comfy_nodes.agent.edit.run_model_turn",
+        lambda **_kwargs: {"json": {}},
+    )
+
+    state = _make_state(
+        graph={"nodes": [{"id": 1, "type": "SaveImage"}]},
+        ui_payload={"nodes": [{"id": 1, "type": "SaveImage"}]},
+        batch_field_changes=(
+            FieldChange(uid="1", field_path="filename_prefix", old="before", new="after"),
+        ),
+        batch_exit_mode="done",
+        raw_executor_message="Executor malformed narrator fallback sentinel.",
+        session_dir=tmp_path / "session",
+        turn_dir=tmp_path / "turns" / "0001",
+        narrative_context_path=Path("narrative_context.json"),
+        narrative_request_path=Path("narrative_request.json"),
+        narrative_response_path=Path("narrative_response.json"),
+        narrative_validation_path=Path("narrative_validation.json"),
+        artifacts={},
+    )
+    state.turn_dir.mkdir(parents=True, exist_ok=True)
+    context = TurnContext(session_id="narrative-malformed-response", turn_id="0001")
+    for gate_name in context.gate_results:
+        context.set_gate(gate_name, True)
+
+    message = _synthesize_post_validation_narrative(
+        state,
+        context,
+        outcome=TurnOutcome.edit(changes=state.batch_field_changes),
+        public_outcome="candidate",
+    )
+
+    validation_payload = json.loads(
+        (state.turn_dir / "narrative_validation.json").read_text(encoding="utf-8")
+    )
+    assert "after" in message
+    assert message != state.raw_executor_message
+    assert validation_payload["fallback_reason"] == "malformed_response"
+    assert validation_payload["selected_source"] == "fallback"
+    assert validation_payload["error"]["type"] == "MissingRequiredField"
 
 
 def test_dev_success_response_failed_execution_plan_has_no_candidate(tmp_path: Path) -> None:
@@ -12733,11 +12971,10 @@ def test_handle_agent_edit_empty_sd15_workflow_reaches_provider_with_seed_signat
     assert "Never respond with only a fenced block" in system_prompt
     assert result["ok"] is True
     assert result["outcome"]["kind"] == "candidate"
-    assert result["message"] == (
-        "I created a standard SD1.5 text-to-image workflow with a "
-        "CheckpointLoaderSimple, positive and negative CLIPTextEncode nodes, "
-        "an EmptyLatentImage, KSampler, VAEDecode, and SaveImage."
-    )
+    assert result["message"].startswith("Added CheckpointLoaderSimple")
+    assert "KSampler" in result["message"]
+    assert "VAEDecode" in result["message"]
+    assert "SaveImage" in result["message"]
     assert result["apply_allowed"] is True
     assert result["candidate"] is not None
     assert len(result["candidate"]["graph"]["nodes"]) == 7

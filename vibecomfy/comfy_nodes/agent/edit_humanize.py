@@ -562,6 +562,629 @@ def _change_details_payload(state: AgentEditState, context: TurnContext) -> dict
     }
 
 
+_NARRATIVE_GATE_JARGON_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bGate\s+[AB]\b", re.I),
+    re.compile(r"\bidentity verified\b", re.I),
+    re.compile(r"\bplan_validate_ok\b", re.I),
+    re.compile(r"\bqueue_validate_ok\b", re.I),
+    re.compile(r"\bui_fidelity_ok\b", re.I),
+    re.compile(r"\bir_validate_ok\b", re.I),
+    re.compile(r"\bstate_match_ok\b", re.I),
+    re.compile(r"\bedit_scope_ok\b", re.I),
+    re.compile(r"\bpython_load_ok\b", re.I),
+)
+
+_NARRATIVE_EDIT_CLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(applied|changed|updated|edited|rewired|connected|disconnected|added|removed)\b", re.I),
+)
+
+_NARRATIVE_NO_EDIT_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(no (?:change|changes|edit|edits|updates?) needed|unchanged|left the graph unchanged|nothing needed changing)\b", re.I),
+)
+
+_NARRATIVE_VALIDATION_PASS_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(validation (?:passed|succeeded)|valid(?:ated)?|ready to apply|safe to apply)\b", re.I),
+)
+
+_NARRATIVE_VALIDATION_FAIL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(validation (?:failed|error|errors|issue|issues)|invalid|blocked by validation)\b", re.I),
+)
+
+_NARRATIVE_QUESTION_START = re.compile(
+    r"^\s*(?:what|which|where|when|why|how|who|whom|whose|should|would|could|can|do|does|did|is|are|am|will|won't)\b",
+    re.I,
+)
+
+_NARRATIVE_COUNT_PATTERN = re.compile(
+    r"\b(\d+)\s+(?:landed\s+)?(?:edit|edits|operation|operations|change|changes)\b",
+    re.I,
+)
+
+_NARRATOR_RESPONSE_REQUIRED_FIELD = "message"
+
+
+def _narrator_system_message() -> str:
+    return (
+        "You write the final user-facing status line for a completed agent-edit turn. "
+        "Use only the provided structured facts. Do not invent edits, validation status, "
+        "or apply readiness. Do not mention internal gate labels. Return JSON with a "
+        'single string field named "message".'
+    )
+
+
+def _narrator_user_message(
+    *,
+    narrative_context: Mapping[str, Any],
+    raw_executor_message: str,
+    fallback_message: str,
+) -> str:
+    request_payload = {
+        "instructions": {
+            "style": "One or two concise sentences.",
+            "must_include": [
+                "Describe what actually happened after validation.",
+                "Ask a direct question when the outcome requires clarification.",
+            ],
+            "must_avoid": [
+                "Internal gate jargon",
+                "Contradicting the landed edit count or validation outcome",
+            ],
+        },
+        "raw_executor_message": raw_executor_message[:240],
+        "fallback_message": fallback_message,
+        "narrative_context": narrative_context,
+    }
+    return (
+        "Return a JSON object with the final public message for this agent-edit turn.\n"
+        + json.dumps(_json_safe(request_payload), indent=2, sort_keys=True)
+    )
+
+
+def _narrator_message_from_response(response: Mapping[str, Any]) -> str:
+    response_json = response.get("json")
+    if not isinstance(response_json, Mapping):
+        raise MalformedModelJSON("Narrator response must include a JSON object.")
+    message = response_json.get(_NARRATOR_RESPONSE_REQUIRED_FIELD)
+    if not isinstance(message, str) or not message.strip():
+        raise MissingRequiredField(
+            'Narrator JSON must include non-empty string key "message".'
+        )
+    return message.strip()
+
+
+def _narrative_issue_summary(issue: Any) -> str:
+    if isinstance(issue, Mapping):
+        for key in ("summary", "message", "diagnostic", "reason", "code"):
+            value = issue.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    text = " ".join(str(issue).split())
+    return text[:160] if text else ""
+
+
+def _narrative_issue_payloads(issues: Any, *, limit: int = 3) -> list[dict[str, Any]]:
+    if not isinstance(issues, (list, tuple)):
+        return []
+    payloads: list[dict[str, Any]] = []
+    for issue in issues:
+        summary = _narrative_issue_summary(issue)
+        if not summary:
+            continue
+        code = ""
+        if isinstance(issue, Mapping):
+            raw_code = issue.get("code") or issue.get("kind") or issue.get("severity")
+            if isinstance(raw_code, str):
+                code = raw_code.strip()
+        payload = {"summary": summary}
+        if code:
+            payload["code"] = code
+        payloads.append(payload)
+        if len(payloads) >= limit:
+            break
+    return payloads
+
+
+def _narrative_stage_payload(result: StageResult | None) -> dict[str, Any] | None:
+    if not isinstance(result, StageResult):
+        return None
+    payload = {
+        "ok": result.ok,
+        "blocking": result.blocking,
+        "issues": _narrative_issue_payloads(result.issues),
+    }
+    if result.duration_ms is not None:
+        payload["duration_ms"] = result.duration_ms
+    return payload
+
+
+def _validation_summary_payload(context: TurnContext) -> dict[str, Any]:
+    gate_snapshot = context.gate_snapshot()
+    plan_gate = gate_snapshot.get("plan_validate_ok")
+    return {
+        "passed": bool(
+            gate_snapshot.get("ir_validate_ok")
+            and gate_snapshot.get("queue_validate_ok")
+            and gate_snapshot.get("ui_load_safe_ok")
+            and (plan_gate is not False)
+        ),
+        "canvas_apply_allowed": context.canvas_apply_allowed,
+        "queue_allowed": context.queue_allowed,
+        "gates": {
+            "python_load_ok": gate_snapshot.get("python_load_ok"),
+            "ir_validate_ok": gate_snapshot.get("ir_validate_ok"),
+            "ui_load_safe_ok": gate_snapshot.get("ui_load_safe_ok"),
+            "queue_validate_ok": gate_snapshot.get("queue_validate_ok"),
+            "plan_validate_ok": plan_gate,
+            "state_match_ok": gate_snapshot.get("state_match_ok"),
+        },
+        "stages": {
+            "lower": _narrative_stage_payload(context.stage_results.get("lower")),
+            "validate": _narrative_stage_payload(context.stage_results.get("validate")),
+            "queue": _narrative_stage_payload(context.stage_results.get("queue")),
+        },
+    }
+
+
+def _narrative_research_payload(state: AgentEditState) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    summary = " ".join((state.executor_research_summary or "").split())
+    if summary:
+        payload["summary"] = summary[:240]
+    warnings = [str(item).strip() for item in state.executor_research_warnings if str(item).strip()]
+    if warnings:
+        payload["warnings"] = warnings[:3]
+    plan = state.execution_plan
+    if plan is not None:
+        plan_id = getattr(plan, "plan_id", None)
+        if isinstance(plan_id, str) and plan_id.strip():
+            payload["plan_id"] = plan_id.strip()
+    return payload
+
+
+def _narrative_revision_payload(state: AgentEditState) -> dict[str, Any]:
+    evidence = state.revision_evidence
+    scoped = evidence.scoped_diff if evidence is not None else None
+    if evidence is None and scoped is None:
+        return {}
+    payload: dict[str, Any] = {}
+    candidate_eligible = getattr(evidence, "candidate_eligible", None)
+    if candidate_eligible is None and scoped is not None:
+        candidate_eligible = getattr(scoped, "candidate_eligible", None)
+    if candidate_eligible is not None:
+        payload["candidate_eligible"] = bool(candidate_eligible)
+    blockers = ()
+    if scoped is not None:
+        blockers = getattr(scoped, "eligibility_blockers", ()) or ()
+    elif evidence is not None:
+        blockers = getattr(evidence, "eligibility_blockers", ()) or ()
+    blocker_list = [str(item).strip() for item in blockers if str(item).strip()]
+    if blocker_list:
+        payload["eligibility_blockers"] = blocker_list[:4]
+    readiness = getattr(evidence, "readiness", None) if evidence is not None else None
+    readiness_blockers = getattr(readiness, "readiness_blockers", ()) if readiness is not None else ()
+    readiness_list = [str(item).strip() for item in readiness_blockers if str(item).strip()]
+    if readiness_list:
+        payload["readiness_blockers"] = readiness_list[:3]
+    topology = getattr(evidence, "topology", None) if evidence is not None else None
+    mismatches = getattr(topology, "socket_type_mismatches", ()) if topology is not None else ()
+    mismatch_payloads = _narrative_issue_payloads(mismatches, limit=3)
+    if mismatch_payloads:
+        payload["socket_type_mismatches"] = mismatch_payloads
+    return payload
+
+
+def _compact_change_details_payload(change_details: Mapping[str, Any]) -> dict[str, Any]:
+    operations = change_details.get("operations")
+    compact_operations: list[dict[str, Any]] = []
+    if isinstance(operations, list):
+        for item in operations[:5]:
+            if not isinstance(item, Mapping):
+                continue
+            compact_item = {
+                "uid": item.get("uid"),
+                "field_path": item.get("field_path"),
+                "summary": item.get("summary"),
+            }
+            compact_operations.append(_json_safe(compact_item))
+    payload = {
+        "landed_operation_count": int(change_details.get("landed_operation_count") or 0),
+        "done_summary": str(change_details.get("done_summary") or "").strip(),
+        "final_summary": str(change_details.get("final_summary") or "").strip(),
+        "operations": compact_operations,
+    }
+    if "gate_a" in change_details:
+        payload["gate_a"] = _json_safe(change_details.get("gate_a"))
+    if "gate_b" in change_details:
+        payload["gate_b"] = _json_safe(change_details.get("gate_b"))
+    return payload
+
+
+def _narrative_context_payload(
+    state: AgentEditState,
+    context: TurnContext,
+    *,
+    outcome: TurnOutcome | None = None,
+    failure: FailureEnvelope | None = None,
+    public_outcome: str | None = None,
+    apply_eligibility: ApplyEligibility | None = None,
+    change_details: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if change_details is None:
+        change_details = _change_details_payload(state, context)
+    compact_change_details = _compact_change_details_payload(change_details)
+    landed_operation_count = int(compact_change_details.get("landed_operation_count") or 0)
+    graph_changed = bool(_batch_candidate_graph_changed(state) or landed_operation_count > 0)
+    internal_kind = outcome.kind if outcome is not None else ("failure" if failure is not None else "unknown")
+    if apply_eligibility is None:
+        apply_eligibility = context.apply_eligibility
+    validation = _validation_summary_payload(context)
+    payload: dict[str, Any] = {
+        "task": " ".join((state.task or "").split())[:240],
+        "route": state.route or "",
+        "outcome": {
+            "internal_kind": internal_kind,
+            "public_kind": public_outcome or "",
+            "batch_exit_mode": state.batch_exit_mode or "",
+            "clarification_question": (
+                outcome.question.strip()
+                if outcome is not None and isinstance(outcome.question, str) and outcome.question.strip()
+                else ""
+            ),
+        },
+        "change": {
+            "graph_changed": graph_changed,
+            "landed_operation_count": landed_operation_count,
+            "operations": compact_change_details.get("operations", []),
+        },
+        "validation": validation,
+        "apply_eligibility": apply_eligibility.to_dict(),
+        "change_details": compact_change_details,
+        "diagnostics": {
+            "delta": _narrative_issue_payloads(state.delta_diagnostics),
+            "lowering": _narrative_issue_payloads(state.lowering_evidence),
+        },
+        "research": _narrative_research_payload(state),
+        "revision": _narrative_revision_payload(state),
+    }
+    if failure is not None:
+        payload["failure"] = {
+            "kind": failure.kind.value,
+            "stage": failure.stage,
+            "retryable": failure.retryable,
+            "graph_unchanged": failure.graph_unchanged,
+            "next_action": failure.next_action,
+            "message": " ".join((failure.user_facing_message or "").split())[:240],
+        }
+    return _json_safe(payload)
+
+
+def _fallback_narrative_message(
+    state: AgentEditState,
+    *,
+    outcome: TurnOutcome | None = None,
+    failure: FailureEnvelope | None = None,
+    narrative_context: Mapping[str, Any] | None = None,
+    fallback_reason: str | None = None,
+) -> str:
+    if failure is not None:
+        if state.batch_exit_mode == _BATCH_EXIT_BUDGET or failure.kind is FailureKind.BATCH_BUDGET_EXHAUSTED:
+            warning = ensure_sentence_message(
+                "I ran out of turn budget before completing the remaining changes",
+                fallback=state.batch_final_summary or failure.user_facing_message,
+            )
+        else:
+            warning = ensure_sentence_message(
+                failure.user_facing_message,
+                fallback=failure.message or "The graph is unchanged.",
+            )
+        lead = _landed_edit_lead(state)
+        if lead:
+            return f"{lead} {warning}".strip()
+        return warning
+
+    if outcome is None:
+        return ensure_sentence_message(state.user_message, fallback="The agent edit turn completed.")
+
+    if outcome.kind == "edit":
+        message = _humanized_edit_message(state)
+        if fallback_reason in {"provider_failure", "malformed_response", "refused_narrative", "timeout"}:
+            return ensure_sentence_message(message, fallback="The candidate is ready to review.")
+        return message
+    if outcome.kind == "edit+clarify":
+        question = (
+            outcome.question.strip()
+            if isinstance(outcome.question, str) and outcome.question.strip()
+            else "What detail should I use before continuing?"
+        )
+        lead = _landed_edit_lead(state)
+        if lead:
+            return f"{lead} {ensure_sentence_message(question, fallback=question)}".strip()
+        return ensure_sentence_message(question, fallback="What detail should I use before continuing?")
+    if outcome.kind == "clarify":
+        question = (
+            outcome.question.strip()
+            if isinstance(outcome.question, str) and outcome.question.strip()
+            else "What detail should I use before continuing?"
+        )
+        return ensure_sentence_message(question, fallback="What detail should I use before continuing?")
+    if outcome.kind == "noop":
+        return _humanized_noop_message(state)
+    if outcome.kind == "budget":
+        return ensure_sentence_message(
+            "I ran out of turn budget before completing the remaining changes",
+            fallback=state.batch_final_summary or state.user_message,
+        )
+
+    if narrative_context is not None:
+        change = narrative_context.get("change")
+        if isinstance(change, Mapping) and int(change.get("landed_operation_count") or 0) > 0:
+            return _humanized_edit_message(state)
+    return ensure_sentence_message(state.user_message, fallback="The agent edit turn completed.")
+
+
+def _validate_narrative_message(
+    message: Any,
+    *,
+    narrative_context: Mapping[str, Any],
+) -> dict[str, Any]:
+    text = " ".join(str(message or "").split())
+    issues: list[str] = []
+    if not text:
+        issues.append("empty_message")
+        return {"ok": False, "message": "", "issues": issues}
+
+    lowered = text.lower()
+    for pattern in _NARRATIVE_GATE_JARGON_PATTERNS:
+        if pattern.search(text):
+            issues.append("exposed_gate_jargon")
+            break
+
+    outcome_payload = narrative_context.get("outcome")
+    change_payload = narrative_context.get("change")
+    validation_payload = narrative_context.get("validation")
+    internal_kind = outcome_payload.get("internal_kind") if isinstance(outcome_payload, Mapping) else ""
+    question = outcome_payload.get("clarification_question") if isinstance(outcome_payload, Mapping) else ""
+    landed_operation_count = (
+        int(change_payload.get("landed_operation_count") or 0)
+        if isinstance(change_payload, Mapping)
+        else 0
+    )
+    graph_changed = bool(change_payload.get("graph_changed")) if isinstance(change_payload, Mapping) else False
+    validation_passed = bool(validation_payload.get("passed")) if isinstance(validation_payload, Mapping) else False
+
+    claims_edit = any(pattern.search(text) for pattern in _NARRATIVE_EDIT_CLAIM_PATTERNS)
+    claims_no_edit = any(pattern.search(text) for pattern in _NARRATIVE_NO_EDIT_PATTERNS)
+    if internal_kind in {"edit", "edit+clarify"}:
+        if claims_no_edit:
+            issues.append("contradicts_edit_outcome")
+        if landed_operation_count <= 0 or not graph_changed:
+            issues.append("edit_outcome_without_landed_operations")
+    else:
+        if claims_edit:
+            issues.append("contradicts_no_edit_outcome")
+
+    if landed_operation_count <= 0 and claims_edit:
+        issues.append("claims_landed_edits_when_none_landed")
+    if landed_operation_count > 0 and claims_no_edit:
+        issues.append("claims_no_edit_when_edits_landed")
+
+    for match in _NARRATIVE_COUNT_PATTERN.finditer(text):
+        claimed_count = int(match.group(1))
+        if claimed_count != landed_operation_count:
+            issues.append("incorrect_landed_operation_count")
+            break
+
+    if validation_passed:
+        if any(pattern.search(text) for pattern in _NARRATIVE_VALIDATION_FAIL_PATTERNS):
+            issues.append("contradicts_validation_success")
+    else:
+        if any(pattern.search(text) for pattern in _NARRATIVE_VALIDATION_PASS_PATTERNS):
+            issues.append("contradicts_validation_failure")
+
+    if internal_kind in {"clarify", "edit+clarify"}:
+        has_question_shape = "?" in text or bool(_NARRATIVE_QUESTION_START.search(text))
+        if not has_question_shape:
+            issues.append("clarify_without_question")
+        if isinstance(question, str) and question.strip() and question.strip("?").lower() not in lowered:
+            issues.append("clarify_question_missing")
+
+    return {
+        "ok": not issues,
+        "message": text,
+        "issues": issues,
+    }
+
+
+def _narrative_artifact_path(state: AgentEditState, path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return state.turn_dir / path
+
+
+def _synthesize_post_validation_narrative(
+    state: AgentEditState,
+    context: TurnContext,
+    *,
+    outcome: TurnOutcome | None = None,
+    failure: FailureEnvelope | None = None,
+    public_outcome: str | None = None,
+    apply_eligibility: ApplyEligibility | None = None,
+    change_details: Mapping[str, Any] | None = None,
+) -> str:
+    if change_details is None:
+        change_details = _change_details_payload(state, context)
+    context_path = _narrative_artifact_path(state, state.narrative_context_path)
+    request_path = _narrative_artifact_path(state, state.narrative_request_path)
+    response_path = _narrative_artifact_path(state, state.narrative_response_path)
+    validation_path = _narrative_artifact_path(state, state.narrative_validation_path)
+    state.narrative_context_path = context_path
+    state.narrative_request_path = request_path
+    state.narrative_response_path = response_path
+    state.narrative_validation_path = validation_path
+    narrative_context = _narrative_context_payload(
+        state,
+        context,
+        outcome=outcome,
+        failure=failure,
+        public_outcome=public_outcome,
+        apply_eligibility=apply_eligibility,
+        change_details=change_details,
+    )
+    write_json_artifact(context_path, narrative_context)
+
+    route = os.getenv("VIBECOMFY_NARRATOR_ROUTE") or None
+    model = os.getenv("VIBECOMFY_NARRATOR_MODEL") or None
+    fallback_message = _fallback_narrative_message(
+        state,
+        outcome=outcome,
+        failure=failure,
+        narrative_context=narrative_context,
+    )
+    final_message = fallback_message
+    fallback_reason = "deterministic_only"
+    attempted = bool(route or model)
+    raw_executor_message = " ".join((state.raw_executor_message or "").split())
+    request_payload: dict[str, Any] = {
+        "attempted": attempted,
+        "route": route,
+        "model": model,
+        "response_contract": "json",
+        "raw_executor_message": raw_executor_message[:240],
+    }
+    response_payload: dict[str, Any] = {
+        "attempted": attempted,
+        "selected_source": "fallback",
+        "selected_message": fallback_message,
+    }
+    validation_payload: dict[str, Any]
+
+    if attempted:
+        messages = [
+            {"role": "system", "content": _narrator_system_message()},
+            {
+                "role": "user",
+                "content": _narrator_user_message(
+                    narrative_context=narrative_context,
+                    raw_executor_message=raw_executor_message,
+                    fallback_message=fallback_message,
+                ),
+            },
+        ]
+        request_payload["messages"] = messages
+        write_json_artifact(request_path, request_payload)
+        try:
+            narrator_response = run_model_turn(
+                task="Write the final post-validation narrative message.",
+                messages=messages,
+                route=route,
+                model=model,
+                response_contract="json",
+                profiling_context={
+                    "surface": "agent_edit_narrator",
+                    "session_dir": str(state.session_dir),
+                    "turn_dir": str(state.turn_dir),
+                },
+            )
+            response_payload["provider_response"] = _json_safe(dict(narrator_response))
+            candidate_message = _narrator_message_from_response(narrator_response)
+            candidate_validation = _validate_narrative_message(
+                candidate_message,
+                narrative_context=narrative_context,
+            )
+            response_payload["candidate_message"] = candidate_message
+            if candidate_validation.get("ok"):
+                final_message = candidate_validation["message"]
+                fallback_reason = ""
+                response_payload["selected_source"] = "narrator"
+                response_payload["selected_message"] = final_message
+                validation_payload = {
+                    "attempted": True,
+                    "selected_source": "narrator",
+                    "selected_message": final_message,
+                    "candidate_validation": candidate_validation,
+                }
+            else:
+                fallback_reason = "refused_narrative"
+                response_payload["selected_message"] = fallback_message
+                response_payload["fallback_reason"] = fallback_reason
+                validation_payload = {
+                    "attempted": True,
+                    "selected_source": "fallback",
+                    "selected_message": fallback_message,
+                    "candidate_validation": candidate_validation,
+                    "fallback_reason": fallback_reason,
+                }
+        except TimeoutError as exc:
+            fallback_reason = "timeout"
+            response_payload["error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            response_payload["fallback_reason"] = fallback_reason
+            validation_payload = {
+                "attempted": True,
+                "selected_source": "fallback",
+                "selected_message": fallback_message,
+                "fallback_reason": fallback_reason,
+                "error": response_payload["error"],
+            }
+        except (MalformedModelJSON, MissingRequiredField) as exc:
+            fallback_reason = "malformed_response"
+            response_payload["error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            response_payload["fallback_reason"] = fallback_reason
+            validation_payload = {
+                "attempted": True,
+                "selected_source": "fallback",
+                "selected_message": fallback_message,
+                "fallback_reason": fallback_reason,
+                "error": response_payload["error"],
+            }
+        except ProviderError as exc:
+            fallback_reason = "provider_failure"
+            response_payload["error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+            response_payload["fallback_reason"] = fallback_reason
+            validation_payload = {
+                "attempted": True,
+                "selected_source": "fallback",
+                "selected_message": fallback_message,
+                "fallback_reason": fallback_reason,
+                "error": response_payload["error"],
+            }
+    else:
+        request_payload["skip_reason"] = "narrator_env_unset"
+        write_json_artifact(request_path, request_payload)
+        response_payload["skip_reason"] = "narrator_env_unset"
+        validation_payload = {
+            "attempted": False,
+            "selected_source": "fallback",
+            "selected_message": fallback_message,
+            "fallback_reason": fallback_reason,
+        }
+
+    final_validation = _validate_narrative_message(
+        final_message,
+        narrative_context=narrative_context,
+    )
+    validation_payload["final_validation"] = final_validation
+    response_payload["selected_message"] = final_message
+    write_json_artifact(response_path, response_payload)
+    write_json_artifact(validation_path, validation_payload)
+    state.artifacts = {
+        **(state.artifacts or {}),
+        "narrative_context": str(context_path),
+        "narrative_request": str(request_path),
+        "narrative_response": str(response_path),
+        "narrative_validation": str(validation_path),
+    }
+    return final_message
+
+
 def _batch_warning_sentence(
     state: AgentEditState,
     *,
