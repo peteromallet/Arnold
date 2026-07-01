@@ -58,6 +58,28 @@ class ShippedPipelineInfo:
 # Mapping from final package path (relative to repo root) to discovery metadata.
 # This table is the source of truth for Phase 3; it is consumed by the inventory
 # scanner in ``scripts/check_workflow_pipeline_inventory.py``.
+#
+# === M3 Migration Inventory (2026-07-01) ===
+#
+# Eight active packages with explicit native migration status:
+#
+#   Megaplan-owned (arnold_pipelines.megaplan.pipelines.*):
+#     1. creative          → arnold_pipelines.megaplan.pipelines.creative          [native, migrated]
+#     2. doc               → arnold_pipelines.megaplan.pipelines.doc               [native, migrated]
+#     3. jokes             → arnold_pipelines.megaplan.pipelines.jokes             [native, migrated]
+#     4. live_supervisor   → arnold_pipelines.megaplan.pipelines.live_supervisor   [native, migrated]
+#     5. select_tournament → arnold_pipelines.megaplan.pipelines.select_tournament [native, migrated]
+#     6. writing_panel_strict → arnold_pipelines.megaplan.pipelines.writing_panel_strict [native, migrated]
+#
+#   Standalone (arnold.pipelines.*):
+#     7. folder_audit      → arnold.pipelines.folder_audit      [native, pending M3 promotion]
+#     8. deliberation      → arnold.pipelines.deliberation      [native, pending M3 promotion]
+#
+#   Archive/Delete — not migrated (no active callers found):
+#     - epic_blitz: archived; delete if no active evidence by M4.
+#       See entries at arnold_pipelines/megaplan/pipelines/epic_blitz.py
+#       and arnold_pipelines/megaplan/pipelines/epic-blitz.
+#
 _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
     # Survivors (migrate)
     "arnold_pipelines/megaplan": {
@@ -169,6 +191,7 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": None,
         "disposition": "delete",
         "migrated": False,
+        "diagnostic": "M3: legacy ephemeral epic_blitz source; delete per M3 bridge narrowing.",
     },
     "arnold/pipelines/megaplan/pipelines/select_tournament": {
         "id": "legacy.megaplan.select_tournament",
@@ -193,6 +216,11 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": None,
         "disposition": "archive",
         "migrated": False,
+        "diagnostic": (
+            "M3: pending promotion to standalone arnold.pipelines.folder_audit "
+            "with native contract. Currently archived legacy; will transition to "
+            "migrate disposition when package is promoted."
+        ),
     },
     "arnold_pipelines/evidence_pack": {
         "id": "evidence_pack_verifier",
@@ -220,6 +248,10 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "disposition": "archive",
         "migrated": False,
         "builder_contract": "native",
+        "diagnostic": (
+            "M3: archive/delete — no active callers found. "
+            "Not migrated. Delete if no active evidence appears by M4."
+        ),
     },
     "arnold_pipelines/megaplan/pipelines/epic-blitz": {
         "id": "megaplan.epic_blitz",
@@ -228,6 +260,10 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": "arnold_pipelines/megaplan/pipelines/epic-blitz/SKILL.md",
         "disposition": "archive",
         "migrated": False,
+        "diagnostic": (
+            "M3: archive/delete — no active callers. "
+            "Not migrated. Delete if no active evidence appears by M4."
+        ),
     },
     # Deletes (legacy duplicates)
     "arnold/pipelines/jokes": {
@@ -325,6 +361,7 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": None,
         "disposition": "archive",
         "migrated": False,
+        "diagnostic": "M3: legacy epic_blitz path; archive/delete, not migrated unless active callers found.",
     },
     "arnold/pipelines/deliberation": {
         "id": "legacy.deliberation",
@@ -333,6 +370,11 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": None,
         "disposition": "archive",
         "migrated": False,
+        "diagnostic": (
+            "M3: pending promotion to standalone arnold.pipelines.deliberation "
+            "with native contract. Currently archived legacy; will transition to "
+            "migrate disposition when package is promoted."
+        ),
     },
     "arnold/pipelines/_deliberation_example": {
         "id": "legacy._deliberation_example",
