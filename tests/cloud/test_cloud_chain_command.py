@@ -17,6 +17,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _chain_anchor_uploads,
     _chain_project_root,
     _chain_start_command,
+    _cloud_chains_command,
     _derive_chain_launch_context,
     _durable_megaplan_uploads,
     _derive_bootstrap_session_name,
@@ -216,7 +217,10 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     uploaded_remote_paths = {remote for _local, remote in provider.uploads}
     remote_spec = next(path for path in uploaded_remote_paths if path.endswith("/.megaplan/initiatives/demo/chain.yaml"))
     assert "/workspace/demo-" in remote_spec
-    assert any(marker["remote_spec"] == remote_spec for marker in provider.markers.values())
+    marker = next(marker for marker in provider.markers.values() if marker["remote_spec"] == remote_spec)
+    assert marker["run_kind"] == "chain"
+    assert "python -P -m arnold_pipelines.megaplan chain start" in marker["relaunch_command"]
+    assert f"--spec {remote_spec}" in marker["relaunch_command"]
     assert remote_spec in provider.remote_files
 
 
@@ -630,12 +634,21 @@ def test_latest_failure_summary_bubbles_plan_state_message() -> None:
 
 
 class _StatusProvider:
-    def __init__(self, *, remote_spec: str, chain_yaml: str, chain_state: dict, plan_status: dict) -> None:
+    def __init__(
+        self,
+        *,
+        remote_spec: str,
+        chain_yaml: str,
+        chain_state: dict,
+        plan_status: dict,
+        runner_probe: str = "dead\n",
+    ) -> None:
         self.remote_spec = remote_spec
         self.state_path = str(chain_module._state_path_for(Path(remote_spec)))
         self.chain_yaml = chain_yaml
         self.chain_state = chain_state
         self.plan_status = plan_status
+        self.runner_probe = runner_probe
 
     def read_remote_file(self, path: str) -> str:
         if path == self.remote_spec:
@@ -651,7 +664,7 @@ class _StatusProvider:
 
     def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
         if "tmux has-session" in command:
-            return subprocess.CompletedProcess([], 0, "dead\n", "")
+            return subprocess.CompletedProcess([], 0, self.runner_probe, "")
         if command.startswith("stat "):
             return subprocess.CompletedProcess([], 0, "unavailable\n", "")
         if "verify-human" in command:
@@ -707,3 +720,58 @@ def test_cloud_chain_status_payload_exposes_plan_latest_failure() -> None:
 
     assert payload["latest_failure"]["message"] == "Claude routes through Shannon, but bun is missing"
     assert payload["plan_status"] == plan_status
+
+
+def test_cloud_chain_status_payload_treats_live_process_as_alive_runner() -> None:
+    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
+    chain_yaml = (
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: idea.md\n"
+    )
+    chain_state = chain_module.ChainState(
+        current_milestone_index=0,
+        current_plan_name="milestone-demo",
+        last_state="prepped",
+        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+        chain_session="megaplan-chain-demo",
+    ).to_dict()
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets=[],
+        ssh=SshSpec(host="testhost"),
+    )
+
+    payload = cloud_chain_status_payload(
+        Path("/repo"),
+        argparse.Namespace(remote_spec=remote_spec, cloud_yaml=None),
+        spec,
+        _StatusProvider(
+            remote_spec=remote_spec,
+            chain_yaml=chain_yaml,
+            chain_state=chain_state,
+            plan_status={"status": "running"},
+            runner_probe="process_alive\n",
+        ),
+    )
+
+    assert payload["runner"]["status"] == "alive"
+    assert payload["runner"]["tmux_status"] == "missing"
+    assert payload["runner"]["process_status"] == "alive"
+    assert payload["effective_status"] == "running"
+
+
+def test_cloud_chains_command_lists_marker_only_live_process_sessions() -> None:
+    script = _cloud_chains_command()
+
+    assert "marker_dir.glob(\"*.json\")" in script
+    assert "process_status" in script
+    assert "tmux_status" in script
+    assert "arnold_pipelines.megaplan chain start" in script
+    assert '"status"] = "running" if payload["tmux_status"] == "alive" or payload["process_status"] == "alive"' in script

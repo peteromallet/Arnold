@@ -2555,6 +2555,14 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         "remote_spec": launch_ctx.remote_spec_path,
         "identity_digest": launch_ctx.digest,
         "chain_slug": launch_ctx.slug,
+        "run_kind": "chain",
+        "relaunch_command": _refresh_then_chain_start_command(
+            remote_spec_path,
+            spec=launch_spec,
+            project_dir=launch_ctx.workspace,
+            log_relative=launch_ctx.log_relative,
+            no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
+        ),
         "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
         "editable_source_head": (
             editable_install_sync.get("editable_head")
@@ -3158,24 +3166,54 @@ def _cloud_chains_command() -> str:
 import json, pathlib, subprocess
 marker_dir = pathlib.Path({_CHAIN_SESSION_MARKER_DIR!r})
 proc = subprocess.run(["tmux", "list-sessions", "-F", "#S"], text=True, capture_output=True)
-sessions = []
+sessions_by_name = {{}}
+tmux_names = set()
+
+def _process_status(remote_spec):
+    if not remote_spec:
+        return "unknown"
+    ps = subprocess.run(["ps", "-eww", "-o", "args="], text=True, capture_output=True)
+    if ps.returncode != 0:
+        return "unknown"
+    for line in ps.stdout.splitlines():
+        if (
+            "arnold_pipelines.megaplan chain start" in line
+            or "arnold_pipelines.megaplan epic-chain start" in line
+        ) and "--spec" in line and remote_spec in line:
+            return "alive"
+    return "dead"
+
+def _payload_for(name):
+    marker = marker_dir / (name + ".json")
+    payload = {{"session": name, "marker": str(marker)}}
+    if marker.exists():
+        try:
+            payload.update(json.loads(marker.read_text()))
+            payload["marker_status"] = "present"
+        except Exception as exc:
+            payload["marker_status"] = "invalid"
+            payload["marker_error"] = str(exc)
+    else:
+        payload["marker_status"] = "missing"
+    payload["tmux_status"] = "alive" if name in tmux_names else "missing"
+    payload["process_status"] = _process_status(payload.get("remote_spec"))
+    payload["status"] = "running" if payload["tmux_status"] == "alive" or payload["process_status"] == "alive" else "stopped"
+    return payload
+
 if proc.returncode == 0:
     for line in proc.stdout.splitlines():
         name = line.strip()
         if not name.startswith({CHAIN_SESSION_NAME!r}):
             continue
-        marker = marker_dir / (name + ".json")
-        payload = {{"session": name, "status": "running", "marker": str(marker)}}
-        if marker.exists():
-            try:
-                payload.update(json.loads(marker.read_text()))
-                payload["marker_status"] = "present"
-            except Exception as exc:
-                payload["marker_status"] = "invalid"
-                payload["marker_error"] = str(exc)
-        else:
-            payload["marker_status"] = "missing"
-        sessions.append(payload)
+        tmux_names.add(name)
+        sessions_by_name[name] = _payload_for(name)
+if marker_dir.exists():
+    for marker in sorted(marker_dir.glob("*.json")):
+        name = marker.stem
+        if not name.startswith({CHAIN_SESSION_NAME!r}):
+            continue
+        sessions_by_name.setdefault(name, _payload_for(name))
+sessions = sorted(sessions_by_name.values(), key=lambda item: item.get("session", ""))
 print(json.dumps({{"success": True, "sessions": sessions}}, sort_keys=True))
 """
     return f"python3 - <<'MEGAPLAN_CHAINS'\n{script.strip()}\nMEGAPLAN_CHAINS"
@@ -3615,17 +3653,51 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         plan_status = {"status": "missing", "reason": "no current plan"}
     latest_failure = _latest_failure_from_plan_status(plan_status)
 
-    # Runner / heartbeat info via optional ssh_exec probe.
+    # Runner / heartbeat info via optional ssh_exec probe. Prefer explicit tmux
+    # liveness but fall back to matching chain process evidence because tmux can
+    # disappear while the chain runner and its child worker remain alive.
     runner: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
     try:
         ssh_meth = getattr(provider, "ssh_exec", None)
         if ssh_meth is not None:
             session_esc = shlex.quote(resolved_session)
-            proc = ssh_meth(f"tmux has-session -t {session_esc} 2>/dev/null && echo alive || echo dead")
-            if proc.returncode == 0 and "alive" in (proc.stdout or ""):
-                runner = {"status": "alive", "session": resolved_session, "detail": "tmux session present"}
+            spec_esc = shlex.quote(remote_spec)
+            proc = ssh_meth(
+                "if tmux has-session -t "
+                + session_esc
+                + " 2>/dev/null; then echo tmux_alive; "
+                + "elif ps -eww -o args= | grep -E "
+                + shlex.quote("[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan (chain|epic-chain) start")
+                + " | grep -F -- '--spec' | grep -Fq -- "
+                + spec_esc
+                + "; then echo process_alive; "
+                + "else echo dead; fi"
+            )
+            stdout = proc.stdout or ""
+            if proc.returncode == 0 and "tmux_alive" in stdout:
+                runner = {
+                    "status": "alive",
+                    "session": resolved_session,
+                    "detail": "tmux session present",
+                    "tmux_status": "alive",
+                    "process_status": "unknown",
+                }
+            elif proc.returncode == 0 and "process_alive" in stdout:
+                runner = {
+                    "status": "alive",
+                    "session": resolved_session,
+                    "detail": "matching chain process present; tmux session absent",
+                    "tmux_status": "missing",
+                    "process_status": "alive",
+                }
             else:
-                runner = {"status": "dead", "session": resolved_session, "detail": "tmux session absent"}
+                runner = {
+                    "status": "dead",
+                    "session": resolved_session,
+                    "detail": "tmux session absent and no matching chain process",
+                    "tmux_status": "missing",
+                    "process_status": "dead",
+                }
     except Exception as exc:
         runner = {"status": "unknown", "reason": str(exc)}
 

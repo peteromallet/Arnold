@@ -2029,6 +2029,44 @@ tmux() {
     assert result.stdout.strip() == "awaiting_pr_merge"
 
 
+def test_watchdog_stopped_tmux_prefers_live_chain_process_over_wait_state(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    chain_dir.mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("merge_policy: review\n", encoding="utf-8")
+    (chain_dir / "demo-chain.json").write_text(
+        json.dumps({"last_state": "awaiting_human_verify"}),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("chain_wait_status"),
+            _extract_wrapper_function("plan_process_is_alive"),
+            _extract_wrapper_function("chain_process_is_alive"),
+            _extract_wrapper_function("session_health_status"),
+            f"""
+tmux() {{
+  if [[ "$1" == "has-session" ]]; then
+    return 1
+  fi
+  return 0
+}}
+ps() {{
+  printf '%s\\n' 'python3 -P -m arnold_pipelines.megaplan chain start --spec {str(spec_path)} --project-dir {str(workspace)}'
+}}
+""".strip(),
+            f"session_health_status demo-session {str(workspace)!r} {str(spec_path)!r} chain ''",
+        ]
+    )
+    result = _run_watchdog_shell(script)
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "alive"
+
+
 def test_watchdog_auto_merge_policy_attempts_pr_merge_before_waiting(
     tmp_path: Path,
 ) -> None:
