@@ -4,6 +4,11 @@ import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan import auto
+from arnold_pipelines.megaplan.orchestration.phase_result import (
+    ExitKind,
+    PhaseResult,
+    atomic_write_phase_result,
+)
 
 
 def test_drive_stops_on_non_retryable_recover_blocked_error(
@@ -81,6 +86,80 @@ def test_drive_stops_on_non_retryable_recover_blocked_error(
     assert "explicitly resolved as non-terminal" in outcome.reason
     assert status_calls == 1
     assert run_calls == 1
+
+
+def test_drive_internal_error_log_prefers_latest_failure_over_warning_stderr(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    structural_failure = (
+        "worker_structural_audit_failed: model output structural audit failed: "
+        "Plan must include at least one step section"
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "prepped",
+                "latest_failure": {
+                    "kind": "phase_failed",
+                    "phase": "plan",
+                    "message": structural_failure,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status_calls = 0
+
+    def fake_status(plan: str, **kwargs):
+        nonlocal status_calls
+        status_calls += 1
+        assert plan == "demo"
+        return {
+            "state": "prepped",
+            "next_step": "plan",
+            "valid_next": ["plan"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="plan",
+                invocation_id="test-invocation",
+                exit_kind=ExitKind.internal_error.value,
+            ),
+        )
+        return (
+            1,
+            "",
+            "M_WARN_ROUTING_DEGRADED plan -> codex:high (no premium credential)",
+        )
+
+    writes: list[str] = []
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=1,
+        poll_sleep=0,
+        writer=writes.append,
+    )
+
+    assert status_calls == 1
+    assert outcome.status == "cap"
+    joined = "".join(writes)
+    assert structural_failure in joined
+    assert "phase 'plan' exited with internal_error: M_WARN_ROUTING_DEGRADED" not in joined
 
 
 def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_blocked_loop(
