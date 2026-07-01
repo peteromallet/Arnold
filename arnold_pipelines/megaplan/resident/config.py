@@ -33,6 +33,7 @@ class ResidentConfig(BaseModel):
     model_api_key_env: str | None = None
     model_base_url: str | None = None
     codex_reasoning_effort: str = "medium"
+    codex_sandbox: str = "workspace-write"
     model_timeout_s: float = Field(default=120.0, gt=0)
     max_tool_calls_per_turn: int = Field(default=8, gt=0)
     scheduler_poll_interval_s: float = Field(default=10.0, gt=0)
@@ -93,6 +94,7 @@ class ResidentConfig(BaseModel):
             model_api_key_env=env.get("MEGAPLAN_RESIDENT_MODEL_API_KEY_ENV"),
             model_base_url=env.get("MEGAPLAN_RESIDENT_MODEL_BASE_URL") or env.get("OPENAI_BASE_URL"),
             codex_reasoning_effort=env.get("MEGAPLAN_RESIDENT_CODEX_REASONING_EFFORT", "medium"),
+            codex_sandbox=env.get("MEGAPLAN_RESIDENT_CODEX_SANDBOX", "workspace-write"),
             model_timeout_s=_env_float(env, "MEGAPLAN_RESIDENT_MODEL_TIMEOUT_S", 120.0),
             max_tool_calls_per_turn=_env_int(env, "MEGAPLAN_RESIDENT_MAX_TOOL_CALLS", 8),
             scheduler_poll_interval_s=_env_float(env, "MEGAPLAN_RESIDENT_SCHEDULER_POLL_S", 10.0),

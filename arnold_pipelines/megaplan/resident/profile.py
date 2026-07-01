@@ -442,6 +442,19 @@ class MegaplanResidentProfile:
                 "legacy_briefs_root": ".megaplan/briefs",
             },
             "initiative_index": initiative_compact_index(Path.cwd(), limit=40),
+            "resident_runtime": {
+                "model_provider": self.config.model_provider,
+                "model": self.config.model_name,
+                "codex_reasoning_effort": self.config.codex_reasoning_effort,
+                "codex_sandbox": self.config.codex_sandbox,
+                "codex_machine_access": (
+                    "full machine access; Codex CLI is launched with danger-full-access"
+                    if self.config.codex_sandbox == "danger-full-access"
+                    else f"Codex CLI sandbox: {self.config.codex_sandbox}"
+                ),
+            },
+            "configured_cloud_yaml": str(self.config.cloud_yaml_path),
+            "live_cloud_chain": await self._load_live_cloud_chain_context(),
         }
         if self.store is None:
             return base
@@ -479,6 +492,42 @@ class MegaplanResidentProfile:
             }
         )
         return base
+
+    async def _load_live_cloud_chain_context(self) -> dict[str, Any] | None:
+        cloud_yaml = self.config.cloud_yaml_path
+        if not cloud_yaml:
+            return None
+        if not cloud_yaml.is_absolute():
+            cloud_yaml = Path.cwd() / cloud_yaml
+        if not cloud_yaml.exists():
+            return {
+                "available": False,
+                "cloud_yaml": str(self.config.cloud_yaml_path),
+                "message": "configured cloud YAML does not exist",
+            }
+        try:
+            result = await self.cloud_backend.run(
+                CloudToolRequest(
+                    operation="cloud_status_chain",
+                    arguments={
+                        "project_root": str(Path.cwd()),
+                        "cloud_yaml": str(self.config.cloud_yaml_path),
+                    },
+                )
+            )
+        except Exception as exc:
+            return {
+                "available": False,
+                "cloud_yaml": str(self.config.cloud_yaml_path),
+                "error": f"{exc.__class__.__name__}: {exc}",
+            }
+        return {
+            "available": True,
+            "cloud_yaml": str(self.config.cloud_yaml_path),
+            "classification": result.classification,
+            "summary": result.summary,
+            "details": result.details,
+        }
 
     def tools(self) -> ToolRegistry:
         return self.tool_registry

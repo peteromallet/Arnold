@@ -6,8 +6,23 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from arnold_pipelines.megaplan.resident.cloud import CloudToolRequest, CloudToolResult
+from arnold_pipelines.megaplan.resident.config import ResidentConfig
 from arnold_pipelines.megaplan.resident.profile import MegaplanResidentProfile
 from arnold_pipelines.megaplan.store import FileStore
+
+
+class FakeCloudBackend:
+    def __init__(self) -> None:
+        self.requests: list[CloudToolRequest] = []
+
+    async def run(self, request: CloudToolRequest) -> CloudToolResult:
+        self.requests.append(request)
+        return CloudToolResult(
+            classification="running",
+            summary="cloud_status_chain: active chain running",
+            details={"payload": {"active_cloud_chains": 1}},
+        )
 
 
 def test_megaplan_resident_tool_catalog_exposes_initiatives_policy(tmp_path: Path) -> None:
@@ -154,3 +169,28 @@ def test_megaplan_resident_hot_context_includes_compact_initiative_index(
     assert row["description"] == "Classify worker messages and preserve initiative structure with enough detail to trim."
     assert row["chain"] is True
     assert {"README.md", "chain.yaml"}.issubset(set(row["recent_docs"]))
+
+
+def test_megaplan_resident_hot_context_includes_live_cloud_chain(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "cloud.active.yaml").write_text("provider: local\n", encoding="utf-8")
+    backend = FakeCloudBackend()
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(cloud_yaml_path=Path("cloud.active.yaml")),
+        cloud_backend=backend,
+    )
+    monkeypatch.chdir(project)
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+
+    assert context["configured_cloud_yaml"] == "cloud.active.yaml"
+    assert context["resident_runtime"]["codex_sandbox"] == "workspace-write"
+    assert context["live_cloud_chain"]["available"] is True
+    assert context["live_cloud_chain"]["classification"] == "running"
+    assert backend.requests[0].operation == "cloud_status_chain"
+    assert backend.requests[0].arguments["cloud_yaml"] == "cloud.active.yaml"
