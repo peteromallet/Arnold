@@ -3,8 +3,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from arnold_pipelines.megaplan.types import CliError
 from arnold_pipelines.megaplan.cloud.cli import (
     _megaplan_refresh_command,
+    _refresh_then_chain_start_command,
     _sync_launch_head_to_editable_install_branch,
 )
 
@@ -38,10 +42,55 @@ def test_cloud_refresh_uses_editible_install_branch() -> None:
     assert "REF=editible-install" in command
     assert 'git -C "$SRC" fetch origin "$REF"' in command
     assert 'git -C "$SRC" checkout "$REF"' in command
+    assert 'refusing editable install refresh: dirty source checkout' in command
+    assert 'merge-base --is-ancestor HEAD "origin/$REF"' in command
+    assert 'refusing editable install refresh: $SRC has local commits' in command
     assert 'git -C "$SRC" pull --ff-only origin "$REF"' in command
 
 
-def test_cloud_chain_sync_merges_launch_head_into_editible_install(
+def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
+    command = _refresh_then_chain_start_command(
+        "/workspace/project/.megaplan/initiatives/example/chain.yaml",
+        project_dir="/workspace/project",
+        log_relative=".megaplan/cloud-chain.log",
+    )
+
+    assert "} >> .megaplan/cloud-chain.log 2>&1 && " in command
+    assert "} >> .megaplan/cloud-chain.log 2>&1 || true" not in command
+
+
+def test_cloud_chain_sync_rejects_divergent_editible_install(
+    tmp_path: Path,
+) -> None:
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(repo))
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "branch", "-M", "main")
+    _git(repo, "push", "-u", "origin", "main")
+
+    _git(repo, "checkout", "-b", "editible-install")
+    editable_only = _commit(repo, "editable.txt", "keep\n", "editable branch work")
+    _git(repo, "push", "-u", "origin", "editible-install")
+
+    _git(repo, "checkout", "-b", "feature", "main")
+    _commit(repo, "feature.txt", "ship\n", "feature work")
+
+    with pytest.raises(CliError) as exc_info:
+        _sync_launch_head_to_editable_install_branch(repo)
+
+    assert exc_info.value.code == "editable_install_sync_diverged"
+    assert exc_info.value.extra["editable_head"] == editable_only
+    assert exc_info.value.extra["editable_only_commits"] == 1
+    assert exc_info.value.extra["launch_only_commits"] == 1
+
+
+def test_cloud_chain_sync_fast_forwards_editible_install(
     tmp_path: Path,
 ) -> None:
     origin = tmp_path / "origin.git"
@@ -58,10 +107,10 @@ def test_cloud_chain_sync_merges_launch_head_into_editible_install(
     _git(repo, "push", "-u", "origin", "main")
 
     _git(repo, "checkout", "-b", "editible-install")
-    editable_only = _commit(repo, "editable.txt", "keep\n", "editable branch work")
+    editable_head = _git(repo, "rev-parse", "HEAD").stdout.strip()
     _git(repo, "push", "-u", "origin", "editible-install")
 
-    _git(repo, "checkout", "-b", "feature", "main")
+    _git(repo, "checkout", "-b", "feature", "editible-install")
     launch_head = _commit(repo, "feature.txt", "ship\n", "feature work")
 
     result = _sync_launch_head_to_editable_install_branch(repo)
@@ -69,10 +118,9 @@ def test_cloud_chain_sync_merges_launch_head_into_editible_install(
     assert result["status"] == "pushed"
     assert result["branch"] == "editible-install"
     assert result["launch_head"] == launch_head
-    assert result["editable_head_before"] == editable_only
+    assert result["editable_head_before"] == editable_head
 
     _git(tmp_path, "clone", "--branch", "editible-install", str(origin), str(verify))
-    assert (verify / "editable.txt").read_text(encoding="utf-8") == "keep\n"
     assert (verify / "feature.txt").read_text(encoding="utf-8") == "ship\n"
     assert (
         _git(verify, "merge-base", "--is-ancestor", launch_head, "HEAD").returncode

@@ -919,12 +919,13 @@ def _sync_launch_head_to_editable_install_branch(
     branch: str = "editible-install",
     remote: str = "origin",
 ) -> dict[str, Any]:
-    """Merge the local launch HEAD into the cloud editable-install branch.
+    """Publish the local launch HEAD to the cloud editable-install branch.
 
     The cloud worker refreshes `/workspace/arnold` from `editible-install`.
     Before launching any new cloud chain, publish the code currently being used
-    to launch the run into that branch as well.  Use a temporary worktree so the
-    caller's active branch and working tree are not disturbed.
+    to launch the run into that branch as well. If the editable branch has
+    unique commits that are not already contained by the launch HEAD, refuse to
+    sync so the divergent code can be reconciled deliberately first.
     """
     root = root.expanduser().resolve()
     inside = _git_run(root, ["rev-parse", "--is-inside-work-tree"])
@@ -966,43 +967,52 @@ def _sync_launch_head_to_editable_install_branch(
                 "launch_branch": launch_branch,
                 "editable_head": remote_head,
             }
+        launch_contains_remote = _git_run(
+            root,
+            ["merge-base", "--is-ancestor", remote_ref, launch_head],
+            check=False,
+        ).returncode == 0
+        if not launch_contains_remote:
+            counts = _git_run(
+                root,
+                ["rev-list", "--left-right", "--count", f"{launch_head}...{remote_ref}"],
+                check=False,
+            ).stdout.strip().split()
+            launch_only = int(counts[0]) if len(counts) == 2 else None
+            editable_only = int(counts[1]) if len(counts) == 2 else None
+            editable_commits = _git_run(
+                root,
+                ["log", "--oneline", "--max-count=5", f"{launch_head}..{remote_ref}"],
+                check=False,
+            ).stdout.strip().splitlines()
+            raise CliError(
+                "editable_install_sync_diverged",
+                (
+                    f"Refusing to sync {branch!r}: {remote_ref} has commits that "
+                    "are not contained in the launch HEAD. Merge or cherry-pick "
+                    "the editable-install work first, then retry the cloud sync."
+                ),
+                extra={
+                    "branch": branch,
+                    "remote": remote,
+                    "launch_head": launch_head,
+                    "launch_branch": launch_branch,
+                    "editable_head": remote_head,
+                    "launch_only_commits": launch_only,
+                    "editable_only_commits": editable_only,
+                    "editable_only_sample": editable_commits,
+                },
+            )
     else:
         remote_head = None
 
     with TemporaryDirectory(prefix="editable-install-sync-") as tmp:
         worktree = Path(tmp) / "worktree"
         if remote_exists:
-            _git_run(root, ["worktree", "add", "--detach", str(worktree), remote_ref])
+            _git_run(root, ["worktree", "add", "--detach", str(worktree), launch_head])
             _git_run(worktree, ["checkout", "-B", branch])
             before = remote_head
-            merge = _git_run(
-                worktree,
-                [
-                    "merge",
-                    "--no-ff",
-                    "--no-edit",
-                    launch_head,
-                    "-m",
-                    f"Sync {launch_branch or launch_head[:12]} into cloud editable install",
-                ],
-                check=False,
-            )
-            if merge.returncode != 0:
-                raise CliError(
-                    "editable_install_sync_conflict",
-                    (
-                        f"Could not merge launch HEAD {launch_head[:12]} into {branch}. "
-                        "Resolve the editable-install branch manually or pass "
-                        "--no-editable-install-sync."
-                    ),
-                    extra={
-                        "branch": branch,
-                        "launch_head": launch_head,
-                        "stdout": merge.stdout,
-                        "stderr": merge.stderr,
-                    },
-                )
-            merged = merge.returncode == 0 and "Already up to date" not in (merge.stdout + merge.stderr)
+            merged = False
         else:
             _git_run(root, ["worktree", "add", "--detach", str(worktree), launch_head])
             _git_run(worktree, ["checkout", "-B", branch])
@@ -1716,7 +1726,7 @@ def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
     repo = (spec.megaplan.repo or "") if spec is not None else ""
     ref = _EDITABLE_INSTALL_BRANCH
     lines = [
-        "set +e",
+        "set -e",
         "echo \"[megaplan-refresh] $(date -Iseconds) starting\"",
         f"SRC={shlex.quote(src)}",
         f"REPO={shlex.quote(repo)}",
@@ -1735,13 +1745,21 @@ def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
         '  git -C "$SRC" fetch origin "$REF"',
         '  BRANCH="$(git -C "$SRC" branch --show-current)"',
         '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
+        '  if [ -n "$(git -C "$SRC" status --porcelain)" ]; then',
+        '    echo "[megaplan-refresh] refusing editable install refresh: dirty source checkout at $SRC"',
+        "    exit 19",
+        "  fi",
+        '  if ! git -C "$SRC" merge-base --is-ancestor HEAD "origin/$REF"; then',
+        '    echo "[megaplan-refresh] refusing editable install refresh: $SRC has local commits not contained in origin/$REF"',
+        '    git -C "$SRC" log --oneline --max-count=5 "origin/$REF..HEAD" || true',
+        "    exit 20",
+        "  fi",
         '  git -C "$SRC" pull --ff-only origin "$REF"',
         '  pip install -e "$SRC"',
         "else",
         '  echo "[megaplan-refresh] source clone missing at $SRC; skipping editable install"',
         "fi",
         'echo "[megaplan-refresh] done"',
-        "set -e",
         "true",
     ]
     return "\n".join(lines)
@@ -1759,7 +1777,7 @@ def _refresh_then_chain_start_command(
     refresh = _megaplan_refresh_command(spec)
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
-        f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 || true; "
+        f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
         f"{_chain_start_command(remote_spec_path, project_dir=project_dir, engine_dir=engine_dir, one_shot=one_shot, no_git_refresh=no_git_refresh, log_relative=log_relative)}"
     )
 
