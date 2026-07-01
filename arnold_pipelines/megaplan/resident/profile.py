@@ -432,6 +432,8 @@ class MegaplanResidentProfile:
         )
 
     async def load_hot_context(self, conversation_id: str) -> dict[str, Any]:
+        local_epic_chain_state = self._load_local_epic_chain_state_context()
+        live_cloud_chain = await self._load_live_cloud_chain_context()
         base: dict[str, Any] = {
             "conversation_id": conversation_id,
             "prompt_version": MEGAPLAN_RESIDENT_PROMPT_VERSION,
@@ -454,8 +456,9 @@ class MegaplanResidentProfile:
                 ),
             },
             "configured_cloud_yaml": str(self.config.cloud_yaml_path),
-            "local_epic_chain_state": self._load_local_epic_chain_state_context(),
-            "live_cloud_chain": await self._load_live_cloud_chain_context(),
+            "epic_chain_visibility": _summarize_epic_chain_visibility(local_epic_chain_state, live_cloud_chain),
+            "local_epic_chain_state": local_epic_chain_state,
+            "live_cloud_chain": live_cloud_chain,
         }
         if self.store is None:
             return base
@@ -2078,6 +2081,38 @@ def _recent_state_paths(roots: list[Path], state_dir_name: str, *, limit: int) -
         except OSError:
             continue
     return sorted(paths.values(), key=lambda path: _path_mtime(path), reverse=True)[:limit]
+
+
+def _summarize_epic_chain_visibility(
+    local_state: dict[str, Any],
+    live_cloud_chain: dict[str, Any] | None,
+) -> dict[str, Any]:
+    active_chains = local_state.get("active_chains") if isinstance(local_state, dict) else []
+    active_chains = active_chains if isinstance(active_chains, list) else []
+    primary = active_chains[0] if active_chains else None
+    live_classification = live_cloud_chain.get("classification") if isinstance(live_cloud_chain, dict) else None
+    if primary:
+        return {
+            "status": "active_from_local_state",
+            "source": "local .megaplan chain state files",
+            "active_chain_count": len(active_chains),
+            "current_plan_name": primary.get("current_plan_name"),
+            "last_state": primary.get("last_state"),
+            "chain_spec_path": primary.get("chain_spec_path"),
+            "work_dir": primary.get("work_dir"),
+            "cloud_cli_classification": live_classification,
+            "cloud_cli_note": (
+                "Cloud CLI status is secondary here; local state files are authoritative inside the cloud container."
+                if live_classification == "failed"
+                else None
+            ),
+        }
+    return {
+        "status": "none_visible",
+        "source": "local .megaplan chain state files",
+        "active_chain_count": 0,
+        "cloud_cli_classification": live_classification,
+    }
 
 
 def _summarize_epic_chain_state(path: Path) -> dict[str, Any]:
