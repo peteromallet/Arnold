@@ -3547,7 +3547,7 @@ kimi_dispatch_marker_clear() { :; }
 def test_watchdog_scan_ignores_progress_snapshot_markers() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert "*.progress.json|*.reap-progress.json|*.chain-health.progress.json" in text
+    assert "*.progress.json|*.reap-progress.json|*.repair-progress.json|*.chain-health.progress.json" in text
 
 
 def test_watchdog_enforces_single_instance_and_reexecs_after_hot_update() -> None:
