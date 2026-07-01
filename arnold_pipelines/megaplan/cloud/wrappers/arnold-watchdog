@@ -3766,6 +3766,13 @@ launch_chain_tick() {
     return 1
   fi
 
+  local sibling_alive
+  if [[ "$health" == "stopped" ]] && sibling_alive="$(workspace_has_other_alive_session "$session" "$workspace" 2>/dev/null)"; then
+    log "stopped session superseded by live sibling; skipping relaunch session=$session sibling=$sibling_alive"
+    report_item "$report_items" "$session" "observe" "superseded" "live sibling session owns workspace: $sibling_alive" "$workspace" "$remote_spec"
+    return 0
+  fi
+
   local repair_busy
   repair_busy="$(repair_loop_busy_state "$session")"
   if [[ "$repair_busy" == "same_session" ]]; then
