@@ -38,6 +38,21 @@ milestones:
   branch: tiered-repair-m1-substrate
   notes: Contract kernel, resolver observe mode, shared lock, redaction, escalation
     preservation, feature flags, rollback gate.
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
 - label: m2-repair-correctness
   idea: .megaplan/initiatives/tiered-repair-hardening/briefs/m2-repair-correctness.md
   profile: partnered-5
@@ -49,6 +64,21 @@ milestones:
   - m1-cloud-safe-substrate
   notes: Existing one-hour repair loop becomes bounded and independently verifiable;
     liveness-only success is removed.
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
 - label: m3-triggered-repair
   idea: .megaplan/initiatives/tiered-repair-hardening/briefs/m3-triggered-repair.md
   profile: partnered-5
@@ -60,6 +90,21 @@ milestones:
   - m2-repair-correctness
   notes: Request queue, dedupe, trigger wrapper, watchdog queue scan, and only the
     highest-signal hooks first.
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
 - label: m4-human-workflow-cloud-hardening
   idea: .megaplan/initiatives/tiered-repair-hardening/briefs/m4-human-workflow-cloud-hardening.md
   profile: partnered-5
@@ -71,6 +116,21 @@ milestones:
   - m3-triggered-repair
   notes: Answer/resume escalation workflow, Discord/resident auth linkage, supersession,
     cloud smoke gates, runbooks.
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
 - label: m5-meta-audit-intelligence
   idea: .megaplan/initiatives/tiered-repair-hardening/briefs/m5-meta-audit-intelligence.md
   profile: partnered-5
@@ -82,6 +142,21 @@ milestones:
   - m4-human-workflow-cloud-hardening
   notes: Meta-repair MVP and six-hour auditor intelligence, gated and initially patch-only/disabled
     where appropriate.
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
 on_failure:
   abort: stop_chain
 on_escalate:
