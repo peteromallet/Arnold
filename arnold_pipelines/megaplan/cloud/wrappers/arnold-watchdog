@@ -1798,6 +1798,8 @@ completed_count = len(completed_list)
 plan_dir = workspace / ".megaplan" / "plans" / current_plan_name if current_plan_name else None
 plan_state_path = plan_dir / "state.json" if plan_dir is not None else None
 plan_state = load_json(plan_state_path) if plan_state_path is not None else {}
+active_step = plan_state.get("active_step")
+plan_has_active_step = isinstance(active_step, dict) and bool(active_step.get("phase") or active_step.get("worker_pid"))
 events_path = plan_dir / "events.ndjson" if plan_dir is not None else None
 events_exists = events_path is not None and events_path.exists()
 events_mtime = events_path.stat().st_mtime if events_exists else 0.0
@@ -1824,6 +1826,7 @@ if previous:
     )
     if (
         events_advanced
+        and not plan_has_active_step
         and int(previous.get("current_milestone_index") or -1) == current_index
         and int(previous.get("completed_count") or -1) == completed_count
     ):
@@ -1839,6 +1842,7 @@ snapshot = {
     "pr_number": pr_number,
     "events_mtime": events_mtime,
     "events_size": events_size,
+    "plan_has_active_step": plan_has_active_step,
     "stuck_ticks": stuck_ticks,
     "no_advance_ticks": no_advance_ticks,
     "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
