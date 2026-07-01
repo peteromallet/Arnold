@@ -1,11 +1,11 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 1,
-  "current_plan_name": "m2-one-hour-repair-20260701-2111",
+  "current_milestone_index": 2,
+  "current_plan_name": "m3-failure-triggered-repair-20260701-2144",
   "current_milestone_base_sha": null,
-  "target_base_ref": "a4308f2063c636b344c475a6d1b7c09ec6ef2cf1",
-  "last_state": "prepped",
-  "pr_number": 130,
+  "target_base_ref": "68ef8d42b106202bc0f578db68e86438ff02df73",
+  "last_state": "initialized",
+  "pr_number": 131,
   "pr_state": "open",
   "completed": [
     {
@@ -14,13 +14,20 @@
       "status": "done",
       "pr_number": 129,
       "pr_state": "merged"
+    },
+    {
+      "label": "m2-repair-correctness",
+      "plan": "m2-one-hour-repair-20260701-2111",
+      "status": "done",
+      "pr_number": 130,
+      "pr_state": "merged"
     }
   ],
-  "branch_head": "89901236616bc2bb27529f3dba08825fc43128d5",
-  "pr_head": "89901236616bc2bb27529f3dba08825fc43128d5",
-  "last_pushed_commit": "89901236616bc2bb27529f3dba08825fc43128d5",
-  "dirty_flag": true,
-  "sync_state": "dirty",
+  "branch_head": "240d9b38119f259ae24d64bc379f6dc93185cb86",
+  "pr_head": "21c962c802b7c3d4449d0aac81ba8af9d77f483d",
+  "last_pushed_commit": "240d9b38119f259ae24d64bc379f6dc93185cb86",
+  "dirty_flag": false,
+  "sync_state": "stale",
   "extra_repos": [],
   "chain_session": null,
   "resolved_workspace": null,
@@ -42,33 +49,21 @@
       "target_root": "/workspace/tiered-repair-hardening/Arnold",
       "work_dir": "/workspace/tiered-repair-hardening/Arnold",
       "engine_root": "/workspace/arnold",
-      "target_head": "89901236616bc2bb27529f3dba08825fc43128d5",
+      "target_head": "21c962c802b7c3d4449d0aac81ba8af9d77f483d",
       "target_base": "c0d973a16609d80a1d11b20276fd0cb6e22c91fe",
       "target_base_ref": "main",
       "target_fallback_reason": null
     },
     "chain_spec_path": "/workspace/tiered-repair-hardening/Arnold/.megaplan/initiatives/tiered-repair-hardening/chain.yaml",
-    "chain_spec_sha256": "c59922d6014aff42d6fbc0a3bc412a6e7dd78fc29871e756f3e44d0931b847d5",
+    "chain_spec_sha256": "b37bdc514bd8d9fd5e41800a7d844fa0b79279e11a45f1c03ff9ec223389e5a3",
     "ground_truth_reconciliation": {
-      "reconciled_at": "2026-07-01T21:14:04Z",
-      "plan": "m2-one-hour-repair-20260701-2111",
-      "current_state": "prepped",
+      "reconciled_at": "2026-07-01T21:49:46Z",
+      "plan": "m3-failure-triggered-repair-20260701-2144",
+      "current_state": "initialized",
       "latest_failure": null,
       "last_gate": {},
-      "active_step": {
-        "phase": "plan",
-        "agent": "codex",
-        "mode": "persistent",
-        "run_id": "a55f9ffc-3a66-4eb2-9b4c-6ee33047279c",
-        "worker_pid": 402615,
-        "started_at": "2026-07-01T21:13:06Z",
-        "attempt": 1,
-        "last_activity_at": "2026-07-01T21:13:41Z",
-        "last_activity_kind": "liveness",
-        "model": "gpt-5.5",
-        "last_activity_detail": "worker subprocess alive"
-      },
-      "pr_number": 130,
+      "active_step": null,
+      "pr_number": 131,
       "pr_state": "open"
     }
   }

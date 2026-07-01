@@ -3164,6 +3164,7 @@ def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) ->
 def _cloud_chains_command() -> str:
     script = f"""
 import json, pathlib, subprocess
+from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path
 marker_dir = pathlib.Path({_CHAIN_SESSION_MARKER_DIR!r})
 proc = subprocess.run(["tmux", "list-sessions", "-F", "#S"], text=True, capture_output=True)
 sessions_by_name = {{}}
@@ -3183,20 +3184,54 @@ def _process_status(remote_spec):
             return "alive"
     return "dead"
 
+def _active_step_evidence(workspace, plan_name):
+    payload = {{"status": "missing", "path": ""}}
+    if not workspace or not plan_name:
+        return payload
+    path = pathlib.Path(workspace) / ".megaplan" / "plans" / plan_name / "state.json"
+    payload["path"] = str(path)
+    if not path.exists():
+        return payload
+    try:
+        state = json.loads(path.read_text())
+    except Exception as exc:
+        return {{"status": "invalid", "path": str(path), "error": str(exc)}}
+    active_step = state.get("active_step")
+    if not isinstance(active_step, dict) or not active_step:
+        return {{"status": "absent", "path": str(path)}}
+    return {{
+        "status": "present",
+        "path": str(path),
+        "phase": active_step.get("phase") or active_step.get("step") or "",
+        "name": active_step.get("name") or "",
+        "attempt": active_step.get("attempt"),
+        "worker_pid": active_step.get("worker_pid"),
+        "last_activity_at": active_step.get("last_activity_at") or "",
+    }}
+
 def _payload_for(name):
     marker = marker_dir / (name + ".json")
-    payload = {{"session": name, "marker": str(marker)}}
+    payload = {{
+        "session": name,
+        "marker": str(marker),
+        "marker_evidence": {{"status": "missing", "path": str(marker)}},
+        "tmux_evidence": {{"status": "alive" if name in tmux_names else "missing"}},
+    }}
     if marker.exists():
         try:
             payload.update(json.loads(marker.read_text()))
-            payload["marker_status"] = "present"
+            payload["marker_evidence"] = {{"status": "present", "path": str(marker)}}
         except Exception as exc:
-            payload["marker_status"] = "invalid"
-            payload["marker_error"] = str(exc)
-    else:
-        payload["marker_status"] = "missing"
-    payload["tmux_status"] = "alive" if name in tmux_names else "missing"
-    payload["process_status"] = _process_status(payload.get("remote_spec"))
+            payload["marker_evidence"] = {{"status": "invalid", "path": str(marker), "error": str(exc)}}
+    payload["process_evidence"] = {{
+        "status": _process_status(payload.get("remote_spec")),
+        "remote_spec": payload.get("remote_spec") or "",
+    }}
+    payload["active_step_evidence"] = _active_step_evidence(payload.get("workspace"), payload.get("plan_name"))
+    payload["marker_status"] = payload["marker_evidence"]["status"]
+    payload["tmux_status"] = payload["tmux_evidence"]["status"]
+    payload["process_status"] = payload["process_evidence"]["status"]
+    payload["active_step_status"] = payload["active_step_evidence"]["status"]
     payload["status"] = "running" if payload["tmux_status"] == "alive" or payload["process_status"] == "alive" else "stopped"
     return payload
 
@@ -3209,6 +3244,8 @@ if proc.returncode == 0:
         sessions_by_name[name] = _payload_for(name)
 if marker_dir.exists():
     for marker in sorted(marker_dir.glob("*.json")):
+        if not is_canonical_session_marker_path(marker):
+            continue
         name = marker.stem
         if not name.startswith({CHAIN_SESSION_NAME!r}):
             continue
@@ -3593,6 +3630,32 @@ def _remote_human_verification_status(
     }
 
 
+def _marker_evidence(marker: dict[str, Any] | None, *, local_marker_path: Path) -> dict[str, Any]:
+    if marker is None:
+        return {"status": "missing", "path": str(local_marker_path)}
+    return {
+        "status": "present",
+        "path": str(local_marker_path),
+        "workspace": marker.get("workspace") if isinstance(marker.get("workspace"), str) else "",
+        "remote_spec": marker.get("remote_spec") if isinstance(marker.get("remote_spec"), str) else "",
+        "chain_session": marker.get("chain_session") if isinstance(marker.get("chain_session"), str) else "",
+    }
+
+
+def _active_step_evidence_from_plan_status(plan_status: Mapping[str, Any]) -> dict[str, Any]:
+    active_step = plan_status.get("active_step")
+    if not isinstance(active_step, Mapping) or not active_step:
+        return {"status": "absent"}
+    return {
+        "status": "present",
+        "phase": active_step.get("phase") or active_step.get("step") or "",
+        "name": active_step.get("name") or "",
+        "attempt": active_step.get("attempt"),
+        "worker_pid": active_step.get("worker_pid"),
+        "last_activity_at": active_step.get("last_activity_at") or "",
+    }
+
+
 def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> dict[str, Any]:
     """Return the same payload printed by `arnold cloud status --chain`."""
     from arnold_pipelines.megaplan import chain as chain_module
@@ -3656,6 +3719,8 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     # Runner / heartbeat info via optional ssh_exec probe. Prefer explicit tmux
     # liveness but fall back to matching chain process evidence because tmux can
     # disappear while the chain runner and its child worker remain alive.
+    tmux_evidence: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
+    process_evidence: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
     runner: dict[str, Any] = {"status": "unavailable", "reason": "runner probe not implemented"}
     try:
         ssh_meth = getattr(provider, "ssh_exec", None)
@@ -3675,30 +3740,38 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
             )
             stdout = proc.stdout or ""
             if proc.returncode == 0 and "tmux_alive" in stdout:
+                tmux_evidence = {"status": "alive", "session": resolved_session}
+                process_evidence = {"status": "unknown", "remote_spec": remote_spec}
                 runner = {
                     "status": "alive",
                     "session": resolved_session,
                     "detail": "tmux session present",
-                    "tmux_status": "alive",
-                    "process_status": "unknown",
+                    "tmux_status": tmux_evidence["status"],
+                    "process_status": process_evidence["status"],
                 }
             elif proc.returncode == 0 and "process_alive" in stdout:
+                tmux_evidence = {"status": "missing", "session": resolved_session}
+                process_evidence = {"status": "alive", "remote_spec": remote_spec}
                 runner = {
                     "status": "alive",
                     "session": resolved_session,
                     "detail": "matching chain process present; tmux session absent",
-                    "tmux_status": "missing",
-                    "process_status": "alive",
+                    "tmux_status": tmux_evidence["status"],
+                    "process_status": process_evidence["status"],
                 }
             else:
+                tmux_evidence = {"status": "missing", "session": resolved_session}
+                process_evidence = {"status": "dead", "remote_spec": remote_spec}
                 runner = {
                     "status": "dead",
                     "session": resolved_session,
                     "detail": "tmux session absent and no matching chain process",
-                    "tmux_status": "missing",
-                    "process_status": "dead",
+                    "tmux_status": tmux_evidence["status"],
+                    "process_status": process_evidence["status"],
                 }
     except Exception as exc:
+        tmux_evidence = {"status": "unknown", "reason": str(exc), "session": resolved_session}
+        process_evidence = {"status": "unknown", "reason": str(exc), "remote_spec": remote_spec}
         runner = {"status": "unknown", "reason": str(exc)}
 
     # Log paths (structured from the resolved workspace).
@@ -3760,6 +3833,11 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
     human_verification: dict[str, Any] = _remote_human_verification_status(
         provider, resolved_workspace, chain_state,
     )
+    marker_evidence = _marker_evidence(
+        marker,
+        local_marker_path=_marker_path_no_create(_cloud_yaml_path(root, args)) / "last_chain.json",
+    )
+    active_step_evidence = _active_step_evidence_from_plan_status(plan_status)
 
     # Classify effective status.
     effective_status = _classify_effective_status(
@@ -3780,6 +3858,10 @@ def cloud_chain_status_payload(root: Path, args: argparse.Namespace, spec: Cloud
         "plan_status": plan_status,
         "latest_failure": latest_failure,
         "runner": runner,
+        "marker_evidence": marker_evidence,
+        "tmux_evidence": tmux_evidence,
+        "process_evidence": process_evidence,
+        "active_step_evidence": active_step_evidence,
         "logs": logs,
         "pr": pr,
         "provider_consistency": provider_consistency,

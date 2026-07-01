@@ -1225,12 +1225,28 @@ def _git_status_porcelain(root: Path, rel: str) -> list[str]:
 
 
 def _is_runtime_status_line(line: str) -> bool:
+    # Strip the two-character porcelain status prefix + optional leading
+    # space so we match on the raw filesystem path.  ``git status
+    # --porcelain`` emits lines like ``?? path`` or `` M path``.
     path = line[3:] if len(line) > 3 else line
+    # Suffixes / substrings that always denote runtime scaffolding.
+    # Keep in sync with the ``.gitignore`` entries that re-ignore runtime
+    # artifacts under committed ``.megaplan/initiatives/`` directories.
+    #
+    # Notes on the prefix convention: ``/.megaplan/<dir>/`` catches runtime
+    # directories that live under a tracked initiative dir (path is
+    # ``.megaplan/initiatives/<epic>/.megaplan/<dir>/...``).  For runtime
+    # artifacts that sit directly inside an initiative tree *without* a
+    # ``.megaplan/`` wrapper — e.g. ``repair-queue/`` or
+    # ``chain_state.json`` — the patterns use only the distinguishing
+    # suffix so they still match.
     runtime_parts = (
         "/.megaplan/plans/",
         "/.megaplan/epics/",
         "/.megaplan/resident/",
         "/.megaplan/cloud-sessions/",
+        "/repair-queue/",
+        "/chain_state.json",
     )
     return any(part in path for part in runtime_parts)
 

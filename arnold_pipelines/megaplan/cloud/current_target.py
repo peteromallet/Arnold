@@ -9,16 +9,13 @@ from typing import Any, Callable, Mapping
 
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json
 from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabled
+from arnold_pipelines.megaplan.cloud.session_markers import (
+    canonical_sidecar_suffix,
+    is_canonical_session_marker_path,
+)
 
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
-
-_MARKER_SUFFIXES = (
-    ".repair-progress.json",
-    ".reap-progress.json",
-    ".chain-health.progress.json",
-)
-
 
 def resolve_current_target(
     session: str,
@@ -350,9 +347,10 @@ def _collect_sidecar_status(marker_dir: Path, session: str) -> dict[str, Any]:
         if not path.exists():
             continue
         payload = _safe_load_dict(path)
+        sidecar_suffix = canonical_sidecar_suffix(path) or suffix
         found.append(
             {
-                "kind": path.name.rsplit(".", 2)[0].split(session, 1)[-1].lstrip("."),
+                "kind": sidecar_suffix.removesuffix(".json").lstrip("."),
                 "path": str(path),
                 "present": True,
                 "status": _safe_text(payload.get("status")) or _safe_text(payload.get("outcome")),
@@ -376,7 +374,7 @@ def _collect_sibling_sessions(
         return []
     siblings: list[dict[str, Any]] = []
     for path in sorted(marker_dir.glob("*.json")):
-        if path.name == f"{session}.json" or path.name.endswith(_MARKER_SUFFIXES):
+        if path.name == f"{session}.json" or not is_canonical_session_marker_path(path):
             continue
         payload = _safe_load_dict(path)
         other_session = _safe_text(payload.get("session"))

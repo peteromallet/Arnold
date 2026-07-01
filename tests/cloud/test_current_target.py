@@ -5,8 +5,14 @@ import json
 from pathlib import Path
 
 from arnold_pipelines.megaplan.cloud.current_target import (
+    _collect_sibling_sessions,
     compare_needs_human_diagnostic,
     resolve_current_target,
+)
+from arnold_pipelines.megaplan.cloud.session_markers import (
+    is_canonical_session_marker_path,
+    is_canonical_sidecar_path,
+    canonical_sidecar_suffix,
 )
 
 
@@ -414,6 +420,163 @@ def test_compare_needs_human_diagnostic_reports_discrepancy(tmp_path: Path) -> N
     assert diag["agreement"] is False
     assert diag["legacy"]["stale"] is True
     assert diag["resolver"]["stale"] is False
+
+
+# ── T11: sidecar / session-marker classification tests ──────────────────
+
+
+def test_canonical_sidecar_suffix_identifies_repair_progress() -> None:
+    assert canonical_sidecar_suffix("demo.repair-progress.json") == ".repair-progress.json"
+    assert canonical_sidecar_suffix("demo.reap-progress.json") == ".reap-progress.json"
+    assert canonical_sidecar_suffix("demo.chain-health.progress.json") == ".chain-health.progress.json"
+    assert canonical_sidecar_suffix("demo.progress.json") == ".progress.json"
+
+
+def test_canonical_sidecar_suffix_returns_none_for_session_markers() -> None:
+    assert canonical_sidecar_suffix("demo-session.json") is None
+    assert canonical_sidecar_suffix("parent-session.json") is None
+    assert canonical_sidecar_suffix("child-session.json") is None
+
+
+def test_is_canonical_sidecar_path_true_for_all_known_suffixes() -> None:
+    for suffix in (".repair-progress.json", ".reap-progress.json", ".chain-health.progress.json", ".progress.json"):
+        assert is_canonical_sidecar_path(f"session{suffix}") is True
+
+
+def test_is_canonical_sidecar_path_false_for_session_markers() -> None:
+    assert is_canonical_sidecar_path("session.json") is False
+    assert is_canonical_sidecar_path("parent-session.json") is False
+
+
+def test_is_canonical_session_marker_path_true_for_markers() -> None:
+    assert is_canonical_session_marker_path("my-session.json") is True
+    assert is_canonical_session_marker_path("parent-session.json") is True
+
+
+def test_is_canonical_session_marker_path_false_for_sidecars() -> None:
+    for suffix in (".repair-progress.json", ".reap-progress.json", ".chain-health.progress.json", ".progress.json"):
+        assert is_canonical_session_marker_path(f"session{suffix}") is False
+
+
+def test_collect_sibling_sessions_excludes_canonical_sidecar_jsons(tmp_path: Path) -> None:
+    """Sibling collection must skip all canonical sidecar files and return only
+    real session markers."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    # Real sibling marker
+    _write_marker(
+        marker_dir / "sibling-1.json",
+        {"session": "sibling-1", "workspace": str(workspace), "run_kind": "chain"},
+    )
+    # Canonical sidecars — must be excluded
+    for suffix in (
+        ".repair-progress.json",
+        ".reap-progress.json",
+        ".chain-health.progress.json",
+        ".progress.json",
+    ):
+        (marker_dir / f"current-session{suffix}").write_text("{}", encoding="utf-8")
+        (marker_dir / f"sibling-1{suffix}").write_text("{}", encoding="utf-8")
+
+    siblings = _collect_sibling_sessions(
+        marker_dir,
+        session="current-session",
+        workspace=workspace,
+        session_is_live=None,
+    )
+
+    assert len(siblings) == 1
+    assert siblings[0]["session"] == "sibling-1"
+
+
+def test_collect_sibling_sessions_one_row_per_session(tmp_path: Path) -> None:
+    """Even when multiple sidecars exist per session, each session contributes
+    exactly one canonical row."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    _write_marker(
+        marker_dir / "alpha.json",
+        {"session": "alpha", "workspace": str(workspace), "run_kind": "chain"},
+    )
+    _write_marker(
+        marker_dir / "beta.json",
+        {"session": "beta", "workspace": str(workspace), "run_kind": "chain"},
+    )
+    # Sidecars for both sessions
+    for suffix in (".repair-progress.json", ".progress.json"):
+        (marker_dir / f"alpha{suffix}").write_text("{}", encoding="utf-8")
+        (marker_dir / f"beta{suffix}").write_text("{}", encoding="utf-8")
+
+    siblings = _collect_sibling_sessions(
+        marker_dir,
+        session="current-session",
+        workspace=workspace,
+        session_is_live=None,
+    )
+
+    assert len(siblings) == 2
+    names = {s["session"] for s in siblings}
+    assert names == {"alpha", "beta"}
+
+
+def test_collect_sibling_sessions_marker_only_sessions_preserved(tmp_path: Path) -> None:
+    """A session with only its canonical .json marker (no tmux, no process) is
+    still included as a sibling row — it must not be filtered out."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    _write_marker(
+        marker_dir / "marker-only.json",
+        {"session": "marker-only", "workspace": str(workspace), "run_kind": "chain"},
+    )
+
+    siblings = _collect_sibling_sessions(
+        marker_dir,
+        session="current-session",
+        workspace=workspace,
+        session_is_live=None,
+    )
+
+    assert len(siblings) == 1
+    assert siblings[0]["session"] == "marker-only"
+    assert siblings[0]["live_status"] == "unknown"
+
+
+def test_resolve_current_target_excludes_all_canonical_sidecars_from_siblings(tmp_path: Path) -> None:
+    """The full resolver must not include canonical sidecar files in its
+    sibling_sessions output."""
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec.parent.mkdir(parents=True)
+    spec.write_text("milestones: []\n", encoding="utf-8")
+    _write_marker(
+        marker_dir / "current.json",
+        {"session": "current", "workspace": str(workspace), "remote_spec": str(spec), "run_kind": "chain"},
+    )
+    _write_marker(
+        marker_dir / "sibling.json",
+        {"session": "sibling", "workspace": str(workspace), "remote_spec": str(spec), "run_kind": "chain"},
+    )
+    # Sidecars that must not appear as siblings
+    for suffix in (".repair-progress.json", ".reap-progress.json", ".chain-health.progress.json", ".progress.json"):
+        (marker_dir / f"current{suffix}").write_text("{}", encoding="utf-8")
+        (marker_dir / f"sibling{suffix}").write_text("{}", encoding="utf-8")
+
+    record = resolve_current_target("current", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
+
+    sibling_sessions = record.get("sibling_sessions", [])
+    sibling_names = {s["session"] for s in sibling_sessions}
+    assert sibling_names == {"sibling"}
 
 
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:

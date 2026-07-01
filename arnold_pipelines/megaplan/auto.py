@@ -1666,11 +1666,89 @@ def _record_lifecycle_failure(
         )
     except (OSError, RuntimeError, ValueError):
         return
+    _enqueue_lifecycle_failure_request(
+        plan_dir=plan_dir,
+        kind=kind,
+        message=message,
+        current_state=current_state,
+        phase=phase,
+        suggested_action=suggested_action,
+        metadata=metadata,
+    )
     if progress_emitter is not None and failure_details is not None:
         if current_state == STATE_BLOCKED:
             progress_emitter.execution_blocked(summary=message, **failure_details)
         else:
             progress_emitter.plan_failed(summary=message, **failure_details)
+
+
+def _enqueue_lifecycle_failure_request(
+    *,
+    plan_dir: Path,
+    kind: str,
+    message: str,
+    current_state: str | None,
+    phase: str | None,
+    suggested_action: str | None,
+    metadata: dict[str, Any] | None,
+) -> None:
+    try:
+        from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
+        from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
+
+        if not repair_request_queue_enabled():
+            return
+        workspace_path = _workspace_path_for_plan_dir(plan_dir)
+        enqueue_repair_request(
+            marker_dir=plan_dir,
+            session=plan_dir.name,
+            source="lifecycle_failure",
+            workspace=workspace_path,
+            run_kind="plan",
+            target={
+                "plan_dir": str(plan_dir),
+                "plan_name": plan_dir.name,
+                "workspace_path": str(workspace_path),
+            },
+            problem_signature={
+                "failure_kind": kind,
+                "current_state": current_state or "",
+                "phase_or_step": phase or "",
+                "milestone_or_plan": plan_dir.name,
+                "gate_recommendation": suggested_action or "",
+                "blocked_task_id": _lifecycle_blocked_task_id(metadata),
+            },
+            root_cause_hint=message,
+        )
+    except Exception:
+        _warn_best_effort_emit_failure(
+            "M3A_WARN_REPAIR_REQUEST_ENQUEUE",
+            action="enqueue_lifecycle_failure_request",
+            plan_dir=plan_dir,
+            phase=phase,
+            context={"failure_kind": kind},
+        )
+
+
+def _workspace_path_for_plan_dir(plan_dir: Path) -> Path:
+    if plan_dir.parent.name == "plans" and plan_dir.parent.parent.name == ".megaplan":
+        return plan_dir.parent.parent.parent
+    return plan_dir
+
+
+def _lifecycle_blocked_task_id(metadata: dict[str, Any] | None) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    for key in ("blocked_task_id", "task_id"):
+        value = metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    blocked = metadata.get("blocked_task_ids")
+    if isinstance(blocked, list):
+        for value in blocked:
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
 
 
 def _clear_latest_failure_for_success(plan_dir: Path | None) -> None:

@@ -24,6 +24,10 @@ from arnold_pipelines.megaplan.cloud.feature_flags import (
     escalation_ledger_on,
     redaction_enabled,
     redaction_on,
+    repair_request_queue_enabled,
+    repair_request_queue_on,
+    repair_trigger_enabled,
+    repair_trigger_on,
     resolver_enforcement_enabled,
     resolver_enforcement_on,
     resolver_observe_enabled,
@@ -83,6 +87,16 @@ class TestM1Defaults:
             assert redaction_enabled() is True
             assert redaction_on() is True
 
+    def test_repair_request_queue_defaults_on(self) -> None:
+        with _clear_env():
+            assert repair_request_queue_enabled() is True
+            assert repair_request_queue_on() is True
+
+    def test_repair_trigger_defaults_off(self) -> None:
+        with _clear_env():
+            assert repair_trigger_enabled() is False
+            assert repair_trigger_on() is False
+
 
 # ---------------------------------------------------------------------------
 # Explicit opt-out for redaction
@@ -135,6 +149,7 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
+            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_by_default(self, env_var: str, flag_func) -> None:
@@ -147,6 +162,7 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
+            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_on_when_env_1(self, env_var: str, flag_func) -> None:
@@ -159,6 +175,7 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
+            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_when_env_0(self, env_var: str, flag_func) -> None:
@@ -171,6 +188,7 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
+            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_when_env_false(self, env_var: str, flag_func) -> None:
@@ -183,6 +201,7 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
+            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_on_when_env_true(self, env_var: str, flag_func) -> None:
@@ -196,6 +215,7 @@ class TestExplicitOptIn:
             ("ARNOLD_RESOLVER_ENFORCEMENT", resolver_enforcement_enabled),
             ("ARNOLD_ESCALATION_LEDGER", escalation_ledger_enabled),
             ("ARNOLD_AUTONOMY", autonomy_enabled),
+            ("ARNOLD_REPAIR_TRIGGER_ENABLED", repair_trigger_enabled),
         ],
     )
     def test_flag_off_when_env_empty(self, env_var: str, flag_func) -> None:
@@ -227,6 +247,18 @@ class TestResolverObserveOptOut:
     def test_resolver_observe_on_by_default(self) -> None:
         with _clear_env():
             assert resolver_observe_enabled() is True
+
+
+class TestRepairRequestQueueOptOut:
+    """Repair queue marker production defaults ON but can be disabled."""
+
+    def test_repair_request_queue_off_when_env_0(self) -> None:
+        with _set_env(ARNOLD_REPAIR_REQUEST_QUEUE="0"):
+            assert repair_request_queue_enabled() is False
+
+    def test_repair_request_queue_on_when_env_true(self) -> None:
+        with _set_env(ARNOLD_REPAIR_REQUEST_QUEUE="true"):
+            assert repair_request_queue_enabled() is True
 
 
 # ---------------------------------------------------------------------------

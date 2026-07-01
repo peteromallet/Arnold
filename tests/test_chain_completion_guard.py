@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from unittest import mock
 from unittest.mock import patch
 
 import arnold_pipelines.megaplan.chain as chain_module
@@ -1404,3 +1405,293 @@ def test_missing_milestone_base_sha_blocks_without_waiver(tmp_path: Path) -> Non
 
     assert ok is False
     assert "milestone_base_sha unavailable" in reason
+
+
+# ---------------------------------------------------------------------------
+# T15: Completion guard fetch-and-retry coverage
+# ---------------------------------------------------------------------------
+
+
+def _empty_completed_process() -> subprocess.CompletedProcess[str]:
+    """Return a successful empty CompletedProcess (used as a stub for fetch)."""
+    return subprocess.CompletedProcess(
+        args=["git", "fetch", "origin", "--prune"],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+
+
+def test_diff_name_only_fetch_once_retry_once_via_subprocess_mock(
+    tmp_path: Path,
+) -> None:
+    """Mocked fatal pattern: diff fails with 'bad object', fetch runs once,
+    retry succeeds.  Verify exactly one fetch + one retry diff call."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    _real_run = subprocess.run
+    captured: list[list[str]] = []
+
+    def _selective_run(args, **kwargs):
+        cmd = [str(a) for a in args]
+        is_diff = any("diff" in a for a in cmd)
+        is_fetch = any("fetch" in a for a in cmd)
+        if is_diff or is_fetch:
+            captured.append(cmd)
+        if is_diff:
+            if len([c for c in captured if "diff" in c]) == 1:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: bad object abc123\n",
+                )
+            # Retry diff: succeed
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="src/app.py\n",
+                stderr="",
+            )
+        if is_fetch:
+            return _empty_completed_process()
+        return _real_run(args, **kwargs)
+
+    with mock.patch("subprocess.run", side_effect=_selective_run):
+        ok, reason = _chain_completion_guard(
+            tmp_path,
+            _record(),
+            implementation_milestone=True,
+        )
+
+    assert ok is True, f"completion guard should pass: {reason}"
+    assert "completion guard passed" in reason
+    diff_calls = [c for c in captured if "diff" in c]
+    fetch_calls = [c for c in captured if "fetch" in c]
+    assert len(diff_calls) == 2, (
+        f"Expected 2 git diff calls (fail + retry); got {len(diff_calls)}: {captured}"
+    )
+    assert len(fetch_calls) == 1, (
+        f"Expected exactly 1 git fetch call; got {len(fetch_calls)}: {captured}"
+    )
+
+
+def test_diff_name_only_non_ref_error_skips_fetch_via_subprocess_mock(
+    tmp_path: Path,
+) -> None:
+    """Non-ref-resolution error (e.g. 'not a git repository') must NOT trigger
+    fetch — the error surfaces immediately with only one diff call."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    _real_run = subprocess.run
+    captured: list[list[str]] = []
+
+    def _selective_run(args, **kwargs):
+        cmd = [str(a) for a in args]
+        is_diff = any("diff" in a for a in cmd)
+        is_fetch = any("fetch" in a for a in cmd)
+        if is_diff or is_fetch:
+            captured.append(cmd)
+        if is_diff or is_fetch:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: not a git repository\n",
+            )
+        return _real_run(args, **kwargs)
+
+    with mock.patch("subprocess.run", side_effect=_selective_run):
+        ok, reason = _chain_completion_guard(
+            tmp_path,
+            _record(),
+            implementation_milestone=True,
+        )
+
+    assert ok is False, "non-ref error should fail the guard"
+    diff_calls = [c for c in captured if "diff" in c]
+    fetch_calls = [c for c in captured if "fetch" in c]
+    assert len(diff_calls) == 1, (
+        f"Expected exactly 1 git diff call (no retry); got {len(diff_calls)}: {captured}"
+    )
+    assert len(fetch_calls) == 0, (
+        f"Expected 0 git fetch calls for non-ref error; got {len(fetch_calls)}: {captured}"
+    )
+
+
+def test_completion_guard_bare_origin_fetch_supplies_missing_object(
+    tmp_path: Path,
+) -> None:
+    """Local/bare Git workflow: a merge commit exists on origin but not locally.
+    _chain_completion_guard with pr_merge_sha pointing to the remote-only commit
+    must fetch --prune and pass the guard."""
+    local = tmp_path / "local"
+    remote = tmp_path / "remote.git"
+    other = tmp_path / "other"
+    local.mkdir()
+    remote.mkdir()
+    _git(remote, "init", "--bare")
+    base = _init_repo(local)
+    _git(local, "branch", "-M", "main")
+    _git(local, "remote", "add", "origin", str(remote))
+    _git(local, "push", "-u", "origin", "main")
+
+    # Create a remote-only commit from a separate clone
+    _git(tmp_path, "clone", str(remote), str(other))
+    _git(other, "config", "user.email", "test@example.com")
+    _git(other, "config", "user.name", "Test User")
+    (other / "src").mkdir(exist_ok=True)
+    (other / "src" / "app.py").write_text("print('remote done')\n", encoding="utf-8")
+    _git(other, "add", "src/app.py")
+    _git(other, "commit", "-m", "remote semantic change")
+    remote_sha = _git(other, "rev-parse", "HEAD")
+    _git(other, "push", "origin", "main")
+
+    # Confirm local doesn't have the remote commit
+    missing = subprocess.run(
+        ["git", "cat-file", "-t", remote_sha],
+        cwd=local,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert missing.returncode != 0, "remote commit should be missing locally"
+
+    # Write plan state with base_sha
+    _write_plan(local, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    # Run completion guard — fetch should bring the missing object in
+    ok, reason = _chain_completion_guard(
+        local,
+        {
+            **_record(),
+            "pr_number": 42,
+            "pr_state": "merged",
+            "pr_merge_sha": remote_sha,
+        },
+        implementation_milestone=True,
+    )
+
+    assert ok is True, f"completion guard should pass after fetch: {reason}"
+    assert (
+        "published PR target" in reason or "completion guard passed" in reason
+    ), f"unexpected reason: {reason}"
+
+
+def test_completion_guard_surfaces_unresolved_error_after_fetch_retry(
+    tmp_path: Path,
+) -> None:
+    """When fetch succeeds but the retry diff still fails (truly bogus SHA),
+    the real error is surfaced through the completion guard, not swallowed."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+    _write_plan(tmp_path, base_sha=base, finalize_tasks=[{"id": "T1"}])
+
+    bogus_sha = "deadbeef" * 5  # 40 hex chars, not a real object anywhere
+
+    _real_run = subprocess.run
+    captured: list[list[str]] = []
+
+    def _selective_run(args, **kwargs):
+        cmd = [str(a) for a in args]
+        is_diff = any("diff" in a for a in cmd)
+        is_fetch = any("fetch" in a for a in cmd)
+        cmd_str = " ".join(cmd)
+        involves_bogus = "deadbeef" in cmd_str
+        if (is_diff and involves_bogus) or is_fetch:
+            captured.append(cmd)
+        if is_fetch:
+            return _empty_completed_process()
+        if is_diff and involves_bogus:
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=128,
+                stdout="",
+                stderr="fatal: bad object deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n",
+            )
+        return _real_run(args, **kwargs)
+
+    with mock.patch("subprocess.run", side_effect=_selective_run):
+        ok, reason = _chain_completion_guard(
+            tmp_path,
+            {
+                **_record(),
+                "pr_number": 99,
+                "pr_state": "merged",
+                "pr_merge_sha": bogus_sha,
+            },
+            implementation_milestone=True,
+        )
+
+    assert ok is False, f"truly bogus SHA should fail after fetch+retry, got ok={ok}: {reason}"
+    diff_calls = [c for c in captured if "diff" in c]
+    fetch_calls = [c for c in captured if "fetch" in c]
+    assert len(diff_calls) == 2, (
+        f"Expected 2 diff calls (first fail + retry fail); got {len(diff_calls)}: {captured}"
+    )
+    assert len(fetch_calls) == 1, (
+        f"Expected 1 fetch call; got {len(fetch_calls)}: {captured}"
+    )
+    # The error reason must mention the failed diff
+    assert (
+        "failed" in reason.lower()
+        or "bad object" in reason.lower()
+        or "git diff" in reason.lower()
+    ), f"reason should surface the unresolved error: {reason}"
+
+
+def test_semantic_diff_nonempty_from_base_fetch_once_retry_once(
+    tmp_path: Path,
+) -> None:
+    """Through _semantic_diff_nonempty_from_base: first diff fails with
+    'unknown revision', fetch runs once, retry succeeds.  Verifies the
+    fetch-and-retry at the lower helper layer called by the completion guard."""
+    base = _init_repo(tmp_path)
+    _commit_semantic_change(tmp_path)
+
+    _real_run = subprocess.run
+    captured: list[list[str]] = []
+
+    def _selective_run(args, **kwargs):
+        cmd = [str(a) for a in args]
+        is_diff = any("diff" in a for a in cmd)
+        is_fetch = any("fetch" in a for a in cmd)
+        if is_diff or is_fetch:
+            captured.append(cmd)
+        if is_diff:
+            if len([c for c in captured if "diff" in c]) == 1:
+                return subprocess.CompletedProcess(
+                    args=args,
+                    returncode=128,
+                    stdout="",
+                    stderr="fatal: unknown revision or path not in the working tree\n",
+                )
+            return subprocess.CompletedProcess(
+                args=args,
+                returncode=0,
+                stdout="src/app.py\n",
+                stderr="",
+            )
+        if is_fetch:
+            return _empty_completed_process()
+        return _real_run(args, **kwargs)
+
+    with mock.patch("subprocess.run", side_effect=_selective_run):
+        ok, reason = chain_module._semantic_diff_nonempty_from_base(
+            tmp_path, base
+        )
+
+    assert ok is True, f"semantic diff should pass after fetch: {reason}"
+    assert "local HEAD" in reason
+    diff_calls = [c for c in captured if "diff" in c]
+    fetch_calls = [c for c in captured if "fetch" in c]
+    assert len(diff_calls) == 2, (
+        f"Expected 2 git diff calls (fail + retry); got {len(diff_calls)}: {captured}"
+    )
+    assert len(fetch_calls) == 1, (
+        f"Expected exactly 1 git fetch call; got {len(fetch_calls)}: {captured}"
+    )
