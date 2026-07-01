@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 from pathlib import Path
 
 import pytest
@@ -23,18 +24,22 @@ def test_m1_dispatch_substrate_proof_describe_surfaces_match(
 ) -> None:
     from arnold_pipelines.megaplan.cli import handle_describe
     from arnold_pipelines.megaplan.cli.run import _describe_pipeline
+    from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
 
+    facade_path = Path(importlib.import_module("arnold_pipelines.megaplan.pipeline").__file__).resolve()
     response = handle_describe(argparse.Namespace(pipeline_name="megaplan"))
     handle_output = capsys.readouterr().out
 
     rc = _describe_pipeline("megaplan")
     run_output = capsys.readouterr().out
+    compiled = build_and_compile_pipeline()
 
     assert response["success"] is True
     assert rc == 0
     for expected in (
         "Pipeline: megaplan",
-        "Manifest: sha256:",
+        f"Manifest: {compiled.manifest_hash}",
+        f"Source:   {facade_path}",
         "Driver:   native / megaplan",
         "Registration: native",
         "Contract: M1 dispatch substrate proof only; not final Megaplan report conformance.",
@@ -48,6 +53,44 @@ def test_m1_dispatch_substrate_proof_describe_surfaces_match(
             "M1 dispatch substrate proof requires run --describe to resolve "
             f"through the same metadata line {expected!r}."
         )
+
+
+def test_canonical_metadata_comes_from_native_backed_compile_path() -> None:
+    from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+    from arnold_pipelines.megaplan.planning.operations import SUPPORTED_OPERATIONS, canonical_metadata
+
+    compiled = build_and_compile_pipeline()
+    metadata = canonical_metadata()
+
+    assert metadata["manifest_hash"] == compiled.manifest_hash
+    assert metadata["topology_hash"] == compiled.topology_hash
+    assert metadata["registration_kind"] == "native"
+    assert metadata["compatibility_classification"] == "native"
+    assert metadata["source_path"].endswith("/arnold_pipelines/megaplan/pipeline.py")
+    assert metadata["authored_source_path"].endswith(
+        "/arnold_pipelines/megaplan/workflows/planning.py"
+    )
+    assert metadata["supported_operations"] == tuple(
+        kind.value for kind in sorted(SUPPORTED_OPERATIONS, key=lambda item: item.value)
+    )
+
+
+def test_describe_alias_resolves_to_canonical_megaplan_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from arnold_pipelines.megaplan.cli import handle_describe
+    from arnold_pipelines.megaplan.cli.run import _describe_pipeline
+
+    response = handle_describe(argparse.Namespace(pipeline_name="planning"))
+    handle_output = capsys.readouterr().out
+
+    rc = _describe_pipeline("planning")
+    run_output = capsys.readouterr().out
+
+    assert response == {"success": True, "step": "describe", "pipeline": "megaplan"}
+    assert rc == 0
+    assert "Pipeline: megaplan" in handle_output
+    assert "Pipeline: megaplan" in run_output
 
 
 def test_m1_dispatch_substrate_proof_pipelines_check_uses_manifest_context(

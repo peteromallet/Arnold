@@ -7,8 +7,8 @@ implementation.  Registry discovery scans ``arnold/pipelines`` before
 Modules:
 
 * ``workflows/planning.py`` — canonical authored workflow source.
-* ``pipeline.py`` — thin public facade for ``build_pipeline()`` and
-  ``build_and_compile_pipeline()``.
+* ``pipeline.py`` — thin public facade for ``build_pipeline()`` and the
+  native-backed ``build_and_compile_pipeline()`` compatibility shell.
 * ``routing.py`` — planning decision literals and routing helpers.
 * ``handlers/`` — handler bridge modules (M5a/M5b deferred).
 
@@ -43,7 +43,7 @@ def build_pipeline(*args: Any, **kwargs: Any) -> Any:
 
 
 def build_and_compile_pipeline(*args: Any, **kwargs: Any) -> Any:
-    """Build the M3 pipeline and compile it to a WorkflowManifest."""
+    """Build the DSL pipeline and project it to a native-backed shell."""
 
     module = import_module("arnold_pipelines.megaplan.pipeline")
     return module.build_and_compile_pipeline(*args, **kwargs)

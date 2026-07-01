@@ -2570,23 +2570,28 @@ def _handle_list_pipelines(args: argparse.Namespace) -> StepResponse:
 def handle_describe(args: argparse.Namespace) -> StepResponse:
     """Handle ``megaplan describe <pipeline>`` command."""
     from arnold_pipelines.megaplan.cli.run import render_pipeline_description
+    from arnold_pipelines.megaplan.planning.operations import canonical_metadata
     from arnold_pipelines.megaplan.registry import (
         describe_pipeline,
         pipeline_metadata,
         registered_pipelines,
         read_pipeline_skill_md,
     )
+    from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
 
     name = args.pipeline_name
-    if name not in set(registered_pipelines()):
+    canonical_name = canonical_pipeline_name(name)
+    if canonical_name not in set(registered_pipelines()):
         return {
             "success": False,
             "step": "describe",
             "error": f"Unknown pipeline: {name}",
         }
 
-    meta = pipeline_metadata(name)
-    desc = describe_pipeline(name) or str(meta.get("description") or "")
+    meta = pipeline_metadata(canonical_name)
+    if canonical_name == "megaplan":
+        meta.update(canonical_metadata())
+    desc = describe_pipeline(canonical_name) or str(meta.get("description") or "")
     rendered_meta = dict(meta)
     if desc and not rendered_meta.get("description"):
         rendered_meta["description"] = desc
@@ -2594,15 +2599,15 @@ def handle_describe(args: argparse.Namespace) -> StepResponse:
     # For CLI rendering, print directly (descriptions are long-form text)
     print(
         render_pipeline_description(
-            name,
+            canonical_name,
             rendered_meta,
-            skill_md=read_pipeline_skill_md(name),
+            skill_md=read_pipeline_skill_md(canonical_name),
         )
     )
     return {
         "success": True,
         "step": "describe",
-        "pipeline": name,
+        "pipeline": canonical_name,
     }
 
 

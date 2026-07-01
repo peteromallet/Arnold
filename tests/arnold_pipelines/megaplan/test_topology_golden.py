@@ -205,7 +205,7 @@ class TestTopologyFixtureLock:
 
     def test_compiled_capabilities_match_fixture(self, fixture: dict) -> None:
         manifest = build_and_compile_pipeline()
-        cap_ids = {c.capability_id for c in manifest.capabilities}
+        cap_ids = {c.id for c in manifest.capabilities}
         assert cap_ids == set(fixture["capabilities"])
 
     def test_compiled_gate_edges_match_fixture(self, fixture: dict) -> None:
