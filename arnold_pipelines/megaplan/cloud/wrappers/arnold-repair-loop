@@ -3420,6 +3420,17 @@ import sys
 data_path, out_path, discord_status = sys.argv[1:]
 payload = json.loads(pathlib.Path(data_path).read_text(encoding="utf-8"))
 iterations = payload.get("iterations") or []
+plan_name = payload.get("plan_name") if isinstance(payload.get("plan_name"), str) else ""
+chain_current_plan_name = ""
+for item in reversed(iterations):
+    if not isinstance(item, dict):
+        continue
+    chain_state = item.get("chain_state_summary")
+    if isinstance(chain_state, dict):
+        value = chain_state.get("current_plan_name")
+        if isinstance(value, str) and value:
+            chain_current_plan_name = value
+            break
 summary_parts = []
 for item in iterations:
     summary_parts.append(
@@ -3431,6 +3442,8 @@ marker = {
     "session": payload.get("session"),
     "workspace": payload.get("workspace"),
     "spec": payload.get("spec"),
+    "plan_name": plan_name,
+    "chain_current_plan_name": chain_current_plan_name,
     "summary": " | ".join(summary_parts),
     "repair_data_path": data_path,
     "discord_status": discord_status,
