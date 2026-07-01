@@ -323,16 +323,12 @@ def build_parser() -> argparse.ArgumentParser:
     initiative_search.add_argument("--keywords-all", action="store_true")
     initiative_search.add_argument("--limit", type=int)
 
-    for command in ("status", "progress", "watch"):
+    # `status` is defined above with its dedicated flags; only add the
+    # lightweight observability siblings here.
+    for command in ("progress", "watch"):
         sub = subparsers.add_parser(command)
         sub.add_argument("--project-dir", default=None)
         sub.add_argument("--plan")
-        if command == "status":
-            sub.add_argument(
-                "--pending-human",
-                action="store_true",
-                default=False,
-            )
 
     audit_parser = subparsers.add_parser("audit")
     audit_parser.add_argument("--project-dir", default=None)
