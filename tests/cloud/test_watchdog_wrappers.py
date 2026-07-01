@@ -1974,11 +1974,11 @@ repair_tree_pgids 100 100
 
 
 def test_watchdog_treats_supervisor_retry_before_process_liveness_as_unhealthy() -> None:
-    text = _wrapper("arnold-watchdog")
+    text = _extract_wrapper_function("session_health_status")
 
     pane_check = "tmux capture-pane"
     retry_check = "retrying_failure"
-    process_check = 'grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start"'
+    process_check = 'if chain_process_is_alive "$remote_spec"; then'
 
     assert text.index(pane_check) < text.index(process_check)
     assert text.index(retry_check) < text.index(process_check)
@@ -3748,6 +3748,67 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
     assert 'tmux new-session -d -s "$session"' in text
     assert 'repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running"' in text
+
+
+def test_repair_loop_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / ".megaplan" / "plans").mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    script = "\n\n".join(
+        [
+            _extract_repair_function("chain_wait_status"),
+            _extract_repair_function("plan_process_is_alive"),
+            _extract_repair_function("chain_process_is_alive"),
+            _extract_repair_function("session_health_status"),
+            f"""
+tmux() {{ return 1; }}
+ps() {{
+  cat <<'EOF'
+python3 -P -m arnold_pipelines.megaplan chain start --spec {spec_path} --project-dir {workspace}
+EOF
+}}
+session_health_status demo-session {workspace} {spec_path} chain ""
+""",
+        ]
+    )
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "alive"
+
+
+def test_watchdog_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / ".megaplan" / "plans").mkdir(parents=True)
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("chain_wait_status"),
+            _extract_wrapper_function("plan_process_is_alive"),
+            _extract_wrapper_function("chain_process_is_alive"),
+            _extract_wrapper_function("epic_chain_process_is_alive"),
+            _extract_wrapper_function("session_health_status"),
+            f"""
+tmux() {{ return 1; }}
+ps() {{
+  cat <<'EOF'
+python3 -P -m arnold_pipelines.megaplan chain start --spec {spec_path} --project-dir {workspace}
+EOF
+}}
+session_health_status demo-session {workspace} {spec_path} chain ""
+""",
+        ]
+    )
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "alive"
 
 
 def test_watchdog_repair_loop_needs_human_sidecar_short_circuits_relaunch(tmp_path: Path) -> None:

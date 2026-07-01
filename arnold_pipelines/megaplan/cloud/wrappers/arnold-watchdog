@@ -1081,6 +1081,52 @@ ensure_install_or_repair() {
   codex_repair_editable_install "$reason"
 }
 
+plan_process_is_alive() {
+  local plan_name="$1"
+  if [[ -z "$plan_name" ]]; then
+    return 1
+  fi
+  if ps -eww -o args= \
+    | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan (init|auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)" \
+    | grep -Eq -- "(--plan[=[:space:]]$plan_name|--name[=[:space:]]$plan_name.*--auto-start|--auto-start.*--name[=[:space:]]$plan_name)"; then
+    return 0
+  fi
+  if ps -eww -o args= \
+    | grep -E "[a]rnold (auto|resume)|[m]egaplan (auto|resume)" \
+    | grep -Fq -- "--plan $plan_name"; then
+    return 0
+  fi
+  return 1
+}
+
+chain_process_is_alive() {
+  local remote_spec="$1"
+  if [[ -z "$remote_spec" ]]; then
+    return 1
+  fi
+  if ps -eww -o args= \
+    | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" \
+    | grep -F -- "--spec" \
+    | grep -Fq -- "$remote_spec"; then
+    return 0
+  fi
+  return 1
+}
+
+epic_chain_process_is_alive() {
+  local remote_spec="$1"
+  if [[ -z "$remote_spec" ]]; then
+    return 1
+  fi
+  if ps -eww -o args= \
+    | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan epic-chain start" \
+    | grep -F -- "--spec" \
+    | grep -Fq -- "$remote_spec"; then
+    return 0
+  fi
+  return 1
+}
+
 session_health_status() {
   local session="$1"
   local workspace="$2"
@@ -1090,11 +1136,23 @@ session_health_status() {
   local wait_status
   if ! tmux has-session -t "$session" 2>/dev/null; then
     if [[ "$run_kind" == "chain" ]]; then
+      if chain_process_is_alive "$remote_spec" || plan_process_is_alive "$plan_name"; then
+        echo "alive"
+        return 0
+      fi
       wait_status="$(chain_wait_status "$workspace" "$remote_spec")"
       if [[ "$wait_status" != "none" ]]; then
         echo "$wait_status"
         return 0
       fi
+    elif [[ "$run_kind" == "epic_chain" ]]; then
+      if epic_chain_process_is_alive "$remote_spec"; then
+        echo "alive"
+        return 0
+      fi
+    elif [[ -n "$plan_name" ]] && plan_process_is_alive "$plan_name"; then
+      echo "alive"
+      return 0
     fi
     echo "stopped"
     return 0
@@ -1118,7 +1176,7 @@ session_health_status() {
       return 0
     fi
 
-    if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+    if chain_process_is_alive "$remote_spec"; then
       echo "alive"
       return 0
     fi
@@ -1135,20 +1193,12 @@ session_health_status() {
       return 0
     fi
 
-    if ps -eww -o args= | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan epic-chain start" | grep -F -- "--spec" | grep -Fq -- "$remote_spec"; then
+    if epic_chain_process_is_alive "$remote_spec"; then
       echo "alive"
       return 0
     fi
   elif [[ -n "$plan_name" ]]; then
-    if ps -eww -o args= \
-      | grep -E "[p]ython[0-9.]*([[:space:]]+-P)?[[:space:]]+-m arnold_pipelines.megaplan (init|auto|resume|plan|prep|critique|revise|gate|finalize|execute|review)" \
-      | grep -Eq -- "(--plan[=[:space:]]$plan_name|--name[=[:space:]]$plan_name.*--auto-start|--auto-start.*--name[=[:space:]]$plan_name)"; then
-      echo "alive"
-      return 0
-    fi
-    if ps -eww -o args= \
-      | grep -E "[a]rnold (auto|resume)|[m]egaplan (auto|resume)" \
-      | grep -Fq -- "--plan $plan_name"; then
+    if plan_process_is_alive "$plan_name"; then
       echo "alive"
       return 0
     fi
