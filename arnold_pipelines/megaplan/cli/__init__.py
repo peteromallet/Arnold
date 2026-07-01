@@ -323,6 +323,55 @@ def build_parser() -> argparse.ArgumentParser:
     initiative_search.add_argument("--keywords-all", action="store_true")
     initiative_search.add_argument("--limit", type=int)
 
+    for command in ("status", "progress", "watch"):
+        sub = subparsers.add_parser(command)
+        sub.add_argument("--project-dir", default=None)
+        sub.add_argument("--plan")
+        if command == "status":
+            sub.add_argument(
+                "--pending-human",
+                action="store_true",
+                default=False,
+            )
+
+    audit_parser = subparsers.add_parser("audit")
+    audit_parser.add_argument("--project-dir", default=None)
+    audit_parser.add_argument("--plan")
+    audit_sub = audit_parser.add_subparsers(dest="audit_action", required=False)
+    audit_query = audit_sub.add_parser("query")
+    audit_query.add_argument("--model")
+    audit_query.add_argument("--phase")
+    audit_query.add_argument("--profile")
+    audit_query.add_argument("--since")
+    audit_query.add_argument("--agg", default="")
+    audit_query.add_argument("--json", action="store_true", default=False)
+    audit_query.add_argument("--audit-dir", default=None)
+    audit_report = audit_sub.add_parser("report")
+    audit_report.add_argument("--plan")
+    audit_report.add_argument("--compare")
+    audit_report.add_argument("--output")
+    audit_report.add_argument("--json-output")
+    audit_report.add_argument("--format", choices=("markdown", "json"), default="markdown")
+
+    resume_parser = subparsers.add_parser("resume")
+    resume_parser.add_argument("--project-dir", default=None)
+    resume_parser.add_argument("--plan", required=True)
+    resume_parser.add_argument("--choice", default=None)
+
+    verify_human = subparsers.add_parser("verify-human")
+    verify_human.add_argument("--project-dir", default=None)
+    verify_human.add_argument("--plan")
+    verify_human.add_argument("--list", dest="list_flag", action="store_true", default=False)
+    verify_human.add_argument("--json", dest="json_flag", action="store_true", default=False)
+    verify_human.add_argument("--criterion", default=None)
+    verify_human.add_argument("--pass", dest="pass_flag", action="store_true", default=False)
+    verify_human.add_argument("--fail", dest="fail_flag", action="store_true", default=False)
+    verify_human.add_argument("--evidence", default=None)
+
+    audit_verifiability = subparsers.add_parser("audit-verifiability")
+    audit_verifiability.add_argument("--project-dir", default=None)
+    audit_verifiability.add_argument("--plan")
+
     migrate_layout = subparsers.add_parser("migrate-layout")
     migrate_layout.add_argument("--apply", action="store_true")
 
