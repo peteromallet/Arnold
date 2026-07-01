@@ -9,6 +9,14 @@ __pycache__/
 !.megaplan/initiatives/
 !.megaplan/initiatives/**
 !.megaplan/tickets/
+# Re-ignore runtime artifacts that accumulate under committed initiative
+# directories.  ``!.megaplan/initiatives/**`` above un-ignores the entire
+# initiative tree, but chain-state files, repair-queue markers, and any
+# *.megaplan/* runtime scaffolding inside initiatives must stay ignored so
+# they cannot dirty git_tracked launch preconditions.
+.megaplan/initiatives/**/.megaplan/
+.megaplan/initiatives/**/chain_state.json
+.megaplan/initiatives/**/repair-queue/
 !.megaplan/tickets/**
 !.megaplan/ideas/
 !.megaplan/ideas/**

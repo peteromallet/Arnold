@@ -775,3 +775,232 @@ def test_cloud_chains_command_lists_marker_only_live_process_sessions() -> None:
     assert "tmux_status" in script
     assert "arnold_pipelines.megaplan chain start" in script
     assert '"status"] = "running" if payload["tmux_status"] == "alive" or payload["process_status"] == "alive"' in script
+
+
+# ── T11: sidecar classification & evidence field tests ──────────────────
+
+
+def test_cloud_chains_command_uses_canonical_session_marker_filter() -> None:
+    """The generated script must import and call ``is_canonical_session_marker_path``
+    to exclude canonical sidecar JSONs from session listing."""
+    script = _cloud_chains_command()
+
+    assert "from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path" in script
+    assert "is_canonical_session_marker_path(marker)" in script
+
+
+def test_cloud_chains_command_emits_separate_evidence_fields() -> None:
+    """Every session row must emit distinct ``marker_evidence``, ``tmux_evidence``,
+    ``process_evidence``, and ``active_step_evidence`` fields."""
+    script = _cloud_chains_command()
+
+    assert '"marker_evidence"' in script
+    assert '"tmux_evidence"' in script
+    assert '"process_evidence"' in script
+    assert '"active_step_evidence"' in script
+    # Status convenience mirrors
+    assert '"marker_status"' in script
+    assert '"tmux_status"' in script
+    assert '"process_status"' in script
+    assert '"active_step_status"' in script
+
+
+def test_cloud_chains_command_marker_only_sessions_have_process_dead_tmux_missing() -> None:
+    """When only a marker exists (no tmux, no process), the row must show
+    tmux=missing and process=dead (or unknown), not omit the fields."""
+    script = _cloud_chains_command()
+
+    # tmux_evidence defaults to missing when session not in tmux_names
+    assert '"tmux_evidence": {"status": "alive" if name in tmux_names else "missing"}' in script
+    # process_evidence calls _process_status which returns alive/dead/unknown
+    assert "def _process_status(remote_spec):" in script
+    assert '"process_evidence"' in script
+
+
+def test_cloud_chain_status_payload_exposes_separate_evidence_fields() -> None:
+    """``cloud_chain_status_payload`` must return separate marker_evidence,
+    tmux_evidence, process_evidence, and active_step_evidence keys."""
+    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
+    chain_yaml = "milestones:\n  - label: m1\n    idea: idea.md\n"
+    chain_state = chain_module.ChainState(
+        current_milestone_index=0,
+        current_plan_name="milestone-demo",
+        last_state="prepped",
+        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+        chain_session="megaplan-chain-demo",
+    ).to_dict()
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets={},
+        ssh=SshSpec(host="testhost"),
+    )
+
+    payload = cloud_chain_status_payload(
+        Path("/repo"),
+        argparse.Namespace(remote_spec=remote_spec, cloud_yaml=None),
+        spec,
+        _StatusProvider(
+            remote_spec=remote_spec,
+            chain_yaml=chain_yaml,
+            chain_state=chain_state,
+            plan_status={"status": "running"},
+            runner_probe="dead\n",
+        ),
+    )
+
+    assert "marker_evidence" in payload
+    assert "tmux_evidence" in payload
+    assert "process_evidence" in payload
+    assert "active_step_evidence" in payload
+    # marker_evidence structure
+    assert isinstance(payload["marker_evidence"], dict)
+    assert "status" in payload["marker_evidence"]
+    # tmux_evidence structure
+    assert isinstance(payload["tmux_evidence"], dict)
+    assert "status" in payload["tmux_evidence"]
+    # process_evidence structure
+    assert isinstance(payload["process_evidence"], dict)
+    assert "status" in payload["process_evidence"]
+    # active_step_evidence structure
+    assert isinstance(payload["active_step_evidence"], dict)
+    assert "status" in payload["active_step_evidence"]
+
+
+def test_cloud_chain_status_payload_tmux_alive_sets_tmux_evidence_and_process_unknown() -> None:
+    """When tmux is alive, ``tmux_evidence`` is *alive* while ``process_evidence``
+    is *unknown* (not dead, not alive)."""
+    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
+    chain_yaml = "milestones:\n  - label: m1\n    idea: idea.md\n"
+    chain_state = chain_module.ChainState(
+        current_milestone_index=0,
+        current_plan_name="milestone-demo",
+        last_state="prepped",
+        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+        chain_session="megaplan-chain-demo",
+    ).to_dict()
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets={},
+        ssh=SshSpec(host="testhost"),
+    )
+
+    payload = cloud_chain_status_payload(
+        Path("/repo"),
+        argparse.Namespace(remote_spec=remote_spec, cloud_yaml=None),
+        spec,
+        _StatusProvider(
+            remote_spec=remote_spec,
+            chain_yaml=chain_yaml,
+            chain_state=chain_state,
+            plan_status={"status": "running"},
+            runner_probe="tmux_alive\n",
+        ),
+    )
+
+    assert payload["tmux_evidence"]["status"] == "alive"
+    assert payload["process_evidence"]["status"] == "unknown"
+    assert payload["runner"]["tmux_status"] == "alive"
+    assert payload["runner"]["process_status"] == "unknown"
+
+
+def test_cloud_chain_status_payload_active_step_from_plan_status() -> None:
+    """``active_step_evidence`` must reflect the active step from plan status
+    when available."""
+    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
+    chain_yaml = "milestones:\n  - label: m1\n    idea: idea.md\n"
+    chain_state = chain_module.ChainState(
+        current_milestone_index=0,
+        current_plan_name="milestone-demo",
+        last_state="prepped",
+        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+        chain_session="megaplan-chain-demo",
+    ).to_dict()
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets={},
+        ssh=SshSpec(host="testhost"),
+    )
+
+    payload = cloud_chain_status_payload(
+        Path("/repo"),
+        argparse.Namespace(remote_spec=remote_spec, cloud_yaml=None),
+        spec,
+        _StatusProvider(
+            remote_spec=remote_spec,
+            chain_yaml=chain_yaml,
+            chain_state=chain_state,
+            plan_status={
+                "status": "running",
+                "active_step": {
+                    "phase": "execute",
+                    "name": "run_tests",
+                    "attempt": 2,
+                    "worker_pid": 4242,
+                },
+            },
+            runner_probe="dead\n",
+        ),
+    )
+
+    assert payload["active_step_evidence"]["status"] == "present"
+    assert payload["active_step_evidence"]["phase"] == "execute"
+    assert payload["active_step_evidence"]["name"] == "run_tests"
+    assert payload["active_step_evidence"]["attempt"] == 2
+    assert payload["active_step_evidence"]["worker_pid"] == 4242
+
+
+def test_cloud_chain_status_payload_active_step_absent_when_missing() -> None:
+    """``active_step_evidence.status`` is *absent* when plan status has no active step."""
+    remote_spec = "/workspace/chain-51d959cf/vibecomfy/.megaplan/initiatives/demo/chain.yaml"
+    chain_yaml = "milestones:\n  - label: m1\n    idea: idea.md\n"
+    chain_state = chain_module.ChainState(
+        current_milestone_index=0,
+        current_plan_name="milestone-demo",
+        last_state="prepped",
+        resolved_workspace="/workspace/chain-51d959cf/vibecomfy",
+        chain_session="megaplan-chain-demo",
+    ).to_dict()
+    spec = CloudSpec(
+        provider="ssh",
+        repo=RepoSpec(url="https://github.com/example/app.git", workspace="/workspace/app"),
+        agents={"default": "codex"},
+        codex=CodexSpec(),
+        mode="idle",
+        megaplan=MegaplanSpec(),
+        resources=ResourcesSpec(),
+        secrets={},
+        ssh=SshSpec(host="testhost"),
+    )
+
+    payload = cloud_chain_status_payload(
+        Path("/repo"),
+        argparse.Namespace(remote_spec=remote_spec, cloud_yaml=None),
+        spec,
+        _StatusProvider(
+            remote_spec=remote_spec,
+            chain_yaml=chain_yaml,
+            chain_state=chain_state,
+            plan_status={"status": "running"},
+            runner_probe="dead\n",
+        ),
+    )
+
+    assert payload["active_step_evidence"]["status"] == "absent"
