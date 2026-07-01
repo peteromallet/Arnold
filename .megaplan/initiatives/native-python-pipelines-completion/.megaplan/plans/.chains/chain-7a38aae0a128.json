@@ -4,7 +4,7 @@
   "current_plan_name": "m1-platform-contract-20260701-0939",
   "current_milestone_base_sha": null,
   "target_base_ref": "b80fab5ec768d93b448d0594003d029aa1db50f6",
-  "last_state": "finalized",
+  "last_state": "done",
   "pr_number": null,
   "pr_state": null,
   "completed": [],
@@ -42,7 +42,7 @@
     "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
     "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
     "ground_truth_reconciliation": {
-      "reconciled_at": "2026-07-01T12:52:17Z",
+      "reconciled_at": "2026-07-01T12:42:06Z",
       "plan": "m1-platform-contract-20260701-0939",
       "current_state": "finalized",
       "latest_failure": null,
@@ -101,14 +101,14 @@
         "phase": "execute",
         "agent": "hermes",
         "mode": "persistent",
-        "run_id": "05ba9ca3-3cc6-4b0e-bbc3-cc2b0b52da8d",
-        "worker_pid": 2119945,
-        "started_at": "2026-07-01T12:49:37Z",
+        "run_id": "73c1d8ea-8953-49ed-8671-882187b73fb4",
+        "worker_pid": 2105884,
+        "started_at": "2026-07-01T12:39:35Z",
         "attempt": 1,
-        "last_activity_at": "2026-07-01T12:52:07Z",
+        "last_activity_at": "2026-07-01T12:41:12Z",
         "last_activity_kind": "llm_stream",
         "model": "deepseek:deepseek-v4-pro",
-        "last_activity_detail": "49 chunks, 7984 reasoning"
+        "last_activity_detail": "45 chunks, 2837 reasoning"
       },
       "pr_number": null,
       "pr_state": null
