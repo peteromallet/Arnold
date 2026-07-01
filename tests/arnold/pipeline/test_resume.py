@@ -11,6 +11,18 @@ from arnold.pipeline.resume import (
     read_composite_resume_cursor,
     read_resume_cursor,
 )
+from arnold.pipeline.types import StepContext, StepResult
+
+
+class _FakeStep:
+    """A step that does nothing — used only for structural tests."""
+
+    def __init__(self, name: str = "fake", kind: str = "produce") -> None:
+        self.name = name
+        self.kind = kind
+
+    def run(self, ctx: StepContext) -> StepResult:
+        raise NotImplementedError("test-only stub")
 
 
 def test_persist_and_read_resume_cursor(tmp_path: Path) -> None:
@@ -514,3 +526,115 @@ class TestGraphHumanGateSuspensionContract:
         assert data["resume_cursor"] == "cursor-1"
         assert data["reason"] == "awaiting_human"
         assert data["choices"] == ["continue", "stop"]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T17: Native-backed resume re-entry path — with_entry preserves fields
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestNativeBackedResumeReEntry:
+    """``with_entry()`` must preserve ``native_program`` and other dataclass
+    fields during resume re-entry.
+
+    The T6 fix closed a drop-site where ``with_entry()`` could lose
+    ``native_program`` during resume by constructing a fresh Pipeline
+    instead of using ``dataclasses.replace``.  These tests lock that
+    behaviour: a native-backed pipeline that suspends and resumes must
+    keep its ``native_program`` intact after re-entry.
+    """
+
+    def test_with_entry_preserves_native_program(self) -> None:
+        """``with_entry`` on a pipeline with native_program keeps it."""
+        from arnold.pipeline.native.ir import NativeProgram
+        from arnold.pipeline.types import Pipeline, Stage
+        from arnold_pipelines.megaplan.runtime.resume import with_entry
+
+        program = NativeProgram(name="test-program")
+        s1 = Stage(name="phase_a", step=_FakeStep("phase_a"), edges=())
+        s2 = Stage(name="phase_b", step=_FakeStep("phase_b"), edges=())
+        pipeline = Pipeline(
+            stages={"phase_a": s1, "phase_b": s2},
+            entry="phase_a",
+            native_program=program,
+        )
+
+        re_entered = with_entry(pipeline, "phase_b")
+        assert re_entered.entry == "phase_b"
+        assert re_entered.native_program is program, (
+            "native_program must survive with_entry() re-entry"
+        )
+
+    def test_with_entry_preserves_native_program_when_none(self) -> None:
+        """``with_entry`` on a pipeline without native_program keeps None."""
+        from arnold.pipeline.types import Pipeline, Stage
+        from arnold_pipelines.megaplan.runtime.resume import with_entry
+
+        s1 = Stage(name="phase_a", step=_FakeStep("phase_a"), edges=())
+        s2 = Stage(name="phase_b", step=_FakeStep("phase_b"), edges=())
+        pipeline = Pipeline(
+            stages={"phase_a": s1, "phase_b": s2},
+            entry="phase_a",
+            native_program=None,
+        )
+
+        re_entered = with_entry(pipeline, "phase_b")
+        assert re_entered.entry == "phase_b"
+        assert re_entered.native_program is None, (
+            "absent native_program must stay None after re-entry"
+        )
+
+    def test_with_entry_preserves_resource_bundles(self) -> None:
+        """``with_entry`` preserves resource_bundles during re-entry."""
+        from arnold.pipeline.types import Pipeline, Stage
+        from arnold_pipelines.megaplan.runtime.resume import with_entry
+
+        class _FakeBundle:
+            pass
+
+        bundle = _FakeBundle()
+        s1 = Stage(name="phase_a", step=_FakeStep("phase_a"), edges=())
+        s2 = Stage(name="phase_b", step=_FakeStep("phase_b"), edges=())
+        pipeline = Pipeline(
+            stages={"phase_a": s1, "phase_b": s2},
+            entry="phase_a",
+            resource_bundles=(bundle,),
+        )
+
+        re_entered = with_entry(pipeline, "phase_b")
+        assert re_entered.entry == "phase_b"
+        assert re_entered.resource_bundles == (bundle,), (
+            "resource_bundles must survive with_entry() re-entry"
+        )
+
+    def test_with_entry_preserves_binding_map(self) -> None:
+        """``with_entry`` preserves binding_map during re-entry."""
+        from arnold.pipeline.types import Pipeline, Stage
+        from arnold_pipelines.megaplan.runtime.resume import with_entry
+
+        bm = {"phase_a": {"out": "phase_b.in"}}
+        s1 = Stage(name="phase_a", step=_FakeStep("phase_a"), edges=())
+        s2 = Stage(name="phase_b", step=_FakeStep("phase_b"), edges=())
+        pipeline = Pipeline(
+            stages={"phase_a": s1, "phase_b": s2},
+            entry="phase_a",
+            binding_map=bm,
+        )
+
+        re_entered = with_entry(pipeline, "phase_b")
+        assert re_entered.entry == "phase_b"
+        assert re_entered.binding_map == bm, (
+            "binding_map must survive with_entry() re-entry"
+        )
+
+    def test_with_entry_rejects_unknown_stage(self) -> None:
+        """``with_entry`` raises KeyError for a stage not in the pipeline."""
+        from arnold.pipeline.types import Pipeline, Stage
+        from arnold_pipelines.megaplan.runtime.resume import with_entry
+
+        s1 = Stage(name="phase_a", step=_FakeStep("phase_a"), edges=())
+        pipeline = Pipeline(stages={"phase_a": s1}, entry="phase_a")
+
+        import pytest as _pytest
+        with _pytest.raises(KeyError, match="phase_b"):
+            with_entry(pipeline, "phase_b")

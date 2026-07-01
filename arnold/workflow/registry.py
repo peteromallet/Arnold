@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any, Callable, Literal, Mapping, Protocol, runtime_checkable
 
 from arnold.pipeline.types import Pipeline
@@ -32,6 +33,67 @@ PipelineBuilder = Callable[[], Pipeline]
 
 RegistrationKind = Literal["native", "graph_compatibility", "unknown"]
 """Classification for a registered pipeline's execution contract."""
+
+
+def _is_native_program_instance(value: Any) -> bool:
+    from arnold.pipeline.native.ir import NativeProgram
+
+    return isinstance(value, NativeProgram)
+
+
+def _pipeline_has_native_program(pipeline: Pipeline) -> bool:
+    return _is_native_program_instance(getattr(pipeline, "native_program", None))
+
+
+def _pipeline_has_compatibility_execution(pipeline: Pipeline) -> bool:
+    for bundle in getattr(pipeline, "resource_bundles", ()) or ():
+        if _is_native_program_instance(bundle):
+            return True
+        if callable(getattr(bundle, "run_native_pipeline", None)):
+            return True
+    return False
+
+
+def _coerce_str_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(str(item) for item in value)
+    if isinstance(value, str):
+        return (value,)
+    return ()
+
+
+def _infer_registration_kind(
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    pipeline: Pipeline | None = None,
+) -> RegistrationKind:
+    meta = metadata or {}
+    compatibility = str(meta.get("compatibility_classification", "") or "").lower()
+    if compatibility == "native":
+        return "native"
+    if compatibility in {
+        "graph",
+        "graph_compatibility",
+        "graph-compatible",
+        "legacy_graph",
+        "legacy-graph",
+    }:
+        return "graph_compatibility"
+
+    driver = _coerce_str_tuple(meta.get("driver"))
+    supported_modes = _coerce_str_tuple(meta.get("supported_modes"))
+    if driver and driver[0] == "native":
+        return "native"
+    if driver and driver[0] == "graph" and "native" not in supported_modes:
+        return "graph_compatibility"
+
+    if pipeline is not None:
+        if _pipeline_has_native_program(pipeline):
+            return "native"
+        if _pipeline_has_compatibility_execution(pipeline):
+            return "graph_compatibility"
+
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +234,6 @@ class PipelineRegistry:
         if name in self.builders:
             raise ValueError(f"pipeline {name!r} already registered")
         self.builders[name] = builder
-        self.registration_kinds[name] = registration_kind
         if description:
             self.descriptions[name] = description
         meta: dict[str, Any] = {}
@@ -180,6 +241,14 @@ class PipelineRegistry:
             meta["description"] = description
         if metadata:
             meta.update(metadata)
+        effective_kind = (
+            registration_kind
+            if registration_kind != "unknown"
+            else _infer_registration_kind(metadata=meta)
+        )
+        self.registration_kinds[name] = effective_kind
+        if effective_kind != "unknown":
+            meta["registration_kind"] = effective_kind
         if meta:
             self.metadata[name] = meta
         if module_file is not None:
@@ -210,7 +279,18 @@ class PipelineRegistry:
         builder = self.builders.get(name)
         if builder is None:
             return None
-        return builder()
+        pipeline = builder()
+        if self.registration_kinds.get(name) == "unknown":
+            inferred_kind = _infer_registration_kind(
+                metadata=self.metadata.get(name),
+                pipeline=pipeline,
+            )
+            if inferred_kind != "unknown":
+                self.registration_kinds[name] = inferred_kind
+                meta = dict(self.metadata.get(name, {}))
+                meta["registration_kind"] = inferred_kind
+                self.metadata[name] = meta
+        return pipeline
 
     def names(self) -> tuple[str, ...]:
         """Return the sorted tuple of registered pipeline names."""

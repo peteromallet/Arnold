@@ -275,6 +275,7 @@ def _translate_pipeline(mp_pipeline: Any) -> Any:
         entry=mp_pipeline.entry,
         binding_map=mp_pipeline.binding_map,
         resource_bundles=mp_pipeline.resource_bundles,
+        native_program=getattr(mp_pipeline, "native_program", None),
     )
 
 

@@ -38,9 +38,47 @@ def test_native_first_import_surface_is_available_from_pipeline_and_native() -> 
         assert name in native.__all__
 
 
-def test_legacy_namespace_is_removed_after_m7_purge() -> None:
-    with pytest.raises(ModuleNotFoundError):
-        importlib.import_module("arnold.pipeline.legacy")
+def test_legacy_namespace_is_available_as_m1_compatibility_surface() -> None:
+    """M1: arnold.pipeline.legacy is a live compatibility namespace (M7 will remove it)."""
+    legacy = importlib.import_module("arnold.pipeline.legacy")
+    assert hasattr(legacy, "__all__")
+    graph_era = [
+        "Edge", "Stage", "ParallelStage",
+        "PipelineBuilder", "PipelineRegistry",
+        "validate",
+        "StepInvocation",
+        "ExecutorHooks", "NullExecutorHooks",
+        "run_pipeline", "run_pipeline_resume",
+    ]
+    for name in graph_era:
+        assert hasattr(legacy, name), f"legacy missing {name}"
+
+
+def test_every_all_name_is_backed_by_an_import() -> None:
+    """Every name in arnold.pipeline.__all__ must resolve to an actual object."""
+    missing = [name for name in pipeline.__all__ if not hasattr(pipeline, name)]
+    assert not missing, f"__all__ names without import: {missing}"
+
+
+def test_graph_era_symbols_absent_from_root_all() -> None:
+    """Graph-era construction/execution names must not appear in pipeline.__all__."""
+    graph_era = [
+        "Edge", "Stage", "ParallelStage",
+        "PipelineBuilder", "PipelineRegistry",
+        "StepInvocation",
+        "ExecutorHooks", "NullExecutorHooks",
+        "run_pipeline", "run_pipeline_resume",
+    ]
+    present = [g for g in graph_era if g in pipeline.__all__]
+    assert not present, f"graph-era symbols in root __all__: {present}"
+
+
+def test_discovery_names_in_root_all() -> None:
+    """Neutral discovery names must be in pipeline.__all__ and resolve."""
+    discovery = ["Manifest", "ManifestError", "TrustGrade", "classify", "read_manifest", "derive_tenant_id"]
+    for name in discovery:
+        assert name in pipeline.__all__, f"{name} missing from __all__"
+        assert hasattr(pipeline, name), f"{name} not resolvable"
 
 
 def test_pipeline_native_program_is_preserved_by_dataclass_and_builder_helpers() -> None:

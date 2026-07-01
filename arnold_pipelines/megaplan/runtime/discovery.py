@@ -135,9 +135,13 @@ class Disposition:
 
 
 def _manifest_discovery_enabled() -> bool:
-    """Return True; the M6 env var remains as an inert compatibility alias."""
+    """Return True; manifest-first discovery is unconditional as of M1.
 
-    os.environ.get("MEGAPLAN_M6_MANIFEST_DISCOVERY")
+    The ``MEGAPLAN_M6_MANIFEST_DISCOVERY`` env var is no longer read or
+    consulted — discovery is always enabled.  The function is retained as
+    a compatibility shim for callers that still gate on it; it will be
+    removed in M7 alongside the legacy graph runtime.
+    """
     return True
 
 
@@ -395,6 +399,12 @@ def _manifest_metadata(name: str, disposition: Disposition) -> dict[str, Any]:
     if manifest.default_profile:
         meta["default_profile"] = manifest.default_profile
     meta["supported_modes"] = tuple(manifest.supported_modes)
+    meta["driver"] = tuple(manifest.driver)
+    meta["compatibility_classification"] = (
+        "graph_compatibility"
+        if manifest.driver and manifest.driver[0] == "graph" and "native" not in manifest.supported_modes
+        else "native"
+    )
     meta["arnold_api_version"] = manifest.arnold_api_version
     meta["capabilities"] = tuple(manifest.capabilities)
     manifest_hash = getattr(manifest, "manifest_hash", None)

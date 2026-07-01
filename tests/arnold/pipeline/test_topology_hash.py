@@ -512,3 +512,36 @@ class TestStepIdentityExcluded:
             resource_bundles=(object(),),  # different bundles
         )
         assert compute_topology_hash(p1) == compute_topology_hash(p2)
+
+    def test_native_program_does_not_affect_hash(self) -> None:
+        """Pipeline native_program field is excluded from the hash."""
+        from arnold.pipeline.native.ir import NativeProgram
+
+        s1 = Stage(name="s", step=_FakeStep("s"), edges=())
+        p1 = Pipeline(stages={"s": s1}, entry="s", native_program=None)
+        p2 = Pipeline(
+            stages={"s": s1},
+            entry="s",
+            native_program=NativeProgram(name="should-not-matter"),
+        )
+        assert compute_topology_hash(p1) == compute_topology_hash(p2)
+
+    def test_different_native_programs_same_hash(self) -> None:
+        """Two different NativeProgram values on same graph → same hash."""
+        from arnold.pipeline.native.ir import NativeProgram
+
+        s1 = Stage(name="s", step=_FakeStep("s"), edges=())
+        p1 = Pipeline(
+            stages={"s": s1},
+            entry="s",
+            native_program=NativeProgram(name="prog-a"),
+        )
+        p2 = Pipeline(
+            stages={"s": s1},
+            entry="s",
+            native_program=NativeProgram(
+                name="prog-b",
+                description="completely different",
+            ),
+        )
+        assert compute_topology_hash(p1) == compute_topology_hash(p2)
