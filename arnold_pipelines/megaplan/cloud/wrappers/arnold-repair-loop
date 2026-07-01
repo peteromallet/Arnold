@@ -1500,6 +1500,12 @@ if plan_state_path is not None:
     execute_attempt_context = _collect_execute_attempt_context(plan_dir, plan_state)
     resume_cursor = plan_state.get("resume_cursor") if isinstance(plan_state.get("resume_cursor"), dict) else {}
     meta = plan_state.get("meta") if isinstance(plan_state.get("meta"), dict) else {}
+    clarification = plan_state.get("clarification") if isinstance(plan_state.get("clarification"), dict) else {}
+    clarification_questions = (
+        clarification.get("questions")
+        if isinstance(clarification.get("questions"), list)
+        else []
+    )
     plan_runtime_state = {
         "current_state": plan_state.get("current_state") or plan_state.get("state") or "",
         "retry_strategy": resume_cursor.get("retry_strategy") or "",
@@ -1516,16 +1522,12 @@ if plan_state_path is not None:
             or ""
         ),
         "clarification_source": (
-            plan_state.get("clarification", {}).get("source")
-            if isinstance(plan_state.get("clarification"), dict)
+            clarification.get("source")
+            if isinstance(clarification, dict)
             else ""
         ),
-        "clarification_question_count": (
-            len(plan_state.get("clarification", {}).get("questions") or [])
-            if isinstance(plan_state.get("clarification"), dict)
-            and isinstance(plan_state.get("clarification", {}).get("questions"), list)
-            else 0
-        ),
+        "clarification_question_count": len(clarification_questions),
+        "clarification_questions": clarification_questions[:20],
     }
     finalize_path = plan_dir / "finalize.json"
     user_actions_path = plan_dir / "user_actions.md"
@@ -1996,6 +1998,29 @@ if state_mismatch.get("detected"):
     ]
 
 user_action_context = latest_context.get("user_action_context") or {}
+plan_runtime_state = latest_context.get("plan_runtime_state") or {}
+clarification_questions = (
+    plan_runtime_state.get("clarification_questions")
+    if isinstance(plan_runtime_state.get("clarification_questions"), list)
+    else []
+)
+clarification_source = str(plan_runtime_state.get("clarification_source") or "").strip()
+if clarification_questions:
+    prep_clarification_lines = [
+        f"- source: {clarification_source or 'unknown'}",
+        "- blocking question(s):",
+        *[
+            f"  {idx}. {question}"
+            for idx, question in enumerate(clarification_questions, start=1)
+        ],
+        (
+            "- If the repo, initiative assets, and prior plan documents provide enough "
+            "evidence, answer these yourself with `megaplan override add-note` and then "
+            "run `megaplan override resume-clarify`."
+        ),
+    ]
+else:
+    prep_clarification_lines = ["- none detected"]
 unresolved_user_actions = user_action_context.get("unresolved_user_actions") or []
 if unresolved_user_actions:
     user_action_lines = [
@@ -2064,6 +2089,9 @@ summary = "\n".join(
         "```text",
         events_tail,
         "```",
+        "",
+        "## Prep Clarification Gate",
+        *prep_clarification_lines,
         "",
         "## User Action Gate",
         f"- plan dir: {user_action_context.get('plan_dir') or '(unknown)'}",
@@ -3217,7 +3245,12 @@ Task:
    - STALE STATE: The latest_failure predates a successful run or the current block is a 0ms same-hash replay. CLEAR latest_failure to null in the plan's state.json, clear stale blocks, and re-drive the run. Do NOT try to fix a source bug; the issue was already addressed.
    For run_kind=plan, use the named plan's state.json, events.ndjson, plan log, and user-action artifacts. Missing chain state, chain logs, chain.yaml, milestones, and base refs are expected and not evidence of a bug.
    For run_kind=chain, use chain state/logs/milestones when present.
-2. If the incident is awaiting_human or the User Action Gate section lists unresolved actions, ATTEMPT to resolve those user actions before treating this as a human stop. Read user_actions.md plus user_action_resolutions.json, inspect the referenced evidence/artifacts/code, make the best defensible judgment call, and record each decision with the CLI instead of hand-writing JSON. Use:
+2. If the incident is awaiting_human, first distinguish the gate type:
+   - Prep Clarification Gate: read the listed questions, plan state/events, initiative assets under .megaplan/initiatives, chain/epic specs, north-star/end-state docs, and the relevant repo code. If the existing evidence is enough, make the best defensible judgment call, record the answers as a note, and resume the plan:
+     cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan override add-note --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --source repair-loop-dev-fix --note "Prep clarification answers: ..."
+     cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan override resume-clarify --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}"
+     Escalate only when the question requires genuinely human product judgment or evidence is missing after checking those sources.
+   - User Action Gate: ATTEMPT to resolve those user actions before treating this as a human stop. Read user_actions.md plus user_action_resolutions.json, inspect the referenced evidence/artifacts/code, make the best defensible judgment call, and record each decision with the CLI instead of hand-writing JSON. Use:
    cd "$WORKSPACE" && MEGAPLAN_ACTOR_ID=repair-loop-dev-fix PYTHONPATH="$ARNOLD_SRC:\${PYTHONPATH:-}" python3 -P -m arnold_pipelines.megaplan user-action resolve --plan "${PLAN_NAME:-<PLAN_NAME_FROM_SNAPSHOT>}" --action-id <ACTION_ID> --resolution <satisfied|accepted_blocked|waived|manual_required|rejected> --reason "..." --instructions "..." --tasks "<TASK_ID,...>"
    Prefer satisfied when the evidence clearly answers the action. Use accepted_blocked or waived only when the action itself permits a fallback. Leave unresolved or mark manual_required only when the decision is genuinely ambiguous, unusually difficult, or requires human-only judgment.
 3. Go to the deepest structural level you can reach in this bounded turn. Do not just fix the one symptom that caused this stop; find the underlying pattern and check whether it has other instantiations.
@@ -3229,7 +3262,7 @@ Task:
 $mode_tasks
 
 Constraints:
-- Work only in $ARNOLD_SRC for source fixes. You may update the active plan's user_action_resolutions.json and state metadata only through the user-action CLI above.
+- Work only in $ARNOLD_SRC for source fixes. You may update the active plan's user_action_resolutions.json and state metadata only through the user-action or override CLI commands above.
 - Do not hardcode a workflow-specific workaround when a general engine fix is appropriate.
 - Do not escalate awaiting_human just because a user action exists. Escalate only after you have reviewed the evidence and cannot make a confident decision.
 - If you find a pattern such as flags positioned wrong across multiple dispatch sites or stale recovery logic duplicated in several places, fix what you can now and persist the broader findings in $FINDINGS_DOC.

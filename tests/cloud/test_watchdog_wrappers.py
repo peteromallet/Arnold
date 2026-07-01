@@ -656,6 +656,9 @@ def test_repair_loop_prefers_awaiting_human_over_timeout_text_in_prep_clarificat
     assert payload["failure_classification"] == "awaiting_human_user_action_gate"
     assert payload["plan_runtime_state"]["clarification_source"] == "prep"
     assert payload["plan_runtime_state"]["clarification_question_count"] == 1
+    assert payload["plan_runtime_state"]["clarification_questions"] == [
+        "Should M1 target surviving workflow modules?"
+    ]
     assert "resume-clarify" in payload["stale_state"]["recommended_action"]
 
 
