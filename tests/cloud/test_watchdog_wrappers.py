@@ -605,6 +605,60 @@ def test_repair_loop_collects_named_single_plan_in_mixed_workspace(tmp_path: Pat
     assert payload["chain_state_summary"] == {}
 
 
+def test_repair_loop_prefers_awaiting_human_over_timeout_text_in_prep_clarification(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "awaiting_human_verify",
+                "latest_failure": None,
+                "clarification": {
+                    "source": "prep",
+                    "questions": ["Should M1 target surviving workflow modules?"],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "events.ndjson").write_text(
+        "\n".join(
+            [
+                json.dumps({"kind": "artifact_written", "payload": {"path": "prep.json"}}),
+                json.dumps(
+                    {
+                        "kind": "state_written",
+                        "payload": {
+                            "state": {
+                                "current_state": "awaiting_human_verify",
+                                "config": {"test_baseline_timeout": 900},
+                                "clarification": {"source": "prep", "questions": ["q1"]},
+                            }
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "demo", "plan", "demo-plan")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "awaiting_human_user_action_gate"
+    assert payload["plan_runtime_state"]["clarification_source"] == "prep"
+    assert payload["plan_runtime_state"]["clarification_question_count"] == 1
+    assert "resume-clarify" in payload["stale_state"]["recommended_action"]
+
+
 def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_result(tmp_path: Path) -> None:
     plan_dir = tmp_path / "workflow" / ".megaplan" / "plans" / "demo-plan"
     plan_dir.mkdir(parents=True)
@@ -5154,6 +5208,36 @@ def test_auditor_gather_includes_chain_repair_stderr_and_user_action_evidence(tm
     assert "unresolved user actions" in reasons
     assert "latest_failure is stale" in reasons
     assert "stale block replay" in reasons
+
+
+def test_repair_loop_stops_recurring_retry_for_prep_clarification_gate(tmp_path: Path) -> None:
+    data_path = tmp_path / "repair-data.json"
+    data_path.write_text(
+        json.dumps(
+            {
+                "run_recurrence_detected": True,
+                "current_recurrence": {"detected": True},
+                "current_failure_context": {
+                    "plan_runtime_state": {
+                        "current_state": "awaiting_human_verify",
+                        "clarification_source": "prep",
+                        "clarification_question_count": 3,
+                    },
+                    "user_action_context": {"unresolved_user_actions": []},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "repair_exhausted_should_retry_without_human",
+        "python3 - \"$DATA_FILE\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(data_path))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "0"
 
 
 def test_auditor_gather_flags_plan_stale_block_without_chain_evidence(tmp_path: Path) -> None:

@@ -1215,6 +1215,9 @@ def _stale_state_analysis(
     block_replay = _stale_block_replay(plan_state)
     latest_failure_stale = bool(latest_failure and latest_success)
     stale_block = bool(block_replay.get("detected"))
+    current_state = str(plan_state.get("current_state") or "").strip().lower()
+    clarification = plan_state.get("clarification") if isinstance(plan_state.get("clarification"), dict) else {}
+    clarification_source = str(clarification.get("source") or "").strip().lower()
     if latest_failure_stale or stale_block:
         classification = "STALE STATE"
         summary_parts = []
@@ -1234,6 +1237,20 @@ def _stale_state_analysis(
         classification = "LIVE FAILURE"
         summary_parts = ["latest_failure is recent; no successful event was found after it"]
         recommended_action = "dispatch dev-fix to fix the Arnold source root cause"
+    elif current_state == "awaiting_human_verify":
+        classification = "NO LATEST FAILURE"
+        if clarification_source == "prep":
+            questions = clarification.get("questions") if isinstance(clarification.get("questions"), list) else []
+            summary_parts = [
+                f"plan is paused for prep clarification ({len(questions)} blocking questions)"
+            ]
+            recommended_action = (
+                "resolve the prep clarification and run `megaplan override resume-clarify`; "
+                "do not redispatch dev-fix"
+            )
+        else:
+            summary_parts = ["plan is awaiting human verification"]
+            recommended_action = "resolve the human verification gate; do not redispatch dev-fix"
     else:
         classification = "NO LATEST FAILURE"
         summary_parts = ["no latest_failure is set"]
@@ -1336,19 +1353,27 @@ def _collect_signal_values(value: object, prefix: str = "", depth: int = 0) -> l
     return collected
 
 
-def _classify_failure(signals: list[str], latest_failure: dict[str, object], chain_state: dict[str, object]) -> str:
+def _classify_failure(
+    signals: list[str],
+    latest_failure: dict[str, object],
+    chain_state: dict[str, object],
+    plan_runtime: dict[str, object],
+) -> str:
     combined = "\n".join(signals).lower()
     kind = str(latest_failure.get("kind") or "").lower()
     phase = str(latest_failure.get("phase") or "").lower()
     last_state = str(chain_state.get("last_state") or "").lower()
     current_state = str(chain_state.get("current_state") or "").lower()
     current_plan_name = str(chain_state.get("current_plan_name") or "").strip()
+    plan_current_state = str(plan_runtime.get("current_state") or "").strip().lower()
     if (
         last_state == "done"
         and current_state in {"", "done", "unknown"}
         and current_plan_name.lower() in {"", "unknown"}
     ):
         return "chain_completed"
+    if plan_current_state == "awaiting_human_verify":
+        return "awaiting_human_user_action_gate"
     if "unrecognized arguments" in combined or "usage:" in combined:
         return "cli_or_argument_error"
     if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":
@@ -1490,6 +1515,17 @@ if plan_state_path is not None:
             or meta.get("awaiting_human_reason")
             or ""
         ),
+        "clarification_source": (
+            plan_state.get("clarification", {}).get("source")
+            if isinstance(plan_state.get("clarification"), dict)
+            else ""
+        ),
+        "clarification_question_count": (
+            len(plan_state.get("clarification", {}).get("questions") or [])
+            if isinstance(plan_state.get("clarification"), dict)
+            and isinstance(plan_state.get("clarification", {}).get("questions"), list)
+            else 0
+        ),
     }
     finalize_path = plan_dir / "finalize.json"
     user_actions_path = plan_dir / "user_actions.md"
@@ -1582,7 +1618,7 @@ raw_failure_signals = _unique_strings(
     ]
 )
 
-failure_classification = _classify_failure(raw_failure_signals, latest_failure, chain_state)
+failure_classification = _classify_failure(raw_failure_signals, latest_failure, chain_state, plan_runtime_state)
 if state_mismatch.get("detected"):
     failure_classification = "plan_chain_state_mismatch"
 elif stale_state.get("classification") == "STALE STATE":
@@ -3078,9 +3114,13 @@ user_action_context = failure_context.get("user_action_context") if isinstance(f
 unresolved = user_action_context.get("unresolved_user_actions") if isinstance(user_action_context.get("unresolved_user_actions"), list) else []
 current_state = str(plan_runtime.get("current_state") or "").strip().lower()
 manual_review_origin = str(plan_runtime.get("manual_review_origin") or "").strip()
+clarification_source = str(plan_runtime.get("clarification_source") or "").strip().lower()
 human_gate = bool(unresolved) or (
     current_state == "manual_review"
     and manual_review_origin not in {"", "auto_stall", "auto_stall_legacy"}
+) or (
+    current_state == "awaiting_human_verify"
+    and clarification_source == "prep"
 )
 print("1" if run_detected and not human_gate else "0")
 PY
