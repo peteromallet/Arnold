@@ -1,0 +1,17 @@
+{
+  "id": "msg_ea46727b6e71",
+  "epic_id": null,
+  "conversation_id": "rconv_85a1c2bfd5f1",
+  "idempotency_key": "discord:message:1521702906477412595",
+  "direction": "inbound",
+  "content": "Is anything running now?",
+  "sent_at": "2026-07-01T02:24:04.885987Z",
+  "discord_message_id": "1521702906477412595",
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": null,
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": "turn_81dcc00374e7"
+}

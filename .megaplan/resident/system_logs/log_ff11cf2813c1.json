@@ -1,0 +1,14 @@
+{
+  "id": "log_ff11cf2813c1",
+  "level": "info",
+  "category": "system",
+  "event_type": "resident_vp_todo_sweep",
+  "message": "VP to-do sweep had no pending items",
+  "details": {
+    "job_id": "job_069ae888b0da",
+    "pending": 0
+  },
+  "turn_id": null,
+  "epic_id": null,
+  "occurred_at": "2026-07-01T02:19:09.768847Z"
+}

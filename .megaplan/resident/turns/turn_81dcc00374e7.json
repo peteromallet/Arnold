@@ -1,0 +1,5080 @@
+{
+  "id": "turn_81dcc00374e7",
+  "epic_id": null,
+  "triggered_by_message_ids": [
+    "msg_ea46727b6e71"
+  ],
+  "prompt_snapshot": {
+    "system_prompt": "You are the resident Megaplan operator. Shape epics through Megaplan editorial tools, report cloud status through constrained cloud tools, ask for human input when gates or ambiguity require it, and do not run arbitrary remote shell commands. Durable planning assets use megaplan-initiatives-v1: create or update project material under .megaplan/initiatives/<slug>/ only. Put executable chain specs at chain.yaml, milestone briefs in briefs/, research in research/, decisions in decisions/, notes in notes/, assets in assets/, and handoffs in handoff/. Never create planning docs directly under .megaplan/briefs. Use tickets/ only for backlog/issues and plans/ only for generated runtime state. If a project or epic does not exist yet, search initiatives by rough slug/title/description first; reuse the closest existing initiative when it matches before creating a new one. You also keep a VP special-requests to-do list (the `*_todo_item` tools). When the user asks you to queue a recurring task or special request, add it with `add_todo_item` (optionally a `when` condition, e.g. 'once epic <id> is done'); use `read_todo_list` to show what's queued. In conversation you add and read items \u2014 a scheduled sweep picks up pending items and executes them with `launch_subagent`.",
+    "message_count": 1,
+    "tool_catalog": [
+      {
+        "name": "create_epic",
+        "description": "Create a new Megaplan epic.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "title": {
+              "title": "Title",
+              "type": "string"
+            },
+            "goal": {
+              "title": "Goal",
+              "type": "string"
+            },
+            "body": {
+              "title": "Body",
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "goal",
+            "body"
+          ],
+          "title": "CreateEpicInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "select_epic",
+        "description": "Select the active epic for a resident conversation.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "title": "Conversation Id",
+              "type": "string"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "conversation_id",
+            "epic_id"
+          ],
+          "title": "SelectEpicInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "read_epic",
+        "description": "Read an epic body, checklist, and sprints.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "epic_id"
+          ],
+          "title": "EpicInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "search_messages",
+        "description": "Search resident messages using the Megaplan store.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "query": {
+              "default": "",
+              "title": "Query",
+              "type": "string"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "limit": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "SearchMessagesInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "search_epics",
+        "description": "Search Megaplan epics using the Megaplan store.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "query": {
+              "default": "",
+              "title": "Query",
+              "type": "string"
+            },
+            "state": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "State"
+            },
+            "limit": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "SearchEpicsInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "search_plans",
+        "description": "Search Megaplan plans using the Megaplan store.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "query": {
+              "default": "",
+              "title": "Query",
+              "type": "string"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "limit": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "SearchPlansInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "search_code_artifacts",
+        "description": "Search stored code artifacts with bounded redacted results.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "query": {
+              "default": "",
+              "title": "Query",
+              "type": "string"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Kind"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Source"
+            },
+            "file_path": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "File Path"
+            },
+            "limit": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "SearchCodeArtifactsInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_codebases",
+        "description": "List durable codebase records visible to the resident.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scope"
+            },
+            "group_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Group Name"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "include_global": {
+              "default": true,
+              "title": "Include Global",
+              "type": "boolean"
+            },
+            "limit": {
+              "default": 25,
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "ListCodebasesInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_repos",
+        "description": "List durable registered repo metadata.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scope"
+            },
+            "group_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Group Name"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "include_global": {
+              "default": true,
+              "title": "Include Global",
+              "type": "boolean"
+            },
+            "limit": {
+              "default": 25,
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "ListReposInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "edit_epic_body",
+        "description": "Replace an epic body using expected_revision.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "body": {
+              "title": "Body",
+              "type": "string"
+            },
+            "expected_revision": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Expected Revision"
+            }
+          },
+          "required": [
+            "epic_id",
+            "body"
+          ],
+          "title": "EditEpicBodyInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "add_checklist_items",
+        "description": "Add checklist items to an epic.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "title": "Items",
+              "type": "array"
+            }
+          },
+          "required": [
+            "epic_id",
+            "items"
+          ],
+          "title": "AddChecklistItemsInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "update_checklist_item",
+        "description": "Update one checklist item.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "item_id": {
+              "title": "Item Id",
+              "type": "string"
+            },
+            "content": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Content"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "open",
+                    "done",
+                    "skipped",
+                    "superseded"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Status"
+            },
+            "position": {
+              "anyOf": [
+                {
+                  "exclusiveMinimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Position"
+            },
+            "skip_reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Skip Reason"
+            },
+            "superseded_by_item_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Superseded By Item Id"
+            }
+          },
+          "required": [
+            "epic_id",
+            "item_id"
+          ],
+          "title": "UpdateChecklistItemInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "create_or_update_sprints",
+        "description": "Create or update sprints and their items.",
+        "operation_kind": "write",
+        "input_schema": {
+          "$defs": {
+            "SprintItemSpec": {
+              "properties": {
+                "content": {
+                  "title": "Content",
+                  "type": "string"
+                },
+                "estimated_complexity": {
+                  "default": "medium",
+                  "title": "Estimated Complexity",
+                  "type": "string"
+                },
+                "status": {
+                  "default": "open",
+                  "title": "Status",
+                  "type": "string"
+                },
+                "source_section": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Source Section"
+                }
+              },
+              "required": [
+                "content"
+              ],
+              "title": "SprintItemSpec",
+              "type": "object"
+            },
+            "SprintSpec": {
+              "properties": {
+                "sprint_id": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Sprint Id"
+                },
+                "sprint_number": {
+                  "exclusiveMinimum": 0,
+                  "title": "Sprint Number",
+                  "type": "integer"
+                },
+                "name": {
+                  "title": "Name",
+                  "type": "string"
+                },
+                "goal": {
+                  "title": "Goal",
+                  "type": "string"
+                },
+                "target_weeks": {
+                  "default": 2,
+                  "exclusiveMinimum": 0,
+                  "title": "Target Weeks",
+                  "type": "integer"
+                },
+                "expected_revision": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "default": null,
+                  "title": "Expected Revision"
+                },
+                "items": {
+                  "items": {
+                    "$ref": "#/$defs/SprintItemSpec"
+                  },
+                  "title": "Items",
+                  "type": "array"
+                }
+              },
+              "required": [
+                "sprint_number",
+                "name",
+                "goal"
+              ],
+              "title": "SprintSpec",
+              "type": "object"
+            }
+          },
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "sprints": {
+              "items": {
+                "$ref": "#/$defs/SprintSpec"
+              },
+              "minItems": 1,
+              "title": "Sprints",
+              "type": "array"
+            }
+          },
+          "required": [
+            "epic_id",
+            "sprints"
+          ],
+          "title": "CreateOrUpdateSprintsInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "queue_sprints",
+        "description": "Queue or mark pending sprints.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "ordered_sprint_ids": {
+              "items": {
+                "type": "string"
+              },
+              "title": "Ordered Sprint Ids",
+              "type": "array"
+            },
+            "pending": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "title": "Pending",
+              "type": "object"
+            }
+          },
+          "required": [
+            "epic_id"
+          ],
+          "title": "QueueSprintsInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "transition_epic_state",
+        "description": "Transition an epic through editorial gates.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "target_state": {
+              "enum": [
+                "shaping",
+                "sprinting",
+                "planned",
+                "paused",
+                "archived"
+              ],
+              "title": "Target State",
+              "type": "string"
+            },
+            "expected_revision": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Expected Revision"
+            },
+            "force": {
+              "default": false,
+              "title": "Force",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "epic_id",
+            "target_state"
+          ],
+          "title": "TransitionEpicStateInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "register_codebase",
+        "description": "Register durable repo metadata after admin confirmation.",
+        "operation_kind": "repo_write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "owner": {
+              "title": "Owner",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "repo_url": {
+              "title": "Repo Url",
+              "type": "string"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "default_branch": {
+              "default": "main",
+              "title": "Default Branch",
+              "type": "string"
+            },
+            "scope": {
+              "default": "global",
+              "enum": [
+                "global",
+                "epic_specific"
+              ],
+              "title": "Scope",
+              "type": "string"
+            },
+            "group_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Group Name"
+            },
+            "associated_epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Associated Epic Id"
+            },
+            "notes": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Notes"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "owner",
+            "name",
+            "repo_url"
+          ],
+          "title": "RegisterCodebaseInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "add_repo",
+        "description": "Alias for registering durable repo metadata after admin confirmation.",
+        "operation_kind": "repo_write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "owner": {
+              "title": "Owner",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "repo_url": {
+              "title": "Repo Url",
+              "type": "string"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "default_branch": {
+              "default": "main",
+              "title": "Default Branch",
+              "type": "string"
+            },
+            "scope": {
+              "default": "global",
+              "enum": [
+                "global",
+                "epic_specific"
+              ],
+              "title": "Scope",
+              "type": "string"
+            },
+            "group_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Group Name"
+            },
+            "associated_epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Associated Epic Id"
+            },
+            "notes": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Notes"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "owner",
+            "name",
+            "repo_url"
+          ],
+          "title": "RegisterCodebaseInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "read_plan_artifact",
+        "description": "Read a bounded plan artifact through the Megaplan store.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "plan_id": {
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "max_bytes": {
+              "default": 65536,
+              "exclusiveMinimum": 0,
+              "maximum": 262144,
+              "title": "Max Bytes",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "plan_id",
+            "name"
+          ],
+          "title": "ReadPlanArtifactInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "write_plan_artifact",
+        "description": "Write a plan artifact through the Megaplan store after admin confirmation.",
+        "operation_kind": "artifact_write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "plan_id": {
+              "title": "Plan Id",
+              "type": "string"
+            },
+            "name": {
+              "title": "Name",
+              "type": "string"
+            },
+            "content_text": {
+              "title": "Content Text",
+              "type": "string"
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Kind"
+            },
+            "role": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Role"
+            },
+            "expected_revision": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Expected Revision"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "plan_id",
+            "name",
+            "content_text"
+          ],
+          "title": "WritePlanArtifactInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_initiatives",
+        "description": "List canonical .megaplan initiative folders.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "limit": {
+              "default": 50,
+              "exclusiveMinimum": 0,
+              "maximum": 200,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "ListInitiativesInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "search_initiatives",
+        "description": "Search canonical initiatives by slug/title/description with rough fuzzy matching.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "query": {
+              "minLength": 1,
+              "title": "Query",
+              "type": "string"
+            },
+            "keywords_all": {
+              "default": false,
+              "title": "Keywords All",
+              "type": "boolean"
+            },
+            "limit": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "title": "SearchInitiativesInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "create_initiative",
+        "description": "Create a canonical .megaplan/initiatives/<slug> folder.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "slug": {
+              "title": "Slug",
+              "type": "string"
+            },
+            "title": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Title"
+            },
+            "description": {
+              "minLength": 1,
+              "title": "Description",
+              "type": "string"
+            },
+            "north_star": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "North Star"
+            },
+            "create_chain": {
+              "default": false,
+              "title": "Create Chain",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "slug",
+            "description"
+          ],
+          "title": "CreateInitiativeInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "read_initiative",
+        "description": "Read metadata and bounded document inventory for one initiative.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "slug": {
+              "title": "Slug",
+              "type": "string"
+            },
+            "max_docs": {
+              "default": 25,
+              "exclusiveMinimum": 0,
+              "maximum": 100,
+              "title": "Max Docs",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "slug"
+          ],
+          "title": "ReadInitiativeInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "write_initiative_doc",
+        "description": "Write a document under an initiative briefs/research/decisions/notes/assets/handoff folder.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "initiative_slug": {
+              "title": "Initiative Slug",
+              "type": "string"
+            },
+            "doc_kind": {
+              "enum": [
+                "briefs",
+                "research",
+                "decisions",
+                "notes",
+                "assets",
+                "handoff"
+              ],
+              "title": "Doc Kind",
+              "type": "string"
+            },
+            "filename": {
+              "title": "Filename",
+              "type": "string"
+            },
+            "content_text": {
+              "title": "Content Text",
+              "type": "string"
+            },
+            "create_if_missing": {
+              "default": true,
+              "title": "Create If Missing",
+              "type": "boolean"
+            },
+            "overwrite": {
+              "default": false,
+              "title": "Overwrite",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "initiative_slug",
+            "doc_kind",
+            "filename",
+            "content_text"
+          ],
+          "title": "WriteInitiativeDocInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "classify_initiative_doc",
+        "description": "Classify a prospective initiative document path into the canonical folder set.",
+        "operation_kind": "read",
+        "input_schema": {
+          "properties": {
+            "path": {
+              "title": "Path",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "title": "ClassifyInitiativeDocInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "migrate_initiative_layout",
+        "description": "Dry-run or apply migration from legacy .megaplan/briefs to initiatives layout.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "apply": {
+              "default": false,
+              "title": "Apply",
+              "type": "boolean"
+            }
+          },
+          "title": "MigrateInitiativeLayoutInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "export_epic_bundle",
+        "description": "Export an epic bundle under the managed resident export root after admin confirmation.",
+        "operation_kind": "export",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "epic_id"
+          ],
+          "title": "ExportEpicBundleInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "reconcile_epic",
+        "description": "Summarize or apply epic reconciliation using existing store helpers.",
+        "operation_kind": "reconcile_apply",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "apply": {
+              "default": false,
+              "title": "Apply",
+              "type": "boolean"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "epic_id"
+          ],
+          "title": "ReconcileEpicInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "reconcile_plan_storage",
+        "description": "Summarize or apply plan storage reconciliation using existing store helpers.",
+        "operation_kind": "reconcile_apply",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "apply": {
+              "default": false,
+              "title": "Apply",
+              "type": "boolean"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "title": "ReconcilePlanStorageInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "archive_cloud_logs",
+        "description": "Archive constrained cloud logs into plan artifacts after admin confirmation.",
+        "operation_kind": "archive_logs",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "cloud_run_id": {
+              "title": "Cloud Run Id",
+              "type": "string"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "no_follow": {
+              "default": true,
+              "title": "No Follow",
+              "type": "boolean"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "cloud_run_id"
+          ],
+          "title": "ArchiveCloudLogsInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "approve_gate",
+        "description": "Queue a validated gate approval control message.",
+        "operation_kind": "control",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "target_id": {
+              "title": "Target Id",
+              "type": "string"
+            },
+            "project_root": {
+              "title": "Project Root",
+              "type": "string"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reason"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Note"
+            },
+            "auto_continue": {
+              "default": false,
+              "title": "Auto Continue",
+              "type": "boolean"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "epic_id",
+            "target_id",
+            "project_root"
+          ],
+          "title": "ControlToolInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "reject_gate",
+        "description": "Queue a validated gate rejection control message.",
+        "operation_kind": "control",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "target_id": {
+              "title": "Target Id",
+              "type": "string"
+            },
+            "project_root": {
+              "title": "Project Root",
+              "type": "string"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reason"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Note"
+            },
+            "auto_continue": {
+              "default": false,
+              "title": "Auto Continue",
+              "type": "boolean"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "epic_id",
+            "target_id",
+            "project_root"
+          ],
+          "title": "ControlToolInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "run_sprint_on_cloud",
+        "description": "Queue a validated sprint-run control message for later cloud handling.",
+        "operation_kind": "control",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "title": "Epic Id",
+              "type": "string"
+            },
+            "target_id": {
+              "title": "Target Id",
+              "type": "string"
+            },
+            "project_root": {
+              "title": "Project Root",
+              "type": "string"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan"
+            },
+            "reason": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Reason"
+            },
+            "note": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Note"
+            },
+            "auto_continue": {
+              "default": false,
+              "title": "Auto Continue",
+              "type": "boolean"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            }
+          },
+          "required": [
+            "epic_id",
+            "target_id",
+            "project_root"
+          ],
+          "title": "ControlToolInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "cloud_status",
+        "description": "Inspect a constrained cloud plan status.",
+        "operation_kind": "cloud_read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "repo_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Url"
+            },
+            "repo_branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Branch"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan"
+            }
+          },
+          "title": "CloudStatusInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "cloud_status_chain",
+        "description": "Inspect constrained cloud chain status.",
+        "operation_kind": "cloud_read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "repo_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Url"
+            },
+            "repo_branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Branch"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "remote_spec": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Remote Spec"
+            }
+          },
+          "title": "CloudStatusChainInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "cloud_start_chain",
+        "description": "Start a constrained cloud chain after exact confirmation.",
+        "operation_kind": "cloud_start",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "repo_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Url"
+            },
+            "repo_branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Branch"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            },
+            "spec": {
+              "title": "Spec",
+              "type": "string"
+            },
+            "idea_dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Idea Dir"
+            }
+          },
+          "required": [
+            "spec"
+          ],
+          "title": "CloudStartChainInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "cloud_bootstrap",
+        "description": "Bootstrap a constrained cloud plan after exact confirmation.",
+        "operation_kind": "cloud_start",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "repo_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Url"
+            },
+            "repo_branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Branch"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            },
+            "idea_file": {
+              "title": "Idea File",
+              "type": "string"
+            },
+            "plan_name": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Name"
+            },
+            "robustness": {
+              "default": "standard",
+              "title": "Robustness",
+              "type": "string"
+            }
+          },
+          "required": [
+            "idea_file"
+          ],
+          "title": "CloudBootstrapInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "cloud_resume",
+        "description": "Resume constrained cloud work.",
+        "operation_kind": "cloud_start",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "repo_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Url"
+            },
+            "repo_branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Branch"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "confirmation_request_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Request Id"
+            },
+            "confirmation_phrase": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Confirmation Phrase"
+            },
+            "plan": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan"
+            }
+          },
+          "title": "CloudResumeInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "cloud_logs",
+        "description": "Read constrained cloud logs.",
+        "operation_kind": "cloud_read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "repo_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Url"
+            },
+            "repo_branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Branch"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "no_follow": {
+              "default": true,
+              "title": "No Follow",
+              "type": "boolean"
+            }
+          },
+          "title": "CloudLogsInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "schedule_cloud_check",
+        "description": "Schedule a durable cloud status check.",
+        "operation_kind": "control",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "sprint_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Sprint Id"
+            },
+            "plan_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Plan Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "project_root": {
+              "default": ".",
+              "title": "Project Root",
+              "type": "string"
+            },
+            "cloud_yaml": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Yaml"
+            },
+            "codebase_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Codebase Id"
+            },
+            "repo_url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Url"
+            },
+            "repo_branch": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Branch"
+            },
+            "repo_workspace": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Repo Workspace"
+            },
+            "interval_seconds": {
+              "default": 60,
+              "exclusiveMinimum": 0,
+              "title": "Interval Seconds",
+              "type": "integer"
+            },
+            "scheduled_for": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Scheduled For"
+            },
+            "notify_every_check": {
+              "default": true,
+              "title": "Notify Every Check",
+              "type": "boolean"
+            },
+            "payload": {
+              "additionalProperties": true,
+              "title": "Payload",
+              "type": "object"
+            },
+            "max_attempts": {
+              "default": 3,
+              "minimum": 1,
+              "title": "Max Attempts",
+              "type": "integer"
+            }
+          },
+          "title": "ScheduleCloudCheckInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "cancel_cloud_check",
+        "description": "Cancel a durable cloud status check.",
+        "operation_kind": "control",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "scheduled_job_id": {
+              "title": "Scheduled Job Id",
+              "type": "string"
+            }
+          },
+          "required": [
+            "scheduled_job_id"
+          ],
+          "title": "CancelCloudCheckInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "list_cloud_checks",
+        "description": "List durable cloud status checks.",
+        "operation_kind": "cloud_read",
+        "input_schema": {
+          "properties": {
+            "actor_user_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Actor User Id"
+            },
+            "guild_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Guild Id"
+            },
+            "channel_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Channel Id"
+            },
+            "conversation_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Conversation Id"
+            },
+            "cloud_run_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Cloud Run Id"
+            },
+            "epic_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Epic Id"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "pending",
+                    "claimed",
+                    "fired",
+                    "cancelled",
+                    "failed"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Status"
+            },
+            "limit": {
+              "default": 10,
+              "exclusiveMinimum": 0,
+              "maximum": 50,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          "title": "ListCloudChecksInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "read_todo_list",
+        "description": "Read the VP special-requests to-do list (pending + retained items).",
+        "operation_kind": "read",
+        "input_schema": {
+          "description": "Read the VP special-requests to-do list (no arguments).",
+          "properties": {},
+          "title": "ReadTodoListInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "complete_todo_item",
+        "description": "Mark a to-do item done and clear it from the list; pass a short result summary.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "result": {
+              "default": "",
+              "title": "Result",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "CompleteTodoItemInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "fail_todo_item",
+        "description": "Mark a to-do item failed (retained for retry); pass the reason.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "id": {
+              "title": "Id",
+              "type": "string"
+            },
+            "reason": {
+              "default": "",
+              "title": "Reason",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "title": "FailTodoItemInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "add_todo_item",
+        "description": "Append a new pending item to the VP to-do list. Optional `when` is a natural-language condition the agent checks before executing (e.g. 'once epic <id> is done').",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "task": {
+              "title": "Task",
+              "type": "string"
+            },
+            "when": {
+              "default": "",
+              "title": "When",
+              "type": "string"
+            }
+          },
+          "required": [
+            "task"
+          ],
+          "title": "AddTodoItemInput",
+          "type": "object"
+        }
+      },
+      {
+        "name": "launch_subagent",
+        "description": "Launch a sub-agent to execute an arbitrary task with file/web/terminal tools and return its final response.",
+        "operation_kind": "write",
+        "input_schema": {
+          "properties": {
+            "task": {
+              "title": "Task",
+              "type": "string"
+            },
+            "toolsets": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Toolsets"
+            },
+            "project_dir": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Project Dir"
+            }
+          },
+          "required": [
+            "task"
+          ],
+          "title": "LaunchSubagentInput",
+          "type": "object"
+        }
+      }
+    ]
+  },
+  "prompt_version": "megaplan-resident-v1",
+  "reasoning": null,
+  "final_output_message_id": "msg_3d3730a08717",
+  "status_message_id": null,
+  "status": "completed",
+  "state_at_turn": {
+    "conversation_id": "rconv_85a1c2bfd5f1",
+    "prompt_version": "megaplan-resident-v1",
+    "layout_policy": {
+      "version": "megaplan-initiatives-v1",
+      "initiatives_root": ".megaplan/initiatives",
+      "allowed_doc_kinds": [
+        "assets",
+        "briefs",
+        "decisions",
+        "handoff",
+        "notes",
+        "research"
+      ],
+      "legacy_briefs_root": ".megaplan/briefs"
+    },
+    "initiative_index": [
+      {
+        "slug": "agentbox-persistent-machine",
+        "title": "Agentbox Persistent Machine",
+        "description": "Build a persistent AgentBox host and runtime layer for Arnold operations, Megaplan chain adaptation, Discord control, guardian scheduling, credentials, and bootstrap.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "notes/wait-log.md",
+          "notes/AGENTBOX_LAUNCH_GOAL.md",
+          "notes/00-OVERVIEW.md"
+        ]
+      },
+      {
+        "slug": "aggressive-generalized-pipeline-migration",
+        "title": "Aggressive Generalized Pipeline Migration",
+        "description": "Extract Megaplan-specific runtime pieces into a generic Arnold substrate with guarded migrations for contracts, executors, supervisor, agents, state lifecycle, and dispatch.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "briefs/m0-boundary-lock.md",
+          "chain.yaml",
+          "NORTHSTAR.md"
+        ]
+      },
+      {
+        "slug": "arnold-complete-cleanup-single-root",
+        "title": "Arnold Complete Cleanup Single Root",
+        "description": "Collapse Arnold's Megaplan implementation onto `arnold_pipelines/megaplan` as the single authoritative root and remove legacy paths only after parity proof.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "notes/PREP.md",
+          "chain.yaml",
+          "briefs/m3-merge-result-closeout.md"
+        ]
+      },
+      {
+        "slug": "arnold-pipeline-friction",
+        "title": "Arnold Pipeline Friction",
+        "description": "Harden Arnold pipeline authoring and execution ergonomics across graph surface, CLI inputs and errors, examples, test seams, and VibeComfy headless integration.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "briefs/m1-5-authoring-contract.md",
+          "chain.yaml",
+          "NORTHSTAR.md"
+        ]
+      },
+      {
+        "slug": "arnold-post-extraction-next",
+        "title": "Arnold Post Extraction Next",
+        "description": "Build on clean extraction by bridging Megaplan to the neutral executor, clarifying package authoring, hardening package behavior, and retiring compatibility branches.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "briefs/m1-megaplan-canonical-executor-bridge.md",
+          "chain.yaml",
+          "NORTHSTAR.md"
+        ]
+      },
+      {
+        "slug": "astrid-consumer",
+        "title": "Astrid Consumer",
+        "description": "Make Arnold's pipeline substrate ready for Astrid as a first-class non-Megaplan media-producing consumer.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "chain.yaml",
+          "NORTHSTAR.md",
+          "briefs/AR3-media-cost-model.md"
+        ]
+      },
+      {
+        "slug": "boundary-turn-end-to-end",
+        "title": null,
+        "description": null,
+        "chain": true,
+        "recent_docs": [
+          "chain.yaml",
+          "briefs/m4-recipe-conformance.md",
+          "briefs/m3-reducer-stage-boundaries.md",
+          "briefs/m2-primary-stage-boundaries.md"
+        ]
+      },
+      {
+        "slug": "epic-pipeline-unification",
+        "title": "Epic Pipeline Unification",
+        "description": "Unify Megaplan's pipeline planning, dispatch, service spine, execution realm, supervisor tier, and sinks while preserving deferred milestone research.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "chain.yaml",
+          "NORTHSTAR.md",
+          "briefs/m5d-supervisor-tier.md"
+        ]
+      },
+      {
+        "slug": "evidence-first-pipeline-semantics",
+        "title": "Evidence First Pipeline Semantics",
+        "description": "Rework pipeline semantics around evidence contracts, authority, objective gates, provenance, transition validation, atomic reset, and rollout enforcement.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "chain.yaml",
+          "NORTHSTAR.md",
+          "briefs/m11-post-merge-rebaseline.md"
+        ]
+      },
+      {
+        "slug": "hetzner-cloud-migration",
+        "title": "Hetzner Cloud Migration",
+        "description": "Migrate cloud execution toward Hetzner-native SSH persistence, remote sync, tests, documentation, and review.",
+        "chain": false,
+        "recent_docs": [
+          "README.md",
+          "handoff/subagent-briefs/04-implement-hetzner-native.md",
+          "handoff/subagent-results/wave1/_report.json",
+          "handoff/subagent-results/wave1/03-cloud-tests-docs.txt"
+        ]
+      },
+      {
+        "slug": "legacy-loose-briefs",
+        "title": "Legacy Loose Briefs",
+        "description": "Preserve migrated loose Megaplan briefs, notes, decisions, and research that do not belong to a more specific initiative.",
+        "chain": false,
+        "recent_docs": [
+          "README.md",
+          "notes/FORWARD-PORT-LEDGER.md",
+          "notes/cleanup-then-workflow-manifest-goal.md",
+          "research/native-endstate-validation-review.md"
+        ]
+      },
+      {
+        "slug": "legacy-root-artifacts",
+        "title": "Legacy Root Artifacts",
+        "description": "Preserve migrated root-level Megaplan planning artifacts and generated plan outputs for historical reference.",
+        "chain": false,
+        "recent_docs": [
+          "README.md",
+          "research/research/plan_v4_draft.md",
+          "research/research/plan_v4.md",
+          "assets/plan_v4_output.json"
+        ]
+      },
+      {
+        "slug": "m6",
+        "title": "M6",
+        "description": "Preserve migrated M6 notes and research around event mapping, manifest contracts, oracle bake time, join functions, and override splitting.",
+        "chain": false,
+        "recent_docs": [
+          "README.md",
+          "notes/override-split.md",
+          "notes/oracle-bake-time.md",
+          "notes/megaloop-deferred.md"
+        ]
+      },
+      {
+        "slug": "megaplan-maintenance",
+        "title": "Megaplan Maintenance",
+        "description": "Collect maintenance research for Megaplan regressions, live watchdog supervision, and post-migration package shape.",
+        "chain": false,
+        "recent_docs": [
+          "README.md",
+          "research/megaplan-functionality-regression-review.md",
+          "research/megaplan-live-watchdog-supervisor.md",
+          "research/megaplan-package-shape-after-aggressive-migration-20260607.md"
+        ]
+      },
+      {
+        "slug": "native-composition-followup",
+        "title": "Native Composition Follow-Up",
+        "description": "Turn Arnold's native pipeline layer into compositional workflows with invocable steps and workflows, nested calls, tree traces, checkpoints, and resume.",
+        "chain": true,
+        "recent_docs": [
+          "chain.yaml",
+          "briefs/m6-composition-docs-and-conformance.md",
+          "briefs/m5-composite-resume-and-start-from-path.md",
+          "briefs/m4-tree-graph-trace-and-audit-skeleton.md"
+        ]
+      },
+      {
+        "slug": "native-platform-followup",
+        "title": "Native Platform Follow-Up",
+        "description": "Extend native composition into production platform concerns such as idempotent side effects, credential isolation, durable substrates, worker supervision, and rollout docs.",
+        "chain": true,
+        "recent_docs": [
+          "chain.yaml",
+          "briefs/m6-platform-docs-conformance-and-rollout.md",
+          "briefs/m5-worker-fleet-supervision-and-cancellation.md",
+          "briefs/m4-durable-substrate-and-checkpoint-backend.md"
+        ]
+      },
+      {
+        "slug": "native-python-pipelines",
+        "title": "Native Python Pipelines",
+        "description": "Migrate Arnold toward native Python pipeline declarations, runtime hooks, parallel and human gates, and default-on cleanup.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "research/native-python-pipelines-megaplan-prep-codex.md",
+          "chain.yaml",
+          "NORTHSTAR.md"
+        ]
+      },
+      {
+        "slug": "native-python-pipelines-completion",
+        "title": "Native Python Pipelines Completion",
+        "description": "Finish the native Python pipeline transition by making native declarations and runtime traces authoritative while removing graph-era surfaces.",
+        "chain": true,
+        "recent_docs": [
+          "chain.yaml",
+          "briefs/m7-megaplan-relocation-and-final-purge.md",
+          "briefs/m6-docs-and-scaffolds-native-first.md",
+          "briefs/m5-native-test-and-golden-trace-cleanup.md"
+        ]
+      },
+      {
+        "slug": "python-shaped-workflow-authoring",
+        "title": "Python Shaped Workflow Authoring",
+        "description": "Build a Python-shaped workflow authoring surface with component grammar, compiler lowering, control-flow policies, validation UX, and runtime conformance.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "briefs/m1-component-contract-grammar.md",
+          "chain.yaml",
+          "NORTHSTAR.md"
+        ]
+      },
+      {
+        "slug": "shannon-stream",
+        "title": "Shannon Stream",
+        "description": "Move Shannon worker phases toward Codex stream-json invocation, stream worker handling, and controlled rollout.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "chain.yaml",
+          "NORTHSTAR.md",
+          "briefs/M1-invocation-seam.md"
+        ]
+      },
+      {
+        "slug": "step-io-contract",
+        "title": "Step IO Contract",
+        "description": "Establish and enforce typed step I/O contracts across results, schemas, ports, model seams, suspension, migration, authoring API, and acceptance gates.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "chain.yaml",
+          "NORTHSTAR.md",
+          "briefs/m8-acceptance-gate.md"
+        ]
+      },
+      {
+        "slug": "step-io-contract-condensed",
+        "title": "Step IO Contract Condensed",
+        "description": "Condense step I/O contract work into four high-leverage milestones covering carrier reconciliation, model seams, suspension and fanout, and authoring gates.",
+        "chain": true,
+        "recent_docs": [
+          "README.md",
+          "chain.yaml",
+          "NORTHSTAR.md",
+          "briefs/C4.md"
+        ]
+      },
+      {
+        "slug": "validation",
+        "title": "Validation",
+        "description": "Preserve validation sequencing notes for the strangler keep-alive program.",
+        "chain": false,
+        "recent_docs": [
+          "README.md",
+          "notes/sequencing/strangler-keep-alive.md",
+          "notes/sequencing/PROGRAM.md"
+        ]
+      },
+      {
+        "slug": "workflow-manifest-runtime",
+        "title": "Workflow Manifest Runtime",
+        "description": "Move Arnold workflows onto a durable `WorkflowManifest` and neutral runtime/kernel contract while preserving supported Megaplan behavior through conformance gates.",
+        "chain": true,
+        "recent_docs": [
+          "briefs/m4-megaplan-product-migration.md",
+          "NORTHSTAR.md",
+          "README.md",
+          "notes/chain-notes.md"
+        ]
+      }
+    ],
+    "conversation": {
+      "id": "rconv_85a1c2bfd5f1",
+      "transport": "discord",
+      "conversation_key": "discord:dm:301463647895683072",
+      "active_epic_id": null,
+      "guild_id": null,
+      "channel_id": "1451308037074714654",
+      "thread_id": null,
+      "dm_user_id": "301463647895683072",
+      "last_inbound_message_id": "msg_ea46727b6e71",
+      "last_outbound_message_id": "msg_4a502ecf776c",
+      "delivery_cursor": "msg_ea46727b6e71",
+      "metadata": {
+        "last_subject_user_id": "301463647895683072"
+      },
+      "created_at": "2026-07-01T02:20:45.866525Z",
+      "updated_at": "2026-07-01T02:24:04.896580Z",
+      "last_active_at": "2026-07-01T02:24:04.896520Z"
+    },
+    "active_epic": null,
+    "active_initiative": null,
+    "recent_messages": [],
+    "recent_tool_calls": [],
+    "checklist": [],
+    "sprints": [],
+    "cloud_runs": [],
+    "pending_cloud_checks": []
+  },
+  "plan_edited": false,
+  "code_consulted": false,
+  "image_generated": false,
+  "second_opinion_requested": false,
+  "message_sent": true,
+  "warnings_issued": null,
+  "current_activity": null,
+  "started_at": "2026-07-01T02:24:06.481044Z",
+  "completed_at": "2026-07-01T02:24:18.400238Z",
+  "model_version": "gpt-5.5"
+}

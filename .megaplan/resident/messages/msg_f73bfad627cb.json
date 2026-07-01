@@ -1,0 +1,17 @@
+{
+  "id": "msg_f73bfad627cb",
+  "epic_id": null,
+  "conversation_id": "rconv_85a1c2bfd5f1",
+  "idempotency_key": "discord:message:1521704388689662095",
+  "direction": "inbound",
+  "content": "Keep searching, check if there\u2019s an epic or epic chain running",
+  "sent_at": "2026-07-01T02:29:58.263506Z",
+  "discord_message_id": "1521704388689662095",
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": null,
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": "turn_0b87496a4e9e"
+}
