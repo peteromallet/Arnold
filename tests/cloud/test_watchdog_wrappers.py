@@ -3603,11 +3603,10 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'FINDINGS_DIR="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DIR:-/workspace/repair-findings}"' in text
     assert 'FINDINGS_DOC="${CLOUD_WATCHDOG_REPAIR_FINDINGS_DOC:-$FINDINGS_DIR/persistent-problems.md}"' in text
     assert 'REPAIR_PID_FILE="${CLOUD_WATCHDOG_REPAIR_PID_FILE:-$MARKER_DIR/${SAFE_SESSION}.repair-loop.pid}"' in text
-    assert 'REPAIR_PID_GUARD_FILE="${REPAIR_PID_FILE}.guard"' in text
     assert "acquire_repair_lock()" in text
     assert "repair_loop_pid_matches_session()" in text
     assert "find_live_repair_loop_for_session()" in text
-    assert 'flock "$guard_fd"' in text
+    assert "set -o noclobber" in text
     assert 'log "repair pid claimed session=$SESSION pid=$$ pidfile=$REPAIR_PID_FILE"' in text
     assert 'log "stale repair pidfile detected; reclaiming session=$SESSION stale_pid=$existing_pid pidfile=$REPAIR_PID_FILE"' in text
     assert "guard_against_recursive_repair_loop()" in text
