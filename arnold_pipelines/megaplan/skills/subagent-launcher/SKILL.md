@@ -22,7 +22,22 @@ Three pathways:
 >
 > **Workarounds:**
 > 1. Launch the hermes subagent directly from a normal shell or Bash tool.
-> 2. If you need a **Codex subagent to orchestrate hermes subagents**, run it with `--sandbox danger-full-access`. `read-only` and `workspace-write` both disable outbound network; only `danger-full-access` allows provider API calls from inside `codex exec`.
+> 2. If you need a **Codex subagent to orchestrate hermes subagents**, run the
+>    outer Codex command with `--sandbox danger-full-access` and seal stdin with
+>    `</dev/null`, for example:
+>
+>    ```bash
+>    timeout 3600 codex exec --sandbox danger-full-access \
+>      -c model_reasoning_effort=high \
+>      "$(cat /tmp/brief.md)" </dev/null
+>    ```
+>
+>    `read-only` and `workspace-write` both disable outbound network for the
+>    Codex subprocess; only `danger-full-access` allows nested Hermes provider
+>    API calls from inside `codex exec`. Tell Codex explicitly to use
+>    `launch_hermes_agent.py` or `fan.py`, and to spend its own context budget
+>    by delegating broad searches, file mapping, and independent reviews to
+>    DeepSeek/Kimi subagents wherever practical.
 >
 > This network restriction does not affect Codex or Claude subagents.
 

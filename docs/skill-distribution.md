@@ -129,16 +129,19 @@ accept the resolved values in the commit.
    pre-composed file under `megaplan/data/_composed/`. Update the canonical
    home table above. Most sub-skills are single-source and do not need this.
 
-6. **Run the tests:** `pytest tests/test_setup_no_shadow_skills.py -v`.
-   `test_every_target_uses_symlink` will fail if any new entry uses a
-   non-symlink install mode.
+6. **Run the tests:** `pytest tests/test_packaging_skills.py -v`.
+   The sync coverage will fail if `subagent-launcher` drops out of the
+   package-managed target set or stops resolving to a portable skill bundle.
 
 ## Personal vs package split
 
 `~/Documents/poms_skills/` is the personal-toolbox home for **non-megaplan**
-skills (bakeoff, subagent-launcher, hivemind, etc.). These skills are managed
-separately and are not covered by this strategy. All `megaplan-*` skills live
-in the megaplan package under `megaplan/data/` — `poms_skills/` should never
+skills (hivemind, local writing helpers, etc.). The `subagent-launcher` and
+`cleanup-loose-branches` skills are now Arnold-managed because the cloud repair
+system depends on them. Their canonical source is
+`arnold_pipelines/megaplan/skills/`, and `_GLOBAL_TARGETS` installs them into
+Claude, Codex, Hermes, and `.agents` skill directories. All `megaplan-*` skills
+live in the megaplan package under `megaplan/data/`; `poms_skills/` should never
 contain a `megaplan-*` directory.
 
 ## Subcommand naming
