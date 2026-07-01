@@ -7,13 +7,13 @@
   "channel_id": "1451308037074714654",
   "thread_id": null,
   "dm_user_id": "301463647895683072",
-  "last_inbound_message_id": "msg_f73bfad627cb",
-  "last_outbound_message_id": "msg_444a5ea7de39",
-  "delivery_cursor": "msg_444a5ea7de39",
+  "last_inbound_message_id": "msg_83695cc9a8ee",
+  "last_outbound_message_id": "msg_ea1bbb46a71e",
+  "delivery_cursor": "msg_ea1bbb46a71e",
   "metadata": {
     "last_subject_user_id": "301463647895683072"
   },
   "created_at": "2026-07-01T02:20:45.866525Z",
-  "updated_at": "2026-07-01T02:30:20.265421Z",
-  "last_active_at": "2026-07-01T02:30:20.265379Z"
+  "updated_at": "2026-07-01T02:41:49.691176Z",
+  "last_active_at": "2026-07-01T02:41:49.691149Z"
 }

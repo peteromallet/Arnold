@@ -1,0 +1,17 @@
+{
+  "id": "msg_83695cc9a8ee",
+  "epic_id": null,
+  "conversation_id": "rconv_85a1c2bfd5f1",
+  "idempotency_key": "discord:message:1521707325285470298",
+  "direction": "inbound",
+  "content": "So the sandbox is broken?",
+  "sent_at": "2026-07-01T02:41:38.428490Z",
+  "discord_message_id": "1521707325285470298",
+  "has_code_attachment": false,
+  "has_image_attachment": false,
+  "in_burst_with": null,
+  "was_voice_message": false,
+  "audio_storage_url": null,
+  "transcription_metadata": null,
+  "bot_turn_id": "turn_b23f75fae922"
+}
