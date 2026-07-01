@@ -49,6 +49,8 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
+WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+
 MARKER_DIR="${MEGAPLAN_AUDIT_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${MEGAPLAN_AUDIT_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
 export MEGAPLAN_AUDIT_REPAIR_DATA_DIR="$REPAIR_DATA_DIR"
@@ -84,7 +86,35 @@ GATHER_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORKLIST" "$GATHER_DIR"' EXIT
 
 log() {
-  echo "[progress-auditor $(date -Iseconds)] $*"
+  local message
+  message="$(redact_inline_text "$*")"
+  echo "[progress-auditor $(date -Iseconds)] $message"
+}
+
+redact_inline_text() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$1" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+print(redact_text(sys.argv[1]), end="")
+PY
+}
+
+redact_file_in_place() {
+  local path="${1:-}"
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    return 0
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+path = Path(sys.argv[1])
+path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
+PY
 }
 
 # Build the plan worklist from marker, tmux, and workspace-activity discovery.
@@ -1273,6 +1303,7 @@ only when kind=chain). Under 350 words.
 EOF
 
   } > "$brief"
+  redact_file_in_place "$brief"
 
   local resp_path="$GATHER_DIR/resp-${plan}.txt"
   if command -v codex >/dev/null 2>&1; then
@@ -1290,6 +1321,8 @@ EOF
       export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
       timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$brief")" </dev/null
     ) > "$resp_path" 2>"$GATHER_DIR/resp-${plan}.err" || true
+    redact_file_in_place "$resp_path"
+    redact_file_in_place "$GATHER_DIR/resp-${plan}.err"
     if [[ ! -s "$resp_path" ]]; then
       echo "Codex audit orchestrator returned no output (timed out or failed to launch DeepSeek research subagents); see audit log." > "$resp_path"
     fi
@@ -1298,11 +1331,13 @@ EOF
     echo "codex CLI missing; no automated hypothesis." > "$resp_path"
   fi
 
-  python3 - "$gather_file" "$resp_path" "$DEEPSEEK_MODEL" <<'PY'
+  PYTHONPATH="$WRAPPER_REPO_ROOT:$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$gather_file" "$resp_path" "$DEEPSEEK_MODEL" <<'PY'
 import json, sys
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
 gather, resp, model = sys.argv[1], sys.argv[2], sys.argv[3]
 data = json.load(open(gather))
-text = open(resp, encoding="utf-8").read().strip()
+text = redact_text(open(resp, encoding="utf-8").read().strip())
 data["deepseek_model"] = model
 data["deepseek_response"] = text
 data["hypothesis"] = text

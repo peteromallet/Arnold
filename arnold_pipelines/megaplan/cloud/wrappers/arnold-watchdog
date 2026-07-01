@@ -8,6 +8,8 @@ if [[ -f /workspace/.cloud-hot-env ]]; then
   set +a
 fi
 
+WRAPPER_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../../.." && pwd)"
+
 SELF_PATH="${BASH_SOURCE[0]:-$0}"
 if command -v readlink >/dev/null 2>&1; then
   SELF_PATH="$(readlink -f "$SELF_PATH" 2>/dev/null || printf '%s' "$SELF_PATH")"
@@ -53,7 +55,35 @@ REPAIR_DISPATCH_RESULT=
 mkdir -p "$(dirname "$LOG")"
 
 log() {
-  echo "[watchdog $(date -Iseconds)] $*" | tee -a "$LOG"
+  local message
+  message="$(redact_inline_text "$*")"
+  echo "[watchdog $(date -Iseconds)] $message" | tee -a "$LOG"
+}
+
+redact_inline_text() {
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$1" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+print(redact_text(sys.argv[1]), end="")
+PY
+}
+
+redact_file_in_place() {
+  local path="${1:-}"
+  if [[ -z "$path" || ! -f "$path" ]]; then
+    return 0
+  fi
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$path" <<'PY'
+from pathlib import Path
+import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_text
+
+path = Path(sys.argv[1])
+path.write_text(redact_text(path.read_text(encoding="utf-8")), encoding="utf-8")
+PY
 }
 
 maybe_reexec_updated_watchdog() {
@@ -165,9 +195,11 @@ report_item() {
   local message="$5"
   local workspace="${6:-}"
   local remote_spec="${7:-}"
-  python3 - "$path" "$session" "$action" "$status" "$message" "$workspace" "$remote_spec" <<'PY'
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$path" "$session" "$action" "$status" "$message" "$workspace" "$remote_spec" <<'PY'
 import json
 import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
 path, session, action, status, message, workspace, remote_spec = sys.argv[1:]
 payload = {
@@ -180,6 +212,7 @@ if workspace:
     payload["workspace"] = workspace
 if remote_spec:
     payload["remote_spec"] = remote_spec
+payload = redact_payload(payload)
 with open(path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(payload, sort_keys=True) + "\n")
 PY
@@ -541,13 +574,15 @@ notify_needs_human() {
   payload_tmp="$(mktemp)"
   dm_result_tmp="$(mktemp)"
   discord_dm_bin="${DISCORD_DM_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
-  python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
     "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
     "${PLAN_STATUS_FAILURE_KIND:-}" "${PLAN_STATUS_FAILURE_MESSAGE:-}" "${PLAN_STATUS_FAILURE_PHASE:-}" \
     "${PLAN_STATUS_FAILURE_RECORDED_AT:-}" "${PLAN_STATUS_TIERS_TRIED:-}" "${PLAN_STATUS_PUSHED_COMMITS:-}" <<'PY'
 import datetime as dt
 import json
 import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
 (
     path,
@@ -620,6 +655,7 @@ payload.update(
         "next_action": "Needs human review. Inspect the workspace, review the failure, and decide whether to resume, repair, or clean up.",
     }
 )
+payload = redact_payload(payload)
 with open(path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
     handle.write("\n")
@@ -720,12 +756,14 @@ emit_report() {
   local markers="$2"
   local report_tmp
   report_tmp="$(mktemp)"
-  python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_WITH_CODEX" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_WITH_CODEX" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"
 import datetime as dt
 import json
 import os
 import shutil
 import sys
+
+from arnold_pipelines.megaplan.cloud.redact import redact_payload
 
 items_path, markers, report_path, archive_dir, repair, push = sys.argv[1:]
 items = []
@@ -768,6 +806,7 @@ payload = {
     "items": items,
     "issues": issues,
 }
+payload = redact_payload(payload)
 os.makedirs(os.path.dirname(report_path) or ".", exist_ok=True)
 with open(report_path, "w", encoding="utf-8") as handle:
     json.dump(payload, handle, indent=2, sort_keys=True)
@@ -1020,6 +1059,7 @@ MEGAPLAN_REF or the active workflow checkout branch to choose the repair branch.
 
 Keep the patch narrowly scoped. Run the smallest relevant verification. Do not ask for input.
 EOF
+  redact_file_in_place "$prompt"
 
   log "starting Codex editable-install repair in $SRC_DIR"
   (
@@ -3435,6 +3475,29 @@ repair_unhealthy_session() {
   return 1
 }
 
+compare_needs_human_to_resolver() {
+  local session="$1"
+  local current_plan="$2"
+  local legacy_stale="$3"
+  local legacy_plans="${4:-}"
+
+  if [[ -z "${current_target_observation:-}" ]]; then
+    return 0
+  fi
+
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$current_target_observation" "$legacy_stale" "$legacy_plans" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import json, sys
+resolver = json.loads(sys.argv[1])
+legacy_stale = sys.argv[2] == "true"
+resolver_stale = any(e.get("kind") == "stale_needs_human_plan_ref" for e in resolver.get("stale_evidence", []))
+if resolver_stale == legacy_stale:
+    print("AGREEMENT needs_human_comparison", file=sys.stderr)
+else:
+    resolver_plans = resolver.get("needs_human", {}).get("plan_refs", [])
+    print(f"DISCREPANCY needs_human_comparison legacy_stale={legacy_stale} resolver_stale={resolver_stale} resolver_plans={resolver_plans}", file=sys.stderr)
+PY
+}
+
 launch_chain_tick() {
   local session="$1"
   local workspace="$2"
@@ -3444,9 +3507,32 @@ launch_chain_tick() {
   local plan_name="${6:-}"
   local relaunch_command="${7:-}"
   local remote_spec_path="$remote_spec"
+  local current_target_observation=""
 
   if [[ -n "$plan_name" ]]; then
     run_kind="plan"
+  fi
+
+  current_target_observation="$(
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$MARKER_DIR" "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" <<'PY' 2>>"${LOG:-/dev/null}" || true
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.current_target import resolve_current_target
+
+session, workspace, remote_spec, run_kind, plan_name, marker_dir, repair_data_dir = sys.argv[1:]
+
+record = resolve_current_target(
+    session,
+    marker_dir=pathlib.Path(marker_dir),
+    repair_data_dir=pathlib.Path(repair_data_dir),
+)
+print(json.dumps(record, sort_keys=True))
+PY
+  )"
+  if [[ -n "$current_target_observation" ]]; then
+    log "current-target observe session=$session evidence=$current_target_observation"
   fi
 
   if [[ ! -d "$workspace" ]]; then
@@ -3644,6 +3730,11 @@ launch_chain_tick() {
         rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
         log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown} marker_plans=${stale_marker_plans:-unknown}"
       }
+      if [[ -n "${stale_marker_plans:-}" ]]; then
+        compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "true" "$stale_marker_plans"
+      else
+        compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
+      fi
       if [[ -f "$(repair_needs_human_path "$session")" ]]; then
         repair_summary="$(repair_needs_human_summary "$session")"
         log "session awaits human action and repair loop already requested human session=$session summary=$repair_summary"
@@ -3704,6 +3795,11 @@ launch_chain_tick() {
           rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
           log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown} marker_plans=${stale_marker_plans:-unknown}"
         }
+        if [[ -n "${stale_marker_plans:-}" ]]; then
+          compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "true" "$stale_marker_plans"
+        else
+          compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
+        fi
         if [[ -f "$(repair_needs_human_path "$session")" ]]; then
           repair_summary="$(repair_needs_human_summary "$session")"
           log "session auto-stalled into manual_review and repair loop already requested human session=$session summary=$repair_summary"
@@ -3752,14 +3848,17 @@ launch_chain_tick() {
     elif ! repair_needs_human_matches_current_plan "$session" "${PLAN_STATUS_PLAN_NAME:-}" >/dev/null 2>&1; then
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
       log "stale repair needs-human marker cleared; live current plan supersedes marker session=$session live_plan=${PLAN_STATUS_PLAN_NAME:-unknown}"
+      compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "true" ""
     elif sibling_alive="$(workspace_has_other_alive_session "$session" "$workspace" 2>/dev/null)"; then
       rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
       log "stale repair needs-human marker cleared; sibling session is alive session=$session sibling=$sibling_alive"
+      compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
     else
       local repair_summary
       repair_summary="$(repair_needs_human_summary "$session")"
       log "session marked needs human by repair loop session=$session summary=$repair_summary"
       report_item "$report_items" "$session" "observe" "needs_human" "$repair_summary" "$workspace" "$remote_spec"
+      compare_needs_human_to_resolver "$session" "${PLAN_STATUS_PLAN_NAME:-}" "false" ""
       return 0
     fi
   fi

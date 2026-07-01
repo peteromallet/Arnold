@@ -55,6 +55,25 @@ def test_render_discord_dm_splits_messages_over_discord_limit() -> None:
     assert rendered[-1].endswith("**Next action:** Inspect the failure.")
 
 
+def test_render_discord_dm_redacts_secret_values_in_rendered_chunks() -> None:
+    payload = {
+        "title": "Megaplan needs human review - demo",
+        "summary": "Authorization: Bearer bearer-secret-token-value",
+        "fields": [
+            {"label": "Command", "value": "export API_TOKEN=supersecret"},
+            {"label": "URL", "value": "https://example.test?token=abcdef1234567890"},
+        ],
+    }
+
+    rendered = render_discord_dm(payload)
+    joined = "\n".join(rendered)
+
+    assert "bearer-secret-token-value" not in joined
+    assert "supersecret" not in joined
+    assert "abcdef1234567890" not in joined
+    assert "***REDACTED***" in joined
+
+
 def test_send_discord_dm_degrades_when_config_missing() -> None:
     result = send_discord_dm({"title": "Megaplan test"}, env={})
 
@@ -114,3 +133,45 @@ def test_send_discord_dm_posts_dm_channel_then_messages() -> None:
     assert requests[1]["url"].endswith("/channels/dm-channel-1/messages")
     assert requests[1]["auth"] == "Bot token-123"
     assert "Megaplan chain complete - chain-1" in requests[1]["body"]["content"]
+
+
+def test_send_discord_dm_redacts_payload_before_delivery() -> None:
+    requests: list[dict[str, Any]] = []
+
+    class _FakeResponse:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload).encode("utf-8")
+
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_urlopen(req, timeout=10):
+        requests.append(json.loads(req.data.decode("utf-8")))
+        if req.full_url.endswith("/users/@me/channels"):
+            return _FakeResponse({"id": "dm-channel-1"})
+        return _FakeResponse({"id": f"msg-{len(requests)}"})
+
+    result = send_discord_dm(
+        {
+            "title": "Megaplan needs human review - chain-1",
+            "summary": "Authorization: Bearer bearer-secret-token-value",
+            "fields": [{"label": "Token", "value": "export API_TOKEN=supersecret"}],
+        },
+        env={
+            "DISCORD_BOT_TOKEN": "token-123",
+            "DISCORD_DM_USER_ID": "user-456",
+        },
+        opener=fake_urlopen,
+    )
+
+    assert result["ok"] is True
+    delivered = requests[1]["content"]
+    assert "bearer-secret-token-value" not in delivered
+    assert "supersecret" not in delivered
+    assert "***REDACTED***" in delivered

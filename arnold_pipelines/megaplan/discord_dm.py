@@ -8,6 +8,8 @@ import os
 from typing import Any, Mapping, Sequence
 from urllib import error, request
 
+from arnold_pipelines.megaplan.cloud.redact import redact_payload
+
 LOGGER = logging.getLogger(__name__)
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
@@ -17,6 +19,7 @@ DISCORD_MESSAGE_LIMIT = 2000
 def render_discord_dm(payload: Mapping[str, Any]) -> list[str]:
     """Render a structured DM payload into Discord-sized markdown chunks."""
 
+    payload = redact_payload(payload)
     lines: list[str] = []
 
     title = _clean_text(payload.get("title"))
@@ -64,7 +67,8 @@ def send_discord_dm(
 ) -> dict[str, Any]:
     """Send a structured payload as one or more Discord bot DMs."""
 
-    environment = env or os.environ
+    environment = env if env is not None else os.environ
+    payload = redact_payload(payload, env=environment)
     token = (environment.get("DISCORD_BOT_TOKEN") or "").strip()
     user_id = (environment.get("DISCORD_DM_USER_ID") or "").strip()
     messages = render_discord_dm(payload)

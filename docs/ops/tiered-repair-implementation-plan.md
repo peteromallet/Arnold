@@ -1048,6 +1048,38 @@ After merging and deploying the staged changes to the cloud machine:
 14. Confirm the safe test escalation leaves a ledger entry and a mutable current
     pointer, and that resolving/superseding the pointer preserves ledger history.
 
+### M1 Substrate Quick-Check
+
+After M1 deployment, the primary rollback/preflight reference is
+[docs/ops/recovery-runbooks.md](docs/ops/recovery-runbooks.md) (`OPS-M1-REPAIR-ROLLBACK`),
+which covers:
+
+- **Flag disablement**: Set `ARNOLD_RESOLVER_OBSERVE=0` to return to legacy-only behaviour;
+  `ARNOLD_REDACTION_ENABLED` and `ARNOLD_ESCALATION_LEDGER` for redaction/ledger gating.
+  All behaviour-changing flags (`ARNOLD_RESOLVER_ENFORCEMENT`, `ARNOLD_ESCALATION_LEDGER`,
+  `ARNOLD_AUTONOMY`) default to `0` (off).
+- **Wrapper refresh**: Copy wrappers from `arnold_pipelines/megaplan/cloud/wrappers/`
+  to `/usr/local/bin/` after every merge — the editable-install sync does **not**
+  refresh `/usr/local/bin`.
+- **Old sidecar compatibility**: Existing `repair-data.json` and `needs-human.json`
+  sidecars remain the canonical M1 compatibility source.  M1 adds additive
+  `current_plan_name`, `target_id`, `authoritative_source`, and nested `current`
+  fields without breaking legacy readers.
+- **Repair lock drain/inspection**: Locks live at
+  `<marker_dir>/<session>.repair-loop.lock/owner.json`.  Use `inspect_repair_lock()`
+  from `arnold_pipelines.megaplan.cloud.repair_lock` — stale locks are never
+  silently deleted.  See the runbook for stale-lock evidence capture and cleanup.
+- **Watchdog restart**: `tmux kill-session -t watchdog`, then restart via
+  `setsid bash -lc '/usr/local/bin/arnold-watchdog ...`.  Follow with
+  `arnold-watchdog --once` for an immediate health scan.
+- **Validation**: Run `pytest tests/cloud/test_repair_contract.py tests/cloud/test_repair_lock.py
+  tests/cloud/test_feature_flags.py tests/cloud/test_redaction.py tests/cloud/test_current_target.py
+  tests/cloud/test_human_blockers.py tests/cloud/test_watchdog_wrappers.py
+  tests/cloud/test_repair_recurrence.py` to confirm M1 substrate health.
+
+See also the M1 Quick Reference table in [docs/cloud.md](../cloud.md) for a
+concise flag and module map.
+
 ## Open Questions Requiring Human Judgement
 
 - Should the failure-triggered repair path be systemd path-based, watchdog-polled, or both? Both is more robust; systemd-only is cleaner but easier to miss if unit installation drifts.
