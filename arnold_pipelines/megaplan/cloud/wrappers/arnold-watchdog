@@ -2040,6 +2040,7 @@ plan_terminal_status() {
   local plan_name="$2"
   python3 - "$workspace" "$plan_name" <<'PY'
 import json
+import os
 import pathlib
 import sys
 
@@ -3071,8 +3072,30 @@ active = state.get("active_step") or {}
 active_phase = active.get("phase") or ""
 active_pid = active.get("worker_pid") or ""
 active_started = active.get("started_at") or ""
+active_last_activity = active.get("last_activity_at") or ""
 current_state = state.get("current_state") or ""
 message = latest_failure.get("message") or ""
+
+active_pid_live = False
+try:
+    active_pid_int = int(active_pid)
+    if active_pid_int > 0:
+        os.kill(active_pid_int, 0)
+        active_pid_live = True
+except Exception:
+    active_pid_live = False
+
+if (
+    active_pid_live
+    and active_phase == phase
+    and (
+        not recorded_at
+        or (isinstance(active_started, str) and active_started > recorded_at)
+        or (isinstance(active_last_activity, str) and active_last_activity > recorded_at)
+    )
+):
+    print("ok")
+    raise SystemExit(0)
 
 success_after_failure = False
 for item in history:
@@ -3099,6 +3122,65 @@ print(
     f"pid={active_pid or 'none'}:"
     f"{message[:160]}"
 )
+PY
+}
+
+epic_child_semantic_status() {
+  local workspace="$1"
+  python3 - "$workspace" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+workspace = pathlib.Path(sys.argv[1])
+chains_dir = workspace / ".megaplan" / "plans" / ".chains"
+if not chains_dir.is_dir():
+    print("none")
+    raise SystemExit(0)
+
+def pid_live(value: object) -> bool:
+    try:
+        pid = int(value)
+        if pid <= 0:
+            return False
+        os.kill(pid, 0)
+        return True
+    except Exception:
+        return False
+
+for chain_path in sorted(chains_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True):
+    try:
+        chain_state = json.loads(chain_path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if not isinstance(chain_state, dict):
+        continue
+    plan_name = chain_state.get("current_plan_name")
+    if not isinstance(plan_name, str) or not plan_name:
+        continue
+    plan_state_path = workspace / ".megaplan" / "plans" / plan_name / "state.json"
+    try:
+        state = json.loads(plan_state_path.read_text(encoding="utf-8"))
+    except Exception:
+        state = {}
+    if not isinstance(state, dict):
+        state = {}
+    current_state = state.get("current_state")
+    active = state.get("active_step") if isinstance(state.get("active_step"), dict) else {}
+    active_phase = active.get("phase") or ""
+    active_pid = active.get("worker_pid")
+    if active_phase and pid_live(active_pid):
+        print(f"child_active:{plan_name}:{current_state or 'unknown'}:{active_phase}:pid={active_pid}")
+        raise SystemExit(0)
+    if current_state in {"prepped", "planned", "critiqued", "gated", "finalized"}:
+        print(
+            f"child_drivable:{plan_name}:{current_state}:"
+            f"chain_last_state={chain_state.get('last_state') or 'unknown'}"
+        )
+        raise SystemExit(0)
+
+print("none")
 PY
 }
 
@@ -3651,6 +3733,20 @@ launch_chain_tick() {
       return 0
     fi
   else
+    if [[ "$run_kind" == "epic_chain" ]]; then
+      local child_semantic
+      child_semantic="$(epic_child_semantic_status "$workspace")"
+      if [[ "$child_semantic" == child_active:* ]]; then
+        log "epic-chain session stopped but child plan is active; deferring parent relaunch session=$session detail=$child_semantic"
+        report_item "$report_items" "$session" "observe" "child_active" "$child_semantic" "$workspace" "$remote_spec"
+        return 0
+      fi
+      if [[ "$child_semantic" == child_drivable:* ]]; then
+        log "epic-chain session stopped but child plan is drivable; deferring parent relaunch session=$session detail=$child_semantic"
+        report_item "$report_items" "$session" "observe" "child_drivable" "$child_semantic" "$workspace" "$remote_spec"
+        return 0
+      fi
+    fi
     if mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
