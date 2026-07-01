@@ -19,6 +19,7 @@ __pycache__/
 .megaplan/m2-auto.log
 .megaplan/m6-test.log
 .megaplan/system_logs/
+.megaplan/resident/
 .megaplan/debt.json
 .megaplan/epics/
 .megaplan/profiles.toml
@@ -52,6 +53,7 @@ planning-bot-spec.md
 idea-*.txt
 ideas/
 *-critique_output.json
+sample_*.json
 
 # Generated audit/design reports from one-off planning runs.
 docs/arnold-merge-design.md

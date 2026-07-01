@@ -96,6 +96,9 @@ from arnold_pipelines.megaplan.execute.step_edit import handle_step
 from arnold_pipelines.megaplan.observability.doctor import handle_doctor
 from arnold_pipelines.megaplan.observability.trace import handle_trace
 from arnold_pipelines.megaplan.resolutions import SUPPORTED_USER_ACTION_RESOLUTION_STATES
+from arnold_pipelines.megaplan.quality_resolutions import (
+    VALID_RESOLUTIONS as QUALITY_GATE_RESOLUTION_STATES,
+)
 from arnold_pipelines.megaplan.user_actions import (
     FALLBACK,
     OMIT,
@@ -202,6 +205,69 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--fresh", action="store_true", default=False)
         sub.add_argument("--persist", action="store_true", default=False)
         sub.add_argument("--ephemeral", action="store_true", default=False)
+
+    override_parser = subparsers.add_parser("override")
+    override_parser.add_argument(
+        "override_action",
+        choices=[
+            "add-note",
+            "abort",
+            "adopt-execution",
+            "force-proceed",
+            "recover-blocked",
+            "replan",
+            "resume-clarify",
+            "set-model",
+            "set-profile",
+            "set-robustness",
+            "set-vendor",
+        ],
+    )
+    override_parser.add_argument("--plan", required=False)
+    override_parser.add_argument("--note")
+    override_parser.add_argument("--source", default="user")
+    override_parser.add_argument("--reason")
+    override_parser.add_argument("--user-approved", action="store_true", default=False)
+    override_parser.add_argument("--robustness", choices=ROBUSTNESS_ACCEPTED)
+    override_parser.add_argument("--profile")
+    override_parser.add_argument("--phase")
+    override_parser.add_argument("--model")
+    override_parser.add_argument("--effort")
+    override_parser.add_argument("--vendor")
+    override_parser.add_argument("--expires-after-runs", dest="expires_after_runs", type=int)
+    override_parser.add_argument("--project-dir", dest="project_dir")
+    override_parser.add_argument("--target-root", dest="target_root")
+
+    user_action_parser = subparsers.add_parser("user-action")
+    user_action_sub = user_action_parser.add_subparsers(dest="user_action_action", required=True)
+    user_action_resolve = user_action_sub.add_parser("resolve")
+    user_action_resolve.add_argument("--plan", required=False)
+    user_action_resolve.add_argument("--action-id", dest="action_id")
+    user_action_resolve.add_argument(
+        "--resolution",
+        choices=sorted(SUPPORTED_USER_ACTION_RESOLUTION_STATES),
+    )
+    user_action_resolve.add_argument("--reason")
+    user_action_resolve.add_argument("--instructions")
+    user_action_resolve.add_argument("--tasks")
+    user_action_resolve.add_argument("--phase")
+    user_action_resolve.add_argument("--evidence", action="append")
+    user_action_resolve.add_argument("--debt-note", dest="debt_note")
+    user_action_resolve.add_argument("--fallback-mode", dest="fallback_mode")
+
+    quality_gate_parser = subparsers.add_parser("quality-gate")
+    quality_gate_sub = quality_gate_parser.add_subparsers(dest="quality_gate_action", required=True)
+    quality_gate_resolve = quality_gate_sub.add_parser("resolve")
+    quality_gate_resolve.add_argument("--plan", required=False)
+    quality_gate_resolve.add_argument("--blocker-id", dest="blocker_id")
+    quality_gate_resolve.add_argument(
+        "--resolution",
+        choices=QUALITY_GATE_RESOLUTION_STATES,
+    )
+    quality_gate_resolve.add_argument("--phase")
+    quality_gate_resolve.add_argument("--evidence", action="append")
+    quality_gate_resolve.add_argument("--debt-note", dest="debt_note")
+    quality_gate_resolve.add_argument("--fallback-mode", dest="fallback_mode")
 
     build_auto_parser(subparsers)
     build_chain_parser(subparsers)
