@@ -12,20 +12,30 @@ Covers:
 from __future__ import annotations
 
 from pathlib import Path
+import importlib.util
+import sys
 
 import pytest
 
 from arnold.workflow.discovery import Manifest, ManifestError, read_manifest
-from arnold_pipelines.megaplan.profiles import (
-    ProfileLoadError,
-    load_profiles,
-)
 from arnold.pipelines.deliberation.profile import abstraction_level_validator
 
 
 # ── Paths ──────────────────────────────────────────────────────────────────
 
 _DELIBERATION_INIT = Path(__file__).parents[4] / "arnold" / "pipelines" / "deliberation" / "__init__.py"
+
+_NEUTRAL_PROFILES_PATH = Path(__file__).parents[4] / "arnold_pipelines" / "megaplan" / "profiles.py"
+_PROFILE_SPEC = importlib.util.spec_from_file_location(
+    "_neutral_profile_loader_for_deliberation_tests",
+    _NEUTRAL_PROFILES_PATH,
+)
+assert _PROFILE_SPEC is not None and _PROFILE_SPEC.loader is not None
+_PROFILE_MODULE = importlib.util.module_from_spec(_PROFILE_SPEC)
+sys.modules[_PROFILE_SPEC.name] = _PROFILE_MODULE
+_PROFILE_SPEC.loader.exec_module(_PROFILE_MODULE)
+ProfileLoadError = _PROFILE_MODULE.ProfileLoadError
+load_profiles = _PROFILE_MODULE.load_profiles
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

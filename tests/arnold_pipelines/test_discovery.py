@@ -28,6 +28,8 @@ def test_discover_migrated_pipelines_have_builders() -> None:
     assert results
     ids = {info.id for info in results}
     expected = {
+        "folder-audit",
+        "deliberation",
         "megaplan",
         "doc",
         "creative",
@@ -61,6 +63,8 @@ def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
     by_id = {info.id: info for info in results}
 
     expected = {
+        "folder-audit": "arnold/pipelines/folder_audit",
+        "deliberation": "arnold/pipelines/deliberation",
         "creative": "arnold_pipelines/megaplan/pipelines/creative",
         "doc": "arnold_pipelines/megaplan/pipelines/doc",
         "jokes": "arnold_pipelines/megaplan/pipelines/jokes",
@@ -71,7 +75,10 @@ def test_migrated_subpipeline_rows_use_normalized_package_paths() -> None:
     for pipeline_id, package_path in expected.items():
         info = by_id[pipeline_id]
         assert info.package_path == package_path
-        assert info.docs_path == f"{package_path}/SKILL.md"
+        if package_path.startswith("arnold_pipelines/"):
+            assert info.docs_path == f"{package_path}/SKILL.md"
+        else:
+            assert info.docs_path is None
         assert not info.package_path.endswith(".py")
         assert "-" not in info.package_path
         assert info.builder is not None
@@ -119,6 +126,8 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         if info.builder_contract in {"native", "deferred-native"}
     }
     expected = {
+        "folder-audit": "arnold.pipelines.folder_audit:build_pipeline",
+        "deliberation": "arnold.pipelines.deliberation:build_pipeline",
         "creative": "arnold_pipelines.megaplan.pipelines.creative:build_pipeline",
         "doc": "arnold_pipelines.megaplan.pipelines.doc:build_pipeline",
         "jokes": "arnold_pipelines.megaplan.pipelines.jokes:build_pipeline",
@@ -154,5 +163,4 @@ def test_archived_pipelines_included_when_requested() -> None:
     results = discover_shipped_pipelines(include_archived=True)
     archived = {info.id for info in results if info.disposition == "archive"}
     assert "megaplan.epic_blitz_py" in archived or "megaplan.epic_blitz" in archived
-    assert "legacy.folder_audit" in archived
-    assert "legacy.deliberation" in archived
+    assert "legacy.deliberation" not in archived

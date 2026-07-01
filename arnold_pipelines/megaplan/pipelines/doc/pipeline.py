@@ -246,13 +246,15 @@ def build_pipeline() -> Pipeline:
 
 
 __all__ = [
-    "build_pipeline",
-    "description",
-    "default_profile",
-    "supported_modes",
-    "recommended_profiles",
-    "driver",
     "arnold_api_version",
+    "build_pipeline",
     "capabilities",
+    "default_profile",
+    "description",
+    "driver",
+    "entrypoint",
+    "name",
+    "recommended_profiles",
+    "supported_modes",
     "doc_native",
 ]

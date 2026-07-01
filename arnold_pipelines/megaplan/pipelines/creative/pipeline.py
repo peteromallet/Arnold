@@ -273,11 +273,36 @@ def _prompt_key_for_form(prompt_key: str | None, form: str) -> str | None:
     return prompt_key
 
 
+def _build_graph_pipeline(
+    form: str = "joke",
+    primary_criterion: str | None = None,
+) -> Pipeline:
+    """Private graph shell for the ``creative`` pipeline.
+
+    Constructs the graph-era stages and edges for the given *form* and
+    *primary_criterion*.  This shell exists only so that legacy graph
+    inspection / forced-graph fallback paths have a concrete
+    :class:`Pipeline` to walk; the canonical runtime dispatches through
+    the attached ``native_program``.
+    """
+    stages = {
+        name: _stage(
+            name,
+            prompt_key=_prompt_key_for_form(prompt_key, form),
+            next_label=next_label,
+            form=form,
+            primary_criterion=primary_criterion,
+        )
+        for name, prompt_key, next_label in STAGE_SPECS
+    }
+    return Pipeline(stages=stages, entry="prep")
+
+
 def build_pipeline(
     form: str = "joke",
     primary_criterion: str | None = None,
 ) -> Pipeline:
-    """Return the canonical ``creative`` :class:`Pipeline` for *form*.
+    """Return the canonical native-backed ``creative`` :class:`Pipeline` for *form*.
 
     *form* is validated against :func:`available_form_ids` — unknown
     forms raise ``CliError('invalid_args')`` so the CLI surface and the
@@ -307,20 +332,9 @@ def build_pipeline(
             exit_code=2,
         )
 
-    stages = {
-        name: _stage(
-            name,
-            prompt_key=_prompt_key_for_form(prompt_key, form),
-            next_label=next_label,
-            form=form,
-            primary_criterion=primary_criterion,
-        )
-        for name, prompt_key, next_label in STAGE_SPECS
-    }
-
-    projected = Pipeline(stages=stages, entry="prep")
+    graph = _build_graph_pipeline(form=form, primary_criterion=primary_criterion)
     return replace(
-        projected,
+        graph,
         native_program=_native_bundle(),
         resource_bundles=(),
     )
