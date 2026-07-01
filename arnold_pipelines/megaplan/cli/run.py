@@ -751,18 +751,29 @@ def _describe_pipeline(name: str) -> int:
     ``0`` on success and ``2`` when the name is unknown.
     """
 
+    from arnold_pipelines.megaplan.planning.operations import canonical_metadata
     from arnold_pipelines.megaplan.registry import (
         pipeline_metadata,
         read_pipeline_skill_md,
         registered_pipelines,
     )
+    from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
 
-    if name not in registered_pipelines():
+    canonical_name = canonical_pipeline_name(name)
+    if canonical_name not in registered_pipelines():
         print(f"Error: Unknown pipeline {name!r}", file=sys.stderr)
         return 2
 
-    metadata = pipeline_metadata(name)
-    print(render_pipeline_description(name, metadata, skill_md=read_pipeline_skill_md(name)))
+    metadata = pipeline_metadata(canonical_name)
+    if canonical_name == "megaplan":
+        metadata.update(canonical_metadata())
+    print(
+        render_pipeline_description(
+            canonical_name,
+            metadata,
+            skill_md=read_pipeline_skill_md(canonical_name),
+        )
+    )
     return 0
 
 

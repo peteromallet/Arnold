@@ -66,7 +66,9 @@ def _branch_selections(tmp_path: Any) -> dict[str, str]:
 
 @pytest.fixture
 def manifest():
-    return build_and_compile_pipeline()
+    from arnold.workflow.compiler import compile_pipeline
+
+    return compile_pipeline(build_pipeline())
 
 
 class TestExplicitNodeCoverage:
