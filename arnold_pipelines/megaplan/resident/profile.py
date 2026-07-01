@@ -454,6 +454,7 @@ class MegaplanResidentProfile:
                 ),
             },
             "configured_cloud_yaml": str(self.config.cloud_yaml_path),
+            "local_epic_chain_state": self._load_local_epic_chain_state_context(),
             "live_cloud_chain": await self._load_live_cloud_chain_context(),
         }
         if self.store is None:
@@ -492,6 +493,26 @@ class MegaplanResidentProfile:
             }
         )
         return base
+
+    def _load_local_epic_chain_state_context(self) -> dict[str, Any]:
+        roots: list[Path] = [Path.cwd()]
+        workspace = Path("/workspace")
+        if workspace.exists() and workspace not in roots:
+            roots.append(workspace)
+        epic_paths = _recent_state_paths(roots, ".epic_chains", limit=8)
+        chain_paths = _recent_state_paths(roots, ".chains", limit=12)
+        epic_states = [_summarize_epic_chain_state(path) for path in epic_paths]
+        chain_states = [_summarize_chain_state(path) for path in chain_paths]
+        return {
+            "searched_roots": [str(root) for root in roots],
+            "epic_chains": epic_states,
+            "chains": chain_states,
+            "active_chains": [
+                row
+                for row in chain_states
+                if row.get("last_state") not in {"done", "completed", "failed", "aborted"}
+            ][:5],
+        }
 
     async def _load_live_cloud_chain_context(self) -> dict[str, Any] | None:
         cloud_yaml = self.config.cloud_yaml_path
@@ -2041,6 +2062,101 @@ def _bounded_text(value: str, limit: int) -> str:
     if len(value) <= limit:
         return value
     return value[: max(0, limit - 1)] + "..."
+
+
+def _recent_state_paths(roots: list[Path], state_dir_name: str, *, limit: int) -> list[Path]:
+    paths: dict[str, Path] = {}
+    for root in roots:
+        try:
+            matches = root.glob(f"**/.megaplan/plans/{state_dir_name}/*.json")
+            for path in matches:
+                try:
+                    if path.is_file():
+                        paths[str(path.resolve())] = path.resolve()
+                except OSError:
+                    continue
+        except OSError:
+            continue
+    return sorted(paths.values(), key=lambda path: _path_mtime(path), reverse=True)[:limit]
+
+
+def _summarize_epic_chain_state(path: Path) -> dict[str, Any]:
+    data = _read_json_object(path)
+    return {
+        "path": str(path),
+        "mtime": _path_mtime(path),
+        "current_epic_id": data.get("current_epic_id"),
+        "current_epic_index": data.get("current_epic_index"),
+        "current_spec_path": data.get("current_spec_path"),
+        "last_state": data.get("last_state"),
+        "completed_count": len(data.get("completed") or []),
+        "chain_session": data.get("chain_session"),
+        "resolved_workspace": data.get("resolved_workspace"),
+        "read_error": data.get("_read_error"),
+    }
+
+
+def _summarize_chain_state(path: Path) -> dict[str, Any]:
+    data = _read_json_object(path)
+    metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+    execution_environment = (
+        metadata.get("execution_environment")
+        if isinstance(metadata.get("execution_environment"), dict)
+        else {}
+    )
+    current_plan = data.get("current_plan_name")
+    work_dir = execution_environment.get("work_dir") or execution_environment.get("project_root")
+    plan_state = _summarize_plan_state(Path(str(work_dir)), str(current_plan)) if work_dir and current_plan else None
+    return {
+        "path": str(path),
+        "mtime": _path_mtime(path),
+        "current_plan_name": current_plan,
+        "current_milestone_index": data.get("current_milestone_index"),
+        "last_state": data.get("last_state"),
+        "completed_count": len(data.get("completed") or []),
+        "dirty_flag": data.get("dirty_flag"),
+        "chain_spec_path": metadata.get("chain_spec_path"),
+        "work_dir": work_dir,
+        "chain_session": data.get("chain_session"),
+        "plan_state": plan_state,
+        "read_error": data.get("_read_error"),
+    }
+
+
+def _summarize_plan_state(work_dir: Path, plan_name: str) -> dict[str, Any] | None:
+    candidates = [
+        work_dir / ".megaplan" / "plans" / plan_name / "state.json",
+        work_dir / ".megaplan" / "briefs" / plan_name / "state.json",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        data = _read_json_object(path)
+        return {
+            "path": str(path),
+            "mtime": _path_mtime(path),
+            "current_state": data.get("current_state") or data.get("state"),
+            "iteration": data.get("iteration"),
+            "active_step": data.get("active_step"),
+            "last_gate": data.get("last_gate"),
+            "read_error": data.get("_read_error"),
+        }
+    return None
+
+
+def _read_json_object(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"_read_error": f"{exc.__class__.__name__}: {exc}"}
+    return data if isinstance(data, dict) else {"_read_error": "state JSON was not an object"}
+
+
+def _path_mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
 
 
 def _safe_filename(value: str) -> str:

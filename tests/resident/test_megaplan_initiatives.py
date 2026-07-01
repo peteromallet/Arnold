@@ -194,3 +194,47 @@ def test_megaplan_resident_hot_context_includes_live_cloud_chain(
     assert context["live_cloud_chain"]["classification"] == "running"
     assert backend.requests[0].operation == "cloud_status_chain"
     assert backend.requests[0].arguments["cloud_yaml"] == "cloud.active.yaml"
+
+
+def test_megaplan_resident_hot_context_includes_local_epic_chain_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    epic_state_dir = project / ".megaplan" / "plans" / ".epic_chains"
+    chain_state_dir = project / "initiative" / ".megaplan" / "plans" / ".chains"
+    plan_dir = project / ".megaplan" / "plans" / "m1-demo"
+    epic_state_dir.mkdir(parents=True)
+    chain_state_dir.mkdir(parents=True)
+    plan_dir.mkdir(parents=True)
+    (epic_state_dir / "epic-chain-demo.json").write_text(
+        '{"current_epic_id":"native-python","current_epic_index":0,"last_state":"running","completed":[]}',
+        encoding="utf-8",
+    )
+    (chain_state_dir / "chain-demo.json").write_text(
+        (
+            '{"current_plan_name":"m1-demo","current_milestone_index":0,'
+            '"last_state":"awaiting_human_verify","completed":[],'
+            '"metadata":{"chain_spec_path":"chain.yaml",'
+            '"execution_environment":{"work_dir":"%s"}}}'
+        )
+        % str(project),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        '{"current_state":"initialized","iteration":0,"active_step":null}',
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(project)
+    profile = MegaplanResidentProfile(
+        store=FileStore(tmp_path / "store"),
+        config=ResidentConfig(cloud_yaml_path=Path("missing-cloud.yaml")),
+    )
+
+    context = asyncio.run(profile.load_hot_context("missing-conversation"))
+
+    local_state = context["local_epic_chain_state"]
+    assert local_state["epic_chains"][0]["current_epic_id"] == "native-python"
+    assert local_state["active_chains"][0]["current_plan_name"] == "m1-demo"
+    assert local_state["active_chains"][0]["plan_state"]["current_state"] == "initialized"
