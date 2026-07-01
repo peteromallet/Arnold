@@ -294,11 +294,11 @@ class CodexCliAgentRunner(DispatchProtocol):
         config: ResidentConfig,
         *,
         cwd: str | Path,
-        sandbox: str = "workspace-write",
+        sandbox: str | None = None,
     ) -> None:
         self.config = config
         self.cwd = Path(cwd)
-        self.sandbox = sandbox
+        self.sandbox = sandbox or config.codex_sandbox
 
     async def run(self, request: AgentRequest, tools: ToolRegistry) -> AgentResponse:
         model_name = _request_model_name(request, self.config.model_name)
@@ -371,7 +371,10 @@ class CodexCliAgentRunner(DispatchProtocol):
             "You are running through the Codex CLI resident runner in the project repository. "
             "Use the local filesystem and Megaplan CLI for durable project actions. "
             "For initiatives, prefer `python -m arnold_pipelines.megaplan initiative ...`; "
-            "initiative creation requires a non-empty description. Keep final Discord replies concise.\n\n"
+            "initiative creation requires a non-empty description. The resident tool catalog below is "
+            "reference material for equivalent CLI capabilities, not a set of callable Codex functions. "
+            "When cloud status is needed, use the configured cloud YAML from hot context. "
+            "Keep final Discord replies concise.\n\n"
             "Resident request JSON:\n"
             + json.dumps(payload, sort_keys=True, default=str)
         )
