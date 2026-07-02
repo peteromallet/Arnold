@@ -22346,3 +22346,49 @@ answer via `megaplan override add-note "…"` and resume via `megaplan override 
   ],
   "base_branch": "main"
 }
+[chain] synced last_state for m7-megaplan-relocation-and-20260702-0856: done -> initialized
+[chain] milestone m7-megaplan-relocation-and-final-purge starting
+[chain] resuming existing plan m7-megaplan-relocation-and-20260702-0856 for m7-megaplan-relocation-and-final-purge
+[auto m7-megaplan-relocation-and-20260702-0856] iter 1 state=initialized next=prep valid_next=['prep', 'prep']
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan prep --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] phase 'prep' exited with internal_error: API call failed (attempt 1/3) error_type=APITimeoutError thread=MainThread:132952159906688 provider=deepseek base_url=https://api.deepseek.com model=deepseek-v4-pro error=Request timed out.
+⚠️  API call failed (attempt 1/3): APITimeoutError
+   🔌 Provider: deepseek  Model: deepseek-v4-pro
+   🌐 Endpoint: https://api.deepseek.com
+   📝 Error: Request timed out.
+⚠️  Streaming deadline exceeded (~3,323 tokens, 2 msgs); next attempt deadline scales to 1800s (streak=1).
+Retrying API call in 2s (attempt 1/3) thread=MainThread:132952159906688 provider=deepseek base_url=https://api.deepseek.com model=deepseek-v4-pro error=Request timed out.
+API call failed (attempt 2/3) error_type=APITimeoutError thread=MainThread:132952159906688 provider=deepseek base_url=https://api.deepseek.com model=deepseek-v4-pro error=Request timed out.
+⚠️  API call failed (attempt 2/3): APITimeoutError
+   🔌 Provider: deepseek  Model: deepseek-v4-pro
+   🌐 Endpoint: https://api.deepseek.com
+   📝 Error: Request timed out.
+⚠️  Streaming deadline exceeded (~3,323 tokens, 2 msgs); next attempt deadline scales to 2700s (streak=2).
+Retrying API call in 4s (attempt 2/3) thread=MainThread:132952159906688 provider=deepseek base_url=https://api.deepseek.com model=deepseek-v4-pro error=Request timed out.
+API call failed (attempt 3/3) error_type=APITimeoutError thread=MainThread:132952159906688 provider=deepseek base_url=https://api.deepseek.com model=deepseek-v4-pro error=Request timed out.
+⚠️  API call failed (attempt 3/3): APITimeoutError
+   🔌 Provider: deepseek  Model: deepseek-v4-pro
+   🌐 Endpoint: https://api.deepseek.com
+   📝 Error: Request timed out.
+⚠️  Streaming deadline exceeded (~3,323 tokens, 2 msgs); next attempt deadline scales to 3353s (streak=3).
+❌ Max retries (3) exceeded. Giving up.
+ERROR:root:API call failed after 3 retries. Last error: Request timed out.
+ERROR:root:Request details - Messages: 2, Approx tokens: 3,323
+[auto m7-megaplan-relocation-and-20260702-0856] iter 2 state=initialized next=prep valid_next=['prep', 'prep']
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan prep --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] iter 3 state=prepped next=plan valid_next=['plan']
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan plan --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] iter 4 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan critique --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] iter 5 state=critiqued next=gate valid_next=['gate', 'step']
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan gate --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] iter 6 state=gated next=finalize valid_next=['finalize', 'override replan', 'step']
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan finalize --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] iter 7 state=finalized next=execute valid_next=['execute', 'override replan', 'step']
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan execute --confirm-destructive --user-approved --retry-blocked-tasks --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] iter 8 state=executed next=review valid_next=['review']
+[auto m7-megaplan-relocation-and-20260702-0856] active step 'execute' is orphaned — clearing before dispatch: The active step's recorded worker process (pid=2660789) is no longer alive; the phase is not actually running. Re-run the step or recover via override.
+[auto m7-megaplan-relocation-and-20260702-0856] running: megaplan review --plan m7-megaplan-relocation-and-20260702-0856
+[auto m7-megaplan-relocation-and-20260702-0856] iter 9 state=done next=None valid_next=[]
+[auto m7-megaplan-relocation-and-20260702-0856] terminal state reached: done
+[auto m7-megaplan-relocation-and-20260702-0856] completion verdict (shadow): accepted-for-mode subject=plan:m7-megaplan-relocation-and-20260702-0856 failures=[landed_diff: execution evidence findings: Executor claimed changed files not present in git status: arnold/conformance/checks.py, arnold/conformance/deleted_surfaces.py, arnold/pipeline/legacy.py, docs/arnold/pipelines/migration-final-import-inventory.md, tests/arnold/conformance/test_conformance_gates.py, tests/arnold/pipeline/test_legacy.py, tests/arnold/pipeline/test_public_contract_imports.py, tests/test_pipeline_run_cli.py,green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)] providers=[phase_coverage,landed_diff,worker_did_work,green_suite,execution_acceptance_contract,review_disposition,declared_noop] legacy_evidence=0 unknown_evidence=1

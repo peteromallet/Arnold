@@ -105,7 +105,6 @@ DELETED_IMPORT_MODULES: tuple[str, ...] = (
     "arnold_pipelines.megaplan._pipeline.types",
     "arnold_pipelines.megaplan.stages",
     "arnold_pipelines.megaplan.stages.inprocess_step",
-    "arnold_pipelines.megaplan._compatibility",
     "arnold.runtime.batch",
     "arnold.runtime.driver",
     "arnold.runtime.process",
@@ -130,14 +129,12 @@ DELETED_IMPORT_PREFIXES: tuple[str, ...] = (
     "arnold.pipelines.megaplan",
     "arnold_pipelines.megaplan._pipeline",
     "arnold_pipelines.megaplan.stages",
-    "arnold_pipelines.megaplan._compatibility",
 )
 
 DELETED_ARTIFACT_PATH_PREFIXES: tuple[str, ...] = (
     "arnold/pipelines/megaplan/",
     "arnold_pipelines/megaplan/_pipeline/",
     "arnold_pipelines/megaplan/stages/",
-    "arnold_pipelines/megaplan/_compatibility.py",
 )
 
 DELETED_MEGAPLAN_LEGACY_SYMBOLS: tuple[str, ...] = (
@@ -163,7 +160,6 @@ DELETED_CLI_HELP_FRAGMENTS: tuple[str, ...] = (
     "arnold.pipelines.megaplan",
     "arnold_pipelines.megaplan._pipeline",
     "arnold_pipelines.megaplan.stages",
-    "arnold_pipelines.megaplan._compatibility",
     "megaplan init",
     "megaplan prep",
     "megaplan plan",

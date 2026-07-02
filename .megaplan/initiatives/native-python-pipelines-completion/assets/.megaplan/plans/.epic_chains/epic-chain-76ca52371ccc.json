@@ -3,7 +3,7 @@
   "current_epic_index": 0,
   "current_epic_id": "native-python-pipelines-completion",
   "current_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
-  "last_state": "awaiting_human_verify",
+  "last_state": "running",
   "pr_number": null,
   "pr_state": null,
   "completed": [],

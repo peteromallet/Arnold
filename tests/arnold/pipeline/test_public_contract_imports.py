@@ -38,20 +38,10 @@ def test_native_first_import_surface_is_available_from_pipeline_and_native() -> 
         assert name in native.__all__
 
 
-def test_legacy_namespace_is_available_as_m1_compatibility_surface() -> None:
-    """M1: arnold.pipeline.legacy is a live compatibility namespace (M7 will remove it)."""
-    legacy = importlib.import_module("arnold.pipeline.legacy")
-    assert hasattr(legacy, "__all__")
-    graph_era = [
-        "Edge", "Stage", "ParallelStage",
-        "PipelineBuilder", "PipelineRegistry",
-        "validate",
-        "StepInvocation",
-        "ExecutorHooks", "NullExecutorHooks",
-        "run_pipeline", "run_pipeline_resume",
-    ]
-    for name in graph_era:
-        assert hasattr(legacy, name), f"legacy missing {name}"
+def test_legacy_namespace_raises_module_not_found_error() -> None:
+    """M7: arnold.pipeline.legacy is removed — import must raise ModuleNotFoundError."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("arnold.pipeline.legacy")
 
 
 def test_every_all_name_is_backed_by_an_import() -> None:
