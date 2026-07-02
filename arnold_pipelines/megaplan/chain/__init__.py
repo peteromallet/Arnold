@@ -97,6 +97,7 @@ from arnold_pipelines.megaplan.planning.state import (
     STATE_DONE,
     STATE_EXECUTED,
     STATE_FINALIZED,
+    STATE_PREPPED,
 )
 from . import spec as chain_spec
 
@@ -3219,11 +3220,11 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         return None, f"plan {plan_name} is already {STATE_DONE!r}"
     if not isinstance(current_state, str) or not current_state:
         return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
-    if current_state not in {STATE_FINALIZED, STATE_EXECUTED}:
+    if current_state not in {STATE_PREPPED, STATE_FINALIZED, STATE_EXECUTED}:
         return (
             None,
-            f"plan {plan_name} current_state={current_state!r} is not terminal-success "
-            f"{STATE_DONE!r}; stale merged PR cannot advance",
+            f"plan {plan_name} current_state={current_state!r} is not recoverable "
+            f"before terminal-success {STATE_DONE!r}; stale merged PR cannot advance",
         )
 
     claimed_root_paths = _claimed_root_paths(root, plan_name)
