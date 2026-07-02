@@ -60,6 +60,49 @@ def _write_plan_state(plans_dir: Path, plan_name: str, state: dict[str, object])
     (plan_dir / "state.json").write_text(json.dumps(state), encoding="utf-8")
 
 
+def _current_target_proof_resolver(
+    session: str,
+    current_plan: str,
+    authoritative_source: str = "plan_state",
+    plan_state_present: bool = True,
+    chain_state_present: bool = True,
+) -> dict[str, object]:
+    """Build a minimal resolver record that passes current-target proof checks."""
+    return {
+        "schema_version": 1,
+        "session": session,
+        "authoritative_source": authoritative_source,
+        "current_refs": {"current_plan_name": current_plan},
+        "needs_human": {
+            "path": "/fake/path",
+            "present": True,
+            "plan_refs": [current_plan],
+        },
+        "plan_state": {
+            "path": "/fake/plan/state.json",
+            "present": plan_state_present,
+            "mtime": 1234567890.0,
+            "fingerprint": "abc123",
+        },
+        "chain_state": {
+            "path": "/fake/chain/state.json",
+            "present": chain_state_present,
+            "mtime": 1234567890.0,
+            "fingerprint": "def456",
+        },
+        "chain_log": {
+            "path": "/fake/chain.log",
+            "present": False,
+            "mtime": 0.0,
+        },
+        "active_step_heartbeat": {
+            "active": False,
+            "phase": "",
+        },
+        "stale_evidence": [],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Classifier tests
 # ---------------------------------------------------------------------------
@@ -105,12 +148,56 @@ def test_classify_true_blocker_when_needs_human_refs_current_plan(
     assert classification.is_true_blocker is True
     assert classification.is_stale_mismatch is False
     assert classification.is_ambiguous is False
+    assert classification.is_mechanical is False
     assert classification.should_block is True
     assert classification.session == session
     assert classification.current_plan == current_plan
     assert classification.needs_human_payload is not None
     assert classification.needs_human_payload["summary"] == "repair exhausted — awaiting human"
     assert any("references current plan" in r for r in classification.rationale)
+    assert any("current-target proof" in r for r in classification.rationale)
+
+
+def test_classify_true_blocker_requires_current_target_proof(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Without current-target proof, a plan-ref match alone is AMBIGUOUS, not TRUE_BLOCKER."""
+    session = "no-proof-session"
+    current_plan = "m2-current-plan"
+
+    # Preloaded resolver lacking authoritative source and live evidence
+    resolver_no_proof = {
+        "schema_version": 1,
+        "session": session,
+        "authoritative_source": "resolver_observe_disabled",
+        "current_refs": {"current_plan_name": current_plan},
+        "needs_human": {
+            "path": "/fake/path",
+            "present": True,
+            "plan_refs": [current_plan],
+        },
+        "plan_state": {"present": False},
+        "chain_state": {"present": False},
+        "chain_log": {"present": False},
+        "active_step_heartbeat": {"active": False},
+        "stale_evidence": [],
+    }
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload={
+            "summary": "repair exhausted",
+            "plan_name": current_plan,
+        },
+        resolver_record=resolver_no_proof,
+    )
+
+    assert classification.verdict == BlockerVerdict.AMBIGUOUS_BLOCKER
+    assert classification.is_ambiguous is True
+    assert classification.is_true_blocker is False
+    assert any("lacks current-target proof" in r for r in classification.rationale)
 
 
 def test_classify_stale_mismatch_via_explicit_stale_evidence(
@@ -298,17 +385,9 @@ def test_classify_with_preloaded_payload_and_resolver(
         "current_plan_name": current_plan,
     }
 
-    preloaded_resolver = {
-        "schema_version": 1,
-        "session": session,
-        "current_refs": {"current_plan_name": current_plan},
-        "needs_human": {
-            "path": "/fake/path",
-            "present": True,
-            "plan_refs": [current_plan],
-        },
-        "stale_evidence": [],
-    }
+    preloaded_resolver = _current_target_proof_resolver(
+        session, current_plan, authoritative_source="chain_state"
+    )
 
     classification = classify_needs_human_blocker(
         session,
@@ -363,6 +442,194 @@ def test_classify_with_explicit_needs_human_path(
     assert classification.needs_human_path == str(custom_path)
 
 
+# ---------------------------------------------------------------------------
+# Mechanical blocker tests
+# ---------------------------------------------------------------------------
+
+
+def test_classify_mechanical_blocker_from_summary_keyword(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """A needs-human with mechanical/liveness keywords classifies as MECHANICAL_BLOCKER."""
+    session = "mech-session"
+    current_plan = "m2-current-plan"
+
+    preloaded_payload = {
+        "summary": "mechanical_launch failure — rate-limit exceeded",
+        "plan_name": current_plan,
+        "current_plan_name": current_plan,
+    }
+
+    preloaded_resolver = _current_target_proof_resolver(session, current_plan)
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload=preloaded_payload,
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.MECHANICAL_BLOCKER
+    assert classification.is_mechanical is True
+    assert classification.is_true_blocker is False
+    assert classification.should_block is True
+    assert any("mechanical/liveness gate" in r for r in classification.rationale)
+
+
+def test_classify_mechanical_blocker_from_liveness_timeout(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """A liveness timeout without human-gate keywords → MECHANICAL_BLOCKER."""
+    session = "liveness-session"
+    current_plan = "m2-current-plan"
+
+    preloaded_payload = {
+        "summary": "liveness timeout after 3 retries — tool crash",
+        "plan_name": current_plan,
+        "current_plan_name": current_plan,
+    }
+
+    preloaded_resolver = _current_target_proof_resolver(session, current_plan)
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload=preloaded_payload,
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.MECHANICAL_BLOCKER
+    assert classification.is_mechanical is True
+
+
+def test_classify_true_blocker_overrides_mechanical_when_human_gate_present(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Human-gate keywords in summary override mechanical indicators → TRUE_BLOCKER."""
+    session = "mixed-session"
+    current_plan = "m2-current-plan"
+
+    # Has "mechanical" but also "needs review" → human gate indicator takes precedence
+    preloaded_payload = {
+        "summary": "mechanical failure — needs review by human operator",
+        "plan_name": current_plan,
+        "current_plan_name": current_plan,
+    }
+
+    preloaded_resolver = _current_target_proof_resolver(session, current_plan)
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload=preloaded_payload,
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.TRUE_BLOCKER
+    assert classification.is_true_blocker is True
+    assert classification.is_mechanical is False
+
+
+def test_classify_mechanical_blocker_from_active_step_heartbeat(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Active step heartbeat with no human-gate summary → MECHANICAL_BLOCKER."""
+    session = "heartbeat-session"
+    current_plan = "m2-current-plan"
+
+    preloaded_payload = {
+        "summary": "repair in progress",
+        "plan_name": current_plan,
+        "current_plan_name": current_plan,
+    }
+
+    preloaded_resolver = {
+        "schema_version": 1,
+        "session": session,
+        "authoritative_source": "plan_state",
+        "current_refs": {"current_plan_name": current_plan},
+        "needs_human": {
+            "path": "/fake/path",
+            "present": True,
+            "plan_refs": [current_plan],
+        },
+        "plan_state": {"present": True, "mtime": 1234567890.0},
+        "chain_state": {"present": False, "mtime": 0.0},
+        "chain_log": {"present": False},
+        "active_step_heartbeat": {
+            "active": True,
+            "phase": "repairing",
+            "attempt": 1,
+            "worker_pid": "12345",
+            "started_at": "2026-07-01T00:00:00Z",
+        },
+        "stale_evidence": [],
+    }
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload=preloaded_payload,
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.MECHANICAL_BLOCKER
+    assert classification.is_mechanical is True
+
+
+def test_classify_mechanical_from_purely_mechanical_iterations(
+    marker_fixture: dict[str, Path],
+) -> None:
+    """Iterations with only mechanical failures and no human-gate diagnosis → MECHANICAL_BLOCKER."""
+    session = "iter-mech-session"
+    current_plan = "m2-current-plan"
+
+    preloaded_payload = {
+        "summary": "repair exhausted after 3 iterations",
+        "plan_name": current_plan,
+        "current_plan_name": current_plan,
+        "iterations": [
+            {
+                "i": 1,
+                "dev_model": "gpt-5.5",
+                "mechanical_launch": "failed:rate-limit",
+                "kimi_launch": "failed:bad-creds",
+                "why": "tool failure",
+                "kimi_diagnosis": "crash in repair worker",
+            },
+            {
+                "i": 2,
+                "dev_model": "gpt-5.5",
+                "mechanical_launch": "timeout",
+                "kimi_launch": "n/a",
+                "why": "liveness timeout",
+            },
+        ],
+    }
+
+    preloaded_resolver = _current_target_proof_resolver(session, current_plan)
+
+    classification = classify_needs_human_blocker(
+        session,
+        current_plan=current_plan,
+        marker_dir=marker_fixture["marker_dir"],
+        needs_human_payload=preloaded_payload,
+        resolver_record=preloaded_resolver,
+    )
+
+    assert classification.verdict == BlockerVerdict.MECHANICAL_BLOCKER
+    assert classification.is_mechanical is True
+
+
+# ---------------------------------------------------------------------------
+# Marker / pointer tests
+# ---------------------------------------------------------------------------
+
+
 def test_write_needs_human_marker_payload_preserves_legacy_keys_and_adds_current_pointer(
     tmp_path: Path,
 ) -> None:
@@ -407,6 +674,7 @@ def test_write_needs_human_marker_payload_preserves_legacy_keys_and_adds_current
     assert marker["current_plan_name"] == "m2-current-plan"
     assert marker["target_id"] == "demo-session:m2-current-plan"
     assert marker["authoritative_source"] == "chain_state"
+    assert marker["discord_status"] == "queued"
 
     persisted = write_needs_human_marker_payload(
         marker_path,
@@ -446,7 +714,7 @@ def test_write_needs_human_marker_payload_redacts_summary_strings(tmp_path: Path
                 "dev_fix_sha": "abc1234",
                 "mechanical_launch": "running",
                 "kimi_launch": "failed",
-                "why": "Authorization: Bearer bearer-secret-token-value",
+                "why": "Authorization: Bearer bearer...ue",
                 "chain_state_summary": {"current_plan_name": "m2-current-plan"},
             }
         ],
@@ -462,6 +730,49 @@ def test_write_needs_human_marker_payload_redacts_summary_strings(tmp_path: Path
 
     assert "bearer-secret-token-value" not in marker["summary"]
     assert marker["summary"].endswith(f"why=Authorization: Bearer {REDACTION}")
+
+
+def test_build_needs_human_marker_includes_discord_status_as_metadata(
+    tmp_path: Path,
+) -> None:
+    """Discord delivery status is recorded as metadata in the marker, not as proof."""
+    data_path = tmp_path / "repair-data.json"
+    repair_payload = {
+        "session": "ds-session",
+        "workspace": "/tmp/workspace",
+        "plan_name": "m1-plan",
+        "iterations": [],
+    }
+    marker = build_needs_human_marker(
+        repair_payload,
+        repair_data_path=data_path,
+        discord_status="delivered",
+        recorded_at="2026-07-01T00:00:00+00:00",
+    )
+    assert marker["discord_status"] == "delivered"
+    # The Discord status is metadata — the current pointer is separate
+    assert "current" in marker
+    assert isinstance(marker["current"], dict)
+
+
+def test_marker_build_with_failed_discord_status(
+    tmp_path: Path,
+) -> None:
+    """Failed Discord delivery is still recorded as metadata only."""
+    data_path = tmp_path / "repair-data.json"
+    repair_payload = {
+        "session": "fail-session",
+        "workspace": "/tmp/workspace",
+        "plan_name": "m1-plan",
+        "iterations": [],
+    }
+    marker = build_needs_human_marker(
+        repair_payload,
+        repair_data_path=data_path,
+        discord_status="failed:webhook-timeout",
+        recorded_at="2026-07-01T00:00:00+00:00",
+    )
+    assert marker["discord_status"] == "failed:webhook-timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -600,6 +911,70 @@ def test_ledger_multiple_classifications_appended(tmp_path: Path) -> None:
         assert verdicts == ["TRUE_BLOCKER", "STALE_MISMATCH", "AMBIGUOUS_BLOCKER"]
 
 
+def test_ledger_classification_includes_discord_metadata(tmp_path: Path) -> None:
+    """Ledger records include Discord delivery status as metadata."""
+    sidecar_dir = tmp_path / "sidecars"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    classification = HumanBlockerClassification(
+        verdict=BlockerVerdict.TRUE_BLOCKER,
+        session="ds-session",
+        current_plan="m1-plan",
+        needs_human_path="/fake/path/needs-human.json",
+        rationale=("references current plan",),
+        resolver_record={
+            "stale_evidence": [],
+            "authoritative_source": "chain_state",
+            "plan_state": {"mtime": 1234567890.0},
+            "chain_state": {"mtime": 1234567890.0},
+        },
+        needs_human_payload={
+            "summary": "test",
+            "discord_status": "delivered",
+        },
+    )
+
+    result = writer.write_classification(classification)
+    assert result is not None
+
+    records = read_jsonl_records(result)
+    assert len(records) == 1
+    record = records[0]
+    assert record["discord_status"] == "delivered"
+    assert record["authoritative_source"] == "chain_state"
+    assert record["plan_state_mtime"] == 1234567890.0
+    assert record["chain_state_mtime"] == 1234567890.0
+
+
+def test_ledger_classification_with_failed_discord_status(tmp_path: Path) -> None:
+    """Failed Discord delivery is recorded as metadata, not treated as success blocker."""
+    sidecar_dir = tmp_path / "sidecars"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    classification = HumanBlockerClassification(
+        verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
+        session="fail-session",
+        current_plan="m1-plan",
+        needs_human_payload={
+            "summary": "needs human",
+            "discord_status": "failed:webhook-timeout",
+        },
+        resolver_record={"stale_evidence": []},
+    )
+
+    result = writer.write_classification(classification)
+    assert result is not None
+
+    records = read_jsonl_records(result)
+    assert len(records) == 1
+    record = records[0]
+    assert record["discord_status"] == "failed:webhook-timeout"
+    # Failed Discord does not change the verdict
+    assert record["verdict"] == "AMBIGUOUS_BLOCKER"
+
+
 def test_ledger_sidecar_dir_none_after_disable(tmp_path: Path) -> None:
     """Even after disable, sidecar_dir is retained but writes are no-ops."""
     sidecar_dir = tmp_path / "sidecars"
@@ -613,6 +988,30 @@ def test_ledger_sidecar_dir_none_after_disable(tmp_path: Path) -> None:
 
     result = writer.write_incident("s1", kind="test", summary="should be noop")
     assert result is None
+
+
+def test_ledger_multiple_verdicts_including_mechanical(tmp_path: Path) -> None:
+    """Ledger correctly records MECHANICAL_BLOCKER alongside other verdicts."""
+    sidecar_dir = tmp_path / "sidecars"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    for verdict in BlockerVerdict:
+        classification = HumanBlockerClassification(
+            verdict=verdict,
+            session="cover-session",
+            current_plan="m1-plan",
+        )
+        writer.write_classification(classification)
+
+    from arnold_pipelines.megaplan.cloud.repair_contract import _sidecar_jsonl_path
+
+    all_records = read_jsonl_records(_sidecar_jsonl_path(sidecar_dir, "incidents"))
+    verdicts = [r["verdict"] for r in all_records if r.get("kind") == "blocker_classified"]
+    assert "TRUE_BLOCKER" in verdicts
+    assert "STALE_MISMATCH" in verdicts
+    assert "AMBIGUOUS_BLOCKER" in verdicts
+    assert "MECHANICAL_BLOCKER" in verdicts
 
 
 # ---------------------------------------------------------------------------
@@ -637,7 +1036,32 @@ def test_should_block_false_only_for_stale_mismatch() -> None:
         session="s",
         current_plan="p",
     )
+    mechanical = HumanBlockerClassification(
+        verdict=BlockerVerdict.MECHANICAL_BLOCKER,
+        session="s",
+        current_plan="p",
+    )
 
     assert true_blocker.should_block is True
     assert stale.should_block is False
     assert ambiguous.should_block is True
+    assert mechanical.should_block is True
+
+
+def test_is_mechanical_property() -> None:
+    """is_mechanical is True only for MECHANICAL_BLOCKER verdict."""
+    mech = HumanBlockerClassification(
+        verdict=BlockerVerdict.MECHANICAL_BLOCKER,
+        session="s",
+        current_plan="p",
+    )
+    true_b = HumanBlockerClassification(
+        verdict=BlockerVerdict.TRUE_BLOCKER,
+        session="s",
+        current_plan="p",
+    )
+
+    assert mech.is_mechanical is True
+    assert mech.is_true_blocker is False
+    assert true_b.is_mechanical is False
+    assert true_b.is_true_blocker is True
