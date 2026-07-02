@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/evidence_pack
-- manifest_hash: sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70
+- manifest_hash: native:evidence_pack
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -21,168 +21,27 @@ Provenance:
 | Builder target | arnold_pipelines.evidence_pack:build_pipeline|
 | Builder source | arnold_pipelines/evidence_pack/__init__.py|
 | Skill | arnold_pipelines/evidence_pack/SKILL.md|
-| Validation | `arnold workflow check --module arnold_pipelines.evidence_pack:build_pipeline`|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | workflow|
-| Load state | workflow|
-| Identity | sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70|
+| Load state | loadable-native|
+| Identity | native:evidence_pack|
 
 ## Builder Surface
 
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "evidence-pack"
-description: str = "Model-less verification of persisted evidence-pack JSON artifacts."
 
-driver: tuple[str, str] = ("graph", "verify")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("artifact-verification", "evidence-pack")
-
-def build_pipeline(name: str = "evidence_pack_verifier") -> Pipeline:
-    """Return the canonical evidence-pack verification pipeline."""
-
-    ingest = Step(
-        id="ingest",
-        kind="agent",
-        label="Ingest evidence pack",
-        inputs=(Input(name="evidence_pack"),),
-        outputs=(Output(name="evidence_pack_payload"),),
-        capabilities=(Capability(id="artifact-verification", route="ingest"),),
-        metadata={"stage": "ingest"},
-    )
-    content_validators = Step(
-        id="content_validators",
-        kind="fanout",
-        label="Parallel checkpoint validators",
-        inputs=(Input(name="evidence_pack_payload", value_ref="ingest.evidence_pack_payload"),),
-        outputs=(Output(name="checkpoint_results"),),
-        capabilities=(Capability(id="artifact-verification", route="validate"),),
-        policy=WorkflowPolicy(
-            fanout=FanoutPolicy(
-                mode="static",
-                width=len(_VALIDATOR_KINDS),
-                reducer_ref="evidence_pack:join_validators",
-            ),
-            reducers=(
-                ReducerRef(
-                    reducer_id="evidence_pack:join_validators",
-                    input_ref="checkpoint_results",
-                    output_ref="checkpoint_results",
-                ),
-            ),
-        ),
-        metadata={
-            "validator_kinds": _VALIDATOR_KINDS,
-            "stage": "content_validators",
-        },
-    )
-    reduce_step = Step(
-        id="reduce",
-        kind="agent",
-        label="Reduce validator results to verdict",
-        inputs=(
-            Input(name="evidence_pack_payload", value_ref="ingest.evidence_pack_payload"),
-            Input(name="checkpoint_results", value_ref="content_validators.checkpoint_results"),
-        ),
-        outputs=(Output(name="verdict"),),
-        capabilities=(Capability(id="artifact-verification", route="reduce"),),
-        metadata={"stage": "reduce"},
-    )
-    human_review = Step(
-        id="human_review",
-        kind="human_gate",
-        label="Human review gate",
-        inputs=(
-            Input(name="evidence_pack_payload", value_ref="ingest.evidence_pack_payload"),
-            Input(name="verdict", value_ref="reduce.verdict"),
-        ),
-        outputs=(Output(name="human_decision"),),
-        capabilities=(Capability(id="human", route="review"),),
-        policy=WorkflowPolicy(
-            suspension_routes=(
-                SuspensionRoute(route_id="human_review:gate", capability_id="human:review"),
-            ),
-        ),
-        metadata={"stage": "human_review"},
-    )
-    emit_attestation = Step(
-        id="emit_attestation",
-        kind="emit",
-        label="Emit signed attestation",
-        inputs=(
-            Input(name="evidence_pack_payload", value_ref="ingest.evidence_pack_payload"),
-            Input(name="verdict", value_ref="reduce.verdict"),
-            Input(name="human_decision", value_ref="human_review.human_decision"),
-        ),
-        outputs=(Output(name="attestation"),),
-        capabilities=(Capability(id="artifact-verification", route="attest"),),
-        metadata={"stage": "emit_attestation", "terminal": True},
-    )
-
-    return Pipeline(
-        id=name,
-        version="m5-phase3",
-        steps=(ingest, content_validators, reduce_step, human_review, emit_attestation),
-        routes=(
-            Route(id="ingest:content_validators", source="ingest", target="content_validators", label="validators"),
-            Route(id="content_validators:reduce", source="content_validators", target="reduce", label="completed"),
-            Route(id="reduce:human_review", source="reduce", target="human_review", label="human_review"),
-            Route(id="human_review:emit_attestation", source="human_review", target="emit_attestation", label="completed"),
-        ),
-        capabilities=(
-            Capability(id="artifact-verification", route="default"),
-            Capability(id="human", route="review", required=False),
-        ),
-        metadata={
-            "name": name,
-            "description": description,
-            "driver": driver,
-            "entrypoint": entrypoint,
-            "arnold_api_version": arnold_api_version,
-            "capabilities": capabilities,
-            "default_profile": default_profile,
-            "supported_modes": supported_modes,
-            "recommended_profiles": recommended_profiles,
-        },
-    )
 ```
 
-## Dry-run report
+## Native builder report
 
 ```yaml
-edge_count: 4
+entry: ingest
 id: evidence_pack_verifier
-manifest_hash: sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70
-node_count: 5
-possible_routes:
-- condition_ref: null
-  label: completed
-  source: content_validators
-  target: reduce
-- condition_ref: null
-  label: completed
-  source: human_review
-  target: emit_attestation
-- condition_ref: null
-  label: validators
-  source: ingest
-  target: content_validators
-- condition_ref: null
-  label: human_review
-  source: reduce
-  target: human_review
-suspension_point_count: 1
-topology_summary:
-  edge_count: 4
-  entry_nodes:
-  - ingest
-  exit_nodes:
-  - emit_attestation
-  node_count: 5
-unresolved_inputs:
-  ingest:
-  - evidence_pack
+instruction_count: 17
+native_program: evidence_pack
+stage_count: 5
 ```
 
 ## Package Skill

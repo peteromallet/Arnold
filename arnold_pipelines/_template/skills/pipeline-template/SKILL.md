@@ -1,21 +1,53 @@
 ---
 name: pipeline-template-reference
-description: Reference contract for the canonical Arnold pipeline template scaffold.
+description: Reference contract for the canonical Arnold native-first pipeline template scaffold.
 ---
 
 # Skill: Pipeline Template Reference
 
 The canonical scaffold is `arnold_pipelines/_template/`. It shows the minimum
-required contract for a workflow pipeline:
+required contract for a native-first pipeline:
 
-- `build_pipeline()` returns `arnold.workflow.Pipeline`.
-- Module-level metadata variables.
-- Typed module-level component exports for Python-shaped source, or explicit
-  `Step`/`Route` topology with stable ids while using the current DSL directly.
+- `build_pipeline()` returns `arnold.pipeline.types.Pipeline` with a
+  **non-null** `native_program`.
+- Module-level metadata with `driver=("native", "<kind>")` and
+  `supported_modes` containing `"native"`.
+- Native declarations in `pipelines.py` using `@pipeline`, `@phase`,
+  `@decision`, `parallel`, `compile_pipeline`, and `project_graph`.
 
-For Python-shaped authoring, organize components as package-local exports such
-as `steps.py`, `prompts.py`, `policies.py`, `schemas.py`, and `subflows.py`.
-Workflow imports define the authored graph. Generated component catalogs and
-manifest files are derived artifacts, not package source.
+## Native-First Authoring Shape
 
-Do not use the legacy authoring primitives in new packages.
+For native-first authoring, organise components as package-local exports:
+`pipelines.py` owns the native declaration topology. Supporting modules
+(`steps.py`, `prompts.py`, `policies.py`, `schemas.py`, `subflows.py`)
+may be imported by the native declaration, but the declaration itself
+is the single source of topology truth.
+
+The `build_pipeline()` entrypoint compiles the native program and projects
+it into a `Pipeline` shell. The shell exists for discovery and validation.
+The runtime executes the native program directly.
+
+## Dispatch Substrate Boundary
+
+The `native_program` field is a **dispatch substrate**, not a final
+compositional surface. It proves the package is executable by the native
+runtime, but it does not lock in panel synthesis, join delegation,
+parallel merge strategy, subpipeline ownership, or Capsule projection.
+Those concerns belong to later Megaplan layers above the dispatch
+boundary.
+
+## What NOT to Use
+
+Do **not** use these patterns in new packages built from the template:
+
+- Graph-first authoring with `arnold.workflow.Pipeline`, `Step`, `Route`.
+- Native-as-opt-in or dual-mode (graph + native) packages — the template
+  is native-first and single-mode.
+- `_legacy.py`, graph fallback builders, compatibility namespaces, shim
+  packages, or temporary wrapper modules.
+- `--driver graph` scaffolding or manual graph construction.
+- Hand-authored `WorkflowManifest`, `NativeProgram` builder objects, or
+  `_forward_m2_m3` graph objects in `build_pipeline()`.
+
+Derived manifests, catalogs, and projection artifacts are compiler output,
+not package source.

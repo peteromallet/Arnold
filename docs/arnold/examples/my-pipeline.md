@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/_template
-- manifest_hash: sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d
+- manifest_hash: native:my-pipeline
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -21,10 +21,10 @@ Provenance:
 | Builder target | arnold_pipelines._template:build_pipeline|
 | Builder source | arnold_pipelines/_template/__init__.py|
 | Skill | arnold_pipelines/_template/SKILL.md|
-| Validation | `arnold workflow check --module arnold_pipelines._template:build_pipeline`|
-| Contract | workflow|
-| Load state | workflow|
-| Identity | sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
+| Contract | native|
+| Load state | loadable-native|
+| Identity | native:my-pipeline|
 
 ## Builder Surface
 
@@ -32,57 +32,43 @@ The following snippet is extracted verbatim from the pack's canonical builder so
 
 ```python
 name: str = "my-pipeline"
+
 description: str = (
-    "A new Arnold pipeline (replace this description with a meaningful one-liner)."
+    "A new Arnold native-first pipeline (replace with a meaningful one-liner)."
 )
 
-driver: tuple[str, str] = ("graph", "linear")
+driver: tuple[str, str] = ("native", "project+validate")
+
 entrypoint: str = "build_pipeline"
+
 arnold_api_version: str = "1.0"
+
 capabilities: tuple[str, ...] = ("skeleton",)
 
 def build_pipeline() -> Pipeline:
-    """Build a skeleton explicit-node workflow pipeline.
+    """Return the canonical native-backed ``my-pipeline`` :class:`Pipeline`.
 
-    Replace the steps and routes with the real shape of your pipeline. The
-    returned :class:`arnold.workflow.Pipeline` is the package source; the
-    compiler produces the manifest and hashes at build time.
+    The returned shell projects the native-program topology into a
+    :class:`Pipeline` with a non-null ``native_program``, satisfying
+    the native-first authoring contract.
     """
-
-    return Pipeline(
-        id="my-pipeline",
-        version="1.0",
-        steps=(
-            Step(id="start", kind="agent"),
-            Step(id="finish", kind="agent"),
-        ),
-        routes=(
-            Route(id="start-finish", source="start", target="finish"),
-        ),
+    native = _native_program()
+    projected = project_graph(native, key_mode="phase")
+    return replace(
+        projected,
+        resource_bundles=(),
+        native_program=native,
     )
 ```
 
-## Dry-run report
+## Native builder report
 
 ```yaml
-edge_count: 1
+entry: draft
 id: my-pipeline
-manifest_hash: sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d
-node_count: 2
-possible_routes:
-- condition_ref: null
-  label: default
-  source: start
-  target: finish
-suspension_point_count: 0
-topology_summary:
-  edge_count: 1
-  entry_nodes:
-  - start
-  exit_nodes:
-  - finish
-  node_count: 2
-unresolved_inputs: {}
+instruction_count: 3
+native_program: my-pipeline
+stage_count: 2
 ```
 
 ## Package Skill
@@ -92,58 +78,93 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 ---
 name: new-arnold-pipeline-template
-description: Scaffold a new Arnold workflow pipeline package from the _template skeleton.
+description: Scaffold a new Arnold native-first pipeline package from the _template skeleton.
 ---
 
 # New Arnold Pipeline Template
 
 Copy `arnold_pipelines/_template/` to a new package under `arnold_pipelines/`,
-rename it (remove the leading underscore), and replace the skeleton explicit-node
-workflow with your pipeline logic.
+rename it (remove the leading underscore), and replace the skeleton native
+declarations with real pipeline logic.
+
+This template is **native-first**. Every package built from it uses
+`@pipeline`, `@phase`, `@decision`, `parallel`, `compile_pipeline`, and
+`project_graph` to declare a native program and project it into a
+`Pipeline` shell that the runtime executes directly.
 
 ## Contract
 
-- `build_pipeline(...) -> arnold.workflow.Pipeline` returning explicit-node data.
+- `build_pipeline() -> arnold.pipeline.types.Pipeline` returning a projected
+  shell with a **non-null** `native_program`.
 - Module-level metadata: `name`, `description`, `driver`, `entrypoint`,
-  `arnold_api_version`, `capabilities`
-- Optional: `default_profile`, `supported_modes`, `recommended_profiles`
+  `arnold_api_version`, `capabilities`.
+- `driver` must be `("native", "<kind>")` (e.g. `("native", "project+validate")`).
+- `supported_modes` must include `"native"` (e.g. `("native",)`).
+- Optional: `default_profile`, `recommended_profiles`.
 
-New packages must be workflow-first. Use `arnold.workflow.Pipeline`, `Step`,
-`Route`, `Input`, `Output`, and `Capability` to declare the graph. Do not add
-`_legacy.py`, native fallback builders, compatibility namespaces, or temporary
-wrapper modules for new work.
+New packages must be native-first. Do **not** add `_legacy.py`, graph
+fallback builders, compatibility namespaces, shim packages, or temporary
+wrapper modules for new work — those patterns are explicitly disallowed.
 
-`build_pipeline()` remains the current package entrypoint used by discovery and
-`arnold workflow check`.
+## Dispatch Substrate, Not Final Composition
+
+The `native_program` attached to the projected `Pipeline` is a **dispatch
+substrate**. It describes how the runtime lowers and executes pipeline
+topology, but it does **not** define the final visible compositional
+semantics (panel synthesis, join delegation, parallel merge strategy,
+subpipeline ownership, or Capsule projection). Those compositional
+concerns are deferred to later Megaplan layers above the dispatch
+boundary.
+
+Package authors should treat `native_program` as the execution-level
+contract: a non-null program proves the package is native-runnable, but
+the exact shape of how composition is rendered for end users, agents, or
+Capsules is not finalised at this layer.
 
 ## Example
 
 ```python
-from arnold.workflow import Pipeline, Route, Step
+from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline.types import Pipeline
+
+
+@phase(name="draft")
+def draft(ctx: object) -> StepResult:
+    return StepResult(outputs={"draft": "TODO"}, next="publish")
+
+
+@phase(name="publish")
+def publish(ctx: object) -> StepResult:
+    return StepResult(outputs={"final_artifact": "TODO"}, next="halt")
+
+
+@pipeline(name="my-pipeline", description="draft → publish")
+def my_pipeline_native(ctx: object) -> Any:
+    state = yield draft(ctx)
+    state = yield publish(ctx)
+    return state
 
 
 def build_pipeline() -> Pipeline:
-    return Pipeline(
-        id="my-pipeline",
-        version="1.0",
-        steps=(
-            Step(id="start", kind="agent"),
-            Step(id="finish", kind="agent"),
-        ),
-        routes=(
-            Route(id="start-finish", source="start", target="finish"),
-        ),
-    )
+    native = compile_pipeline(my_pipeline_native)
+    return project_graph(native, key_mode="phase")
 ```
+
+The returned `Pipeline` carries a non-null `native_program`. The runtime
+uses that program directly; the projected shell is for discovery and
+validation, not for hand-authored graph construction.
 
 ## Validation
 
 - Validate import: `arnold_pipelines.my_pipeline:build_pipeline`
-- Contract: `build_pipeline()` returns `arnold.workflow.Pipeline`.
+- Contract: `build_pipeline()` returns `arnold.pipeline.types.Pipeline`
+  with a non-null `native_program`.
+- Metadata: `driver` starts with `"native"`; `supported_modes` contains
+  `"native"`.
 
-Run through the Arnold workflow checker:
+Run through the Arnold native checker:
 
 ```bash
-arnold workflow check --module arnold_pipelines.my_pipeline:build_pipeline
+arnold pipelines check --module arnold_pipelines.my_pipeline:build_pipeline
 ```
 ````

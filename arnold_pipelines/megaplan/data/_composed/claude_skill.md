@@ -5,7 +5,7 @@ description: Workflow-only composed skill for Claude.
 
 # workflow-claude
 
-This composed rule is the workflow-only successor to the legacy Megaplan skill bundles.  It references only ``arnold.workflow`` and the shipped pipeline registry.
+This composed rule references ``arnold.pipeline`` and ``arnold.workflow`` surfaces and the shipped pipeline registry.  Native-first pipelines use ``build_pipeline()`` returning a projected ``Pipeline`` with a non-null ``native_program``; workflow pipelines use ``arnold workflow check`` for validation.
 
 ## Launcher
 
@@ -18,16 +18,18 @@ arnold workflow check --module <package.module>:build_pipeline
 
 ## Shipped pipelines
 
-- `evidence_pack.verifier` -> `arnold workflow check --module arnold_pipelines.evidence_pack:build_pipeline`
+- `deliberation` -> native (validate import: `arnold.pipelines.deliberation:build_pipeline`)
+- `folder_audit` -> native (validate import: `arnold.pipelines.folder_audit:build_pipeline`)
+- `evidence_pack.verifier` -> native (validate import: `arnold_pipelines.evidence_pack:build_pipeline`)
 - `megaplan.core` -> `arnold workflow check --module arnold_pipelines.megaplan:build_pipeline`
-- `megaplan.creative` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.creative:build_pipeline`
-- `megaplan.doc` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.doc:build_pipeline`
-- `megaplan.jokes` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.jokes:build_pipeline`
-- `megaplan.live_supervisor` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline`
+- `megaplan.creative` -> native (validate import: `arnold_pipelines.megaplan.pipelines.creative:build_pipeline`)
+- `megaplan.doc` -> native (validate import: `arnold_pipelines.megaplan.pipelines.doc:build_pipeline`)
+- `megaplan.jokes` -> native (validate import: `arnold_pipelines.megaplan.pipelines.jokes:build_pipeline`)
+- `megaplan.live_supervisor` -> native (validate import: `arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline`)
 - `megaplan.planning` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.planning:build_pipeline`
-- `megaplan.select_tournament` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline`
-- `megaplan.writing_panel_strict` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline`
+- `megaplan.select_tournament` -> native (validate import: `arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline`)
+- `megaplan.writing_panel_strict` -> native (validate import: `arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline`)
 
 ## Disallowed surfaces
 
-Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, hand-built graph fallback builders, native-backed factories, executor objects, or deleted Megaplan-root imports.  New packages must be workflow-first: use explicit-node ``arnold.workflow.Pipeline`` authoring and return a ``Pipeline`` from ``build_pipeline()``.  ``WorkflowManifest`` is compiler output only.
+Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, hand-built graph fallback builders, shim packages, executor objects, or deleted Megaplan-root imports.  New packages must be native-first: use ``@pipeline``, ``@phase``, ``compile_pipeline``, and ``project_graph`` to return a projected ``Pipeline`` with a non-null ``native_program`` from ``build_pipeline()``.  ``NativeProgram`` is dispatch substrate, not final compositional semantics.

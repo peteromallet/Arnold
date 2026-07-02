@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 from argparse import Namespace
+import importlib.util
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from arnold.workflow.validator import (
     contract_diagnostic_code,
     validate,
 )
+from arnold.pipelines._authoring import validate_package_module
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -486,6 +488,111 @@ def test_m1_dispatch_substrate_cli_check_non_model_invocation_is_authorable_but_
         in captured.err
     )
     assert run_attempted is False
+
+
+def test_pipelines_new_emits_native_first_projected_shell(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`pipelines new` writes the native-first projected-shell scaffold."""
+    from arnold_pipelines.megaplan import cli as cli_mod
+    from arnold_pipelines.megaplan.runtime import discovery as discovery_mod
+
+    pipelines_dir = tmp_path / "pipelines"
+    pipelines_dir.mkdir()
+    monkeypatch.setattr(
+        discovery_mod,
+        "_SCAN_ROOTS",
+        ((tmp_path, "arnold_pipelines"), (pipelines_dir, "arnold_pipelines.megaplan.pipelines")),
+    )
+
+    rc = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="new", pipeline_name="native-scaffold", driver=None),
+    )
+
+    assert rc == 0
+    module_path = pipelines_dir / "native_scaffold.py"
+    skill_path = pipelines_dir / "native-scaffold" / "SKILL.md"
+    assert module_path.exists()
+    assert skill_path.exists()
+
+    content = module_path.read_text(encoding="utf-8")
+    assert "@pipeline" in content
+    assert "@phase" in content
+    assert "@decision" in content
+    assert "compile_pipeline(" in content
+    assert "project_graph(" in content
+    assert 'supported_modes: tuple[str, ...] = ("native",)' in content
+    assert 'driver: tuple[str, str] = ("native", "project+validate")' in content
+
+    spec = importlib.util.spec_from_file_location("native_scaffold", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    validate_package_module(module)
+
+    pipeline = module.build_pipeline()
+    assert pipeline.native_program is not None
+
+
+def test_pipelines_new_refuses_overwrite_via_handler(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`pipelines new` preserves overwrite refusal for existing module paths."""
+    from arnold_pipelines.megaplan import cli as cli_mod
+    from arnold_pipelines.megaplan.runtime import discovery as discovery_mod
+
+    pipelines_dir = tmp_path / "pipelines"
+    pipelines_dir.mkdir()
+    monkeypatch.setattr(
+        discovery_mod,
+        "_SCAN_ROOTS",
+        ((tmp_path, "arnold_pipelines"), (pipelines_dir, "arnold_pipelines.megaplan.pipelines")),
+    )
+
+    first = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="new", pipeline_name="native-exists", driver=None),
+    )
+    second = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="new", pipeline_name="native-exists", driver=None),
+    )
+
+    assert first == 0
+    assert second == 1
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_pipelines_new_rejects_legacy_graph_driver(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--driver graph` is rejected as legacy input."""
+    from arnold_pipelines.megaplan import cli as cli_mod
+    from arnold_pipelines.megaplan.runtime import discovery as discovery_mod
+
+    pipelines_dir = tmp_path / "pipelines"
+    pipelines_dir.mkdir()
+    monkeypatch.setattr(
+        discovery_mod,
+        "_SCAN_ROOTS",
+        ((tmp_path, "arnold_pipelines"), (pipelines_dir, "arnold_pipelines.megaplan.pipelines")),
+    )
+
+    rc = cli_mod._handle_pipelines(
+        os.getcwd(),
+        Namespace(pipelines_action="new", pipeline_name="legacy-graph", driver="graph"),
+    )
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "unsupported legacy driver 'graph'" in captured.err
+    assert not (pipelines_dir / "legacy_graph.py").exists()
 
 
 # ── judge manifest validation ──────────────────────────────────────────────

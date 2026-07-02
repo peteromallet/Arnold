@@ -370,6 +370,20 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_layout = subparsers.add_parser("migrate-layout")
     migrate_layout.add_argument("--apply", action="store_true")
 
+    pipelines_parser = subparsers.add_parser("pipelines")
+    pipelines_sub = pipelines_parser.add_subparsers(dest="pipelines_action", required=True)
+    pipelines_new = pipelines_sub.add_parser("new")
+    pipelines_new.add_argument("pipeline_name")
+    pipelines_new.add_argument("--driver", default=None)
+    pipelines_check = pipelines_sub.add_parser("check")
+    pipelines_check.add_argument("pipeline_name")
+    pipelines_doctor = pipelines_sub.add_parser("doctor")
+
+    # Also add aliases for other COMMAND_HANDLERS that are reached via main()
+    # but never registered in the parser.
+    for _cmd in ("introspect", "trace", "doctor", "record-tag"):
+        subparsers.add_parser(_cmd)
+
     return parser
 from .status_view import (
     _build_active_step,
@@ -1999,10 +2013,17 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
         if not name:
             print("pipelines new: missing pipeline name", file=sys.stderr)
             return 1
-        driver = getattr(args, "driver", "graph")
-        if driver != "graph":
+        driver = getattr(args, "driver", None)
+        if driver == "graph":
             print(
-                f"pipelines new: unsupported driver {driver!r}; only 'graph' is supported",
+                "pipelines new: unsupported legacy driver 'graph'; "
+                "native projection is emitted by default",
+                file=sys.stderr,
+            )
+            return 1
+        if driver not in (None, "native"):
+            print(
+                f"pipelines new: unsupported driver {driver!r}; only 'native' is supported",
                 file=sys.stderr,
             )
             return 1
@@ -2033,54 +2054,100 @@ def _handle_pipelines(root: Path, args: argparse.Namespace) -> int:
             return 1
 
         # ── Scaffold the Python module ────────────────────────────
-        module_content = (
-            f'"""Python composition of the ``{cli_name}`` pipeline."""\n'
-            f"\n"
-            f"from __future__ import annotations\n"
-            f"\n"
-            f"from pathlib import Path\n"
-            f"\n"
-            f"from arnold.pipeline.types import Pipeline\n"
-            f"\n"
-            f"\n"
-            f'_PIPELINE_DIR: Path = Path(__file__).parent / "{cli_name}"\n'
-            f"\n"
-            f'\n'
-            f'name: str = "{cli_name}"\n'
-            f'description: str = "TODO: add a description"\n'
-            f"default_profile: str | None = None\n"
-            f"supported_modes: tuple[str, ...] = ()\n"
-            f'driver: tuple[str, str] = ({driver!r}, "dispatch+emit")\n'
-            f'entrypoint: str = "build_pipeline"\n'
-            f'arnold_api_version: str = "1.0"\n'
-            f"capabilities: tuple[str, ...] = ()\n"
-            f"\n"
-            f"\n"
-            f"def build_pipeline() -> Pipeline:\n"
-            f'    """Return the canonical ``{cli_name}`` :class:`Pipeline`."""\n'
-            f"    return (\n"
-            f"        Pipeline.builder(\n"
-            f'            "{cli_name}",\n'
-            f"            description=description,\n"
-            f"            pipeline_dir=_PIPELINE_DIR,\n"
-            f"        )\n"
-            f'        .agent("run", prompt="TODO: add your prompt file path")\n'
-            f"        .build()\n"
-            f"    )\n"
-            f"\n"
-            f"\n"
-            f"__all__ = [\n"
-            f'    "build_pipeline",\n'
-            f'    "name",\n'
-            f'    "description",\n'
-            f'    "default_profile",\n'
-            f'    "supported_modes",\n'
-            f'    "driver",\n'
-            f'    "entrypoint",\n'
-            f'    "arnold_api_version",\n'
-            f'    "capabilities",\n'
-            f"]\n"
-        )
+        module_content = f'''"""Native-first projected shell for the ``{cli_name}`` pipeline."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+from arnold.pipeline.native import (
+    compile_pipeline,
+    decision,
+    phase,
+    pipeline,
+    project_graph,
+)
+from arnold.pipeline.types import Pipeline, StepResult
+
+
+_PIPELINE_DIR: Path = Path(__file__).parent / "{cli_name}"
+
+name: str = "{cli_name}"
+description: str = "TODO: add a description"
+default_profile: str | None = None
+supported_modes: tuple[str, ...] = ("native",)
+recommended_profiles: tuple[str, ...] = ()
+driver: tuple[str, str] = ("native", "project+validate")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ()
+
+
+@phase(name="draft")
+def _native_draft(ctx: object) -> StepResult:
+    del ctx
+    return StepResult(outputs={{"draft": "TODO"}}, next="review")
+
+
+@phase(name="review")
+def _native_review(ctx: object) -> StepResult:
+    del ctx
+    return StepResult(outputs={{"review_notes": "TODO"}}, next="ship_or_revise")
+
+
+@decision(name="ship_or_revise", vocabulary={{"ship", "revise"}})
+def _native_ship_or_revise(ctx: object) -> str:
+    del ctx
+    return "ship"
+
+
+@phase(name="publish")
+def _native_publish(ctx: object) -> StepResult:
+    del ctx
+    return StepResult(outputs={{"final_artifact": "TODO"}}, next="halt")
+
+
+@pipeline("{cli_name}")
+def {module_stem}_native(ctx: object) -> Any:
+    state = yield _native_draft(ctx)
+    state = yield _native_review(ctx)
+    if _native_ship_or_revise(ctx) == "revise":
+        state = yield _native_review(ctx)
+    state = yield _native_publish(ctx)
+    return state
+
+
+def _native_program() -> Any:
+    return compile_pipeline({module_stem}_native)
+
+
+def build_pipeline() -> Pipeline:
+    """Return the canonical native-backed ``{cli_name}`` :class:`Pipeline`."""
+
+    native_program = _native_program()
+    projected = project_graph(native_program, key_mode="phase")
+    return replace(
+        projected,
+        resource_bundles=(),
+        native_program=native_program,
+    )
+
+
+__all__ = [
+    "arnold_api_version",
+    "build_pipeline",
+    "capabilities",
+    "default_profile",
+    "description",
+    "driver",
+    "entrypoint",
+    "name",
+    "recommended_profiles",
+    "supported_modes",
+]
+'''
         skill_dir.mkdir(parents=True, exist_ok=True)
         module_path.write_text(module_content, encoding="utf-8")
 

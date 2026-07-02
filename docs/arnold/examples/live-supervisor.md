@@ -32,20 +32,7 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "live-supervisor"
-description: str = (
-    "Megaplan Live Watchdog Supervisor: classify, diagnose, and decide "
-    "safe repair actions for likely-live Megaplan/Arnold runs."
-)
 
-driver: tuple[str, str] = ("native", "linear")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = (
-    "plan_supervision",
-    "incident_classification",
-    "repair_dispatch",
-)
 ```
 
 ## Step Surface
