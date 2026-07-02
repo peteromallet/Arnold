@@ -264,6 +264,39 @@ def test_resolve_current_target_reports_missing_state_deterministically(tmp_path
     ]
 
 
+def test_resolve_current_target_infers_chain_run_kind_from_legacy_marker(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    state_path = _chain_state_path(workspace, spec_path)
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps({"current_plan_name": "m1-demo", "last_state": "done"}),
+        encoding="utf-8",
+    )
+    _write_marker(
+        marker_dir / "legacy.json",
+        {
+            "session": "legacy",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+        },
+    )
+
+    record = resolve_current_target("legacy", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
+
+    assert record["current_refs"]["run_kind"] == "chain"
+    assert record["authoritative_source"] == "chain_state"
+    assert record["chain_state"]["path"] == str(state_path)
+    assert record["chain_state"]["current_plan_name"] == "m1-demo"
+
+
 def test_resolve_current_target_tolerates_partial_evidence_fixture(tmp_path: Path) -> None:
     marker_dir = tmp_path / "markers"
     repair_data_dir = marker_dir / "repair-data"
