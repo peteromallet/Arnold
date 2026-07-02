@@ -9,7 +9,17 @@ logic lives here.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, FrozenSet, Tuple
+from typing import Any, Callable, FrozenSet, Mapping, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class NativeInvocable(Protocol):
+    """Structural metadata shared by native steps and workflows."""
+
+    name: str
+    stable_id: str | None
+    inputs_schema: Mapping[str, Any] | None
+    outputs_schema: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True)
@@ -28,6 +38,15 @@ class NativePhase:
 
     func: Callable[..., Any] = field(compare=False, hash=False)
     """The wrapped callable (excluded from equality/hash)."""
+
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorator, if any."""
+
+    inputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared input schema metadata, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared output schema metadata, if any."""
 
     produces: tuple = ()
     """Typed ports this phase produces (Port instances)."""
@@ -129,6 +148,15 @@ class NativePipeline:
     func: Callable[..., Any] = field(compare=False, hash=False)
     """The top-level pipeline callable (excluded from equality/hash)."""
 
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorator, if any."""
+
+    inputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow input schema metadata, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow output schema metadata, if any."""
+
     phases: tuple[NativePhase, ...] = ()
     """Phases in declaration order."""
 
@@ -210,6 +238,12 @@ class NativeInstruction:
     For ``parallel`` ops: the :class:`ParallelInstruction` metadata block.
     Excluded from equality/hash; ignored for other ops."""
 
+    input_mapping: dict[str, str] = field(default_factory=dict)
+    """For ``subpipeline`` ops: maps child input names to parent bindings."""
+
+    output_mapping: dict[str, str] = field(default_factory=dict)
+    """For ``subpipeline`` ops: maps child output names to parent bindings."""
+
     parallel_index: int | None = None
     """For ``parallel`` ops: index into :attr:`NativeProgram.parallel_blocks`."""
 
@@ -242,6 +276,15 @@ class NativeProgram:
 
     name: str
     """Pipeline name."""
+
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorator, if any."""
+
+    inputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow input schema metadata, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow output schema metadata, if any."""
 
     instructions: tuple[NativeInstruction, ...] = ()
     """Instructions in PC order."""
