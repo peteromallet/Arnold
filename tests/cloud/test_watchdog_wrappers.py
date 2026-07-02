@@ -8785,3 +8785,575 @@ def test_meta_repair_wrapper_has_verdict_parsing() -> None:
     assert 'verdict=ESCALATE' in text
     assert 'verdict=NO_FIX' in text
     assert 'verdict=UNKNOWN' in text
+
+
+# ---------------------------------------------------------------------------
+# Meta-repair dispatch primitives (T9)
+# ---------------------------------------------------------------------------
+
+
+def _extract_watchdog_function_by_name(text: str, name: str) -> str:
+    """Extract a function body from watchdog text by function name."""
+    start = text.index(f"{name}() {{")
+    end = text.index("\n}\n", start) + 3
+    return text[start:end]
+
+
+_REPORT_ITEM_STUB = """\
+report_item() {
+  local path="$1"
+  local session="$2"
+  local action="$3"
+  local status="$4"
+  local message="$5"
+  local workspace="${6:-}"
+  local remote_spec="${7:-}"
+  printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' "$session" "$action" "$status" "$message" "$workspace" "$remote_spec" >> "$path"
+}"""
+
+_LOG_STUB = """\
+log() {
+  echo "[watchdog $(date -Iseconds)] $*" | tee -a "${LOG:-/dev/null}"
+}"""
+
+_REDACT_INLINE_STUB = """\
+redact_inline_text() {
+  printf '%s' "$1"
+}"""
+
+
+def _build_meta_dispatch_script(
+    marker_dir: Path,
+    report_path: Path,
+    *,
+    meta_repair_bin: str,
+    meta_repair_enabled: str = "1",
+    extra_lines: list[str] | None = None,
+    log_path: str | None = None,
+    override_kimi_operator: str | None = None,
+) -> str:
+    """Build a shell script exercising dispatch_meta_repair with stubbed dependencies."""
+    lines: list[str] = [
+        _LOG_STUB,
+        _REDACT_INLINE_STUB,
+        _REPORT_ITEM_STUB,
+        _extract_wrapper_function("meta_dispatch_marker_path"),
+        _extract_wrapper_function("meta_pgid_path"),
+        _extract_wrapper_function("meta_dispatch_marker_set"),
+        _extract_wrapper_function("meta_dispatch_marker_clear"),
+        _extract_wrapper_function("repair_loop_busy_state"),
+        _extract_wrapper_function("check_meta_repair_recursion_guard"),
+        _extract_wrapper_function("dispatch_meta_repair"),
+        _extract_wrapper_function("kimi_dispatch_marker_path"),
+        _extract_wrapper_function("kimi_pgid_path"),
+        _extract_wrapper_function("repair_pidfile_path"),
+        _extract_wrapper_function("repair_loop_pid_matches_session"),
+        _extract_wrapper_function("safe_name"),
+    ]
+    if override_kimi_operator is not None:
+        lines.append(override_kimi_operator)
+    else:
+        lines.append(_extract_wrapper_function("kimi_operator_running"))
+
+    lines += [
+        f"MARKER_DIR={str(marker_dir)!r}",
+        """SRC_DIR=/workspace/arnold""",
+        f"""LOG={str(log_path) if log_path else '/dev/null'}""",
+        "WRAPPER_REPO_ROOT=/workspace/arnold",
+        f"META_REPAIR_BIN={meta_repair_bin!r}",
+        f"META_REPAIR_ENABLED_FLAG={meta_repair_enabled}",
+        f"REPAIR_DATA_DIR={str(marker_dir)!r}/repair-data",
+        f"PYTHONPATH={str(REPO_ROOT)!r}",
+    ]
+    if extra_lines:
+        lines.extend(extra_lines)
+    return "\n\n".join(lines)
+
+
+def test_meta_repair_dispatch_missing_binary(tmp_path: Path) -> None:
+    """dispatch_meta_repair returns 1 when META_REPAIR_BIN is missing/unexecutable."""
+    watchdog_text = _wrapper("arnold-watchdog")
+    assert "META_REPAIR_BIN=" in watchdog_text
+    assert "dispatch_meta_repair() {" in watchdog_text
+    assert "meta_dispatch_marker_path() {" in watchdog_text
+    assert "meta_pgid_path() {" in watchdog_text
+    assert "meta_dispatch_marker_set() {" in watchdog_text
+    assert "check_meta_repair_recursion_guard() {" in watchdog_text
+
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin="/nonexistent/meta-repair-loop",
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            'DISPATCH_EXIT=$?',
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+            'echo "EXIT=$DISPATCH_EXIT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert "RESULT=unavailable" in result.stdout, f"stdout: {result.stdout}\nstderr: {result.stderr}"
+    # dispatch_meta_repair returns 1 for missing binary
+    assert "EXIT=1" in result.stdout, f"stdout: {result.stdout}"
+
+
+def test_meta_repair_dispatch_disabled_flag(tmp_path: Path) -> None:
+    """dispatch_meta_repair returns 0 with disabled when META_REPAIR_ENABLED_FLAG != 1."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        meta_repair_enabled="0",
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=disabled" in result.stdout, f"stdout: {result.stdout}"
+
+
+def test_meta_repair_dispatch_enabled_success(tmp_path: Path) -> None:
+    """dispatch_meta_repair returns 0 with dispatched when enabled and binary exists."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\necho meta-repair ran\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=dispatched" in result.stdout, f"stdout: {result.stdout}"
+    # The background dispatch writes pgid asynchronously; wait briefly
+    import time as _time
+
+    for _ in range(10):
+        if (marker_dir / "demo-session.meta-pgid").exists():
+            break
+        _time.sleep(0.1)
+    pgid_path = marker_dir / "demo-session.meta-pgid"
+    assert pgid_path.exists(), f"pgid marker not created at {pgid_path}"
+    # Verify the dispatch marker was written
+    dispatch_path = marker_dir / "demo-session.meta-dispatch"
+    assert dispatch_path.exists(), f"dispatch marker not created at {dispatch_path}"
+    # Verify report was emitted
+    assert report_path.exists(), f"report not created"
+    report_content = report_path.read_text(encoding="utf-8")
+    assert "dispatched" in report_content, f"report missing dispatched: {report_content}"
+
+
+def test_meta_repair_dispatch_busy_skip(tmp_path: Path) -> None:
+    """dispatch_meta_repair returns 0 with busy when repair loop already active."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\necho should not run\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        override_kimi_operator="""kimi_operator_running() { return 0; }""",
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=busy" in result.stdout, f"stdout: {result.stdout}"
+    # Verify report was emitted with busy status
+    if report_path.exists():
+        report_content = report_path.read_text(encoding="utf-8")
+        assert "busy" in report_content, f"report missing busy: {report_content}"
+
+
+def test_meta_repair_dispatch_recursive_skip(tmp_path: Path) -> None:
+    """dispatch_meta_repair returns 0 with recursive when meta-repair already exists."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\necho should not run\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    # Pre-create a meta-repair record for the same session
+    repair_data = marker_dir / "repair-data" / "meta"
+    repair_data.mkdir(parents=True)
+    (repair_data / "existing-001.json").write_text(
+        json.dumps(
+            {
+                "meta_repair_id": "existing-001",
+                "session": "demo-session",
+                "trigger": "repair_timeout",
+                "outcome": "FIXED",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+            'echo "RESULT=$REPAIR_DISPATCH_RESULT"',
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    assert "RESULT=recursive" in result.stdout, f"stdout: {result.stdout}"
+    # Verify report was emitted with recursive status
+    if report_path.exists():
+        report_content = report_path.read_text(encoding="utf-8")
+        assert "recursive" in report_content, f"report missing recursive: {report_content}"
+
+
+def test_meta_repair_dispatch_report_output(tmp_path: Path) -> None:
+    """dispatch_meta_repair emits report items for dispatched, disabled, and unavailable cases."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\necho ran\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    # Test disabled dispatch
+    script_disabled = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        meta_repair_enabled="0",
+        extra_lines=[
+            f"dispatch_meta_repair sess-1 /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+        ],
+    )
+    result = subprocess.run(
+        ["bash", "-lc", script_disabled],
+        capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0
+
+    # Test missing binary
+    script_missing = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin="/nonexistent/meta-repair-loop",
+        extra_lines=[
+            f"dispatch_meta_repair sess-2 /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r} || true",
+        ],
+    )
+    result2 = subprocess.run(
+        ["bash", "-lc", script_missing],
+        capture_output=True, text=True, check=False,
+    )
+
+    # Verify report was emitted
+    if report_path.exists():
+        report_content = report_path.read_text(encoding="utf-8")
+        assert "disabled" in report_content, f"report missing disabled: {report_content}"
+
+
+def test_meta_repair_marker_and_pgid_helpers(tmp_path: Path) -> None:
+    """meta_dispatch_marker_path, meta_pgid_path, meta_dispatch_marker_set/clear work correctly."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("meta_dispatch_marker_path"),
+            _extract_wrapper_function("meta_pgid_path"),
+            _extract_wrapper_function("meta_dispatch_marker_set"),
+            _extract_wrapper_function("meta_dispatch_marker_clear"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            "META_PATH=$(meta_dispatch_marker_path demo)",
+            'echo "MARKER=$META_PATH"',
+            "PGID_PATH=$(meta_pgid_path demo)",
+            'echo "PGID=$PGID_PATH"',
+            "meta_dispatch_marker_set demo",
+            "test -f \"$META_PATH\" && echo MARKER_EXISTS",
+            "meta_dispatch_marker_clear demo",
+            "test ! -f \"$META_PATH\" && echo MARKER_CLEARED",
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    lines = result.stdout.strip().splitlines()
+    assert any("MARKER=" in line and ".meta-dispatch" in line for line in lines), f"stdout: {result.stdout}"
+    assert any("PGID=" in line and ".meta-pgid" in line for line in lines), f"stdout: {result.stdout}"
+    assert "MARKER_EXISTS" in lines, f"stdout: {result.stdout}"
+    assert "MARKER_CLEARED" in lines, f"stdout: {result.stdout}"
+
+
+def test_meta_repair_dispatch_logs_are_redacted(tmp_path: Path) -> None:
+    """dispatch_meta_repair log output passes through redaction."""
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    log_path = tmp_path / "watchdog.log"
+    report_path = tmp_path / "report.jsonl"
+
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\necho ran\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        log_path=str(log_path),
+        extra_lines=[
+            f"dispatch_meta_repair demo-session /tmp/ws /tmp/ws/spec.yaml {str(report_path)!r}",
+        ],
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    if log_path.exists():
+        log_content = log_path.read_text(encoding="utf-8")
+        assert "meta-repair background-dispatched" in log_content, f"log: {log_content}"
+        assert "session=demo-session" in log_content, f"log: {log_content}"
+
+
+def test_meta_repair_dispatch_defaults_structural() -> None:
+    """Verify META_REPAIR_BIN default and dispatch_meta_repair function exist in watchdog."""
+    watchdog_text = _wrapper("arnold-watchdog")
+
+    # META_REPAIR_BIN default
+    assert 'META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"' in watchdog_text
+
+    # dispatch_meta_repair function
+    assert "dispatch_meta_repair() {" in watchdog_text
+
+    # Helper functions
+    assert "check_meta_repair_recursion_guard() {" in watchdog_text
+    assert "meta_dispatch_marker_path() {" in watchdog_text
+    assert "meta_pgid_path() {" in watchdog_text
+    assert "meta_dispatch_marker_set() {" in watchdog_text
+    assert "meta_dispatch_marker_clear() {" in watchdog_text
+
+    # Key behaviors
+    assert "META_REPAIR_ENABLED_FLAG" in watchdog_text
+    assert "meta-repair disabled by feature flag" in watchdog_text
+    assert "meta-repair binary missing" in watchdog_text
+    assert "meta-repair skipped; repair loop already active" in watchdog_text
+    assert "meta-repair recursion guard blocked dispatch" in watchdog_text
+    assert "meta-repair background-dispatched" in watchdog_text
+
+    # Partial-liveness tick tracking
+    assert "write_partial_liveness_tick() {" in watchdog_text
+
+
+def test_partial_liveness_tick_writes_sidecar_record(tmp_path: Path) -> None:
+    """write_partial_liveness_tick appends a correctly-shaped JSONL record."""
+    events_dir = tmp_path / "repair-data.d" / "events"
+    events_dir.mkdir(parents=True)
+    events_path = events_dir / "events.jsonl"
+
+    # Extract write_partial_liveness_tick via _extract_wrapper_function_until
+    # because _extract_wrapper_function cannot handle nested braces in heredocs.
+    func_body = _extract_wrapper_function_until(
+        "write_partial_liveness_tick", "clear_session_tracking_artifacts"
+    )
+
+    script = "\n\n".join(
+        [
+            func_body,
+            f"MARKER_DIR={str(tmp_path)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path)!r}/repair-data",
+            "SRC_DIR=/workspace/arnold",
+            "WRAPPER_REPO_ROOT=/workspace/arnold",
+            "PYTHONPATH=/workspace/arnold",
+            f"CLOUD_WATCHDOG_REPAIR_SIDECAR_DIR={str(tmp_path)!r}/repair-data.d",
+            "write_partial_liveness_tick demo-session /tmp/ws /tmp/ws/spec.yaml chain demo-plan alive",
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    assert events_path.exists(), f"events.jsonl not created at {events_path}"
+    lines = events_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) >= 1, f"expected at least 1 line, got {len(lines)}"
+
+    record = json.loads(lines[0])
+    assert record["session"] == "demo-session"
+    assert record["outcome"] == "partial_liveness"
+    assert record["health"] == "alive"
+    assert "recorded_at" in record
+    assert record["run_kind"] == "chain"
+    assert record["plan_name"] == "demo-plan"
+
+
+def test_partial_liveness_tick_bounded_history(tmp_path: Path) -> None:
+    """write_partial_liveness_tick keeps at most 20 records per sidecar."""
+    events_dir = tmp_path / "repair-data.d" / "events"
+    events_dir.mkdir(parents=True)
+    events_path = events_dir / "events.jsonl"
+
+    # Pre-seed with 25 existing records
+    existing = [
+        {
+            "session": "demo-session",
+            "outcome": "partial_liveness",
+            "health": "alive",
+            "recorded_at": f"2026-07-02T00:{i:02d}:00Z",
+            "run_kind": "chain",
+            "plan_name": "demo-plan",
+        }
+        for i in range(25)
+    ]
+    events_path.write_text(
+        "\n".join(json.dumps(e, sort_keys=True) for e in existing) + "\n",
+        encoding="utf-8",
+    )
+
+    func_body = _extract_wrapper_function_until(
+        "write_partial_liveness_tick", "clear_session_tracking_artifacts"
+    )
+
+    script = "\n\n".join(
+        [
+            func_body,
+            f"MARKER_DIR={str(tmp_path)!r}",
+            f"REPAIR_DATA_DIR={str(tmp_path)!r}/repair-data",
+            "SRC_DIR=/workspace/arnold",
+            "WRAPPER_REPO_ROOT=/workspace/arnold",
+            "PYTHONPATH=/workspace/arnold",
+            f"CLOUD_WATCHDOG_REPAIR_SIDECAR_DIR={str(tmp_path)!r}/repair-data.d",
+            "write_partial_liveness_tick demo-session /tmp/ws /tmp/ws/spec.yaml chain demo-plan alive",
+        ]
+    )
+
+    result = subprocess.run(
+        ["bash", "-lc", script],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+
+    lines = events_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 20, f"expected 20 lines (25 pre-seeded + 1 new, bounded to 20), got {len(lines)}"
+
+
+def test_partial_liveness_isolated_does_not_trigger_condition_5() -> None:
+    """Isolated partial liveness (1 tick) does NOT trigger condition 5."""
+    from arnold_pipelines.megaplan.cloud.meta_repair import classify_repair_system_failure
+
+    classification = classify_repair_system_failure(
+        "test-session",
+        partial_liveness_ticks=1,
+    )
+    assert not classification.should_dispatch, (
+        "Isolated partial liveness (1 tick) should NOT trigger condition 5"
+    )
+    assert classification.trigger is None
+
+
+def test_partial_liveness_repeated_triggers_condition_5() -> None:
+    """Repeated partial liveness (2 ticks) DOES trigger condition 5."""
+    from arnold_pipelines.megaplan.cloud.meta_repair import (
+        MetaRepairTrigger,
+        classify_repair_system_failure,
+    )
+
+    classification = classify_repair_system_failure(
+        "test-session",
+        partial_liveness_ticks=2,
+    )
+    assert classification.should_dispatch, (
+        "Repeated partial liveness (2 ticks) SHOULD trigger condition 5"
+    )
+    assert classification.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
+
+
+def test_partial_liveness_three_ticks_triggers_condition_5() -> None:
+    """Three partial liveness ticks also trigger condition 5 (>=2 threshold)."""
+    from arnold_pipelines.megaplan.cloud.meta_repair import (
+        MetaRepairTrigger,
+        classify_repair_system_failure,
+    )
+
+    classification = classify_repair_system_failure(
+        "test-session",
+        partial_liveness_ticks=3,
+    )
+    assert classification.should_dispatch
+    assert classification.trigger == MetaRepairTrigger.PARTIAL_LIVENESS_RECURRENCE
