@@ -23,19 +23,26 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+import subprocess
+from typing import Any, Callable, Mapping, Sequence
 
 from arnold_pipelines.megaplan.cloud.redact import redact_payload, redact_text
+from arnold_pipelines.megaplan.cloud.repair_lock import release_repair_lock
 from arnold_pipelines.megaplan.cloud.repair_contract import (
     ALL_OUTCOMES,
     DISCORD_ESCALATED,
+    LIVE_WITH_FRESH_ACTIVITY,
     NEEDS_HUMAN,
     PARTIAL_LIVENESS,
+    PROGRESSED,
     REPAIR_EXHAUSTED,
     REPAIR_TIMEOUT,
     REPAIRING,
     SUCCESS_OUTCOMES,
+    TRUE_HUMAN_BLOCKER,
     atomic_write_json,
+    build_verification_record,
+    classify_verification_outcome,
     compute_deadline,
     is_budget_exhausted,
     is_success_outcome,
@@ -684,6 +691,150 @@ def is_meta_budget_exhausted(
 
 
 # ---------------------------------------------------------------------------
+# Ordinary repair retrigger verification
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RetriggerExecutionResult:
+    """Result of invoking the ordinary repair loop from meta-repair."""
+
+    command: tuple[str, ...]
+    returncode: int
+    stdout: str = ""
+    stderr: str = ""
+    lock_released: bool = False
+
+    @property
+    def command_text(self) -> str:
+        return " ".join(self.command)
+
+
+def retrigger_ordinary_repair(
+    *,
+    command: Sequence[str],
+    repair_lock_dir: str | Path | None = None,
+    expected_lock_pid: int | None = None,
+    cwd: str | Path | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout_secs: float | None = None,
+    runner: Callable[..., Any] | None = None,
+    release_lock: Callable[..., bool] | None = None,
+) -> RetriggerExecutionResult:
+    """Release the ordinary repair lock, then invoke the primary repair loop."""
+    if not command:
+        raise ValueError("command must not be empty")
+
+    effective_release = release_repair_lock if release_lock is None else release_lock
+    lock_released = False
+    if repair_lock_dir is not None:
+        lock_released = bool(
+            effective_release(repair_lock_dir, expected_pid=expected_lock_pid)
+        )
+        if not lock_released:
+            raise RuntimeError(
+                f"failed to release ordinary repair lock before retrigger: {repair_lock_dir}"
+            )
+
+    effective_runner = subprocess.run if runner is None else runner
+    completed = effective_runner(
+        list(command),
+        cwd=None if cwd is None else str(cwd),
+        env=None if env is None else dict(env),
+        capture_output=True,
+        text=True,
+        timeout=timeout_secs,
+        check=False,
+    )
+    return RetriggerExecutionResult(
+        command=tuple(str(part) for part in command),
+        returncode=int(getattr(completed, "returncode", 1)),
+        stdout=str(getattr(completed, "stdout", "")),
+        stderr=str(getattr(completed, "stderr", "")),
+        lock_released=lock_released,
+    )
+
+
+def verify_retrigger_success(
+    *,
+    retriggered: bool,
+    retrigger_result: RetriggerExecutionResult | None = None,
+    post_retrigger_verification: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Verify that a retriggered ordinary repair finished with a real success."""
+    verification = dict(post_retrigger_verification or {})
+    raw_outcome = str(verification.get("outcome", "")).strip().lower()
+    normalized_outcome = raw_outcome
+
+    if raw_outcome == "running":
+        normalized_outcome = classify_verification_outcome(
+            is_complete=bool(verification.get("is_complete")),
+            has_progressed=bool(verification.get("has_progressed")),
+            has_fresh_activity=bool(verification.get("has_fresh_activity")),
+            has_true_human_blocker=bool(verification.get("has_true_human_blocker")),
+            is_live=bool(verification.get("is_live")),
+            pre_snapshot=verification.get("pre_snapshot"),
+            post_snapshot=verification.get("post_snapshot"),
+        )
+
+    if not normalized_outcome:
+        normalized_outcome = classify_verification_outcome(
+            is_complete=bool(verification.get("is_complete")),
+            has_progressed=bool(verification.get("has_progressed")),
+            has_fresh_activity=bool(verification.get("has_fresh_activity")),
+            has_true_human_blocker=bool(verification.get("has_true_human_blocker")),
+            is_live=bool(verification.get("is_live")),
+            pre_snapshot=verification.get("pre_snapshot"),
+            post_snapshot=verification.get("post_snapshot"),
+        )
+
+    accepted = (
+        retriggered
+        and (retrigger_result is None or retrigger_result.returncode == 0)
+        and normalized_outcome in SUCCESS_OUTCOMES
+    )
+
+    rejection_reason = ""
+    if not retriggered:
+        rejection_reason = "ordinary repair was not retriggered"
+    elif retrigger_result is not None and retrigger_result.returncode != 0:
+        rejection_reason = (
+            "ordinary repair retrigger command failed "
+            f"(returncode={retrigger_result.returncode})"
+        )
+    elif normalized_outcome == PARTIAL_LIVENESS:
+        rejection_reason = "partial_liveness is not a terminal success"
+    elif normalized_outcome == REPAIRING:
+        rejection_reason = "repairing is not a verified terminal success"
+    elif normalized_outcome not in SUCCESS_OUTCOMES:
+        rejection_reason = f"outcome {normalized_outcome!r} is outside SUCCESS_OUTCOMES"
+
+    verification_record = build_verification_record(
+        normalized_outcome,
+        pre_snapshot=verification.get("pre_snapshot"),
+        post_snapshot=verification.get("post_snapshot"),
+        delta_summary=str(verification.get("delta_summary", "")),
+    )
+    verification_record.update(
+        {
+            "raw_outcome": raw_outcome or normalized_outcome,
+            "accepted": accepted,
+            "retriggered": retriggered,
+            "rejection_reason": rejection_reason,
+        }
+    )
+    if raw_outcome == "running":
+        verification_record["legacy_running_mapped_to"] = normalized_outcome
+    if retrigger_result is not None:
+        verification_record["retrigger_command"] = retrigger_result.command_text
+        verification_record["retrigger_returncode"] = retrigger_result.returncode
+        verification_record["lock_released_before_retrigger"] = (
+            retrigger_result.lock_released
+        )
+    return verification_record
+
+
+# ---------------------------------------------------------------------------
 # Convenience: combined load + classify + prompt
 # ---------------------------------------------------------------------------
 
@@ -723,6 +874,12 @@ def evaluate_meta_repair_triggers(
             secret_names=secret_names,
         )
 
+    # Compute partial_liveness_ticks from loaded evidence when available
+    # and the caller did not supply an explicit value
+    if load_evidence and evidence and not partial_liveness_ticks:
+        history = evidence.get("partial_liveness_history", [])
+        partial_liveness_ticks = len(history)
+
     classification = classify_repair_system_failure(
         session,
         evidence=evidence,
@@ -755,6 +912,7 @@ __all__ = [
     "MetaRepairClassification",
     "MetaRepairRecord",
     "MetaRepairTrigger",
+    "RetriggerExecutionResult",
     "build_meta_repair_prompt",
     "classify_repair_system_failure",
     "compute_meta_deadline",
@@ -764,5 +922,7 @@ __all__ = [
     "load_redacted_evidence",
     "persist_meta_repair_record",
     "remaining_meta_budget_secs",
+    "retrigger_ordinary_repair",
     "trigger_priority",
+    "verify_retrigger_success",
 ]
