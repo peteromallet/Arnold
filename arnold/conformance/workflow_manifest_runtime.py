@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -25,7 +26,7 @@ FORBIDDEN_PRODUCT_PREFIXES = (
 
 @dataclass(frozen=True)
 class GoldenRegressionRule:
-    """Rule deciding whether behavioral golden changes are explained."""
+    """Rule deciding whether golden changes are explained."""
 
     fixture_path: Path
     explanation_path: Path
@@ -33,6 +34,35 @@ class GoldenRegressionRule:
     def is_explained(self, *, old_text: str, new_text: str) -> bool:
         if old_text == new_text:
             return True
+        return self._has_explanation()
+
+    def directory_digest(self, directory: Path | None = None) -> str:
+        """Return a deterministic digest for a directory fixture snapshot."""
+        target = directory or self.fixture_path
+        if not target.is_dir():
+            raise NotADirectoryError(target)
+
+        digest = hashlib.sha256()
+        for path in sorted(child for child in target.rglob("*") if child.is_file()):
+            relpath = path.relative_to(target).as_posix().encode("utf-8")
+            digest.update(relpath)
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    def directory_is_explained(
+        self,
+        *,
+        old_directory: Path,
+        new_directory: Path,
+    ) -> bool:
+        """Return whether a directory fixture change is explained."""
+        if self.directory_digest(old_directory) == self.directory_digest(new_directory):
+            return True
+        return self._has_explanation()
+
+    def _has_explanation(self) -> bool:
         if not self.explanation_path.exists():
             return False
         return bool(self.explanation_path.read_text(encoding="utf-8").strip())

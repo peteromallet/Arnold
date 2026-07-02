@@ -1,3 +1,9 @@
+"""CLI command registration and parser tests.
+
+Verify that automation commands are properly registered in both the
+argument parser and the handler dispatch table.
+"""
+
 from __future__ import annotations
 
 from arnold_pipelines.megaplan.cli import COMMAND_HANDLERS

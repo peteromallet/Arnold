@@ -96,7 +96,7 @@ def write_artifact_inventory(root: str | Path) -> dict[str, str]:
 
 
 class NativeTraceHooks:
-    """Native runtime hooks that emit parity-trace artifacts when enabled.
+    """Native runtime hooks that emit native-trace artifacts when enabled.
 
     Wraps an inner :class:`NativeRuntimeHooks` (default
     :class:`NullNativeRuntimeHooks`) and delegates every callback to it.

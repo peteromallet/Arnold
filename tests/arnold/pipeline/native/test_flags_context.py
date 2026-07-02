@@ -164,13 +164,18 @@ class TestNativeRuntimeDisabledError:
 
 
 class TestM3HandoffBoundary:
-    """Regression coverage for the M3 handoff contract.
+    """Regression coverage for the M3 handoff contract and M5 native golden fixtures.
 
     Verifies the boundary discipline from MILESTONE_3_HANDOFF.md:
     - No megaplan imports in the neutral native package (SD3).
     - Rejected protocol callbacks (resolve_step_io_policy, on_edge_traverse)
       are absent from the native hooks surface.
     - The rejected boundary-violating shim (megaplan_hooks.py) does not exist.
+
+    Also validates M5 native golden fixture delivery:
+    - Native golden root, manifest, and D12 multi-file fixture are committed.
+    - Old graph-era single-file golden names remain permanently absent.
+    - The directory-level golden regression rule can be exercised.
     """
 
     def test_no_megaplan_imports_in_native_package(self) -> None:
@@ -326,45 +331,92 @@ class TestM3HandoffBoundary:
             f"Unexpected callbacks on NullNativeRuntimeHooks (invented?): {extra}"
         )
 
-    def test_m3_golden_files_documented_as_m4_gap(self) -> None:
-        """M3 golden trace files are noted as absent — owned by M4.
+    def test_native_golden_root_manifest_and_d12_fixture_exist(self) -> None:
+        """M5 native golden root, manifest, and D12 multi-file fixture are committed.
 
-        Per MILESTONE_3_HANDOFF.md Golden Trace Paths section, the following
-        golden files are expected but not yet committed:
+        Validates:
+        - The native golden root directory exists under
+          tests/arnold_pipelines/megaplan/fixtures/native_goldens/.
+        - manifest.json defines the committed scenario set.
+        - The D12-runtime-trace directory contains all five canonical
+          native trace files: events.ndjson, state.json, stages.json,
+          artifacts.json, checkpoint.json.
 
-        - tests/arnold/pipeline/native/data/golden_graph_trace.json
-        - tests/arnold/pipeline/native/data/golden_native_trace.json
-        - tests/arnold/pipeline/native/data/golden_composite_cursor.json
-
-        These are regenerated via --record-goldens by M4 parity tests.
-        This test encodes the gap so it cannot be silently forgotten.
+        Also asserts:
+        - Old graph-era single-file golden names (golden_graph_trace.json,
+          golden_native_trace.json, golden_composite_cursor.json) remain
+          permanently absent from both the legacy data directory and the new
+          native golden root (SD2).
+        - The directory-level golden regression rule produces a stable digest
+          when exercised against the D12 fixture directory.
         """
         from pathlib import Path
 
-        data_dir = (
-            Path(__file__).resolve().parent / "data"
+        repo_root = Path(__file__).resolve().parents[4]
+        native_golden_root = (
+            repo_root / "tests" / "arnold_pipelines" / "megaplan"
+            / "fixtures" / "native_goldens"
         )
-        golden_files = [
+        legacy_data_dir = Path(__file__).resolve().parent / "data"
+
+        # ── Native golden root exists ──────────────────────────────
+        assert native_golden_root.is_dir(), (
+            f"Native golden root missing: {native_golden_root}"
+        )
+
+        # ── Manifest exists ────────────────────────────────────────
+        manifest = native_golden_root / "manifest.json"
+        assert manifest.is_file(), (
+            f"Native golden manifest missing: {manifest}"
+        )
+
+        # ── D12 multi-file fixture exists ──────────────────────────
+        d12_dir = native_golden_root / "D12-runtime-trace"
+        assert d12_dir.is_dir(), (
+            f"D12-runtime-trace directory missing: {d12_dir}"
+        )
+        canonical_files = [
+            "events.ndjson",
+            "state.json",
+            "stages.json",
+            "artifacts.json",
+            "checkpoint.json",
+        ]
+        for fname in canonical_files:
+            assert (d12_dir / fname).is_file(), (
+                f"D12-runtime-trace missing canonical file '{fname}'"
+            )
+
+        # ── Old graph-era single-file golden names are absent ──────
+        old_graph_names = [
             "golden_graph_trace.json",
             "golden_native_trace.json",
             "golden_composite_cursor.json",
         ]
+        for old_name in old_graph_names:
+            # Neither the legacy data directory ...
+            assert not (legacy_data_dir / old_name).exists(), (
+                f"Old graph-era golden file '{old_name}' unexpectedly present "
+                f"in legacy data directory: {legacy_data_dir}"
+            )
+            # ... nor the new native golden root should contain these names
+            assert not (native_golden_root / old_name).exists(), (
+                f"Old graph-era golden file '{old_name}' unexpectedly present "
+                f"in native golden root: {native_golden_root}"
+            )
 
-        missing = [
-            gf for gf in golden_files
-            if not (data_dir / gf).exists()
-        ]
+        # ── Golden regression rule exercises directory digest ──────
+        from arnold.conformance.workflow_manifest_runtime import GoldenRegressionRule
 
-        # This test documents the gap rather than failing on it.
-        # When M4 delivers the golden files this assertion flips to
-        # assert not missing (they should exist).
-        # For M3: we acknowledge they are absent and record the gap.
-        assert missing, (
-            "M4-owned gap closed early: all golden files are present. "
-            "Update this test to assert they exist (remove the 'assert missing')."
+        rule = GoldenRegressionRule(
+            fixture_path=d12_dir,
+            explanation_path=native_golden_root / ".explanation.md",
         )
-        # Explicit record of what's missing
-        assert set(missing) == set(golden_files), (
-            f"Unexpected golden file state: missing={missing}, "
-            f"expected all absent={golden_files}"
+        digest = rule.directory_digest()
+        assert isinstance(digest, str) and len(digest) == 64, (
+            f"Golden regression rule produced unexpected digest: {digest!r}"
+        )
+        # Digest is deterministic — same directory yields same hash
+        assert rule.directory_digest() == digest, (
+            "Golden regression rule directory_digest is not deterministic"
         )
