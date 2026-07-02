@@ -690,6 +690,60 @@ def test_repair_loop_collects_stale_state_classification(tmp_path: Path) -> None
     assert stale["stale_block_replay"]["artifact_hash"] == "sha256:repeat"
 
 
+def test_repair_loop_classifies_github_large_file_push_rejection(tmp_path: Path) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
+    plan_dir.mkdir(parents=True)
+    chain_dir.mkdir(parents=True)
+    message = (
+        "phase-complete callback failed after 'review': "
+        "git push --no-verify origin HEAD:demo exited 1"
+    )
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo-plan",
+                "current_state": "failed",
+                "latest_failure": {
+                    "kind": "phase_callback_failed",
+                    "message": message,
+                    "phase": "review",
+                    "recorded_at": "2026-07-02T15:32:20Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (chain_dir / "chain-demo.json").write_text(
+        json.dumps({"current_plan_name": "demo-plan", "last_state": "failed"}),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "\n".join(
+            [
+                "[chain] git push --no-verify origin HEAD:demo -> rc=1",
+                "remote: error: GH001: Large files detected.",
+                "remote: error: File .megaplan/epics/demo-plan/events.jsonl is 101.74 MB; this exceeds GitHub's file size limit of 100.00 MB",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "demo", "chain", "")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "git_large_file_push_rejection"
+    assert "GH001" in payload["chain_log_tail"]
+    assert payload["plan_latest_failure"]["kind"] == "phase_callback_failed"
+
+
 def test_repair_loop_collects_named_single_plan_in_mixed_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / "workflow"
     target = workspace / ".megaplan" / "plans" / "target-plan"
@@ -6198,6 +6252,63 @@ def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
     assert artifact["issue_kind"] == "chain_stuck_nonterminal"
     assert artifact["details"]["stuck_ticks"] == 2
     assert artifact["chain_state_summary"]["last_state"] == "authority_divergence"
+
+
+def test_chain_health_status_detects_github_large_file_push_rejection() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    plan_name = "demo-plan"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {
+            "current_state": "failed",
+            "latest_failure": {
+                "kind": "phase_callback_failed",
+                "phase": "review",
+                "message": (
+                    "phase-complete callback failed after 'review': "
+                    "git push --no-verify origin HEAD:demo exited 1"
+                ),
+            },
+        },
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 0,
+            "current_plan_name": plan_name,
+            "last_state": "failed",
+            "completed": [],
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "\n".join(
+            [
+                "[chain] git push --no-verify origin HEAD:demo -> rc=1",
+                "remote: error: GH001: Large files detected.",
+                "remote: error: File .megaplan/epics/demo-plan/events.jsonl is 101.74 MB; this exceeds GitHub's file size limit of 100.00 MB",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    payload = _run_chain_health(ws, marker, repair_dir, health="stopped")
+
+    assert payload["CHAIN_HEALTH_STATUS"] == "chain_large_file_push_rejection"
+    assert payload["CHAIN_HEALTH_KIND"] == "git_large_file_push_rejection"
+    assert "oversized runtime journal" in payload["CHAIN_HEALTH_SUMMARY"]
+    assert "large-file limit" in payload["CHAIN_HEALTH_LOG_MESSAGE"]
+    artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
+    assert artifact["issue_kind"] == "git_large_file_push_rejection"
+    assert artifact["details"]["runtime_journal_patterns"] == [
+        ".megaplan/epics/*/events.jsonl",
+        ".megaplan/plans/*/events.ndjson",
+        ".megaplan/plans/*/execution_trace.jsonl",
+    ]
 
 
 def test_chain_health_status_detects_busy_no_advance_across_ticks() -> None:
