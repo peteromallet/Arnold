@@ -213,6 +213,49 @@ def test_handle_outcome_stops_finalized_plan_before_pr_progression(
     assert any("finalized but not executed" in message for message in messages)
 
 
+def test_handle_outcome_stops_unresolved_prerequisite_block_without_retry(
+    tmp_path: Path,
+) -> None:
+    spec = SimpleNamespace(
+        on_failure_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        on_escalate_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        robustness="extreme",
+    )
+    milestone = SimpleNamespace(label="m1", profile=None, robustness="extreme")
+    state = ChainState()
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        DriverOutcome(
+            status="blocked",
+            plan="m1-plan",
+            final_state="blocked",
+            iterations=1,
+            reason=(
+                "execute reported prerequisite-blocked tasks: T11 "
+                "(M7 prerequisite is not satisfied)"
+            ),
+        ),
+        spec=spec,
+        writer=messages.append,
+        milestone=milestone,
+        state=state,
+        root=tmp_path,
+    )
+
+    assert decision == "stop"
+    assert state.retry_counts == {}
+    assert any("unresolved explicit blocker" in message for message in messages)
+
+
 def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path) -> None:
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text("milestones: []\n", encoding="utf-8")
