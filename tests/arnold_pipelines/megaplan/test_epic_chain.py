@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from pathlib import Path
@@ -11,7 +12,12 @@ from arnold_pipelines.megaplan.chain.epic_chain import (
     run_epic_chain,
     save_epic_chain_state,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState, save_chain_state
+from arnold_pipelines.megaplan.chain.spec import (
+    ChainState,
+    _state_path_for as _chain_state_path_for,
+    load_chain_state,
+    save_chain_state,
+)
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -257,6 +263,63 @@ def test_epic_chain_launches_not_started_child_via_chain_start(tmp_path: Path) -
     assert payload["status"] == "done"
     state = load_epic_chain_state(parent_spec)
     assert state.completed[0]["status"] == "done"
+
+
+def test_chain_state_uses_project_root_path_for_symlinked_chain_spec(tmp_path: Path) -> None:
+    spec_path = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    root_alias = tmp_path / "chain.yaml"
+    root_alias.symlink_to(spec_path.relative_to(tmp_path))
+
+    save_chain_state(
+        root_alias,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="m1-plan",
+            last_state="awaiting_pr_merge",
+        ),
+    )
+
+    canonical_path = _chain_state_path_for(root_alias)
+    nested_path = spec_path.parent / ".megaplan" / "plans" / ".chains" / canonical_path.name
+
+    assert canonical_path.parent == tmp_path / ".megaplan" / "plans" / ".chains"
+    assert canonical_path.exists()
+    assert not nested_path.exists()
+    assert load_chain_state(spec_path).current_plan_name == "m1-plan"
+
+
+def test_chain_state_load_prefers_more_advanced_nested_symlink_state(tmp_path: Path) -> None:
+    spec_path = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    root_alias = tmp_path / "chain.yaml"
+    root_alias.symlink_to(spec_path.relative_to(tmp_path))
+
+    save_chain_state(root_alias, ChainState())
+
+    nested_state_path = (
+        spec_path.parent
+        / ".megaplan"
+        / "plans"
+        / ".chains"
+        / f"{spec_path.stem}-{hashlib.sha1(str(spec_path.resolve()).encode('utf-8')).hexdigest()[:12]}.json"
+    )
+    nested_state_path.parent.mkdir(parents=True, exist_ok=True)
+    nested_state_path.write_text(
+        json.dumps(
+            ChainState(
+                current_milestone_index=0,
+                current_plan_name="m1-plan",
+                last_state="awaiting_pr_merge",
+            ).to_dict(),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_chain_state(spec_path)
+
+    assert loaded.current_plan_name == "m1-plan"
+    assert load_chain_state(root_alias).current_plan_name == "m1-plan"
 
 
 def test_epic_chain_treats_already_running_launch_as_live_child(tmp_path: Path) -> None:
