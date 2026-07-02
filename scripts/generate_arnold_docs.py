@@ -239,9 +239,9 @@ def _compile_and_validate_workflow(info: ShippedPipelineInfo) -> WorkflowManifes
 
 
 def _validate_native_builder(info: ShippedPipelineInfo) -> native_pipeline.Pipeline:
-    if info.builder_contract != "native" or info.load_state != "loadable-native":
+    if info.load_state != "loadable-native":
         raise RuntimeError(
-            f"pipeline {info.id!r} is {info.builder_contract}/{info.load_state}, expected loadable-native"
+            f"pipeline {info.id!r} has load_state {info.load_state!r}, expected loadable-native"
         )
     builder = info.builder
     if builder is None:
@@ -258,9 +258,9 @@ def _validate_native_builder(info: ShippedPipelineInfo) -> native_pipeline.Pipel
 
 
 def _pipeline_identity(info: ShippedPipelineInfo) -> str:
-    if info.builder_contract == "workflow" and info.load_state == "workflow":
+    if info.load_state == "workflow":
         return _compile_and_validate_workflow(info).manifest_hash or ""
-    if info.builder_contract == "native" and info.load_state == "loadable-native":
+    if info.load_state == "loadable-native":
         return f"native:{_validate_native_builder(info).native_program.name}"
     return info.load_state
 
@@ -301,12 +301,12 @@ def _render_example(info: ShippedPipelineInfo) -> Path | None:
     dry_report: dict[str, Any] | None = None
     native_pipeline_obj: native_pipeline.Pipeline | None = None
 
-    if info.builder_contract == "workflow" and info.load_state == "workflow":
+    if info.load_state == "workflow":
         manifest = _compile_and_validate_workflow(info)
         dry_report = dry_run(manifest)
         _fake_run(manifest)
         manifest_hash = manifest.manifest_hash or ""
-    elif info.builder_contract == "native" and info.load_state == "loadable-native":
+    elif info.load_state == "loadable-native":
         native_pipeline_obj = _validate_native_builder(info)
         manifest_hash = f"native:{native_pipeline_obj.native_program.name}"
 
@@ -319,9 +319,9 @@ def _render_example(info: ShippedPipelineInfo) -> Path | None:
         ("Load state", info.load_state),
         ("Identity", manifest_hash or info.load_state),
     ]
-    if info.builder_contract == "workflow" and info.load_state == "workflow":
+    if info.load_state == "workflow":
         source_rows.insert(4, ("Validation", f"`arnold workflow check --module {_builder_target(info)}`"))
-    elif info.builder_contract == "native" and info.load_state == "loadable-native":
+    elif info.load_state == "loadable-native":
         source_rows.insert(
             4,
             (
@@ -552,7 +552,7 @@ def render_reference() -> str:
 def _render_skill(info: ShippedPipelineInfo) -> str:
     target = _builder_target(info)
     identity = _pipeline_identity(info)
-    if info.builder_contract == "workflow" and info.load_state == "workflow":
+    if info.load_state == "workflow":
         surface = "workflow-only"
         commands = [
             f"- Validate: `arnold workflow check --module {target}`",
@@ -560,7 +560,7 @@ def _render_skill(info: ShippedPipelineInfo) -> str:
             f"- Dry-run: `arnold workflow dry-run --module {target}`",
             f"- Run (fake backend): `arnold workflow run --module {target} --backend fake`",
         ]
-    elif info.builder_contract == "native" and info.load_state == "loadable-native":
+    elif info.load_state == "loadable-native":
         surface = "native"
         commands = [
             f"- Validate import: `{target}`",
@@ -630,9 +630,10 @@ def _render_composed_skill(name: str, description: str) -> str:
         "",
         f"# {name}",
         "",
-        "This composed rule is the workflow-only successor to the legacy Megaplan "
-        "skill bundles.  It references only ``arnold.workflow`` and the shipped "
-        "pipeline registry.",
+        "This composed rule references ``arnold.pipeline`` and ``arnold.workflow`` surfaces "
+        "and the shipped pipeline registry.  Native-first pipelines use ``build_pipeline()`` "
+        "returning a projected ``Pipeline`` with a non-null ``native_program``; workflow "
+        "pipelines use ``arnold workflow check`` for validation.",
         "",
         "## Launcher",
         "",
@@ -649,17 +650,29 @@ def _render_composed_skill(name: str, description: str) -> str:
     for info in discover_migrated_pipelines():
         if info.registry_id is None:
             continue
-        lines.append(f"- `{info.registry_id}` -> `arnold workflow check --module {_builder_target(info)}`")
+        if info.load_state == "loadable-native":
+            lines.append(
+                f"- `{info.registry_id}` -> native (validate import: `{_builder_target(info)}`)"
+            )
+        elif info.load_state == "workflow":
+            lines.append(
+                f"- `{info.registry_id}` -> `arnold workflow check --module {_builder_target(info)}`"
+            )
+        else:
+            lines.append(
+                f"- `{info.registry_id}` -> load state `{info.load_state}`"
+            )
     lines.extend(
         [
             "",
             "## Disallowed surfaces",
             "",
             "Do not author new packages with ``PipelineBuilder``, ``Stage``, public ``Edge``, "
-            "hand-built graph fallback builders, native-backed factories, executor objects, "
-            "or deleted Megaplan-root imports.  New packages must be workflow-first: use "
-            "explicit-node ``arnold.workflow.Pipeline`` authoring and return a ``Pipeline`` "
-            "from ``build_pipeline()``.  ``WorkflowManifest`` is compiler output only.",
+            "hand-built graph fallback builders, shim packages, executor objects, "
+            "or deleted Megaplan-root imports.  New packages must be native-first: use "
+            "``@pipeline``, ``@phase``, ``compile_pipeline``, and ``project_graph`` to return a "
+            "projected ``Pipeline`` with a non-null ``native_program`` from ``build_pipeline()``.  "
+            "``NativeProgram`` is dispatch substrate, not final compositional semantics.",
             "",
         ]
     )
@@ -704,12 +717,22 @@ def _load_registry(path: Path) -> dict[str, Any]:
     return {"version": 1, "pipelines": []}
 
 
+def _identity_for_registry(info: ShippedPipelineInfo) -> str:
+    """Return a stable identity string suitable for the registry manifest_hash column."""
+    if info.load_state == "workflow":
+        return _compile_and_validate_workflow(info).manifest_hash or ""
+    if info.load_state == "loadable-native":
+        pipeline = _validate_native_builder(info)
+        return f"native:{pipeline.native_program.name}"
+    return info.load_state
+
+
 def render_registries() -> dict[Path, str]:
     rendered: dict[Path, str] = {}
     for path, infos in _registries_to_update().items():
         data = _load_registry(path)
         hashes_by_stable_id = {
-            info.registry_id: (_compile_and_validate_workflow(info).manifest_hash or "")
+            info.registry_id: _identity_for_registry(info)
             for info in infos
             if info.registry_id
         }

@@ -32,16 +32,7 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "writing-panel-strict"
-description: str = (
-    "Adversarial review of prose drafts by N reviewers, then revise. "
-    "Not for code."
-)
 
-driver: tuple[str, str] = ("native", "panel")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("writing", "critique", "revise")
 ```
 
 ## Step Surface
@@ -139,6 +130,15 @@ def _make_agent_step(
         _produces="markdown",
         _panel_reviewer_order=_copy_panel_order(panel_reviewer_order),
         _mode="",
+    )
+
+def _make_human_gate_step(stage_name: str, artifact_stage: str) -> HumanGateStep:
+    return HumanGateStep(
+        name=stage_name,
+        _artifact_stage=artifact_stage,
+        _choices=list(_HUMAN_CHOICES),
+        _pipeline_name=_PIPELINE_NAME,
+        _pipeline_version=1,
     )
 
 def _json_safe_step_result(result: StepResult) -> StepResult:

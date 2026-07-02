@@ -1978,3 +1978,125 @@ class TestParallelProjection:
         assert binding_map is None or binding_map == {}, (
             f"Expected None or empty dict, got {binding_map!r}"
         )
+
+
+# ──────────────────────────────────────────────────────────────────────
+# T17: Projected shells keep native_program assertions active
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestProjectedShellNativeProgram:
+    """``project_graph`` must attach the source ``NativeProgram`` onto the
+    returned ``Pipeline`` so downstream executors can discover it without
+    recomputing the program.
+
+    The T6 bridge fix threads ``native_program`` onto reconstructed
+    neutral shells; these tests lock that projection always preserves
+    the reference.
+    """
+
+    def test_projected_pipeline_carries_native_program(self) -> None:
+        """``project_graph`` result has native_program set to the input."""
+        @phase
+        def do_work(ctx: object) -> dict:
+            return {"x": 1}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield do_work(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        assert graph.native_program is prog, (
+            "projected Pipeline must carry the source NativeProgram"
+        )
+
+    def test_projected_pipeline_native_program_identity(self) -> None:
+        """``project_graph`` preserves NativeProgram identity, not a copy."""
+        @phase
+        def a(ctx: object) -> dict:
+            return {}
+
+        @decision(vocabulary={"left", "right"})
+        def branch(ctx: object) -> str:
+            return "left"
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield a(ctx)
+            if branch(ctx) == "left":
+                pass
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        assert graph.native_program is prog, (
+            "native_program must be the same object (identity), not a copy"
+        )
+        # Verify the name survives the round-trip
+        assert graph.native_program.name == prog.name
+
+    def test_projected_pipeline_validates_with_native_program(self) -> None:
+        """A projected Pipeline with native_program validates cleanly."""
+        @phase
+        def a(ctx: object) -> dict:
+            return {}
+
+        @phase
+        def b(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield a(ctx)
+            state = yield b(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        assert graph.native_program is prog
+        result = validate(graph)
+        assert len(result.defects) == 0, (
+            f"projected Pipeline with native_program must validate, got: {result.defects}"
+        )
+
+    def test_projected_shell_keeps_native_program_after_round_trip(self) -> None:
+        """Re-projecting the same program yields the same native_program."""
+        @phase
+        def do_work(ctx: object) -> dict:
+            return {"x": 1}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield do_work(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph1 = project_graph(prog)
+        graph2 = project_graph(prog)
+        assert graph1.native_program is prog
+        assert graph2.native_program is prog
+        assert graph1.native_program is graph2.native_program, (
+            "re-projection must return the same native_program identity"
+        )
+
+    def test_native_program_does_not_leak_into_stages(self) -> None:
+        """``native_program`` lives on the Pipeline, not on individual Stages."""
+        @phase
+        def a(ctx: object) -> dict:
+            return {}
+
+        @pipeline
+        def my_pipe(ctx: object) -> dict:
+            state = yield a(ctx)
+            return state
+
+        prog = compile_pipeline(my_pipe)
+        graph = project_graph(prog)
+        assert graph.native_program is prog
+
+        for name, stage in graph.stages.items():
+            assert not hasattr(stage, "native_program") or getattr(stage, "native_program", None) is None, (
+                f"stage {name!r} must not carry native_program; it is a Pipeline-level field"
+            )

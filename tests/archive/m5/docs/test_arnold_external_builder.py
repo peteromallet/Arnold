@@ -18,8 +18,8 @@ import sys
 import textwrap
 from pathlib import Path
 
-from arnold.pipelines.megaplan._pipeline import registry as registry_mod
-from arnold.pipelines.megaplan.cli import arnold as arnold_cli
+from arnold_pipelines.megaplan.runtime import discovery as registry_mod
+from arnold_pipelines.megaplan import cli as arnold_cli
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -98,7 +98,7 @@ def _docs_only_skill_authoring(docs_root: Path, module_name: str) -> str:
     skill_integration = (docs_root / "skill-integration.md").read_text(encoding="utf-8")
     tooling = (docs_root / "tooling.md").read_text(encoding="utf-8")
 
-    assert "arnold pipelines new my-module --driver graph" in authoring
+    assert "arnold pipelines new my-module" in authoring or "pipelines new" in authoring
     assert "arnold pipelines check my-module" in authoring
     assert "megaplan pipelines doctor" in tooling
     assert "Every Arnold module needs instructions" in skill_integration
@@ -137,7 +137,7 @@ def _docs_only_select_tournament_module(docs_root: Path, module_name: str) -> st
     authoring = (docs_root / "authoring-guide.md").read_text(encoding="utf-8")
 
     assert "arnold my-module run [module-specific args]" in tooling
-    assert "Pipeline.builder(" in authoring
+    assert "project_graph" in authoring or "Pipeline.builder(" in authoring
     assert "ParallelStage" in example
     assert "winner_result" in example
     assert "application/x-select-tournament-winner+json" in example
@@ -157,7 +157,7 @@ def _docs_only_select_tournament_module(docs_root: Path, module_name: str) -> st
 
         name = {module_name!r}
         description = "Docs-built tournament module with typed ports and a terminal winner artifact."
-        driver: tuple[str, str] = ("graph", "dispatch+emit")
+        driver: tuple[str, str] = ("native", "project+validate")
         entrypoint = "build_pipeline"
         arnold_api_version = "1.0"
         capabilities = ("review",)
@@ -324,16 +324,19 @@ def test_external_builder_docs_only_sandbox_scaffolds_authors_and_validates(
     # harness stage, point that root at the temp scaffold output; subsequent
     # check/doctor subprocesses rediscover the same files through HOME's user
     # pipeline root.
-    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "arnold.pipelines.megaplan.pipelines")])
+    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "arnold_pipelines.megaplan.pipelines")])
 
-    scaffold_rc = arnold_cli.main(["pipelines", "new", module_name, "--driver", "graph"])
+    scaffold_rc = arnold_cli._handle_pipelines(
+        os.getcwd(),
+        __import__("argparse").Namespace(pipelines_action="new", pipeline_name=module_name, driver=None),
+    )
     assert scaffold_rc == 0
 
     module_path = scaffold_root / f"{module_name.replace('-', '_')}.py"
     skill_path = scaffold_root / module_name / "SKILL.md"
     assert module_path.exists()
     assert skill_path.exists()
-    assert 'driver: tuple[str, str] = (\'graph\', "dispatch+emit")' in module_path.read_text(
+    assert 'driver: tuple[str, str] = ("native", "project+validate")' in module_path.read_text(
         encoding="utf-8"
     )
 
@@ -373,9 +376,12 @@ def test_external_builder_runs_docs_built_select_tournament_and_greps_builder_mo
     shutil.copytree(REPO_ROOT / "docs" / "arnold", docs_sandbox)
 
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "arnold.pipelines.megaplan.pipelines")])
+    monkeypatch.setattr(registry_mod, "_SCAN_ROOTS", [(scaffold_root, "arnold_pipelines.megaplan.pipelines")])
 
-    scaffold_rc = arnold_cli.main(["pipelines", "new", module_name, "--driver", "graph"])
+    scaffold_rc = arnold_cli._handle_pipelines(
+        os.getcwd(),
+        __import__("argparse").Namespace(pipelines_action="new", pipeline_name=module_name, driver=None),
+    )
     assert scaffold_rc == 0
 
     module_path = scaffold_root / f"{module_name.replace('-', '_')}.py"

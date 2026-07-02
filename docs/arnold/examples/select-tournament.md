@@ -32,23 +32,7 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "select-tournament"
-description: str = (
-    "Selection tournament pipeline: fan out per-candidate scoring, reduce "
-    "scores through a pairwise bracket, then emit a winner artifact."
-)
 
-driver: tuple[str, str] = ("native", "fanout+pairwise-reduce")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("review",)
-
-def build_pipeline(
-    candidates: Sequence[str] = DEFAULT_CANDIDATES,
-) -> Pipeline:
-    """Return the canonical native-projected ``select-tournament`` pipeline."""
-
-    return _build_pipeline(candidates=candidates)
 ```
 
 ## Step Surface
@@ -275,16 +259,22 @@ score_candidates (fanout) -> pairwise_bracket -> winner
 
 ## Runtime
 
-`select-tournament` is a native-default converted pipeline. Fresh runs through
-`megaplan run select-tournament ...` or
-`arnold pipelines run select-tournament ...` persist runtime ownership in
-`state.json.runtime_envelope.runtime` and `state.json.meta.executor`. During
-the M7 deprecation window, the derived graph remains available as a
-compatibility fallback: pass `--runtime graph` (or the deprecated
-`--executor graph`) for a fresh run that must use the graph executor. Existing
-graph-born plan directories keep resuming on graph. Native-born runs resume on
-native, and corrupt native cursors fail closed rather than silently falling
-back to graph.
+`select-tournament` is a native-first pipeline whose ``build_pipeline()``
+returns a projected ``Pipeline`` shell with a non-null ``native_program``.
+Fresh runs through ``megaplan run select-tournament ...`` or
+``arnold pipelines run select-tournament ...`` dispatch through the native
+runtime. The projected graph shell exists for structural inspection, port
+binding, and downstream composition — it does not represent a separate
+execution path.
+
+### Bridge-milestone caveat
+
+During the M6→M7 transition, the graph-projected shell is derived from the
+native declaration via ``project_graph`` and remains structurally equivalent
+to the native program. Native-born runs resume on native, and corrupt native
+cursors fail closed rather than silently degrading. The graph shell is a
+reflection, not a fallback — there is no ``--runtime graph`` or
+``--executor graph`` toggle on fresh runs.
 
 ## Verdict Semantics
 

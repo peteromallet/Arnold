@@ -14,8 +14,8 @@ def test_current_tree_passes_megaplan_coupling_gate() -> None:
 
     assert result.passed is True
     assert result.check_id == "generic-arnold-megaplan-coupling"
-    assert result.details["allowlisted_count"] == 8
-    assert result.details["coupled_count"] == 8
+    assert result.details["allowlisted_count"] == 11
+    assert result.details["coupled_count"] == 11
     assert result.details["unexpected"] == {}
     assert result.details["stale_allowlist"] == []
 
@@ -55,7 +55,6 @@ def test_new_generic_megaplan_import_fails_gate(tmp_path: Path) -> None:
     assert "new generic Arnold Megaplan coupling" in result.message
     assert result.details["unexpected"] == {
         "arnold.new_surface": (
-            "arnold.pipelines.megaplan",
             "arnold_pipelines.megaplan.run_outcome",
             "arnold_pipelines.megaplan.run_outcome.RunOutcome",
         )

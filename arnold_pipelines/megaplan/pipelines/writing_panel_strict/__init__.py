@@ -3,25 +3,17 @@
 from __future__ import annotations
 
 from arnold_pipelines.megaplan.pipelines.writing_panel_strict.pipeline import (
+    arnold_api_version,
     build_pipeline,
+    capabilities,
+    default_profile,
+    description,
+    driver,
+    entrypoint,
+    name,
+    recommended_profiles,
+    supported_modes,
 )
-
-name: str = "writing-panel-strict"
-description: str = (
-    "Adversarial review of prose drafts by N reviewers, then revise. "
-    "Not for code."
-)
-default_profile: str = "@writing-panel-strict:standard"
-supported_modes: tuple[str, ...] = ("native",)
-recommended_profiles: tuple[str, ...] = (
-    "@writing-panel-strict:premium",
-    "@writing-panel-strict:standard",
-    "@writing-panel-strict:cheap",
-)
-driver: tuple[str, str] = ("native", "panel")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("writing", "critique", "revise")
 
 __all__ = [
     "arnold_api_version",

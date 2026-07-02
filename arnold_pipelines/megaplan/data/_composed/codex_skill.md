@@ -9,6 +9,21 @@ description: AI agent harness for coordinating Claude and GPT to make and execut
 
 **Scope:** This skill covers tooling — how to invoke and drive megaplan. For the decisions that come *before* invocation (scoping, brief, profile, robustness, depth), consult the **megaplan-prep** skill. If anything here contradicts megaplan-prep on decision-making content, megaplan-prep wins.
 
+## Native Pipeline Registry
+This composed rule references `arnold.pipeline` and `arnold.workflow` surfaces and the shipped pipeline registry. Native-first pipelines use `build_pipeline()` returning a projected `Pipeline` with a non-null `native_program`; workflow pipelines use `arnold workflow check` for validation.
+
+- `deliberation` -> native (validate import: `arnold.pipelines.deliberation:build_pipeline`)
+- `folder_audit` -> native (validate import: `arnold.pipelines.folder_audit:build_pipeline`)
+- `evidence_pack.verifier` -> native (validate import: `arnold_pipelines.evidence_pack:build_pipeline`)
+- `megaplan.core` -> `arnold workflow check --module arnold_pipelines.megaplan:build_pipeline`
+- `megaplan.creative` -> native (validate import: `arnold_pipelines.megaplan.pipelines.creative:build_pipeline`)
+- `megaplan.doc` -> native (validate import: `arnold_pipelines.megaplan.pipelines.doc:build_pipeline`)
+- `megaplan.jokes` -> native (validate import: `arnold_pipelines.megaplan.pipelines.jokes:build_pipeline`)
+- `megaplan.live_supervisor` -> native (validate import: `arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline`)
+- `megaplan.planning` -> `arnold workflow check --module arnold_pipelines.megaplan.pipelines.planning:build_pipeline`
+- `megaplan.select_tournament` -> native (validate import: `arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline`)
+- `megaplan.writing_panel_strict` -> native (validate import: `arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline`)
+
 Route every step through the Arnold CLI's Megaplan subcommands. Never call agents directly.
 Before the first CLI call, resolve a working launcher and reuse it for the whole run. Do not assume the removed `megaplan` entrypoint is on `PATH`; command presence alone is not enough. Prove the launcher works by successfully running a harmless CLI call with it first. In the instructions below, treat `<launcher>` as that verified command.
 Launcher resolution order:

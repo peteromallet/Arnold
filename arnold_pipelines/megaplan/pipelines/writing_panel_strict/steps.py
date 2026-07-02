@@ -7,6 +7,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from arnold.pipeline.steps.human_gate import HumanGateStep
 from arnold.runtime.envelope import EMPTY_ENVELOPE
 from arnold_pipelines.megaplan.steps.agent import AgentStep
 from arnold_pipelines.megaplan.steps.panel import PanelReviewerStep
@@ -128,6 +129,16 @@ def _make_agent_step(
         _produces="markdown",
         _panel_reviewer_order=_copy_panel_order(panel_reviewer_order),
         _mode="",
+    )
+
+
+def _make_human_gate_step(stage_name: str, artifact_stage: str) -> HumanGateStep:
+    return HumanGateStep(
+        name=stage_name,
+        _artifact_stage=artifact_stage,
+        _choices=list(_HUMAN_CHOICES),
+        _pipeline_name=_PIPELINE_NAME,
+        _pipeline_version=1,
     )
 
 

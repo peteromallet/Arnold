@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from collections.abc import Callable, Mapping
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +93,46 @@ def _pipeline():
     from arnold_pipelines.megaplan.workflows.planning import build_pipeline
 
     return build_pipeline()
+
+
+def canonical_metadata() -> dict[str, Any]:
+    """Return live canonical Megaplan metadata from the native-backed compile path."""
+
+    import arnold_pipelines.megaplan as megaplan_package
+    from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+
+    compiled = build_and_compile_pipeline()
+    facade_module = import_module("arnold_pipelines.megaplan.pipeline")
+    authored_module = import_module("arnold_pipelines.megaplan.workflows.planning")
+    native_program = getattr(compiled, "native_program", None)
+    registration_kind = "native" if native_program is not None else "graph_compatibility"
+
+    metadata: dict[str, Any] = {
+        "name": str(getattr(megaplan_package, "name", "megaplan") or "megaplan"),
+        "description": str(getattr(megaplan_package, "description", "") or ""),
+        "source_path": str(Path(facade_module.__file__).resolve()),
+        "authored_source_path": str(Path(authored_module.__file__).resolve()),
+        "driver": tuple(getattr(megaplan_package, "driver", ()) or ()),
+        "supported_modes": tuple(getattr(megaplan_package, "supported_modes", ()) or ()),
+        "recommended_profiles": tuple(
+            getattr(megaplan_package, "recommended_profiles", ()) or ()
+        ),
+        "capabilities": tuple(getattr(megaplan_package, "capabilities", ()) or ()),
+        "arnold_api_version": str(getattr(megaplan_package, "arnold_api_version", "") or ""),
+        "registration_kind": registration_kind,
+        "compatibility_classification": "native" if native_program is not None else "graph",
+        "supported_operations": tuple(kind.value for kind in sorted(SUPPORTED_OPERATIONS, key=lambda item: item.value)),
+    }
+    default_profile = getattr(megaplan_package, "default_profile", None)
+    if isinstance(default_profile, str) and default_profile:
+        metadata["default_profile"] = default_profile
+    manifest_hash = getattr(compiled, "manifest_hash", None)
+    if isinstance(manifest_hash, str) and manifest_hash:
+        metadata["manifest_hash"] = manifest_hash
+    topology_hash = getattr(compiled, "topology_hash", None)
+    if isinstance(topology_hash, str) and topology_hash:
+        metadata["topology_hash"] = topology_hash
+    return metadata
 
 
 def _invalid_request(message: str, **details: Any) -> OperationResult:

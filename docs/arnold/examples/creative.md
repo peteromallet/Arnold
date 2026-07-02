@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/megaplan/pipelines/creative
-- manifest_hash: 
+- manifest_hash: native:creative
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -22,27 +22,17 @@ Provenance:
 | Steps | arnold_pipelines/megaplan/pipelines/creative/steps.py|
 | Builder source | arnold_pipelines/megaplan/pipelines/creative/__init__.py|
 | Skill | arnold_pipelines/megaplan/pipelines/creative/SKILL.md|
-| Diagnostic | No callable canonical build_pipeline could be imported.|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
-| Load state | not-loadable|
-| Identity | not-loadable|
+| Load state | loadable-native|
+| Identity | native:creative|
 
 ## Builder Surface
 
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "creative"
-description: str = (
-    "Creative-form pipeline: form-aware prep -> execute -> critique -> "
-    "revise -> finalize. Forms registry validates --form; "
-    "--primary-criterion threads through as a first-class input."
-)
 
-driver: tuple[str, str] = ("native", "linear")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("creative",)
 ```
 
 ## Step Surface
@@ -191,9 +181,15 @@ def _artifact_text(
     )
 ```
 
-## Deferred native diagnostic
+## Native builder report
 
-No callable canonical build_pipeline could be imported.
+```yaml
+entry: prep
+id: creative
+instruction_count: 6
+native_program: creative
+stage_count: 5
+```
 
 ## Package Skill
 

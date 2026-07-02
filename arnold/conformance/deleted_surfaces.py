@@ -76,10 +76,7 @@ RUNTIME_SALVAGE_DELETION_TARGETS: tuple[DeletedSurface, ...] = (
     DeletedSurface("arnold.runtime.wal_fold", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "WAL folding replaced by journal fold."),
     DeletedSurface("arnold.runtime.oracle", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Oracle coordination is out of scope for the neutral runtime."),
     DeletedSurface("arnold.runtime.operations", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.runtime", "M6 deletion target", "Operational helpers are product-side."),
-    DeletedSurface("arnold.pipeline.validator", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Validation now in arnold.workflow.validation."),
-    DeletedSurface("arnold.pipeline.builder", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "DSL builder replaced by explicit Pipeline/Step/Route."),
     DeletedSurface("arnold.pipeline.hooks", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Hook dispatch is registry-driven."),
-    DeletedSurface("arnold.pipeline.registry", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Registry logic moved to arnold.execution.registries."),
     DeletedSurface("arnold.pipeline.step_invocation", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Native step invocation replaced by backend hooks."),
     DeletedSurface("arnold.pipeline.token_cost / model_resource_capabilities / media_cost", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Cost/resource modeling belongs in product harness.", note="Grouped row; concrete gates expand to all three modules."),
     DeletedSurface("arnold.pipeline.profiles", "module", "docs/arnold/runtime-salvage-deletion-map.md", "arnold.pipeline", "M6 deletion target", "Profile selection is product-side."),
@@ -108,7 +105,6 @@ DELETED_IMPORT_MODULES: tuple[str, ...] = (
     "arnold_pipelines.megaplan._pipeline.types",
     "arnold_pipelines.megaplan.stages",
     "arnold_pipelines.megaplan.stages.inprocess_step",
-    "arnold_pipelines.megaplan._compatibility",
     "arnold.runtime.batch",
     "arnold.runtime.driver",
     "arnold.runtime.process",
@@ -118,10 +114,7 @@ DELETED_IMPORT_MODULES: tuple[str, ...] = (
     "arnold.runtime.wal_fold",
     "arnold.runtime.oracle",
     "arnold.runtime.operations",
-    "arnold.pipeline.validator",
-    "arnold.pipeline.builder",
     "arnold.pipeline.hooks",
-    "arnold.pipeline.registry",
     "arnold.pipeline.step_invocation",
     "arnold.pipeline.token_cost",
     "arnold.pipeline.model_resource_capabilities",
@@ -136,14 +129,12 @@ DELETED_IMPORT_PREFIXES: tuple[str, ...] = (
     "arnold.pipelines.megaplan",
     "arnold_pipelines.megaplan._pipeline",
     "arnold_pipelines.megaplan.stages",
-    "arnold_pipelines.megaplan._compatibility",
 )
 
 DELETED_ARTIFACT_PATH_PREFIXES: tuple[str, ...] = (
     "arnold/pipelines/megaplan/",
     "arnold_pipelines/megaplan/_pipeline/",
     "arnold_pipelines/megaplan/stages/",
-    "arnold_pipelines/megaplan/_compatibility.py",
 )
 
 DELETED_MEGAPLAN_LEGACY_SYMBOLS: tuple[str, ...] = (
@@ -169,7 +160,6 @@ DELETED_CLI_HELP_FRAGMENTS: tuple[str, ...] = (
     "arnold.pipelines.megaplan",
     "arnold_pipelines.megaplan._pipeline",
     "arnold_pipelines.megaplan.stages",
-    "arnold_pipelines.megaplan._compatibility",
     "megaplan init",
     "megaplan prep",
     "megaplan plan",

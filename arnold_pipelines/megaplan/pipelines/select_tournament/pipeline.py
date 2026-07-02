@@ -58,6 +58,19 @@ DEFAULT_CANDIDATES: tuple[str, ...] = (
 )
 _CANDIDATE_SCORE_STATE_PREFIX = "__select_tournament_candidate_score_"
 
+name: str = "select-tournament"
+description: str = (
+    "Selection tournament pipeline: fan out per-candidate scoring, reduce "
+    "scores through a pairwise bracket, then emit a winner artifact."
+)
+default_profile: str | None = None
+supported_modes: tuple[str, ...] = ("native",)
+recommended_profiles: tuple[str, ...] = ()
+driver: tuple[str, str] = ("native", "fanout+pairwise-reduce")
+entrypoint: str = "build_pipeline"
+arnold_api_version: str = "1.0"
+capabilities: tuple[str, ...] = ("review",)
+
 
 def _candidate_score_state_key(seed: int) -> str:
     return f"{_CANDIDATE_SCORE_STATE_PREFIX}{seed}"
@@ -389,5 +402,14 @@ def _build_legacy_graph_pipeline(
 
 __all__ = [
     "DEFAULT_CANDIDATES",
+    "arnold_api_version",
     "build_pipeline",
+    "capabilities",
+    "default_profile",
+    "description",
+    "driver",
+    "entrypoint",
+    "name",
+    "recommended_profiles",
+    "supported_modes",
 ]

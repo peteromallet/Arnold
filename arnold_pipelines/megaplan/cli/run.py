@@ -31,6 +31,72 @@ from arnold.runtime.resume import TRUST_TRUSTED
 from arnold_pipelines.megaplan._core.state import write_plan_state
 
 
+def _describe_contract_label(metadata: dict[str, Any]) -> str:
+    registration = metadata.get("registration_kind")
+    if isinstance(registration, str) and registration:
+        return registration
+
+    compatibility = str(metadata.get("compatibility_classification", "") or "").lower()
+    if compatibility in {"graph", "graph_compatibility", "graph-compatible"}:
+        return "graph_compatibility"
+    if compatibility == "native":
+        return "native"
+
+    driver = metadata.get("driver")
+    if isinstance(driver, (list, tuple)) and driver:
+        if str(driver[0]) == "graph":
+            return "graph_compatibility"
+        if str(driver[0]) == "native":
+            return "native"
+    return "unknown"
+
+
+def render_pipeline_description(
+    name: str,
+    metadata: dict[str, Any],
+    *,
+    skill_md: str | None = None,
+) -> str:
+    """Render shared M1 substrate metadata for CLI describe surfaces."""
+    lines: list[str] = [f"Pipeline: {name}"]
+    source_path = metadata.get("source_path")
+    if source_path:
+        lines.append(f"Source:   {source_path}")
+    description = metadata.get("description")
+    if description:
+        lines.append("")
+        lines.append(str(description))
+
+    manifest_hash = metadata.get("manifest_hash")
+    if manifest_hash:
+        lines.append(f"Manifest: {manifest_hash}")
+
+    driver = metadata.get("driver")
+    if isinstance(driver, (list, tuple)) and driver:
+        lines.append(f"Driver:   {' / '.join(str(part) for part in driver)}")
+
+    lines.append(f"Registration: {_describe_contract_label(metadata)}")
+    lines.append(
+        "Contract: M1 dispatch substrate proof only; not final Megaplan report conformance."
+    )
+
+    default_profile = metadata.get("default_profile")
+    if default_profile:
+        lines.append(f"Default profile: {default_profile}")
+    recommended = metadata.get("recommended_profiles") or ()
+    if recommended:
+        lines.append(f"Recommended:     {', '.join(recommended)}")
+    supported_modes = metadata.get("supported_modes") or ()
+    if supported_modes:
+        lines.append(f"Modes:           {', '.join(supported_modes)}")
+
+    if skill_md:
+        lines.append("")
+        lines.append("─── SKILL.md ───")
+        lines.append(skill_md.strip())
+    return "\n".join(lines)
+
+
 def build_run_parser(subparsers: Any) -> None:
     """Attach the ``megaplan run`` subcommand to the main CLI."""
 
@@ -685,43 +751,29 @@ def _describe_pipeline(name: str) -> int:
     ``0`` on success and ``2`` when the name is unknown.
     """
 
+    from arnold_pipelines.megaplan.planning.operations import canonical_metadata
     from arnold_pipelines.megaplan.registry import (
         pipeline_metadata,
         read_pipeline_skill_md,
         registered_pipelines,
     )
+    from arnold_pipelines.megaplan.runtime.discovery import canonical_pipeline_name
 
-    if name not in registered_pipelines():
+    canonical_name = canonical_pipeline_name(name)
+    if canonical_name not in registered_pipelines():
         print(f"Error: Unknown pipeline {name!r}", file=sys.stderr)
         return 2
 
-    metadata = pipeline_metadata(name)
-    lines: list[str] = [f"Pipeline: {name}"]
-    source_path = metadata.get("source_path")
-    if source_path:
-        lines.append(f"Source:   {source_path}")
-    description = metadata.get("description")
-    if description:
-        lines.append("")
-        lines.append(str(description))
-    default_profile = metadata.get("default_profile")
-    if default_profile:
-        lines.append("")
-        lines.append(f"Default profile: {default_profile}")
-    recommended = metadata.get("recommended_profiles") or ()
-    if recommended:
-        lines.append(f"Recommended:     {', '.join(recommended)}")
-    supported_modes = metadata.get("supported_modes") or ()
-    if supported_modes:
-        lines.append(f"Modes:           {', '.join(supported_modes)}")
-
-    skill_md = read_pipeline_skill_md(name)
-    if skill_md:
-        lines.append("")
-        lines.append("─── SKILL.md ───")
-        lines.append(skill_md.strip())
-
-    print("\n".join(lines))
+    metadata = pipeline_metadata(canonical_name)
+    if canonical_name == "megaplan":
+        metadata.update(canonical_metadata())
+    print(
+        render_pipeline_description(
+            canonical_name,
+            metadata,
+            skill_md=read_pipeline_skill_md(canonical_name),
+        )
+    )
     return 0
 
 

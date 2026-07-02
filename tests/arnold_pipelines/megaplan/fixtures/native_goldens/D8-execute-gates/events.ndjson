@@ -1,0 +1,11 @@
+{"kind":"pipeline.init","payload":{"status":"started"},"schema_version":1,"seq":0,"ts_rel_init_s":null,"ts_utc":"2026-07-02T00:32:42.753162+00:00"}
+{"kind":"phase.start","payload":{"pc":0,"phase":"panel_review"},"phase":"panel_review","schema_version":1,"seq":1,"ts_rel_init_s":0.00336,"ts_utc":"2026-07-02T00:32:42.756522+00:00"}
+{"kind":"phase.end","payload":{"pc":0,"phase":"panel_review"},"phase":"panel_review","schema_version":1,"seq":2,"ts_rel_init_s":0.009319,"ts_utc":"2026-07-02T00:32:42.762481+00:00"}
+{"kind":"stage.complete","payload":{"pc":0,"stage":"panel_review__pc0"},"phase":"panel_review","schema_version":1,"seq":3,"ts_rel_init_s":0.012313,"ts_utc":"2026-07-02T00:32:42.765475+00:00"}
+{"kind":"phase.start","payload":{"pc":1,"phase":"synth"},"phase":"synth","schema_version":1,"seq":4,"ts_rel_init_s":0.015141,"ts_utc":"2026-07-02T00:32:42.768303+00:00"}
+{"kind":"phase.end","payload":{"pc":1,"phase":"synth"},"phase":"synth","schema_version":1,"seq":5,"ts_rel_init_s":0.019248,"ts_utc":"2026-07-02T00:32:42.772410+00:00"}
+{"kind":"stage.complete","payload":{"pc":1,"stage":"synth__pc1"},"phase":"synth","schema_version":1,"seq":6,"ts_rel_init_s":0.02246,"ts_utc":"2026-07-02T00:32:42.775622+00:00"}
+{"kind":"phase.start","payload":{"pc":2,"phase":"revise"},"phase":"revise","schema_version":1,"seq":7,"ts_rel_init_s":0.025252,"ts_utc":"2026-07-02T00:32:42.778414+00:00"}
+{"kind":"phase.end","payload":{"pc":2,"phase":"revise"},"phase":"revise","schema_version":1,"seq":8,"ts_rel_init_s":0.029044,"ts_utc":"2026-07-02T00:32:42.782206+00:00"}
+{"kind":"stage.complete","payload":{"pc":2,"stage":"revise__pc2"},"phase":"revise","schema_version":1,"seq":9,"ts_rel_init_s":0.032093,"ts_utc":"2026-07-02T00:32:42.785255+00:00"}
+{"kind":"checkpoint","payload":{"final":false,"stage_count":3},"schema_version":1,"seq":10,"ts_rel_init_s":0.043663,"ts_utc":"2026-07-02T00:32:42.796825+00:00"}

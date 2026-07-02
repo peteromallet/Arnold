@@ -7,7 +7,7 @@ Uses the same subprocess + ``sys.meta_path`` blocker pattern as
 with a MetaPathFinder that raises ``ModuleNotFoundError`` for any
 ``arnold.pipelines.megaplan.*``, ``arnold_pipelines.megaplan.*``, or
 ``megaplan.*`` import attempts to import ``arnold.pipelines.deliberation`` and
-``arnold.pipelines.deliberation.pipelines.build_initial_pipeline``.
+``arnold.pipelines.deliberation.build_pipeline``.
 If the import chain is clean the subprocess exits 0; otherwise it
 exits non-zero with the blocking module name in stderr.
 
@@ -73,7 +73,7 @@ sys.meta_path.insert(0, _BlockMegaplanFinder())
 
 # These imports must succeed with zero megaplan transitive dependencies.
 import arnold.pipelines.deliberation  # noqa: E402
-from arnold.pipelines.deliberation.pipelines import build_initial_pipeline  # noqa: E402, F401
+from arnold.pipelines.deliberation import build_pipeline  # noqa: E402, F401
 
 sys.exit(0)
 """)

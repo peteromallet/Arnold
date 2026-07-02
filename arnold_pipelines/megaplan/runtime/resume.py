@@ -13,7 +13,7 @@ opinionated layer.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -245,13 +245,7 @@ def with_entry(pipeline: Pipeline, stage_name: str) -> Pipeline:
             f"stage {stage_name!r} not in pipeline; available: "
             f"{sorted(pipeline.stages)}"
         )
-    return Pipeline(
-        stages=pipeline.stages,
-        entry=stage_name,
-        overlays=getattr(pipeline, "overlays", ()),
-        binding_map=getattr(pipeline, "binding_map", None),
-        resource_bundles=getattr(pipeline, "resource_bundles", ()),
-    )
+    return replace(pipeline, entry=stage_name)
 
 
 def check_awaiting_user(plan_dir: Path) -> dict[str, Any] | None:

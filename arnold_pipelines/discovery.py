@@ -58,6 +58,28 @@ class ShippedPipelineInfo:
 # Mapping from final package path (relative to repo root) to discovery metadata.
 # This table is the source of truth for Phase 3; it is consumed by the inventory
 # scanner in ``scripts/check_workflow_pipeline_inventory.py``.
+#
+# === M3 Migration Inventory (2026-07-01) ===
+#
+# Eight active packages with explicit native migration status:
+#
+#   Megaplan-owned (arnold_pipelines.megaplan.pipelines.*):
+#     1. creative          → arnold_pipelines.megaplan.pipelines.creative          [native, migrated]
+#     2. doc               → arnold_pipelines.megaplan.pipelines.doc               [native, migrated]
+#     3. jokes             → arnold_pipelines.megaplan.pipelines.jokes             [native, migrated]
+#     4. live_supervisor   → arnold_pipelines.megaplan.pipelines.live_supervisor   [native, migrated]
+#     5. select_tournament → arnold_pipelines.megaplan.pipelines.select_tournament [native, migrated]
+#     6. writing_panel_strict → arnold_pipelines.megaplan.pipelines.writing_panel_strict [native, migrated]
+#
+#   Standalone (arnold.pipelines.*):
+#     7. folder_audit      → arnold.pipelines.folder_audit      [native, migrated]
+#     8. deliberation      → arnold.pipelines.deliberation      [native, migrated]
+#
+#   Archive/Delete — not migrated (no active callers found):
+#     - epic_blitz: archived; delete if no active evidence by M4.
+#       See entries at arnold_pipelines/megaplan/pipelines/epic_blitz.py
+#       and arnold_pipelines/megaplan/pipelines/epic-blitz.
+#
 _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
     # Survivors (migrate)
     "arnold_pipelines/megaplan": {
@@ -169,6 +191,7 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": None,
         "disposition": "delete",
         "migrated": False,
+        "diagnostic": "M3: legacy ephemeral epic_blitz source; delete per M3 bridge narrowing.",
     },
     "arnold/pipelines/megaplan/pipelines/select_tournament": {
         "id": "legacy.megaplan.select_tournament",
@@ -187,12 +210,24 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": False,
     },
     "arnold/pipelines/folder_audit": {
-        "id": "legacy.folder_audit",
-        "public": False,
-        "registry_id": None,
+        "id": "folder-audit",
+        "public": True,
+        "registry_id": "folder_audit",
         "docs_path": None,
-        "disposition": "archive",
-        "migrated": False,
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+        "diagnostic": "Standalone native-first folder_audit package promoted in M3.",
+    },
+    "arnold/pipelines/deliberation": {
+        "id": "deliberation",
+        "public": True,
+        "registry_id": "deliberation",
+        "docs_path": None,
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+        "diagnostic": "Standalone native-first deliberation package promoted in M3.",
     },
     "arnold_pipelines/evidence_pack": {
         "id": "evidence_pack_verifier",
@@ -209,7 +244,10 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": "arnold_pipelines/_template/SKILL.md",
         "disposition": "migrate",
         "migrated": True,
-        "builder_contract": "workflow",
+        "builder_contract": "native",
+        "diagnostic": (
+            "M6: template migrated to native-first projected-shell contract (T6)."
+        ),
     },
     # Archives
     "arnold_pipelines/megaplan/pipelines/epic_blitz.py": {
@@ -220,6 +258,10 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "disposition": "archive",
         "migrated": False,
         "builder_contract": "native",
+        "diagnostic": (
+            "M3: archive/delete — no active callers found. "
+            "Not migrated. Delete if no active evidence appears by M4."
+        ),
     },
     "arnold_pipelines/megaplan/pipelines/epic-blitz": {
         "id": "megaplan.epic_blitz",
@@ -228,6 +270,10 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": "arnold_pipelines/megaplan/pipelines/epic-blitz/SKILL.md",
         "disposition": "archive",
         "migrated": False,
+        "diagnostic": (
+            "M3: archive/delete — no active callers. "
+            "Not migrated. Delete if no active evidence appears by M4."
+        ),
     },
     # Deletes (legacy duplicates)
     "arnold/pipelines/jokes": {
@@ -295,12 +341,16 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": False,
     },
     "arnold/pipelines/_authoring.py": {
-        "id": "legacy.arnold_pipelines.authoring",
-        "public": False,
+        "id": "arnold.pipelines._authoring",
+        "public": True,
         "registry_id": None,
         "docs_path": None,
-        "disposition": "delete",
+        "disposition": "whitelist",
         "migrated": False,
+        "diagnostic": (
+            "M6: active whitelisted non-pipeline helper; "
+            "import-only native-first authoring contract surface."
+        ),
     },
     "arnold/pipelines/simplify_writing": {
         "id": "legacy.simplify_writing",
@@ -325,14 +375,7 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": None,
         "disposition": "archive",
         "migrated": False,
-    },
-    "arnold/pipelines/deliberation": {
-        "id": "legacy.deliberation",
-        "public": False,
-        "registry_id": None,
-        "docs_path": None,
-        "disposition": "archive",
-        "migrated": False,
+        "diagnostic": "M3: legacy epic_blitz path; archive/delete, not migrated unless active callers found.",
     },
     "arnold/pipelines/_deliberation_example": {
         "id": "legacy._deliberation_example",

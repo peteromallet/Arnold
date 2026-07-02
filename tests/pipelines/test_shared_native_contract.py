@@ -31,6 +31,8 @@ class NativeTarget:
 # core Arnold packages live under ``arnold.pipelines.*``.  Archived or
 # graph-marked packages (e.g. epic_blitz) are intentionally excluded.
 ACTIVE_NATIVE_TARGETS: tuple[NativeTarget, ...] = (
+    NativeTarget("arnold.pipelines.folder_audit", "folder-audit"),
+    NativeTarget("arnold.pipelines.deliberation", "deliberation"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.creative", "creative"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.doc", "doc"),
     NativeTarget("arnold_pipelines.megaplan.pipelines.jokes", "jokes"),
@@ -148,6 +150,8 @@ def test_contract_target_sets_are_staged_explicitly() -> None:
     deferred_names = {target.pipeline_name for target in DEFERRED_NATIVE_TARGETS}
 
     assert active_names == {
+        "folder-audit",
+        "deliberation",
         "creative",
         "doc",
         "jokes",
@@ -157,6 +161,40 @@ def test_contract_target_sets_are_staged_explicitly() -> None:
     }
     assert deferred_names == set()
     assert active_names.isdisjoint(deferred_names)
+
+
+def test_epic_blitz_is_documented_as_not_migrated() -> None:
+    """M3 migration: epic_blitz is explicitly not migrated.
+
+    The epic-blitz pipeline is archived/delete disposition per the M3
+    inventory. This discovery assertion documents that no active native
+    parity requirement exists for epic_blitz — it must NOT appear in
+    ACTIVE_NATIVE_TARGETS, and its archived source (if any) must not
+    be importable as an active first-class pipeline package.
+    """
+    # epic-blitz must NOT be in the active targets.
+    active_names = {target.pipeline_name for target in ACTIVE_NATIVE_TARGETS}
+    assert "epic-blitz" not in active_names, (
+        "epic-blitz is documented as archive/delete in the M3 migration inventory; "
+        "it must NOT appear in ACTIVE_NATIVE_TARGETS"
+    )
+    # The archived epic_blitz module path must not be importable as a
+    # first-class pipeline (it lives in docs/archive/m5/).
+    ARCHIVE_PATH = "arnold_pipelines.megaplan.pipelines.epic_blitz"
+    try:
+        importlib.import_module(ARCHIVE_PATH)
+        # If it somehow imports, assert it is NOT a native-backed active pipeline.
+        mod = importlib.import_module(ARCHIVE_PATH)
+        is_active = getattr(mod, "name", None) is not None and "native" in (
+            getattr(mod, "supported_modes", ()) or ()
+        )
+        assert not is_active, (
+            f"epic-blitz ({ARCHIVE_PATH}) is importable and advertises native support — "
+            "this contradicts the M3 archive/delete disposition"
+        )
+    except ImportError:
+        # Expected: epic_blitz is NOT importable as an active package.
+        pass
 
 
 def test_workflow_first_template_contrasts_with_native_targets() -> None:
