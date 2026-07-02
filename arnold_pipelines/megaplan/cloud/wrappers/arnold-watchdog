@@ -38,6 +38,7 @@ REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
 REAP_ORPHAN_AGE_SECS="${CLOUD_WATCHDOG_REAP_ORPHAN_AGE_SECS:-3900}"
 REAP_STALL_GRACE_SECS="${CLOUD_WATCHDOG_REAP_STALL_GRACE_SECS:-900}"
 REAP_STALL_IDLE_SECS="${CLOUD_WATCHDOG_REAP_STALL_IDLE_SECS:-600}"
+REPAIR_DATA_RETENTION_INTERVAL_SECS="${CLOUD_WATCHDOG_REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
 SRC_DIR="${CLOUD_WATCHDOG_ARNOLD_SRC:-/workspace/arnold}"
 SYNC_ENABLED="${CLOUD_WATCHDOG_SYNC_ENABLED:-1}"
 SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-editible-install}"
@@ -47,6 +48,7 @@ KIMI_OPERATOR_ROOT="${KIMI_GOAL_OPERATOR_ROOT:-/workspace/kimi-goal-operator}"
 REPAIR_OPERATOR_ROOT="${CLOUD_WATCHDOG_REPAIR_ROOT:-$KIMI_OPERATOR_ROOT}"
 PRIMARY_REPAIR_BIN="${CLOUD_WATCHDOG_PRIMARY_REPAIR_BIN:-/usr/local/bin/arnold-repair-loop}"
 KIMI_REPAIR_BIN="${CLOUD_WATCHDOG_KIMI_REPAIR_BIN:-/usr/local/bin/arnold-kimi-goal-operator}"
+META_REPAIR_BIN="${CLOUD_WATCHDOG_META_REPAIR_BIN:-/usr/local/bin/arnold-meta-repair-loop}"
 REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"
 DISCOVER_BIN="${CLOUD_WATCHDOG_DISCOVER_BIN:-$SRC_DIR/arnold_pipelines/megaplan/cloud/wrappers/arnold-cloud-discover}"
 ONCE="${1:-}"
@@ -1658,6 +1660,14 @@ kimi_pgid_path() {
   printf '%s/%s.kimi-pgid' "$MARKER_DIR" "$1"
 }
 
+meta_dispatch_marker_path() {
+  printf '%s/%s.meta-dispatch' "$MARKER_DIR" "$1"
+}
+
+meta_pgid_path() {
+  printf '%s/%s.meta-pgid' "$MARKER_DIR" "$1"
+}
+
 session_marker_path() {
   printf '%s/%s.json' "$MARKER_DIR" "$1"
 }
@@ -2594,6 +2604,78 @@ kimi_dispatch_marker_clear() {
   rm -f "$(kimi_dispatch_marker_path "$1")" "$(kimi_pgid_path "$1")" 2>/dev/null || true
 }
 
+meta_dispatch_marker_set() {
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$(meta_dispatch_marker_path "$1")" 2>/dev/null || true
+}
+
+meta_dispatch_marker_clear() {
+  rm -f "$(meta_dispatch_marker_path "$1")" "$(meta_pgid_path "$1")" 2>/dev/null || true
+}
+
+write_partial_liveness_tick() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local run_kind="${4:-chain}"
+  local plan_name="${5:-}"
+  local health="${6:-alive}"
+  local sidecar_dir events_path
+  sidecar_dir="${CLOUD_WATCHDOG_REPAIR_SIDECAR_DIR:-${REPAIR_DATA_DIR}.d}"
+  events_path="$sidecar_dir/events/events.jsonl"
+  mkdir -p "$(dirname "$events_path")" 2>/dev/null || true
+  PYTHONPATH="$WRAPPER_REPO_ROOT:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$events_path" "$session" "$health" "$workspace" "$remote_spec" "$run_kind" "$plan_name" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+events_path, session, health, workspace, remote_spec, run_kind, plan_name = sys.argv[1:8]
+
+MAX_TICKS = 20
+
+tick = {
+    "session": session,
+    "outcome": "partial_liveness",
+    "health": health,
+    "recorded_at": datetime.now(timezone.utc).isoformat(),
+    "run_kind": run_kind,
+    "plan_name": plan_name,
+}
+
+# Read existing events, append the new tick, and truncate to MAX_TICKS
+events = []
+try:
+    if os.path.exists(events_path):
+        with open(events_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+except Exception:
+    pass
+
+events.append(tick)
+
+# Keep only the most recent MAX_TICKS
+if len(events) > MAX_TICKS:
+    events = events[-MAX_TICKS:]
+
+# Write atomically via temp file
+tmp_path = events_path + ".tmp"
+try:
+    with open(tmp_path, "w", encoding="utf-8") as fh:
+        for entry in events:
+            fh.write(json.dumps(entry, sort_keys=True) + "\n")
+    os.replace(tmp_path, events_path)
+except Exception:
+    pass
+PY
+}
+
 clear_session_tracking_artifacts() {
   local session="$1"
   local plan_name="${2:-}"
@@ -2715,6 +2797,178 @@ dispatch_kimi_repair() {
   log "repair loop background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
   return 0
+}
+
+# ---- meta-repair dispatch ----------------------------------------------------
+# Meta-repair diagnoses and fixes repair-system failures when ordinary repair
+# has proven insufficient.  It is gated behind META_REPAIR_ENABLED (default-off),
+# guarded against recursion, and tracked with dedicated marker/pgid sidecars so
+# the watchdog can observe its lifecycle independently of ordinary repair.
+
+check_meta_repair_recursion_guard() {
+  local session="$1"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" <<'PY'
+import sys
+
+from arnold_pipelines.megaplan.cloud.meta_repair_policy import check_meta_repair_recursion
+
+session, repair_data_dir = sys.argv[1:3]
+result = check_meta_repair_recursion(session, repair_data_dir=repair_data_dir)
+if result.recursing:
+    print(f"RECURSION:{result.recommendation}")
+else:
+    print(f"OK:{result.recommendation}")
+PY
+}
+
+dispatch_meta_repair() {
+  local session="$1"
+  local workspace="$2"
+  local remote_spec="$3"
+  local report_items="$4"
+  local pgid_path repair_busy recursion_result
+  REPAIR_DISPATCH_RESULT="unavailable"
+
+  # Feature-flag gate: META_REPAIR_ENABLED must be explicitly set to "1"
+  if [[ "${META_REPAIR_ENABLED_FLAG:-0}" != "1" ]]; then
+    log "meta-repair disabled by feature flag; skipping dispatch session=$session"
+    REPAIR_DISPATCH_RESULT="disabled"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "meta_repair" "disabled" "meta-repair disabled by feature flag" "$workspace" "$remote_spec"
+    fi
+    return 0
+  fi
+
+  # Binary must exist and be executable
+  if [[ ! -x "$META_REPAIR_BIN" ]]; then
+    log "meta-repair binary missing or not executable: $META_REPAIR_BIN session=$session"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "meta_repair" "unavailable" "meta-repair binary missing: $META_REPAIR_BIN" "$workspace" "$remote_spec"
+    fi
+    return 1
+  fi
+
+  # Busy guard: don't dispatch if a repair loop is already active for this session
+  repair_busy="$(repair_loop_busy_state "$session")"
+  if [[ "$repair_busy" == "same_session" ]]; then
+    log "meta-repair skipped; repair loop already active session=$session"
+    REPAIR_DISPATCH_RESULT="busy"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "meta_repair" "busy" "repair loop already active" "$workspace" "$remote_spec"
+    fi
+    return 0
+  fi
+
+  # Recursion guard: must not launch meta-repair when one already exists
+  recursion_result="$(check_meta_repair_recursion_guard "$session" 2>&1)" || true
+  if [[ "$recursion_result" == RECURSION:* ]]; then
+    log "meta-repair recursion guard blocked dispatch session=$session detail=$(redact_inline_text "$recursion_result")"
+    REPAIR_DISPATCH_RESULT="recursive"
+    if [[ -n "$report_items" ]]; then
+      report_item "$report_items" "$session" "meta_repair" "recursive" "meta-repair recursion guard blocked dispatch" "$workspace" "$remote_spec"
+    fi
+    return 0
+  fi
+  log "meta-repair recursion guard: $recursion_result"
+
+  # Marker and pgid tracking
+  pgid_path="$(meta_pgid_path "$session")"
+  meta_dispatch_marker_set "$session"
+
+  # Background-dispatch meta-repair so it never blocks the watchdog tick
+  if command -v setsid >/dev/null 2>&1; then
+    setsid bash -c 'echo "$$" > "$1"; exec "$2" "$3"' \
+      _ "$pgid_path" "$META_REPAIR_BIN" "$session" \
+      >> "$LOG" 2>&1 < /dev/null &
+  else
+    bash -c 'echo "$$" > "$1"; exec "$2" "$3"' \
+      _ "$pgid_path" "$META_REPAIR_BIN" "$session" \
+      >> "$LOG" 2>&1 < /dev/null &
+  fi
+  log "meta-repair background-dispatched session=$session pid=$!"
+  REPAIR_DISPATCH_RESULT="dispatched"
+  if [[ -n "$report_items" ]]; then
+    report_item "$report_items" "$session" "meta_repair" "dispatched" "meta-repair background-dispatched" "$workspace" "$remote_spec"
+  fi
+  return 0
+}
+
+run_repair_data_maintenance() {
+  local throttle_secs="${REPAIR_DATA_RETENTION_INTERVAL_SECS:-21600}"
+  [[ "$throttle_secs" =~ ^[0-9]+$ ]] || throttle_secs=21600
+  if (( throttle_secs <= 0 )); then
+    return 0
+  fi
+
+  PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$MARKER_DIR" "$REPAIR_DATA_DIR" "$throttle_secs" <<'PY'
+import json
+import pathlib
+import sys
+from datetime import datetime, timezone
+
+from arnold_pipelines.megaplan.cloud.repair_contract import cleanup_repair_data_retention, load_json
+from arnold_pipelines.megaplan.cloud.repair_lock import inspect_repair_lock
+from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path
+
+marker_dir = pathlib.Path(sys.argv[1])
+repair_data_dir = pathlib.Path(sys.argv[2])
+throttle_secs = int(sys.argv[3])
+sidecar_dir = repair_data_dir.with_name(f"{repair_data_dir.name}.d")
+stamp_path = sidecar_dir / "cleanup" / "retention-maintenance.json"
+now = datetime.now(timezone.utc)
+
+previous = load_json(stamp_path, default={})
+last_started_at = str(previous.get("started_at") or "").strip() if isinstance(previous, dict) else ""
+if last_started_at:
+    try:
+        started_at = datetime.fromisoformat(last_started_at)
+    except ValueError:
+        started_at = None
+    if started_at is not None and (now - started_at).total_seconds() < throttle_secs:
+        print("THROTTLED")
+        raise SystemExit(0)
+
+for lock_dir in sorted(marker_dir.glob("*.repair-loop.lock")):
+    result = inspect_repair_lock(lock_dir)
+    if result.busy:
+        print("LOCK_BUSY")
+        raise SystemExit(0)
+
+active_sessions: set[str] = set()
+for path in sorted(marker_dir.glob("*.json")):
+    if not is_canonical_session_marker_path(path):
+        continue
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    if isinstance(payload, dict):
+        session = str(payload.get("session") or "").strip()
+        if session:
+            active_sessions.add(session)
+
+stamp_path.parent.mkdir(parents=True, exist_ok=True)
+stamp_path.write_text(json.dumps({"started_at": now.isoformat()}, sort_keys=True), encoding="utf-8")
+summary = cleanup_repair_data_retention(
+    repair_data_dir,
+    sidecar_dir=sidecar_dir,
+    index_path=repair_data_dir / "index.json",
+    now=now,
+    active_session_ids=active_sessions,
+)
+stamp_path.write_text(
+    json.dumps(
+        {
+            "started_at": now.isoformat(),
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "cleanup_id": summary.get("cleanup_id", ""),
+        },
+        sort_keys=True,
+    ),
+    encoding="utf-8",
+)
+print(f"RAN:{summary.get('cleanup_id', '')}")
+PY
 }
 
 reap_stale_repair_candidates() {
@@ -4210,6 +4464,7 @@ PY
     # falling back.
     kimi_dispatch_marker_clear "$session"
     rm -f "$(repair_needs_human_path "$session")" 2>/dev/null || true
+    write_partial_liveness_tick "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name" "$health"
     log "session alive: $session"
     report_item "$report_items" "$session" "observe" "alive" "session already alive" "$workspace" "$remote_spec"
     return 0
@@ -4485,6 +4740,248 @@ PY
       report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
       return 0
     fi
+    local meta_repair_trigger meta_dispatch_result
+    meta_repair_trigger="$(
+      PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
+import json
+import pathlib
+import sys
+from typing import Any
+
+from arnold_pipelines.megaplan.cloud.human_blockers import classify_needs_human_blocker
+from arnold_pipelines.megaplan.cloud.meta_repair import evaluate_meta_repair_triggers
+
+session, repair_data_dir_raw, marker_dir_raw, current_target_observation_raw = sys.argv[1:]
+repair_data_dir = pathlib.Path(repair_data_dir_raw)
+marker_dir = pathlib.Path(marker_dir_raw)
+repair_data_path = repair_data_dir / f"{session}.repair-data.json"
+needs_human_path = repair_data_dir / f"{session}.needs-human.json"
+sidecar_root = repair_data_dir.with_name(f"{repair_data_dir.name}.d")
+
+if not repair_data_path.exists():
+    print("NO_TRIGGER")
+    raise SystemExit(0)
+
+try:
+    payload = json.loads(repair_data_path.read_text(encoding="utf-8"))
+except Exception:
+    print("NO_TRIGGER")
+    raise SystemExit(0)
+
+if not isinstance(payload, dict):
+    print("NO_TRIGGER")
+    raise SystemExit(0)
+
+resolver_record: dict[str, Any] = {}
+if current_target_observation_raw:
+    try:
+        loaded_observation = json.loads(current_target_observation_raw)
+    except Exception:
+        loaded_observation = {}
+    if isinstance(loaded_observation, dict):
+        resolver_record = loaded_observation
+
+
+def strings_from(value: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(value, str):
+        found.append(value)
+    elif isinstance(value, dict):
+        for item in value.values():
+            found.extend(strings_from(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.extend(strings_from(item))
+    return found
+
+
+attempts = payload.get("attempts")
+if not isinstance(attempts, list):
+    attempts = []
+iterations = payload.get("iterations")
+if not isinstance(iterations, list):
+    iterations = []
+
+recent_attempts = [item for item in attempts[-5:] if isinstance(item, dict)]
+recent_iterations = [item for item in iterations[-5:] if isinstance(item, dict)]
+contexts = [payload.get("current_failure_context")]
+contexts.extend(recent_attempts)
+contexts.extend(recent_iterations)
+
+failure_kinds: list[str] = []
+for item in recent_attempts:
+    for candidate in (
+        item.get("failure_classification"),
+        (item.get("failure_context") or {}).get("failure_classification") if isinstance(item.get("failure_context"), dict) else None,
+        (item.get("post_launch_failure_context") or {}).get("failure_classification") if isinstance(item.get("post_launch_failure_context"), dict) else None,
+        (item.get("plan_latest_failure") or {}).get("kind") if isinstance(item.get("plan_latest_failure"), dict) else None,
+    ):
+        if isinstance(candidate, str) and candidate.strip():
+            failure_kinds.append(candidate.strip())
+            break
+
+repair_outcome = str(payload.get("outcome") or "")
+attempt_outcomes = [
+    str(item.get("outcome") or repair_outcome or "").strip()
+    for item in recent_attempts
+    if isinstance(item, dict)
+]
+attempt_outcomes = [item for item in attempt_outcomes if item]
+
+state_tokens = (
+    "failed:missing_state_path",
+    "failed:state_unreadable",
+    "failed:state_not_object",
+    "state_inspection_error",
+)
+has_state_inspection_error = any(
+    token in text
+    for context in contexts
+    for text in strings_from(context)
+    for token in state_tokens
+)
+
+launch_statuses = []
+for item in recent_attempts + recent_iterations:
+    launch_statuses.extend(
+        str(item.get(key) or "").strip()
+        for key in ("mechanical_launch", "kimi_launch")
+        if isinstance(item, dict)
+    )
+has_model_tool_launch_error = any(
+    status.startswith("failed:")
+    and not any(token in status for token in state_tokens)
+    for status in launch_statuses
+)
+
+discord_delivery_failed = False
+discord_escalation_is_true_blocker = False
+escalation_path = sidecar_root / "escalations" / "escalations.jsonl"
+if escalation_path.exists():
+    escalation_records: list[dict[str, Any]] = []
+    for line in escalation_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(record, dict) and str(record.get("session") or "") == session:
+            escalation_records.append(record)
+    latest_opened: dict[str, Any] | None = None
+    latest_followup_event = ""
+    for record in escalation_records:
+        event = str(record.get("event") or "").strip()
+        if event == "opened":
+            latest_opened = record
+            latest_followup_event = ""
+            continue
+        if (
+            latest_opened
+            and str(record.get("escalation_id") or "") == str(latest_opened.get("escalation_id") or "")
+            and event
+        ):
+            latest_followup_event = event
+    if latest_opened:
+        discord_escalation_is_true_blocker = (
+            str(latest_opened.get("blocker_verdict") or "").strip() == "TRUE_BLOCKER"
+        )
+        discord_delivery_failed = latest_followup_event in {
+            "unavailable",
+            "failed",
+            "delivery_failed",
+        }
+if needs_human_path.exists():
+    try:
+        needs_human_payload = json.loads(needs_human_path.read_text(encoding="utf-8"))
+    except Exception:
+        needs_human_payload = {}
+    discord_status = ""
+    if isinstance(needs_human_payload, dict):
+        discord_status = str(needs_human_payload.get("discord_status") or "").strip()
+    if not discord_delivery_failed:
+        discord_delivery_failed = discord_status not in {"", "pending", "queued", "delivered"}
+
+    current_plan = ""
+    if isinstance(needs_human_payload, dict):
+        current_plan = str(
+            needs_human_payload.get("current_plan_name")
+            or needs_human_payload.get("plan_name")
+            or ""
+        ).strip()
+    if not current_plan:
+        current_plan = str(payload.get("plan_name") or "").strip()
+
+    if current_plan:
+        plan_refs = (resolver_record.get("needs_human") or {}).get("plan_refs", [])
+        if not isinstance(plan_refs, list):
+            plan_refs = []
+        current_refs = resolver_record.get("current_refs") or {}
+        if not isinstance(current_refs, dict):
+            current_refs = {}
+        authoritative_source = str(resolver_record.get("authoritative_source") or "").strip()
+        has_current_target_proof = bool(
+            authoritative_source
+            and authoritative_source != "resolver_observe_disabled"
+            and (
+                bool((resolver_record.get("plan_state") or {}).get("present"))
+                or bool((resolver_record.get("chain_state") or {}).get("present"))
+                or bool((resolver_record.get("chain_log") or {}).get("present"))
+                or bool((resolver_record.get("active_step_heartbeat") or {}).get("active"))
+            )
+        )
+        discord_escalation_is_true_blocker = (
+            current_plan in plan_refs
+            and str(current_refs.get("current_plan_name") or "").strip() == current_plan
+            and has_current_target_proof
+        )
+    if current_plan and not discord_escalation_is_true_blocker:
+        try:
+            blocker = classify_needs_human_blocker(
+                session,
+                current_plan=current_plan,
+                marker_dir=marker_dir,
+                repair_data_dir=repair_data_dir,
+                needs_human_path=needs_human_path,
+                needs_human_payload=needs_human_payload if isinstance(needs_human_payload, dict) else None,
+            )
+            discord_escalation_is_true_blocker = blocker.is_true_blocker
+        except Exception:
+            discord_escalation_is_true_blocker = False
+
+classification, _ = evaluate_meta_repair_triggers(
+    session,
+    repair_data_dir=repair_data_dir,
+    repair_outcome=repair_outcome,
+    attempt_outcomes=attempt_outcomes,
+    failure_kinds=failure_kinds,
+    has_state_inspection_error=has_state_inspection_error,
+    has_model_tool_launch_error=has_model_tool_launch_error,
+    discord_delivery_failed=discord_delivery_failed,
+    discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
+    repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
+    load_evidence=True,
+)
+
+if classification.should_dispatch and classification.trigger_label:
+    print(f"TRIGGER:{classification.trigger_label}")
+else:
+    print("NO_TRIGGER")
+PY
+    )"
+    if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+      if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
+        meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+        if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+          log "session unhealthy after repair failure; meta-repair background-dispatched session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+          return 0
+        fi
+        log "session unhealthy after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+      else
+        log "session unhealthy after repair failure; meta-repair trigger matched but dispatch unavailable session=$session health=$health trigger=${meta_repair_trigger#TRIGGER:}"
+      fi
+    fi
   else
     if mechanical_relaunch_attempted_previously "$session"; then
       if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
@@ -4607,6 +5104,13 @@ for path in sorted(marker_dir.glob("*.json")):
         print(path)
 PY
 )
+  local retention_result
+  retention_result="$(run_repair_data_maintenance 2>>"${LOG:-/dev/null}" || true)"
+  if [[ "$retention_result" == RAN:* ]]; then
+    log "repair-data maintenance complete cleanup_id=${retention_result#RAN:}"
+  elif [[ "$retention_result" == LOCK_BUSY ]]; then
+    log "repair-data maintenance skipped; ordinary repair lock active"
+  fi
   reap_stale_repairs "$report_items"
   log "scan complete markers=$found"
   emit_report "$report_items" "$found"
