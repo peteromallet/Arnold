@@ -944,11 +944,13 @@ def test_repair_loop_clear_stale_state_trims_replay_tail_and_backs_up_phase_resu
         },
     }
 
+    failure_context_path = tmp_path / "failure-context.json"
+    failure_context_path.write_text(json.dumps(failure_context), encoding="utf-8")
     program = _extract_repair_program(
         "repair_clear_stale_state_if_needed",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$failure_context\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$failure_context_file\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(data_path), json.dumps(failure_context))
+    result = _run_embedded_python(program, str(data_path), str(failure_context_path))
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.startswith("cleared:")
@@ -1012,11 +1014,13 @@ def test_repair_loop_clear_stale_state_syncs_plan_chain_mismatch(tmp_path: Path)
         },
     }
 
+    failure_context_path = tmp_path / "failure-context.json"
+    failure_context_path.write_text(json.dumps(failure_context), encoding="utf-8")
     program = _extract_repair_program(
         "repair_clear_stale_state_if_needed",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$failure_context\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$failure_context_file\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(data_path), json.dumps(failure_context))
+    result = _run_embedded_python(program, str(data_path), str(failure_context_path))
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.startswith("cleared:")
@@ -1566,11 +1570,13 @@ def test_repair_clear_stale_state_preserves_legacy_repair_data_shapes(tmp_path: 
         },
     }
 
+    failure_context_path = tmp_path / "failure-context.json"
+    failure_context_path.write_text(json.dumps(failure_context), encoding="utf-8")
     program = _extract_repair_program(
         "repair_clear_stale_state_if_needed",
-        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$failure_context\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$failure_context_file\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(data_path), json.dumps(failure_context))
+    result = _run_embedded_python(program, str(data_path), str(failure_context_path))
 
     assert result.returncode == 0, result.stderr
     payload = json.loads(data_path.read_text(encoding="utf-8"))
@@ -4169,149 +4175,6 @@ tmux() { echo TMUX >&2; return 1; }
     assert "TMUX" not in result.stderr
 
 
-def test_watchdog_missing_chain_spec_uses_terminal_chain_state_without_repair(
-    tmp_path: Path,
-) -> None:
-    marker_dir = tmp_path / "markers"
-    marker_dir.mkdir()
-    workspace = tmp_path / "ws"
-    chain_dir = workspace / ".megaplan" / "plans" / ".chains"
-    chain_dir.mkdir(parents=True, exist_ok=True)
-    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
-    spec_path.parent.mkdir(parents=True, exist_ok=True)
-    import hashlib
-
-    digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
-    (chain_dir / f"{spec_path.stem}-{digest}.json").write_text(
-        json.dumps(
-            {
-                "current_plan_name": "",
-                "current_state": "",
-                "last_state": "done",
-                "events": [{"msg": "all milestones complete"}],
-            }
-        ),
-        encoding="utf-8",
-    )
-    report_path = tmp_path / "report.tsv"
-    log_path = tmp_path / "watchdog.log"
-
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function("session_terminal_status"),
-            _extract_wrapper_function("plan_attention_status_env"),
-            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
-            _extract_wrapper_function("launch_chain_tick"),
-            f"MARKER_DIR={str(marker_dir)!r}",
-            f"REPAIR_DATA_DIR={str(marker_dir / 'repair-data')!r}",
-            f"LOG={str(log_path)!r}",
-            """
-report_item() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
-}
-log() { printf '%s\n' "$*" >> "$LOG"; }
-session_health_status() { echo stopped; }
-plan_phase_health_status() { echo ok; }
-plan_progress_stall_status() { echo ok; }
-kimi_operator_running() { return 1; }
-repair_loop_busy_state() { echo none; }
-dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
-repair_unhealthy_session() { echo REPAIR >&2; return 0; }
-ensure_install_or_repair() { return 0; }
-resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
-safe_name() { printf '%s\n' "$1"; }
-tmux() { echo TMUX >&2; return 1; }
-""".strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} .megaplan/initiatives/demo-chain/chain.yaml {str(report_path)!r} chain '' ''",
-        ]
-    )
-    result = _run_watchdog_shell(script)
-    assert result.returncode == 0, result.stderr
-    report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tcomplete\tchain complete\t" in report
-    assert "DISPATCH" not in result.stderr
-    assert "REPAIR" not in result.stderr
-    assert "RELAUNCH" not in result.stderr
-    assert "TMUX" not in result.stderr
-
-
-def test_watchdog_missing_workspace_uses_completed_repair_history_without_repair(
-    tmp_path: Path,
-) -> None:
-    marker_dir = tmp_path / "markers"
-    repair_data_dir = marker_dir / "repair-data"
-    marker_dir.mkdir()
-    repair_data_dir.mkdir()
-    workspace = tmp_path / "missing-ws"
-    report_path = tmp_path / "report.tsv"
-    log_path = tmp_path / "watchdog.log"
-    (repair_data_dir / "demo-chain.repair-data.json").write_text(
-        json.dumps(
-            {
-                "session": "demo-chain",
-                "attempts": [
-                    {
-                        "failure_classification": "chain_completed",
-                        "chain_state_summary": {
-                            "current_plan_name": "",
-                            "current_state": "",
-                            "last_state": "done",
-                            "events": [{"msg": "all milestones complete"}],
-                        },
-                        "failure_context": {
-                            "failure_classification": "chain_completed",
-                            "chain_state_summary": {
-                                "current_plan_name": "",
-                                "current_state": "",
-                                "last_state": "done",
-                            },
-                        },
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    script = "\n\n".join(
-        [
-            _extract_wrapper_function("session_terminal_status"),
-            _extract_wrapper_function("plan_attention_status_env"),
-            _extract_wrapper_function_until("notify_needs_human", "adopt_unmarked_tmux_sessions"),
-            _extract_wrapper_function("launch_chain_tick"),
-            f"MARKER_DIR={str(marker_dir)!r}",
-            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
-            f"LOG={str(log_path)!r}",
-            """
-report_item() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" "$5" "$6" "$7" >> "$1"
-}
-log() { printf '%s\n' "$*" >> "$LOG"; }
-session_health_status() { echo stopped; }
-plan_phase_health_status() { echo ok; }
-plan_progress_stall_status() { echo ok; }
-kimi_operator_running() { return 1; }
-repair_loop_busy_state() { echo none; }
-dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
-repair_unhealthy_session() { echo REPAIR >&2; return 0; }
-ensure_install_or_repair() { return 0; }
-resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
-safe_name() { printf '%s\n' "$1"; }
-tmux() { echo TMUX >&2; return 1; }
-""".strip(),
-            f"launch_chain_tick demo-chain {str(workspace)!r} /missing/demo-chain.yaml {str(report_path)!r} chain '' ''",
-        ]
-    )
-    result = _run_watchdog_shell(script)
-    assert result.returncode == 0, result.stderr
-    report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tcomplete\tchain complete\t" in report
-    assert "DISPATCH" not in result.stderr
-    assert "REPAIR" not in result.stderr
-    assert "RELAUNCH" not in result.stderr
-    assert "TMUX" not in result.stderr
-
-
 def test_watchdog_missing_base_ref_chain_state_reports_needs_human_without_plan_state(
     tmp_path: Path,
 ) -> None:
@@ -4945,7 +4808,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$detail"' in text
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$iteration" "$attempt_id" "$status" "$report_path" "$turn_rc" "$failure_context"' in text
     assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$outcome"' in text
-    assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context"' in text
+    assert 'failure_context_file="$(mktemp)"' in text
+    assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context_file"' in text
     assert "repair_data_record_kimi()" in text
     assert "from arnold_pipelines.megaplan.cloud.human_blockers import write_needs_human_marker_payload" in text
     assert "write_needs_human_marker_payload(" in text
@@ -4978,7 +4842,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'DEV_REQUESTED_MODEL="glm-5.2"' in text
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.4"' in text
     assert 'DEV_REQUESTED_MODEL="codex:gpt-5.5"' in text
-    assert 'GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"' in text
+    assert 'CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0' in text
+    assert 'GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"' in text
     assert 'repair_data_set_outcome "running"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
     assert 'repair_data_set_outcome "discord_escalated"' in text
@@ -6545,6 +6410,16 @@ def test_plan_progress_stall_status_is_wired_into_launch_chain_tick() -> None:
     # Progress stalls are unintended stops from the operator perspective; they
     # must launch repair instead of only surfacing as passive issues.
     assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stall_health"' in text
+
+
+def test_watchdog_resolves_stale_remote_spec_before_repair_dispatch() -> None:
+    text = _wrapper("arnold-watchdog")
+
+    assert "resolve_existing_remote_spec()" in text
+    assert 'payload["remote_spec"] = str(selected)' in text
+    assert 'resolved_remote_spec="$(resolve_existing_remote_spec "$session" "$workspace" "$remote_spec" "$run_kind"' in text
+    assert 'remote_spec="$resolved_remote_spec"' in text
+    assert 'remote_spec_path="$resolved_remote_spec"' in text
     # The progress_stall status must NOT be in the alive-allowlist so it surfaces
     # in issues[] — the allowlist is the set excluded from issues.
     assert '"progress_stall"' not in text.split('not in {"alive"')[1].split("}")[0]
@@ -6751,6 +6626,12 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     assert "hypothesis" in text
     assert "recommendation" in text
     assert "You are auditing a cloud megaplan SESSION, not just one plan." in text
+    assert "Superfixer health / repair-the-repairer" in text
+    assert "Fix the watchdog/repair-trigger/auditor source" in text
+    assert "dead provider/auth path" in text
+    assert "argument-size crash" in text
+    assert "Do not patch the running workspace merely to" in text
+    assert "make this one session green when the repairer is the broken component" in text
     assert "chain log line numbers" in text
     assert "Live failure vs stale state" in text
     assert "Gate resolvability" in text

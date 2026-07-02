@@ -2880,9 +2880,11 @@ PY
 repair_clear_stale_state_if_needed() {
   require_repair_lock_held
   ensure_repair_budget_available "stale-state-clear"
-  local failure_context
+  local failure_context failure_context_file
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context_file" <<'PY'
 import datetime as dt
 import json
 import os
@@ -2891,9 +2893,9 @@ import sys
 
 from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, load_json, save_repair_data
 
-data_path_raw, failure_context_raw = sys.argv[1:]
+data_path_raw, failure_context_path_raw = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
-failure_context = json.loads(failure_context_raw)
+failure_context = json.loads(pathlib.Path(failure_context_path_raw).read_text(encoding="utf-8"))
 stale_state = failure_context.get("stale_state") if isinstance(failure_context, dict) else {}
 if not isinstance(stale_state, dict):
     stale_state = {}
@@ -3044,6 +3046,9 @@ initial["state_mismatch"] = state_mismatch
 save_repair_data(data_path, payload)
 print("cleared:" + "; ".join(actions))
 PY
+  local rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 clear_repair_markers() {
@@ -3734,12 +3739,16 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
 fi
 
 GLM_MODEL=""
-GLM_FALLBACK=""
-if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
-  :
+GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"
+if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" == "1" ]]; then
+  if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
+    GLM_FALLBACK=""
+  else
+    GLM_MODEL="gpt-5.4"
+    GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
+  fi
 else
   GLM_MODEL="gpt-5.4"
-  GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
 fi
 
 for iteration in 1 2 3; do
