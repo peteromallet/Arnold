@@ -2237,9 +2237,11 @@ merged_examples: dict[str, str] = {}
 guard_counts: collections.Counter[str] = collections.Counter()
 guard_examples: dict[str, str] = {}
 guard_reasons: dict[str, str] = {}
+guard_kinds: dict[str, str] = {}
 interesting_lines: list[str] = []
 merged_pattern = re.compile(r"^\[chain\] PR #(?P<pr>\d+) merged; advancing past (?P<milestone>.+)$")
-guard_pattern = re.compile(r"^\[chain\] completion guard blocked (?P<milestone>[^:]+): (?P<reason>.+)$")
+completion_guard_pattern = re.compile(r"^\[chain\] completion guard blocked (?P<milestone>[^:]+): (?P<reason>.+)$")
+pr_progression_guard_pattern = re.compile(r"^\[chain\] PR progression blocked (?P<milestone>[^:]+): (?P<reason>.+)$")
 
 for raw_line in log_lines:
     line = raw_line.strip()
@@ -2252,12 +2254,22 @@ for raw_line in log_lines:
         merged_examples.setdefault(milestone, line)
         interesting_lines.append(line)
         continue
-    guard_match = guard_pattern.match(line)
+    guard_match = completion_guard_pattern.match(line)
     if guard_match:
         milestone = guard_match.group("milestone").strip()
         guard_counts[milestone] += 1
         guard_examples.setdefault(milestone, line)
         guard_reasons[milestone] = guard_match.group("reason").strip()
+        guard_kinds[milestone] = "completion_guard"
+        interesting_lines.append(line)
+        continue
+    guard_match = pr_progression_guard_pattern.match(line)
+    if guard_match:
+        milestone = guard_match.group("milestone").strip()
+        guard_counts[milestone] += 1
+        guard_examples.setdefault(milestone, line)
+        guard_reasons[milestone] = guard_match.group("reason").strip()
+        guard_kinds[milestone] = "pr_progression"
         interesting_lines.append(line)
         continue
     if "authority_divergence" in line or '"last_state": "authority_divergence"' in line:
@@ -2392,6 +2404,7 @@ if status in {"chain_cycle", "chain_completion_guard_rejections"}:
     guard_milestone = str(completion_guard.get("milestone") or "")
     guard_reason = str(completion_guard.get("reason") or "")
     guard_repeat_count = int(completion_guard.get("repeat_count") or 0)
+    guard_kind = guard_kinds.get(guard_milestone, "completion_guard")
     base_sha = milestone_base_sha_from_state_or_reason(plan_state, guard_reason)
     advancement_check = completion_guard_advancement(base_sha, previous)
     worktree_check = working_tree_status()
@@ -2412,8 +2425,35 @@ if status in {"chain_cycle", "chain_completion_guard_rejections"}:
         "completion_guard_advancement": advancement_check,
         "completion_guard_worktree": worktree_check,
         "completion_guard_state_fallback": fallback_check,
+        "completion_guard_kind": guard_kind,
     }
-    if zero_advancement:
+    if (
+        guard_kind == "pr_progression"
+        and "unpublished claimed changes" in guard_reason
+        and worktree_check.get("available") is True
+        and worktree_check.get("dirty") is True
+    ):
+        uncommitted_count = int(worktree_check.get("uncommitted_file_count") or 0)
+        status = "chain_uncommitted_execute_output"
+        issue_kind = "chain_uncommitted_execute_output"
+        summary = (
+            f"milestone {guard_milestone or 'unknown'} repeatedly blocked PR progression after merge "
+            f"because claimed execute output remained unpublished in a dirty worktree "
+            f"({uncommitted_count} uncommitted files); this is a CHAIN-DRIVER commit/publish bug, "
+            "not a plan-level no-op or stale-state case"
+        )
+        chain_health_log_message = (
+            "CHAIN HEALTH EVIDENCE: merged milestone PR hit repeated unpublished-claimed-change "
+            f"publish guards with {uncommitted_count} uncommitted files still in the working tree; "
+            "execute output was left local after PR progression"
+        )
+        evidence_extra_lines.append(
+            "- PR progression guard evidence: merged milestone PR repeatedly reported unpublished claimed "
+            "changes while the working tree remained dirty, so execute output was left local after PR "
+            "progression. Investigate arnold_pipelines/megaplan/chain publish/merge sequencing."
+        )
+        details["chain_driver_diagnosis"] = summary
+    elif zero_advancement:
         base_label = base_sha or "unknown"
         if worktree_check.get("available") is True and worktree_check.get("dirty") is True:
             uncommitted_count = int(worktree_check.get("uncommitted_file_count") or 0)
