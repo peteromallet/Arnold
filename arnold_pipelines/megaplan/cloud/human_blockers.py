@@ -8,6 +8,8 @@ ledger writer skeleton so that M1 does not make escalation authoritative.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -355,6 +357,80 @@ def write_needs_human_marker_payload(
     return marker
 
 
+def supersede_needs_human_marker(
+    path: str | Path,
+    repair_payload: Mapping[str, Any],
+    *,
+    repair_data_path: str | Path,
+    discord_status: str,
+    previous_escalation_id: str,
+    superseded_by: str,
+    ledger_writer: EscalationLedgerWriter | None = None,
+    reason: str = "",
+    recorded_at: str | None = None,
+) -> dict[str, Any]:
+    """Rewrite the mutable needs-human pointer and record the superseded escalation."""
+
+    marker_path = Path(path)
+    previous_marker = _resolve_needs_human_payload(marker_path, None) or {}
+    marker = write_needs_human_marker_payload(
+        marker_path,
+        repair_payload,
+        repair_data_path=repair_data_path,
+        discord_status=discord_status,
+        recorded_at=recorded_at,
+    )
+    session = _safe_marker_text(marker.get("session")) or _safe_marker_text(repair_payload.get("session"))
+    if ledger_writer is not None and previous_escalation_id:
+        previous_target_id = _safe_marker_text(previous_marker.get("target_id"))
+        new_target_id = _safe_marker_text(marker.get("target_id"))
+        ledger_writer.write_superseded(
+            session,
+            escalation_id=previous_escalation_id,
+            superseded_by=superseded_by,
+            reason=reason,
+            extra={
+                "previous_target_id": previous_target_id,
+                "new_target_id": new_target_id,
+            },
+        )
+    return marker
+
+
+def clear_needs_human_marker(path: str | Path) -> bool:
+    """Clear the mutable needs-human pointer without touching ledger history."""
+
+    target = Path(path)
+    try:
+        target.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def compute_escalation_id(
+    session: str,
+    *,
+    target_id: str = "",
+    current_plan: str = "",
+    current_plan_name: str = "",
+    needs_human_path: str = "",
+) -> str:
+    """Return a deterministic escalation id for the current target pointer."""
+
+    payload = {
+        "session": _safe_marker_text(session),
+        "target_id": _safe_marker_text(target_id),
+        "current_plan": _safe_marker_text(current_plan),
+        "current_plan_name": _safe_marker_text(current_plan_name),
+        "needs_human_path": _safe_marker_text(needs_human_path),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"esc-{digest}"
+
+
 # ---------------------------------------------------------------------------
 # Escalation ledger writer skeleton (disabled by default)
 # ---------------------------------------------------------------------------
@@ -430,6 +506,145 @@ class EscalationLedgerWriter:
         record = _classification_to_record(classification)
         return append_incident_record(self.sidecar_dir, record)
 
+    def write_opened(
+        self,
+        session: str,
+        *,
+        escalation_id: str,
+        current_plan: str = "",
+        target_id: str = "",
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        return self._write_lifecycle(
+            session,
+            event="opened",
+            escalation_id=escalation_id,
+            extra={
+                "current_plan": current_plan,
+                "target_id": target_id,
+                **(dict(extra) if extra else {}),
+            },
+        )
+
+    def write_delivered(
+        self,
+        session: str,
+        *,
+        escalation_id: str,
+        channel_id: str = "",
+        message_ids: Sequence[str] | None = None,
+        message_count: int | None = None,
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        payload: dict[str, Any] = {
+            "channel_id": channel_id,
+            "message_ids": list(message_ids or ()),
+        }
+        if message_count is None:
+            payload["message_count"] = len(payload["message_ids"])
+        else:
+            payload["message_count"] = message_count
+        if extra:
+            payload.update(extra)
+        return self._write_lifecycle(
+            session,
+            event="delivered",
+            escalation_id=escalation_id,
+            extra=payload,
+        )
+
+    def write_unavailable(
+        self,
+        session: str,
+        *,
+        escalation_id: str,
+        reason: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        return self._write_lifecycle(
+            session,
+            event="unavailable",
+            escalation_id=escalation_id,
+            extra={"reason": reason, **(dict(extra) if extra else {})},
+        )
+
+    def write_answered(
+        self,
+        session: str,
+        *,
+        escalation_id: str,
+        responder_user_id: str = "",
+        channel_id: str = "",
+        message_id: str = "",
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        return self._write_lifecycle(
+            session,
+            event="answered",
+            escalation_id=escalation_id,
+            extra={
+                "responder_user_id": responder_user_id,
+                "channel_id": channel_id,
+                "message_id": message_id,
+                **(dict(extra) if extra else {}),
+            },
+        )
+
+    def write_superseded(
+        self,
+        session: str,
+        *,
+        escalation_id: str,
+        superseded_by: str,
+        reason: str = "",
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        return self._write_lifecycle(
+            session,
+            event="superseded",
+            escalation_id=escalation_id,
+            extra={
+                "superseded_by": superseded_by,
+                "reason": reason,
+                **(dict(extra) if extra else {}),
+            },
+        )
+
+    def write_timed_out(
+        self,
+        session: str,
+        *,
+        escalation_id: str,
+        deadline_at: str = "",
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        return self._write_lifecycle(
+            session,
+            event="timed_out",
+            escalation_id=escalation_id,
+            extra={"deadline_at": deadline_at, **(dict(extra) if extra else {})},
+        )
+
+    def write_resume_attempted(
+        self,
+        session: str,
+        *,
+        escalation_id: str,
+        action: str = "",
+        resume_status: str = "",
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        return self._write_lifecycle(
+            session,
+            event="resume_attempted",
+            escalation_id=escalation_id,
+            extra={
+                "action": action,
+                "resume_status": resume_status,
+                **(dict(extra) if extra else {}),
+            },
+        )
+
     def write_incident(
         self,
         session: str,
@@ -462,6 +677,28 @@ class EscalationLedgerWriter:
         if extra:
             record.update(extra)
         return append_incident_record(self.sidecar_dir, record)
+
+    def _write_lifecycle(
+        self,
+        session: str,
+        *,
+        event: str,
+        escalation_id: str,
+        extra: Mapping[str, Any] | None = None,
+    ) -> Path | None:
+        if not self._enabled or self.sidecar_dir is None:
+            return None
+
+        from arnold_pipelines.megaplan.cloud.repair_contract import append_escalation_record
+
+        record: dict[str, Any] = {
+            "session": session,
+            "event": event,
+            "escalation_id": escalation_id,
+        }
+        if extra:
+            record.update(extra)
+        return append_escalation_record(self.sidecar_dir, _redact_small_record(record))
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +765,19 @@ def _classification_to_record(classification: HumanBlockerClassification) -> dic
         "authoritative_source": authoritative_source,
         "plan_state_mtime": plan_state_mtime,
         "chain_state_mtime": chain_state_mtime,
+    }
+
+
+def _redact_small_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """Redact secrets while keeping lifecycle payloads compact and predictable."""
+
+    redacted = redact_payload(record)
+    if not isinstance(redacted, dict):
+        return dict(record)
+    return {
+        key: value
+        for key, value in redacted.items()
+        if value not in ("", None, [], {})
     }
 
 
@@ -648,5 +898,8 @@ __all__ = [
     "HumanBlockerClassification",
     "build_needs_human_marker",
     "classify_needs_human_blocker",
+    "clear_needs_human_marker",
+    "compute_escalation_id",
+    "supersede_needs_human_marker",
     "write_needs_human_marker_payload",
 ]

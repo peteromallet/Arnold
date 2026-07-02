@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 from arnold_pipelines.megaplan.resident.discord import (
     DISCORD_MESSAGE_LIMIT,
+    DiscordInboundMessage,
     DiscordOutboundSink,
     split_discord_message,
 )
@@ -65,3 +67,83 @@ def test_discord_outbound_sink_sends_long_messages_in_chunks() -> None:
             return self.user
 
     asyncio.run(run_case())
+
+
+def test_discord_inbound_reply_resolves_escalation_id_from_referenced_message(tmp_path, monkeypatch) -> None:
+    repair_data_dir = tmp_path / "repair-data"
+    ledger_dir = repair_data_dir / "escalations"
+    ledger_dir.mkdir(parents=True)
+    (ledger_dir / "escalations.jsonl").write_text(
+        json.dumps(
+            {
+                "event": "delivered",
+                "session": "demo-session",
+                "escalation_id": "esc-ref-1",
+                "message_ids": ["bot-msg-1", "bot-msg-2"],
+                "channel_id": "channel-1",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("MEGAPLAN_RESIDENT_REPAIR_DATA_DIR", str(repair_data_dir))
+
+    message = SimpleNamespace(
+        id="reply-1",
+        content="I approve this.",
+        author=SimpleNamespace(id="user-1"),
+        guild=None,
+        channel=SimpleNamespace(id="channel-1", parent=None),
+        reference=SimpleNamespace(message_id="bot-msg-2"),
+    )
+
+    inbound = DiscordInboundMessage.from_discord_message(message)
+    event = inbound.to_inbound_event()
+
+    assert inbound.referenced_message_id == "bot-msg-2"
+    assert inbound.escalation_id == "esc-ref-1"
+    assert event.escalation_id == "esc-ref-1"
+    assert event.conversation_key == "discord:dm:user-1"
+    assert event.raw["discord_reference_message_id"] == "bot-msg-2"
+
+
+def test_discord_inbound_reply_falls_back_to_escalation_tag(monkeypatch) -> None:
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_REPAIR_DATA_DIR", raising=False)
+    monkeypatch.delenv("CLOUD_WATCHDOG_REPAIR_DATA_DIR", raising=False)
+
+    message = SimpleNamespace(
+        id="reply-2",
+        content="[escalation:esc-tag-9] proceed",
+        author=SimpleNamespace(id="user-9"),
+        guild=None,
+        channel=SimpleNamespace(id="channel-9", parent=None),
+        reference=None,
+    )
+
+    inbound = DiscordInboundMessage.from_discord_message(message)
+    event = inbound.to_inbound_event()
+
+    assert inbound.escalation_id == "esc-tag-9"
+    assert event.escalation_id == "esc-tag-9"
+    assert event.conversation_key == "discord:dm:user-9"
+
+
+def test_discord_inbound_without_escalation_context_preserves_conversation_key(monkeypatch) -> None:
+    monkeypatch.delenv("MEGAPLAN_RESIDENT_REPAIR_DATA_DIR", raising=False)
+    monkeypatch.delenv("CLOUD_WATCHDOG_REPAIR_DATA_DIR", raising=False)
+
+    message = SimpleNamespace(
+        id="reply-3",
+        content="plain reply",
+        author=SimpleNamespace(id="user-3"),
+        guild=SimpleNamespace(id="guild-1"),
+        channel=SimpleNamespace(id="channel-3", parent=None),
+        reference=None,
+    )
+
+    inbound = DiscordInboundMessage.from_discord_message(message)
+    event = inbound.to_inbound_event()
+
+    assert inbound.escalation_id is None
+    assert event.escalation_id is None
+    assert event.conversation_key == "discord:guild:guild-1:channel:channel-3"

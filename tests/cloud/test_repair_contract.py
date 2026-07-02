@@ -310,6 +310,85 @@ def test_jsonl_unknown_kind_raises(tmp_path: Path) -> None:
         repair_contract.append_jsonl_record(tmp_path, "unknown", {"x": 1})
 
 
+def test_jsonl_append_escalation_writes_to_correct_path(tmp_path: Path) -> None:
+    """The escalations sidecar uses escalations/escalations.jsonl under the sidecar dir."""
+    sidecar_dir = tmp_path / "repair-data.d"
+
+    repair_contract.append_escalation_record(sidecar_dir, {"escalation_id": "esc-1", "event": "opened"})
+
+    path = repair_contract._sidecar_jsonl_path(sidecar_dir, "escalations")
+    assert path.exists()
+    assert path.name == "escalations.jsonl"
+    assert path.parent.name == "escalations"
+
+    records = repair_contract.read_jsonl_records(path)
+    assert len(records) == 1
+    assert records[0]["escalation_id"] == "esc-1"
+    assert records[0]["event"] == "opened"
+    assert records[0]["_sequence"] == 1
+
+
+def test_jsonl_append_escalation_preserves_existing_sidecars(tmp_path: Path) -> None:
+    """Adding escalation records must not disturb events/incidents/attempts sidecars."""
+    sidecar_dir = tmp_path / "repair-data.d"
+
+    # Write to all existing sidecar kinds
+    repair_contract.append_repair_event(sidecar_dir, {"kind": "event"})
+    repair_contract.append_incident_record(sidecar_dir, {"kind": "incident"})
+    repair_contract.append_attempt_record(sidecar_dir, {"kind": "attempt"})
+
+    # Now write escalation records
+    repair_contract.append_escalation_record(sidecar_dir, {"escalation_id": "esc-1", "lifecycle": "opened"})
+    repair_contract.append_escalation_record(sidecar_dir, {"escalation_id": "esc-1", "lifecycle": "delivered"})
+
+    # Verify existing sidecars are untouched
+    events = repair_contract.read_jsonl_records(
+        repair_contract._sidecar_jsonl_path(sidecar_dir, "events")
+    )
+    incidents = repair_contract.read_jsonl_records(
+        repair_contract._sidecar_jsonl_path(sidecar_dir, "incidents")
+    )
+    attempts = repair_contract.read_jsonl_records(
+        repair_contract._sidecar_jsonl_path(sidecar_dir, "attempts")
+    )
+    assert len(events) == 1
+    assert events[0]["kind"] == "event"
+    assert len(incidents) == 1
+    assert incidents[0]["kind"] == "incident"
+    assert len(attempts) == 1
+    assert attempts[0]["kind"] == "attempt"
+
+    # Verify escalations sidecar has both records with correct sequences
+    escalations = repair_contract.read_jsonl_records(
+        repair_contract._sidecar_jsonl_path(sidecar_dir, "escalations")
+    )
+    assert len(escalations) == 2
+    assert escalations[0]["lifecycle"] == "opened"
+    assert escalations[0]["_sequence"] == 1
+    assert escalations[1]["lifecycle"] == "delivered"
+    assert escalations[1]["_sequence"] == 2
+
+
+def test_jsonl_append_escalation_auto_sequence_and_timestamp(tmp_path: Path) -> None:
+    """Escalation records get auto-sequence and _timestamp like other sidecars."""
+    sidecar_dir = tmp_path / "repair-data.d"
+
+    repair_contract.append_escalation_record(sidecar_dir, {"escalation_id": "esc-1"})
+    repair_contract.append_escalation_record(sidecar_dir, {"escalation_id": "esc-2"})
+    repair_contract.append_escalation_record(sidecar_dir, {"escalation_id": "esc-3"})
+
+    path = repair_contract._sidecar_jsonl_path(sidecar_dir, "escalations")
+    records = repair_contract.read_jsonl_records(path)
+
+    assert len(records) == 3
+    sequences = [r["_sequence"] for r in records]
+    assert sequences == [1, 2, 3]
+
+    for r in records:
+        assert "_timestamp" in r
+        datetime.fromisoformat(r["_timestamp"])
+
+
 def test_jsonl_non_mapping_record_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must be a mapping"):
         repair_contract.append_jsonl_record(tmp_path, "events", [1, 2, 3])  # type: ignore[arg-type]

@@ -126,6 +126,7 @@ def test_send_discord_dm_posts_dm_channel_then_messages() -> None:
     assert result == {
         "ok": True,
         "channel_id": "dm-channel-1",
+        "message_ids": ["msg-2"],
         "message_count": 1,
     }
     assert requests[0]["url"].endswith("/users/@me/channels")
@@ -175,3 +176,62 @@ def test_send_discord_dm_redacts_payload_before_delivery() -> None:
     assert "bearer-secret-token-value" not in delivered
     assert "supersecret" not in delivered
     assert "***REDACTED***" in delivered
+
+
+def test_send_discord_dm_returns_chunked_message_ids_without_secret_bearing_fields() -> None:
+    requests: list[dict[str, Any]] = []
+    payload = {
+        "title": "Megaplan needs human review - chain-1",
+        "summary": "Authorization: Bearer bearer-secret-token-value",
+        "fields": [
+            {"label": "Summary", "value": "x" * (DISCORD_MESSAGE_LIMIT + 300)},
+            {"label": "Token", "value": "export API_TOKEN=supersecret"},
+        ],
+    }
+    expected_messages = render_discord_dm(payload)
+
+    class _FakeResponse:
+        def __init__(self, payload: dict[str, Any]) -> None:
+            self._payload = payload
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload).encode("utf-8")
+
+        def __enter__(self) -> "_FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    def fake_urlopen(req, timeout=10):
+        requests.append(
+            {
+                "url": req.full_url,
+                "headers": dict(req.header_items()),
+                "body": json.loads(req.data.decode("utf-8")),
+                "timeout": timeout,
+            }
+        )
+        if req.full_url.endswith("/users/@me/channels"):
+            return _FakeResponse({"id": "dm-channel-1"})
+        return _FakeResponse({"id": f"msg-{len(requests) - 1}"})
+
+    result = send_discord_dm(
+        payload,
+        env={
+            "DISCORD_BOT_TOKEN": "token-123",
+            "DISCORD_DM_USER_ID": "user-456",
+        },
+        opener=fake_urlopen,
+    )
+
+    assert result["ok"] is True
+    assert result["channel_id"] == "dm-channel-1"
+    assert result["message_ids"] == [f"msg-{idx}" for idx in range(1, len(expected_messages) + 1)]
+    assert result["message_count"] == len(expected_messages)
+    assert "Authorization" not in result
+    assert "headers" not in result
+    assert "body" not in result
+    assert "token-123" not in json.dumps(result)
+    assert "supersecret" not in json.dumps(result)
+    assert "bearer-secret-token-value" not in json.dumps(result)

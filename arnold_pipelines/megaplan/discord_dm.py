@@ -102,13 +102,17 @@ def send_discord_dm(
             opener=urlopen,
         )
         channel_id = str(channel["id"])
+        message_ids: list[str] = []
         for content in messages:
-            _discord_api_request(
+            delivered = _discord_api_request(
                 f"/channels/{channel_id}/messages",
                 {"content": content},
                 token=token,
                 opener=urlopen,
             )
+            message_id = delivered.get("id")
+            if message_id is not None:
+                message_ids.append(str(message_id))
     except Exception as exc:
         LOGGER.warning("Discord DM delivery failed for user %s: %s", user_id, exc)
         return {
@@ -121,6 +125,7 @@ def send_discord_dm(
     return {
         "ok": True,
         "channel_id": channel_id,
+        "message_ids": message_ids,
         "message_count": len(messages),
     }
 
