@@ -430,6 +430,30 @@ def test_chain_child_python_commands_use_safe_path(
         assert cmd[:3] == [sys.executable, "-P", "-m"]
 
 
+def test_commit_phase_excludes_tracked_runtime_journals(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    _init_repo(root)
+    event_log = root / ".megaplan" / "epics" / "epic-a" / "events.jsonl"
+    event_log.parent.mkdir(parents=True)
+    event_log.write_text('{"event":"old"}\n', encoding="utf-8")
+    _git(root, "add", ".megaplan/epics/epic-a/events.jsonl")
+    _git(root, "commit", "-m", "track event log")
+
+    event_log.write_text('{"event":"old"}\n{"event":"new"}\n', encoding="utf-8")
+    changed = root / "changed.txt"
+    changed.write_text("real milestone work\n", encoding="utf-8")
+
+    messages: list[str] = []
+    commit_sha = _commit_phase(root, "plan-x", "review-cleanup", writer=messages.append)
+
+    assert commit_sha is not None
+    committed_paths = _git(root, "show", "--name-only", "--format=", commit_sha).stdout.splitlines()
+    assert "changed.txt" in committed_paths
+    assert ".megaplan/epics/epic-a/events.jsonl" not in committed_paths
+    assert _git(root, "ls-files", "-v", ".megaplan/epics/epic-a/events.jsonl").stdout.startswith("S ")
+    assert any("excluded runtime journal paths" in message for message in messages)
+
+
 def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

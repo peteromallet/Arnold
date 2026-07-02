@@ -8,6 +8,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,12 @@ _MISSING_REMOTE_REF_MARKERS = (
     "couldn't find remote ref",
     "could not find remote ref",
     "remote ref does not exist",
+)
+
+_CHAIN_RUNTIME_JOURNAL_PATTERNS = (
+    ".megaplan/epics/*/events.jsonl",
+    ".megaplan/plans/*/events.ndjson",
+    ".megaplan/plans/*/execution_trace.jsonl",
 )
 
 
@@ -136,6 +143,58 @@ def _command_detail(proc: subprocess.CompletedProcess[str]) -> str:
 def _is_missing_remote_ref_detail(detail: str) -> bool:
     lowered = detail.lower()
     return any(marker in lowered for marker in _MISSING_REMOTE_REF_MARKERS)
+
+
+def _is_chain_runtime_journal_path(rel_path: str) -> bool:
+    normalized = rel_path.replace(os.sep, "/")
+    return any(fnmatchcase(normalized, pattern) for pattern in _CHAIN_RUNTIME_JOURNAL_PATTERNS)
+
+
+def _exclude_chain_runtime_journals_from_commit(root: Path, *, writer) -> None:
+    staged = _compat().subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "-z"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if staged.returncode != 0:
+        detail = (staged.stderr or staged.stdout or "").strip()
+        raise CliError(
+            "git_commit_failed",
+            f"git diff --cached --name-only exited {staged.returncode}",
+            extra={"stdout": staged.stdout, "stderr": detail},
+        )
+    paths = [path for path in staged.stdout.split("\0") if path]
+    runtime_paths = [path for path in paths if _is_chain_runtime_journal_path(path)]
+    if not runtime_paths:
+        return
+    _compat()._reset_staged_paths(root, [root / path for path in runtime_paths], writer=writer)
+    tracked_paths: list[str] = []
+    for path in runtime_paths:
+        tracked_check = _compat().subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", path],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if tracked_check.returncode == 0:
+            tracked_paths.append(path)
+    if tracked_paths:
+        _compat()._run_command(
+            root,
+            ["git", "update-index", "--skip-worktree", "--", *tracked_paths],
+            writer=writer,
+            error_code="git_commit_failed",
+        )
+    writer(
+        "[chain] excluded runtime journal paths from milestone commit: "
+        + ", ".join(runtime_paths)
+        + "\n"
+    )
 
 
 def _is_missing_remote_ref_result(proc: subprocess.CompletedProcess[str]) -> bool:
@@ -1422,6 +1481,7 @@ def _commit_phase(
             "a project_dir rooted at the repository being changed.",
         )
     _compat()._run_command(root, ["git", "add", "-A"], writer=writer, error_code="git_commit_failed")
+    _exclude_chain_runtime_journals_from_commit(root, writer=writer)
     claimed_root_paths = _compat()._claimed_root_paths(root, plan)
     claimed_nested_repo_roots: set[str] = set()
     root_abs = root.resolve()
