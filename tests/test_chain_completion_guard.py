@@ -537,6 +537,65 @@ def test_run_chain_blocks_merged_pr_with_unpublished_claimed_changes(
     assert "src/app.py" in result["reason"]
 
 
+def test_run_chain_logs_pr_progression_block_for_unpublished_claimed_changes(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    plan_dir = _write_plan(
+        tmp_path,
+        current_state="finalized",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+        execution_batch=False,
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {"tasks": [{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}]}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "app.py").write_text("print('local only')\n", encoding="utf-8")
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="authority_divergence",
+            pr_number=122,
+            pr_state="merged",
+        ),
+    )
+    messages: list[str] = []
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch("arnold_pipelines.megaplan.chain._run_milestone_validations_blocking") as validate,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=messages.append,
+            mode="execute",
+        )
+
+    validate.assert_not_called()
+    assert result["status"] == "blocked"
+    assert any(
+        message.startswith("[chain] PR progression blocked m1: ")
+        and "unpublished claimed changes after PR merged" in message
+        for message in messages
+    )
+
+
 def test_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     spec_path = tmp_path / "chain.yaml"

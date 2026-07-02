@@ -6395,6 +6395,65 @@ def test_chain_health_status_classifies_zero_git_advancement_with_dirty_worktree
     assert "commit-and-push gating" in artifact["evidence_markdown"]
 
 
+def test_chain_health_status_classifies_repeated_pr_progression_publish_guard_as_commit_bug() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    base_sha = _init_git_repo(ws)
+    (ws / "compiler.py").write_text("print('uncommitted execute output')\n", encoding="utf-8")
+    plan_name = "sprint-1-safe-compiler-20260630-0033"
+    _write_plan(
+        ws / ".megaplan" / "plans" / plan_name,
+        {
+            "current_state": "finalized",
+            "iteration": 3,
+            "meta": {"chain_policy": {"milestone_base_sha": base_sha}},
+        },
+        events_body=json.dumps({"kind": "phase_end", "phase": "execute"}) + "\n",
+    )
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 0,
+            "current_plan_name": plan_name,
+            "last_state": "authority_divergence",
+            "pr_number": 77,
+            "pr_state": "merged",
+            "completed": [],
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        (
+            "[chain] PR progression blocked sprint-01-safe-compiler-foundation: "
+            "plan sprint-1-safe-compiler-20260630-0033 has unpublished claimed changes after PR merged: compiler.py\n"
+        )
+        * 3,
+        encoding="utf-8",
+    )
+
+    payload = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="stopped",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_COMPLETION_GUARD_REPEATS": "3"},
+    )
+
+    assert payload["CHAIN_HEALTH_STATUS"] == "chain_uncommitted_execute_output"
+    assert "unpublished in a dirty worktree" in payload["CHAIN_HEALTH_SUMMARY"]
+    assert "publish guards" in payload["CHAIN_HEALTH_LOG_MESSAGE"]
+    artifact = json.loads(Path(payload["CHAIN_HEALTH_ARTIFACT_PATH"]).read_text(encoding="utf-8"))
+    assert artifact["issue_kind"] == "chain_uncommitted_execute_output"
+    assert artifact["details"]["completion_guard_kind"] == "pr_progression"
+    worktree = artifact["details"]["completion_guard_worktree"]
+    assert worktree["dirty"] is True
+    assert worktree["uncommitted_file_count"] == 1
+    assert "compiler.py" in "\n".join(worktree["sample"])
+    assert "PR progression guard evidence" in artifact["evidence_markdown"]
+
+
 def test_chain_health_status_keeps_recurring_completion_guard_repair_eligible_when_git_advanced() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"

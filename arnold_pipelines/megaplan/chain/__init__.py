@@ -2634,6 +2634,28 @@ def _handle_completion_guard_failure(
     )
 
 
+def _block_pr_progression_guard_failure(
+    *,
+    spec_path: Path,
+    spec: ChainSpec,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    reason: str,
+    events: list[dict[str, Any]],
+    writer,
+) -> dict[str, Any]:
+    writer(f"[chain] PR progression blocked {milestone.label}: {reason}\n")
+    state.last_state = "authority_divergence"
+    chain_spec.save_chain_state(spec_path, state)
+    return _result(
+        "blocked",
+        state,
+        events,
+        spec=spec,
+        reason=reason,
+    )
+
+
 def _finalize_records_missing_authority_fields(
     task_records: list[dict[str, Any]],
 ) -> list[str]:
@@ -4044,14 +4066,14 @@ def run_chain(
                     allow_publish=False,
                 )
                 if not publish_ok:
-                    state.last_state = "authority_divergence"
-                    chain_spec.save_chain_state(spec_path, state)
-                    return _result(
-                        "blocked",
-                        state,
-                        events,
+                    return _block_pr_progression_guard_failure(
+                        spec_path=spec_path,
                         spec=spec,
+                        state=state,
+                        milestone=milestone,
                         reason=publish_reason,
+                        events=events,
+                        writer=writer,
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
                 validation_reason = _run_milestone_validations_blocking(
@@ -4176,14 +4198,14 @@ def run_chain(
                         allow_publish=True,
                     )
                     if not publish_ok:
-                        state.last_state = "authority_divergence"
-                        chain_spec.save_chain_state(spec_path, state)
-                        return _result(
-                            "blocked",
-                            state,
-                            events,
+                        return _block_pr_progression_guard_failure(
+                            spec_path=spec_path,
                             spec=spec,
+                            state=state,
+                            milestone=milestone,
                             reason=publish_reason,
+                            events=events,
+                            writer=writer,
                         )
                     if publish_reason.startswith("published "):
                         state = chain_spec.load_chain_state(spec_path)
@@ -4256,14 +4278,14 @@ def run_chain(
                     allow_publish=False,
                 )
                 if not publish_ok:
-                    state.last_state = "authority_divergence"
-                    chain_spec.save_chain_state(spec_path, state)
-                    return _result(
-                        "blocked",
-                        state,
-                        events,
+                    return _block_pr_progression_guard_failure(
+                        spec_path=spec_path,
                         spec=spec,
+                        state=state,
+                        milestone=milestone,
                         reason=publish_reason,
+                        events=events,
+                        writer=writer,
                     )
                 log(f"PR #{state.pr_number} merged; advancing past {milestone.label}")
             validation_reason = _run_milestone_validations_blocking(
