@@ -1,7 +1,7 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 5,
-  "current_plan_name": "m5-native-test-and-golden-20260701-2334",
+  "current_milestone_index": 6,
+  "current_plan_name": "m6-docs-and-scaffolds-native-20260702-0053",
   "current_milestone_base_sha": null,
   "target_base_ref": "b80fab5ec768d93b448d0594003d029aa1db50f6",
   "last_state": "done",
@@ -483,6 +483,31 @@
         "ran": true,
         "artifact": "full_suite_backstop.json"
       }
+    },
+    {
+      "label": "m5-native-test-and-golden-trace-cleanup",
+      "plan": "m5-native-test-and-golden-20260701-2334",
+      "status": "done",
+      "pr_number": null,
+      "pr_state": null,
+      "full_suite_backstop": {
+        "mode": "shadow",
+        "status": "error",
+        "blocks": false,
+        "reason": "full_suite_backstop_mode=shadow: recorded only",
+        "passed": 0,
+        "failed": 0,
+        "failing_tests": [],
+        "newly_failing": [],
+        "deleted_tests": [],
+        "baseline_failing_count": 3,
+        "current_failing_count": 0,
+        "delta_computed": false,
+        "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/arnold/conformance/workflow_manifest_runtime/test_golden_regression_rule.py tests/arnold/pipeline/native/test_flags_context.py tests/arnold/pipelines/deliberation/test_native_parity.py tests/arnold/pipelines/megaplan/test_legacy_pipeline_baseline.py tests/arnold_pipelines/megaplan/pipelines/test_native_truth_parity.py tests/arnold_pipelines/megaplan/test_cli_command_parser_parity.py tests/arnold_pipelines/megaplan/test_handler_parity.py tests/arnold_pipelines/megaplan/test_native_parity.py tests/arnold_pipelines/megaplan/test_pipeline_contracts.py tests/arnold/pipeline/native/test_runtime.py tests/arnold/conformance/workflow_manifest_runtime/test_existing_behavioral_goldens.py tests/arnold/conformance/workflow_manifest_runtime/test_neutral_import_boundaries.py tests/arnold/execution/test_import_boundaries.py _smoke_trace_test.py arnold_pipelines/megaplan/orchestration/test_selection.py tests/agentbox/test_cli.py tests/agentbox/test_cli_bootstrap_day2.py tests/agentbox/test_credentials.py tests/agentbox/test_guardian_notifications.py tests/agentbox/test_local_smoke.py tests/agentbox/test_notify.py tests/agentbox/test_resident_profile.py tests/agentbox/test_smoke.py tests/archive/m5/_pipeline/test_dynamic_primitives.py tests/archive/m5/_pipeline/test_executor_bridge.py tests/archive/m5/_pipeline/test_forward_m2_m3.py tests/archive/m5/_pipeline/test_human_gate.py tests/archive/m5/_pipeline/test_runtime_binding.py tests/archive/m5/_pipeline/test_step_protocol_test_locals.py tests/archive/m5/_pipeline/test_suspension_aware_composition.py tests/archive/m5/pipelines/test_creative_pipeline.py tests/archive/m5/pipelines/test_doc_pipeline.py tests/archive/m5/pipelines/test_jokes_pipeline.py tests/archive/m5/pipelines/test_live_supervisor_pipeline.py tests/archive/m5/pipelines/test_live_supervisor_steps.py tests/archive/m5/pipelines/test_select_tournament_pipeline.py tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/native/test_resume_routing.py tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_end_to_end.py tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_hooks.py tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_pipelines.py tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_resume.py tests/archive/m6_deleted_legacy_runtime/test_pipeline_registry.py tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py tests/archive/m6_deleted_legacy_runtime/test_pipeline_subloop.py tests/arnold/agent/test_codex_adapter.py tests/arnold/agent/test_contracts.py tests/arnold/agent/test_deepseek_adapter.py tests/arnold/agent/test_import_boundaries.py tests/arnold/agent/test_shannon_adapter.py tests/arnold/conformance/test_evidence_pack_conformance.py tests/arnold/execution/test_cli.py tests/arnold/execution/test_fixture_scenarios.py tests/arnold/pipeline/native/test_checkpoint.py tests/arnold/pipeline/native/test_compiler.py tests/arnold/pipeline/native/test_decorators.py tests/arnold/pipeline/native/test_graph_projection.py tests/arnold/pipeline/test_author_diagnostics.py tests/arnold/pipeline/test_composite_resume.py tests/arnold/pipeline/test_contract_reduce.py tests/arnold/pipeline/test_contracts.py tests/arnold/pipeline/test_cost_exports.py tests/arnold/pipeline/test_evidence_pack_expressibility.py tests/arnold/pipeline/test_executor_hooks.py tests/arnold/pipeline/test_executor_native_program_priority.py tests/arnold/pipeline/test_executor_selection.py tests/arnold/pipeline/test_legacy.py tests/arnold/pipeline/test_media_cost.py tests/arnold/pipeline/test_model_seam_neutral.py tests/arnold/pipeline/test_port_metadata.py tests/arnold/pipeline/test_profiles.py tests/arnold/pipeline/test_profiles_opaque.py tests/arnold/pipeline/test_public_contract_imports.py tests/arnold/pipeline/test_registry.py tests/arnold/pipeline/test_registry_manifest_discovery.py tests/arnold/pipeline/test_registry_python_discovery.py tests/arnold/pipeline/test_resume.py tests/arnold/pipeline/test_runner.py tests/arnold/pipeline/test_schema_registry.py tests/arnold/pipeline/test_step_invocation.py tests/arnold/pipeline/test_step_io_handoff.py tests/arnold/pipeline/test_token_cost.py tests/arnold/pipeline/test_topology_hash.py tests/arnold/pipeline/test_validator.py tests/arnold/pipelines/deliberation/test_e2e.py tests/arnold/pipelines/deliberation/test_skeleton.py tests/arnold/pipelines/deliberation/test_steps.py tests/arnold/pipelines/evidence_pack/test_end_to_end.py tests/arnold/pipelines/evidence_pack/test_hooks.py tests/arnold/pipelines/evidence_pack/test_pipelines.py tests/arnold/pipelines/evidence_pack/test_resume.py tests/arnold/pipelines/megaplan/test_init_install_ordering.py tests/arnold/test_boundary_skeleton.py tests/arnold/workflow/test_m5_inventory_scanners.py tests/arnold_pipelines/megaplan/pipelines/test_creative_native_contract.py tests/arnold_pipelines/megaplan/pipelines/test_doc_native_contract.py tests/arnold_pipelines/megaplan/pipelines/test_jokes_native_contract.py tests/arnold_pipelines/megaplan/pipelines/test_live_supervisor_native_contract.py tests/arnold_pipelines/megaplan/pipelines/test_select_tournament_native_contract.py tests/arnold_pipelines/megaplan/pipelines/test_writing_panel_strict_native_contract.py tests/arnold_pipelines/megaplan/test_agentbox_adapter.py tests/arnold_pipelines/megaplan/test_anchors.py tests/arnold_pipelines/megaplan/test_auto_engine_isolation_default.py tests/arnold_pipelines/megaplan/test_auto_native_dispatch.py tests/arnold_pipelines/megaplan/test_auto_recover_blocked.py tests/arnold_pipelines/megaplan/test_chain_awaiting_human_retry.py tests/arnold_pipelines/megaplan/test_chain_launch_preconditions.py tests/arnold_pipelines/megaplan/test_chain_milestone_validation.py tests/arnold_pipelines/megaplan/test_chain_self_hosted_editable.py tests/arnold_pipelines/megaplan/test_chain_worktree_safety.py tests/arnold_pipelines/megaplan/test_cli_check_validator.py tests/arnold_pipelines/megaplan/test_cli_describe_contract.py tests/arnold_pipelines/megaplan/test_cli_projection.py tests/arnold_pipelines/megaplan/test_codex_writable_roots.py tests/arnold_pipelines/megaplan/test_control_resume_runner.py tests/arnold_pipelines/megaplan/test_engine_fix_ports.py tests/arnold_pipelines/megaplan/test_epic_chain.py tests/arnold_pipelines/megaplan/test_execute_flag_compat.py tests/arnold_pipelines/megaplan/test_gate_checks.py tests/arnold_pipelines/megaplan/test_hermes_plan_recovery.py tests/arnold_pipelines/megaplan/test_import_boundaries.py tests/arnold_pipelines/megaplan/test_manifest_backend.py tests/arnold_pipelines/megaplan/test_model_seam_recovery.py tests/arnold_pipelines/megaplan/test_native_representation_alignment_artifacts.py tests/arnold_pipelines/megaplan/test_package.py tests/arnold_pipelines/megaplan/test_pipeline.py tests/arnold_pipelines/megaplan/test_plan_markdown_capture.py tests/arnold_pipelines/megaplan/test_prerequisite_resolution_sync.py tests/arnold_pipelines/megaplan/test_profile_policy.py tests/arnold_pipelines/megaplan/test_resume_routing.py tests/arnold_pipelines/megaplan/test_runtime_pipeline_native_program.py tests/arnold_pipelines/megaplan/test_state_reconciliation.py tests/arnold_pipelines/megaplan/test_topology_golden.py tests/arnold_pipelines/megaplan/test_workflows_components.py tests/arnold_pipelines/megaplan/test_workflows_planning.py tests/arnold_pipelines/megaplan/workflows/test_workflows_planning.py tests/arnold_pipelines/test_discovery.py tests/arnold_pipelines/test_shipped_pipeline_migration.py tests/bakeoff/test_channel_shadow.py tests/bakeoff/test_cli.py tests/bakeoff/test_comparison.py tests/bakeoff/test_integration.py tests/bakeoff/test_judge.py tests/bakeoff/test_merge.py tests/bakeoff/test_metrics.py tests/bakeoff/test_orchestrator.py tests/bakeoff/test_state.py tests/bakeoff/test_worktree.py tests/characterization/test_auto_drive.py tests/characterization/test_blocked_retry_byte_stability.py tests/characterization/test_cli_parser_snapshot.py tests/characterization/test_context_retry_byte_stability.py tests/characterization/test_external_retry_byte_stability.py tests/characterization/test_import_surface.py tests/characterization/test_m4_plugin_registry_characterization.py tests/characterization/test_pipeline_golden.py tests/cli/test_arnold_parser_snapshot.py tests/cli/test_m5_dispatch.py tests/cli/test_m5_operators.py tests/cli/test_m5_workflow_cli.py tests/cli/test_m5_workflow_source_cli.py tests/cli/test_m6_workflow_explain.py tests/cli/test_megaplan_recovery_command_parser.py tests/cloud/test_cloud_chain_command.py tests/cloud/test_cloud_hot_upload.py tests/cloud/test_editable_install_sync.py tests/cloud/test_phase_command_shim.py tests/cloud/test_ssh_deploy.py tests/cloud/test_ssh_spec.py tests/execute/test_envelope_flag.py tests/execute/test_reducer_binding.py tests/execute/test_tier_binding.py tests/fixtures/state_json/test_load_resume.py tests/handlers/test_session_cache_noop.py tests/m8/benchmark/test_benchmark_gate.py tests/m8/benchmark/test_c4bench.py tests/m8/benchmark/test_gate.py tests/m8/benchmark/test_helpers.py tests/m8/regression/test_budget_suspension_regressions.py tests/m8/regression/test_motivating_failures.py tests/m8/regression/test_structural_regressions.py tests/megaplan/test_authority_divergence_recovery.py tests/observability/test_concurrent_telemetry_ordering.py tests/observability/test_events_projection.py tests/oracle/test_m5d_substrate_swap.py tests/oracles/test_calibration_loop_oracle.py tests/oracles/test_crash_isolation_oracle.py tests/oracles/test_effect_ledger_replay_oracle.py tests/oracles/test_evaluand_replay_oracle.py tests/oracles/test_evaluand_transaction_boundary_oracle.py tests/oracles/test_journal_join_key_oracle.py tests/oracles/test_replay_oracle.py tests/orchestration/test_blast_radius_floor.py tests/orchestration/test_codex_output_schema.py tests/orchestration/test_completion_contract_suite_selection.py tests/orchestration/test_critique_evaluator_validation.py tests/orchestration/test_full_suite_backstop.py tests/orchestration/test_import_graph.py tests/orchestration/test_parallel_critique.py tests/orchestration/test_phase_result_classify.py tests/orchestration/test_plan_test_blast_radius.py tests/orchestration/test_revise_blast_radius.py tests/pipelines/test_folder_audit.py tests/pipelines/test_shared_native_contract.py tests/profiles/test_pipeline_profiles.py tests/prompts/test_template_read_instruction.py tests/resident/test_authorizer.py tests/resident/test_codex_cli_runner.py tests/resident/test_discord_outbound.py tests/resident/test_launch_subagent.py tests/resident/test_megaplan_initiatives.py tests/resident/test_scheduler_notifications.py tests/resident/test_vp_todo_state.py tests/resident/test_vp_todo_sweep_handler.py tests/resident/test_vp_todo_tools.py tests/resume/test_pre_m6_alias.py tests/store/test_capsule_storage.py tests/store/test_warrant_sources.py tests/test_arnold_cli.py tests/test_arnold_dispatcher.py tests/test_chain_completion_guard.py tests/test_codex_adapter.py tests/test_deepseek_adapter.py tests/test_doc_assembly.py tests/test_generate_arnold_docs.py tests/test_pipeline_composability.py tests/test_pipeline_compose.py tests/test_pipeline_discovery_integrity.py tests/test_pipeline_elegance.py tests/test_pipeline_run_cli.py tests/test_shannon_adapter.py tests/test_state_reader_audit.py tests/test_store_layout.py tests/test_watchdog_cli.py tests/test_worker_concurrency.py tests/test_worker_exports_compatibility.py tests/test_workers_shannon_session.py tests/workers/test_hermes_tool_markup.py tests/workers/test_session_cache_regression.py tests/arnold_pipelines/megaplan --tb=no -q --no-header -rA",
+        "duration_s": 0.978909790981561,
+        "ran": true,
+        "artifact": "full_suite_backstop.json"
+      }
     }
   ],
   "branch_head": null,
@@ -511,7 +536,7 @@
       "target_root": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
       "work_dir": "/workspace/native-python-pipelines-completion-parent-22937539/arnold",
       "engine_root": "/workspace/arnold",
-      "target_head": "ee1fce1113d814ea955fecc4114151dad47af4ca",
+      "target_head": "610375ed6f24e8b0ffe1b67fde2a2541aeb5222c",
       "target_base": "b80fab5ec768d93b448d0594003d029aa1db50f6",
       "target_base_ref": "main",
       "target_fallback_reason": null
@@ -519,11 +544,52 @@
     "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
     "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
     "ground_truth_reconciliation": {
-      "reconciled_at": "2026-07-01T23:34:50Z",
-      "plan": null,
-      "current_state": null,
+      "reconciled_at": "2026-07-02T08:56:00Z",
+      "plan": "m6-docs-and-scaffolds-native-20260702-0053",
+      "current_state": "done",
       "latest_failure": null,
-      "last_gate": null,
+      "last_gate": {
+        "recommendation": "PROCEED",
+        "rationale": "All three original blocking flags were resolved in this revision. The weighted score dropped from 4.5 to 0, indicating the plan revisions successfully addressed every critique. No unresolved significant flags remain, no addressed-but-unverified flags require verification, and no recurring critiques or scope-creep flags are present. The plan is structurally sound: it correctly identifies the template/scaffold surfaces under arnold_pipelines/ (not the historical arnold/pipelines/_template/ paths), makes the namespace-package decision for arnold/pipelines/_authoring.py explicit and verifiable, adds concrete directory-creation and pytest-collection steps for the new tests/arnold/pipelines/ test files, and reclassifies arnold_pipelines/_template from workflow to native in discovery. The North Star distinction is preserved: M6 is a bridge milestone providing native-first docs/scaffold substrate, explicitly deferring compositional Megaplan semantics to the follow-up. The execution order and validation order are logical and well-sequenced.",
+        "reprompted": false,
+        "signals_assessment": "Score trajectory improved from 4.5 (iteration 1) to 0 (iteration 2) after a 32.2% plan delta. All three flagged concerns were resolved: _template discovery metadata, _authoring.py namespace-package decision, and test directory setup. Preflight checks all pass. No unresolved flags, no addressed-but-unverified flags, no recurring critiques. The plan is clean and ready for execution.",
+        "warnings": [
+          "The plan defers final compositional authoring semantics to the native composition follow-up; ensure M6 does not accidentally teach a flat-native stage list as the final model, as flagged in the North Star false-pass guard.",
+          "The test_blast_radius lists 178 import-graph dependent tests with full-suite fallback; execution should validate focused tests first before expanding to the full suite as prescribed in Step 10.",
+          "Three new source files (arnold/pipelines/_authoring.py, arnold_pipelines/_template/pipelines.py, arnold_pipelines/megaplan/cli/arnold.py) have no existing import-graph data; exercise them directly during execution to catch import errors early."
+        ],
+        "settled_decisions": [
+          {
+            "id": "SD1",
+            "decision": "Create arnold/pipelines/_authoring.py as an import-only helper module without recreating arnold/pipelines/__init__.py; verify the import works before proceeding, and only reconsider the namespace decision if import verification fails.",
+            "rationale": "Keeps the legacy __init__.py deleted as intended while allowing the authoring helper to live at the path referenced by existing docs. PEP 420 namespace packages support this hybrid layout, and the plan includes explicit import verification as a hard gate."
+          },
+          {
+            "id": "SD2",
+            "decision": "Keep all scaffold/template implementation under arnold_pipelines/ (not arnold/pipelines/_template/); the historical paths in the task description are acknowledged but not duplicated.",
+            "rationale": "The actual implementation surfaces are arnold_pipelines/megaplan/cli/__init__.py and arnold_pipelines/_template/*. Duplicating under arnold/pipelines/ would create maintenance drift."
+          },
+          {
+            "id": "SD3",
+            "decision": "Create tests/arnold/pipelines/ directory (if absent) and place test files without a __init__.py; only add a test package initializer if pytest collection fails and the failure proves it is required.",
+            "rationale": "pytest with --import-mode=importlib does not require __init__.py for test discovery. Adding one only when proven necessary avoids unnecessary package structure changes."
+          },
+          {
+            "id": "SD4",
+            "decision": "Treat Pipeline.native_program as dispatch substrate proof only for M6; final compositional Megaplan semantics (workflow nesting, tree traces, path resume, stable unit IDs, dynamic fanout, handler-purity) remain deferred to the native composition follow-up.",
+            "rationale": "Preserves the North Star distinction between bridge milestone (M6) and final authoring model (composition follow-up). This prevents M6 from overclaiming or accidentally teaching an intermediate model as final."
+          }
+        ],
+        "passed": true,
+        "preflight_results": {
+          "project_dir_exists": true,
+          "project_dir_writable": true,
+          "success_criteria_present": true,
+          "claude_available": true,
+          "codex_available": true
+        },
+        "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize."
+      },
       "active_step": null,
       "pr_number": null,
       "pr_state": null

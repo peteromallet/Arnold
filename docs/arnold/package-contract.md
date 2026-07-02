@@ -2,9 +2,9 @@
 
 An Arnold package is a discoverable pipeline module plus its adjacent agent
 instructions. The contract is intentionally small: the package must expose
-stable metadata for no-import discovery, return a valid
-`arnold.workflow.Pipeline` from its entrypoint, and keep human/agent-facing
-guidance in `SKILL.md`.
+stable metadata for no-import discovery, return a projected
+`arnold.pipeline.types.Pipeline` with a **non-null** `native_program` from
+its entrypoint, and keep human/agent-facing guidance in `SKILL.md`.
 
 Generated details for manifest fields, discovery facts, dispositions, schemas,
 and CLI inventories are maintained in
@@ -43,44 +43,56 @@ A package module should keep these concepts visible at top level:
 
 - the public Arnold name and description;
 - the Arnold API version;
-- the driver declaration (`("graph", "<kind>")` for workflow-first packages);
+- the driver declaration (`("native", "<kind>")` for native-first packages);
 - the entrypoint function name;
-- optional supported modes, default profile, and capability labels;
-- an entrypoint that returns an explicit-node `arnold.workflow.Pipeline`.
+- supported modes (must include `"native"`);
+- optional default profile, recommended profiles, and capability labels;
+- an entrypoint that compiles a native program and returns a projected
+  `arnold.pipeline.types.Pipeline` with a non-null `native_program`.
 
 Keep these values static. Discovery must be able to inspect the package without
-executing arbitrary code. Runtime work belongs inside stages, not in module
+executing arbitrary code. Runtime work belongs inside phases, not in module
 metadata.
 
-## Workflow-First Execution
+## Native-First Execution
 
-The canonical package constructs an explicit-node `arnold.workflow.Pipeline`
-and returns it from `build_pipeline()`. The workflow compiler lowers the
-pipeline to a neutral `WorkflowManifest` with deterministic hashes. The native
-runtime may execute a compiled manifest, but the package itself must not
-hand-author manifest objects, hashes, or native execution structures.
+The canonical package declares topology via `@pipeline`, `@phase`,
+`@decision`, and `parallel(...)` decorators, compiles the native program
+with `compile_pipeline()`, and projects it into a `Pipeline` shell via
+`project_graph()`. The runtime executes the native program directly. The
+projected shell satisfies discovery and validation — it is **not** the
+final compositional surface.
 
 ```python
-from arnold.workflow import Pipeline, Step, Route
+from arnold.pipeline.native import compile_pipeline, phase, pipeline, project_graph
+from arnold.pipeline.types import Pipeline
+
+
+@phase(name="start")
+def start(ctx: object) -> Any:
+    return {"status": "ready"}
+
+
+@phase(name="finish")
+def finish(ctx: object) -> Any:
+    return {"status": "done"}
+
+
+@pipeline(name="my-pipeline", description="start → finish")
+def my_pipeline_native(ctx: object) -> Any:
+    yield start(ctx)
+    yield finish(ctx)
 
 
 def build_pipeline() -> Pipeline:
-    return Pipeline(
-        id="my-pipeline",
-        version="1.0",
-        steps=(
-            Step(id="start", kind="agent"),
-            Step(id="finish", kind="agent"),
-        ),
-        routes=(
-            Route(id="start-finish", source="start", target="finish"),
-        ),
-    )
+    native = compile_pipeline(my_pipeline_native)
+    return project_graph(native, key_mode="phase")
 ```
 
-Packages must not return `NativeProgram`, native-backed factories, builder
-objects, executor objects, or `_forward_m2_m3` graph objects from
-`build_pipeline()`. `WorkflowManifest` is compiler output only.
+Packages must **not** return `NativeProgram` builder objects, executor
+objects, `_forward_m2_m3` graph objects, or graph-only `Pipeline` objects
+without a native program from `build_pipeline()`. Do not hand-author
+`WorkflowManifest` — it is compiler output only.
 
 ## Entrypoint Rules
 
@@ -90,9 +102,9 @@ builder signature. That preserves a stable package identity: the module can be
 discovered, checked, and included in Capsule Definition identity without knowing
 which run-time flags a user will pass later.
 
-When a workflow needs mode-specific behavior, prefer prompt variants,
-`ctx.mode`, profile slots, or explicit state inputs over changing the graph at
-import time.
+When a pipeline needs mode-specific behavior, prefer prompt variants,
+`ctx.mode`, profile slots, or explicit state inputs over changing the native
+declaration at import time.
 
 ## Static Identity
 
@@ -106,12 +118,12 @@ Package authors should therefore make two things easy:
 
 - no-import discovery can find enough stable metadata to name and describe the
   package;
-- trusted builds can construct the same graph repeatedly from the same package
-  bytes and declared resources.
+- trusted builds can construct the same native program repeatedly from the same
+  package bytes and declared resources.
 
 Avoid top-level side effects, global mutation, environment-dependent metadata,
-and network or filesystem probes during import. If a stage needs the filesystem,
-do that work inside the stage's `run()` method and make the relevant file paths
+and network or filesystem probes during import. If a phase needs the filesystem,
+do that work inside the phase's function body and make the relevant file paths
 explicit inputs.
 
 ## Resource Ownership
@@ -127,12 +139,12 @@ field inventories.
 
 ## Validation Contract
 
-`arnold workflow check --module <package>:build_pipeline` is the package's basic
-compatibility gate. It must be able to load the package, build the pipeline, and
-validate pipeline structure.
+`arnold pipelines check --module <package>:build_pipeline` is the package's
+basic compatibility gate. It must be able to load the package, build the
+projected `Pipeline`, and verify that `native_program` is non-null.
 
-`arnold workflow doctor` is a discovery tool. Use it when a package is skipped or
-rejected before graph validation begins.
+`arnold pipelines doctor` is a discovery tool. Use it when a package is skipped
+or rejected before native-program validation begins.
 
 ## Capsule Contract Interaction
 
@@ -149,18 +161,29 @@ inside package metadata to make a Capsule look more complete.
 
 ## Compatibility Policy
 
-**Canonical surface**: `arnold workflow <subcommand>` is the canonical Arnold
-CLI. `arnold pipelines <subcommand>` and `megaplan pipelines <subcommand>` are
-legacy compatibility paths; they continue to work during the migration but new
-authoring guidance and conformance checks target the Arnold namespace and the
-workflow-first contract.
+**Canonical surface**: `arnold pipelines <subcommand>` is the canonical Arnold
+CLI for native-first packages. `megaplan pipelines <subcommand>` is a legacy
+compatibility path; it continues to work during the migration but new authoring
+guidance and conformance checks target the Arnold namespace and the native-first
+contract.
 
-Native-first packages, package-level `hooks`, `resume` drivers, and
-`build_continuation_pipeline` entrypoints are deprecated. New packages must be
-workflow-first; legacy packages should migrate to explicit-node
-`arnold.workflow.Pipeline` authoring.
+Graph-first packages, `--driver graph`, `arnold.workflow.Pipeline` authoring,
+package-level `hooks`, `resume` drivers, and `build_continuation_pipeline`
+entrypoints are deprecated. New packages must be native-first; legacy packages
+should migrate to native declarations plus projected `Pipeline` shells.
 
 Forward-compatible projection schemas ignore unknown keys, but package modules
 should not rely on that to smuggle behavior through undocumented metadata. Add
 new public package facts deliberately, update the generator when they are
-code-owned, and keep authored docs focused on intent and workflow.
+code-owned, and keep authored docs focused on intent and native declarations.
+
+## M6 Dispatch Substrate Boundary
+
+The `native_program` attached to the projected `Pipeline` is a **dispatch
+substrate** — it proves the package is executable by the native runtime, but
+it does not define the final visible compositional semantics. Panel synthesis,
+join delegation, parallel merge strategy, subpipeline ownership, and Capsule
+projection are deferred to later Megaplan layers above the dispatch boundary.
+
+Package authors should treat `native_program` as the execution-level contract
+and avoid overclaiming composition guarantees in metadata or docs.

@@ -1,8 +1,9 @@
 # Arnold Authoring Guide
 
-Arnold is the module-oriented face of Megaplan pipelines. Use it when a workflow
-should be discoverable as a named module, runnable from the CLI, inspectable by
-the pipeline checker, and documented for agents through a sibling `SKILL.md`.
+Arnold is the module-oriented face of Megaplan pipelines. Use it when a
+native-first pipeline should be discoverable as a named module, runnable from
+the CLI, inspectable by the pipeline checker, and documented for agents
+through a sibling `SKILL.md`.
 
 This page is authored guidance. Code-owned field lists, schema surfaces, defect
 templates, command inventories, and vocabulary live in the generated reference:
@@ -12,18 +13,18 @@ The canonical field table and per-package reference summary are at
 
 ## Choose the Right Artifact
 
-Author a pipeline module when the workflow has a stable graph and can be
-expressed as typed stages. Author a prompt or skill-only extension when the
-existing planning pipeline already has the right control flow and only needs
-domain instructions. Build a Capsule when you need a replayable outward
+Author a pipeline module when the pipeline has a stable native topology
+declared via `@pipeline` / `@phase` / `@decision` decorators. Author a
+prompt or skill-only extension when the existing planning pipeline already
+has the right control flow and only needs domain instructions. Build a Capsule when you need a replayable outward
 projection of an epic's exported evidence. Build a Warrant only when the source
 projection is complete enough to sign.
 
 Those boundaries matter because the three terminal sinks have different trust
 contracts:
 
-- Builder modules describe executable behavior and are validated by pipeline
-  discovery and graph checks.
+- Builder modules describe executable behavior via native declarations and are
+  validated by pipeline discovery and native-program checks.
 - Capsules package exported evidence and declared contract facts into
   content-addressed records.
 - Warrants sign a frozen source projection and must reject incomplete source
@@ -37,23 +38,29 @@ Start with the documented Arnold command:
 arnold pipelines new my-module
 ```
 
-The command creates a Python module under `megaplan/pipelines/` and a sibling
-`SKILL.md` directory. The scaffold is native-first: it uses `@pipeline`,
-`@phase`, `@decision`, `parallel(...)`, and a derived graph projection. Do not
-add `_legacy.py`, graph fallback builders, compatibility namespaces, or
-temporary wrapper modules for new packages.
+The command creates a native-first Python module and a sibling `SKILL.md`
+directory. The scaffold uses `@pipeline`, `@phase`, `@decision`,
+`parallel(...)`, `compile_pipeline`, and `project_graph` to produce a
+projected `Pipeline` shell with a non-null `native_program`. Do **not** add
+`_legacy.py`, graph fallback builders, compatibility namespaces, shim
+packages, or temporary wrapper modules for new packages.
+
+The `--driver graph` option is an unsupported legacy input. The scaffold
+only emits `driver=("native", "project+validate")` and
+`supported_modes=("native",)`.
 
 The generated module should keep module-level metadata accurate enough for
-no-import discovery, then implement workflow behavior in native declarations.
+no-import discovery, then implement pipeline behavior in native declarations.
 The canonical package and manifest facts are generated in the Arnold projection
 reference rather than copied here by hand.
 
-## Author the Native Workflow
+## Author the Native Pipeline
 
 Start from the [contract surface](package-authoring-contract.md). Every Arnold
 pipeline package must expose the required fields at module level and a nullary
-`build_pipeline()` entrypoint. For M7, the primary authoring path is native
-declarations plus a derived validation graph:
+`build_pipeline()` entrypoint. The primary authoring path is native
+declarations plus a projected `Pipeline` shell with a non-null
+`native_program`:
 
 ```python
 from typing import Any
@@ -132,12 +139,23 @@ reviewer panels whose outputs should be prefixed by reviewer id. Use
 `run_subpipeline(...)` inside a phase when a child pipeline owns a distinct
 workflow and resume boundary.
 
-`build_pipeline()` should return the derived graph projection so discovery and
-`arnold pipelines check` validate the public topology that the native runtime
-will execute.
+`build_pipeline()` returns the projected `Pipeline` shell with a non-null
+`native_program`. Discovery and `arnold pipelines check` validate the
+public topology through the shell; the native runtime executes the program
+directly.
 
-Hand-built graph builders are retained only for existing plans that have not yet
-migrated. New packages must be native-first.
+### M6 Dispatch Substrate
+
+The `native_program` is a **dispatch substrate**, not a final composition
+contract. It proves the package is executable by the native runtime, but
+panel synthesis, join delegation, parallel merge strategy, subpipeline
+ownership, and Capsule projection are deferred to later Megaplan layers
+above the dispatch boundary. Authors should treat `native_program` as the
+execution-level contract and avoid overclaiming final composition semantics
+in package metadata or docs.
+
+Hand-built graph builders are retained only for existing plans that have not
+yet migrated. New packages must be native-first.
 
 ### Typed Ports
 
@@ -168,23 +186,22 @@ The executor validates port compatibility at graph-construction time. Use
 :class:`~arnold.pipeline.types.RoutingKey` for content-type–qualified
 fan-out dispatch when multiple downstream stages consume the same port.
 
-### Hooks and Resume (Recommended)
+### Hooks and Resume (Deprecated)
 
-Once the native workflow is stable, add the optional extension surface:
+The following extension surfaces are **deprecated** for new native-first
+packages:
 
-- **``hooks``** — a module-level :class:`~arnold.pipeline.hooks.ExecutorHooks`
-  subclass or instance for lifecycle callbacks (``on_step_start``,
-  ``on_step_end``, ``on_suspension``).
-- **``resume``** — a module-level resume driver callable that accepts a
-  suspension artifact and returns a resume result.
-- **``build_continuation_pipeline``** — a nullary callable returning a
-  ``Pipeline`` for resuming a previously suspended run without re-running
-  completed stages.
+- **``hooks``** — package-level lifecycle hooks are replaced by runtime-neutral
+  trace hooks and policy-driven suspension routes.
+- **``resume``** — package-local resume drivers are replaced by the shared
+  native runtime resume path.
+- **``build_continuation_pipeline``** — continuation pipelines are replaced by
+  explicit continuation `Pipeline` objects where needed.
 
-All three are **recommended**, not required. The runtime validator reports
-their absence as informational (``info:`` prefix) rather than errors. See the
-[contract field table](package-authoring-contract.md) for the full list and
-the evidence-pack / megaplan reference comparison.
+These fields may still appear on legacy packages. The runtime validator
+reports their presence as informational (``info:`` prefix). New native-first
+packages should not define them. See the [contract field
+table](package-authoring-contract.md) for the full list.
 
 Existing graph-born plans resume on graph. Upgrade them only with the explicit
 dry-run-first command:
@@ -259,15 +276,14 @@ resolution, not AST parsing) and reports diagnostics prefixed ``error:`` or
 - [ ] **``entrypoint``** — bare name or ``module:name`` string that resolves to
   a callable.
 - [ ] **``build_pipeline``** — nullary callable that returns a
-  :class:`~arnold.pipeline.types.Pipeline`.
-- [ ] **Graph validation** — the built pipeline passes
+  :class:`~arnold.pipeline.types.Pipeline` with a **non-null**
+  ``native_program``.
+- [ ] **Native program validation** — the built pipeline carries a non-null
+  ``native_program`` and passes
   :func:`~arnold.pipeline.validator.validate` with zero defects.
 - [ ] **``default_profile``** *(recommended)* — declare even as ``None``.
-- [ ] **``supported_modes``** *(recommended)* — declare even as empty tuple.
-- [ ] **``hooks``** *(recommended)* — lifecycle callbacks
-  (:class:`~arnold.pipeline.hooks.ExecutorHooks` subclass or instance).
-- [ ] **``resume``** *(recommended)* — resume driver callable.
-- [ ] **``build_continuation_pipeline``** *(recommended)* — continuation graph.
+- [ ] **``supported_modes``** *(recommended)* — declare, must include
+  ``"native"``.
 
 Any ``error:`` diagnostic must be fixed. ``info:`` diagnostics are advisory
 but should be addressed before the package reaches production. See the

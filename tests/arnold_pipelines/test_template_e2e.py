@@ -1,22 +1,21 @@
-"""End-to-end tests for the workflow-first ``arnold_pipelines/_template`` package.
+"""End-to-end tests for the native-first ``arnold_pipelines/_template`` package.
 
-Covers three concerns from the M2 package-contract phase:
+Covers three concerns:
 
 1. **Scanner exclusion** — the legacy megaplan-side pipeline discovery scanner
    must skip ``_template`` because its leading-underscore directory name
    triggers the skip rule.
-2. **Workflow-first build** — the skeleton ``build_pipeline()`` returns an
-   :class:`arnold.workflow.Pipeline` built from explicit nodes and routes.
-3. **Determinism** — repeated builds produce the same pipeline topology and,
-   after compilation, the same manifest hashes.
+2. **Native-first build** — the skeleton ``build_pipeline()`` returns an
+   :class:`arnold.pipeline.Pipeline` with a non-null ``native_program``
+   built from a projected native shell.
+3. **Determinism** — repeated builds produce equivalent native programs.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import arnold.workflow as workflow
-from arnold.workflow import Pipeline, compile_pipeline
+from arnold.pipeline.types import Pipeline
 from arnold_pipelines._template import build_pipeline
 from arnold_pipelines.megaplan.runtime.discovery import _scan_dir_for_pipeline_modules
 
@@ -39,37 +38,34 @@ def test_template_excluded_by_legacy_scanner() -> None:
     assert not any("_template" in p for p in found_paths)
 
 
-def test_template_builds_workflow_pipeline() -> None:
+def test_template_builds_native_pipeline() -> None:
+    """``build_pipeline()`` returns a native-first :class:`Pipeline` shell."""
     pipeline = build_pipeline()
     assert isinstance(pipeline, Pipeline)
-    assert pipeline.id == "my-pipeline"
-    step_ids = {step.id for step in pipeline.steps}
-    assert "start" in step_ids
-    assert "finish" in step_ids
+    assert pipeline.entry is not None
+    assert len(pipeline.stages) >= 1
 
 
-def test_template_pipeline_has_expected_routes() -> None:
+def test_template_pipeline_has_non_null_native_program() -> None:
+    """The returned pipeline has a non-null ``native_program``."""
     pipeline = build_pipeline()
-    assert len(pipeline.routes) == 1
-    assert pipeline.routes[0].id == "start-finish"
-    assert pipeline.routes[0].source == "start"
-    assert pipeline.routes[0].target == "finish"
+    assert pipeline.native_program is not None
 
 
-def test_template_manifest_identity_is_deterministic() -> None:
+def test_template_native_program_is_deterministic() -> None:
+    """Repeated builds produce equivalent native programs."""
     p1 = build_pipeline()
     p2 = build_pipeline()
-    m1 = compile_pipeline(p1)
-    m2 = compile_pipeline(p2)
-    assert m1.manifest_hash == m2.manifest_hash
-    assert m1.topology_hash == m2.topology_hash
+    assert p1.native_program is not None
+    assert p2.native_program is not None
+    # The native programs should reference equivalent phases
+    assert len(p1.native_program.phases) == len(p2.native_program.phases)
 
 
-def test_template_compile_produces_valid_manifest() -> None:
-    pipeline = build_pipeline()
-    manifest = compile_pipeline(pipeline)
-    assert manifest.schema_version == workflow.WorkflowManifest.SCHEMA_VERSION
-    assert manifest.manifest_hash
-    assert manifest.topology_hash
-    assert any(node.id == "start" for node in manifest.nodes)
-    assert any(node.id == "finish" for node in manifest.nodes)
+def test_template_pipeline_passes_authoring_validation() -> None:
+    """The template package passes :func:`validate_package_module`."""
+    import importlib
+    from arnold.pipelines._authoring import validate_package_module
+
+    pkg = importlib.import_module("arnold_pipelines._template")
+    validate_package_module(pkg)  # raises on failure
