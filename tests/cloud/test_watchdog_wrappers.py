@@ -4736,6 +4736,8 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "acquire_repair_lock || exit 75" in text
     assert 'exit_if_repair_target_complete "start"' in text
     assert 'exit_if_repair_target_complete "iteration-$iteration-start"' in text
+    assert 'exit_if_repair_target_complete "iteration-$iteration-post-kimi"' in text
+    assert 'exit_if_repair_target_complete "post-iterations"' in text
     assert "repair_data_init()" in text
     assert "repair_data_record_dev()" in text
     assert "append_repair_finding_if_reported()" in text
@@ -4783,6 +4785,7 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'repair_data_set_outcome "running"' in text
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
     assert 'repair_data_set_outcome "discord_escalated"' in text
+    assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index('repair_data_set_outcome "discord_escalated"')
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
     assert "## Incident Snapshot" in text

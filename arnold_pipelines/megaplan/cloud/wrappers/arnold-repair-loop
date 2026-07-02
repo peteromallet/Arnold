@@ -3675,7 +3675,10 @@ for iteration in 1 2 3; do
     log "repair loop succeeded via Kimi iteration=$iteration"
     exit 0
   fi
+  exit_if_repair_target_complete "iteration-$iteration-post-kimi"
 done
+
+exit_if_repair_target_complete "post-iterations"
 
 if [[ "$(repair_exhausted_should_retry_without_human)" == "1" ]]; then
   repair_data_set_outcome "recurring_retry_pending"
