@@ -3236,16 +3236,29 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         and path != ".megaplan"
         and not path.startswith(".megaplan/")
     )
+    active_step = plan_state.get("active_step")
+    active_phase = (
+        active_step.get("phase")
+        if isinstance(active_step, dict) and isinstance(active_step.get("phase"), str)
+        else None
+    )
     if unrelated_dirty:
-        sample = ", ".join(unrelated_dirty[:5])
-        return (
-            None,
-            f"plan {plan_name} has stale merged PR #{state.pr_number} but unrelated "
-            f"dirty paths prevent recovery: {sample}",
+        if active_phase != "execute":
+            sample = ", ".join(unrelated_dirty[:5])
+            return (
+                None,
+                f"plan {plan_name} has stale merged PR #{state.pr_number} but unrelated "
+                f"dirty paths prevent recovery: {sample}",
+            )
+        writer(
+            f"[chain] stale merged PR recovery for {plan_name} will preserve "
+            f"{len(unrelated_dirty)} unclaimed dirty path(s) from active execute: "
+            f"{', '.join(unrelated_dirty[:5])}\n"
         )
 
     old_pr_number = state.pr_number
-    if dirty_claimed:
+    dirty_recovery_paths = sorted({*dirty_claimed, *unrelated_dirty})
+    if dirty_recovery_paths:
         current_branch = _current_branch_name(root)
         if current_branch != milestone.branch:
             _run_command(
@@ -3275,14 +3288,16 @@ def _recover_stale_merged_pr_for_unfinished_plan(
         "stale_pr_number": old_pr_number,
         "plan_current_state": current_state,
         "dirty_claimed_paths": dirty_claimed,
+        "unclaimed_execute_dirty_paths": unrelated_dirty,
     }
     chain_spec.save_chain_state(spec_path, state)
 
-    if dirty_claimed:
+    if dirty_recovery_paths:
         return (
             state,
             f"recovered stale merged PR #{old_pr_number} for unfinished plan {plan_name}; "
-            f"published {len(dirty_claimed)} claimed local change(s) to {milestone.branch}",
+            f"published {len(dirty_recovery_paths)} local change(s) to {milestone.branch} "
+            f"({len(dirty_claimed)} claimed, {len(unrelated_dirty)} unclaimed active-execute)",
         )
     return (
         state,

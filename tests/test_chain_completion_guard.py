@@ -657,7 +657,7 @@ def test_run_chain_logs_stale_merged_pr_recovery_for_unfinished_plan(
     assert result["status"] == "stopped"
     assert any(
         message.startswith("[chain] recovered stale merged PR #122 for unfinished plan plan-m1; ")
-        and "published 1 claimed local change(s) to test/m1" in message
+        and "published 1 local change(s) to test/m1 (1 claimed, 0 unclaimed active-execute)" in message
         for message in messages
     )
 
@@ -863,6 +863,100 @@ def test_run_chain_blocks_stale_merged_pr_recovery_with_unrelated_dirty_paths(
     assert saved.last_state == "authority_divergence"
     assert "unrelated dirty paths prevent recovery" in result["reason"]
     assert "src/scratch.py" in result["reason"]
+
+
+def test_run_chain_recovers_unclaimed_dirty_paths_from_active_execute(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    plan_dir = _write_plan(
+        tmp_path,
+        current_state="finalized",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+        execution_batch=False,
+    )
+    state_path = plan_dir / "state.json"
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["active_step"] = {"phase": "execute", "run_id": "worker-1"}
+    state_path.write_text(json.dumps(state_payload) + "\n", encoding="utf-8")
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {"tasks": [{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}]}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "app.py").write_text("print('local only')\n", encoding="utf-8")
+    (tmp_path / "src" / "scratch.py").write_text("print('execute partial')\n", encoding="utf-8")
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="authority_divergence",
+            pr_number=122,
+            pr_state="merged",
+        ),
+    )
+
+    def fake_commit_and_push(
+        root: Path,
+        branch: str,
+        plan: str,
+        phase: str,
+        *,
+        writer,
+        preexisting_dirty_paths: list[Path] | None = None,
+    ) -> None:
+        assert phase == "stale-merged-pr-recovery"
+        _git(root, "add", "src/app.py", "src/scratch.py")
+        _git(root, "commit", "-m", "recover active execute")
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="finalized"),
+        patch(
+            "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+            side_effect=fake_commit_and_push,
+        ) as commit_and_push,
+        patch("arnold_pipelines.megaplan.chain._checkout_milestone_branch"),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=123),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=chain_module.DriverOutcome(
+                status="finalized",
+                plan="plan-m1",
+                final_state="finalized",
+                iterations=1,
+                reason="still executing",
+            ),
+        ),
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+        )
+
+    commit_and_push.assert_called_once()
+    saved = load_chain_state(spec_path)
+    assert result["status"] == "stopped"
+    assert saved.metadata["stale_merged_pr_recovery"]["dirty_claimed_paths"] == ["src/app.py"]
+    assert saved.metadata["stale_merged_pr_recovery"]["unclaimed_execute_dirty_paths"] == [
+        "src/scratch.py"
+    ]
+    assert "src/scratch.py" not in _git(tmp_path, "status", "--porcelain")
 
 
 def test_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
