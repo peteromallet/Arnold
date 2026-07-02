@@ -23,6 +23,7 @@ from arnold_pipelines.megaplan.chain.git_ops import (
     _commit_and_push_phase,
     _commit_phase,
     _checkout_milestone_branch,
+    _enable_auto_merge,
     _ensure_milestone_pr,
     _require_git_worktree_root,
 )
@@ -165,6 +166,33 @@ def test_chain_commit_refuses_non_git_directory_without_deleting_files(
 
     assert exc_info.value.code == "chain_git_worktree_required"
     assert keep.read_text(encoding="utf-8") == "print('keep')\n"
+
+
+def test_enable_auto_merge_refuses_dirty_worktree_before_gh_merge(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    dirty = repo / "src.py"
+    dirty.write_text("print('local only')\n", encoding="utf-8")
+
+    def fail_run_command(*_args, **_kwargs):
+        raise AssertionError("gh merge must not run with a dirty worktree")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=subprocess,
+            _run_command=fail_run_command,
+        ),
+    )
+
+    with pytest.raises(CliError) as exc_info:
+        _enable_auto_merge(repo, 77, writer=lambda _message: None)
+
+    assert exc_info.value.code == "dirty_worktree_before_pr_merge"
+    assert "src.py" in exc_info.value.message
 
 
 def test_ensure_milestone_pr_skips_when_gh_missing(monkeypatch) -> None:

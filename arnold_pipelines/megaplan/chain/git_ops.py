@@ -1657,95 +1657,89 @@ def _mark_pr_ready(root: Path, pr_number: int, *, writer) -> None:
 
 
 def _enable_auto_merge(root: Path, pr_number: int, *, writer) -> str:
-    def _dirty() -> bool:
-        status = _compat().subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
+    status = _compat().subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if status.returncode != 0:
+        raise CliError(
+            "git_status_failed",
+            "git status --porcelain failed before PR merge",
+            extra={"stdout": status.stdout, "stderr": status.stderr},
+    )
+    dirty_lines = [line for line in status.stdout.splitlines() if line.strip()]
+    if dirty_lines:
+        sample = ", ".join(
+            line[3:] if len(line) > 3 else line for line in dirty_lines[:8]
         )
-        return bool(status.stdout.strip())
-
-    def _stash() -> bool:
-        if not _dirty():
-            return False
-        _compat()._run_command(
-            root,
-            ["git", "stash", "push", "-u", "-m", "megaplan pre-merge cleanup"],
-            writer=writer,
-            error_code="git_stash_failed",
+        raise CliError(
+            "dirty_worktree_before_pr_merge",
+            "refusing to merge PR with a dirty worktree; publish or clean local "
+            f"changes first: {sample}",
+            extra={"dirty_status": status.stdout},
         )
-        return True
-
-    def _pop_stash() -> None:
-        try:
-            _compat()._run_command(
-                root,
-                ["git", "stash", "pop"],
-                writer=writer,
-                error_code="git_stash_failed",
-            )
-        except CliError:
-            # If pop fails the working tree is at least clean for merge; the
-            # chain can recompute state from disk. Log and move on.
-            writer("[chain] stash pop failed; leaving stash for manual recovery\n")
-
-    stash_created = False
     try:
-        stash_created = _stash()
-        try:
-            _compat()._run_command(
-                root,
-                ["gh", "pr", "merge", str(pr_number), "--auto", "--squash", "--delete-branch"],
-                writer=writer,
-                timeout=120,
-                error_code="gh_pr_merge_failed",
-            )
-            return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
-        except CliError as exc:
-            combined = f"{exc.message} {exc.extra.get('stdout', '')} {exc.extra.get('stderr', '')}"
-            if "already checked out" in combined:
-                # --delete-branch needs a local branch switch, which fails when the
-                # chain runs in a git worktree whose base branch is checked out
-                # elsewhere. Retry without local branch deletion (remote branch is
-                # cleaned up by GitHub's delete-on-merge or left for manual GC).
-                writer("[chain] --delete-branch impossible from worktree; retrying auto-merge without it\n")
-                _compat()._run_command(
-                    root,
-                    ["gh", "pr", "merge", str(pr_number), "--auto", "--squash"],
-                    writer=writer,
-                    timeout=120,
-                    error_code="gh_pr_merge_failed",
-                )
-                return "merged" if _compat()._pr_state(root, pr_number, writer=writer) == "merged" else "open"
-            if "Auto merge is not allowed" not in combined:
-                raise
-            writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
-        finally:
-            if stash_created:
-                _pop_stash()
         _compat()._run_command(
             root,
-            ["gh", "pr", "merge", str(pr_number), "--squash", "--delete-branch"],
+            [
+                "gh",
+                "pr",
+                "merge",
+                str(pr_number),
+                "--auto",
+                "--squash",
+                "--delete-branch",
+            ],
             writer=writer,
             timeout=120,
             error_code="gh_pr_merge_failed",
         )
-        return "merged"
-    finally:
-        # Ensure stash is restored even if the immediate squash merge path above
-        # raised before the inner finally could run.
-        if stash_created and _compat().subprocess.run(
-            ["git", "stash", "list"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=120,
-        ).stdout.strip():
-            _pop_stash()
+        return (
+            "merged"
+            if _compat()._pr_state(root, pr_number, writer=writer) == "merged"
+            else "open"
+        )
+    except CliError as exc:
+        combined = (
+            f"{exc.message} {exc.extra.get('stdout', '')} "
+            f"{exc.extra.get('stderr', '')}"
+        )
+        if "already checked out" in combined:
+            # --delete-branch needs a local branch switch, which fails when the
+            # chain runs in a git worktree whose base branch is checked out
+            # elsewhere. Retry without local branch deletion (remote branch is
+            # cleaned up by GitHub's delete-on-merge or left for manual GC).
+            writer(
+                "[chain] --delete-branch impossible from worktree; retrying "
+                "auto-merge without it\n"
+            )
+            _compat()._run_command(
+                root,
+                ["gh", "pr", "merge", str(pr_number), "--auto", "--squash"],
+                writer=writer,
+                timeout=120,
+                error_code="gh_pr_merge_failed",
+            )
+            return (
+                "merged"
+                if _compat()._pr_state(root, pr_number, writer=writer) == "merged"
+                else "open"
+            )
+        if "Auto merge is not allowed" not in combined:
+            raise
+        writer("[chain] auto-merge unavailable; falling back to immediate squash merge\n")
+    _compat()._run_command(
+        root,
+        ["gh", "pr", "merge", str(pr_number), "--squash", "--delete-branch"],
+        writer=writer,
+        timeout=120,
+        error_code="gh_pr_merge_failed",
+    )
+    return "merged"
 
 
 def _is_transient_gh_error(exc: CliError) -> bool:
