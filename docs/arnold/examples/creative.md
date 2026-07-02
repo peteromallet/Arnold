@@ -32,7 +32,16 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
+name = "creative"
+description = (
+    "Creative-form pipeline: form-aware prep -> execute -> critique -> "
+    "revise -> finalize for creative writing artifacts."
+)
 
+driver = ("native", "linear")
+entrypoint = "build_pipeline"
+arnold_api_version = "1.0"
+capabilities = ("creative",)
 ```
 
 ## Step Surface
