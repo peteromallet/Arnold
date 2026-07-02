@@ -102,6 +102,14 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
         ),
     )
     chain_parser.add_argument(
+        "--force-clean-editable-install",
+        action="store_true",
+        help=(
+            "Before remote editable-install refresh, reset and clean only "
+            "megaplan.src_path. Opt-in recovery for dirty remote Arnold checkouts."
+        ),
+    )
+    chain_parser.add_argument(
         "--allow-loose-chain-spec",
         action="store_true",
         help=(
@@ -942,11 +950,26 @@ def _git_run(
     return proc
 
 
+def _git_relative_path(root: Path, path: Path) -> str | None:
+    try:
+        return path.expanduser().resolve().relative_to(root.expanduser().resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def _porcelain_path(line: str) -> str:
+    path = line[3:] if len(line) > 3 else ""
+    if " -> " in path:
+        path = path.rsplit(" -> ", 1)[-1]
+    return path.strip()
+
+
 def _sync_launch_head_to_editable_install_branch(
     root: Path,
     *,
     branch: str = "editible-install",
     remote: str = "origin",
+    ignore_dirty_paths: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Publish the local launch HEAD to the cloud editable-install branch.
 
@@ -963,8 +986,17 @@ def _sync_launch_head_to_editable_install_branch(
             "editable_install_sync_failed",
             f"cloud chain must be launched from a git worktree to sync {branch}",
         )
-    dirty = _git_run(root, ["status", "--porcelain"]).stdout.strip()
-    if dirty:
+    ignored = {
+        relative
+        for path in (ignore_dirty_paths or [])
+        if (relative := _git_relative_path(root, path)) is not None
+    }
+    dirty_lines = [
+        line
+        for line in _git_run(root, ["status", "--porcelain", "--untracked-files=all"]).stdout.splitlines()
+        if _porcelain_path(line) not in ignored
+    ]
+    if dirty_lines:
         raise CliError(
             "editable_install_sync_dirty",
             (
@@ -972,7 +1004,7 @@ def _sync_launch_head_to_editable_install_branch(
                 "the launch checkout has uncommitted changes. Commit or stash them, "
                 "or pass --no-editable-install-sync."
             ),
-            extra={"dirty": dirty.splitlines()},
+            extra={"dirty": dirty_lines},
         )
 
     launch_head = _git_run(root, ["rev-parse", "HEAD"]).stdout.strip()
@@ -1225,6 +1257,7 @@ class CanonicalEpicMaterialization:
     slug: str
     brief_dir: Path
     copied_files: list[str]
+    created_files: list[str]
     generated_chain: bool
 
 
@@ -1329,6 +1362,7 @@ def _materialize_canonical_epic_input(
     canonical_brief_dir.mkdir(parents=True, exist_ok=True)
 
     copied: list[str] = []
+    created: list[str] = []
     generated_chain = False
 
     if source_spec.exists():
@@ -1349,8 +1383,11 @@ def _materialize_canonical_epic_input(
             north_dest = canonical_dir / "NORTHSTAR.md"
         else:
             north_dest = canonical_dir / north_source.name
+        north_existed = north_dest.exists()
         if _copy_if_different(north_source, north_dest):
             copied.append(str(north_dest))
+            if not north_existed:
+                created.append(str(north_dest))
         raw = dict(raw)
         raw["anchors"] = {"north_star": "NORTHSTAR.md"}
         milestones = raw.get("milestones")
@@ -1374,8 +1411,11 @@ def _materialize_canonical_epic_input(
                 dest_name = f"{idx + 1:02d}-{dest_name}"
             seen_dest_names.add(dest_name)
             idea_dest = canonical_brief_dir / dest_name
+            idea_existed = idea_dest.exists()
             if _copy_if_different(idea_source, idea_dest):
                 copied.append(str(idea_dest))
+                if not idea_existed:
+                    created.append(str(idea_dest))
             copied_item = dict(item)
             copied_item["idea"] = f".megaplan/initiatives/{slug}/briefs/{dest_name}"
             rewritten.append(copied_item)
@@ -1388,8 +1428,12 @@ def _materialize_canonical_epic_input(
                 f"epic directory must contain NORTHSTAR.md before launch: {source_dir}",
                 extra={"missing_artifact": str(north_source)},
             )
-        if _copy_if_different(north_source, canonical_dir / "NORTHSTAR.md"):
-            copied.append(str(canonical_dir / "NORTHSTAR.md"))
+        north_dest = canonical_dir / "NORTHSTAR.md"
+        north_existed = north_dest.exists()
+        if _copy_if_different(north_source, north_dest):
+            copied.append(str(north_dest))
+            if not north_existed:
+                created.append(str(north_dest))
         briefs = _brief_markdown_files(source_dir)
         if not briefs:
             raise CliError(
@@ -1399,8 +1443,11 @@ def _materialize_canonical_epic_input(
         brief_names: list[str] = []
         for brief in briefs:
             dest = canonical_brief_dir / brief.name
+            dest_existed = dest.exists()
             if _copy_if_different(brief, dest):
                 copied.append(str(dest))
+                if not dest_existed:
+                    created.append(str(dest))
             brief_names.append(brief.name)
         raw = _default_generated_chain_yaml(
             slug=slug,
@@ -1410,8 +1457,11 @@ def _materialize_canonical_epic_input(
         generated_chain = True
 
     canonical_spec = canonical_dir / "chain.yaml"
+    canonical_spec_existed = canonical_spec.exists()
     canonical_spec.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     copied.append(str(canonical_spec))
+    if not canonical_spec_existed:
+        created.append(str(canonical_spec))
 
     # Validate after materialization so the exact files being uploaded are the
     # files accepted by the chain runner and watchdog contract.
@@ -1430,6 +1480,7 @@ def _materialize_canonical_epic_input(
         slug=slug,
         brief_dir=canonical_dir,
         copied_files=copied,
+        created_files=created,
         generated_chain=generated_chain,
     )
 
@@ -1750,7 +1801,11 @@ def _plan_auto_command(
     return f"{prefix}MEGAPLAN_TRUSTED_CONTAINER=1 {command} >> {log_target} 2>&1"
 
 
-def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
+def _megaplan_refresh_command(
+    spec: CloudSpec | None = None,
+    *,
+    force_clean_editable_install: bool = False,
+) -> str:
     src = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     repo = (spec.megaplan.repo or "") if spec is not None else ""
     ref = _EDITABLE_INSTALL_BRANCH
@@ -1774,6 +1829,15 @@ def _megaplan_refresh_command(spec: CloudSpec | None = None) -> str:
         '  git -C "$SRC" fetch origin "$REF"',
         '  BRANCH="$(git -C "$SRC" branch --show-current)"',
         '  if [ "$BRANCH" != "$REF" ]; then git -C "$SRC" checkout "$REF"; fi',
+        *(
+            [
+                '  echo "[megaplan-refresh] force-clean enabled: resetting and cleaning $SRC"',
+                '  git -C "$SRC" reset --hard "origin/$REF"',
+                '  git -C "$SRC" clean -fd',
+            ]
+            if force_clean_editable_install
+            else []
+        ),
         '  if [ -n "$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then',
         '    echo "[megaplan-refresh] refusing editable install refresh: tracked changes in source checkout at $SRC"',
         "    exit 19",
@@ -1801,9 +1865,13 @@ def _refresh_then_chain_start_command(
     project_dir: str | None = None,
     one_shot: bool = False,
     no_git_refresh: bool = False,
+    force_clean_editable_install: bool = False,
     log_relative: str = _CHAIN_LOG_RELATIVE,
 ) -> str:
-    refresh = _megaplan_refresh_command(spec)
+    refresh = _megaplan_refresh_command(
+        spec,
+        force_clean_editable_install=force_clean_editable_install,
+    )
     engine_dir = spec.megaplan.src_path if spec is not None else "/workspace/arnold"
     return (
         f"{{ {refresh}; }} >> {shlex.quote(log_relative)} 2>&1 && "
@@ -1817,6 +1885,7 @@ def _tmux_chain_launch_command(
     *,
     one_shot: bool = False,
     no_git_refresh: bool = False,
+    force_clean_editable_install: bool = False,
     session_name: str | None = None,
     spec: CloudSpec | None = None,
     log_relative: str = _CHAIN_LOG_RELATIVE,
@@ -1841,6 +1910,7 @@ def _tmux_chain_launch_command(
         project_dir=workspace,
         one_shot=one_shot,
         no_git_refresh=no_git_refresh,
+        force_clean_editable_install=force_clean_editable_install,
         log_relative=log_relative,
     )
     marker = marker_path or str(PurePosixPath(_CHAIN_SESSION_MARKER_DIR) / f"{name}.json")
@@ -2270,11 +2340,29 @@ for idx in range(max(1, attempts)):
     if idx + 1 < attempts:
         time.sleep(sleep_seconds)
 likely = None
+failure_code = None
+log_tail = []
+if log_path.exists():
+    try:
+        log_tail = log_path.read_text(errors="replace").splitlines()[-80:]
+    except Exception as exc:
+        log_tail = [f"<unable to read chain log: {{exc}}>"]
+tail_text = "\\n".join(log_tail)
 if not last_state["session_alive"]:
     likely = "driver exited; inspect chain log for missing megaplan or dependency failures"
 elif not last_state["advanced_past_init"]:
     likely = "driver stayed at init; inspect chain log for stale state, git refresh conflict, or missing megaplan"
+if "[megaplan-refresh] refusing editable install refresh" in tail_text:
+    likely = "editable install refresh failed before chain start"
+    if "tracked changes in source checkout" in tail_text:
+        failure_code = "editable_install_refresh_dirty"
+    elif "local commits not contained" in tail_text:
+        failure_code = "editable_install_refresh_diverged"
+    else:
+        failure_code = "editable_install_refresh_failed"
 last_state["likely_cause"] = likely
+last_state["failure_code"] = failure_code
+last_state["log_tail"] = log_tail
 print(json.dumps(last_state, sort_keys=True))
 """
     return f"python3 - <<'MEGAPLAN_VERIFY'\n{script.strip()}\nMEGAPLAN_VERIFY"
@@ -2383,12 +2471,17 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     from arnold_pipelines.megaplan import chain as chain_module
     from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
 
+    generated_canonical_files = [
+        Path(path)
+        for path in getattr(args, "_generated_canonical_files", []) or []
+    ]
     if not bool(getattr(args, "_canonicalized_epic", False)):
         materialized = _materialize_canonical_epic_input(
             root=root,
             spec=spec,
             spec_or_dir=args.spec,
         )
+        generated_canonical_files = [Path(path) for path in materialized.created_files]
         sys.stderr.write(
             "cloud chain canonicalized: "
             f"slug={materialized.slug} "
@@ -2401,6 +2494,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
                 "spec": str(materialized.spec_path),
                 "idea_dir": str(materialized.project_root),
                 "_canonicalized_epic": True,
+                "_generated_canonical_files": [str(path) for path in generated_canonical_files],
             }
         )
 
@@ -2424,6 +2518,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
         editable_install_sync = _sync_launch_head_to_editable_install_branch(
             _arnold_engine_repo_root(),
             branch=_EDITABLE_INSTALL_BRANCH,
+            ignore_dirty_paths=generated_canonical_files,
         )
         sys.stderr.write(
             "cloud chain editable-install sync: "
@@ -2562,6 +2657,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             project_dir=launch_ctx.workspace,
             log_relative=launch_ctx.log_relative,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
+            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
         ),
         "editable_source_branch": _EDITABLE_INSTALL_BRANCH,
         "editable_source_head": (
@@ -2582,6 +2678,7 @@ def _run_chain_wrapper(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
             identity_digest=launch_ctx.digest,
             marker_payload=marker_payload,
             no_git_refresh=bool(getattr(args, "no_git_refresh", False)),
+            force_clean_editable_install=bool(getattr(args, "force_clean_editable_install", False)),
         )
     )
     _relay_output(result, secret_names=spec.secrets, env=os.environ)
@@ -2667,6 +2764,7 @@ def _run_launch_epic_wrapper(root: Path, args: argparse.Namespace, spec: CloudSp
             "spec": str(materialized.spec_path),
             "idea_dir": str(materialized.project_root),
             "_canonicalized_epic": True,
+            "_generated_canonical_files": materialized.created_files,
         }
     )
     return _run_chain_wrapper(root, chain_args, spec, provider)
