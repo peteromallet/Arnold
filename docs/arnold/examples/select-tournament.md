@@ -32,7 +32,16 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
+name = "select-tournament"
+description = (
+    "Selection tournament pipeline: fan out per-candidate scoring, reduce "
+    "through pairwise brackets, and emit a winner."
+)
 
+driver = ("native", "fanout+pairwise-reduce")
+entrypoint = "build_pipeline"
+arnold_api_version = "1.0"
+capabilities = ("review",)
 ```
 
 ## Step Surface
