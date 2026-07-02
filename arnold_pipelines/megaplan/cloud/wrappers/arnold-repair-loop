@@ -1505,7 +1505,7 @@ def _classify_failure(
         return "timeout_or_hang"
     if "awaiting_human" in combined or last_state == "awaiting_human":
         return "awaiting_human_user_action_gate"
-    if "blocked" in combined or phase == "recover-blocked" or kind in {"execution_blocked", "iteration_cap"}:
+    if "blocked" in combined or phase == "recover-blocked" or kind in {"execution_blocked", "iteration_cap", "repeated_failure_signature"}:
         return "blocked_state_or_recovery_error"
     if "external_error" in kind:
         return "external_dependency_error"
