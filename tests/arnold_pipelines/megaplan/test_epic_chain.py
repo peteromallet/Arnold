@@ -257,3 +257,29 @@ def test_epic_chain_launches_not_started_child_via_chain_start(tmp_path: Path) -
     assert payload["status"] == "done"
     state = load_epic_chain_state(parent_spec)
     assert state.completed[0]["status"] == "done"
+
+
+def test_epic_chain_treats_already_running_launch_as_live_child(tmp_path: Path) -> None:
+    child_spec = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    parent_spec = _write_parent_spec(tmp_path, child_spec=child_spec)
+
+    def _start_child(*_args, **_kwargs) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            ["python3", "-P", "-m", "arnold_pipelines.megaplan", "chain", "start"],
+            0,
+            "megaplan-chain session already running for this epic-chain\n",
+            "",
+        )
+
+    payload = run_epic_chain(
+        tmp_path,
+        parent_spec,
+        writer=lambda _msg: None,
+        start_child=_start_child,
+    )
+
+    assert payload["status"] == "running"
+    assert payload["reason"] == "child epic python-shaped-workflow-authoring already running"
+    assert payload["active_child"]["effective_status"] == "not_started"
+    state = load_epic_chain_state(parent_spec)
+    assert state.last_state == "running"
