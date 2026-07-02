@@ -15,6 +15,7 @@ from arnold_pipelines.megaplan import chain as chain_module
 from arnold_pipelines.megaplan.cloud.cli import (
     _bootstrap_launch_command,
     _chain_anchor_uploads,
+    _chain_launch_verification_command,
     _chain_project_root,
     _chain_start_command,
     _cloud_chains_command,
@@ -115,6 +116,7 @@ def test_launch_epic_materializes_canonical_layout_from_brief_dir(tmp_path: Path
     assert raw["milestones"][0]["idea"] == ".megaplan/initiatives/research-plan-execute-epic/briefs/m1-contracts.md"
     assert (materialized.brief_dir / "NORTHSTAR.md").is_file()
     assert (materialized.brief_dir / "briefs" / "m2-routing.md").is_file()
+    assert str(materialized.spec_path) in materialized.created_files
 
 
 class _LaunchEpicProvider:
@@ -430,6 +432,21 @@ def test_cloud_chain_spec_location_requires_durable_initiatives_tree(tmp_path: P
         _validate_chain_spec_location(loose, project)
 
     assert excinfo.value.code == "chain_spec_layout_violation"
+
+
+def test_chain_launch_verification_classifies_editable_refresh_dirty() -> None:
+    command = _chain_launch_verification_command(
+        workspace="/workspace/demo/app",
+        session_name="megaplan-chain-demo",
+        state_path="/workspace/demo/app/.megaplan/plans/.chains/chain-state.json",
+        log_path="/workspace/demo/app/.megaplan/cloud-chain-megaplan-chain-demo.log",
+        attempts=1,
+        sleep_seconds=0,
+    )
+
+    assert "editable_install_refresh_dirty" in command
+    assert "[megaplan-refresh] refusing editable install refresh" in command
+    assert '"log_tail"' in command
 
 
 def test_durable_megaplan_uploads_exclude_runtime_state(tmp_path: Path) -> None:
