@@ -1,3 +1,9 @@
+"""Deliberation pipeline native behavior tests.
+
+Verify projected stage names match native program phases, and that
+resume-after-max-phases produces the same final report as a full run.
+"""
+
 from __future__ import annotations
 
 from arnold.pipeline.native.runtime import run_native_pipeline

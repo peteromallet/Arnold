@@ -1,3 +1,10 @@
+"""Native truth runtime trace tests for subpipeline native programs.
+
+These tests exercise each subpipeline's ``native_program`` through the
+native runtime and verify trace contract compliance: event kinds, stage
+sequences, artifact outputs, and resume behavior.
+"""
+
 from __future__ import annotations
 
 import json

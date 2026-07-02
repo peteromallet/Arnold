@@ -1,15 +1,12 @@
-"""Pre-migration parity tests: canonical Megaplan vs native-backed subpipelines.
+"""Native contract tests: canonical Megaplan vs native-backed subpipelines.
 
 These tests assert that the canonical megaplan pipeline satisfies the same
 ``native_program`` contract that subpipelines (creative, doc, jokes, etc.)
-already satisfy.  Before M3.5 implementation, the canonical pipeline has
-**no** ``native_program`` — these tests are expected to **FAIL** and serve
-as the characterisation baseline for the conversion layer (T3).
+already satisfy.  The canonical pipeline must:
 
-After M3.5, the canonical pipeline must:
 - Carry a non-null ``native_program`` (same contract as subpipelines).
-- Have route-label parity between DSL and native projection.
-- Carry canonical metadata in parity with DSL metadata.
+- Have route-label alignment between DSL and native projection.
+- Carry canonical metadata consistent with DSL metadata.
 """
 
 from __future__ import annotations
@@ -55,8 +52,8 @@ def _assert_subpipeline_native_contract(
 class TestSubpipelineNativeContractBaseline:
     """Existing subpipelines already satisfy the native contract.
 
-    These tests serve as the *target* for the canonical megaplan pipeline
-    after M3.5 conversion.  They document the contract the canonical
+    These tests serve as the *target* for the canonical megaplan pipeline.
+    They document the contract the canonical
     pipeline must match.
     """
 
@@ -120,15 +117,14 @@ class TestSubpipelineNativeContractBaseline:
         assert pipeline.native_program.name == "writing-panel-strict"
 
 
-# ── Canonical Megaplan parity assertions ──────────────────────────────────
+# ── Canonical Megaplan native contract assertions ─────────────────────────
 
 
-class TestCanonicalMegaplanNativeParity:
+class TestCanonicalMegaplanNativeContract:
     """The canonical megaplan pipeline must satisfy the native contract.
 
-    These assertions are expected to **FAIL** before M3.5 implementation
-    because ``build_pipeline()`` currently returns a DSL ``Pipeline``
-    without a ``native_program``.
+    These assertions verify that ``build_pipeline()`` exposes a
+    ``native_program`` consistent with the subpipeline contract.
     """
 
     def test_canonical_has_native_program_like_subpipelines(self) -> None:
@@ -139,7 +135,7 @@ class TestCanonicalMegaplanNativeParity:
         native_program = getattr(pipeline, "native_program", None)
 
         assert native_program is not None, (
-            "M3.5 parity contract: canonical megaplan build_pipeline() "
+            "Native contract: canonical megaplan build_pipeline() "
             "must expose native_program just like creative, doc, jokes, "
             "and all other subpipelines.  Currently: None."
         )
@@ -182,12 +178,12 @@ class TestCanonicalMegaplanNativeParity:
 
         capable = has_native_dispatch_capability(pipeline)
         assert capable or is_neutral or has_native, (
-            "M3.5 parity: canonical megaplan must be native-dispatch-capable "
+            "Native contract: canonical megaplan must be native-dispatch-capable "
             "or expose native_program.  has_native_dispatch_capability() "
             f"returned {capable}"
         )
 
-    def test_canonical_step_count_parity_with_subpipelines(self) -> None:
+    def test_canonical_step_count_consistent_with_subpipelines(self) -> None:
         """Canonical pipeline has 12 steps; subpipelines have 3-10.
 
         The absolute number is not enforced — just that we can count them.
@@ -210,7 +206,7 @@ class TestCanonicalMegaplanNativeParity:
             f"Canonical megaplan must have 12 steps; got {step_count}"
         )
 
-    def test_canonical_metadata_parity_dsl_vs_native(self) -> None:
+    def test_canonical_metadata_consistent_dsl_vs_native(self) -> None:
         """Canonical metadata must be consistent between DSL and native views."""
         from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
 
@@ -233,7 +229,7 @@ class TestCanonicalMegaplanNativeParity:
             )
 
 
-class TestNativeRoutingParity:
+class TestNativeRoutingIndependence:
     """Native routing must work generically, not via Megaplan stage-order."""
 
     def test_select_fresh_runtime_does_not_reference_megaplan_stages(

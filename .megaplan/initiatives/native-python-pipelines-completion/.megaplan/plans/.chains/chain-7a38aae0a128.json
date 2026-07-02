@@ -1,7 +1,7 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 4,
-  "current_plan_name": "m4-evidence-pack-native-20260701-2203",
+  "current_milestone_index": 5,
+  "current_plan_name": "m5-native-test-and-golden-20260701-2334",
   "current_milestone_base_sha": null,
   "target_base_ref": "b80fab5ec768d93b448d0594003d029aa1db50f6",
   "last_state": "done",
@@ -436,6 +436,53 @@
         "ran": true,
         "artifact": "full_suite_backstop.json"
       }
+    },
+    {
+      "label": "m4-evidence-pack-native-migration",
+      "plan": "m4-evidence-pack-native-20260701-2203",
+      "status": "done",
+      "pr_number": null,
+      "pr_state": null,
+      "full_suite_backstop": {
+        "mode": "shadow",
+        "status": "failed",
+        "blocks": false,
+        "reason": "full_suite_backstop_mode=shadow: recorded only",
+        "passed": 426,
+        "failed": 3,
+        "failing_tests": [
+          "tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_pipelines.py::TestPipelineConstruction::test_branch_metadata_is_stable_on_projection_and_native_program",
+          "tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_resume.py::test_resume_extra_state_merges_into_native_initial_state",
+          "tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_resume.py::test_resume_reverify_fail_policy_raises"
+        ],
+        "newly_failing": [
+          "tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_pipelines.py::TestPipelineConstruction::test_branch_metadata_is_stable_on_projection_and_native_program",
+          "tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_resume.py::test_resume_extra_state_merges_into_native_initial_state",
+          "tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_resume.py::test_resume_reverify_fail_policy_raises"
+        ],
+        "deleted_tests": [
+          "tests/archive/m5/_pipeline/test_step_protocol_test_locals.py",
+          "tests/archive/m5/pipelines/test_jokes_pipeline.py",
+          "tests/archive/m5/pipelines/test_select_tournament_pipeline.py",
+          "tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py",
+          "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py",
+          "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py",
+          "tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py",
+          "tests/arnold/pipeline/test_profiles.py",
+          "tests/arnold/pipeline/test_profiles_opaque.py",
+          "tests/arnold_pipelines/megaplan/test_hermes_plan_recovery.py",
+          "tests/cli/test_arnold_parser_snapshot.py",
+          "tests/m8/regression/test_structural_regressions.py",
+          "tests/test_arnold_cli.py"
+        ],
+        "baseline_failing_count": 13,
+        "current_failing_count": 3,
+        "delta_computed": true,
+        "command": "/root/.pyenv/versions/3.11.11/bin/python3 -m pytest tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_pipelines.py tests/arnold_pipelines/megaplan/test_pipeline.py tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_resume.py tests/arnold/execution/test_resume.py tests/arnold/pipeline/test_resume.py tests/arnold/runtime/test_resume.py tests/archive/m6_deleted_legacy_runtime/arnold/pipelines/evidence_pack/test_steps.py tests/arnold/pipelines/deliberation/test_steps.py tests/arnold/pipeline/native --tb=no -q --no-header -rA",
+        "duration_s": 3.1167653009761125,
+        "ran": true,
+        "artifact": "full_suite_backstop.json"
+      }
     }
   ],
   "branch_head": null,
@@ -472,7 +519,7 @@
     "chain_spec_path": "/workspace/native-python-pipelines-completion-parent-22937539/arnold/.megaplan/initiatives/native-python-pipelines-completion/chain.yaml",
     "chain_spec_sha256": "9ee3f687c98d67cc6d2631851f762a4baac034d4ec50d51727de8a414671937b",
     "ground_truth_reconciliation": {
-      "reconciled_at": "2026-07-01T22:03:05Z",
+      "reconciled_at": "2026-07-01T23:34:50Z",
       "plan": null,
       "current_state": null,
       "latest_failure": null,
