@@ -1853,6 +1853,10 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                             merged[key] = value
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
+                authoritative_finalize_records = _filter_stale_pending_finalize_records(
+                    authoritative_finalize_records,
+                    authoritative_batch_overrides=authoritative_batch_overrides,
+                )
 
     task_records: list[dict[str, Any]] = []
     for key in ("task_updates", "tasks"):
@@ -2672,6 +2676,37 @@ def _finalize_records_missing_authority_fields(
             continue
         missing.append(f"{task_id}='unknown':missing_finalize_authority_fields")
     return missing
+
+
+def _filter_stale_pending_finalize_records(
+    task_records: list[dict[str, Any]],
+    *,
+    authoritative_batch_overrides: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    filtered: list[dict[str, Any]] = []
+    overrides = authoritative_batch_overrides or {}
+    for task in task_records:
+        task_id = str(task.get("task_id") or task.get("id") or "")
+        if task_id and task_id in overrides:
+            filtered.append(task)
+            continue
+        if task.get("status") != "pending":
+            filtered.append(task)
+            continue
+        if any(
+            task.get(field)
+            for field in (
+                "files_changed",
+                "commands_run",
+                "evidence_files",
+                "sections_written",
+                "evidence",
+                "head_sha",
+            )
+        ):
+            filtered.append(task)
+            continue
+    return filtered
 
 
 def _non_authoritative_task_reasons(
