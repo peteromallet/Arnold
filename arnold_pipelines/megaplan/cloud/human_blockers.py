@@ -1,9 +1,9 @@
 """Conservative human-blocker classifier for cloud repair observe mode.
 
-Distinguishes true human blockers from stale/current-target mismatches using
-needs-human sidecar data plus resolver output.  Uses a disabled-by-default
-append-only escalation ledger writer skeleton so that M1 does not make
-escalation authoritative.
+Distinguishes true human blockers from stale/current-target mismatches,
+mechanical/liveness gates, and ambiguous evidence using needs-human sidecar
+data plus resolver output.  Uses a disabled-by-default append-only escalation
+ledger writer skeleton so that M1 does not make escalation authoritative.
 """
 
 from __future__ import annotations
@@ -28,9 +28,10 @@ logger = logging.getLogger(__name__)
 
 
 class BlockerVerdict(Enum):
-    TRUE_BLOCKER = auto()        # Needs-human sidecar references the *current* plan
+    TRUE_BLOCKER = auto()        # Needs-human sidecar references the *current* plan AND has current-target proof
     STALE_MISMATCH = auto()      # Needs-human sidecar references a *previous* plan
     AMBIGUOUS_BLOCKER = auto()   # Resolver evidence is missing/incomplete — treat conservatively as blocker
+    MECHANICAL_BLOCKER = auto()  # Mechanical/liveness gate, not a genuine human blocker — distinct non-success
 
 
 @dataclass(frozen=True)
@@ -61,12 +62,21 @@ class HumanBlockerClassification:
         return self.verdict == BlockerVerdict.AMBIGUOUS_BLOCKER
 
     @property
+    def is_mechanical(self) -> bool:
+        """True when the blocker is a mechanical/liveness gate, not a genuine human blocker."""
+        return self.verdict == BlockerVerdict.MECHANICAL_BLOCKER
+
+    @property
     def should_block(self) -> bool:
-        """Return True if escalation should be held (true blocker or ambiguous).
+        """Return True if escalation should be held (true blocker, ambiguous, or mechanical).
 
         Only a confirmed stale mismatch returns False.
         """
-        return self.verdict in (BlockerVerdict.TRUE_BLOCKER, BlockerVerdict.AMBIGUOUS_BLOCKER)
+        return self.verdict in (
+            BlockerVerdict.TRUE_BLOCKER,
+            BlockerVerdict.AMBIGUOUS_BLOCKER,
+            BlockerVerdict.MECHANICAL_BLOCKER,
+        )
 
 
 def classify_needs_human_blocker(
@@ -85,6 +95,10 @@ def classify_needs_human_blocker(
 
     The classifier prefers false positives (treating ambiguous evidence as a
     blocker) over false negatives (dismissing a genuine blocker as stale).
+
+    Only verified current-target human gates classify as TRUE_BLOCKER.
+    Stale markers, mechanical/liveness gates, and ambiguous evidence remain
+    distinct non-success classifications.
 
     Args:
         session: Repair session identifier.
@@ -164,20 +178,6 @@ def classify_needs_human_blocker(
     # Check if the current plan appears in the needs-human plan refs
     current_in_refs = current_plan in resolver_plan_refs if resolver_plan_refs else None
 
-    if resolver_plan_refs and current_in_refs is True:
-        rationale.append(
-            f"needs-human sidecar references current plan {current_plan!r}"
-        )
-        return HumanBlockerClassification(
-            verdict=BlockerVerdict.TRUE_BLOCKER,
-            session=session,
-            current_plan=current_plan,
-            needs_human_path=str(resolved_path),
-            rationale=tuple(rationale),
-            resolver_record=record,
-            needs_human_payload=payload,
-        )
-
     if resolver_plan_refs and current_in_refs is False:
         rationale.append(
             f"needs-human sidecar references plans {resolver_plan_refs} "
@@ -193,13 +193,80 @@ def classify_needs_human_blocker(
             needs_human_payload=payload,
         )
 
-    # Resolver plan_refs are empty or None — cannot confirm either way
+    if not resolver_plan_refs:
+        # Resolver plan_refs are empty or None — cannot confirm either way
+        rationale.append(
+            "resolver did not produce plan_refs from needs-human sidecar "
+            f"(resolver_current_plan={resolver_current_plan!r}) — conservatively treating as blocker"
+        )
+        return HumanBlockerClassification(
+            verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
+            session=session,
+            current_plan=current_plan,
+            needs_human_path=str(resolved_path),
+            rationale=tuple(rationale),
+            resolver_record=record,
+            needs_human_payload=payload,
+        )
+
+    # --- current plan IS in refs → verify with current-target proof ----------------
+    # Require current-target proof: the resolver must have an authoritative source
+    # that is not disabled, and at least one piece of live evidence (plan/chain state
+    # present, chain log, or active step heartbeat).
+    authoritative_source = record.get("authoritative_source", "")
+    has_authoritative_source = bool(
+        authoritative_source
+        and authoritative_source != "resolver_observe_disabled"
+    )
+
+    plan_state_present = record.get("plan_state", {}).get("present", False)
+    chain_state_present = record.get("chain_state", {}).get("present", False)
+    chain_log_present = record.get("chain_log", {}).get("present", False)
+    active_step_active = record.get("active_step_heartbeat", {}).get("active", False)
+
+    has_current_target_proof = has_authoritative_source and (
+        plan_state_present or chain_state_present or chain_log_present or active_step_active
+    )
+
+    if not has_current_target_proof:
+        rationale.append(
+            f"needs-human references current plan {current_plan!r} but resolver lacks "
+            f"current-target proof (authoritative_source={authoritative_source!r}, "
+            f"plan_state_present={plan_state_present}, chain_state_present={chain_state_present})"
+        )
+        return HumanBlockerClassification(
+            verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
+            session=session,
+            current_plan=current_plan,
+            needs_human_path=str(resolved_path),
+            rationale=tuple(rationale),
+            resolver_record=record,
+            needs_human_payload=payload,
+        )
+
+    # --- current-target proof established → check for mechanical/liveness gate ------
+    if _is_mechanical_blocker(payload, record):
+        rationale.append(
+            f"needs-human references current plan {current_plan!r} but evidence indicates "
+            f"a mechanical/liveness gate rather than a genuine human blocker"
+        )
+        return HumanBlockerClassification(
+            verdict=BlockerVerdict.MECHANICAL_BLOCKER,
+            session=session,
+            current_plan=current_plan,
+            needs_human_path=str(resolved_path),
+            rationale=tuple(rationale),
+            resolver_record=record,
+            needs_human_payload=payload,
+        )
+
+    # --- genuine TRUE_BLOCKER: current-target proof + current plan match ------------
     rationale.append(
-        "resolver did not produce plan_refs from needs-human sidecar "
-        f"(resolver_current_plan={resolver_current_plan!r}) — conservatively treating as blocker"
+        f"needs-human sidecar references current plan {current_plan!r} "
+        f"with current-target proof (source={authoritative_source})"
     )
     return HumanBlockerClassification(
-        verdict=BlockerVerdict.AMBIGUOUS_BLOCKER,
+        verdict=BlockerVerdict.TRUE_BLOCKER,
         session=session,
         current_plan=current_plan,
         needs_human_path=str(resolved_path),
@@ -436,6 +503,16 @@ def _resolve_needs_human_payload(
 
 
 def _classification_to_record(classification: HumanBlockerClassification) -> dict[str, Any]:
+    """Build a durable ledger record from a classification, including Discord metadata."""
+    needs_human = classification.needs_human_payload or {}
+    discord_status = _safe_marker_text(needs_human.get("discord_status"))
+
+    # Extract resolver evidence summary for audit trail
+    resolver = classification.resolver_record or {}
+    authoritative_source = _safe_marker_text(resolver.get("authoritative_source", ""))
+    plan_state_mtime = resolver.get("plan_state", {}).get("mtime", 0.0)
+    chain_state_mtime = resolver.get("chain_state", {}).get("mtime", 0.0)
+
     return {
         "session": classification.session,
         "kind": "blocker_classified",
@@ -444,10 +521,82 @@ def _classification_to_record(classification: HumanBlockerClassification) -> dic
         "needs_human_path": classification.needs_human_path,
         "rationale": list(classification.rationale),
         "resolver_stale_evidence": [
-            e for e in (classification.resolver_record or {}).get("stale_evidence", [])
+            e for e in resolver.get("stale_evidence", [])
             if isinstance(e, dict) and "needs_human" in str(e.get("kind", ""))
         ],
+        "discord_status": discord_status,
+        "authoritative_source": authoritative_source,
+        "plan_state_mtime": plan_state_mtime,
+        "chain_state_mtime": chain_state_mtime,
     }
+
+
+def _is_mechanical_blocker(
+    needs_human_payload: dict[str, Any],
+    resolver_record: dict[str, Any],
+) -> bool:
+    """Detect whether a needs-human sidecar represents a mechanical/liveness gate.
+
+    A mechanical blocker is one where the evidence indicates the escalation was
+    triggered by a mechanical failure (e.g. repair tool crash, liveness timeout,
+    rate-limit) rather than a genuine human gate (e.g. awaiting review, blocked
+    by follow-up, needs approval).
+
+    Heuristics (any single signal is sufficient):
+    - Summary text contains mechanical/liveness keywords without genuine human-gate keywords.
+    - The needs-human payload lacks iteration-level `why`/`kimi_diagnosis` human-gate indicators.
+    - The resolver shows active_step_heartbeat with a running phase (liveness gate).
+    """
+    summary = _safe_marker_text(needs_human_payload.get("summary", "")).lower()
+
+    # Genuine human-gate keywords — if present, it's NOT a mechanical blocker
+    human_gate_keywords = (
+        "awaiting human", "needs review", "blocked by follow-up",
+        "needs approval", "human intervention", "manual review",
+        "true blocker", "escalation",
+    )
+    has_human_gate_indicator = any(kw in summary for kw in human_gate_keywords)
+
+    if has_human_gate_indicator:
+        return False
+
+    # Mechanical/liveness keywords
+    mechanical_keywords = (
+        "mechanical", "liveness", "timeout", "rate-limit",
+        "rate limit", "crash", "tool failure", "launch failure",
+        "mechanical_launch", "kimi_launch",
+    )
+    has_mechanical_indicator = any(kw in summary for kw in mechanical_keywords)
+
+    if has_mechanical_indicator:
+        return True
+
+    # Check if the needs-human payload was created from a purely mechanical iteration
+    # (no human-gate diagnosis in the `why` or `kimi_diagnosis` fields)
+    iterations = needs_human_payload.get("iterations")
+    if isinstance(iterations, list) and iterations:
+        all_mechanical = True
+        for item in iterations:
+            if not isinstance(item, dict):
+                continue
+            why = _safe_marker_text(item.get("why", "")).lower()
+            kimi_diag = _safe_marker_text(item.get("kimi_diagnosis", "")).lower()
+            combined = f"{why} {kimi_diag}"
+            if any(kw in combined for kw in human_gate_keywords):
+                all_mechanical = False
+                break
+        if all_mechanical:
+            return True
+
+    # Check resolver active_step_heartbeat for liveness-only pattern
+    heartbeat = resolver_record.get("active_step_heartbeat", {})
+    if heartbeat.get("active") and heartbeat.get("phase"):
+        # An active step with a running phase but no human-gate needs-human summary
+        # suggests a liveness gate rather than a genuine human blocker
+        if not has_human_gate_indicator:
+            return True
+
+    return False
 
 
 def _build_current_pointer(

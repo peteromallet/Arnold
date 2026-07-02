@@ -199,6 +199,7 @@ def test_resolve_current_target_marks_stale_needs_human(tmp_path: Path) -> None:
         "line_count": 2,
         "latest_gate_kind": "gate_entered",
         "resume_retry_strategy": "manual_review",
+        "mtime": (workspace / ".megaplan" / "plans" / "m3-current-plan" / "events.ndjson").stat().st_mtime,
     }
     assert record["needs_human"]["plan_refs"] == ["m1-old-plan"]
     assert record["stale_evidence"] == [
@@ -577,8 +578,264 @@ def test_resolve_current_target_excludes_all_canonical_sidecars_from_siblings(tm
     sibling_sessions = record.get("sibling_sessions", [])
     sibling_names = {s["session"] for s in sibling_sessions}
     assert sibling_names == {"sibling"}
+# ---------------------------------------------------------------------------
+# New T2 tests: disabled-observe compatibility, deterministic evidence fields,
+# unchanged-live vs fresh-activity differentiation
+# ---------------------------------------------------------------------------
 
 
+def test_resolve_current_target_disabled_observe_returns_stub(tmp_path: Path, monkeypatch) -> None:
+    """When ARNOLD_RESOLVER_OBSERVE is disabled the stub includes new fields."""
+    monkeypatch.setenv("ARNOLD_RESOLVER_OBSERVE", "0")
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+
+    record = resolve_current_target("test-session", marker_dir=marker_dir)
+
+    assert record["authoritative_source"] == "resolver_observe_disabled"
+    assert record["chain_log"] == {}
+    assert record["active_step_heartbeat"] == {}
+    assert "mtime" not in record["plan_state"]  # stub is empty dict
+    assert "fingerprint" not in record["plan_state"]
+
+
+def test_resolve_current_target_includes_evidence_mtime_and_fingerprint(tmp_path: Path) -> None:
+    """Plan/chain state snapshots carry mtime and fingerprint for comparison."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    plan_name = "demo-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "running"}), encoding="utf-8"
+    )
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": plan_name}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    ps = record["plan_state"]
+    assert ps["present"] is True
+    assert isinstance(ps["mtime"], float) and ps["mtime"] > 0
+    assert len(ps["fingerprint"]) == 64  # SHA256 hex digest
+    assert ps["fingerprint"] == hashlib.sha256(
+        (plan_dir / "state.json").read_bytes()
+    ).hexdigest()
+
+
+def test_resolve_current_target_chain_log_evidence(tmp_path: Path) -> None:
+    """Chain log section captures path, mtime, size, and fingerprint."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    chain_log_dir = workspace / ".megaplan"
+    chain_log_dir.mkdir(parents=True)
+    chain_log_path = chain_log_dir / "cloud-chain.log"
+    chain_log_path.write_text("chain started\nmilestone complete\n", encoding="utf-8")
+
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": "p1"}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    cl = record["chain_log"]
+    assert cl["present"] is True
+    assert cl["path"] == str(chain_log_path)
+    assert cl["mtime"] > 0
+    assert cl["size"] > 0
+    assert len(cl["fingerprint"]) == 64
+
+
+def test_resolve_current_target_chain_log_missing(tmp_path: Path) -> None:
+    """Chain log section is empty-but-stable when no log file exists."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": "p1"}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    cl = record["chain_log"]
+    assert cl["present"] is False
+    assert cl["mtime"] == 0.0
+    assert cl["size"] == 0
+    assert cl["fingerprint"] == ""
+
+
+def test_resolve_current_target_active_step_heartbeat_present(tmp_path: Path) -> None:
+    """Active-step heartbeat is extracted from plan state when present."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "hb-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({
+            "name": plan_name,
+            "current_state": "running",
+            "active_step": {
+                "phase": "execute",
+                "attempt": 2,
+                "worker_pid": "12345",
+                "started_at": "2025-07-01T12:00:00Z",
+            },
+        }),
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": plan_name}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    hb = record["active_step_heartbeat"]
+    assert hb["active"] is True
+    assert hb["phase"] == "execute"
+    assert hb["attempt"] == 2
+    assert hb["worker_pid"] == "12345"
+    assert hb["started_at"] == "2025-07-01T12:00:00Z"
+
+
+def test_resolve_current_target_active_step_heartbeat_absent(tmp_path: Path) -> None:
+    """Active-step heartbeat is inactive when plan state has no active_step."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    plan_name = "idle-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "idle"}),
+        encoding="utf-8",
+    )
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": plan_name}),
+        encoding="utf-8",
+    )
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    hb = record["active_step_heartbeat"]
+    assert hb["active"] is False
+    assert hb["phase"] == ""
+    assert hb["attempt"] == 0
+
+
+def test_snapshots_distinguish_unchanged_live_from_fresh_activity(tmp_path: Path) -> None:
+    """Two snapshots taken at different times expose evidence deltas.
+
+    - Unchanged tmux without file changes: same fingerprints, same mtimes.
+    - Fresh activity: event line count or chain-log mtime advances.
+    """
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / ".megaplan").mkdir()
+    chain_log = workspace / ".megaplan" / "cloud-chain.log"
+    chain_log.write_text("initial line\n", encoding="utf-8")
+
+    plan_name = "delta-plan"
+    plan_dir = workspace / ".megaplan" / "plans" / plan_name
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": plan_name, "current_state": "running"}),
+        encoding="utf-8",
+    )
+    events_path = plan_dir / "events.ndjson"
+    events_path.write_text(
+        '{"kind":"gate_entered"}\n{"kind":"state_written"}\n',
+        encoding="utf-8",
+    )
+
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({
+            "session": "demo",
+            "workspace": str(workspace),
+            "plan_name": plan_name,
+            "pid": 9999,
+        }),
+        encoding="utf-8",
+    )
+
+    # --- First snapshot: tmux is alive, no activity ---
+    snap1 = resolve_current_target(
+        "demo",
+        marker_dir=marker_dir,
+        session_is_live=lambda s: True if s == "demo" else None,
+        pid_is_live=lambda p: True if p == 9999 else None,
+    )
+    assert snap1["tmux_process"]["live_status"] == "alive"
+    ec1 = snap1["event_cursors"]
+    cl1 = snap1["chain_log"]
+
+    # --- Simulate fresh activity: more events written ---
+    events_path.write_text(
+        '{"kind":"gate_entered"}\n{"kind":"state_written"}\n{"kind":"gate_passed"}\n',
+        encoding="utf-8",
+    )
+
+    # --- Second snapshot ---
+    snap2 = resolve_current_target(
+        "demo",
+        marker_dir=marker_dir,
+        session_is_live=lambda s: True if s == "demo" else None,
+        pid_is_live=lambda p: True if p == 9999 else None,
+    )
+    assert snap2["tmux_process"]["live_status"] == "alive"
+    ec2 = snap2["event_cursors"]
+
+    # Unchanged-live case: same fingerprint, no delta
+    assert snap1["plan_state"]["fingerprint"] == snap2["plan_state"]["fingerprint"]
+
+    # Fresh activity case: event line count increased
+    assert ec2["line_count"] > ec1["line_count"]
+
+    # Determinism: second snapshot with same files produces same fingerprint
+    snap2b = resolve_current_target(
+        "demo",
+        marker_dir=marker_dir,
+        session_is_live=lambda s: True if s == "demo" else None,
+        pid_is_live=lambda p: True if p == 9999 else None,
+    )
+    assert snap2 == snap2b
+
+
+def test_repair_progress_sidecar_includes_mtime(tmp_path: Path) -> None:
+    """Repair-progress sidecar items carry mtime for comparison."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    (marker_dir / "demo.json").write_text(
+        json.dumps({"session": "demo", "workspace": str(workspace), "plan_name": "p1"}),
+        encoding="utf-8",
+    )
+    sidecar = marker_dir / "demo.repair-progress.json"
+    sidecar.write_text(json.dumps({"status": "waiting"}), encoding="utf-8")
+
+    record = resolve_current_target("demo", marker_dir=marker_dir)
+
+    assert record["repair_progress"]["present"] is True
+    items = record["repair_progress"]["items"]
+    assert len(items) == 1
+    assert items[0]["status"] == "waiting"
+    assert isinstance(items[0]["mtime"], float) and items[0]["mtime"] > 0
 def _chain_state_path(workspace: Path, spec_path: Path) -> Path:
     digest = hashlib.sha1(str(spec_path.resolve()).encode("utf-8")).hexdigest()[:12]
     return workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"

@@ -364,3 +364,323 @@ def test_jsonl_concurrent_appends_are_visible(tmp_path: Path) -> None:
     for r in records:
         assert "_sequence" in r
         assert "_timestamp" in r
+
+
+# ---------------------------------------------------------------------------
+# Outcome lattice helpers
+# ---------------------------------------------------------------------------
+
+
+def test_outcome_constants_are_well_defined() -> None:
+    assert repair_contract.COMPLETE == "complete"
+    assert repair_contract.PROGRESSED == "progressed"
+    assert repair_contract.LIVE_WITH_FRESH_ACTIVITY == "live_with_fresh_activity"
+    assert repair_contract.TRUE_HUMAN_BLOCKER == "true_human_blocker"
+    assert repair_contract.PARTIAL_LIVENESS == "partial_liveness"
+    assert repair_contract.REPAIRING == "repairing"
+    assert repair_contract.REPAIR_TIMEOUT == "repair_timeout"
+    assert repair_contract.REPAIR_EXHAUSTED == "repair_exhausted"
+    assert repair_contract.NEEDS_HUMAN == "needs_human"
+    assert repair_contract.DISCORD_ESCALATED == "discord_escalated"
+
+
+def test_success_outcomes_match_planned_lattice() -> None:
+    assert repair_contract.SUCCESS_OUTCOMES == frozenset(
+        {"complete", "progressed", "live_with_fresh_activity", "true_human_blocker"}
+    )
+
+
+def test_non_success_outcomes_include_liveness_and_exhaustion() -> None:
+    assert "partial_liveness" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "repair_timeout" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "repair_exhausted" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "needs_human" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "repairing" in repair_contract.NON_SUCCESS_OUTCOMES
+    assert "discord_escalated" in repair_contract.NON_SUCCESS_OUTCOMES
+
+
+def test_all_outcomes_union_covers_both_sets() -> None:
+    assert repair_contract.ALL_OUTCOMES == (
+        repair_contract.SUCCESS_OUTCOMES | repair_contract.NON_SUCCESS_OUTCOMES
+    )
+    # Sanity: these are disjoint
+    assert repair_contract.SUCCESS_OUTCOMES.isdisjoint(repair_contract.NON_SUCCESS_OUTCOMES)
+
+
+def test_is_success_outcome_only_accepts_four_values() -> None:
+    for outcome in repair_contract.ALL_OUTCOMES:
+        expected = outcome in repair_contract.SUCCESS_OUTCOMES
+        assert repair_contract.is_success_outcome(outcome) == expected, (
+            f"is_success_outcome({outcome!r}) returned unexpected {not expected}"
+        )
+
+
+def test_is_success_outcome_unknown_value_not_in_lattice() -> None:
+    assert not repair_contract.is_success_outcome("bogus")
+    assert not repair_contract.is_success_outcome("")
+
+
+def test_is_terminal_outcome() -> None:
+    assert repair_contract.is_terminal_outcome("complete")
+    assert repair_contract.is_terminal_outcome("partial_liveness")
+    assert repair_contract.is_terminal_outcome("repair_timeout")
+    assert repair_contract.is_terminal_outcome("repair_exhausted")
+    assert repair_contract.is_terminal_outcome("true_human_blocker")
+    assert not repair_contract.is_terminal_outcome("repairing")
+    # Unknown values are treated as terminal (not "repairing")
+    assert repair_contract.is_terminal_outcome("bogus")
+
+
+# ---------------------------------------------------------------------------
+# Budget / deadline helpers
+# ---------------------------------------------------------------------------
+
+
+def test_default_repair_budget_is_3600_seconds() -> None:
+    assert repair_contract.DEFAULT_REPAIR_BUDGET_SECS == 3600
+
+
+def test_compute_deadline_adds_budget_to_start() -> None:
+    from datetime import datetime, timezone
+
+    start = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+    deadline = repair_contract.compute_deadline(start, 3600)
+    assert deadline == datetime(2026, 7, 1, 13, 0, 0, tzinfo=timezone.utc)
+
+
+def test_compute_deadline_defaults_to_3600() -> None:
+    from datetime import datetime, timezone
+
+    start = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+    deadline = repair_contract.compute_deadline(start)
+    assert deadline == datetime(2026, 7, 1, 13, 0, 0, tzinfo=timezone.utc)
+
+
+def test_compute_deadline_arbitrary_budget() -> None:
+    from datetime import datetime, timezone
+
+    start = datetime(2026, 7, 1, 0, 0, 0, tzinfo=timezone.utc)
+    assert repair_contract.compute_deadline(start, 60) == datetime(
+        2026, 7, 1, 0, 1, 0, tzinfo=timezone.utc
+    )
+    assert repair_contract.compute_deadline(start, 0) == start
+
+
+def test_remaining_budget_secs_positive() -> None:
+    from datetime import datetime, timezone
+
+    deadline = datetime(2026, 7, 1, 12, 1, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert repair_contract.remaining_budget_secs(deadline, now) == 60.0
+
+
+def test_remaining_budget_secs_exhausted_returns_zero() -> None:
+    from datetime import datetime, timezone
+
+    deadline = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 1, 13, 0, 0, tzinfo=timezone.utc)
+    assert repair_contract.remaining_budget_secs(deadline, now) == 0.0
+
+
+def test_remaining_budget_secs_exact_deadline_returns_zero() -> None:
+    from datetime import datetime, timezone
+
+    deadline = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+    assert repair_contract.remaining_budget_secs(deadline, deadline) == 0.0
+
+
+def test_is_budget_exhausted_before_and_after() -> None:
+    from datetime import datetime, timezone
+
+    deadline = datetime(2026, 7, 1, 12, 1, 0, tzinfo=timezone.utc)
+    before = datetime(2026, 7, 1, 12, 0, 30, tzinfo=timezone.utc)
+    after = datetime(2026, 7, 1, 13, 0, 0, tzinfo=timezone.utc)
+
+    assert not repair_contract.is_budget_exhausted(deadline, before)
+    assert repair_contract.is_budget_exhausted(deadline, after)
+    assert repair_contract.is_budget_exhausted(deadline, deadline)
+
+
+def test_remaining_budget_defaults_now_to_utc() -> None:
+    from datetime import datetime, timezone
+
+    far_future = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    remaining = repair_contract.remaining_budget_secs(far_future)
+    assert remaining > 0
+
+
+# ---------------------------------------------------------------------------
+# classify_verification_outcome — status transitions
+# ---------------------------------------------------------------------------
+
+
+def test_classify_complete_beats_everything() -> None:
+    assert (
+        repair_contract.classify_verification_outcome(
+            is_complete=True,
+            has_progressed=True,
+            has_fresh_activity=True,
+            has_true_human_blocker=True,
+            is_live=True,
+        )
+        == repair_contract.COMPLETE
+    )
+
+
+def test_classify_progressed_beats_fresh_and_blocker() -> None:
+    assert (
+        repair_contract.classify_verification_outcome(
+            has_progressed=True,
+            has_fresh_activity=True,
+            has_true_human_blocker=True,
+            is_live=True,
+        )
+        == repair_contract.PROGRESSED
+    )
+
+
+def test_classify_fresh_activity_beats_blocker_and_liveness() -> None:
+    assert (
+        repair_contract.classify_verification_outcome(
+            has_fresh_activity=True,
+            has_true_human_blocker=True,
+            is_live=True,
+        )
+        == repair_contract.LIVE_WITH_FRESH_ACTIVITY
+    )
+
+
+def test_classify_true_human_blocker_beats_liveness() -> None:
+    assert (
+        repair_contract.classify_verification_outcome(
+            has_true_human_blocker=True,
+            is_live=True,
+        )
+        == repair_contract.TRUE_HUMAN_BLOCKER
+    )
+
+
+def test_classify_liveness_only_becomes_partial_liveness() -> None:
+    """The critical semantic: held tmux with no delta is partial_liveness, NOT success."""
+    outcome = repair_contract.classify_verification_outcome(is_live=True)
+    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert not repair_contract.is_success_outcome(outcome)
+
+
+def test_classify_liveness_only_with_no_flags_is_not_success() -> None:
+    outcome = repair_contract.classify_verification_outcome(
+        is_live=True,
+        is_complete=False,
+        has_progressed=False,
+        has_fresh_activity=False,
+        has_true_human_blocker=False,
+    )
+    assert outcome == repair_contract.PARTIAL_LIVENESS
+    assert not repair_contract.is_success_outcome(outcome)
+
+
+def test_classify_no_evidence_yields_repairing() -> None:
+    outcome = repair_contract.classify_verification_outcome()
+    assert outcome == repair_contract.REPAIRING
+    assert not repair_contract.is_success_outcome(outcome)
+    assert not repair_contract.is_terminal_outcome(outcome)
+
+
+def test_classify_not_live_no_evidence_yields_repairing() -> None:
+    outcome = repair_contract.classify_verification_outcome(is_live=False)
+    assert outcome == repair_contract.REPAIRING
+
+
+def test_classify_every_outcome_reachable() -> None:
+    """Each outcome in the lattice should be reachable via some flag combination."""
+    assert (
+        repair_contract.classify_verification_outcome(is_complete=True)
+        == repair_contract.COMPLETE
+    )
+    assert (
+        repair_contract.classify_verification_outcome(has_progressed=True)
+        == repair_contract.PROGRESSED
+    )
+    assert (
+        repair_contract.classify_verification_outcome(has_fresh_activity=True)
+        == repair_contract.LIVE_WITH_FRESH_ACTIVITY
+    )
+    assert (
+        repair_contract.classify_verification_outcome(has_true_human_blocker=True)
+        == repair_contract.TRUE_HUMAN_BLOCKER
+    )
+    assert (
+        repair_contract.classify_verification_outcome(is_live=True)
+        == repair_contract.PARTIAL_LIVENESS
+    )
+    assert (
+        repair_contract.classify_verification_outcome()
+        == repair_contract.REPAIRING
+    )
+
+
+def test_classify_accepts_pre_post_snapshots_forward_compat() -> None:
+    """Pre/post snapshots are accepted but not compared in T1."""
+    pre = {"session": "s1", "target_id": "s1:plan"}
+    post = {"session": "s1", "target_id": "s1:plan"}
+    outcome = repair_contract.classify_verification_outcome(
+        is_complete=True, pre_snapshot=pre, post_snapshot=post
+    )
+    assert outcome == repair_contract.COMPLETE
+
+
+# ---------------------------------------------------------------------------
+# build_verification_record
+# ---------------------------------------------------------------------------
+
+
+def test_build_verification_record_success() -> None:
+    rec = repair_contract.build_verification_record(
+        "complete", delta_summary="all tasks done"
+    )
+    assert rec["outcome"] == "complete"
+    assert rec["is_success"] is True
+    assert rec["is_terminal"] is True
+    assert rec["delta_summary"] == "all tasks done"
+    assert "recorded_at" in rec
+    assert rec["pre_snapshot"] is None
+    assert rec["post_snapshot"] is None
+
+
+def test_build_verification_record_non_success() -> None:
+    rec = repair_contract.build_verification_record("partial_liveness")
+    assert rec["is_success"] is False
+    assert rec["is_terminal"] is True
+
+
+def test_build_verification_record_non_terminal() -> None:
+    rec = repair_contract.build_verification_record("repairing")
+    assert rec["is_success"] is False
+    assert rec["is_terminal"] is False
+
+
+def test_build_verification_record_with_snapshots() -> None:
+    pre = {"a": 1}
+    post = {"a": 2}
+    rec = repair_contract.build_verification_record(
+        "progressed", pre_snapshot=pre, post_snapshot=post
+    )
+    assert rec["pre_snapshot"] == pre
+    assert rec["post_snapshot"] == post
+    # Snapshots are deep-copied (independent of input)
+    pre["a"] = 99
+    assert rec["pre_snapshot"] == {"a": 1}
+
+
+def test_build_verification_record_explicit_timestamp() -> None:
+    from datetime import datetime, timezone
+
+    ts = datetime(2026, 7, 1, 12, 0, 0, tzinfo=timezone.utc)
+    rec = repair_contract.build_verification_record("complete", recorded_at=ts)
+    assert rec["recorded_at"] == "2026-07-01T12:00:00+00:00"
+
+
+def test_build_verification_record_default_timestamp_is_iso() -> None:
+    rec = repair_contract.build_verification_record("complete")
+    # Must be parseable as ISO datetime
+    datetime.fromisoformat(rec["recorded_at"])

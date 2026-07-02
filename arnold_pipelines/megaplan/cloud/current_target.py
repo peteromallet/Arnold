@@ -14,8 +14,26 @@ from arnold_pipelines.megaplan.cloud.session_markers import (
     is_canonical_session_marker_path,
 )
 
+_FINGERPRINT_ALGORITHM = "sha256"
+
 SessionLiveProbe = Callable[[str], bool | None]
 PidLiveProbe = Callable[[int], bool | None]
+
+def _fingerprint(path: Path) -> str:
+    """Return hex digest of file content, or empty string when unavailable."""
+    try:
+        return hashlib.new(_FINGERPRINT_ALGORITHM, path.read_bytes()).hexdigest()
+    except (OSError, ValueError):
+        return ""
+
+
+def _mtime(path: Path) -> float:
+    """Return st_mtime as float, or 0.0 when unavailable."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
 
 def resolve_current_target(
     session: str,
@@ -48,6 +66,8 @@ def resolve_current_target(
             "tmux_process": {},
             "needs_human": {},
             "repair_progress": {"present": False, "items": []},
+            "chain_log": {},
+            "active_step_heartbeat": {},
             "sibling_sessions": [],
             "ignored_artifacts": [],
             "stale_evidence": [],
@@ -84,6 +104,8 @@ def resolve_current_target(
         session_is_live=session_is_live,
     )
     event_cursors = _collect_event_cursors(plan_state_path, plan_state)
+    chain_log = _collect_chain_log_evidence(workspace, session, run_kind)
+    active_step_heartbeat = _collect_active_step_heartbeat(plan_state)
 
     stale_evidence: list[dict[str, Any]] = []
     rationale: list[str] = []
@@ -201,12 +223,16 @@ def resolve_current_target(
             "name": plan_name,
             "current_state": _safe_text(plan_state.get("current_state")),
             "resume_cursor": _stable_mapping(plan_state.get("resume_cursor")),
+            "mtime": _mtime(plan_state_path) if plan_state_path is not None else 0.0,
+            "fingerprint": _fingerprint(plan_state_path) if plan_state_path is not None else "",
         },
         "chain_state": {
             "path": str(chain_state_path) if chain_state_path is not None else "",
             "present": bool(chain_state_path and chain_state_path.exists()),
             "current_plan_name": chain_current_plan,
             "last_state": _safe_text(chain_state.get("last_state")),
+            "mtime": _mtime(chain_state_path) if chain_state_path is not None else 0.0,
+            "fingerprint": _fingerprint(chain_state_path) if chain_state_path is not None else "",
         },
         "event_cursors": event_cursors,
         "tmux_process": tmux_process,
@@ -218,6 +244,8 @@ def resolve_current_target(
             "recorded_at": _safe_text(needs_human.get("recorded_at")),
         },
         "repair_progress": repair_progress,
+        "chain_log": chain_log,
+        "active_step_heartbeat": active_step_heartbeat,
         "sibling_sessions": siblings,
         "ignored_artifacts": sorted(ignored_artifacts, key=_artifact_sort_key),
         "stale_evidence": sorted(stale_evidence, key=_artifact_sort_key),
@@ -283,7 +311,7 @@ def _plan_state_path(workspace: Path | None, plan_name: str, run_kind: str) -> P
 
 def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str, Any]) -> dict[str, Any]:
     if plan_state_path is None:
-        return {"events_path": "", "events_present": False, "line_count": 0, "latest_gate_kind": ""}
+        return {"events_path": "", "events_present": False, "line_count": 0, "latest_gate_kind": "", "resume_retry_strategy": "", "mtime": 0.0}
     events_path = plan_state_path.parent / "events.ndjson"
     line_count = 0
     latest_gate_kind = ""
@@ -311,6 +339,7 @@ def _collect_event_cursors(plan_state_path: Path | None, plan_state: Mapping[str
         "line_count": line_count,
         "latest_gate_kind": latest_gate_kind,
         "resume_retry_strategy": retry_strategy,
+        "mtime": _mtime(events_path),
     }
 
 
@@ -354,6 +383,7 @@ def _collect_sidecar_status(marker_dir: Path, session: str) -> dict[str, Any]:
                 "path": str(path),
                 "present": True,
                 "status": _safe_text(payload.get("status")) or _safe_text(payload.get("outcome")),
+                "mtime": _mtime(path),
             }
         )
     found.sort(key=lambda item: item["path"])
@@ -492,6 +522,61 @@ def compare_needs_human_diagnostic(
             "plan_refs": record.get("needs_human", {}).get("plan_refs", []),
             "current_plan": record.get("current_refs", {}).get("current_plan_name", ""),
         },
+    }
+
+
+def _collect_chain_log_evidence(
+    workspace: Path | None,
+    session: str,
+    run_kind: str,
+) -> dict[str, Any]:
+    """Collect deterministic chain-log evidence for comparison snapshots.
+
+    The canonical chain log lives at ``.megaplan/cloud-chain.log``; per-session
+    variants (``cloud-chain-{session}.log``) are also inspected when available.
+    """
+    if workspace is None:
+        return {"path": "", "present": False, "mtime": 0.0, "size": 0, "fingerprint": ""}
+    candidates: list[Path] = []
+    if session:
+        candidates.append(workspace / ".megaplan" / f"cloud-chain-{session}.log")
+    candidates.append(workspace / ".megaplan" / "cloud-chain.log")
+    for path in candidates:
+        if path.exists():
+            return {
+                "path": str(path),
+                "present": True,
+                "mtime": _mtime(path),
+                "size": path.stat().st_size if path.exists() else 0,
+                "fingerprint": _fingerprint(path),
+            }
+    # No chain log found — return a stable empty record
+    return {
+        "path": str(candidates[-1]) if candidates else "",
+        "present": False,
+        "mtime": 0.0,
+        "size": 0,
+        "fingerprint": "",
+    }
+
+
+def _collect_active_step_heartbeat(
+    plan_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Extract active-step heartbeat evidence from plan state.
+
+    Returns the ``active_step`` sub-dict with phase, attempt, worker_pid,
+    and started_at fields, plus an ``active`` boolean for quick liveness checks.
+    """
+    active_step = plan_state.get("active_step")
+    if not isinstance(active_step, dict):
+        return {"active": False, "phase": "", "attempt": 0, "worker_pid": "", "started_at": ""}
+    return {
+        "active": bool(active_step.get("phase") or active_step.get("worker_pid")),
+        "phase": _safe_text(active_step.get("phase")),
+        "attempt": int(active_step.get("attempt") or 0),
+        "worker_pid": _safe_text(active_step.get("worker_pid")),
+        "started_at": _safe_text(active_step.get("started_at")),
     }
 
 

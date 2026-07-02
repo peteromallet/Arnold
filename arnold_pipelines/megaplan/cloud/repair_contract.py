@@ -156,6 +156,156 @@ def _redact_value(value: Any, redactor: Callable[[str], str]) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Repair verification outcome lattice and budget helpers
+# ---------------------------------------------------------------------------
+
+# -- outcome constants -------------------------------------------------------
+COMPLETE = "complete"
+PROGRESSED = "progressed"
+LIVE_WITH_FRESH_ACTIVITY = "live_with_fresh_activity"
+TRUE_HUMAN_BLOCKER = "true_human_blocker"
+PARTIAL_LIVENESS = "partial_liveness"
+REPAIRING = "repairing"
+REPAIR_TIMEOUT = "repair_timeout"
+REPAIR_EXHAUSTED = "repair_exhausted"
+NEEDS_HUMAN = "needs_human"
+DISCORD_ESCALATED = "discord_escalated"  # legacy non-success — preserved for compatibility
+
+SUCCESS_OUTCOMES: frozenset[str] = frozenset(
+    {COMPLETE, PROGRESSED, LIVE_WITH_FRESH_ACTIVITY, TRUE_HUMAN_BLOCKER}
+)
+
+NON_SUCCESS_OUTCOMES: frozenset[str] = frozenset(
+    {PARTIAL_LIVENESS, REPAIRING, REPAIR_TIMEOUT, REPAIR_EXHAUSTED, NEEDS_HUMAN, DISCORD_ESCALATED}
+)
+
+ALL_OUTCOMES: frozenset[str] = SUCCESS_OUTCOMES | NON_SUCCESS_OUTCOMES
+
+
+def is_success_outcome(outcome: str) -> bool:
+    """Return True when *outcome* is a terminal repair success.
+
+    Only ``complete``, ``progressed``, ``live_with_fresh_activity``, and
+    ``true_human_blocker`` are considered success.  Liveness-only outcomes
+    (``partial_liveness``) are explicitly excluded.
+    """
+    return outcome in SUCCESS_OUTCOMES
+
+
+def is_terminal_outcome(outcome: str) -> bool:
+    """Return True when *outcome* is terminal (success or non-success).
+
+    ``repairing`` is the only non-terminal outcome; everything else is terminal.
+    """
+    return outcome != REPAIRING
+
+
+# -- one-hour budget helpers ------------------------------------------------
+
+DEFAULT_REPAIR_BUDGET_SECS: int = 3600
+
+
+def compute_deadline(
+    start_time: datetime,
+    budget_secs: int = DEFAULT_REPAIR_BUDGET_SECS,
+) -> datetime:
+    """Return the wall-clock deadline computed from *start_time* + *budget_secs*."""
+    from datetime import timedelta
+
+    return start_time + timedelta(seconds=budget_secs)
+
+
+def remaining_budget_secs(
+    deadline: datetime,
+    now: datetime | None = None,
+) -> float:
+    """Return the number of seconds remaining before *deadline* (never negative)."""
+    if now is None:
+        now = datetime.now(timezone.utc)
+    delta = (deadline - now).total_seconds()
+    return max(0.0, delta)
+
+
+def is_budget_exhausted(
+    deadline: datetime,
+    now: datetime | None = None,
+) -> bool:
+    """Return True when no budget remains before *deadline*."""
+    return remaining_budget_secs(deadline, now) <= 0.0
+
+
+# -- verification outcome classification ------------------------------------
+
+
+def classify_verification_outcome(
+    *,
+    is_complete: bool = False,
+    has_progressed: bool = False,
+    has_fresh_activity: bool = False,
+    has_true_human_blocker: bool = False,
+    is_live: bool = False,
+    pre_snapshot: Mapping[str, Any] | None = None,
+    post_snapshot: Mapping[str, Any] | None = None,
+) -> str:
+    """Classify a repair verification outcome from explicit evidence flags.
+
+    The outcome lattice (first match wins):
+
+    1. *is_complete* → :data:`COMPLETE` (terminal success)
+    2. *has_progressed* → :data:`PROGRESSED` (terminal success)
+    3. *has_fresh_activity* → :data:`LIVE_WITH_FRESH_ACTIVITY` (terminal success)
+    4. *has_true_human_blocker* → :data:`TRUE_HUMAN_BLOCKER` (terminal success)
+    5. *is_live* with no progress/fresh-activity/blocker → :data:`PARTIAL_LIVENESS` (terminal non-success)
+    6. Otherwise → :data:`REPAIRING` (non-terminal)
+
+    *pre_snapshot* and *post_snapshot* are accepted for forward compatibility
+    with snapshot-driven delta detection but are not compared here; callers
+    should compute the explicit flags before calling this function.
+    """
+    if is_complete:
+        return COMPLETE
+    if has_progressed:
+        return PROGRESSED
+    if has_fresh_activity:
+        return LIVE_WITH_FRESH_ACTIVITY
+    if has_true_human_blocker:
+        return TRUE_HUMAN_BLOCKER
+    if is_live:
+        return PARTIAL_LIVENESS
+    return REPAIRING
+
+
+def build_verification_record(
+    outcome: str,
+    *,
+    pre_snapshot: Mapping[str, Any] | None = None,
+    post_snapshot: Mapping[str, Any] | None = None,
+    delta_summary: str = "",
+    recorded_at: datetime | None = None,
+) -> dict[str, Any]:
+    """Return a structured verification record suitable for repair-data persistence.
+
+    Args:
+        outcome: One of the outcome lattice constants (e.g. :data:`COMPLETE`).
+        pre_snapshot: Optional pre-relaunch resolver snapshot.
+        post_snapshot: Optional post-relaunch resolver snapshot.
+        delta_summary: Human-readable description of what changed (or didn't).
+        recorded_at: Timestamp for the record (defaults to now).
+    """
+    if recorded_at is None:
+        recorded_at = datetime.now(timezone.utc)
+    return {
+        "outcome": outcome,
+        "is_success": is_success_outcome(outcome),
+        "is_terminal": is_terminal_outcome(outcome),
+        "recorded_at": recorded_at.isoformat(),
+        "pre_snapshot": dict(pre_snapshot) if pre_snapshot is not None else None,
+        "post_snapshot": dict(post_snapshot) if post_snapshot is not None else None,
+        "delta_summary": delta_summary,
+    }
+
+
+# ---------------------------------------------------------------------------
 # JSONL / NDJSON sidecar helpers (append-only, atomic)
 # ---------------------------------------------------------------------------
 
@@ -387,17 +537,38 @@ def append_attempt_record(
 
 __all__ = [
     "ADDITIVE_FIELD_DEFAULTS",
+    "ALL_OUTCOMES",
+    "COMPLETE",
     "CURRENT_SCHEMA_VERSION",
+    "DEFAULT_REPAIR_BUDGET_SECS",
+    "DISCORD_ESCALATED",
+    "LIVE_WITH_FRESH_ACTIVITY",
+    "NEEDS_HUMAN",
+    "NON_SUCCESS_OUTCOMES",
+    "PARTIAL_LIVENESS",
+    "PROGRESSED",
+    "REPAIR_EXHAUSTED",
+    "REPAIR_TIMEOUT",
+    "REPAIRING",
+    "SUCCESS_OUTCOMES",
+    "TRUE_HUMAN_BLOCKER",
     "append_attempt_record",
     "append_incident_record",
     "append_jsonl_record",
     "append_repair_event",
     "atomic_write_json",
+    "build_verification_record",
+    "classify_verification_outcome",
+    "compute_deadline",
     "ensure_additive_fields",
+    "is_budget_exhausted",
+    "is_success_outcome",
+    "is_terminal_outcome",
     "load_json",
     "merge_additive_fields",
     "read_jsonl_records",
     "redact_repair_data",
+    "remaining_budget_secs",
     "save_repair_data",
     "validate_jsonl_summary",
     "validate_repair_data",
