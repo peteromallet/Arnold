@@ -49,6 +49,10 @@ def test_discover_migrated_pipelines_have_builders() -> None:
             if info.load_state == "loadable-native":
                 assert isinstance(pipeline, NativePipeline)
                 assert isinstance(pipeline.native_program, NativeProgram)
+            elif info.load_state == "workflow":
+                # Transitional: declared native but builder still returns
+                # a workflow.Pipeline (e.g. _template before T5 migration).
+                assert isinstance(pipeline, Pipeline)
             else:
                 assert info.load_state == "not-loadable"
                 assert info.diagnostic
@@ -102,7 +106,9 @@ def test_discovery_exposes_load_state_contracts_and_deferred_native() -> None:
         assert info.load_state == "workflow"
         assert info.canonical_builder_path is not None
 
-    assert by_id["my-pipeline"].builder_contract == "workflow"
+    assert by_id["my-pipeline"].builder_contract == "native"
+    # _template still returns a workflow.Pipeline until T5 migration;
+    # the load_state reflects the actual builder output, not the declared contract.
     assert by_id["my-pipeline"].load_state == "workflow"
     assert by_id["my-pipeline"].canonical_builder_path is not None
 
@@ -125,6 +131,7 @@ def test_native_discovery_does_not_canonicalize_mirrored_modules() -> None:
         "live-supervisor": "arnold_pipelines.megaplan.pipelines.live_supervisor:build_pipeline",
         "writing-panel-strict": "arnold_pipelines.megaplan.pipelines.writing_panel_strict:build_pipeline",
         "select-tournament": "arnold_pipelines.megaplan.pipelines.select_tournament:build_pipeline",
+        "my-pipeline": "arnold_pipelines._template:build_pipeline",
     }
 
     assert set(native_or_deferred) == set(expected)

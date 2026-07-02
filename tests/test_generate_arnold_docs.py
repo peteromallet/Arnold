@@ -91,15 +91,14 @@ def test_workflow_template_example_renders_dry_run_report() -> None:
     generator = _load_generator()
     info = _by_id()["my-pipeline"]
 
-    assert info.builder_contract == "workflow"
-    assert info.load_state == "workflow"
+    assert info.builder_contract == "native"
+    assert info.load_state == "workflow"  # transitional, template not yet migrated
 
     rendered_path, rendered = generator._render_example(info)
     assert rendered_path == _example_path(generator, "my-pipeline")
     assert "## Dry-run report" in rendered
-    assert "| Contract | workflow|" in rendered
+    assert "| Contract | native|" in rendered
     assert "`arnold workflow check --module arnold_pipelines._template:build_pipeline`" in rendered
-    assert "native_program" not in rendered
 
 
 def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> None:

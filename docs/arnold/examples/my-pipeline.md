@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/_template
-- manifest_hash: sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d
+- manifest_hash: 
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -21,10 +21,10 @@ Provenance:
 | Builder target | arnold_pipelines._template:build_pipeline|
 | Builder source | arnold_pipelines/_template/__init__.py|
 | Skill | arnold_pipelines/_template/SKILL.md|
-| Validation | `arnold workflow check --module arnold_pipelines._template:build_pipeline`|
-| Contract | workflow|
+| Diagnostic | M6: template declared native-first; actual builder still returns workflow.Pipeline until T5 migration.|
+| Contract | native|
 | Load state | workflow|
-| Identity | sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d|
+| Identity | workflow|
 
 ## Builder Surface
 
@@ -62,28 +62,9 @@ def build_pipeline() -> Pipeline:
     )
 ```
 
-## Dry-run report
+## Deferred native diagnostic
 
-```yaml
-edge_count: 1
-id: my-pipeline
-manifest_hash: sha256:0460764971b2d55bc972aae766986ee556ec14c820660c05b919c2507d56360d
-node_count: 2
-possible_routes:
-- condition_ref: null
-  label: default
-  source: start
-  target: finish
-suspension_point_count: 0
-topology_summary:
-  edge_count: 1
-  entry_nodes:
-  - start
-  exit_nodes:
-  - finish
-  node_count: 2
-unresolved_inputs: {}
-```
+M6: template declared native-first; actual builder still returns workflow.Pipeline until T5 migration.
 
 ## Package Skill
 

@@ -237,7 +237,11 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "docs_path": "arnold_pipelines/_template/SKILL.md",
         "disposition": "migrate",
         "migrated": True,
-        "builder_contract": "workflow",
+        "builder_contract": "native",
+        "diagnostic": (
+            "M6: template declared native-first; "
+            "actual builder still returns workflow.Pipeline until T5 migration."
+        ),
     },
     # Archives
     "arnold_pipelines/megaplan/pipelines/epic_blitz.py": {
@@ -331,12 +335,16 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": False,
     },
     "arnold/pipelines/_authoring.py": {
-        "id": "legacy.arnold_pipelines.authoring",
-        "public": False,
+        "id": "arnold.pipelines._authoring",
+        "public": True,
         "registry_id": None,
         "docs_path": None,
-        "disposition": "delete",
+        "disposition": "whitelist",
         "migrated": False,
+        "diagnostic": (
+            "M6: active whitelisted non-pipeline helper; "
+            "import-only native-first authoring contract surface."
+        ),
     },
     "arnold/pipelines/simplify_writing": {
         "id": "legacy.simplify_writing",

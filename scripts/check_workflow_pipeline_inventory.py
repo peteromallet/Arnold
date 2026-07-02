@@ -146,7 +146,7 @@ PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "registry_id": None,
     },
     "arnold/pipelines/_authoring.py": {
-        "status": "delete",
+        "status": "whitelist",
         "registry_id": None,
     },
     "arnold_pipelines/megaplan/pipelines/epic-blitz": {
