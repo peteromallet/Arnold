@@ -3026,6 +3026,37 @@ kimi_dispatch_failed_previously() {
     && ! kimi_operator_running "$session"
 }
 
+repair_data_outcome_for_session() {
+  local session="$1"
+  local data_path
+  data_path="$REPAIR_DATA_DIR/$(safe_name "$session").repair-data.json"
+  [[ -r "$data_path" ]] || return 0
+  python3 - "$data_path" <<'PY' 2>/dev/null || true
+import json
+import pathlib
+import sys
+
+try:
+    payload = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+outcome = payload.get("outcome")
+if isinstance(outcome, str):
+    print(outcome)
+PY
+}
+
+repair_outcome_wants_repair_retry() {
+  case "$1" in
+    recurring_retry_pending|repair_timeout)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 mechanical_relaunch_attempted_previously() {
   local session="$1"
   [[ -f "$(kimi_dispatch_marker_path "$session")" ]] \
@@ -4404,7 +4435,7 @@ repair_unhealthy_session() {
   local workspace="$2"
   local remote_spec="$3"
   local reason="$4"
-  local repair_busy
+  local previous_repair_outcome repair_busy
 
   repair_busy="$(repair_loop_busy_state "$session")"
 
@@ -4435,6 +4466,22 @@ repair_unhealthy_session() {
     return 1
   fi
   if kimi_dispatch_failed_previously "$session"; then
+    previous_repair_outcome="$(repair_data_outcome_for_session "$session")"
+    if repair_outcome_wants_repair_retry "$previous_repair_outcome"; then
+      log "session unhealthy; previous repair outcome requires another root-cause repair session=$session outcome=$previous_repair_outcome reason=$reason"
+      kimi_dispatch_marker_clear "$session"
+      if dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
+        if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+          log "session unhealthy after repair outcome=$previous_repair_outcome; another repair loop already running so waiting turn session=$session reason=$reason"
+          return 0
+        fi
+        log "session unhealthy after repair outcome=$previous_repair_outcome: background-dispatched repair loop session=$session reason=$reason"
+        tmux kill-session -t "$session" 2>/dev/null || true
+        return 0
+      fi
+      log "session unhealthy after repair outcome=$previous_repair_outcome; repair loop missing -> direct relaunch session=$session reason=$reason"
+      return 1
+    fi
     log "session unhealthy; repair loop tried and exited without recovery -> direct relaunch session=$session reason=$reason"
     kimi_dispatch_marker_clear "$session"
     return 1
