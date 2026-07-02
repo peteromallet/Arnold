@@ -2516,6 +2516,254 @@ else:
 PY
 }
 
+session_terminal_status() {
+  local session="$1"
+  local workspace="$2"
+  local run_kind="${3:-chain}"
+  local plan_name="${4:-}"
+  local remote_spec="${5:-}"
+  python3 - "$session" "$workspace" "$run_kind" "$plan_name" "$remote_spec" "$MARKER_DIR" "$REPAIR_DATA_DIR" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+session = sys.argv[1]
+workspace = pathlib.Path(sys.argv[2])
+run_kind = sys.argv[3]
+plan_name = sys.argv[4]
+remote_spec_raw = sys.argv[5]
+marker_dir = pathlib.Path(sys.argv[6])
+repair_data_dir = pathlib.Path(sys.argv[7])
+
+
+def load_json(path: pathlib.Path | None) -> dict[str, object]:
+    if path is None:
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def candidate_plan_states(root: pathlib.Path) -> list[pathlib.Path]:
+    candidates: list[tuple[float, pathlib.Path]] = []
+    for pattern in (
+        ".megaplan/plans/*/state.json",
+        ".megaplan/initiatives/*/.megaplan/plans/*/state.json",
+    ):
+        for path in root.glob(pattern):
+            try:
+                candidates.append((path.stat().st_mtime, path))
+            except OSError:
+                continue
+    candidates.sort(reverse=True)
+    return [path for _, path in candidates]
+
+
+def latest_chain_state(root: pathlib.Path, remote_spec_value: str) -> pathlib.Path | None:
+    candidates: list[pathlib.Path] = []
+    if remote_spec_value:
+        spec_path = pathlib.Path(remote_spec_value)
+        if not spec_path.is_absolute():
+            spec_path = root / spec_path
+        try:
+            spec_resolved = spec_path.resolve()
+        except Exception:
+            spec_resolved = spec_path.absolute()
+        digest = hashlib.sha1(str(spec_resolved).encode("utf-8")).hexdigest()[:12]
+        candidates.extend(
+            [
+                root / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+                root / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+                spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json",
+                spec_resolved.parent / ".megaplan" / "plans" / ".chains" / f"{spec_resolved.stem}-{digest}.json",
+                spec_resolved.with_name("chain_state.json"),
+            ]
+        )
+    for pattern in (
+        ".megaplan/plans/.chains/*.json",
+        ".megaplan/initiatives/*/.megaplan/plans/.chains/*.json",
+        ".megaplan/**/chain_state.json",
+    ):
+        try:
+            candidates.extend(root.glob(pattern))
+        except Exception:
+            continue
+    ordered: list[tuple[float, pathlib.Path]] = []
+    seen: set[pathlib.Path] = set()
+    for path in candidates:
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            ordered.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    ordered.sort(reverse=True)
+    return ordered[0][1] if ordered else None
+
+
+def resolve_plan_state(root: pathlib.Path, preferred_name: str) -> pathlib.Path | None:
+    candidates = candidate_plan_states(root)
+    if preferred_name:
+        preferred = [path for path in candidates if path.parent.name == preferred_name]
+        if preferred:
+            return preferred[0]
+        return None
+    return candidates[0] if candidates else None
+
+
+def is_terminal_plan(plan_state: dict[str, object]) -> tuple[bool, str]:
+    current_state = str(plan_state.get("current_state") or plan_state.get("state") or "").strip().lower()
+    if current_state in {"done", "completed", "reviewed", "abandoned"}:
+        return True, f"plan_state={current_state}"
+    return False, ""
+
+
+def chain_completion_reason(chain_state: dict[str, object]) -> str:
+    last_state = str(chain_state.get("last_state") or "").strip().lower()
+    if last_state in {"done", "complete"}:
+        return f"last_state={last_state}"
+    milestones = chain_state.get("milestones")
+    milestones = milestones if isinstance(milestones, list) else []
+    completed = chain_state.get("completed")
+    completed = completed if isinstance(completed, list) else []
+    milestone_count = len(milestones)
+    completed_count = len(completed)
+    current_idx = chain_state.get("current_milestone_index")
+    try:
+        current_idx_int = int(current_idx)
+    except (TypeError, ValueError):
+        current_idx_int = None
+    if milestone_count and current_idx_int is not None and current_idx_int >= milestone_count:
+        return f"current_milestone_index={current_idx_int} past_last_milestone={milestone_count - 1}"
+    milestone_labels = [
+        str(item.get("label") or item.get("id") or "").strip()
+        for item in milestones
+        if isinstance(item, dict)
+    ]
+    completed_labels = {
+        str(item.get("label") or item.get("id") or item.get("plan") or "").strip()
+        for item in completed
+        if isinstance(item, dict)
+    }
+    milestone_labels = [label for label in milestone_labels if label]
+    if milestone_labels and all(label in completed_labels for label in milestone_labels):
+        return f"all_milestones_completed={len(milestone_labels)}/{milestone_count}"
+    if milestone_count and completed_count >= milestone_count:
+        return f"completed_entries={completed_count}/{milestone_count}"
+    return ""
+
+
+def marker_repair_data_path() -> pathlib.Path | None:
+    marker_path = marker_dir / f"{session}.json"
+    marker = load_json(marker_path)
+    repair_path = marker.get("repair_data_path")
+    if isinstance(repair_path, str) and repair_path.strip():
+        return pathlib.Path(repair_path)
+    return None
+
+
+def chain_reason_from_context(context: object) -> str:
+    if not isinstance(context, dict):
+        return ""
+    classification = str(context.get("failure_classification") or "").strip().lower()
+    if classification == "chain_completed":
+        return "repair_data.failure_classification=chain_completed"
+    chain_summary = context.get("chain_state_summary")
+    if isinstance(chain_summary, dict):
+        reason = chain_completion_reason(chain_summary)
+        if reason:
+            return f"repair_data.chain_state_summary:{reason}"
+    return ""
+
+
+def prior_terminal_status() -> tuple[str, str]:
+    candidates = [repair_data_dir / f"{session}.repair-data.json"]
+    marker_repair_path = marker_repair_data_path()
+    if marker_repair_path is not None:
+        candidates.insert(0, marker_repair_path)
+    seen: set[pathlib.Path] = set()
+    for data_path in candidates:
+        if data_path in seen:
+            continue
+        seen.add(data_path)
+        data = load_json(data_path)
+        if not data:
+            continue
+        if run_kind == "chain":
+            contexts: list[object] = [
+                data.get("current_failure_context"),
+                data.get("initial_facts"),
+            ]
+            initial = data.get("initial_facts")
+            if isinstance(initial, dict):
+                contexts.append(initial.get("failure_context"))
+            entries = data.get("attempts")
+            if not isinstance(entries, list) or not entries:
+                entries = data.get("iterations")
+            if isinstance(entries, list):
+                for entry in reversed(entries):
+                    if not isinstance(entry, dict):
+                        continue
+                    contexts.extend([entry, entry.get("failure_context"), entry.get("current_failure_context")])
+            for context in contexts:
+                reason = chain_reason_from_context(context)
+                if reason:
+                    return reason, str(data_path)
+        else:
+            contexts = [data.get("current_failure_context"), data.get("initial_facts")]
+            entries = data.get("attempts")
+            if not isinstance(entries, list) or not entries:
+                entries = data.get("iterations")
+            if isinstance(entries, list):
+                for entry in reversed(entries):
+                    if isinstance(entry, dict):
+                        contexts.extend([entry, entry.get("failure_context"), entry.get("current_failure_context")])
+            for context in contexts:
+                if not isinstance(context, dict):
+                    continue
+                plan_state = str(
+                    context.get("current_state")
+                    or (context.get("plan_latest_failure") or {}).get("current_state")
+                    or ""
+                ).strip().lower()
+                if plan_state in {"done", "completed", "reviewed", "abandoned"}:
+                    return f"repair_data.plan_state={plan_state}", str(data_path)
+    return "", ""
+
+
+chain_path = latest_chain_state(workspace, remote_spec_raw) if workspace.exists() and run_kind == "chain" else None
+chain_state = load_json(chain_path)
+preferred_plan_name = plan_name or str(chain_state.get("current_plan_name") or "").strip()
+plan_path = resolve_plan_state(workspace, preferred_plan_name) if workspace.exists() else None
+plan_state = load_json(plan_path)
+
+if run_kind == "chain":
+    chain_reason = chain_completion_reason(chain_state)
+    if chain_reason:
+        print("\t".join(["chain", chain_reason, str(chain_path or ""), str(plan_path or ""), str(plan_state.get("current_state") or plan_state.get("state") or "")]))
+        raise SystemExit(0)
+    prior_reason, prior_path = prior_terminal_status()
+    if prior_reason:
+        print("\t".join(["chain", prior_reason, prior_path, str(plan_path or ""), str(plan_state.get("current_state") or plan_state.get("state") or "")]))
+        raise SystemExit(0)
+else:
+    plan_complete, plan_reason = is_terminal_plan(plan_state)
+    if plan_complete:
+        print("\t".join(["plan", plan_reason, str(plan_path or ""), str(plan_path or ""), str(plan_state.get("current_state") or plan_state.get("state") or "")]))
+        raise SystemExit(0)
+    prior_reason, prior_path = prior_terminal_status()
+    if prior_reason:
+        print("\t".join(["plan", prior_reason, prior_path, str(plan_path or ""), str(plan_state.get("current_state") or plan_state.get("state") or "")]))
+        raise SystemExit(0)
+
+print("none")
+PY
+}
+
 kill_kimi_repair_tree() {
   local session="$1"
   local pgid_path pgid root_pid
@@ -4046,6 +4294,23 @@ PY
   )"
   if [[ -n "$current_target_observation" ]]; then
     log "current-target observe session=$session evidence=$current_target_observation"
+  fi
+
+  local terminal_status="none"
+  if declare -F session_terminal_status >/dev/null 2>&1; then
+    terminal_status="$(session_terminal_status "$session" "$workspace" "$run_kind" "$plan_name" "$remote_spec")"
+  fi
+  if [[ "$terminal_status" != "none" ]]; then
+    local terminal_scope terminal_reason terminal_evidence terminal_plan_path terminal_plan_state
+    IFS=$'\t' read -r terminal_scope terminal_reason terminal_evidence terminal_plan_path terminal_plan_state <<< "$terminal_status"
+    if [[ "$terminal_scope" == "chain" ]]; then
+      log "chain complete; skipping repair/relaunch session=$session reason=${terminal_reason:-unknown} evidence=${terminal_evidence:-n/a} plan_state=${terminal_plan_state:-unknown}"
+      report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
+    else
+      log "plan complete; skipping repair/relaunch session=$session reason=${terminal_reason:-unknown} evidence=${terminal_evidence:-n/a} plan_state=${terminal_plan_state:-unknown}"
+      report_item "$report_items" "$session" "observe" "complete" "plan complete" "$workspace" "$remote_spec"
+    fi
+    return 0
   fi
 
   if [[ ! -d "$workspace" ]]; then
