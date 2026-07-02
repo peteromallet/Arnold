@@ -48,6 +48,15 @@ def test_cloud_refresh_uses_editible_install_branch() -> None:
     assert 'git -C "$SRC" pull --ff-only origin "$REF"' in command
 
 
+def test_cloud_refresh_force_clean_resets_only_editable_source() -> None:
+    command = _megaplan_refresh_command(force_clean_editable_install=True)
+
+    assert 'SRC=/workspace/arnold' in command
+    assert 'force-clean enabled: resetting and cleaning $SRC' in command
+    assert 'git -C "$SRC" reset --hard "origin/$REF"' in command
+    assert 'git -C "$SRC" clean -fd' in command
+
+
 def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
     command = _refresh_then_chain_start_command(
         "/workspace/project/.megaplan/initiatives/example/chain.yaml",
@@ -57,6 +66,18 @@ def test_cloud_chain_start_requires_successful_editable_refresh() -> None:
 
     assert "} >> .megaplan/cloud-chain.log 2>&1 && " in command
     assert "} >> .megaplan/cloud-chain.log 2>&1 || true" not in command
+
+
+def test_cloud_chain_start_can_force_clean_editable_refresh() -> None:
+    command = _refresh_then_chain_start_command(
+        "/workspace/project/.megaplan/initiatives/example/chain.yaml",
+        project_dir="/workspace/project",
+        log_relative=".megaplan/cloud-chain.log",
+        force_clean_editable_install=True,
+    )
+
+    assert 'git -C "$SRC" reset --hard "origin/$REF"' in command
+    assert "python -P -m arnold_pipelines.megaplan chain start" in command
 
 
 def test_cloud_chain_sync_rejects_divergent_editible_install(
@@ -126,3 +147,62 @@ def test_cloud_chain_sync_fast_forwards_editible_install(
         _git(verify, "merge-base", "--is-ancestor", launch_head, "HEAD").returncode
         == 0
     )
+
+
+def test_cloud_chain_sync_ignores_only_explicit_generated_paths(tmp_path: Path) -> None:
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(repo))
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "branch", "-M", "main")
+    _git(repo, "push", "-u", "origin", "main")
+    _git(repo, "checkout", "-b", "editible-install")
+    _git(repo, "push", "-u", "origin", "editible-install")
+    _git(repo, "checkout", "-b", "feature", "editible-install")
+
+    generated = repo / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("milestones: []\n", encoding="utf-8")
+
+    result = _sync_launch_head_to_editable_install_branch(
+        repo,
+        ignore_dirty_paths=[generated],
+    )
+
+    assert result["status"] == "already_contains"
+
+
+def test_cloud_chain_sync_still_rejects_other_dirty_paths(tmp_path: Path) -> None:
+    origin = tmp_path / "origin.git"
+    repo = tmp_path / "repo"
+
+    _git(tmp_path, "init", "--bare", str(origin))
+    _git(tmp_path, "clone", str(origin), str(repo))
+    _git(repo, "config", "user.email", "test@example.com")
+    _git(repo, "config", "user.name", "Test User")
+
+    _commit(repo, "README.md", "base\n", "base")
+    _git(repo, "branch", "-M", "main")
+    _git(repo, "push", "-u", "origin", "main")
+    _git(repo, "checkout", "-b", "editible-install")
+    _git(repo, "push", "-u", "origin", "editible-install")
+    _git(repo, "checkout", "-b", "feature", "editible-install")
+
+    generated = repo / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("milestones: []\n", encoding="utf-8")
+    (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+    with pytest.raises(CliError) as exc_info:
+        _sync_launch_head_to_editable_install_branch(
+            repo,
+            ignore_dirty_paths=[generated],
+        )
+
+    assert exc_info.value.code == "editable_install_sync_dirty"
+    assert "README.md" in "\n".join(exc_info.value.extra["dirty"])

@@ -198,6 +198,11 @@ python -m arnold_pipelines.megaplan init --project-dir <workspace> --idea-file <
 6. Uploads the chain spec to the matching repo-relative path in the remote workspace.
 7. Starts remote `python -m arnold_pipelines.megaplan chain start --spec <remote-spec>` in the derived tmux session, logging to `<workspace>/.megaplan/cloud-chain-<session>.log`.
 
+If the remote Arnold editable checkout is dirty from a previous failed repair,
+retry with `--force-clean-editable-install`. This is opt-in and only resets and
+cleans `megaplan.src_path` before refreshing from `editible-install`; it does not
+reset the application workspace.
+
 After upload + dispatch, cloud writes a provider-independent marker:
 
 ```text
