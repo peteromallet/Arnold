@@ -3931,6 +3931,132 @@ tmux() { echo TMUX >&2; return 1; }
     assert "TMUX" not in result.stderr
 
 
+def test_repair_unhealthy_session_retries_root_cause_repair_after_recurring_outcome(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    session = "demo-session"
+    (marker_dir / f"{session}.kimi-dispatch").write_text("2026-07-02T00:00:00Z\n", encoding="utf-8")
+    (marker_dir / f"{session}.kimi-pgid").write_text("12345\n", encoding="utf-8")
+    (repair_data_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"outcome": "recurring_retry_pending"}),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_outcome_wants_repair_retry"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("repair_unhealthy_session"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            """
+log() { echo "LOG $*" >&2; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+tmux() { echo "TMUX $*" >&2; return 0; }
+repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "previous repair outcome requires another root-cause repair" in result.stderr
+    assert "DISPATCH" in result.stderr
+
+
+def test_repair_unhealthy_session_retries_root_cause_repair_after_timeout(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    session = "demo-session"
+    (marker_dir / f"{session}.kimi-dispatch").write_text("2026-07-02T00:00:00Z\n", encoding="utf-8")
+    (marker_dir / f"{session}.kimi-pgid").write_text("12345\n", encoding="utf-8")
+    (repair_data_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"outcome": "repair_timeout"}),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_outcome_wants_repair_retry"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("repair_unhealthy_session"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            """
+log() { echo "LOG $*" >&2; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+tmux() { echo "TMUX $*" >&2; return 0; }
+repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "outcome=repair_timeout" in result.stderr
+    assert "DISPATCH" in result.stderr
+
+
+def test_repair_unhealthy_session_preserves_direct_relaunch_for_non_retry_repair_outcome(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = tmp_path / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    session = "demo-session"
+    (marker_dir / f"{session}.kimi-dispatch").write_text("2026-07-02T00:00:00Z\n", encoding="utf-8")
+    (marker_dir / f"{session}.kimi-pgid").write_text("12345\n", encoding="utf-8")
+    (repair_data_dir / f"{session}.repair-data.json").write_text(
+        json.dumps({"outcome": "discord_escalated"}),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_outcome_wants_repair_retry"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("repair_unhealthy_session"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            """
+log() { echo "LOG $*" >&2; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+tmux() { echo "TMUX $*" >&2; return 0; }
+repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 1, result.stderr
+    assert "repair loop tried and exited without recovery -> direct relaunch" in result.stderr
+    assert "DISPATCH" not in result.stderr
+
+
 def test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch_or_kimi(
     tmp_path: Path,
 ) -> None:
