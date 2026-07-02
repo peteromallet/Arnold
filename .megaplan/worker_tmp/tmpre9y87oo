@@ -1,0 +1,680 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `revise`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603`
+Current milestone: `m1a-reference-identity`
+
+### Phase Instruction
+Address critique findings without weakening the North Star. If a finding requires changing the anchor, escalate instead of editing around it.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are revising an implementation plan after critique and gate feedback.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: prep surfaced 1 blocking ambiguity; answer and run `megaplan override resume-clarify`
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Current plan (markdown):
+        # Implementation Plan: Reference Identity And Contribution Index
+
+## Overview
+The repository matches the brief's main shape: SDK reference contracts are absent, `ExtensionRuntime` has no `contributionIndex`, `FamilyContributionSequence` still rejects duplicate bare IDs, reserved timeline ops auto-flow from SDK constants, and shader scope validation is duplicated between timeline-domain serialization/assignment and render planner snapshot checks.
+
+Scope narrowing: route-fit normalization here is a bridge, not a contradiction. The index can expose route-fit fields where existing planner/finding data gives per-contribution attribution, while leaving `RenderPlannerResult` unchanged and deferring any graph-authoritative route model.
+
+Open ambiguity resolution: remove bare-ID duplicate rejection from runtime assembly in favor of scoped-key-only duplicate detection. A duplicate scoped key should be preserved as duplicate index entries and diagnosed as a warning with `resolutionPolicy`; cross-extension bare-ID reuse and same-extension cross-kind reuse must not warn.
+
+## Phase 1: SDK Reference Foundation
+
+### Step 1: Add portable reference contracts (`src/sdk/video/composition/references.ts`, `src/sdk/index.ts`)
+**Complexity: 2**
+1. Create `references.ts` with `ContributionRef`, `LiveSourceRef`, `MaterialRef = RenderMaterialRef`, and `contributionRefKey()`.
+2. Export them from `src/sdk/index.ts` in a new Video: Composition section.
+3. Add SDK boundary/index tests for constructability and key formatting.
+
+### Step 2: Update public API fixtures (`config/governance/sdk-public-api-manifest.json`, `config/contracts/registry.json`)
+**Complexity: 2**
+1. Update SDK public API governance/registry fixtures if required by existing tests.
+2. Keep manifest schema unchanged.
+
+## Phase 2: Runtime Contribution Index
+
+### Step 3: Define host-owned index types (`src/tools/video-editor/runtime/extensionSurface.ts`)
+**Complexity: 3**
+1. Add `ContributionIndexEntry` with scoped identity, status, optional package state, render id, route fit, diagnostics, and resolution policy.
+2. Add `contributionIndex` to `ExtensionRuntime`.
+3. Keep this host-owned, not manifest-facing.
+
+### Step 4: Migrate duplicate detection to scoped keys (`src/tools/video-editor/runtime/families/FamilyContributionSequence.ts`)
+**Complexity: 3**
+1. Replace bare-ID duplicate tracking with scoped-key tracking.
+2. Preserve all contributions; remove the duplicate `continue` skip.
+3. Emit `runtime/duplicate-contribution` as a warning only for exact scoped-key duplicates.
+4. Update runtime tests for valid bare-ID reuse and preserved scoped duplicates.
+
+### Step 5: Populate `contributionIndex` (`src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts`)
+**Complexity: 4**
+1. Add active entries from descriptor arrays.
+2. Add inactive-reserved entries from `seq.inactiveReserved`.
+3. Add disabled/invalid entries from `packageStateInventory` when manifest contributions exist.
+4. Attach matching diagnostics and mark exact scoped-key collisions with `resolutionPolicy`.
+5. Freeze the index with the runtime.
+
+## Phase 3: Reserved Graph Patch Vocabulary
+
+### Step 6: Reserve graph patch ops and granularities (`src/sdk/video/timeline/patch.ts`)
+**Complexity: 2**
+1. Extend reserved op families with concrete `graph.node.*`, `graph.edge.*`, and `graph.group.*` strings.
+2. Extend diff granularities with `graph`, `node`, and `edge`.
+3. Add tests proving graph ops are known, warning-only, non-previewable, and skipped during compile.
+
+## Phase 4: Shader Validation Extraction
+
+### Step 7: Extract host shader scope validation (`src/tools/video-editor/runtime/composition/shaderValidation.ts`)
+**Complexity: 4**
+1. Centralize the “one enabled shader per clip scope and one postprocess shader” rule.
+2. Wire timeline-domain assignment and serialized config validation through it.
+3. Preserve existing `shader_scope_occupied` payloads and behavior.
+
+### Step 8: Migrate planner shader diagnosis (`src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 4**
+1. Add `projectShaderRefs(shaderSummaries, contributionIndex)` as a narrow projection helper.
+2. Move duplicate snapshot shader diagnosis to the shared host composition module.
+3. Preserve `CapabilityFinding` output and `RenderPlannerResult` shape.
+
+## Phase 5: Route-Fit Metadata
+
+### Step 9: Normalize route fit into the index
+**Complexity: 3**
+1. Add a helper that maps existing route plans/findings/blockers to `RouteFitMetadata` by scoped contribution key where attribution exists.
+2. Join by contribution finding attribution without changing planner actions or result shape.
+3. Leave unknown/unattributed route data absent or `unknown`.
+
+## Phase 6: Validation
+
+### Step 10: Run focused then broad checks
+**Complexity: 2**
+1. Run focused tests for SDK boundary/index, extension surface, timeline patch, timeline-domain shaders, and render planner.
+2. Run repo typecheck/lint commands from `package.json`.
+3. Run a broader suite if focused checks or public SDK changes indicate wider impact.
+4. Verify SDK modules do not import host runtime modules and manifest schema remains unchanged.
+
+## Execution Order
+1. Land SDK references first.
+2. Change duplicate semantics before building the index.
+3. Build the index, then add route-fit metadata.
+4. Add reserved graph patch vocabulary independently.
+5. Extract shader validation and preserve planner compatibility.
+6. Finish with focused tests, typecheck/lint, then broader tests as needed.
+
+## Validation Order
+1. SDK export/type tests.
+2. Runtime duplicate and contribution index tests.
+3. Timeline patch reserved-op tests.
+4. Shader timeline-domain and render planner tests.
+5. Lint/typecheck and broader suite fallback.
+
+
+        Current plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-02T16:16:36Z",
+  "hash": "sha256:1e8f19878d222af1f9fcb9881f9eec5d49fa8e9af9e031dd166b3df4d6ee08d2",
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`ContributionRef`, `LiveSourceRef`, `MaterialRef`, and `contributionRefKey` are exported from the SDK, are data-only, and `contributionRefKey` returns `kind:extensionId:contributionId` without version fields by default.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`FamilyContributionRef` remains source-compatible and is not replaced by `ContributionRef` in adapter normalization paths.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Runtime duplicate detection no longer rejects cross-extension bare `contributionId` reuse or same-extension cross-kind reuse.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Exact scoped-key duplicate declarations are preserved, diagnosed as warnings, and represented in `contributionIndex` with structured `resolutionPolicy`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`ExtensionRuntime.contributionIndex` includes active, inactive-reserved, and disabled/invalid contributions where source data exists, with scoped keys, status, package state, diagnostics, and route-fit metadata where known.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Reserved graph patch operation families are known to SDK types and host patch validation but remain non-executable, non-previewable warnings.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Shader scope validation is centralized in host composition validation and existing assignment, serialized config, and render planner duplicate-shader behavior remains compatible.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`RenderPlannerResult` remains backward compatible; route-fit normalization does not add or remove required planner result fields.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "SDK modules do not import host runtime/editor modules.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "No new manifest-facing schema vocabulary is introduced for these runtime/reference contracts.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps helpers narrow and avoids a general composition graph contract, target-path model, material runtime, or process/output-format execution behavior in this milestone.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The blocking ambiguity is resolved by locked decisions: scoped-key duplicate detection only, exact duplicates preserved, and `runtime/duplicate-contribution` demoted to warning for scoped-key duplicates.",
+    "`resolutionPolicy` is host-owned on `ContributionIndexEntry`; it is not public SDK or manifest schema.",
+    "Route-fit metadata can be absent or `unknown` when existing planner data cannot attribute a route finding to a scoped contribution key.",
+    "Concrete graph reserved op strings should be explicit families under `graph.node.*`, `graph.edge.*`, and `graph.group.*`, and remain known-but-not-executable.",
+    "Governance fixtures under `config/governance` and `config/contracts/registry.json` are public API/test registries, not manifest schema changes."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "SDK public reference exports and reserved patch type boundary coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/index.test.ts",
+        "reason": "SDK barrel export coverage for new reference contracts."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Runtime duplicate semantics, contribution index, package-state, inactive-reserved coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-patch.test.ts",
+        "reason": "Reserved graph op validation/compile/preview propagation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+        "reason": "Host timeline-domain shader scope assignment and serialization behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Planner shader duplicate diagnosis and route-fit compatibility."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/index.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/sdk/index.test.ts",
+      "config/governance/sdk-public-api-manifest.json",
+      "config/contracts/registry.json",
+      "src/sdk/video/timeline/patch.ts",
+      "src/tools/video-editor/lib/timeline-patch.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/lib/timeline-domain.ts",
+      "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ],
+    "always_run": [
+      "Typecheck command from package.json",
+      "Lint command from package.json if available"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts. Candidate: The change crosses SDK exports, runtime normalization, patch vocabulary, and render planning. Scoped tests catch direct regressions quickly, with full-suite fallback because public SDK and runtime shape changes can affect downstream fixtures.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "passed": false,
+  "criteria_check": {
+    "count": 11,
+    "items": [
+      {
+        "criterion": "`ContributionRef`, `LiveSourceRef`, `MaterialRef`, and `contributionRefKey` are exported from the SDK, are data-only, and `contributionRefKey` returns `kind:extensionId:contributionId` without version fields by default.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`FamilyContributionRef` remains source-compatible and is not replaced by `ContributionRef` in adapter normalization paths.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Runtime duplicate detection no longer rejects cross-extension bare `contributionId` reuse or same-extension cross-kind reuse.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Exact scoped-key duplicate declarations are preserved, diagnosed as warnings, and represented in `contributionIndex` with structured `resolutionPolicy`.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`ExtensionRuntime.contributionIndex` includes active, inactive-reserved, and disabled/invalid contributions where source data exists, with scoped keys, status, package state, diagnostics, and route-fit metadata where known.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Reserved graph patch operation families are known to SDK types and host patch validation but remain non-executable, non-previewable warnings.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "Shader scope validation is centralized in host composition validation and existing assignment, serialized config, and render planner duplicate-shader behavior remains compatible.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "`RenderPlannerResult` remains backward compatible; route-fit normalization does not add or remove required planner result fields.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "run_tests",
+          "parse_diff"
+        ]
+      },
+      {
+        "criterion": "SDK modules do not import host runtime/editor modules.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_linter"
+        ]
+      },
+      {
+        "criterion": "No new manifest-facing schema vocabulary is introduced for these runtime/reference contracts.",
+        "priority": "must",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "run_tests"
+        ]
+      },
+      {
+        "criterion": "The implementation keeps helpers narrow and avoids a general composition graph contract, target-path model, material runtime, or process/output-format execution behavior in this milestone.",
+        "priority": "should",
+        "requires": [
+          "read_files",
+          "parse_diff",
+          "subjective_judgment"
+        ]
+      }
+    ]
+  },
+  "preflight_results": {
+    "project_dir_exists": true,
+    "project_dir_writable": true,
+    "success_criteria_present": true,
+    "claude_available": true,
+    "codex_available": true
+  },
+  "unresolved_flags": [
+    {
+      "id": "issue_hints-1",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The idea snapshot lists six touchpoints including `src/tools/video-editor/commands/**`, `src/tools/video-editor/lib/renderRouter.ts`, and `config/contracts/reigh-extension.schema.json` \u2014 none of these appear in any plan step or in the changed_surfaces list. The plan's changed_surfaces omits `commands/**` (20 files) and `renderRouter.ts` entirely, and mentions only `config/governance/sdk-public-api-manifest.json` and `config/contracts/registry.json` for governance/contract files, not the schema. If these touchpoints require no changes, the plan should explicitly state that; otherwise the work may be incomplete against the approved scope.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The idea snapshot lists six touchpoints including `src/tools/video-editor/commands/**`, `src/tools/video-editor/lib/renderRouter.ts`, and `config/contracts/reigh-extension.schema.json` \u2014 none of these appear in any plan step or in the changed_surfaces list. The plan's changed_surfaces omits `commands/**` (20 files) and `renderRouter.ts` entirely, and mentions only `config/governance/sdk-public-api-manifest.json` and `config/contracts/registry.json` for governance/contract files, not the schema. If these touchpoints require no changes, the plan should explicitly state that; otherwise the work may be incomplete against the approved scope.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "issue_hints-2",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 7 says to create `shaderValidation.ts` and 'Wire timeline-domain assignment and serialized config validation through it' but never specifies how the existing inline functions in `timeline-domain.ts` \u2014 `assignTimelineClipShader`, `assignTimelinePostprocessShader`, the `shader_scope_occupied` result type, and the serialized config validation path at line ~2072 \u2014 will be modified or what stays in place. The `timeline-domain.ts` file (2,253 lines) has shader validation deeply coupled to `TimelineDomainIssue` types and `TimelineConfig` serialization. Extracting validation without breaking the existing test coverage at `timeline-domain.shaders.test.ts` (164 lines) requires a concrete extraction plan that Step 7 doesn't provide.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Step 7 says to create `shaderValidation.ts` and 'Wire timeline-domain assignment and serialized config validation through it' but never specifies how the existing inline functions in `timeline-domain.ts` \u2014 `assignTimelineClipShader`, `assignTimelinePostprocessShader`, the `shader_scope_occupied` result type, and the serialized config validation path at line ~2072 \u2014 will be modified or what stays in place. The `timeline-domain.ts` file (2,253 lines) has shader validation deeply coupled to `TimelineDomainIssue` types and `TimelineConfig` serialization. Extracting validation without breaking the existing test coverage at `timeline-domain.shaders.test.ts` (164 lines) requires a concrete extraction plan that Step 7 doesn't provide.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "issue_hints-3",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 4 migrates duplicate detection from bare-ID rejection (current behavior: `error` severity, `continue` skip, first-wins) to scoped-key warning with preservation. However, no plan step addresses how downstream descriptor arrays \u2014 particularly `shaderDescriptors`, `effectDescriptors`, `transitionDescriptors`, and `agentToolDescriptors` in `FamilyRuntimeAssembly` \u2014 will handle now-preserved duplicate entries. The slot adapter already does first-wins for slots, but other descriptor arrays append unconditionally. Without mitigation, duplicate scoped-key entries would produce duplicate runtime descriptors, potentially causing render planner or UI consumers to see the same contribution twice.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "Step 4 migrates duplicate detection from bare-ID rejection (current behavior: `error` severity, `continue` skip, first-wins) to scoped-key warning with preservation. However, no plan step addresses how downstream descriptor arrays \u2014 particularly `shaderDescriptors`, `effectDescriptors`, `transitionDescriptors`, and `agentToolDescriptors` in `FamilyRuntimeAssembly` \u2014 will handle now-preserved duplicate entries. The slot adapter already does first-wins for slots, but other descriptor arrays append unconditionally. Without mitigation, duplicate scoped-key entries would produce duplicate runtime descriptors, potentially causing render planner or UI consumers to see the same contribution twice.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    },
+    {
+      "id": "issue_hints-4",
+      "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The plan adds `MaterialRef` as an alias for `RenderMaterialRef` (already exported at line 117 of `src/sdk/index.ts`). Introducing a parallel export name under a new 'Video: Composition' section creates a dual-name situation where both `MaterialRef` and `RenderMaterialRef` are public SDK exports referring to the same type. The plan doesn't clarify whether `RenderMaterialRef` should be deprecated, whether consumers should migrate, or whether the alias is temporary. This ambiguity could confuse extension authors about which name to use.",
+      "category": "completeness",
+      "severity_hint": "likely-significant",
+      "evidence": "The plan adds `MaterialRef` as an alias for `RenderMaterialRef` (already exported at line 117 of `src/sdk/index.ts`). Introducing a parallel export name under a new 'Video: Composition' section creates a dual-name situation where both `MaterialRef` and `RenderMaterialRef` are public SDK exports referring to the same type. The plan doesn't clarify whether `RenderMaterialRef` should be deprecated, whether consumers should migrate, or whether the alias is temporary. This ambiguity could confuse extension authors about which name to use.",
+      "raised_in": "critique_v1.json",
+      "status": "open",
+      "severity": "significant",
+      "verified": false
+    }
+  ],
+  "addressed_flags": [],
+  "recommendation": "ITERATE",
+  "rationale": "Four significant completeness flags remain unresolved, two of which are substantive implementation gaps that would cause downstream breakage if executed as written. Flag issue_hints-3 (duplicate preservation causing duplicate downstream descriptors) and issue_hints-2 (underspecified shader validation extraction strategy) are both real architectural gaps \u2014 the plan acknowledges changed semantics in Phase 2 but provides no mitigation for the resulting descriptor array pollution across FamilyRuntimeAssembly's shaderDescriptors, effectDescriptors, transitionDescriptors, and agentToolDescriptors, and provides no extraction strategy for the deeply-coupled 2,253-line timeline-domain.ts file. Flags issue_hints-1 (touchpoint omission) and issue_hints-4 (MaterialRef alias policy) are documentation/policy gaps that should be resolved concurrently. The weighted score of 5.0 on first iteration confirms the plan is not yet ready for execution.",
+  "signals_assessment": "First iteration with weighted score 5.0. All 4 flags are significant, none addressed from prior iterations, no reopened patterns yet. The plan's core direction (scoped-key identity, additive index, reserved graph ops) is sound, but the execution details for shader extraction and duplicate handling are insufficient. Preflight confirms project directory is writable and tooling is available. Score trajectory is flat at 5.0 \u2014 no convergence signal.",
+  "warnings": [
+    "The FamilyRuntimeAssembly descriptor arrays (shaders, effects, transitions, agentTools) must be checked for deduplication logic during revision \u2014 they currently append unconditionally and duplicate scoped-key entries would produce duplicate runtime descriptors.",
+    "The timeline-domain.ts file at 2,253 lines with TimelineDomainIssue coupling requires a concrete extraction plan; an underspecified extraction risks subtle behavioral changes.",
+    "Verify that the renderRouter.ts import of RenderPlannerResult remains compatible with any RouteFitMetadata changes in Step 9."
+  ],
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Scoped-key identity (extensionId, kind, contributionId) is the correct foundation for duplicate detection and contribution indexing",
+      "rationale": "The plan correctly identifies that bare-ID rejection is too aggressive and constrains valid cross-extension/cross-kind reuse. This decision carries forward."
+    },
+    {
+      "id": "SD2",
+      "decision": "Reserved graph ops (graph.node.*, graph.edge.*, graph.group.*) are known-but-non-executable warnings in the SDK patch vocabulary",
+      "rationale": "This aligns with the epic North Star's constraint that the graph is authoritative for graph-authoritative facts, while keeping V1 scope limited to clip/effect/transition params and shader uniforms."
+    },
+    {
+      "id": "SD3",
+      "decision": "MaterialRef is a type alias for RenderMaterialRef, not a parallel material system",
+      "rationale": "The plan correctly constrains this to an alias only. The naming policy (whether to deprecate RenderMaterialRef or keep both) is the remaining ambiguity to resolve."
+    }
+  ],
+  "override_forced": false,
+  "orchestrator_guidance": "First iteration; follow gate recommendation: ITERATE. Verify unresolved flags against the plan and project code before accepting.",
+  "robustness": "thorough",
+  "signals": {
+    "iteration": 1,
+    "idea": "# M1a: Reference Identity, Patch Vocabulary, And First Validation Rule\n\n## Outcome\n\nAdd the portable reference identity foundation and reserved graph-owned patch vocabulary. The milestone creates scoped contribution refs and the additive contribution index needed before graph projection becomes authority.\n\n## Execution Posture\n\nBuild the smallest SDK/runtime bridge that preserves source compatibility. Keep refs portable and data-only; keep descriptor pointers and package-state interpretation host-owned.\n\n## Scope\n\nIN:\n- Add SDK reference contracts and barrel exports for `ContributionRef`, useful family refinements, `LiveSourceRef`, `MaterialRef`, and `contributionRefKey`.\n- Add `ExtensionRuntime.contributionIndex` during family runtime assembly.\n- Use scoped keys by `(extensionId, kind, contributionId)` with versionless default lookup.\n- Preserve duplicate scoped-key declarations as duplicate index entries with structured `resolutionPolicy`.\n- Include active descriptors, inactive/reserved metadata, disabled/invalid entries, package state, route metadata where known, and diagnostics in the host-owned index.\n- Reserve graph-owned `TimelinePatch` op families and diff granularities.\n- Extract shader-scope validation into host composition validation.\n- Add a narrow shader projection helper for existing snapshot shader refs.\n- Normalize route fit using existing planner outputs only.\n\nOUT:\n- Full graph contracts.\n- Target paths.\n- Material runtime.\n- New planner actions.\n- Process or output-format work.\n- Public descriptor-pointer or contribution-index entry shapes.\n\n## Locked Decisions\n\n- Contribution identity defaults to `kind:extensionId:contributionId`; version and compatibility range are resolver inputs.\n- Cross-extension reuse of a bare `contributionId` and same-extension cross-kind reuse are valid.\n- Duplicate declarations of the same scoped key are preserved; first-wins is projection fallback only.\n- Reserved graph ops are known but non-executable.\n- `MaterialRef` is an alias of existing `RenderMaterialRef`, not a parallel material system.\n\n## Constraints\n\n- SDK modules must not import host runtime modules.\n- Existing family arrays remain source-compatible.\n- Do not make duplicate fallback a permanent semantic resolution policy.\n- Do not activate process/output-format vocabulary beyond reserved data shapes.\n- Do not loosen SDK boundary checks to make examples pass.\n\n## Done Criteria\n\n- `contributionRefKey` defaults to versionless lookup.\n- Contribution index resolves active and inactive/reserved descriptors and preserves duplicates.\n- Duplicate scoped-key projection records a `resolutionPolicy`.\n- Reserved graph ops are known and non-executable.\n- Existing shader scope tests remain green.\n- `RenderPlannerResult` remains backward compatible.\n\n## Touchpoints\n\n- `src/sdk/index.ts`\n- `src/sdk/video/composition/references.ts`\n- `src/tools/video-editor/runtime/FamilyRuntimeAssembly.ts`\n- `src/tools/video-editor/runtime/ExtensionRuntime*`\n- `src/tools/video-editor/runtime/composition/**`\n- `src/tools/video-editor/lib/renderRouter.ts`\n- `src/tools/video-editor/commands/**`\n- `config/contracts/reigh-extension.schema.json`\n- `tests/**/video-editor/**`",
+    "significant_flags": 4,
+    "unresolved_flags": [
+      {
+        "id": "issue_hints-1",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The idea snapshot lists six touchpoints including `src/tools/video-editor/commands/**`, `src/tools/video-editor/lib/renderRouter.ts`, and `config/contracts/reigh-extension.schema.json` \u2014 none of these appear in any plan step or in the changed_surfaces list. The plan's changed_surfaces omits `commands/**` (20 files) and `renderRouter.ts` entirely, and mentions only `config/governance/sdk-public-api-manifest.json` and `config/contracts/registry.json` for governance/contract files, not the schema. If these touchpoints require no changes, the plan should explicitly state that; otherwise the work may be incomplete against the approved scope.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints-2",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 7 says to create `shaderValidation.ts` and 'Wire timeline-domain assignment and serialized config validation through it' but never specifies how the existing inline functions in `timeline-domain.ts` \u2014 `assignTimelineClipShader`, `assignTimelinePostprocessShader`, the `shader_scope_occupied` result type, and the serialized config validation path at line ~2072 \u2014 will be modified or what stays in place. The `timeline-domain.ts` file (2,253 lines) has shader validation deeply coupled to `TimelineDomainIssue` types and `TimelineConfig` serialization. Extracting validation without breaking the existing test coverage at `timeline-domain.shaders.test.ts` (164 lines) requires a concrete extraction plan that Step 7 doesn't provide.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints-3",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 4 migrates duplicate detection from bare-ID rejection (current behavior: `error` severity, `continue` skip, first-wins) to scoped-key warning with preservation. However, no plan step addresses how downstream descriptor arrays \u2014 particularly `shaderDescriptors`, `effectDescriptors`, `transitionDescriptors`, and `agentToolDescriptors` in `FamilyRuntimeAssembly` \u2014 will handle now-preserved duplicate entries. The slot adapter already does first-wins for slots, but other descriptor arrays append unconditionally. Without mitigation, duplicate scoped-key entries would produce duplicate runtime descriptors, potentially causing render planner or UI consumers to see the same contribution twice.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      },
+      {
+        "id": "issue_hints-4",
+        "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The plan adds `MaterialRef` as an alias for `RenderMaterialRef` (already exported at line 117 of `src/sdk/index.ts`). Introducing a parallel export name under a new 'Video: Composition' section creates a dual-name situation where both `MaterialRef` and `RenderMaterialRef` are public SDK exports referring to the same type. The plan doesn't clarify whether `RenderMaterialRef` should be deprecated, whether consumers should migrate, or whether the alias is temporary. This ambiguity could confuse extension authors about which name to use.",
+        "category": "completeness",
+        "severity": "significant",
+        "status": "open"
+      }
+    ],
+    "addressed_flags": [],
+    "resolved_flags": [],
+    "weighted_score": 5.0,
+    "weighted_history": [],
+    "plan_delta_from_previous": null,
+    "recurring_critiques": [],
+    "scope_creep_flags": [],
+    "loop_summary": "Iteration 1. Weighted score trajectory: 5.0. Plan deltas: n/a. Recurring critiques: 0. Addressed-unverified flags: 0. Resolved flags: 0. Open significant flags: 4.",
+    "debt_overlaps": [],
+    "escalated_debt_subsystems": [],
+    "repeated_divergence_fingerprint": null,
+    "unverifiable_checks": [
+      {
+        "id": "correctness",
+        "question": "Are the proposed changes technically correct?",
+        "reason": "`planRender()` selects requested formats by `format.id` in `src/tools/video-editor/runtime/renderPlanner.ts:931-967`, `useRenderState` does the same in `src/tools/video-editor/hooks/useRenderState.ts:515-539`, and `createCompileOnlyOutputFormatRegistry()` stores handlers in a `Map` keyed by `entry.contribution.id` in `src/tools/video-editor/runtime/outputFormatRegistry.ts:65-74`.",
+        "complexity": 4,
+        "attention": "high_complexity_unverifiable"
+      },
+      {
+        "id": "scope",
+        "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader \u2014 and is any single step sized to fit one worker turn?",
+        "reason": "`src/sdk/manifest.ts:371-382` rejects duplicate contribution IDs, and `src/tools/video-editor/runtime/extensionPackageManifest.ts:368-376` treats that diagnostic as universally blocking.",
+        "complexity": 4,
+        "attention": "high_complexity_unverifiable"
+      },
+      {
+        "id": "verification",
+        "question": "Is there convincing verification for the change?",
+        "reason": "extensionSurface.test.ts:302 asserts severity='error' for cross-extension duplicates; plan changes to warning. extensionSurface.test.ts:311 asserts duplicate is skipped; plan removes the skip. extensionSurface.test.ts:2257 asserts cross-kind rejection; plan allows cross-kind reuse.",
+        "complexity": 3
+      }
+    ],
+    "execution_acceptance_contract": {
+      "scope": "execute",
+      "verification_mode": "verification_suite",
+      "required_checks": [
+        {
+          "id": "correctness",
+          "question": "Are the proposed changes technically correct?",
+          "reason": "`planRender()` selects requested formats by `format.id` in `src/tools/video-editor/runtime/renderPlanner.ts:931-967`, `useRenderState` does the same in `src/tools/video-editor/hooks/useRenderState.ts:515-539`, and `createCompileOnlyOutputFormatRegistry()` stores handlers in a `Map` keyed by `entry.contribution.id` in `src/tools/video-editor/runtime/outputFormatRegistry.ts:65-74`.",
+          "complexity": 4,
+          "attention": "high_complexity_unverifiable"
+        },
+        {
+          "id": "scope",
+          "question": "Search for related code that handles the same concept. Is the reported issue a symptom of something broader \u2014 and is any single step sized to fit one worker turn?",
+          "reason": "`src/sdk/manifest.ts:371-382` rejects duplicate contribution IDs, and `src/tools/video-editor/runtime/extensionPackageManifest.ts:368-376` treats that diagnostic as universally blocking.",
+          "complexity": 4,
+          "attention": "high_complexity_unverifiable"
+        },
+        {
+          "id": "verification",
+          "question": "Is there convincing verification for the change?",
+          "reason": "extensionSurface.test.ts:302 asserts severity='error' for cross-extension duplicates; plan changes to warning. extensionSurface.test.ts:311 asserts duplicate is skipped; plan removes the skip. extensionSurface.test.ts:2257 asserts cross-kind rejection; plan allows cross-kind reuse.",
+          "complexity": 3
+        }
+      ]
+    }
+  },
+  "flag_resolutions": [],
+  "resolved_flag_ids": [],
+  "resolution_summary": "",
+  "reprompted": false
+}
+
+        Open significant flags:
+        [
+  {
+    "id": "issue_hints-1",
+    "severity": "significant",
+    "status": "open",
+    "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The idea snapshot lists six touchpoints including `src/tools/video-editor/commands/**`, `src/tools/video-editor/lib/renderRouter.ts`, and `config/contracts/reigh-extension.schema.json` \u2014 none of these appear in any plan step or in the changed_surfaces list. The plan's changed_surfaces omits `commands/**` (20 files) and `renderRouter.ts` entirely, and mentions only `config/governance/sdk-public-api-manifest.json` and `config/contracts/registry.json` for governance/contract files, not the schema. If these touchpoints require no changes, the plan should explicitly state that; otherwise the work may be incomplete against the approved scope.",
+    "evidence": "The idea snapshot lists six touchpoints including `src/tools/video-editor/commands/**`, `src/tools/video-editor/lib/renderRouter.ts`, and `config/contracts/reigh-extension.schema.json` \u2014 none of these appear in any plan step or in the changed_surfaces list. The plan's changed_surfaces omits `commands/**` (20 files) and `renderRouter.ts` entirely, and mentions only `config/governance/sdk-public-api-manifest.json` and `config/contracts/registry.json` for governance/contract files, not the schema. If these touchpoints require no changes, the plan should explicitly state that; otherwise the work may be incomplete against the approved scope."
+  },
+  {
+    "id": "issue_hints-2",
+    "severity": "significant",
+    "status": "open",
+    "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 7 says to create `shaderValidation.ts` and 'Wire timeline-domain assignment and serialized config validation through it' but never specifies how the existing inline functions in `timeline-domain.ts` \u2014 `assignTimelineClipShader`, `assignTimelinePostprocessShader`, the `shader_scope_occupied` result type, and the serialized config validation path at line ~2072 \u2014 will be modified or what stays in place. The `timeline-domain.ts` file (2,253 lines) has shader validation deeply coupled to `TimelineDomainIssue` types and `TimelineConfig` serialization. Extracting validation without breaking the existing test coverage at `timeline-domain.shaders.test.ts` (164 lines) requires a concrete extraction plan that Step 7 doesn't provide.",
+    "evidence": "Step 7 says to create `shaderValidation.ts` and 'Wire timeline-domain assignment and serialized config validation through it' but never specifies how the existing inline functions in `timeline-domain.ts` \u2014 `assignTimelineClipShader`, `assignTimelinePostprocessShader`, the `shader_scope_occupied` result type, and the serialized config validation path at line ~2072 \u2014 will be modified or what stays in place. The `timeline-domain.ts` file (2,253 lines) has shader validation deeply coupled to `TimelineDomainIssue` types and `TimelineConfig` serialization. Extracting validation without breaking the existing test coverage at `timeline-domain.shaders.test.ts` (164 lines) requires a concrete extraction plan that Step 7 doesn't provide."
+  },
+  {
+    "id": "issue_hints-3",
+    "severity": "significant",
+    "status": "open",
+    "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: Step 4 migrates duplicate detection from bare-ID rejection (current behavior: `error` severity, `continue` skip, first-wins) to scoped-key warning with preservation. However, no plan step addresses how downstream descriptor arrays \u2014 particularly `shaderDescriptors`, `effectDescriptors`, `transitionDescriptors`, and `agentToolDescriptors` in `FamilyRuntimeAssembly` \u2014 will handle now-preserved duplicate entries. The slot adapter already does first-wins for slots, but other descriptor arrays append unconditionally. Without mitigation, duplicate scoped-key entries would produce duplicate runtime descriptors, potentially causing render planner or UI consumers to see the same contribution twice.",
+    "evidence": "Step 4 migrates duplicate detection from bare-ID rejection (current behavior: `error` severity, `continue` skip, first-wins) to scoped-key warning with preservation. However, no plan step addresses how downstream descriptor arrays \u2014 particularly `shaderDescriptors`, `effectDescriptors`, `transitionDescriptors`, and `agentToolDescriptors` in `FamilyRuntimeAssembly` \u2014 will handle now-preserved duplicate entries. The slot adapter already does first-wins for slots, but other descriptor arrays append unconditionally. Without mitigation, duplicate scoped-key entries would produce duplicate runtime descriptors, potentially causing render planner or UI consumers to see the same contribution twice."
+  },
+  {
+    "id": "issue_hints-4",
+    "severity": "significant",
+    "status": "open",
+    "concern": "Did the work fully address the issue hints, user notes, and approved plan requirements?: The plan adds `MaterialRef` as an alias for `RenderMaterialRef` (already exported at line 117 of `src/sdk/index.ts`). Introducing a parallel export name under a new 'Video: Composition' section creates a dual-name situation where both `MaterialRef` and `RenderMaterialRef` are public SDK exports referring to the same type. The plan doesn't clarify whether `RenderMaterialRef` should be deprecated, whether consumers should migrate, or whether the alias is temporary. This ambiguity could confuse extension authors about which name to use.",
+    "evidence": "The plan adds `MaterialRef` as an alias for `RenderMaterialRef` (already exported at line 117 of `src/sdk/index.ts`). Introducing a parallel export name under a new 'Video: Composition' section creates a dual-name situation where both `MaterialRef` and `RenderMaterialRef` are public SDK exports referring to the same type. The plan doesn't clarify whether `RenderMaterialRef` should be deprecated, whether consumers should migrate, or whether the alias is temporary. This ambiguity could confuse extension authors about which name to use."
+  }
+]
+
+
+
+
+
+        Requirements:
+        - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
+        - Update the plan to address the significant issues.
+        - Keep the plan readable and executable.
+        - Return flags_addressed with the exact flag IDs you addressed or rejected. For each flag, include:
+          - `id`: the flag ID
+          - `resolution`: `"addressed"` (you incorporated the fix) or `"rejected"` (the flag is invalid or out of scope)
+          - `reason`: a concise explanation of what was changed or why the flag was rejected
+          - `where`: a pointer to the plan section / files the change or claim points at (e.g., "Phase 2 — Step 3", "README.md §API")
+        - Include `changes_summary` as a short plain-English summary of what changed in the revision. If there were no concrete flags, say that explicitly (for example: `No critique flags were raised; refined wording and kept the plan aligned for execution.`).
+        - Preserve or improve success criteria quality. Each criterion must have a `priority` of `must`, `should`, or `info`. Promote or demote priorities if critique feedback reveals a criterion was over- or under-weighted.
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - For code-mode plans with any `run_tests` success criterion, include or preserve a machine-readable `test_blast_radius` object in the structured output. Use this shape: `{"strategy":"scoped","confidence":"high","selectors":[{"kind":"path","value":"tests/test_relevant.py","reason":"covers the changed surface"}],"changed_surfaces":["src/relevant.py"],"always_run":[],"full_suite_fallback":true,"rationale":"Why these tests cover the planned changes."}`. If finalize feedback says scoped baseline metadata was missing, the revision must add this object rather than only adding prose validation commands.
+        - Verify that the plan remains aligned with the user's original intent, not just internal plan quality.
+        - Remove unjustified scope growth. If critique raised scope creep, narrow the plan back to the original idea unless the broader work is strictly required.
+        - Maintain the structural template: H1 title, ## Overview, phase sections with numbered step sections, ## Execution Order or ## Validation Order.
+        - CRITICAL: Your entire revised plan markdown (all sections) must be output as the `plan` field in the structured output. The prose response must not contain the plan text.
+        - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
+        - Populate `changed_surfaces` with every concrete file path your revised plan will change or create. Include both source files and test files. Use repo-relative paths. This list drives the deterministic test-selection blast radius; be complete. If your revised plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor and the prior plan's blast radius; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".

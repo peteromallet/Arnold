@@ -1,0 +1,341 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: prep surfaced 1 blocking ambiguity; answer and run `megaplan override resume-clarify`
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: Reference Identity And Contribution Index
+
+## Overview
+The repository matches the brief's main shape: SDK reference contracts are absent, `ExtensionRuntime` has no `contributionIndex`, `FamilyContributionSequence` still rejects duplicate bare IDs, reserved timeline ops auto-flow from SDK constants, and shader scope validation is duplicated between timeline-domain serialization/assignment and render planner snapshot checks.
+
+Scope narrowing: route-fit normalization here is a bridge, not a contradiction. The index can expose route-fit fields where existing planner/finding data gives per-contribution attribution, while leaving `RenderPlannerResult` unchanged and deferring any graph-authoritative route model.
+
+Open ambiguity resolution: remove bare-ID duplicate rejection from runtime assembly in favor of scoped-key-only duplicate detection. A duplicate scoped key should be preserved as duplicate index entries and diagnosed as a warning with `resolutionPolicy`; cross-extension bare-ID reuse and same-extension cross-kind reuse must not warn.
+
+## Phase 1: SDK Reference Foundation
+
+### Step 1: Add portable reference contracts (`src/sdk/video/composition/references.ts`, `src/sdk/index.ts`)
+**Complexity: 2**
+1. Create `references.ts` with `ContributionRef`, `LiveSourceRef`, `MaterialRef = RenderMaterialRef`, and `contributionRefKey()`.
+2. Export them from `src/sdk/index.ts` in a new Video: Composition section.
+3. Add SDK boundary/index tests for constructability and key formatting.
+
+### Step 2: Update public API fixtures (`config/governance/sdk-public-api-manifest.json`, `config/contracts/registry.json`)
+**Complexity: 2**
+1. Update SDK public API governance/registry fixtures if required by existing tests.
+2. Keep manifest schema unchanged.
+
+## Phase 2: Runtime Contribution Index
+
+### Step 3: Define host-owned index types (`src/tools/video-editor/runtime/extensionSurface.ts`)
+**Complexity: 3**
+1. Add `ContributionIndexEntry` with scoped identity, status, optional package state, render id, route fit, diagnostics, and resolution policy.
+2. Add `contributionIndex` to `ExtensionRuntime`.
+3. Keep this host-owned, not manifest-facing.
+
+### Step 4: Migrate duplicate detection to scoped keys (`src/tools/video-editor/runtime/families/FamilyContributionSequence.ts`)
+**Complexity: 3**
+1. Replace bare-ID duplicate tracking with scoped-key tracking.
+2. Preserve all contributions; remove the duplicate `continue` skip.
+3. Emit `runtime/duplicate-contribution` as a warning only for exact scoped-key duplicates.
+4. Update runtime tests for valid bare-ID reuse and preserved scoped duplicates.
+
+### Step 5: Populate `contributionIndex` (`src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts`)
+**Complexity: 4**
+1. Add active entries from descriptor arrays.
+2. Add inactive-reserved entries from `seq.inactiveReserved`.
+3. Add disabled/invalid entries from `packageStateInventory` when manifest contributions exist.
+4. Attach matching diagnostics and mark exact scoped-key collisions with `resolutionPolicy`.
+5. Freeze the index with the runtime.
+
+## Phase 3: Reserved Graph Patch Vocabulary
+
+### Step 6: Reserve graph patch ops and granularities (`src/sdk/video/timeline/patch.ts`)
+**Complexity: 2**
+1. Extend reserved op families with concrete `graph.node.*`, `graph.edge.*`, and `graph.group.*` strings.
+2. Extend diff granularities with `graph`, `node`, and `edge`.
+3. Add tests proving graph ops are known, warning-only, non-previewable, and skipped during compile.
+
+## Phase 4: Shader Validation Extraction
+
+### Step 7: Extract host shader scope validation (`src/tools/video-editor/runtime/composition/shaderValidation.ts`)
+**Complexity: 4**
+1. Centralize the “one enabled shader per clip scope and one postprocess shader” rule.
+2. Wire timeline-domain assignment and serialized config validation through it.
+3. Preserve existing `shader_scope_occupied` payloads and behavior.
+
+### Step 8: Migrate planner shader diagnosis (`src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 4**
+1. Add `projectShaderRefs(shaderSummaries, contributionIndex)` as a narrow projection helper.
+2. Move duplicate snapshot shader diagnosis to the shared host composition module.
+3. Preserve `CapabilityFinding` output and `RenderPlannerResult` shape.
+
+## Phase 5: Route-Fit Metadata
+
+### Step 9: Normalize route fit into the index
+**Complexity: 3**
+1. Add a helper that maps existing route plans/findings/blockers to `RouteFitMetadata` by scoped contribution key where attribution exists.
+2. Join by contribution finding attribution without changing planner actions or result shape.
+3. Leave unknown/unattributed route data absent or `unknown`.
+
+## Phase 6: Validation
+
+### Step 10: Run focused then broad checks
+**Complexity: 2**
+1. Run focused tests for SDK boundary/index, extension surface, timeline patch, timeline-domain shaders, and render planner.
+2. Run repo typecheck/lint commands from `package.json`.
+3. Run a broader suite if focused checks or public SDK changes indicate wider impact.
+4. Verify SDK modules do not import host runtime modules and manifest schema remains unchanged.
+
+## Execution Order
+1. Land SDK references first.
+2. Change duplicate semantics before building the index.
+3. Build the index, then add route-fit metadata.
+4. Add reserved graph patch vocabulary independently.
+5. Extract shader validation and preserve planner compatibility.
+6. Finish with focused tests, typecheck/lint, then broader tests as needed.
+
+## Validation Order
+1. SDK export/type tests.
+2. Runtime duplicate and contribution index tests.
+3. Timeline patch reserved-op tests.
+4. Shader timeline-domain and render planner tests.
+5. Lint/typecheck and broader suite fallback.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-02T16:16:36Z",
+  "hash": "sha256:1e8f19878d222af1f9fcb9881f9eec5d49fa8e9af9e031dd166b3df4d6ee08d2",
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`ContributionRef`, `LiveSourceRef`, `MaterialRef`, and `contributionRefKey` are exported from the SDK, are data-only, and `contributionRefKey` returns `kind:extensionId:contributionId` without version fields by default.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`FamilyContributionRef` remains source-compatible and is not replaced by `ContributionRef` in adapter normalization paths.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Runtime duplicate detection no longer rejects cross-extension bare `contributionId` reuse or same-extension cross-kind reuse.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Exact scoped-key duplicate declarations are preserved, diagnosed as warnings, and represented in `contributionIndex` with structured `resolutionPolicy`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`ExtensionRuntime.contributionIndex` includes active, inactive-reserved, and disabled/invalid contributions where source data exists, with scoped keys, status, package state, diagnostics, and route-fit metadata where known.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Reserved graph patch operation families are known to SDK types and host patch validation but remain non-executable, non-previewable warnings.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Shader scope validation is centralized in host composition validation and existing assignment, serialized config, and render planner duplicate-shader behavior remains compatible.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`RenderPlannerResult` remains backward compatible; route-fit normalization does not add or remove required planner result fields.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "SDK modules do not import host runtime/editor modules.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "No new manifest-facing schema vocabulary is introduced for these runtime/reference contracts.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps helpers narrow and avoids a general composition graph contract, target-path model, material runtime, or process/output-format execution behavior in this milestone.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The blocking ambiguity is resolved by locked decisions: scoped-key duplicate detection only, exact duplicates preserved, and `runtime/duplicate-contribution` demoted to warning for scoped-key duplicates.",
+    "`resolutionPolicy` is host-owned on `ContributionIndexEntry`; it is not public SDK or manifest schema.",
+    "Route-fit metadata can be absent or `unknown` when existing planner data cannot attribute a route finding to a scoped contribution key.",
+    "Concrete graph reserved op strings should be explicit families under `graph.node.*`, `graph.edge.*`, and `graph.group.*`, and remain known-but-not-executable.",
+    "Governance fixtures under `config/governance` and `config/contracts/registry.json` are public API/test registries, not manifest schema changes."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "SDK public reference exports and reserved patch type boundary coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/index.test.ts",
+        "reason": "SDK barrel export coverage for new reference contracts."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Runtime duplicate semantics, contribution index, package-state, inactive-reserved coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-patch.test.ts",
+        "reason": "Reserved graph op validation/compile/preview propagation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+        "reason": "Host timeline-domain shader scope assignment and serialization behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Planner shader duplicate diagnosis and route-fit compatibility."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/index.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/sdk/index.test.ts",
+      "config/governance/sdk-public-api-manifest.json",
+      "config/contracts/registry.json",
+      "src/sdk/video/timeline/patch.ts",
+      "src/tools/video-editor/lib/timeline-patch.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/lib/timeline-domain.ts",
+      "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts"
+    ],
+    "always_run": [
+      "Typecheck command from package.json",
+      "Lint command from package.json if available"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts. Candidate: The change crosses SDK exports, runtime normalization, patch vocabulary, and render planning. Scoped tests catch direct regressions quickly, with full-suite fallback because public SDK and runtime shape changes can affect downstream fixtures.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/critique_check_scope.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: scope
+Question: Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+Guidance: Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

@@ -1,18 +1,26 @@
 {
   "schema_version": 0,
-  "current_milestone_index": 0,
-  "current_plan_name": "m0-decisions-fixtures-and-20260701-1826",
+  "current_milestone_index": 1,
+  "current_plan_name": "m1a-reference-identity-patch-20260702-1603",
   "current_milestone_base_sha": null,
-  "target_base_ref": "15d53465077f7bed697ceaf8032c5adf4580dbce",
-  "last_state": "critiqued",
-  "pr_number": 76,
+  "target_base_ref": "4c348280f180be93c56efdb1ea9a6a5e2a4bfa4b",
+  "last_state": "prepped",
+  "pr_number": 77,
   "pr_state": "open",
-  "completed": [],
-  "branch_head": "5433955719006255d8fc3f2d4f143df51cb5f7a7",
-  "pr_head": "5433955719006255d8fc3f2d4f143df51cb5f7a7",
-  "last_pushed_commit": "5433955719006255d8fc3f2d4f143df51cb5f7a7",
-  "dirty_flag": false,
-  "sync_state": "clean",
+  "completed": [
+    {
+      "label": "m0-decisions-fixtures",
+      "plan": "m0-decisions-fixtures-and-20260701-1826",
+      "status": "done",
+      "pr_number": 76,
+      "pr_state": "merged"
+    }
+  ],
+  "branch_head": "ae863c5db2e682fd54eec70281f4f6d61200bd18",
+  "pr_head": "1271da46bf96a19167b02212fc3c47c8610bb9e4",
+  "last_pushed_commit": "ae863c5db2e682fd54eec70281f4f6d61200bd18",
+  "dirty_flag": true,
+  "sync_state": "dirty",
   "extra_repos": [],
   "chain_session": null,
   "resolved_workspace": null,
@@ -26,85 +34,39 @@
   "depth_bumps": {},
   "enforce_revise_counts": {},
   "metadata": {
-    "execution_environment": {
-      "schema_version": 1,
-      "created_phase": "chain_start",
-      "last_observed_phase": "chain_start",
-      "project_root": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app",
-      "target_root": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app",
-      "work_dir": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app",
-      "engine_root": "/workspace/arnold",
-      "target_head": "747a183924ef228762b25c58aa5661a458e1ad10",
-      "target_base": null,
-      "target_base_ref": "main",
-      "target_fallback_reason": "merge_base_unavailable:main"
-    },
     "chain_spec_path": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/initiatives/reigh-extension-composition-spine-epic/chain.yaml",
     "chain_spec_sha256": "11ab4cde1fd4bd4781cc65af9f0b6288c9a1ac1d8c15274e8bd0f087f4bcf32e",
+    "execution_environment": {
+      "created_phase": "chain_start",
+      "engine_root": "/workspace/arnold",
+      "last_observed_phase": "chain_start",
+      "project_root": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app",
+      "schema_version": 1,
+      "target_base": null,
+      "target_base_ref": "main",
+      "target_fallback_reason": "merge_base_unavailable:main",
+      "target_head": "e19485769b0c0e515d6df630f78cafc09f57ad20",
+      "target_root": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app",
+      "work_dir": "/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app"
+    },
     "ground_truth_reconciliation": {
-      "reconciled_at": "2026-07-02T14:18:23Z",
-      "plan": "m0-decisions-fixtures-and-20260701-1826",
-      "current_state": "critiqued",
-      "latest_failure": {
-        "kind": "iteration_cap",
-        "message": "exceeded max_iterations=120",
-        "phase": "override add-note",
-        "state": "critiqued",
-        "recorded_at": "2026-07-01T23:31:33Z",
-        "last_artifact": null,
-        "suggested_action": "Review automation progress before resuming.",
-        "metadata": {
-          "max_iterations": 120
-        }
-      },
-      "last_gate": {
-        "recommendation": "ESCALATE",
-        "rationale": "Iteration 23, hard limit reached. The single open significant flag (criteria_quality-2) concerns a structural metadata mismatch: the plan prose explicitly directs that seven non-empty path selector objects go into `test_blast_radius.selectors`, but every revision across 23 iterations lands with `test_blast_radius.selectors: []` while the seven paths migrate to `missing_test_selectors`. The plan's own assumptions and success criteria anticipate this possibility and explicitly call for escalation: 'If the harness again moves those paths to missing_test_selectors or drops them, that is a system-level selector preservation issue, not a reason to broaden M0 into runtime testing.' The plan also states: 'If a subsequent gate still reports test_blast_radius.selectors as empty after this structured revision includes seven path selector objects, the issue is escalated as selector preservation failure.' This is not a plan-quality fix the writer can achieve through further iteration \u2014 it is an orchestrator/harness limitation where the metadata generation pipeline cannot accept documentation-only path selectors and instead classifies them as missing tests. The M0 scope (documentation-only, no runtime code, no test execution) is correct and aligned with the North Star. Further iteration cannot resolve a system-level selector preservation issue. Human intervention is needed to either adjust the harness to accept documentation-only scoped path selectors, accept the `missing_test_selectors` field as the authoritative scoped surface for documentation-only milestones, or provide a different mechanism for scoped finalize baseline selection in artifact-only milestones.",
-        "reprompted": false,
-        "signals_assessment": "Score trajectory flat at 1.5 for 14 consecutive iterations after an initial spike to 4.5 at iteration 9. The single unresolved significant flag (criteria_quality-2) has been open since at least iteration 14 and concerns a metadata field (`test_blast_radius.selectors`) that the plan writer cannot populate \u2014 the harness always moves documentation paths to `missing_test_selectors`. Three recurring critiques about subjective judgment requirements persist but are not blocking (criterion 9 was already demoted from must to should). Preflight confirms project directory exists, is writable, and success criteria are present. The weighted score, flat trajectory, and hard iteration cap all point to a structural limitation rather than a correctable plan defect.",
-        "warnings": [
-          "Iteration 23: high iteration count.",
-          "Iteration 23: hard iteration limit reached. Escalation is likely warranted.",
-          "Iteration 23: hard iteration limit reached. Further automated revision loops are unlikely to resolve the selector preservation issue.",
-          "The plan's `test_blast_radius.selectors` remains `[]` after 23 iterations despite explicit plan prose directing seven path selector objects. This is consistent with a harness that cannot represent documentation-only scoped selectors.",
-          "If the finalize system requires non-empty `selectors` to proceed but the harness cannot generate them for documentation-only milestones, the M0 milestone is structurally blocked regardless of plan quality.",
-          "The `plan_v1.meta.json` file shows `strategy: 'none'` and empty selectors, while the plan text describes `strategy: 'scoped'` with seven selectors. These two representations are in conflict and the harness-side metadata generator controls the actual output."
-        ],
-        "settled_decisions": [
-          {
-            "id": "SD1",
-            "decision": "M0 is documentation-only: no runtime code, SDK exports, test execution, or UI work. Validation is static review, grep checks, source cross-referencing, and diff hygiene.",
-            "rationale": "Aligned with the North Star constraint that this milestone produces durable planning artifacts for M1a-M7b to cite. The M0 brief, success criteria, and plan all agree on this posture."
-          },
-          {
-            "id": "SD2",
-            "decision": "The seven planned documentation artifacts live at `docs/extensions/composition-spine/` (README, v8-architecture-baseline, m0-decisions, m0-fixture-matrices, m0-release-examples, deterministic-capture-profiles, json-rpc-protocol-v0).",
-            "rationale": "Consistent across plan text, changed_surfaces, missing_test_selectors, and success criteria. This path is the stable citation target for downstream milestones."
-          },
-          {
-            "id": "SD3",
-            "decision": "Deferred edge names (`materializes`, `produces`, `fallbacks`) may appear in anti-scope/deferral prose but must not appear as public graph edge discriminants.",
-            "rationale": "The M0 brief requires recording the deferral decision. Automated validators checking for literal absence of these strings from all M0 artifacts conflict with the brief. This tension was surfaced as an open question in plan metadata and remains a reviewer judgment call."
-          },
-          {
-            "id": "SD4",
-            "decision": "Full-suite test fallback is available only if the finalize system cannot accept documentation-only scoped path selectors, not as a plan-level scope expansion.",
-            "rationale": "The plan's `full_suite_fallback: true` is a harness compatibility escape hatch, not a signal that M0 should include runtime tests. M0 explicitly forbids test execution by milestone scope."
-          }
-        ],
-        "passed": false,
-        "preflight_results": {
-          "project_dir_exists": true,
-          "project_dir_writable": true,
-          "success_criteria_present": true,
-          "claude_available": true,
-          "codex_available": true
-        },
-        "orchestrator_guidance": "Gate escalated. Ask the user: force-proceed, add-note, or abort. Verify unresolved flags against the plan and project code before accepting. Recurring critiques (criterion 10: requires human verification (subjective_judgment)., criterion 12: requires human verification (subjective_judgment)., criterion 9: requires human verification (subjective_judgment).); the loop likely can't fix these, so judge if they are real blockers."
-      },
+      "reconciled_at": "2026-07-02T16:14:20Z",
+      "plan": "m1a-reference-identity-patch-20260702-1603",
+      "current_state": "prepped",
+      "latest_failure": null,
+      "last_gate": {},
       "active_step": null,
-      "pr_number": 76,
+      "pr_number": 77,
       "pr_state": "open"
+    },
+    "operator_recovery_20260702": {
+      "previous_current_plan_name": "m0-decisions-fixtures-and-20260701-1826",
+      "previous_last_state": "critiqued",
+      "reason": "retry after GitHub large-file push rejection from runtime event journal"
+    },
+    "operator_recovery_20260702_done_replay": {
+      "previous_last_state": "failed",
+      "reason": "review phase had successful phase_result and transition_decision_review_done; replay post-milestone transition"
     }
   }
 }

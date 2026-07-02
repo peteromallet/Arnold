@@ -1,0 +1,484 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: prep surfaced 1 blocking ambiguity; answer and run `megaplan override resume-clarify`
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: Reference Identity And Contribution Index
+
+## Overview
+The critique does not show that the plan is aimed at the wrong North Star or root cause. Scoped contribution identity is still the right foundation, but the first draft missed four execution details: SDK manifest validation also enforces bare-ID uniqueness, exact duplicate preservation needs a projection boundary so descriptor arrays are not polluted, shader validation extraction needs a concrete adapter shape, and several idea touchpoints need explicit audit/no-change rationale.
+
+Scope remains narrow. This milestone adds portable refs, host-owned contribution indexing, known-but-non-executable graph patch vocabulary, centralized shader scope validation, and route-fit metadata where existing attribution exists. It does not introduce graph contracts, target paths, material runtime, planner actions, manifest schema vocabulary, process execution, or output-format execution behavior beyond compatibility hardening.
+
+Material naming policy: `MaterialRef` is a composition-facing type alias of the existing `RenderMaterialRef`. `RenderMaterialRef` remains public and supported in M1a; no deprecation or migration is introduced here.
+
+## Phase 0: Scope And Root-Cause Alignment
+
+### Step 0: Audit omitted touchpoints and SDK duplicate validators
+**Complexity: 3**
+1. Verify `src/tools/video-editor/commands/**`, `src/tools/video-editor/lib/renderRouter.ts`, and `config/contracts/reigh-extension.schema.json` against the intended changes.
+2. Record no planned command changes unless tests show a command imports a changed runtime shape. Commands do not own contribution identity or `RenderPlannerResult` shape.
+3. Keep `renderRouter.ts` source-compatible with unchanged `RenderPlannerResult`; add or update router tests only if route-fit/index changes affect planner compatibility.
+4. Do not change `config/contracts/reigh-extension.schema.json`; this plan changes SDK/runtime semantics and governance fixtures, not manifest-facing schema vocabulary.
+5. Include SDK manifest validation in scope because `src/sdk/manifest.ts` currently blocks bare duplicate contribution IDs before runtime can apply scoped-key semantics.
+
+## Phase 1: SDK Reference Foundation
+
+### Step 1: Add portable reference contracts (`src/sdk/video/composition/references.ts`, `src/sdk/index.ts`)
+**Complexity: 2**
+1. Create `references.ts` with data-only `ContributionRef`, `LiveSourceRef`, `MaterialRef = RenderMaterialRef`, and `contributionRefKey()`.
+2. Make `contributionRefKey()` return `kind:extensionId:contributionId` by default; version or compatibility fields are resolver inputs and not part of the default key.
+3. Export the refs from `src/sdk/index.ts` in a new Video: Composition section while leaving the existing `RenderMaterialRef` export in place.
+4. Add JSDoc clarifying that `MaterialRef` is an alias for composition-facing SDK ergonomics, not a parallel material model and not a deprecation of `RenderMaterialRef`.
+5. Add SDK boundary/index tests for constructability, key formatting, alias compatibility, and absence of host/runtime imports.
+
+### Step 2: Update SDK validation and public API fixtures (`src/sdk/manifest.ts`, `src/tools/video-editor/runtime/extensionPackageManifest.ts`, governance fixtures)
+**Complexity: 3**
+1. Remove blocking bare contribution-ID duplicate rejection from SDK manifest validation so cross-kind reuse and exact scoped duplicate declarations can reach runtime normalization.
+2. Update package validation so `manifest/duplicate-contribution-id` is not a universal activation blocker if any legacy diagnostic path remains.
+3. Update tests that currently expect `defineExtension()` or package validation to reject duplicate bare IDs.
+4. Update `config/governance/sdk-public-api-manifest.json` and `config/contracts/registry.json` for the new public SDK exports if existing governance checks require it.
+5. Keep `config/contracts/reigh-extension.schema.json` unchanged; verify schema drift/contracts checks rather than adding schema vocabulary.
+
+## Phase 2: Runtime Contribution Index
+
+### Step 3: Define host-owned index types (`src/tools/video-editor/runtime/extensionSurface.ts`)
+**Complexity: 3**
+1. Add `ContributionIndexEntry` with `key`, scoped ref fields, status, optional package state, optional render id, optional route fit, diagnostics, projection metadata, and optional `resolutionPolicy`.
+2. Add `contributionIndex` to `ExtensionRuntime`.
+3. Keep the index host-owned and runtime-facing only; do not expose it through manifest schema or SDK descriptor pointer types.
+4. Freeze the index and nested entry arrays/objects with the runtime.
+
+### Step 4: Migrate duplicate detection to scoped keys (`src/tools/video-editor/runtime/families/FamilyContributionSequence.ts`)
+**Complexity: 4**
+1. Replace bare-ID tracking with scoped-key tracking using `(kind, extensionId, contributionId)`.
+2. Preserve every contribution in sequencing data; remove the duplicate `continue` skip.
+3. Emit `runtime/duplicate-contribution` as a warning only for exact scoped-key duplicates.
+4. Do not warn for cross-extension bare-ID reuse or same-extension cross-kind reuse.
+5. Keep adapter normalization source-compatible: do not replace existing `FamilyContributionRef` or adapter input shapes with SDK `ContributionRef`.
+6. Carry duplicate ordinal/projection eligibility metadata forward for assembly and index construction.
+
+### Step 5: Prevent duplicate descriptor pollution during projection (`src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts`)
+**Complexity: 4**
+1. Split preserved contribution records from projection candidates.
+2. Pass only the first occurrence of each exact scoped key to family adapters, while preserving all occurrences in `contributionIndex`.
+3. Keep slot projection’s existing slot-name first-wins behavior, but ensure shader/effect/transition/agentTool/outputFormat/process/searchProvider arrays do not receive repeated descriptors for exact scoped duplicates.
+4. Mark non-projected duplicate entries with structured `resolutionPolicy` such as current projection fallback/first projected occurrence, without making that fallback a permanent semantic resolver.
+5. Count package contribution summaries with scoped active keys instead of bare IDs so same-extension cross-kind reuse is not miscounted.
+6. Add tests for valid cross-extension bare-ID reuse, valid same-extension cross-kind reuse, preserved exact scoped duplicates, warning diagnostics, duplicate index entries, and no duplicate runtime descriptors.
+
+### Step 6: Populate `contributionIndex` and harden legacy bare-ID consumers
+**Complexity: 4**
+1. Add active entries from projected descriptor arrays and preserved records.
+2. Add inactive-reserved entries from `seq.inactiveReserved`.
+3. Add disabled/invalid entries from `packageStateInventory` when manifest contributions exist without active runtime extensions.
+4. Attach diagnostics by scoped key when possible and by extension/contribution fallback when kind is unavailable.
+5. Add route-fit metadata from descriptor/blocker/requirement data where existing attribution can resolve a unique scoped key.
+6. Update `src/tools/video-editor/runtime/outputFormatRegistry.ts` to avoid clobbering valid cross-extension compile-only output formats with the same bare `formatId`: use an internal scoped key derived from `extensionId` and `formatId`, while keeping public execution options source-compatible.
+7. Audit `renderPlanner.ts`, `useRenderState.ts`, `renderRouter.ts`, and `commands/**` for bare-ID assumptions. Do not change `RenderPlannerResult` or command surfaces unless focused tests expose a direct compatibility break.
+
+## Phase 3: Reserved Graph Patch Vocabulary
+
+### Step 7: Reserve graph patch ops and granularities (`src/sdk/video/timeline/patch.ts`)
+**Complexity: 2**
+1. Extend reserved op families with concrete `graph.node.*`, `graph.edge.*`, and `graph.group.*` strings.
+2. Extend diff granularities with `graph`, `node`, and `edge`.
+3. Add tests proving graph ops are known, warning-only, non-previewable, and skipped during compile.
+4. Keep graph ops reserved only; do not add graph execution, target-path mutation, or graph SDK contracts.
+
+## Phase 4: Shader Validation Extraction
+
+### Step 8: Extract host shader scope validation (`src/tools/video-editor/runtime/composition/shaderValidation.ts`, `src/tools/video-editor/lib/timeline-domain.ts`)
+**Complexity: 4**
+1. Create a host composition helper that imports no timeline-domain issue types and no render planner types.
+2. Move shared identity comparison, occupied-scope message generation, and stack validation into the helper.
+3. Keep `TimelineDomainIssue`, `TimelineShaderAssignmentResult`, `assignTimelineClipShader`, and `assignTimelinePostprocessShader` exported from `timeline-domain.ts`; only their validation decision delegates to the helper.
+4. For assignment, timeline-domain maps the helper’s occupied-scope result back to the existing `shader_scope_occupied` result payload without changing message text or `existing`/`incoming` fields.
+5. For serialized config validation, timeline-domain calls a helper for `clip.app.shader` and `app.shaderPostprocess` arrays, then wraps the result with existing `createIssue()` paths, severities, details, and `repairApplied: false`.
+6. Preserve tests in `timeline-domain.shaders.test.ts` and add assertions for unchanged error payloads.
+
+### Step 9: Migrate planner shader diagnosis (`src/tools/video-editor/runtime/renderPlanner.ts`)
+**Complexity: 4**
+1. Add `projectShaderRefs(shaderSummaries, contributionIndex)` as a narrow projection helper for existing snapshot shader summaries.
+2. Use the shared shader validation helper for duplicate clip-scope and postprocess-scope planner findings.
+3. Preserve `CapabilityFinding` shape, IDs, severities, route coverage, and `RenderPlannerResult` fields.
+4. Do not add material runtime, shader stacks, WebGPU, FBO routing, or graph target paths.
+
+## Phase 5: Route-Fit Metadata
+
+### Step 10: Normalize route fit into the index
+**Complexity: 3**
+1. Add a narrow helper that maps existing route requirements, descriptor blockers, and planner findings to `RouteFitMetadata` by scoped contribution key where attribution exists.
+2. Join only when extensionId/kind/contributionId can be resolved directly or uniquely from the contribution index.
+3. Leave unknown or unattributed route data absent or `unknown`; do not infer scoped identity from ambiguous bare IDs.
+4. Keep `RenderPlannerResult`, planner actions, `renderRouter.ts`, and `useRenderState.ts` request/result shapes unchanged.
+5. Add render planner/router compatibility tests for unchanged route selection and route-fit diagnostics.
+
+## Phase 6: Validation
+
+### Step 11: Run focused then broad checks
+**Complexity: 2**
+1. Run focused tests for SDK refs/manifest validation, package validation, extension runtime/index, compile-only output registry, timeline patch, timeline-domain shaders, render planner, and render router compatibility.
+2. Run `npm run check:video-editor-sdk-imports` to verify SDK modules do not import host runtime/editor modules.
+3. Run SDK public export and contract governance checks after updating fixtures.
+4. Run `npm run lint` and `npm run build` from `package.json`.
+5. Run the broader suite or full `npm run test` if focused checks reveal indirect impact or governance fixtures changed.
+6. Verify `config/contracts/reigh-extension.schema.json` is unchanged in the final diff.
+
+## Execution Order
+1. Audit touchpoints and fix SDK manifest/package duplicate blocking first.
+2. Land SDK reference exports and governance fixture updates.
+3. Change runtime duplicate sequencing to scoped keys while preserving all declarations.
+4. Add projection filtering and contribution index population.
+5. Harden compile-only output registry scoped lookup.
+6. Add reserved graph patch vocabulary.
+7. Extract shader validation and then migrate planner shader diagnosis.
+8. Add route-fit metadata only where attribution is already available.
+9. Finish with focused tests, import/governance checks, lint/build, and broader fallback.
+
+## Validation Order
+1. SDK reference, manifest validation, and public export tests.
+2. Package validation and runtime duplicate/index tests.
+3. Output format registry scoped-key compatibility tests.
+4. Timeline patch reserved-op tests.
+5. Shader timeline-domain and render planner tests.
+6. Render router compatibility tests.
+7. SDK import boundary, contract governance, lint, build, and broader test fallback.
+
+
+        Plan metadata:
+        {
+  "version": 2,
+  "timestamp": "2026-07-02T16:29:52Z",
+  "hash": "sha256:9431d7ffc01dc5f10e9b7276183ccb2488f0cfa6efe54b34a327fbb094841a0d",
+  "changes_summary": "Revised the plan to include SDK/package duplicate validators, explicit touchpoint audit/no-change rationale, projection filtering for preserved exact duplicates, a concrete shader-validation extraction strategy, scoped compile-only output registry hardening, and a clear MaterialRef alias policy.",
+  "flags_addressed": [
+    {
+      "id": "issue_hints-1",
+      "resolution": "addressed",
+      "reason": "Added a Phase 0 audit for commands, renderRouter, and the manifest schema, plus validation steps that explicitly keep commands/renderRouter/schema unchanged unless tests expose a direct compatibility break.",
+      "where": "Phase 0 \u2014 Step 0; Phase 6 \u2014 Step 11"
+    },
+    {
+      "id": "issue_hints-2",
+      "resolution": "addressed",
+      "reason": "Expanded shader extraction into concrete helper boundaries and timeline-domain mapping rules for assignment and serialized config validation while preserving existing payloads.",
+      "where": "Phase 4 \u2014 Step 8; Phase 4 \u2014 Step 9"
+    },
+    {
+      "id": "issue_hints-3",
+      "resolution": "addressed",
+      "reason": "Added projection filtering so exact scoped duplicates remain in sequencing/index entries but only the first scoped occurrence reaches descriptor arrays.",
+      "where": "Phase 2 \u2014 Step 4; Phase 2 \u2014 Step 5"
+    },
+    {
+      "id": "issue_hints-4",
+      "resolution": "addressed",
+      "reason": "Documented that MaterialRef is a composition-facing alias for RenderMaterialRef, with RenderMaterialRef remaining supported and not deprecated in this milestone.",
+      "where": "Overview; Phase 1 \u2014 Step 1"
+    }
+  ],
+  "questions": [],
+  "success_criteria": [
+    {
+      "criterion": "`ContributionRef`, `LiveSourceRef`, `MaterialRef`, and `contributionRefKey` are exported from the SDK, are data-only, and `contributionRefKey` returns `kind:extensionId:contributionId` without version fields by default.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`MaterialRef` is documented and tested as a composition-facing alias of `RenderMaterialRef`; `RenderMaterialRef` remains public and supported with no M1a deprecation.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "SDK manifest/package validation no longer blocks bare contribution-ID reuse before runtime scoped-key duplicate handling can run.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`FamilyContributionRef` remains source-compatible and is not replaced by `ContributionRef` in adapter normalization paths.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Runtime duplicate detection no longer rejects cross-extension bare `contributionId` reuse or same-extension cross-kind reuse.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Exact scoped-key duplicate declarations are preserved, diagnosed as warnings, represented in `contributionIndex` with structured `resolutionPolicy`, and filtered so duplicate runtime descriptors are not emitted.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "`ExtensionRuntime.contributionIndex` includes active, inactive-reserved, and disabled/invalid contributions where source data exists, with scoped keys, status, package state, diagnostics, and route-fit metadata where known.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Compile-only output format registry lookup does not clobber valid cross-extension formats with the same bare format ID, while keeping public execution options source-compatible.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Reserved graph patch operation families are known to SDK types and host patch validation but remain non-executable, non-previewable warnings.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Shader scope validation is centralized in host composition validation and existing assignment, serialized config, and render planner duplicate-shader behavior remains compatible.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`RenderPlannerResult`, `renderRouter.ts`, `useRenderState`, and command surfaces remain backward compatible; route-fit normalization does not add or remove required planner result fields.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "SDK modules do not import host runtime/editor modules.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_linter"
+      ]
+    },
+    {
+      "criterion": "No new manifest-facing schema vocabulary is introduced; `config/contracts/reigh-extension.schema.json` remains unchanged.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "The implementation keeps helpers narrow and avoids a general composition graph contract, target-path model, material runtime, process/output-format execution behavior, shader stacks, WebGPU, FBO chains, or generic texture routing in this milestone.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "Scoped-key identity remains aligned with the epic North Star and does not require changing anchors.",
+    "SDK manifest duplicate-ID blocking must be relaxed because otherwise runtime scoped duplicate handling cannot execute.",
+    "`MaterialRef` is an alias only; no material runtime or separate material model is introduced.",
+    "`RenderPlannerResult` and command surfaces remain source-compatible; route-fit metadata lives in the contribution index/helper path only.",
+    "The manifest JSON schema remains unchanged because this milestone changes runtime/reference semantics, not manifest-facing schema vocabulary."
+  ],
+  "delta_from_previous_percent": 93.68,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/index.test.ts",
+        "reason": "Covers SDK barrel exports, reference contracts, and changed duplicate validation expectations."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/boundary.test.ts",
+        "reason": "Covers defineExtension boundary behavior and duplicate contribution validation expectations."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Covers SDK public boundary and data-only export surface."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionPackageManifest.test.ts",
+        "reason": "Covers package activation validation after duplicate contribution diagnostics are no longer universal blockers."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/extensionSurface.test.ts",
+        "reason": "Covers runtime duplicate semantics, projection filtering, contribution index, inactive-reserved, and package-state entries."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+        "reason": "Covers scoped lookup compatibility for compile-only output formats with duplicate bare IDs."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-patch.test.ts",
+        "reason": "Covers reserved graph patch vocabulary validation, preview, and compile skipping."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+        "reason": "Covers shader assignment and serialized config validation payload compatibility."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/renderPlanner.test.ts",
+        "reason": "Covers planner shader duplicate diagnosis, route-fit compatibility, and unchanged result shape."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/renderRouter.test.ts",
+        "reason": "Covers router compatibility with unchanged RenderPlannerResult and route-fit planning behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/manifest-schema-validation.test.ts",
+        "reason": "Verifies manifest schema behavior remains stable while runtime/SDK validation semantics change."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/index.ts",
+      "src/sdk/manifest.ts",
+      "src/sdk/index.test.ts",
+      "src/sdk/boundary.test.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "config/governance/sdk-public-api-manifest.json",
+      "config/contracts/registry.json",
+      "src/tools/video-editor/runtime/extensionPackageManifest.ts",
+      "src/tools/video-editor/runtime/extensionPackageManifest.test.ts",
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/FamilyContributionSequence.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/runtime/outputFormatRegistry.ts",
+      "src/tools/video-editor/runtime/outputFormatRegistry.test.ts",
+      "src/sdk/video/timeline/patch.ts",
+      "src/tools/video-editor/lib/timeline-patch.test.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/lib/timeline-domain.ts",
+      "src/tools/video-editor/lib/timeline-domain.shaders.test.ts",
+      "src/tools/video-editor/runtime/renderPlanner.ts",
+      "src/tools/video-editor/runtime/renderPlanner.test.ts",
+      "src/tools/video-editor/lib/renderRouter.test.ts"
+    ],
+    "always_run": [
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --release",
+      "npm run check:contracts",
+      "npm run lint",
+      "npm run build"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/registry.json, config/governance/sdk-public-api-manifest.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/boundary.test.ts, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest.ts, src/sdk/video/composition/references.ts, src/sdk/video/timeline/patch.ts, src/tools/video-editor/lib/renderRouter.test.ts, src/tools/video-editor/lib/timeline-domain.shaders.test.ts, src/tools/video-editor/lib/timeline-domain.ts, src/tools/video-editor/lib/timeline-patch.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionPackageManifest.test.ts, src/tools/video-editor/runtime/extensionPackageManifest.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyContributionSequence.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/outputFormatRegistry.test.ts, src/tools/video-editor/runtime/outputFormatRegistry.ts, src/tools/video-editor/runtime/renderPlanner.test.ts, src/tools/video-editor/runtime/renderPlanner.ts. Candidate: The baseline is scoped to direct SDK, runtime, timeline, planner, and router surfaces, with full-suite fallback because public SDK exports, governance fixtures, manifest validation, and runtime descriptor semantics can affect downstream consumers outside the local import graph.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 10: requires human verification (subjective_judgment).",
+    "status": "open",
+    "severity": "minor"
+  }
+]
+
+
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1a-reference-identity-patch-20260702-1603/critique_check_correctness.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: correctness
+Question: Are the proposed changes technically correct?
+Guidance: Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+    This is critique iteration 2. The template file includes prior findings with their status. Verify addressed flags were actually fixed, re-flag if inadequate, and check for new issues introduced by the revision.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.
