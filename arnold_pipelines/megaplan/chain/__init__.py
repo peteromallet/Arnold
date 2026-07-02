@@ -5281,7 +5281,11 @@ def run_chain_cli(
     except CliError as exc:
         return _emit_error(exc)
     sys.stdout.write(json.dumps(result, indent=2) + "\n")
-    if result["status"] in {"done", "paused"}:
+    if result["status"] in {
+        "done",
+        "paused",
+        STATE_AWAITING_PR_MERGE,
+    }:
         return 0
     return 1
 

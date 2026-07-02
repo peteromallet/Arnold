@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import subprocess
+from argparse import Namespace
 from pathlib import Path
 
+import arnold_pipelines.megaplan.chain as chain_cli
 from arnold_pipelines.megaplan.chain.epic_chain import (
     _state_path_for,
     load_epic_chain_spec,
@@ -50,6 +52,39 @@ def _write_plan_state(root: Path, plan_name: str, current_state: str) -> None:
         plan_state,
         json.dumps({"name": plan_name, "current_state": current_state}) + "\n",
     )
+
+
+def test_chain_start_cli_treats_awaiting_pr_merge_as_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    _write_text(tmp_path / "NORTHSTAR.md", "# North Star\n")
+    _write_text(
+        spec_path,
+        "base_branch: main\nanchors:\n  north_star: NORTHSTAR.md\nmilestones: []\n",
+    )
+
+    def fake_run_chain(*args, **kwargs):
+        return {"status": "awaiting_pr_merge", "reason": "PR #42 is open"}
+
+    monkeypatch.setattr(chain_cli, "run_chain", fake_run_chain)
+
+    rc = chain_cli.run_chain_cli(
+        tmp_path,
+        Namespace(
+            chain_action="start",
+            spec=str(spec_path),
+            project_dir=str(tmp_path),
+            no_git_refresh=False,
+            no_push=False,
+            one=False,
+            fresh=False,
+            require_anchor=None,
+            missing_anchor_ack=None,
+        )
+    )
+
+    assert rc == 0
 
 
 def _write_parent_spec(
