@@ -1596,6 +1596,17 @@ def _classify_failure(
         return "cli_or_argument_error"
     if "couldn't find remote ref" in combined or "missing_base_ref" in combined or last_state == "missing_base_ref":
         return "git_or_branch_resolution_error"
+    if (
+        "git push" in combined
+        and (
+            "gh001" in combined
+            or "large files detected" in combined
+            or "exceeds github" in combined
+            or "exceeds file size limit" in combined
+            or "100.00 mb" in combined
+        )
+    ):
+        return "git_large_file_push_rejection"
     if "authentication" in combined or "missing credentials" in combined or "api key" in combined or re.search(r"\b401\b", combined):
         return "authentication_or_credentials_error"
     if "credit balance is too low" in combined or "insufficient credits" in combined or "quota" in combined:
@@ -1984,6 +1995,17 @@ if classification == "unknown_failure_mode":
         classification = "cli_or_argument_error"
     elif "couldn't find remote ref" in combined_signals or "missing_base_ref" in combined_signals:
         classification = "git_or_branch_resolution_error"
+    elif (
+        "git push" in combined_signals
+        and (
+            "gh001" in combined_signals
+            or "large files detected" in combined_signals
+            or "exceeds github" in combined_signals
+            or "exceeds file size limit" in combined_signals
+            or "100.00 mb" in combined_signals
+        )
+    ):
+        classification = "git_large_file_push_rejection"
     elif "authentication" in combined_signals or "missing credentials" in combined_signals or "api key" in combined_signals:
         classification = "authentication_or_credentials_error"
     elif "credit balance" in combined_signals or "quota" in combined_signals:

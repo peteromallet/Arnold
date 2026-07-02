@@ -2099,6 +2099,32 @@ for raw_line in log_lines:
     if "authority_divergence" in line or '"last_state": "authority_divergence"' in line:
         interesting_lines.append(line)
 
+latest_failure = plan_state.get("latest_failure")
+latest_failure = latest_failure if isinstance(latest_failure, dict) else {}
+large_file_signal_text = "\n".join(
+    [
+        "\n".join(log_lines[-80:]),
+        str(latest_failure.get("kind") or ""),
+        str(latest_failure.get("message") or ""),
+        json.dumps(latest_failure.get("metadata") or {}, sort_keys=True),
+    ]
+).lower()
+has_large_file_push_rejection = (
+    last_state == "failed"
+    and (
+        "phase-complete callback failed" in large_file_signal_text
+        or "phase_callback_failed" in large_file_signal_text
+    )
+    and "git push" in large_file_signal_text
+    and (
+        "gh001" in large_file_signal_text
+        or "large files detected" in large_file_signal_text
+        or "exceeds github" in large_file_signal_text
+        or "exceeds file size limit" in large_file_signal_text
+        or "100.00 mb" in large_file_signal_text
+    )
+)
+
 status = "ok"
 issue_kind = ""
 summary = ""
@@ -2112,6 +2138,44 @@ completion_guard = {
 details: dict[str, object] = {}
 chain_health_log_message = ""
 completion_guard_repair_eligible = False
+
+if has_large_file_push_rejection:
+    status = "chain_large_file_push_rejection"
+    issue_kind = "git_large_file_push_rejection"
+    recurring_lines = [
+        line
+        for line in log_lines[-40:]
+        if (
+            "GH001" in line
+            or "Large files detected" in line
+            or "exceeds GitHub" in line
+            or "100.00 MB" in line
+            or "phase-complete callback failed" in line
+            or "git push" in line
+        )
+    ]
+    summary = (
+        "chain failed after a successful phase because the post-phase git push was rejected "
+        "for an oversized runtime journal; exclude .megaplan runtime event logs from commits "
+        "and replay the post-phase publish/chain transition"
+    )
+    chain_health_log_message = (
+        "CHAIN HEALTH EVIDENCE: git push rejected by GitHub large-file limit after phase callback; "
+        "runtime journals such as .megaplan/epics/*/events.jsonl must not be pushed"
+    )
+    evidence_extra_lines.append(
+        "- Large-file push rejection: GitHub rejected the milestone branch because a runtime journal exceeded the file-size limit. "
+        "Exclude runtime journals from chain commits and replay the post-phase transition."
+    )
+    details = {
+        "latest_failure_kind": latest_failure.get("kind") or "",
+        "latest_failure_message": latest_failure.get("message") or "",
+        "runtime_journal_patterns": [
+            ".megaplan/epics/*/events.jsonl",
+            ".megaplan/plans/*/events.ndjson",
+            ".megaplan/plans/*/execution_trace.jsonl",
+        ],
+    }
 
 cycle_milestone = next(
     (
@@ -3935,29 +3999,29 @@ PY
     if [[ -n "${CHAIN_HEALTH_LOG_MESSAGE:-}" ]]; then
       log "${CHAIN_HEALTH_LOG_MESSAGE}"
     fi
-    if [[ "${CHAIN_HEALTH_STATUS:-ok}" == "chain_uncommitted_execute_output" ]]; then
+    if [[ "${CHAIN_HEALTH_STATUS:-ok}" == "chain_uncommitted_execute_output" || "${CHAIN_HEALTH_STATUS:-ok}" == "chain_large_file_push_rejection" ]]; then
       local chain_health_message repair_busy
-      chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain execute output is uncommitted}"
+      chain_health_message="${CHAIN_HEALTH_SUMMARY:-chain publish failure needs repair}"
       if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
         chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
       fi
       repair_busy="$(repair_loop_busy_state "$session")"
       if [[ "$repair_busy" == "same_session" ]]; then
-        log "chain uncommitted execute output detected; repair already running session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
-        report_item "$report_items" "$session" "repair" "repair_running" "uncommitted execute output repair already running" "$workspace" "$remote_spec"
+        log "repairable chain health issue detected; repair already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
+        report_item "$report_items" "$session" "repair" "repair_running" "repairable chain issue repair already running" "$workspace" "$remote_spec"
       elif [[ "$repair_busy" == "other_session" ]]; then
-        log "chain uncommitted execute output detected; another repair loop already running session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
+        log "repairable chain health issue detected; another repair loop already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
         report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
       elif dispatch_kimi_repair "$session" "$workspace" "$remote_spec"; then
         if [[ "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
-          log "chain uncommitted execute output detected; another repair loop already running session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
+          log "repairable chain health issue detected; another repair loop already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
           report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn" "$workspace" "$remote_spec"
         else
-          log "chain uncommitted execute output detected: background-dispatched repair loop session=$session summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
+          log "repairable chain health issue detected: background-dispatched repair loop session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
           report_item "$report_items" "$session" "repair" "repair_dispatched" "$chain_health_message" "$workspace" "$remote_spec"
         fi
       else
-        log "chain uncommitted execute output detected but repair loop is unavailable session=$session summary=${CHAIN_HEALTH_SUMMARY:-}"
+        log "repairable chain health issue detected but repair loop is unavailable session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
         report_item "$report_items" "$session" "repair" "repair_unavailable" "$chain_health_message" "$workspace" "$remote_spec"
       fi
       return 0
