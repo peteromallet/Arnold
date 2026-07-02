@@ -175,8 +175,7 @@ def test_contract_constants_are_stable() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_validate_rejects_graph_template() -> None:
-    """The current _template uses ``driver=('graph',...)`` and must be rejected."""
+def test_validate_accepts_native_template() -> None:
+    """T6: _template is now native-first and must pass validation."""
     pkg = importlib.import_module("arnold_pipelines._template")
-    with pytest.raises(_AuthoringError):
-        validate_package_module(pkg)
+    validate_package_module(pkg)  # does not raise

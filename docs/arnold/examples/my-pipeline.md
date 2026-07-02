@@ -5,7 +5,7 @@ Do not edit by hand; run `python scripts/generate_arnold_docs.py --write`.
 Provenance:
 - generator: scripts/generate_arnold_docs.py
 - source_package: arnold_pipelines/_template
-- manifest_hash: 
+- manifest_hash: native:my-pipeline
 - generated_at: regenerated on demand (not embedded)
 - m6_disposition: keep
 - policy: regenerate from compiled surviving registries; fail on stale examples.
@@ -21,10 +21,10 @@ Provenance:
 | Builder target | arnold_pipelines._template:build_pipeline|
 | Builder source | arnold_pipelines/_template/__init__.py|
 | Skill | arnold_pipelines/_template/SKILL.md|
-| Diagnostic | M6: template declared native-first; actual builder still returns workflow.Pipeline until T5 migration.|
+| Validation | `build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`|
 | Contract | native|
-| Load state | workflow|
-| Identity | workflow|
+| Load state | loadable-native|
+| Identity | native:my-pipeline|
 
 ## Builder Surface
 
@@ -32,39 +32,44 @@ The following snippet is extracted verbatim from the pack's canonical builder so
 
 ```python
 name: str = "my-pipeline"
+
 description: str = (
-    "A new Arnold pipeline (replace this description with a meaningful one-liner)."
+    "A new Arnold native-first pipeline (replace with a meaningful one-liner)."
 )
 
-driver: tuple[str, str] = ("graph", "linear")
+driver: tuple[str, str] = ("native", "project+validate")
+
 entrypoint: str = "build_pipeline"
+
 arnold_api_version: str = "1.0"
+
 capabilities: tuple[str, ...] = ("skeleton",)
 
 def build_pipeline() -> Pipeline:
-    """Build a skeleton explicit-node workflow pipeline.
+    """Return the canonical native-backed ``my-pipeline`` :class:`Pipeline`.
 
-    Replace the steps and routes with the real shape of your pipeline. The
-    returned :class:`arnold.workflow.Pipeline` is the package source; the
-    compiler produces the manifest and hashes at build time.
+    The returned shell projects the native-program topology into a
+    :class:`Pipeline` with a non-null ``native_program``, satisfying
+    the native-first authoring contract.
     """
-
-    return Pipeline(
-        id="my-pipeline",
-        version="1.0",
-        steps=(
-            Step(id="start", kind="agent"),
-            Step(id="finish", kind="agent"),
-        ),
-        routes=(
-            Route(id="start-finish", source="start", target="finish"),
-        ),
+    native = _native_program()
+    projected = project_graph(native, key_mode="phase")
+    return replace(
+        projected,
+        resource_bundles=(),
+        native_program=native,
     )
 ```
 
-## Deferred native diagnostic
+## Native builder report
 
-M6: template declared native-first; actual builder still returns workflow.Pipeline until T5 migration.
+```yaml
+entry: draft
+id: my-pipeline
+instruction_count: 3
+native_program: my-pipeline
+stage_count: 2
+```
 
 ## Package Skill
 

@@ -72,8 +72,8 @@ class ShippedPipelineInfo:
 #     6. writing_panel_strict → arnold_pipelines.megaplan.pipelines.writing_panel_strict [native, migrated]
 #
 #   Standalone (arnold.pipelines.*):
-#     7. folder_audit      → arnold.pipelines.folder_audit      [native, pending M3 promotion]
-#     8. deliberation      → arnold.pipelines.deliberation      [native, pending M3 promotion]
+#     7. folder_audit      → arnold.pipelines.folder_audit      [native, migrated]
+#     8. deliberation      → arnold.pipelines.deliberation      [native, migrated]
 #
 #   Archive/Delete — not migrated (no active callers found):
 #     - epic_blitz: archived; delete if no active evidence by M4.
@@ -210,17 +210,24 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": False,
     },
     "arnold/pipelines/folder_audit": {
-        "id": "legacy.folder_audit",
-        "public": False,
-        "registry_id": None,
+        "id": "folder-audit",
+        "public": True,
+        "registry_id": "folder_audit",
         "docs_path": None,
-        "disposition": "archive",
-        "migrated": False,
-        "diagnostic": (
-            "M3: pending promotion to standalone arnold.pipelines.folder_audit "
-            "with native contract. Currently archived legacy; will transition to "
-            "migrate disposition when package is promoted."
-        ),
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+        "diagnostic": "Standalone native-first folder_audit package promoted in M3.",
+    },
+    "arnold/pipelines/deliberation": {
+        "id": "deliberation",
+        "public": True,
+        "registry_id": "deliberation",
+        "docs_path": None,
+        "disposition": "migrate",
+        "migrated": True,
+        "builder_contract": "native",
+        "diagnostic": "Standalone native-first deliberation package promoted in M3.",
     },
     "arnold_pipelines/evidence_pack": {
         "id": "evidence_pack_verifier",
@@ -239,8 +246,7 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "migrated": True,
         "builder_contract": "native",
         "diagnostic": (
-            "M6: template declared native-first; "
-            "actual builder still returns workflow.Pipeline until T5 migration."
+            "M6: template migrated to native-first projected-shell contract (T6)."
         ),
     },
     # Archives
@@ -370,19 +376,6 @@ _SHIPPED_PIPELINE_DISPOSITION: dict[str, dict[str, Any]] = {
         "disposition": "archive",
         "migrated": False,
         "diagnostic": "M3: legacy epic_blitz path; archive/delete, not migrated unless active callers found.",
-    },
-    "arnold/pipelines/deliberation": {
-        "id": "legacy.deliberation",
-        "public": False,
-        "registry_id": None,
-        "docs_path": None,
-        "disposition": "archive",
-        "migrated": False,
-        "diagnostic": (
-            "M3: pending promotion to standalone arnold.pipelines.deliberation "
-            "with native contract. Currently archived legacy; will transition to "
-            "migrate disposition when package is promoted."
-        ),
     },
     "arnold/pipelines/_deliberation_example": {
         "id": "legacy._deliberation_example",

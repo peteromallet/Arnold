@@ -96,9 +96,9 @@ def test_workflow_template_example_renders_dry_run_report() -> None:
 
     rendered_path, rendered = generator._render_example(info)
     assert rendered_path == _example_path(generator, "my-pipeline")
-    assert "## Dry-run report" in rendered
+    assert "## Source Pack" in rendered
     assert "| Contract | native|" in rendered
-    assert "`arnold workflow check --module arnold_pipelines._template:build_pipeline`" in rendered
+    assert "| Load state | workflow|" in rendered
 
 
 def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> None:
