@@ -746,6 +746,42 @@ def test_repair_loop_collects_named_single_plan_in_mixed_workspace(tmp_path: Pat
     assert payload["chain_state_summary"] == {}
 
 
+def test_repair_loop_classifies_repeated_failure_signature_as_repairable(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workflow"
+    plan_dir = workspace / ".megaplan" / "plans" / "target-plan"
+    _write_plan(
+        plan_dir,
+        {
+            "name": "target-plan",
+            "current_state": "blocked",
+            "latest_failure": {
+                "kind": "repeated_failure_signature",
+                "phase": "finalize",
+                "message": (
+                    "same semantic failure repeated 3 times: finalize: "
+                    "test_blast_radius selectors are missing or empty"
+                ),
+                "metadata": {"count": 3},
+            },
+            "history": [],
+        },
+        plan_v_bodies={"plan_v1.md": "target"},
+    )
+
+    program = _extract_repair_program(
+        "collect_failure_context_json",
+        "python3 - \"$workspace\" \"$session\" \"$run_kind\" \"$plan_name\" <<'PY'",
+    )
+    result = _run_embedded_python(program, str(workspace), "single-session", "plan", "target-plan")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["failure_classification"] == "blocked_state_or_recovery_error"
+    assert payload["plan_latest_failure"]["kind"] == "repeated_failure_signature"
+
+
 def test_repair_loop_prefers_awaiting_human_over_timeout_text_in_prep_clarification(tmp_path: Path) -> None:
     workspace = tmp_path / "workflow"
     plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"

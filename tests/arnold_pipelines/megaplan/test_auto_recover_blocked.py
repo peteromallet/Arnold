@@ -148,6 +148,84 @@ def test_drive_iteration_cap_preserves_original_resume_cursor_after_recover_bloc
     }
 
 
+def test_drive_bails_on_repeated_finalize_failure_signature(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps(
+            {
+                "name": "demo",
+                "current_state": "critiqued",
+                "history": [
+                    {
+                        "step": "finalize",
+                        "result": "error",
+                        "message": (
+                            "Finalize could not resolve a scoped baseline test "
+                            "command. Reason: test_blast_radius strategy is "
+                            "'scoped' but selectors are missing or empty."
+                        ),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    run_calls = 0
+    captured_failures: list[dict[str, object]] = []
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "critiqued",
+            "next_step": "revise",
+            "valid_next": ["revise"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        nonlocal run_calls
+        run_calls += 1
+        assert args == ["revise", "--plan", "demo"]
+        return (0, "", "")
+
+    def fake_record_failure(**kwargs):
+        captured_failures.append(dict(kwargs))
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", fake_record_failure)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive(
+        "demo",
+        cwd=tmp_path,
+        max_iterations=120,
+        max_repeated_failure_signatures=3,
+        stall_threshold=10,
+    )
+
+    assert outcome.status == "blocked"
+    assert outcome.final_state == "blocked"
+    assert outcome.iterations == 3
+    assert outcome.blocking_reasons == ["repeated_failure_signature"]
+    assert run_calls == 2
+    assert captured_failures
+    failure = captured_failures[-1]
+    assert failure["kind"] == "repeated_failure_signature"
+    assert failure["current_state"] == "blocked"
+    assert failure["resume_cursor"] == {
+        "phase": "finalize",
+        "retry_strategy": "repair_repeated_failure",
+    }
+    assert failure["metadata"]["count"] == 3
+
+
 def test_drive_stall_marks_manual_review_origin_auto_stall(
     monkeypatch,
     tmp_path: Path,

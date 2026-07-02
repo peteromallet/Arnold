@@ -279,6 +279,39 @@ def test_resolve_baseline_test_selection_rejects_missing_path_selector(
     assert "do not exist" in result["reason"]
 
 
+def test_resolve_baseline_test_selection_allows_docs_only_no_baseline(
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "plan"
+    plan_dir.mkdir()
+    state = _make_state(plan_dir)
+    docs = [
+        "docs/extensions/composition-spine/README.md",
+        "docs/extensions/composition-spine/m0-decisions.md",
+    ]
+    _write_plan_meta(
+        plan_dir,
+        1,
+        {
+            "strategy": "scoped",
+            "confidence": "medium",
+            "selectors": [],
+            "changed_surfaces": docs,
+            "missing_test_selectors": docs,
+            "always_run": ["git diff --check -- docs/extensions/composition-spine"],
+            "full_suite_fallback": True,
+            "rationale": "Documentation-only milestone.",
+        },
+    )
+
+    result = resolve_baseline_test_selection(plan_dir, state)
+
+    assert result["mode"] == "none"
+    assert result["command_override"] is None
+    assert result["changed_surfaces"] == docs
+    assert "documentation surfaces" in result["reason"]
+
+
 def test_resolve_baseline_test_selection_rejects_missing_always_run_path(
     tmp_path: Path,
 ) -> None:

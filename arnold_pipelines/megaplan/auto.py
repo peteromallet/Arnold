@@ -153,6 +153,13 @@ DEFAULT_MAX_REVIEW_REWORK_CYCLES = 3
 # only synthesize a stub note, and if even that fails twice the only
 # remaining safe escape valve is force-proceed.
 DEFAULT_MAX_ADD_NOTE_ATTEMPTS = 2
+# Repeated semantic failure breaker. The normal stall detector intentionally
+# treats fresh artifacts/events as progress, but some loops make expensive
+# progress while preserving the exact same root failure (for example finalize
+# rejecting the same selector contract after every revise). Cap those loops
+# low so cloud repair receives a concrete failure instead of waiting for the
+# broad max_iterations limit.
+DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES = 3
 # Auto-ESCALATE-up: after this many consecutive execute failures with no
 # forward progress, the driver pins execute to the next *more capable* tier
 # model and retries with a fresh session. It keeps climbing on further
@@ -1213,6 +1220,71 @@ def _read_state_data(plan_dir: Path | None) -> dict[str, Any] | None:
     except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _normalize_failure_message(value: object) -> str:
+    text = str(value or "").strip()
+    text = re.sub(r"\s+", " ", text)
+    return text[:500]
+
+
+def _latest_meaningful_history_failure(
+    state_data: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(state_data, dict):
+        return None
+    history = state_data.get("history")
+    if not isinstance(history, list):
+        return None
+    for entry in reversed(history):
+        if not isinstance(entry, dict):
+            continue
+        result = str(entry.get("result") or "").strip().lower()
+        message = _normalize_failure_message(entry.get("message"))
+        if result in {"error", "failed", "failure", "blocked"} or message:
+            return entry
+    return None
+
+
+def _repeated_failure_signature(
+    plan_dir: Path | None,
+    status: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Return a semantic failure signature worth circuit-breaking.
+
+    The breaker is intentionally narrow: it only watches loops that are about
+    to spend another revise turn responding to the same latest failure. Normal
+    execute/review progress and ordinary state repeats stay governed by the
+    existing stall/rework detectors.
+    """
+
+    if status.get("next_step") != "revise":
+        return None
+    state_data = _read_state_data(plan_dir)
+    failure = _latest_meaningful_history_failure(state_data)
+    if not failure:
+        return None
+    step = str(failure.get("step") or "").strip()
+    result = str(failure.get("result") or "").strip()
+    message = _normalize_failure_message(failure.get("message"))
+    if not message:
+        return None
+    raw = json.dumps(
+        {
+            "state": status.get("state"),
+            "next_step": status.get("next_step"),
+            "step": step,
+            "result": result,
+            "message": message,
+        },
+        sort_keys=True,
+    )
+    return {
+        "hash": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+        "step": step,
+        "result": result,
+        "message": message,
+    }
 
 
 def _auto_verify_deferred_must_criteria(plan_dir: Path | None, *, log) -> bool:
@@ -2645,6 +2717,7 @@ def drive(
     max_external_retries: int = DEFAULT_MAX_EXTERNAL_RETRIES,
     max_blocked_retries: int = DEFAULT_MAX_BLOCKED_RETRIES,
     max_add_note_attempts: int = DEFAULT_MAX_ADD_NOTE_ATTEMPTS,
+    max_repeated_failure_signatures: int = DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES,
     escalate_after_fails: int = DEFAULT_ESCALATE_AFTER_FAILS,
     on_escalate: str = "force-proceed",
     poll_sleep: float = DEFAULT_POLL_SLEEP_SECONDS,
@@ -2683,6 +2756,8 @@ def drive(
     # leaves the plan on the same override path is still a no-progress loop
     # and should eventually escalate to `override force-proceed`.
     add_note_attempts = 0
+    repeated_failure_signature: str | None = None
+    repeated_failure_signature_count = 0
 
     # ── Auto-ESCALATE-up state ─────────────────────────────────────────
     # Consecutive execute failures (timeout / internal_error / quality-block)
@@ -2908,6 +2983,67 @@ def drive(
             next_step=next_step,
             valid_next=valid_next,
         )
+
+        repeat = _repeated_failure_signature(plan_dir, status)
+        if repeat is None:
+            pass
+        elif repeat["hash"] == repeated_failure_signature:
+            repeated_failure_signature_count += 1
+        else:
+            repeated_failure_signature = str(repeat["hash"])
+            repeated_failure_signature_count = 1
+        if (
+            repeat is not None
+            and max_repeated_failure_signatures > 0
+            and repeated_failure_signature_count >= max_repeated_failure_signatures
+        ):
+            log(
+                "repeated failure signature reached cap — bailing to repair",
+                repeated_failure_signature=repeated_failure_signature,
+                repeated_failure_signature_count=repeated_failure_signature_count,
+                max_repeated_failure_signatures=max_repeated_failure_signatures,
+                failure_step=repeat.get("step"),
+            )
+            _record_failure(
+                plan_dir=plan_dir,
+                kind="repeated_failure_signature",
+                message=(
+                    "same semantic failure repeated "
+                    f"{repeated_failure_signature_count} times: "
+                    f"{repeat.get('step')}: {repeat.get('message')}"
+                ),
+                current_state=STATE_BLOCKED,
+                phase=str(repeat.get("step") or last_phase or next_step or "unknown"),
+                resume_cursor={
+                    "phase": str(repeat.get("step") or last_phase or next_step or "unknown"),
+                    "retry_strategy": "repair_repeated_failure",
+                },
+                last_artifact=_latest_artifact_name(plan_dir),
+                suggested_action=(
+                    "Dispatch repair: repeated identical failure indicates a "
+                    "system or plan-contract issue, not another revise turn."
+                ),
+                metadata={
+                    "signature": repeated_failure_signature,
+                    "count": repeated_failure_signature_count,
+                    "max_repeated_failure_signatures": max_repeated_failure_signatures,
+                    "failure_step": repeat.get("step"),
+                    "failure_result": repeat.get("result"),
+                    "failure_message": repeat.get("message"),
+                    "iteration": iteration,
+                },
+            )
+            return _outcome(
+                "blocked",
+                final_state=STATE_BLOCKED,
+                iterations=iteration,
+                reason=(
+                    "same semantic failure repeated "
+                    f"{repeated_failure_signature_count} times — repair required"
+                ),
+                last_phase=last_phase,
+                blocking_reasons=["repeated_failure_signature"],
+            )
 
         if state == STATE_FAILED and _recover_execute_callback_failure_state(plan_dir):
             log("recovered execute state after phase-complete callback failure; resuming")
@@ -4529,6 +4665,16 @@ def build_auto_parser(subparsers: Any) -> None:
         ),
     )
     auto_parser.add_argument(
+        "--max-repeated-failure-signatures",
+        type=_non_negative_int,
+        default=DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES,
+        help=(
+            "Consecutive observations of the same semantic failure before "
+            "bailing to repair instead of spending another revise loop "
+            f"(default {DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES}; 0 disables)."
+        ),
+    )
+    auto_parser.add_argument(
         "--escalate-after-fails",
         type=_non_negative_int,
         default=DEFAULT_ESCALATE_AFTER_FAILS,
@@ -4698,6 +4844,11 @@ def run_auto(root: Path, args: argparse.Namespace) -> int:
             ),
             max_blocked_retries=args.max_blocked_retries,
             max_add_note_attempts=args.max_add_note_attempts,
+            max_repeated_failure_signatures=getattr(
+                args,
+                "max_repeated_failure_signatures",
+                DEFAULT_MAX_REPEATED_FAILURE_SIGNATURES,
+            ),
             escalate_after_fails=getattr(
                 args,
                 "escalate_after_fails",

@@ -1441,6 +1441,8 @@ def _require_explicit_finalize_baseline_selection(test_selection: dict[str, Any]
     mode = test_selection.get("mode")
     if mode == "full":
         return
+    if mode == "none":
+        return
     if mode == "scoped" and test_selection.get("command_override"):
         return
     raise FinalizeBaselineSelectionError(test_selection)
@@ -1606,7 +1608,15 @@ def _write_finalize_artifacts(plan_dir: Path, payload: dict[str, Any], state: Pl
         payload["evidence_base_ref"] = _resolve_evidence_base_ref(project_dir)
         # ──────────────────────────────────────────────────────────────────
 
-        baseline = _capture_test_baseline_for_plan(plan_dir, project_dir, _config)
+        if test_selection.get("mode") == "none":
+            baseline = {
+                "baseline_test_failures": None,
+                "baseline_test_command": None,
+                "baseline_test_note": test_selection.get("reason")
+                or "No baseline tests apply for this plan.",
+            }
+        else:
+            baseline = _capture_test_baseline_for_plan(plan_dir, project_dir, _config)
         payload.update(baseline)
     # Scrub model-authored verification loops before injecting handler-owned
     # coordination tasks. Otherwise the user-action gate matches the generic

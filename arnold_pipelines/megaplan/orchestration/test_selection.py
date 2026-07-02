@@ -36,6 +36,15 @@ def _is_documentation_path(rel_path: str) -> bool:
     return bool(parts) and parts[0] in {"docs", "doc"}
 
 
+def _only_documentation_paths(paths: Iterable[str]) -> bool:
+    normalized = [
+        _normalize_relpath(path)
+        for path in paths
+        if isinstance(path, str) and path.strip()
+    ]
+    return bool(normalized) and all(_is_documentation_path(path) for path in normalized)
+
+
 def _existing_file(repo_root: Path, rel_path: str) -> bool:
     candidate = repo_root / rel_path
     return candidate.is_file()
@@ -798,6 +807,27 @@ def resolve_baseline_test_selection(
         }
 
     if not isinstance(selectors, list) or not selectors:
+        changed_surfaces = value.get("changed_surfaces")
+        missing_selectors = value.get("missing_test_selectors")
+        docs_only_changed = (
+            isinstance(changed_surfaces, list)
+            and _only_documentation_paths(changed_surfaces)
+        )
+        docs_only_missing = (
+            isinstance(missing_selectors, list)
+            and _only_documentation_paths(missing_selectors)
+        )
+        if docs_only_changed and (not missing_selectors or docs_only_missing):
+            return {
+                "mode": "none",
+                "reason": (
+                    "test_blast_radius is scoped but contains only documentation "
+                    "surfaces; no pytest baseline applies"
+                ),
+                "command_override": None,
+                "selectors_used": [],
+                "changed_surfaces": list(changed_surfaces),
+            }
         return {
             "mode": "unresolved",
             "reason": (
