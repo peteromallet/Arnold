@@ -480,7 +480,7 @@ def test_run_chain_publishes_claimed_changes_before_auto_merge(
     assert "src/app.py" not in _git(tmp_path, "status", "--porcelain")
 
 
-def test_run_chain_blocks_merged_pr_with_unpublished_claimed_changes(
+def test_run_chain_recovers_merged_pr_with_unfinished_claimed_changes(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -513,6 +513,21 @@ def test_run_chain_blocks_merged_pr_with_unpublished_claimed_changes(
         ),
     )
 
+    def fake_commit_and_push(
+        root: Path,
+        branch: str,
+        plan: str,
+        phase: str,
+        *,
+        writer,
+        preexisting_dirty_paths: list[Path] | None = None,
+    ) -> None:
+        assert branch == "test/m1"
+        assert plan == "plan-m1"
+        assert phase == "stale-merged-pr-recovery"
+        _git(root, "add", "src/app.py")
+        _git(root, "commit", "-m", "recover stale merged pr")
+
     with (
         patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
         patch(
@@ -520,6 +535,24 @@ def test_run_chain_blocks_merged_pr_with_unpublished_claimed_changes(
             lambda *args, **kwargs: None,
         ),
         patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="finalized"),
+        patch(
+            "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+            side_effect=fake_commit_and_push,
+        ) as commit_and_push,
+        patch("arnold_pipelines.megaplan.chain._checkout_milestone_branch"),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=123),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=chain_module.DriverOutcome(
+                status="finalized",
+                plan="plan-m1",
+                final_state="finalized",
+                iterations=1,
+                reason="still executing",
+            ),
+        ) as drive,
         patch("arnold_pipelines.megaplan.chain._run_milestone_validations_blocking") as validate,
     ):
         result = run_chain(
@@ -530,14 +563,17 @@ def test_run_chain_blocks_merged_pr_with_unpublished_claimed_changes(
         )
 
     validate.assert_not_called()
+    commit_and_push.assert_called_once()
+    drive.assert_called_once()
     saved = load_chain_state(spec_path)
-    assert result["status"] == "blocked"
-    assert saved.last_state == "authority_divergence"
-    assert "unpublished claimed changes after PR merged" in result["reason"]
-    assert "src/app.py" in result["reason"]
+    assert result["status"] == "stopped"
+    assert saved.pr_number == 123
+    assert saved.pr_state == "open"
+    assert saved.metadata["stale_merged_pr_recovery"]["stale_pr_number"] == 122
+    assert "src/app.py" not in _git(tmp_path, "status", "--porcelain")
 
 
-def test_run_chain_logs_pr_progression_block_for_unpublished_claimed_changes(
+def test_run_chain_logs_stale_merged_pr_recovery_for_unfinished_plan(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -571,6 +607,18 @@ def test_run_chain_logs_pr_progression_block_for_unpublished_claimed_changes(
     )
     messages: list[str] = []
 
+    def fake_commit_and_push(
+        root: Path,
+        branch: str,
+        plan: str,
+        phase: str,
+        *,
+        writer,
+        preexisting_dirty_paths: list[Path] | None = None,
+    ) -> None:
+        _git(root, "add", "src/app.py")
+        _git(root, "commit", "-m", "recover stale merged pr")
+
     with (
         patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
         patch(
@@ -578,6 +626,24 @@ def test_run_chain_logs_pr_progression_block_for_unpublished_claimed_changes(
             lambda *args, **kwargs: None,
         ),
         patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="finalized"),
+        patch(
+            "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+            side_effect=fake_commit_and_push,
+        ),
+        patch("arnold_pipelines.megaplan.chain._checkout_milestone_branch"),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=123),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=chain_module.DriverOutcome(
+                status="finalized",
+                plan="plan-m1",
+                final_state="finalized",
+                iterations=1,
+                reason="still executing",
+            ),
+        ),
         patch("arnold_pipelines.megaplan.chain._run_milestone_validations_blocking") as validate,
     ):
         result = run_chain(
@@ -588,10 +654,10 @@ def test_run_chain_logs_pr_progression_block_for_unpublished_claimed_changes(
         )
 
     validate.assert_not_called()
-    assert result["status"] == "blocked"
+    assert result["status"] == "stopped"
     assert any(
-        message.startswith("[chain] PR progression blocked m1: ")
-        and "unpublished claimed changes after PR merged" in message
+        message.startswith("[chain] recovered stale merged PR #122 for unfinished plan plan-m1; ")
+        and "published 1 claimed local change(s) to test/m1" in message
         for message in messages
     )
 
@@ -635,7 +701,7 @@ def test_claimed_paths_include_execution_batch_artifacts(tmp_path: Path) -> None
     }
 
 
-def test_run_chain_treats_batched_untracked_execute_output_as_claimed(
+def test_run_chain_recovers_batched_untracked_execute_output_as_claimed(
     tmp_path: Path,
 ) -> None:
     base = _init_repo(tmp_path)
@@ -685,6 +751,19 @@ def test_run_chain_treats_batched_untracked_execute_output_as_claimed(
         ),
     )
 
+    def fake_commit_and_push(
+        root: Path,
+        branch: str,
+        plan: str,
+        phase: str,
+        *,
+        writer,
+        preexisting_dirty_paths: list[Path] | None = None,
+    ) -> None:
+        assert phase == "stale-merged-pr-recovery"
+        _git(root, "add", "src/app.py", "src/newdir/new.py")
+        _git(root, "commit", "-m", "recover batched output")
+
     with (
         patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
         patch(
@@ -692,6 +771,24 @@ def test_run_chain_treats_batched_untracked_execute_output_as_claimed(
             lambda *args, **kwargs: None,
         ),
         patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="finalized"),
+        patch(
+            "arnold_pipelines.megaplan.chain._commit_and_push_phase",
+            side_effect=fake_commit_and_push,
+        ) as commit_and_push,
+        patch("arnold_pipelines.megaplan.chain._checkout_milestone_branch"),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._ensure_milestone_pr", return_value=123),
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=chain_module.DriverOutcome(
+                status="finalized",
+                plan="plan-m1",
+                final_state="finalized",
+                iterations=1,
+                reason="still executing",
+            ),
+        ),
         patch("arnold_pipelines.megaplan.chain._run_milestone_validations_blocking") as validate,
     ):
         result = run_chain(
@@ -702,10 +799,70 @@ def test_run_chain_treats_batched_untracked_execute_output_as_claimed(
         )
 
     validate.assert_not_called()
+    commit_and_push.assert_called_once()
+    assert result["status"] == "stopped"
+    assert "src/newdir/new.py" not in _git(tmp_path, "status", "--porcelain")
+
+
+def test_run_chain_blocks_stale_merged_pr_recovery_with_unrelated_dirty_paths(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    plan_dir = _write_plan(
+        tmp_path,
+        current_state="finalized",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+        execution_batch=False,
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {"tasks": [{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}]}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "app.py").write_text("print('local only')\n", encoding="utf-8")
+    (tmp_path / "src" / "scratch.py").write_text("print('unclaimed')\n", encoding="utf-8")
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="authority_divergence",
+            pr_number=122,
+            pr_state="merged",
+        ),
+    )
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="finalized"),
+        patch("arnold_pipelines.megaplan.chain._commit_and_push_phase") as commit_and_push,
+        patch("arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery") as drive,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+        )
+
+    commit_and_push.assert_not_called()
+    drive.assert_not_called()
+    saved = load_chain_state(spec_path)
     assert result["status"] == "blocked"
-    assert "unpublished claimed changes after PR merged" in result["reason"]
-    assert "plus unrelated dirty paths" not in result["reason"]
-    assert "src/newdir/new.py" in result["reason"]
+    assert saved.last_state == "authority_divergence"
+    assert "unrelated dirty paths prevent recovery" in result["reason"]
+    assert "src/scratch.py" in result["reason"]
 
 
 def test_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
@@ -775,7 +932,7 @@ def test_pr_merge_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> 
     (tmp_path / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
     _write_plan(
         tmp_path,
-        current_state="finalized",
+        current_state="done",
         base_sha=base,
         finalize_tasks=[{"id": "T1", "status": "done"}],
     )
@@ -811,7 +968,7 @@ def test_pr_merge_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> 
     saved = load_chain_state(spec_path)
     assert result["status"] == "stopped"
     assert "completion guard retrying" in result["reason"]
-    assert saved.current_plan_name == "plan-m1"
+    assert saved.current_plan_name is None
     assert saved.last_state == "blocked"
     assert saved.retry_counts["m1"] == 1
 
