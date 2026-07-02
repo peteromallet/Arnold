@@ -1770,17 +1770,33 @@ def _validate_completion_manifest(
                 f"{label} failed for {spec_path}: completion manifest plan mismatch for {spec_milestone.label!r}",
             )
         if prereq_spec.merge_policy == "review":
-            if manifest_milestone.get("pr_number") != record.get("pr_number") or manifest_milestone.get("pr_state") != "merged":
-                raise CliError(
-                    "launch_precondition_failed",
-                    f"{label} failed for {spec_path}: completion manifest merged PR evidence mismatch for {spec_milestone.label!r}",
-                )
-            pr_merge_sha = manifest_milestone.get("pr_merge_sha")
-            if not isinstance(pr_merge_sha, str) or not pr_merge_sha.strip():
-                raise CliError(
-                    "launch_precondition_failed",
-                    f"{label} failed for {spec_path}: completion manifest milestone {spec_milestone.label!r} missing pr_merge_sha",
-                )
+            record_pr_number = record.get("pr_number")
+            record_pr_state = record.get("pr_state")
+            record_local_commit = record.get("local_commit_sha")
+            if isinstance(record_pr_number, int) and record_pr_state == "merged":
+                if manifest_milestone.get("pr_number") != record_pr_number or manifest_milestone.get("pr_state") != "merged":
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest merged PR evidence mismatch for {spec_milestone.label!r}",
+                    )
+                pr_merge_sha = manifest_milestone.get("pr_merge_sha")
+                if not isinstance(pr_merge_sha, str) or not pr_merge_sha.strip():
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest milestone {spec_milestone.label!r} missing pr_merge_sha",
+                    )
+            elif isinstance(record_local_commit, str) and record_local_commit.strip():
+                if manifest_milestone.get("local_commit_sha") != record_local_commit:
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest local commit evidence mismatch for {spec_milestone.label!r}",
+                    )
+            else:
+                if manifest_milestone.get("publication_evidence") != "chain_state_only":
+                    raise CliError(
+                        "launch_precondition_failed",
+                        f"{label} failed for {spec_path}: completion manifest publication evidence mismatch for {spec_milestone.label!r}",
+                    )
         proof_artifacts = manifest_milestone.get("proof_artifacts")
         if not isinstance(proof_artifacts, list):
             raise CliError(

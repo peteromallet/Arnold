@@ -3723,6 +3723,38 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   exit 0
 fi
 
+
+repair_dependency_manifests_if_possible() {
+  require_repair_lock_held
+  ensure_repair_budget_available "dependency-manifest-repair"
+  local result_path status
+  result_path="$RUN_DIR/dependency-manifest-repair.json"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.dependency_manifest_repair \
+    --workspace "$WORKSPACE" \
+    --remote-spec "$REMOTE_SPEC" \
+    --marker-dir "$MARKER_DIR" >"$result_path" 2>>"$LOG"
+  status=$?
+  if [[ "$status" == "0" ]]; then
+    log "dependency manifest repair succeeded result=$result_path"
+    return 0
+  fi
+  log "dependency manifest repair not applicable status=$status result=$result_path"
+  return 1
+}
+
+if repair_dependency_manifests_if_possible; then
+  mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+    repair_data_record_mechanical "1" "0" "$mechanical_status" "after dependency-manifest repair: $mechanical_status"
+  }
+  if [[ "${mechanical_status:-}" == "running" ]]; then
+    repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
+    repair_data_set_outcome "running"
+    clear_repair_markers
+    log "repair loop succeeded after dependency manifest repair"
+    exit 0
+  fi
+fi
+
 STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
 if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   log "stale state cleared before dev-fix: ${STALE_CLEAR_STATUS#cleared:}"
