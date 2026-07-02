@@ -31,7 +31,7 @@ REPORT_WEBHOOK="${CLOUD_WATCHDOG_REPORT_WEBHOOK:-}"
 INTERVAL="${CLOUD_WATCHDOG_INTERVAL_SECS:-3600}"
 MARKER_DIR="${CLOUD_WATCHDOG_MARKER_DIR:-/workspace/.megaplan/cloud-sessions}"
 REPAIR_DATA_DIR="${CLOUD_WATCHDOG_REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
-REPAIR_WITH_CODEX="${CLOUD_WATCHDOG_CODEX_REPAIR:-0}"
+REPAIR_ENABLED="${ARNOLD_REPAIR_TRIGGER_ENABLED:-0}"
 PUSH_REPAIRS="${CLOUD_WATCHDOG_PUSH_REPAIRS:-0}"
 CODEX_TIMEOUT="${CLOUD_WATCHDOG_CODEX_TIMEOUT_SECS:-7200}"
 REAP_AGE_SECS="${CLOUD_WATCHDOG_REAP_AGE_SECS:-7200}"
@@ -757,7 +757,7 @@ emit_report() {
   local markers="$2"
   local report_tmp
   report_tmp="$(mktemp)"
-  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_WITH_CODEX" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$items_path" "$markers" "$REPORT_PATH" "$REPORT_ARCHIVE_DIR" "$REPAIR_ENABLED" "$PUSH_REPAIRS" <<'PY' > "$report_tmp"
 import datetime as dt
 import json
 import os
@@ -1030,8 +1030,8 @@ sync_editable_source_branch() {
 
 codex_repair_editable_install() {
   local reason="$1"
-  if [[ "$REPAIR_WITH_CODEX" != "1" ]]; then
-    log "editable install check failed; Codex repair disabled (set CLOUD_WATCHDOG_CODEX_REPAIR=1): $reason"
+  if [[ "$REPAIR_ENABLED" != "1" ]]; then
+    log "editable install check failed; repair disabled (set ARNOLD_REPAIR_TRIGGER_ENABLED=1): $reason"
     return 1
   fi
   if [[ ! -d "$SRC_DIR/.git" ]]; then
@@ -3914,6 +3914,30 @@ repair_unhealthy_session() {
   return 1
 }
 
+repair_unintended_stop() {
+  local report_items="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local reason="$5"
+  local before_busy
+
+  before_busy="$(repair_loop_busy_state "$session")"
+  if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$reason"; then
+    if [[ "$before_busy" == "same_session" ]]; then
+      report_item "$report_items" "$session" "repair" "repair_running" "repair already running: $reason" "$workspace" "$remote_spec"
+    elif [[ "$before_busy" == "other_session" || "${REPAIR_DISPATCH_RESULT:-}" == "busy" ]]; then
+      report_item "$report_items" "$session" "repair" "repair_running" "another repair loop already running; waiting turn: $reason" "$workspace" "$remote_spec"
+    else
+      report_item "$report_items" "$session" "repair" "repair_dispatched" "$reason" "$workspace" "$remote_spec"
+    fi
+    return 0
+  fi
+
+  report_item "$report_items" "$session" "repair" "repair_unavailable" "$reason" "$workspace" "$remote_spec"
+  return 1
+}
+
 compare_needs_human_to_resolver() {
   local session="$1"
   local current_plan="$2"
@@ -3976,7 +4000,7 @@ PY
 
   if [[ ! -d "$workspace" ]]; then
     log "flag $session: workspace missing: $workspace"
-    report_item "$report_items" "$session" "flag" "workspace_missing" "workspace missing" "$workspace" "$remote_spec"
+    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "workspace_missing: $workspace" || true
     return 1
   fi
   if [[ "$run_kind" == "chain" && "$remote_spec" != /* ]]; then
@@ -3986,12 +4010,12 @@ PY
   health="$(session_health_status "$session" "$workspace" "$remote_spec" "$run_kind" "$plan_name")"
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
     log "flag $session: chain spec missing: $remote_spec"
-    report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: chain spec missing at $remote_spec" || true
     return 1
   fi
   if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
     log "flag $session: epic-chain spec missing: $remote_spec"
-    report_item "$report_items" "$session" "flag" "spec_missing" "epic-chain spec missing" "$workspace" "$remote_spec"
+    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: epic-chain spec missing at $remote_spec" || true
     return 1
   fi
   if [[ "$run_kind" == "chain" ]]; then
@@ -4033,7 +4057,7 @@ PY
         chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
       fi
       log "chain-level health issue detected session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
-      report_item "$report_items" "$session" "observe" "${CHAIN_HEALTH_STATUS:-chain_issue}" "$chain_health_message" "$workspace" "$remote_spec"
+      repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "${CHAIN_HEALTH_STATUS:-chain_issue}: $chain_health_message" || true
       return 0
     fi
   fi
@@ -4067,7 +4091,8 @@ PY
     stall_health="$(plan_progress_stall_status "$workspace" "$run_kind" "$plan_name")"
     if [[ "$stall_health" != "ok" ]]; then
       log "progress stall flagged session=$session detail=$stall_health"
-      report_item "$report_items" "$session" "observe" "progress_stall" "$stall_health" "$workspace" "$remote_spec"
+      repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stall_health" || true
+      return 0
     fi
     # Alive and phase-healthy: any prior repair dispatch succeeded, so clear the
     # marker so a future stop dispatches the primary repair fresh instead of
@@ -4308,12 +4333,12 @@ PY
 
   if [[ "$run_kind" == "chain" && ! -f "$remote_spec_path" ]]; then
     log "flag $session: chain spec missing: $remote_spec"
-    report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing" "$workspace" "$remote_spec"
+    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: chain spec missing at $remote_spec" || true
     return 1
   fi
   if [[ "$run_kind" == "epic_chain" && ! -f "$remote_spec_path" ]]; then
     log "flag $session: epic-chain spec missing: $remote_spec"
-    report_item "$report_items" "$session" "flag" "spec_missing" "epic-chain spec missing" "$workspace" "$remote_spec"
+    repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing: epic-chain spec missing at $remote_spec" || true
     return 1
   fi
 
@@ -4477,7 +4502,7 @@ PY
   rm -f "$report_items"
 }
 
-log "starting (interval=${INTERVAL}s marker_dir=$MARKER_DIR repair=$REPAIR_WITH_CODEX push=$PUSH_REPAIRS report=$REPORT_PATH)"
+log "starting (interval=${INTERVAL}s marker_dir=$MARKER_DIR repair=$REPAIR_ENABLED push=$PUSH_REPAIRS report=$REPORT_PATH)"
 while true; do
   scan_once
   if [[ "$ONCE" == "--once" ]]; then

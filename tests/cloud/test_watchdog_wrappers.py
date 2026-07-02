@@ -292,14 +292,14 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert "workflow-manifest-runtime" not in text
 
 
-def test_watchdog_flags_setup_deviations_instead_of_skipping() -> None:
+def test_watchdog_repairs_setup_deviations_instead_of_skipping() -> None:
     text = _wrapper("arnold-watchdog")
 
-    assert 'report_item "$report_items" "$session" "flag" "workspace_missing" "workspace missing"' in text
-    assert 'report_item "$report_items" "$session" "flag" "spec_missing" "chain spec missing"' in text
+    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "workspace_missing:' in text
+    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "spec_missing:' in text
     assert 'report_item "$report_items" "" "flag" "setup_invalid" "missing session: $marker"' in text
     assert 'report_item "$report_items" "$session" "flag" "setup_invalid" "missing remote_spec: $marker"' in text
-    assert '"spec_missing" "chain spec missing"' in text
+    assert '"repair_dispatched" "$reason"' in text
     assert '"skip" "spec_missing"' not in text
     assert '"skip" "workspace_missing"' not in text
 
@@ -5805,7 +5805,7 @@ def test_chain_health_status_is_wired_into_launch_chain_tick() -> None:
 
     assert "chain_health_status()" in text
     assert 'chain_health_status "$session" "$workspace" "$remote_spec_path" "$health"' in text
-    assert 'report_item "$report_items" "$session" "observe" "${CHAIN_HEALTH_STATUS:-chain_issue}"' in text
+    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "${CHAIN_HEALTH_STATUS:-chain_issue}:' in text
 
 
 def test_watchdog_scan_once_runs_repair_trigger_before_marker_scan() -> None:
@@ -5911,6 +5911,7 @@ def test_watchdog_chain_health_short_circuits_plan_repair_dispatch(tmp_path: Pat
     script = "\n\n".join(
         [
             _extract_wrapper_function("launch_chain_tick"),
+            _extract_wrapper_function("repair_unintended_stop"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_dir)!r}",
             """
@@ -5927,9 +5928,9 @@ chain_health_status() {
 plan_phase_health_status() { echo phase_failure:should-not-run; }
 plan_progress_stall_status() { echo progress_stall:should-not-run; }
 plan_attention_status_env() { echo SHOULD_NOT_RUN >&2; }
-repair_loop_busy_state() { echo none; }
-dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
-repair_unhealthy_session() { echo REPAIR >&2; return 0; }
+    repair_loop_busy_state() { echo none; }
+    dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
+    repair_unhealthy_session() { return 0; }
 mechanical_relaunch_attempted_previously() { return 1; }
 kimi_dispatch_failed_previously() { return 1; }
 ensure_install_or_repair() { return 0; }
@@ -5944,9 +5945,7 @@ tmux() { echo TMUX >&2; return 1; }
     result = _run_watchdog_shell(script)
     assert result.returncode == 0, result.stderr
     report = report_path.read_text(encoding="utf-8")
-    assert "\tobserve\tchain_cycle\tchain cycle detected; artifact=/tmp/chain-health.json\t" in report
-    assert "DISPATCH" not in result.stderr
-    assert "REPAIR" not in result.stderr
+    assert "\trepair\trepair_dispatched\tchain_cycle: chain cycle detected; artifact=/tmp/chain-health.json\t" in report
     assert "SHOULD_NOT_RUN" not in result.stderr
     assert "TMUX" not in result.stderr
 
@@ -6400,8 +6399,9 @@ def test_plan_progress_stall_status_is_wired_into_launch_chain_tick() -> None:
 
     assert "plan_progress_stall_status()" in text
     assert 'stall_health="$(plan_progress_stall_status "$workspace" "$run_kind" "$plan_name")"' in text
-    # FLAG ONLY — emits a progress_stall report item, no repair dispatch.
-    assert 'report_item "$report_items" "$session" "observe" "progress_stall"' in text
+    # Progress stalls are unintended stops from the operator perspective; they
+    # must launch repair instead of only surfacing as passive issues.
+    assert 'repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stall_health"' in text
     # The progress_stall status must NOT be in the alive-allowlist so it surfaces
     # in issues[] — the allowlist is the set excluded from issues.
     assert '"progress_stall"' not in text.split('not in {"alive"')[1].split("}")[0]

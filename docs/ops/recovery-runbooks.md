@@ -540,7 +540,7 @@ Key watchdog env vars that affect restart behaviour:
 | `CLOUD_WATCHDOG_INTERVAL_SECS` | `3600` | Seconds between scans. |
 | `CLOUD_WATCHDOG_LOG` | `/workspace/watchdog.log` | Scan log path. |
 | `CLOUD_WATCHDOG_REPORT_PATH` | `/workspace/watchdog-report.json` | Latest report. |
-| `CLOUD_WATCHDOG_CODEX_REPAIR` | `0` | Must be `1` for repair dispatch. |
+| `ARNOLD_REPAIR_TRIGGER_ENABLED` | `0` | Must be `1` for repair dispatch. |
 | `CLOUD_WATCHDOG_PUSH_REPAIRS` | `0` | Set to `1` to push repair commits. |
 | `CLOUD_WATCHDOG_SYNC_ENABLED` | `1` | Set to `0` to skip editable-install sync. |
 
