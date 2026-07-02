@@ -1,0 +1,174 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m0-composition-contract-and-examples
+  idea: .megaplan/initiatives/native-composition-followup.chain/briefs/m0-composition-contract-and-examples.md
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
+- label: m1-megaplan-compositional-migration
+  idea: .megaplan/initiatives/native-composition-followup.chain/briefs/m1-megaplan-compositional-migration.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - m0-composition-contract-and-examples
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:max
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:max
+  - feedback=codex:low
+  - loop_plan=codex:max
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:max
+  - tiebreaker_challenger=codex:max
+- label: m2-routing-validator-and-authoring-boundary
+  idea: .megaplan/initiatives/native-composition-followup.chain/briefs/m2-routing-validator-and-authoring-boundary.md
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  depends_on:
+  - m0-composition-contract-and-examples
+  - m1-megaplan-compositional-migration
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
+- label: m3-general-nested-workflow-invocation
+  idea: .megaplan/initiatives/native-composition-followup.chain/briefs/m3-general-nested-workflow-invocation.md
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  depends_on:
+  - m0-composition-contract-and-examples
+  - m1-megaplan-compositional-migration
+  - m2-routing-validator-and-authoring-boundary
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
+- label: m4-tree-graph-trace-and-audit-skeleton
+  idea: .megaplan/initiatives/native-composition-followup.chain/briefs/m4-tree-graph-trace-and-audit-skeleton.md
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  depends_on:
+  - m2-routing-validator-and-authoring-boundary
+  - m3-general-nested-workflow-invocation
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
+- label: m5-composite-resume-and-start-from-path
+  idea: .megaplan/initiatives/native-composition-followup.chain/briefs/m5-composite-resume-and-start-from-path.md
+  profile: partnered-5
+  robustness: extreme
+  depth: max
+  depends_on:
+  - m3-general-nested-workflow-invocation
+  - m4-tree-graph-trace-and-audit-skeleton
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:max
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:max
+  - feedback=codex:low
+  - loop_plan=codex:max
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:max
+  - tiebreaker_challenger=codex:max
+- label: m6-composition-docs-and-conformance
+  idea: .megaplan/initiatives/native-composition-followup.chain/briefs/m6-composition-docs-and-conformance.md
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  depends_on:
+  - m5-composite-resume-and-start-from-path
+  phase_model:
+  - execute=codex:medium
+  - finalize=codex:low
+  - critique=hermes:deepseek:deepseek-v4-pro
+  - review=codex:low
+  - gate=hermes:deepseek:deepseek-v4-pro
+  - plan=codex:high
+  - prep=hermes:deepseek:deepseek-v4-pro
+  - critique_evaluator=codex:low
+  - revise=codex:high
+  - feedback=codex:low
+  - loop_plan=codex:high
+  - loop_execute=codex:medium
+  - tiebreaker_researcher=codex:high
+  - tiebreaker_challenger=codex:high
+on_failure:
+  retry: retry_milestone
+  escalate: bump_profile
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: review
+driver:
+  auto_approve: false
+  max_iterations: 80
+  require_clean_base: true
+  robustness: thorough
+  poll_sleep: 8.0

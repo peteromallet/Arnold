@@ -164,6 +164,25 @@ class _Compiler:
         self._pending_halt: bool = False
         self._parallel_block_counter: int = 0
 
+    def _build_native_phase(
+        self,
+        func: Callable[..., Any],
+        *,
+        fallback_name: str,
+    ) -> NativePhase:
+        """Build a NativePhase carrying additive decorator metadata."""
+        meta = get_phase_meta(func)
+        name = meta["name"] if meta else fallback_name
+        return NativePhase(
+            name=name,
+            func=func,
+            stable_id=meta.get("id") if meta else None,
+            inputs_schema=meta.get("inputs") if meta else None,
+            outputs_schema=meta.get("outputs") if meta else None,
+            produces=meta.get("produces", ()) if meta else (),
+            consumes=meta.get("consumes", ()) if meta else (),
+        )
+
     # ── emit helpers ──────────────────────────────────────────────
 
     def _emit(
@@ -371,18 +390,23 @@ class _Compiler:
                 func_node,
             )
 
-        meta = get_phase_meta(func)
-        name = meta["name"] if meta else getattr(func, "__name__", "unknown")
-
-        # Extract typed port metadata from phase decorator
-        phase_produces = meta.get("produces", ()) if meta else ()
-        phase_consumes = meta.get("consumes", ()) if meta else ()
+        phase_ir = self._build_native_phase(
+            func,
+            fallback_name=getattr(func, "__name__", "unknown"),
+        )
+        name = phase_ir.name
 
         # Track phase
-        self._phases.append(NativePhase(name=name, func=func, produces=phase_produces, consumes=phase_consumes))
+        self._phases.append(phase_ir)
 
         # Emit phase instruction
-        self._emit("phase", name=name, func=func, produces=phase_produces, consumes=phase_consumes)
+        self._emit(
+            "phase",
+            name=name,
+            func=func,
+            produces=phase_ir.produces,
+            consumes=phase_ir.consumes,
+        )
 
     def _lower_yield_parallel(self, yield_node: ast.Yield) -> None:
         """Lower ``yield parallel([...])`` into one resumable parallel instruction.
@@ -413,12 +437,7 @@ class _Compiler:
 
         # Register each branch callable as a known phase (for metadata/reflection)
         for bf, bn in zip(branch_funcs, branch_names):
-            meta = get_phase_meta(bf)
-            produces = meta.get("produces", ()) if meta else ()
-            consumes = meta.get("consumes", ()) if meta else ()
-            self._phases.append(
-                NativePhase(name=bn, func=bf, produces=produces, consumes=consumes)
-            )
+            self._phases.append(self._build_native_phase(bf, fallback_name=bn))
 
         # Build ParallelInstruction metadata and attach to the instruction
         parallel_index = len(self._parallel_blocks)
