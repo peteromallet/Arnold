@@ -415,12 +415,6 @@
       "reason": "Allowlist tests intentionally construct legacy slash-path references as scanner fixtures."
     },
     {
-      "path": "tests/arnold/conformance/test_megaplan_coupling_gate.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Coupling-gate tests intentionally construct legacy package import references as scanner fixtures."
-    },
-    {
       "path": "tests/arnold/conformance/workflow_manifest_runtime/test_conformance_boundaries.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",

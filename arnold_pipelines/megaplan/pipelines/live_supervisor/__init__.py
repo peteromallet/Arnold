@@ -8,18 +8,24 @@ a recheck request for the outer daemon.
 
 from __future__ import annotations
 
-from arnold_pipelines.megaplan.pipelines.live_supervisor.pipeline import (
-    arnold_api_version,
-    build_pipeline,
-    capabilities,
-    default_profile,
-    description,
-    driver,
-    entrypoint,
-    name,
-    recommended_profiles,
-    supported_modes,
+name = "live-supervisor"
+description = (
+    "Megaplan Live Watchdog Supervisor: classify, diagnose, and decide "
+    "repair action for live plan incidents."
 )
+default_profile = None
+supported_modes = ("supervise", "native")
+recommended_profiles = ()
+driver = ("native", "linear")
+entrypoint = "build_pipeline"
+arnold_api_version = "1.0"
+capabilities = (
+    "plan_supervision",
+    "incident_classification",
+    "repair_decision",
+)
+
+from arnold_pipelines.megaplan.pipelines.live_supervisor.pipeline import build_pipeline
 
 __all__ = [
     "build_pipeline",
