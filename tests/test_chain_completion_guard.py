@@ -596,6 +596,118 @@ def test_run_chain_logs_pr_progression_block_for_unpublished_claimed_changes(
     )
 
 
+def test_claimed_paths_include_execution_batch_artifacts(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    plan_dir = _write_plan(
+        tmp_path,
+        current_state="finalized",
+        finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+        execution_batch=False,
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {"tasks": [{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}]}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "files_changed": ["src/top_level.ts"],
+                "task_updates": [
+                    {
+                        "task_id": "T2",
+                        "status": "done",
+                        "files_changed": ["src/batched.ts"],
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert chain_module._claimed_paths(tmp_path, "plan-m1") == {
+        "src/app.py",
+        "src/batched.ts",
+        "src/top_level.ts",
+    }
+
+
+def test_run_chain_treats_batched_untracked_execute_output_as_claimed(
+    tmp_path: Path,
+) -> None:
+    base = _init_repo(tmp_path)
+    spec_path = _write_chain_spec(tmp_path)
+    _git(tmp_path, "add", "chain.yaml", "idea.md", "NORTHSTAR.md")
+    _git(tmp_path, "commit", "-m", "track chain inputs")
+    plan_dir = _write_plan(
+        tmp_path,
+        current_state="finalized",
+        base_sha=base,
+        finalize_tasks=[{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}],
+        execution_batch=False,
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {"tasks": [{"id": "T1", "status": "done", "files_changed": ["src/app.py"]}]}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (plan_dir / "execution_batch_1.json").write_text(
+        json.dumps(
+            {
+                "task_updates": [
+                    {
+                        "task_id": "T2",
+                        "status": "done",
+                        "files_changed": ["src/newdir/new.py"],
+                    }
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "app.py").write_text("print('local only')\n", encoding="utf-8")
+    (tmp_path / "src" / "newdir").mkdir()
+    (tmp_path / "src" / "newdir" / "new.py").write_text("print('nested')\n", encoding="utf-8")
+    save_chain_state(
+        spec_path,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="plan-m1",
+            last_state="authority_divergence",
+            pr_number=122,
+            pr_state="merged",
+        ),
+    )
+
+    with (
+        patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._pr_state", return_value="merged"),
+        patch("arnold_pipelines.megaplan.chain._run_milestone_validations_blocking") as validate,
+    ):
+        result = run_chain(
+            spec_path,
+            tmp_path,
+            writer=lambda _msg: None,
+            mode="execute",
+        )
+
+    validate.assert_not_called()
+    assert result["status"] == "blocked"
+    assert "unpublished claimed changes after PR merged" in result["reason"]
+    assert "plus unrelated dirty paths" not in result["reason"]
+    assert "src/newdir/new.py" in result["reason"]
+
+
 def test_completion_guard_failure_uses_retry_ladder(tmp_path: Path) -> None:
     base = _init_repo(tmp_path)
     spec_path = tmp_path / "chain.yaml"

@@ -818,8 +818,12 @@ def _ensure_milestone_pr(root: Path, milestone: MilestoneSpec, *, base_branch: s
 def _claimed_paths(root: Path, plan_name: str) -> set[str]:
     plan_dir = root / ".megaplan" / "plans" / plan_name
     claimed_paths: set[str] = set()
-    for artifact_name in ("finalize.json", "execution.json"):
-        artifact = plan_dir / artifact_name
+    artifacts = [
+        plan_dir / "finalize.json",
+        plan_dir / "execution.json",
+        *sorted(plan_dir.glob("execution_batch_*.json")),
+    ]
+    for artifact in artifacts:
         if not artifact.exists():
             continue
         try:
@@ -935,7 +939,7 @@ def _dirty_nested_repos_from_claimed_paths(root: Path, plan_name: str, *, writer
 
 def _dirty_worktree_paths(root: Path) -> list[Path]:
     proc = _compat().subprocess.run(
-        ["git", "status", "--porcelain"],
+        ["git", "status", "--porcelain", "-uall"],
         cwd=str(root),
         capture_output=True,
         text=True,
