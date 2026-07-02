@@ -653,6 +653,11 @@ def _default_start_child_chain(
     )
 
 
+def _launch_output_indicates_already_running(proc: subprocess.CompletedProcess[str]) -> bool:
+    output = f"{proc.stdout or ''}\n{proc.stderr or ''}".lower()
+    return "already running" in output
+
+
 def run_epic_chain(
     root: Path,
     spec_path: Path,
@@ -764,6 +769,19 @@ def run_epic_chain(
                 )
             if child.effective_status == "complete":
                 continue
+            if _launch_output_indicates_already_running(proc):
+                writer(
+                    f"[epic-chain] child epic {epic.id} reports an existing live session; preserving running state\n"
+                )
+                state.last_state = "running"
+                save_epic_chain_state(spec_path, state)
+                return _result(
+                    "running",
+                    state,
+                    spec=spec,
+                    reason=f"child epic {epic.id} already running",
+                    active_child=child,
+                )
         decision = _handle_child_failure(spec.on_failure_policy)
         if decision == "retry":
             writer(f"[epic-chain] retrying child epic {epic.id}\n")
