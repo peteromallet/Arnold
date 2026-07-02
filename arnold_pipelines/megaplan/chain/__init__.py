@@ -3754,6 +3754,12 @@ def _handle_outcome(
             f"{outcome.reason}\n"
         )
         return "stop"
+    if status == "blocked" and _blocked_outcome_requires_operator_resolution(outcome):
+        writer(
+            f"[chain] plan {outcome.plan} has an unresolved explicit blocker: "
+            f"{outcome.reason}\n"
+        )
+        return "stop"
     if status in ("aborted", "escalated"):
         if status == "aborted":
             writer(f"[chain] plan {outcome.plan} ended aborted\n")
@@ -3809,6 +3815,16 @@ def _handle_outcome(
     return _apply_ladder_action(
         policy.abort, milestone=milestone, state=state, spec=spec, writer=writer
     )
+
+
+def _blocked_outcome_requires_operator_resolution(outcome: DriverOutcome) -> bool:
+    reason = (outcome.reason or "").lower()
+    blocker_markers = (
+        "prerequisite-blocked",
+        "requires every current blocker to be explicitly resolved",
+        "explicit task or quality blockers",
+    )
+    return any(marker in reason for marker in blocker_markers)
 
 
 def _carried_wip_paths(root: Path) -> list[Path]:
