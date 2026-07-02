@@ -1920,6 +1920,7 @@ def _tmux_chain_launch_command(
         "workspace": workspace,
         "remote_spec": remote_spec_path,
         "identity_digest": digest,
+        "run_kind": "chain",
     }
     return (
         f"mkdir -p {shlex.quote(str(PurePosixPath(workspace) / '.megaplan'))} "
