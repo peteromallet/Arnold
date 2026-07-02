@@ -46,6 +46,9 @@ class AgentRequest:
     hot_context: dict[str, Any] = field(default_factory=dict)
     model_seam_metadata: Mapping[str, Any] = field(default_factory=dict)
     subject: Any | None = None
+    escalation_id: str | None = None
+    resume_handler: str | None = None
+    target_id: str | None = None
 
 
 @dataclass(frozen=True)

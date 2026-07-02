@@ -628,3 +628,578 @@ Concrete references:
 - `megaplan/store/db.py`: `write_plan_artifact()`, `read_plan_artifact()`, `copy_plan_artifacts_idempotent()`.
 - `megaplan/store/multi.py`: `_artifact_model()`, `_copy_plan_artifacts_to_db()`.
 - `supabase/migrations/202605050003_plan_artifact_binary_content.sql`.
+
+## M4 Human Workflow And Cloud Hardening — Runbook
+
+Evidence id: `OPS-M4-HUMAN-WORKFLOW`
+
+The M4 milestone turns escalation from "we sent a DM" into an answerable,
+authorized, resumable workflow with delivery state, current-target matching,
+supersession, confirmation gates, and an append-only escalation lifecycle
+ledger.  This runbook covers preflight, safe testing, inspection, rollback,
+and sidecar compatibility for the M4 human workflow.
+
+### Preflight
+
+Before enabling M4 escalation in production, verify the substrate is healthy:
+
+```bash
+cd /workspace/arnold
+
+# 1. Core M4 contract, lifecycle, and pointer tests
+pytest tests/cloud/test_repair_contract.py tests/cloud/test_human_blockers.py -v
+
+# 2. Discord DM rendering and redaction
+pytest tests/arnold_pipelines/megaplan/test_discord_dm.py -v
+
+# 3. Wrapper integration (repair-loop + watchdog)
+pytest tests/cloud/test_watchdog_wrappers.py -v
+
+# 4. Resident authorization and escalation reply handling
+pytest tests/resident/test_authorizer.py tests/resident/test_escalation_reply.py -v
+
+# 5. Resident Discord outbound parsing
+pytest tests/resident/test_discord_outbound.py -v
+
+# 6. All changed modules compile cleanly
+python -c "
+import compileall
+compileall.compile_dir('arnold_pipelines/megaplan/cloud', quiet=1)
+compileall.compile_dir('arnold_pipelines/megaplan/resident', quiet=1)
+print('All modules compile.')
+"
+```
+
+A healthy M4 substrate passes all tests except pre-existing baseline failures.
+
+Confirm that wrapper executables are on the M4 version after deployment:
+
+```bash
+md5sum /usr/local/bin/arnold-repair-loop /usr/local/bin/arnold-watchdog
+head -5 /usr/local/bin/arnold-repair-loop
+head -5 /usr/local/bin/arnold-watchdog
+```
+
+### Flag Enablement
+
+M4 lifecycle writes are gated behind feature flags.  All behavior-changing
+flags remain **off by default**.  The escalation ledger flag controls the new
+append-only lifecycle sidecar:
+
+| Flag | Env Var | M4 Default | Purpose |
+|---|---|---|---|
+| escalation-ledger | `ARNOLD_ESCALATION_LEDGER` | `0` (off) | Enable append-only `escalations/escalations.jsonl` lifecycle writes. |
+
+Enable the escalation ledger for a test run:
+
+```bash
+export ARNOLD_ESCALATION_LEDGER=1
+```
+
+The flag is consumed centrally in
+`arnold_pipelines/megaplan/cloud/feature_flags.py` via
+`escalation_ledger_enabled()`.  When disabled, the `EscalationLedgerWriter`
+silently no-ops all lifecycle writes — no records are created and no sidecar
+files are touched.
+
+The resident escalation reply path uses its own configuration via
+`escalation_repair_data_dir` and `escalation_repair_lock_dir` in
+`ResidentConfig` — these must point to the same repair-data directory the
+cloud wrappers use so the resident can read delivered escalation records and
+acquire the shared repair lock.
+
+### Safe Test Escalation
+
+Test M4 escalation without real Discord delivery by exercising the lifecycle
+paths directly with the escalation ledger enabled:
+
+```bash
+cd /workspace/arnold
+
+# Enable the ledger and run the human-blocker lifecycle tests
+ARNOLD_ESCALATION_LEDGER=1 pytest tests/cloud/test_human_blockers.py -v
+
+# Test the pointer supersession and clearing helpers
+ARNOLD_ESCALATION_LEDGER=1 pytest tests/cloud/test_human_blockers.py -v \
+  -k "supersede or clear"
+
+# Verify the wrapper escalation paths (repair-loop and watchdog)
+ARNOLD_ESCALATION_LEDGER=1 pytest tests/cloud/test_watchdog_wrappers.py -v
+
+# Test resident-side authorization and escalation reply without live Discord
+pytest tests/resident/test_authorizer.py tests/resident/test_escalation_reply.py -v
+```
+
+To manually simulate an escalation lifecycle for a session without running
+the full repair loop:
+
+```bash
+PYTHONPATH=/workspace/arnold ARNOLD_ESCALATION_LEDGER=1 python3 -c "
+from arnold_pipelines.megaplan.cloud.human_blockers import (
+    EscalationLedgerWriter, compute_escalation_id
+)
+from pathlib import Path
+import tempfile, os
+
+sidecar = Path(tempfile.mkdtemp(prefix='m4-test-'))
+writer = EscalationLedgerWriter(sidecar_dir=str(sidecar))
+writer.enable(str(sidecar))
+
+session = 'test-session-001'
+target_id = 'plan:m4-human-workflow-and-cloud'
+esc_id = compute_escalation_id(session, target_id=target_id)
+
+# Opened
+writer.write_opened(session, escalation_id=esc_id, target_id=target_id)
+
+# Delivered (simulated — no real Discord call)
+writer.write_delivered(session, escalation_id=esc_id,
+    channel_id='test-channel', message_ids=['msg-1', 'msg-2'])
+
+# Answered
+writer.write_answered(session, escalation_id=esc_id,
+    responder_user_id='test-user', channel_id='test-channel', message_id='msg-3')
+
+# Resume attempted
+writer.write_resume_attempted(session, escalation_id=esc_id,
+    action='cloud_resume', resume_status='dispatched')
+
+# Inspect the sidecar
+sidecar_file = sidecar / 'escalations' / 'escalations.jsonl'
+print(f'Sidecar: {sidecar_file}')
+for line in sidecar_file.read_text().strip().split(chr(10)):
+    print(line)
+"
+```
+
+### Dry-Run Discord Delivery Evidence
+
+The `arnold-discord-dm` wrapper and `send_discord_dm()` helper return
+redacted delivery evidence without real Discord calls when the bot token is
+unset or the helper is invoked in test mode.  Verify the evidence shape
+without sending a real DM:
+
+```bash
+cd /workspace/arnold
+
+# Run the Discord DM tests (these mock HTTP and verify redaction)
+pytest tests/arnold_pipelines/megaplan/test_discord_dm.py -v
+
+# Inspect what send_discord_dm returns on success:
+PYTHONPATH=/workspace/arnold python3 -c "
+from arnold_pipelines.megaplan.discord_dm import send_discord_dm
+# Without a real token this will fail at the HTTP layer, but the
+# evidence structure is verified by the test suite above.
+print('Delivery evidence shape: {message_ids, channel_id, message_count}')
+print('Redaction is applied BEFORE any outbound send.')
+print('Tokens, headers, and raw secret-bearing payloads are never returned.')
+"
+```
+
+The returned delivery evidence is the **only** source of truth for whether an
+escalation was answerable.  Webhook delivery is ancillary reporting only and
+does not satisfy the M4 human escalation workflow because webhooks cannot map
+replies to `escalation_id`.
+
+To inspect delivery evidence that was already written to the ledger:
+
+```bash
+# Read delivered records for a session
+PYTHONPATH=/workspace/arnold python3 -c "
+import json
+from pathlib import Path
+
+sidecar = Path('/workspace/.megaplan/cloud-sessions/repair-data/escalations/escalations.jsonl')
+if sidecar.exists():
+    for line in sidecar.read_text().strip().split(chr(10)):
+        rec = json.loads(line)
+        if rec.get('event') == 'delivered':
+            print(json.dumps(rec, indent=2))
+else:
+    print('No escalation sidecar found.')
+"
+```
+
+### Non-Secret Inspection
+
+All M4 lifecycle records and delivery evidence are redacted by the canonical
+`redact_payload()` before persistence.  To safely inspect escalation state
+without risk of exposing secrets:
+
+```bash
+cd /workspace/arnold
+
+# 1. List all escalation lifecycle records for a session (redacted)
+PYTHONPATH=/workspace/arnold python3 -c "
+import json
+from pathlib import Path
+
+sidecar_dir = Path('/workspace/.megaplan/cloud-sessions/repair-data')
+esc_file = sidecar_dir / 'escalations' / 'escalations.jsonl'
+if esc_file.exists():
+    for line in esc_file.read_text().strip().split(chr(10)):
+        rec = json.loads(line)
+        # All records are pre-redacted — safe to print
+        print(f\"event={rec.get('event')} escalation_id={rec.get('escalation_id')} session={rec.get('session')}\")
+else:
+    print('No escalation records.')
+"
+
+# 2. Inspect a needs-human pointer without mutating it
+PYTHONPATH=/workspace/arnold python3 -c "
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json
+nh = load_json('/workspace/.megaplan/cloud-sessions/repair-data/<session>.needs-human.json')
+print('Keys:', sorted(nh.keys()))
+print('Plan:', nh.get('current_plan_name') or nh.get('plan_name'))
+print('Target:', nh.get('target_id'))
+print('Escalation ID:', nh.get('escalation_id'))
+print('Delivered channel:', nh.get('discord_escalation', {}).get('channel_id'))
+"
+
+# 3. Inspect escalation records for a specific escalation_id
+PYTHONPATH=/workspace/arnold python3 -c "
+import json
+from pathlib import Path
+
+esc_id = '<escalation-id>'  # e.g. esc-a1b2c3d4e5f6g7h8
+sidecar = Path('/workspace/.megaplan/cloud-sessions/repair-data/escalations/escalations.jsonl')
+if sidecar.exists():
+    for line in sidecar.read_text().strip().split(chr(10)):
+        rec = json.loads(line)
+        if rec.get('escalation_id') == esc_id:
+            print(json.dumps(rec, indent=2))
+"
+
+# 4. Audit authorization denials (resident-side)
+#    Check the resident audit log for escalation_answer_unauthorized events.
+#    The resident audit sink records denials with category='escalation' and
+#    event_type='escalation_answer_unauthorized'.
+```
+
+**Safety note:** Never disable redaction (`ARNOLD_REDACTION_ENABLED=0`) for
+routine inspection.  Redacted data may contain secrets.  Only disable
+redaction in emergency debug scenarios where you explicitly accept the risk of
+secret exposure.
+
+### Pointer Supersession And Clearing vs Append-Only History
+
+M4 maintains a strict separation between mutable pointers and the append-only
+ledger:
+
+| Artifact | Path | Behavior |
+|---|---|---|
+| Needs-human pointer (mutable) | `<marker_dir>/repair-data/<session>.needs-human.json` | Rewritten on supersession; deleted on clear. |
+| Escalation ledger (append-only) | `<marker_dir>/repair-data/escalations/escalations.jsonl` | Never deleted; records accumulate forever. |
+| Incident records (compatibility) | `<marker_dir>/repair-data/incidents/incidents.jsonl` | Existing `blocker_classified` records preserved. |
+
+Default `<marker_dir>`: `/workspace/.megaplan/cloud-sessions`
+
+**Supersede a pointer (new target, old escalation recorded as superseded):**
+
+```bash
+PYTHONPATH=/workspace/arnold ARNOLD_ESCALATION_LEDGER=1 python3 -c "
+from arnold_pipelines.megaplan.cloud.human_blockers import (
+    supersede_needs_human_marker, EscalationLedgerWriter, compute_escalation_id
+)
+from pathlib import Path
+
+sidecar_dir = Path('/workspace/.megaplan/cloud-sessions/repair-data')
+pointer_path = sidecar_dir / '<session>.needs-human.json'
+repair_data_path = sidecar_dir / '<session>.repair-data.json'
+
+writer = EscalationLedgerWriter(sidecar_dir=str(sidecar_dir))
+writer.enable(str(sidecar_dir))
+
+repair_payload = {
+    'session': '<session>',
+    'plan_name': '<new-plan-name>',
+    'target_id': '<new-target-id>',
+}
+
+new_marker = supersede_needs_human_marker(
+    pointer_path,
+    repair_payload,
+    repair_data_path=repair_data_path,
+    discord_status='delivered',
+    previous_escalation_id='esc-<old-id>',
+    superseded_by='esc-<new-id>',
+    ledger_writer=writer,
+    reason='New escalation for updated target',
+)
+print('New pointer:', new_marker.get('target_id'))
+print('Old escalation superseded in ledger — records preserved.')
+"
+```
+
+**Clear a pointer (remove mutable marker, ledger untouched):**
+
+```bash
+PYTHONPATH=/workspace/arnold python3 -c "
+from arnold_pipelines.megaplan.cloud.human_blockers import clear_needs_human_marker
+
+removed = clear_needs_human_marker(
+    '/workspace/.megaplan/cloud-sessions/repair-data/<session>.needs-human.json'
+)
+print(f'Pointer removed: {removed}')
+print('Ledger records are NOT affected by clearing the mutable pointer.')
+"
+```
+
+**Key invariant:** Clearing or superseding the mutable pointer **never**
+deletes or modifies records in the append-only `escalations/escalations.jsonl`
+ledger.  The ledger is the durable audit trail; the pointer is a convenience
+for current-target discovery.
+
+### Rollback
+
+M4 rollback reverts the wrapper scripts, shared Python modules, and flag
+state to the pre-M4 behavior.  The escalation ledger sidecar is append-only
+and can be left in place — it does not affect pre-M4 consumers.
+
+**Step 1: Restore pre-M4 wrappers.**
+
+```bash
+cd /workspace/arnold
+# Restore wrappers from the pre-M4 baseline commit
+git checkout 437de55d8fa413a0c022f5d63008b800451d23aa -- \
+  arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop \
+  arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog
+
+# Re-copy to /usr/local/bin
+for wrapper in arnold-repair-loop arnold-watchdog; do
+  cp "arnold_pipelines/megaplan/cloud/wrappers/$wrapper" "/usr/local/bin/$wrapper"
+  chmod +x "/usr/local/bin/$wrapper"
+done
+```
+
+**Step 2: Restore pre-M4 Python modules.**
+
+```bash
+cd /workspace/arnold
+# Restore cloud modules (human_blockers, repair_contract, feature_flags)
+git checkout 437de55d8fa413a0c022f5d63008b800451d23aa -- \
+  arnold_pipelines/megaplan/cloud/human_blockers.py \
+  arnold_pipelines/megaplan/cloud/repair_contract.py \
+  arnold_pipelines/megaplan/cloud/feature_flags.py
+
+# Restore resident modules (auth, config, escalations, runtime, discord, agent_loop)
+git checkout 437de55d8fa413a0c022f5d63008b800451d23aa -- \
+  arnold_pipelines/megaplan/resident/auth.py \
+  arnold_pipelines/megaplan/resident/config.py \
+  arnold_pipelines/megaplan/resident/escalations.py \
+  arnold_pipelines/megaplan/resident/runtime.py \
+  arnold_pipelines/megaplan/resident/discord.py \
+  arnold_pipelines/megaplan/resident/agent_loop.py
+
+# Restore Discord DM helper
+git checkout 437de55d8fa413a0c022f5d63008b800451d23aa -- \
+  arnold_pipelines/megaplan/discord_dm.py
+```
+
+**Step 3: Disable M4 flags.**
+
+```bash
+unset ARNOLD_ESCALATION_LEDGER
+# Or explicitly disable:
+export ARNOLD_ESCALATION_LEDGER=0
+```
+
+**Step 4: Verify rollback.**
+
+```bash
+cd /workspace/arnold
+# Pre-M4 tests should still pass (excluding known baseline failures)
+pytest tests/cloud/test_repair_contract.py tests/cloud/test_feature_flags.py -v
+
+# Wrappers should be on the pre-M4 version
+md5sum /usr/local/bin/arnold-repair-loop /usr/local/bin/arnold-watchdog
+```
+
+**Note:** The `escalations/escalations.jsonl` sidecar file is not removed
+during rollback — it is an append-only audit artifact that pre-M4 consumers
+ignore.  If disk space is a concern, archive the file before removing it:
+
+```bash
+mv /workspace/.megaplan/cloud-sessions/repair-data/escalations/escalations.jsonl \
+   /workspace/.megaplan/cloud-sessions/repair-data/escalations/escalations.jsonl.$(date +%Y%m%d).bak
+```
+
+### Old Sidecar Compatibility
+
+M4 introduces a new `escalations` sidecar kind alongside the existing
+`events`, `incidents`, and `attempts` sidecars.  Existing sidecars are
+**untouched** by M4 changes.
+
+**Existing sidecar artifacts (unchanged by M4):**
+
+| Artifact | Path | Status |
+|---|---|---|
+| Repair events | `<marker_dir>/repair-data/events/events.jsonl` | Preserved — no M4 changes. |
+| Incidents | `<marker_dir>/repair-data/incidents/incidents.jsonl` | Preserved — `blocker_classified` records remain compatible. |
+| Attempts | `<marker_dir>/repair-data/attempts/attempts.jsonl` | Preserved — no M4 changes. |
+| Escalations (new) | `<marker_dir>/repair-data/escalations/escalations.jsonl` | New in M4 — append-only, ignored by pre-M4 consumers. |
+| Needs-human marker | `<marker_dir>/repair-data/<session>.needs-human.json` | Additive `escalation_id`, `target_id`, `discord_escalation` fields. |
+| Repair data | `<marker_dir>/repair-data/<session>.repair-data.json` | No M4 schema changes. |
+
+Default `<marker_dir>`: `/workspace/.megaplan/cloud-sessions`
+
+**Verify old sidecars are still readable after M4 deployment:**
+
+```bash
+cd /workspace/arnold
+
+# 1. Existing incident/event/attempt sidecars are unaffected
+PYTHONPATH=/workspace/arnold python3 -c "
+from arnold_pipelines.megaplan.cloud.repair_contract import (
+    _SIDECAR_KINDS, append_jsonl_record
+)
+print('Registered sidecar kinds:', _SIDECAR_KINDS)
+# 'escalations' is present alongside 'events', 'incidents', 'attempts'
+"
+
+# 2. Old blocker_classified records remain valid
+PYTHONPATH=/workspace/arnold python3 -c "
+import json
+from pathlib import Path
+incidents = Path('/workspace/.megaplan/cloud-sessions/repair-data/incidents/incidents.jsonl')
+if incidents.exists():
+    for line in incidents.read_text().strip().split(chr(10)):
+        rec = json.loads(line)
+        print(f\"kind={rec.get('kind')} session={rec.get('session')}\")
+else:
+    print('No incident records — nothing to check.')
+"
+
+# 3. Needs-human markers carry additive M4 fields alongside legacy keys
+PYTHONPATH=/workspace/arnold python3 -c "
+from arnold_pipelines.megaplan.cloud.repair_contract import load_json
+nh = load_json('/workspace/.megaplan/cloud-sessions/repair-data/<session>.needs-human.json')
+legacy_keys = {'plan_name', 'summary', 'session', 'needs_human'}
+m4_keys = {'escalation_id', 'target_id', 'discord_escalation', 'current_plan_name'}
+print('Legacy keys present:', sorted(k for k in legacy_keys if k in nh))
+print('M4 keys present:', sorted(k for k in m4_keys if k in nh))
+print('All keys:', sorted(nh.keys()))
+# Legacy readers that only inspect 'plan_name' or 'summary' are unaffected
+# by the additive M4 fields.
+"
+```
+
+**Compatibility guarantees:**
+
+- Pre-M4 consumers that read `incidents/incidents.jsonl` are unaffected —
+  `blocker_classified` records continue to be written by `write_classification()`.
+- Pre-M4 consumers that read `needs-human.json` pointers see the same
+  `plan_name`, `summary`, and `needs_human` keys they always did.
+- The new `escalations/escalations.jsonl` sidecar is ignored by pre-M4
+  consumers — it is a pure add.
+- The `append_escalation_record()` helper uses the same `append_jsonl_record()`
+  path as existing sidecars — sequence numbering and timestamp injection are
+  identical.
+
+### Resident-Side Escalation Inspection
+
+The resident authorization and escalation reply path uses the shared
+repair-data directory.  To inspect resident-side escalation state:
+
+```bash
+cd /workspace/arnold
+
+# Check resident config for escalation paths
+PYTHONPATH=/workspace/arnold python3 -c "
+from arnold_pipelines.megaplan.resident.config import ResidentConfig
+cfg = ResidentConfig.from_env()
+print(f'escalation_repair_data_dir: {cfg.escalation_repair_data_dir}')
+print(f'escalation_repair_lock_dir: {cfg.escalation_repair_lock_dir}')
+"
+
+# Run resident authorization and escalation reply tests
+pytest tests/resident/test_authorizer.py tests/resident/test_escalation_reply.py -v
+```
+
+The resident validates these conditions before any state mutation on an
+escalation answer:
+
+1. **Authorization:** The responding user and channel must match the
+   delivered escalation's `responder_user_id` and `channel_id` from the
+   ledger.
+2. **Current-target match:** The escalation must not be stale or superseded —
+   the pointer's current `target_id` must match the escalation's `target_id`.
+3. **Confirmation (for `escalation_resolve`):** High-impact resolution
+   requires the responder to confirm with the exact confirmation phrase.
+4. **Repair-lock acquisition:** The shared repair lock must be acquired
+   before any pointer mutation or resume dispatch.
+
+Denials are audited as `escalation_answer_unauthorized` system events.
+Unconfirmed free text never mutates state — it only produces a confirmation
+prompt.
+
+### Validation Commands
+
+After any M4 flag change, wrapper refresh, pointer supersession, or resident
+reconfiguration, run the focused M4 test suite:
+
+```bash
+cd /workspace/arnold
+
+# Core M4 contract and lifecycle tests
+pytest tests/cloud/test_repair_contract.py tests/cloud/test_human_blockers.py -v
+
+# Feature flags (escalation-ledger gating)
+pytest tests/cloud/test_feature_flags.py -v
+
+# Discord DM redaction and delivery evidence
+pytest tests/arnold_pipelines/megaplan/test_discord_dm.py -v
+
+# Wrapper integration (repair-loop + watchdog escalation paths)
+pytest tests/cloud/test_watchdog_wrappers.py -v --timeout=120
+
+# Resident authorization and escalation reply
+pytest tests/resident/test_authorizer.py tests/resident/test_escalation_reply.py -v
+
+# Resident Discord outbound parsing
+pytest tests/resident/test_discord_outbound.py -v
+
+# Full M4 focused suite
+pytest tests/cloud/test_repair_contract.py \
+       tests/cloud/test_human_blockers.py \
+       tests/cloud/test_feature_flags.py \
+       tests/cloud/test_watchdog_wrappers.py \
+       tests/arnold_pipelines/megaplan/test_discord_dm.py \
+       tests/resident/test_authorizer.py \
+       tests/resident/test_escalation_reply.py \
+       tests/resident/test_discord_outbound.py \
+       -v --timeout=120
+```
+
+### Concrete References
+
+- **Escalation ledger:** `arnold_pipelines/megaplan/cloud/human_blockers.py` —
+  `EscalationLedgerWriter`, `compute_escalation_id()`, `write_opened()`,
+  `write_delivered()`, `write_unavailable()`, `write_answered()`,
+  `write_superseded()`, `write_timed_out()`, `write_resume_attempted()`.
+- **Pointer helpers:** `arnold_pipelines/megaplan/cloud/human_blockers.py` —
+  `supersede_needs_human_marker()`, `clear_needs_human_marker()`.
+- **Classifier:** `arnold_pipelines/megaplan/cloud/human_blockers.py` —
+  `classify_needs_human_blocker()`, `BlockerVerdict`, `HumanBlockerClassification`.
+- **Sidecar contract:** `arnold_pipelines/megaplan/cloud/repair_contract.py` —
+  `_SIDECAR_KINDS`, `append_escalation_record()`, `append_jsonl_record()`.
+- **Discord DM:** `arnold_pipelines/megaplan/discord_dm.py` —
+  `send_discord_dm()`, `render_discord_dm()`, redacted delivery evidence.
+- **Resident auth:** `arnold_pipelines/megaplan/resident/auth.py` —
+  `ActionKind` (`escalation_reply`, `escalation_resolve`),
+  `CONFIRMED_HIGH_IMPACT_ACTIONS`.
+- **Resident escalations:** `arnold_pipelines/megaplan/resident/escalations.py` —
+  `authorize_escalation_answer()`, `EscalationTarget`, `EscalationAnswerDecision`.
+- **Resident config:** `arnold_pipelines/megaplan/resident/config.py` —
+  `escalation_repair_data_dir`, `escalation_repair_lock_dir`.
+- **Feature flags:** `arnold_pipelines/megaplan/cloud/feature_flags.py` —
+  `escalation_ledger_enabled()`, `ARNOLD_ESCALATION_LEDGER`.
+- **Wrappers:** `arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-loop`,
+  `arnold_pipelines/megaplan/cloud/wrappers/arnold-watchdog`.
+- **Tests:** `tests/cloud/test_repair_contract.py`,
+  `tests/cloud/test_human_blockers.py`,
+  `tests/cloud/test_watchdog_wrappers.py`,
+  `tests/arnold_pipelines/megaplan/test_discord_dm.py`,
+  `tests/resident/test_authorizer.py`,
+  `tests/resident/test_escalation_reply.py`,
+  `tests/resident/test_discord_outbound.py`.

@@ -571,9 +571,11 @@ notify_needs_human() {
   local run_kind="${5:-chain}"
   local health="${6:-stopped}"
   local summary="$7"
-  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin
+  local payload_tmp delivered webhook_delivered dm_result_tmp dm_status dm_reason discord_dm_bin escalation_context_tmp repair_data_dir
   payload_tmp="$(mktemp)"
   dm_result_tmp="$(mktemp)"
+  escalation_context_tmp="$(mktemp)"
+  repair_data_dir="${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}"
   discord_dm_bin="${DISCORD_DM_BIN:-${SRC_DIR:-/workspace/arnold}/arnold_pipelines/megaplan/cloud/wrappers/arnold-discord-dm}"
   PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$summary" \
     "${PLAN_STATUS_PLAN_NAME:-}" "${PLAN_STATUS_CURRENT_STATE:-}" "${PLAN_STATUS_RETRY_STRATEGY:-}" \
@@ -662,20 +664,114 @@ with open(path, "w", encoding="utf-8") as handle:
     handle.write("\n")
 PY
 
+  PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$payload_tmp" "$escalation_context_tmp" "$session" "$MARKER_DIR" "$repair_data_dir" "${PLAN_STATUS_PLAN_NAME:-}" "${DISCORD_DM_USER_ID:-}" <<'PY' 2>>"$LOG" || true
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.human_blockers import (
+    EscalationLedgerWriter,
+    classify_needs_human_blocker,
+    compute_escalation_id,
+)
+
+payload_path, context_path, session, marker_dir, repair_data_dir, current_plan, dm_user_id = sys.argv[1:]
+needs_human_path = str(pathlib.Path(repair_data_dir) / f"{session}.needs-human.json")
+classification = classify_needs_human_blocker(
+    session,
+    current_plan=current_plan,
+    marker_dir=marker_dir,
+    repair_data_dir=repair_data_dir,
+    needs_human_path=needs_human_path,
+)
+marker = classification.needs_human_payload or {}
+target_id = str(marker.get("target_id") or "")
+escalation_id = compute_escalation_id(
+    session,
+    target_id=target_id,
+    current_plan=current_plan,
+    current_plan_name=str(marker.get("current_plan_name") or current_plan),
+    needs_human_path=needs_human_path,
+)
+writer = EscalationLedgerWriter()
+writer.enable(repair_data_dir)
+writer.write_opened(
+    session,
+    escalation_id=escalation_id,
+    current_plan=current_plan,
+    target_id=target_id,
+    extra={
+        "needs_human_path": needs_human_path,
+        "dm_user_id": dm_user_id,
+        "blocker_verdict": classification.verdict.name,
+        "source": "watchdog",
+    },
+)
+payload = json.loads(pathlib.Path(payload_path).read_text(encoding="utf-8"))
+payload["escalation_id"] = escalation_id
+pathlib.Path(payload_path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+pathlib.Path(context_path).write_text(
+    json.dumps(
+        {
+            "session": session,
+            "escalation_id": escalation_id,
+            "repair_data_dir": repair_data_dir,
+            "dm_user_id": dm_user_id,
+        },
+        sort_keys=True,
+    ),
+    encoding="utf-8",
+)
+PY
+
   delivered=0
   webhook_delivered=0
   if [[ -x "$discord_dm_bin" ]]; then
     if "$discord_dm_bin" < "$payload_tmp" > "$dm_result_tmp" 2>>"$LOG"; then
-      read -r dm_status dm_reason < <(python3 - "$dm_result_tmp" <<'PY'
+      read -r dm_status dm_reason < <(PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$dm_result_tmp" "$escalation_context_tmp" <<'PY'
 import json
+import pathlib
 import sys
+
+from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter
 
 try:
     payload = json.load(open(sys.argv[1], encoding="utf-8"))
 except Exception:
-    print("invalid unknown")
+    payload = {}
+try:
+    context = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+except Exception:
+    context = {}
+
+writer = EscalationLedgerWriter()
+repair_data_dir = context.get("repair_data_dir")
+if repair_data_dir:
+    writer.enable(repair_data_dir)
+
+message_ids = [str(item).strip() for item in payload.get("message_ids", []) if str(item).strip()]
+channel_id = str(payload.get("channel_id") or "").strip()
+message_count = payload.get("message_count")
+if payload.get("ok") and message_ids and channel_id:
+    writer.write_delivered(
+        str(context.get("session") or ""),
+        escalation_id=str(context.get("escalation_id") or ""),
+        channel_id=channel_id,
+        message_ids=message_ids,
+        message_count=message_count if isinstance(message_count, int) else None,
+        extra={"dm_user_id": str(context.get("dm_user_id") or "")},
+    )
+    print("ok delivered")
     raise SystemExit(0)
-print("ok" if payload.get("ok") else "failed", payload.get("reason") or "")
+
+reason = str(payload.get("reason") or ("missing_delivery_evidence" if payload.get("ok") else "unknown"))
+writer.write_unavailable(
+    str(context.get("session") or ""),
+    escalation_id=str(context.get("escalation_id") or ""),
+    reason=reason,
+    extra={"dm_user_id": str(context.get("dm_user_id") or ""), "channel_id": channel_id},
+)
+print("failed", reason)
 PY
 )
       if [[ "$dm_status" == "ok" ]]; then
@@ -687,9 +783,49 @@ PY
         log "needs-human discord dm delivery failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
       fi
     else
+      PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$escalation_context_tmp" <<'PY' 2>>"$LOG" || true
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter
+
+try:
+    context = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+writer = EscalationLedgerWriter()
+writer.enable(context["repair_data_dir"])
+writer.write_unavailable(
+    context["session"],
+    escalation_id=context["escalation_id"],
+    reason="helper_failed",
+    extra={"dm_user_id": context.get("dm_user_id", "")},
+)
+PY
       log "needs-human discord dm helper failed session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
     fi
   else
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$escalation_context_tmp" <<'PY' 2>>"$LOG" || true
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter
+
+try:
+    context = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+writer = EscalationLedgerWriter()
+writer.enable(context["repair_data_dir"])
+writer.write_unavailable(
+    context["session"],
+    escalation_id=context["escalation_id"],
+    reason="helper_unavailable",
+    extra={"dm_user_id": context.get("dm_user_id", "")},
+)
+PY
     log "needs-human discord dm helper unavailable session=$session plan=${PLAN_STATUS_PLAN_NAME:-}"
   fi
 
@@ -717,7 +853,7 @@ PY
   if [[ "$webhook_delivered" == "1" ]]; then
     report_item "$report_items" "$session" "notify" "webhook_sent" "needs-human webhook delivered" "$workspace" "$remote_spec"
   fi
-  rm -f "$payload_tmp" "$dm_result_tmp"
+  rm -f "$payload_tmp" "$dm_result_tmp" "$escalation_context_tmp"
 }
 
 adopt_unmarked_tmux_sessions() {
