@@ -57,6 +57,7 @@ temp/
 !docs/design/*.md
 !docs/extensions/foundation-contract-ledger.md
 !docs/extensions/foundation-closure-assessment.md
+!docs/extensions/composition-spine/*.md
 !docs/video-editor/*.md
 !tasks/*.md
 !CLAUDE.md

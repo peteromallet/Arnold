@@ -2,7 +2,8 @@
   "type": "object",
   "properties": {
     "plan": {
-      "type": "string"
+      "type": "string",
+      "description": "Complete plan markdown. Must include exactly one H1 title, a `## Overview` section, at least one step heading in the form `## Step N: ...` or `### Step N: ...` under a phase, and `## Execution Order` or `## Validation Order`. Do not return a prose numbered list without Step headings."
     },
     "questions": {
       "type": "array",
@@ -60,9 +61,9 @@
         "strategy": {
           "type": "string",
           "enum": [
+            "none",
             "scoped",
-            "full",
-            "none"
+            "full"
           ]
         },
         "confidence": {
@@ -109,33 +110,21 @@
           }
         },
         "full_suite_fallback": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "type": "boolean"
         },
         "rationale": {
           "type": "string"
         },
         "import_graph": {
-          "type": [
-            "object",
-            "null"
-          ],
+          "type": "object",
           "properties": {
-            "enabled": {
+            "degraded": {
               "type": "boolean"
             },
-            "reason": {
-              "type": "string"
+            "dependent_tests": {
+              "type": "integer"
             },
-            "files_considered": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "tests_added": {
+            "unresolved": {
               "type": "array",
               "items": {
                 "type": "string"
@@ -143,10 +132,9 @@
             }
           },
           "required": [
-            "enabled",
-            "reason",
-            "files_considered",
-            "tests_added"
+            "degraded",
+            "dependent_tests",
+            "unresolved"
           ],
           "additionalProperties": false
         }

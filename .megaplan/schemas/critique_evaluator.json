@@ -9,7 +9,19 @@
             "type": "object",
             "properties": {
               "check_id": {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "issue_hints",
+                  "correctness",
+                  "scope",
+                  "all_locations",
+                  "callers",
+                  "conventions",
+                  "verification",
+                  "criteria_quality",
+                  "prerequisite_ordering",
+                  "other"
+                ]
               },
               "critic_model": {
                 "type": "string"
@@ -33,7 +45,18 @@
             "type": "object",
             "properties": {
               "check_id": {
-                "type": "string"
+                "type": "string",
+                "enum": [
+                  "issue_hints",
+                  "correctness",
+                  "scope",
+                  "all_locations",
+                  "callers",
+                  "conventions",
+                  "verification",
+                  "criteria_quality",
+                  "prerequisite_ordering"
+                ]
               },
               "complexity": {
                 "type": "integer"
@@ -93,7 +116,18 @@
         "type": "object",
         "properties": {
           "check_id": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "issue_hints",
+              "correctness",
+              "scope",
+              "all_locations",
+              "callers",
+              "conventions",
+              "verification",
+              "criteria_quality",
+              "prerequisite_ordering"
+            ]
           },
           "why": {
             "type": "string"

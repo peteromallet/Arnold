@@ -1,0 +1,199 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M0: Decisions, Fixtures, And Protocol V0
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 4 of 9.
+        - Actionable task IDs for this batch: ['T4']
+        - Already completed task IDs available as dependency context: ['T1', 'T2', 'T3']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "pending",
+    "kind": "docs",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Write `docs/extensions/composition-spine/m0-fixture-matrices.md`. Enumerate fixture rows for every literal in `VIDEO_CONTRIBUTION_KINDS`, `DECLARATION_MATURITY_LEVELS`, `EXECUTION_MATURITY_LEVELS`, package state literals, `RENDER_ROUTES`, `DETERMINISM_STATUSES`, `RENDER_BLOCKER_REASONS`, `ProcessLifecycleState`, `RenderMaterialMediaKind`, `RenderArtifactSidecarKind`, `RenderLocatorKind`, and `ArtifactBoundary` source/target/failure behavior; cite authorities and cross-check `src/tools...",
+    "complexity_justification": "Coverage is non-local across SDK literals, config, process contracts, artifact contracts, and render planner behavior. A missing or invented row would corrupt the fixture baseline future milestones rely on and may not be caught by a simple grep.",
+    "executor_notes": "",
+    "files_changed": [],
+    "commands_run": []
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 3: Write `docs/extensions/composition-spine/m0-decisions.md`. Freeze route-model decisions, define the public graph edge vocabulary as exactly `consumes`, `animates`, `binds-live`, and `requires`, isolate `materializes`, `produces`, and `fallbacks` only in anti-scope/deferred prose, assign the M2/M3b/M4/M6 ownership boundaries, and list anti-scope terms only as exclusions or deferrals.",
+    "complexity_justification": "This freezes milestone-facing contract language across multiple later phases, so the executor must be precise about vocabulary and ownership. It is still a bounded documentation artifact rather than a live schema or runtime state machine.",
+    "executor_notes": "Created docs/extensions/composition-spine/m0-decisions.md (335 lines). Verified: (1) Section 2 public edge vocabulary table lists exactly consumes, animates, binds-live, requires \u2014 confirmed 14 matches all in public-vocabulary and ownership-boundary contexts. (2) Deferred names materializes, produces, fallbacks appear ONLY in Section 3 (Deferred Edge Names, lines 127-132) and Section 8 (Anti-Scope Terms, lines 271, 281) \u2014 6 matches, none in public vocabulary table. (3) Ownership boundaries frozen: M2 owns target-path grammar; M3b owns keyframe patch semantics; M4 owns shader assignment, sha...",
+    "files_changed": [
+      "docs/extensions/composition-spine/m0-decisions.md"
+    ],
+    "commands_run": [
+      "rg 'consumes|animates|binds-live|requires' docs/extensions/composition-spine/m0-decisions.md",
+      "rg 'materializes|produces|fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+      "git diff --check -- docs/extensions/composition-spine/m0-decisions.md",
+      "git status --short -- docs/extensions/composition-spine/",
+      "wc -l docs/extensions/composition-spine/m0-decisions.md"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 2: Write `docs/extensions/composition-spine/v8-architecture-baseline.md`. Reconstruct the missing v8 architecture baseline from `prep.md`, North Star constraints, milestone briefs, `config/extensions/family-maturity.json`, SDK contract files, supported/deferred behavior matrices, and cited source paths; include the immutable constraints and explicitly say the original v8 brief is absent.",
+    "complexity_justification": "The task is documentation-only, but it requires reconciling several source artifacts into a coherent baseline with auditable provenance. A mistake would mostly mislead downstream documentation, not change executable behavior, so tier 3 is sufficient.",
+    "executor_notes": "Created docs/extensions/composition-spine/v8-architecture-baseline.md (300 lines). Verified: (1) Provenance Statement explicitly records the missing v8 brief and states it was not transferred. (2) Reconstructive Sources table enumerates 15 source artifacts with paths and roles. (3) Every major claim has explicit source citations with file paths and line numbers \u2014 49 total source-file references confirmed. (4) Immutable North Star constraints verbatim from NORTHSTAR.md. (5) 13-milestone epic chain matches prep.md. (6) Family maturity snapshot reconciles 21 entries from family-maturity.json....",
+    "files_changed": [
+      ".gitignore",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md"
+    ],
+    "commands_run": [
+      "git diff --name-only",
+      "git check-ignore",
+      "patch .gitignore",
+      "git diff --check",
+      "rg source file references (49 matches)",
+      "rg missing v8 brief path",
+      "rg Source: annotations",
+      "rg deferred edge names",
+      "rg anti-scope terms",
+      "git status"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "docs",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 1: Create `docs/extensions/composition-spine/README.md` and the docs directory. The README must index all seven M0 artifacts, state the planning-only posture, record the missing v8 brief source gap, name `docs/extensions/composition-spine/**` as the changed surface, and list the seven concrete path selectors verbatim while keeping static commands out of selector metadata.",
+    "complexity_justification": "This is a localized documentation scaffold in one README plus directory creation. Correctness depends on faithfully copying the approved selector contract, but it does not alter runtime contracts or shared code.",
+    "executor_notes": "Created docs/extensions/composition-spine/README.md. Verified: (1) indexes all seven M0 artifacts in dependency order, (2) states planning-only posture with explicit 'no runtime implementation, no test execution', (3) records missing v8 brief at .megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md citing prep.md and other reconstructive sources, (4) names docs/extensions/composition-spine/** as the sole changed surface, (5) lists the seven concrete path selectors verbatim with explicit disclaimer that static validation commands are tools not selectors. Also includes static...",
+    "files_changed": [
+      "docs/extensions/composition-spine/README.md"
+    ],
+    "commands_run": [
+      "mkdir -p docs/extensions/composition-spine"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory quality: skipped file growth for .megaplan/epics/m0-decisions-fixtures-and-20260701-1826/events.jsonl: file is binary or not valid UTF-8",
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: docs/extensions/composition-spine/m0-decisions.md",
+  "Advisory audit finding: Executor claimed changed files not present in git status: .gitignore",
+  "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T4, T5, T6, T7, T8, T9"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC4",
+    "task_id": "T4",
+    "verdict": "",
+    "question": "Does the fixture matrix include at least one sourced row for every required literal and avoid introducing states absent from the cited config, SDK, process, artifact, or render planner authorities?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: M0 is documentation-only: no runtime code, SDK exports, test execution, or UI work. Validation is static review, grep checks, source cross-referencing, and diff hygiene. - Aligned with the North Star constraint that this milestone produces durable planning artifacts for M1a-M7b to cite. The M0 brief, success criteria, and plan all agree on this posture.
+- SD2: The seven planned documentation artifacts live at `docs/extensions/composition-spine/` (README, v8-architecture-baseline, m0-decisions, m0-fixture-matrices, m0-release-examples,... - Consistent across plan text, changed_surfaces, missing_test_selectors, and success criteria. This path is the stable citation target for downstream milestones.
+- SD3: Deferred edge names (`materializes`, `produces`, `fallbacks`) may appear in anti-scope/deferral prose but must not appear as public graph edge discriminants. - The M0 brief requires recording the deferral decision. Automated validators checking for literal absence of these strings from all M0 artifacts conflict with the brief. This tension was surfaced as an open question in...
+
+        ## Plan execution order rationale
+
+        1. Create the artifact index first so every later doc has a stable destination and naming convention.
+2. Write the synthesized v8 baseline before decisions and matrices so all M0 artifacts cite one local reference.
+3. Freeze decisions before release examples, because example assertions depend on edge vocabulary and ownership boundaries.
+4. Build fixture matrices before release gates, because release examples should point to concrete fixture rows.
+5. Draft protocol v0 after process/output fixture rows, so protocol state names agree with the matrix.
+6. Finish with static validation notes and diff hygiene.
+
+        ## Inter-task guidance from finalize
+
+        Execute this as a documentation-only milestone. Keep the DAG mostly linear because each artifact depends on vocabulary and source references from the previous one, and isolate the heavier matrix and release-example work so one worker is not juggling unrelated contracts. The approved plan already settled strategy; do not revisit whether M0 should implement runtime behavior or add tests. If validation discovers that deferred edge names appear outside anti-scope prose, fix the wording rather than deleting the required deferral record. If a harness later reports empty `test_blast_radius.selectors` despite these docs preserving the seven concrete paths, treat that as the known selector-preservation limitation, not as permission to expand M0 scope.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826/execute_batch_4_output.json
+        - Only produce `task_updates` for these tasks: [T4]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC4]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826/execution_batch_4.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T4",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC4",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

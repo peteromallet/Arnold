@@ -1,0 +1,131 @@
+base_branch: main
+anchors:
+  north_star: NORTHSTAR.md
+milestones:
+- label: m0-decisions-fixtures
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m0-decisions-fixtures.md
+  branch: epic/composition-spine-m0-decisions-fixtures
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Freeze route model, ownership decisions, release examples, fixture matrices,
+    deterministic-capture profiles, and JSON-RPC protocol v0 before implementation.
+- label: m1a-reference-identity
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m1a-reference-identity.md
+  branch: epic/composition-spine-m1a-reference-identity
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Add SDK refs, scoped contribution identity, duplicate preservation, reserved
+    graph patch vocabulary, and first shader-scope validation extraction.
+- label: m1b-shader-graph-authority
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m1b-shader-graph-authority.md
+  branch: epic/composition-spine-m1b-shader-graph-authority
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Make CompositionGraph projection authoritative for shader/ref facts and contribution-index
+    lookups.
+- label: m2-target-paths-schema
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m2-target-paths-schema.md
+  branch: epic/composition-spine-m2-target-paths-schema
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Define V1 target paths, schema capability, animates/binds-live edges, and
+    canonical target validation.
+- label: m3a-material-status-matrix
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m3a-material-status-matrix.md
+  branch: epic/composition-spine-m3a-material-status-matrix
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Lock material statuses, detail taxonomy, helper predicates, blocking matrix,
+    next actions, and provenance validation.
+- label: m3b-live-binding-capture
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m3b-live-binding-capture.md
+  branch: epic/composition-spine-m3b-live-binding-capture
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Implement live binding bake semantics, deterministic capture profiles, and
+    graph-owned keyframe patch execution for live/bake paths.
+- label: m3c-agent-material-promotion
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m3c-agent-material-promotion.md
+  branch: epic/composition-spine-m3c-agent-material-promotion
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Promote agent-produced materials to durable RenderMaterial/RenderArtifact
+    records and attach only resolved refs to existing slots.
+- label: m4-clip-shader-keyframes
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m4-clip-shader-keyframes.md
+  branch: epic/composition-spine-m4-clip-shader-keyframes
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Execute shader assignment, shader-uniform keyframes, clip-type refs, graph-projected
+    requires edges, and the clip shader canary.
+- label: m5-effects-transitions-mask
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m5-effects-transitions-mask.md
+  branch: epic/composition-spine-m5-effects-transitions-mask
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Add effect/transition refs, effect live binding, transition mask material
+    consumption, repair UI, and the first three V1 release examples.
+- label: m6a-process-runtime-core
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m6a-process-runtime-core.md
+  branch: epic/composition-spine-m6a-process-runtime-core
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Add trusted process manager, JSON-RPC stdio protocol, process lifecycle contracts,
+    runtime overlays, blockers, and result attachment.
+- label: m6b-process-ux-canary
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m6b-process-ux-canary.md
+  branch: epic/composition-spine-m6b-process-ux-canary
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Wire process runtime into UX, start/cancel/shutdown repair flows, returned-ref
+    inspection, canary tests, and browser acceptance.
+- label: m7a-output-format-routes
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m7a-output-format-routes.md
+  branch: epic/composition-spine-m7a-output-format-routes
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Introduce graph-backed output-format route planning, route artifacts, typed
+    manifest profiles, route-scope symmetry, and multi-artifact completion.
+- label: m7b-output-format-sidecars
+  idea: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m7b-output-format-sidecars.md
+  branch: epic/composition-spine-m7b-output-format-sidecars
+  profile: partnered-5
+  robustness: thorough
+  depth: high
+  vendor: codex
+  notes: Wire output-format planning to trusted sidecar/process execution, prove the
+    fourth composed example, and harden release governance.
+on_failure:
+  abort: stop_chain
+on_escalate:
+  abort: stop_chain
+merge_policy: auto
+driver:
+  robustness: full
+  auto_approve: true
+  max_iterations: 120
+  poll_sleep: 8.0

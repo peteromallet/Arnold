@@ -1,0 +1,421 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `revise`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826`
+Current milestone: `m0-decisions-fixtures`
+
+### Phase Instruction
+Address critique findings without weakening the North Star. If a finding requires changing the anchor, escalate instead of editing around it.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are revising an implementation plan after critique and gate feedback.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M0: Decisions, Fixtures, And Protocol V0
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Current plan (markdown):
+        # Implementation Plan: M0 Decisions, Fixtures, and Protocol V0
+
+## Overview
+M0 lands durable planning artifacts only. The repository already has SDK literals, process contracts, render planner crosswalks, canary/example material, and foundation docs needed to reconstruct the missing v8 architecture baseline. This plan creates a small `docs/extensions/composition-spine/` artifact set that M1a-M7b can cite, without runtime code, SDK export changes, UI work, runtime implementation, or runtime test execution.
+
+Root-cause check before addressing the gate finding: the open flag does not suggest that M0 is targeting the wrong code, wrong document surface, wrong milestone root cause, or wrong North Star interpretation. The target remains correct because M0 is documentation-only by milestone scope and by the North Star. The failure is a structured plan-contract failure: prior revisions described scoped documentation selectors in prose, but the machine-readable `test_blast_radius.selectors` field remained empty after metadata generation. This revision therefore keeps the documentation-only scope and carries the seven concrete documentation paths directly in structured `test_blast_radius.selectors` in the plan output.
+
+The scoped baseline is a bridge, not scope growth. M0 records decisions and anti-scope boundaries; later milestones implement projection, execution, repair, and export. Runtime test suites are intentionally outside this milestone unless the finalize system cannot accept documentation-only scoped path selectors and explicitly invokes the full-suite fallback.
+
+The machine-readable scoped verification contract for this plan is: `test_blast_radius.strategy` is `scoped`; `test_blast_radius.selectors` contains seven concrete selector objects of kind `path`, one for each planned documentation artifact; `test_blast_radius.changed_surfaces` contains the same seven repo-relative paths; static validation commands are listed in `always_run`; and `full_suite_fallback` is `true` only as a fallback if code-mode finalize cannot accept documentation-only scoped path selectors.
+
+The only tension to preserve explicitly is edge vocabulary wording: the task requires recording that `materializes`, `produces`, and `fallbacks` are deferred, while one test expectation may read as literal absence of those strings from M0 artifacts. Implementation should treat those names as anti-scope/deferred names only, never as public edge discriminants. If a validator requires literal absence from every M0 artifact, that validator conflicts with the M0 brief and should be escalated instead of silently weakening the decision record.
+
+Ticket linkage: do not propose either open ticket as `resolves_on_complete=true`. `01KS384XKZNEWQRSXN2NXQ0DTJ` is related background but broader than M0; `01KV8XVYW2EYDDDY30V48YX520` is unrelated to composition-spine planning.
+
+## Phase 1: Baseline and Artifact Layout
+
+### Step 1: Create the M0 artifact index (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Create** the composition-spine docs directory and an index that lists every M0 artifact, its purpose, and its primary source anchors.
+2. **State** the execution posture clearly: planning artifacts only; no runtime code, no SDK export changes, no process manager, no UI implementation, and no runtime test execution.
+3. **Record** the missing v8 brief as a known source gap and point to the synthesized baseline artifact that replaces it for M0 planning.
+4. **Include** a scoped static validation section that names `docs/extensions/composition-spine/**` as the full changed surface for M0 and lists the exact static commands reviewers should run.
+5. **Mirror** the machine-readable verification contract: `test_blast_radius.strategy` is `scoped`; `test_blast_radius.selectors` contains seven concrete selector objects of kind `path`, one for each planned doc file under `docs/extensions/composition-spine/`; static commands belong in `always_run`, not in `selectors`; `missing_test_selectors` is not a valid substitute for scoped selectors.
+6. **List** the seven selector values verbatim in the README validation section: `docs/extensions/composition-spine/README.md`, `docs/extensions/composition-spine/v8-architecture-baseline.md`, `docs/extensions/composition-spine/m0-decisions.md`, `docs/extensions/composition-spine/m0-fixture-matrices.md`, `docs/extensions/composition-spine/m0-release-examples.md`, `docs/extensions/composition-spine/deterministic-capture-profiles.md`, and `docs/extensions/composition-spine/json-rpc-protocol-v0.md`.
+
+### Step 2: Synthesize the v8 architecture baseline (`docs/extensions/composition-spine/v8-architecture-baseline.md`)
+**Complexity:** 3
+1. **Reconstruct** the baseline from `prep.md`, the North Star constraints, milestone briefs, `config/extensions/family-maturity.json`, SDK contract files, and the supported/deferred behavior matrix.
+2. **Capture** the immutable constraints: host-projected `CompositionGraph`, graph-authoritative fact families, V1 target path limits, live/nondeterministic bake-or-promote rules, trusted process/output sidecars outside V1 SDK, and anti-scope exclusions.
+3. **Cite** source file paths for each major claim so later milestones can audit the replacement baseline without relying on the missing `.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md` file.
+
+## Phase 2: Decisions and Fixture Matrices
+
+### Step 3: Write the M0 decision record (`docs/extensions/composition-spine/m0-decisions.md`)
+**Complexity:** 3
+1. **Freeze** route-model decisions: typed `requires`/`consumes` detail, route artifact records, and multi-artifact completion records.
+2. **Declare** public graph edge vocabulary as exactly `consumes`, `animates`, `binds-live`, and `requires`.
+3. **Isolate** deferred edge names in an anti-scope section only, and never list them in the public vocabulary table.
+4. **Assign** ownership: `requires` graph projection in M4; process repair and `start-process` in M6; target-path grammar in M2; executable keyframe patch semantics in M3b; shader assignment execution in M4.
+5. **Make** anti-scope language explicit rather than inferential: sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, and V1 SDK inclusion for sidecars/process lifecycle must appear only as exclusions, deferrals, or out-of-scope notes.
+
+### Step 4: Build fixture matrices (`docs/extensions/composition-spine/m0-fixture-matrices.md`)
+**Complexity:** 4
+1. **Enumerate** version/ref dimensions from `VIDEO_CONTRIBUTION_KINDS`, `DECLARATION_MATURITY_LEVELS`, `EXECUTION_MATURITY_LEVELS`, and package state literals already present in maturity/config sources.
+2. **Enumerate** target/material/process/output dimensions from `RENDER_ROUTES`, `DETERMINISM_STATUSES`, `RENDER_BLOCKER_REASONS`, `ProcessLifecycleState`, `RenderMaterialMediaKind`, `RenderArtifactSidecarKind`, `RenderLocatorKind`, and `ArtifactBoundary` source/target/failure behavior.
+3. **Add** one or more fixture rows per literal and mark the source authority for each row.
+4. **Cross-check** rows against `src/tools/video-editor/runtime/renderPlanner.ts` for route planning, determinism ordering, material state, and blocker reason alignment.
+
+## Phase 3: Release Examples and Capture Profiles
+
+### Step 5: Specify release-example assertions (`docs/extensions/composition-spine/m0-release-examples.md`)
+**Complexity:** 4
+1. **Inventory** the four examples as graph-backed target deliverables, not as already-composed runtime examples.
+2. **For each example**, define graph-path assertions, fixture rows, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates.
+3. **Align** ownership with milestone scope: M4 for clip+shader+keyframes; M5 for effect+live-data and transition+agent-mask-material; M7b for output-format+sidecar/process.
+4. **Reference** existing canary/example files only as source material, making explicit where composed graph-backed examples do not yet exist.
+
+### Step 6: Freeze deterministic-capture profiles (`docs/extensions/composition-spine/deterministic-capture-profiles.md`)
+**Complexity:** 2
+1. **List exactly** four V1 profiles: seed table, event table, scalar table, and structured motion curve table.
+2. **Define** the evidence each profile must capture and which release examples can use it.
+3. **Mark** all additional capture/profile candidates out of V1 unless future release-example evidence justifies a new decision record.
+
+## Phase 4: Process Protocol V0 and Static Verification
+
+### Step 7: Draft JSON-RPC protocol v0 (`docs/extensions/composition-spine/json-rpc-protocol-v0.md`)
+**Complexity:** 3
+1. **Formalize** newline-delimited JSON-RPC 2.0 over stdio for `ProcessSpec.protocol: 'stdio-jsonrpc'`.
+2. **Name** methods `health`, `execute`, `cancel`, and `shutdown`; message types `progress`, `log`, `result`, and `error`; and all 8 `ProcessLifecycleState` values.
+3. **Define** task correlation fields such as `processId`, `operationId`, and `taskId`, consistent with M6a and `ProcessSpec`.
+4. **Define** at least these error classes: `protocol-error`, `timeout`, `process-exited`, and `invalid-request`.
+5. **State** that this is a protocol contract only; no process manager or sidecar runtime is implemented in M0.
+
+### Step 8: Add the M0 validation checklist (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Add** static validation commands and review checks to the README: `git diff --check -- docs/extensions/composition-spine`, `git diff --name-only`, targeted `rg` checks for required names, targeted `rg` checks for anti-scope terms, and source cross-check instructions.
+2. **Document** that runtime tests should not be run for M0 validation because this milestone is artifact-only by constraint.
+3. **Include** a final reviewer checklist for no runtime/SDK/test-file diff, complete fixture coverage, exact capture profiles, protocol naming, ownership alignment, anti-scope wording review, and scoped path verification for `docs/extensions/composition-spine/**`.
+4. **Keep** the scoped baseline contract explicit: machine-readable selectors are concrete path selectors for the seven planned docs files. Static commands are validation commands, not selector kinds. Full-suite fallback is available only if the finalize system cannot accept documentation-only scoped path selectors.
+5. **Ensure** the structured plan output carries the same seven non-empty path selector objects in `test_blast_radius.selectors`; README prose alone is not sufficient for finalize, and `missing_test_selectors` must not be used as the contract surface.
+6. **Escalate** instead of iterating if a later gate again shows `test_blast_radius.selectors: []` after this structured output includes non-empty path selectors, because that would indicate the harness is discarding documentation selectors.
+
+## Execution Order
+1. Create the artifact index first so every later doc has a stable destination and naming convention.
+2. Write the synthesized v8 baseline before decisions and matrices so all M0 artifacts cite one local reference.
+3. Freeze decisions before release examples, because example assertions depend on edge vocabulary and ownership boundaries.
+4. Build fixture matrices before release gates, because release examples should point to concrete fixture rows.
+5. Draft protocol v0 after process/output fixture rows, so protocol state names agree with the matrix.
+6. Finish with static validation notes and diff hygiene.
+
+## Validation Order
+1. Use `git diff --name-only` to confirm only the seven planned docs files under `docs/extensions/composition-spine/` changed.
+2. Use `git diff --check -- docs/extensions/composition-spine` for whitespace and markdown hygiene.
+3. Use targeted `rg` checks over `docs/extensions/composition-spine/**` to confirm required names exist: four public edge discriminants, four deterministic-capture profiles, protocol methods/messages, lifecycle states, and error classes.
+4. Use contextual review for deferred edge names: they may appear only in anti-scope/deferred text, never as public graph edge discriminants.
+5. Use targeted `rg` checks for anti-scope terms, then human review to confirm mentions are exclusions, deferrals, or out-of-scope notes rather than affirmative M0/V1 scope commitments.
+6. Compare fixture rows against the SDK const arrays and literal unions in the cited source files.
+7. Do not run unit, integration, e2e, or quality test suites for this milestone unless the M0 artifact-only constraint is changed or the finalize system explicitly invokes the full-suite fallback.
+8. Treat the machine-readable scoped verification surface as the concrete `test_blast_radius.selectors` path-selector list for the seven planned docs files. This is the finalize baseline contract for M0 and replaces prior command-selector metadata, empty selector lists, or `missing_test_selectors` placeholders.
+9. If the next gate still reports empty `test_blast_radius.selectors` despite this structured revision containing seven path selector objects, stop iterating on plan prose and escalate the selector preservation issue as an orchestrator limitation.
+
+
+        Current plan metadata:
+        {
+  "version": 21,
+  "timestamp": "2026-07-01T22:54:22Z",
+  "hash": "sha256:792a0b69114352061bfa9fa64a4cf53b9f179b6cfb715709ad101dea9974b74a",
+  "changes_summary": "Kept the M0 plan documentation-only but made the scoped verification contract explicit in structured metadata: seven non-empty `path` selectors now mirror the seven planned docs artifacts, with static validation in `always_run` and full-suite fallback retained only for finalize limitations.",
+  "flags_addressed": [
+    {
+      "id": "criteria_quality-2",
+      "resolution": "addressed",
+      "reason": "The structured `test_blast_radius.selectors` field now contains seven concrete non-empty `path` selector objects matching the planned docs artifacts, instead of relying on prose or `missing_test_selectors`.",
+      "where": "Overview; Phase 1 \u2014 Step 1; Phase 4 \u2014 Step 8; Validation Order; structured `test_blast_radius.selectors`"
+    },
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Added the required machine-readable scoped baseline contract with concrete path selectors, mirrored changed surfaces, static `always_run` checks, and an explicit fallback/escalation rule if finalize drops documentation selectors again.",
+      "where": "structured `test_blast_radius`; Overview; Validation Order"
+    }
+  ],
+  "questions": [
+    "Should downstream milestones cite these artifacts from `docs/extensions/composition-spine/`, or is a different durable docs path required by release tooling?",
+    "Should deferred edge names be allowed in anti-scope prose, or must automated validation require literal absence of `materializes`, `produces`, and `fallbacks` from every M0 artifact despite the brief requiring that deferral be recorded?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Only planning artifacts under `docs/extensions/composition-spine/**` are created or edited; no runtime source, SDK export, test, script, or config files are changed.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The v8 baseline artifact explicitly documents the missing original v8 brief and cites reconstructive sources instead of claiming the missing file exists.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The M0 decision record names exactly `consumes`, `animates`, `binds-live`, and `requires` as public graph edge discriminants, with deferred edge names excluded from the public vocabulary table.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Ownership assignments match the brief: `requires` in M4, process repair and `start-process` in M6, target-path grammar in M2, keyframe patch execution in M3b, and shader assignment execution in M4.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The deterministic-capture profile document lists exactly seed table, event table, scalar table, and structured motion curve table as V1 profiles, with no extra V1 profiles.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Fixture matrices include at least one row for every literal in the enumerated version/ref and target/material/process/output dimensions and do not introduce states absent from the cited SDK unions or const arrays.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Each of the four release examples has non-empty graph-path assertions, fixture row references, UI surface markers, and release gates aligned to the owning milestone.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "JSON-RPC protocol v0 names `health`, `execute`, `cancel`, `shutdown`, `progress`, `log`, `result`, `error`, all 8 lifecycle states, and the four required error classes, while matching `ProcessSpec.protocol: 'stdio-jsonrpc'`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The README includes a static validation checklist, includes targeted anti-scope term checks, and states that M0 validation should not execute runtime tests.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "M0 docs do not imply sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, or V1 SDK inclusion for sidecars/process lifecycle; any mentions are reviewed as exclusions, deferrals, or out-of-scope notes.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The docs use stable source references to SDK/runtime files rather than copying unverifiable architecture claims without provenance.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The plan metadata exposes a scoped verification surface for finalize baseline selection with non-empty `path` selectors for every planned `docs/extensions/composition-spine/` artifact; command selectors and `missing_test_selectors` are not used as scoped selectors.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "If a subsequent gate still reports `test_blast_radius.selectors` as empty after this structured revision includes seven path selector objects, the issue is escalated as selector preservation failure instead of addressed by adding runtime tests or changing M0 scope.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The collective state of `prep.md`, milestone briefs, North Star constraints, SDK contracts, `family-maturity.json`, and behavior matrices is the M0 v8 architecture baseline because the cited v8 brief file is absent.",
+    "Planning artifacts should live in repo docs under `docs/extensions/composition-spine/` so future implementation milestones can cite them without depending on `.megaplan` plan output.",
+    "The edge-vocabulary expectation means deferred names must not be public edge discriminants; it does not mean the brief-required deferred decision cannot mention those names in anti-scope prose.",
+    "No runtime tests should be added or executed in M0; validation is static review, source cross-checking, and diff hygiene.",
+    "Existing dirty `.megaplan/**` harness files are unrelated and should be ignored by implementation workers.",
+    "The remaining gate failure is satisfied by scoped documentation verification metadata with concrete non-empty path selectors. If the harness again moves those paths to `missing_test_selectors` or drops them, that is a system-level selector preservation issue, not a reason to broaden M0 into runtime testing."
+  ],
+  "delta_from_previous_percent": 1.1,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "medium",
+    "selectors": [],
+    "changed_surfaces": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ],
+    "always_run": [
+      "git diff --check -- docs/extensions/composition-spine",
+      "git diff --name-only",
+      "rg \"consumes|animates|binds-live|requires|seed table|event table|scalar table|structured motion curve table|health|execute|cancel|shutdown|progress|log|result|error\" docs/extensions/composition-spine"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/v8-architecture-baseline.md. Candidate: M0 is documentation-only. Scoped finalize baseline selection is driven by the seven concrete documentation paths planned for creation or edit. Static shell commands validate markdown hygiene and required vocabulary, while runtime suites remain outside M0 unless finalize cannot accept documentation-only scoped path selectors. If these explicit path selectors are dropped by later metadata generation, that is an orchestrator limitation to escalate rather than plan scope to expand. Dropped nonexistent pytest path(s) from plan-time baseline metadata: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "recommendation": "ITERATE",
+  "passed": false,
+  "rationale": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+  "signals_assessment": "Finalize baseline selection could not establish a trusted scoped test command from plan metadata or finalized task declarations.",
+  "warnings": [
+    "Code-mode plans that require tests must carry machine-readable `test_blast_radius` metadata before finalize.",
+    "Finalize refused to infer scope from current git status and refused to run the full suite implicitly."
+  ],
+  "criteria_check": {
+    "finalize_baseline_test_scope": {
+      "passed": false,
+      "message": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+      "requires_revise": true
+    }
+  },
+  "preflight_results": {},
+  "unresolved_flags": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "severity": "significant",
+      "status": "open",
+      "concern": "Plan metadata lacks a trusted scoped baseline test contract for code-mode work.",
+      "evidence": "Finalize could not resolve a scoped baseline test command. This is a plan-contract failure, not a finalize retry: revise the approved plan to include machine-readable `test_blast_radius` metadata for code-mode work, or explicitly set `test_selection=full` when the full suite is intended. Reason: test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available Fallback: Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations.",
+      "category": "verification_contract"
+    }
+  ],
+  "addressed_flags": [],
+  "flag_resolutions": [],
+  "orchestrator_guidance": "Run revise. The revised plan must add structured `test_blast_radius` metadata with scoped path selectors, or explicitly opt into `test_selection=full` if that is intentional.",
+  "signals": {},
+  "finalize_failure": {
+    "code": "missing_scoped_baseline_test_contract",
+    "test_selection": {
+      "mode": "unresolved",
+      "reason": "test_blast_radius strategy is 'scoped' but selectors are missing or empty; scoped baseline selection is unresolved; no finalize task pytest command or mappable planned files were available",
+      "command_override": null,
+      "fallback_attempted": true,
+      "fallback_reason": "Finalize baseline selection intentionally does not infer scope from current git status; tests must come from plan metadata or finalized task declarations."
+    }
+  }
+}
+
+        Open significant flags:
+        [
+  {
+    "id": "criteria_quality-2",
+    "severity": "significant",
+    "status": "open",
+    "concern": "Are the success criteria well-prioritized and verifiable?: Criterion 12 (must): 'The plan metadata exposes a scoped verification surface for finalize baseline selection with non-empty `path` selectors for every planned `docs/extensions/composition-spine/` artifact; command selectors are not used as scoped selectors.' \u2014 The criterion itself is well-formed and mechanically verifiable (check `test_blast_radius.selectors` for non-empty path entries). However, in plan_v14.meta.json, `test_blast_radius.selectors` is still `[]` (empty) while the seven paths appear only in `missing_test_selectors`. The v14 `changes_summary` claims selectors were added, but the structured data contradicts this. This creates ambiguity about whether a mechanical verifier should inspect `selectors` (would fail \u2014 empty) or `missing_test_selectors` (would pass \u2014 seven paths). The criterion is clear; the plan metadata fails to satisfy it.",
+    "evidence": "Criterion 12 (must): 'The plan metadata exposes a scoped verification surface for finalize baseline selection with non-empty `path` selectors for every planned `docs/extensions/composition-spine/` artifact; command selectors are not used as scoped selectors.' \u2014 The criterion itself is well-formed and mechanically verifiable (check `test_blast_radius.selectors` for non-empty path entries). However, in plan_v14.meta.json, `test_blast_radius.selectors` is still `[]` (empty) while the seven paths appear only in `missing_test_selectors`. The v14 `changes_summary` claims selectors were added, but the structured data contradicts this. This creates ambiguity about whether a mechanical verifier should inspect `selectors` (would fail \u2014 empty) or `missing_test_selectors` (would pass \u2014 seven paths). The criterion is clear; the plan metadata fails to satisfy it."
+  }
+]
+
+
+
+
+
+        Requirements:
+        - Before addressing individual flags, check: does any flag suggest the plan is targeting the wrong code or the wrong root cause? If so, consider whether the plan needs a new approach rather than adjustments. Explain your reasoning.
+        - Update the plan to address the significant issues.
+        - Keep the plan readable and executable.
+        - Return flags_addressed with the exact flag IDs you addressed or rejected. For each flag, include:
+          - `id`: the flag ID
+          - `resolution`: `"addressed"` (you incorporated the fix) or `"rejected"` (the flag is invalid or out of scope)
+          - `reason`: a concise explanation of what was changed or why the flag was rejected
+          - `where`: a pointer to the plan section / files the change or claim points at (e.g., "Phase 2 — Step 3", "README.md §API")
+        - Include `changes_summary` as a short plain-English summary of what changed in the revision. If there were no concrete flags, say that explicitly (for example: `No critique flags were raised; refined wording and kept the plan aligned for execution.`).
+        - Preserve or improve success criteria quality. Each criterion must have a `priority` of `must`, `should`, or `info`. Promote or demote priorities if critique feedback reveals a criterion was over- or under-weighted.
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - For code-mode plans with any `run_tests` success criterion, include or preserve a machine-readable `test_blast_radius` object in the structured output. Use this shape: `{"strategy":"scoped","confidence":"high","selectors":[{"kind":"path","value":"tests/test_relevant.py","reason":"covers the changed surface"}],"changed_surfaces":["src/relevant.py"],"always_run":[],"full_suite_fallback":true,"rationale":"Why these tests cover the planned changes."}`. If finalize feedback says scoped baseline metadata was missing, the revision must add this object rather than only adding prose validation commands.
+        - Verify that the plan remains aligned with the user's original intent, not just internal plan quality.
+        - Remove unjustified scope growth. If critique raised scope creep, narrow the plan back to the original idea unless the broader work is strictly required.
+        - Maintain the structural template: H1 title, ## Overview, phase sections with numbered step sections, ## Execution Order or ## Validation Order.
+        - CRITICAL: Your entire revised plan markdown (all sections) must be output as the `plan` field in the structured output. The prose response must not contain the plan text.
+        - CRITICAL: Return only the structured JSON object for the schema fields `plan`, `changes_summary`, `flags_addressed`, `assumptions`, `success_criteria`, `questions`, and optional `changed_surfaces` / `test_blast_radius`. Do not add commentary before or after the JSON object.
+        - Populate `changed_surfaces` with every concrete file path your revised plan will change or create. Include both source files and test files. Use repo-relative paths. This list drives the deterministic test-selection blast radius; be complete. If your revised plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor and the prior plan's blast radius; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".

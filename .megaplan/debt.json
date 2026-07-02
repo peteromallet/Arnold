@@ -3724,6 +3724,125 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-220",
+      "subsystem": "documentation-quality",
+      "concern": "criterion 10 requires human verification via subjective_judgment for evaluating whether docs use stable source references to sdk/runtime files rather than copying unverifiable architecture claims without provenance.",
+      "flag_ids": [
+        "FG-001"
+      ],
+      "plan_ids": [
+        "m0-decisions-fixtures-and-20260701-1826"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-01T19:11:28Z",
+      "updated_at": "2026-07-01T19:11:28Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-221",
+      "subsystem": "verification",
+      "concern": "criterion 10 ('the docs use stable source references to sdk/runtime files rather than copying unverifiable architecture claims without provenance') requires subjective_judgment and cannot be fully automated.",
+      "flag_ids": [
+        ""
+      ],
+      "plan_ids": [
+        "m0-decisions-fixtures-and-20260701-1826"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-01T20:08:26Z",
+      "updated_at": "2026-07-01T20:08:26Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-222",
+      "subsystem": "plan-step-sizing-fixture-matrix-generation",
+      "concern": "step 4 bundles fixture enumeration (~82+ rows from 11 sdk dimensions) with renderplanner.ts cross-check, risking worker-turn exhaustion for a complexity-4 task.",
+      "flag_ids": [
+        "scope-1"
+      ],
+      "plan_ids": [
+        "m0-decisions-fixtures-and-20260701-1826"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-01T20:19:58Z",
+      "updated_at": "2026-07-01T20:19:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-223",
+      "subsystem": "plan-step-sizing-release-example-specifications",
+      "concern": "step 5 bundles four distinct release example specifications into one step (~24 structured assertions), risking incomplete per-example coverage from output truncation.",
+      "flag_ids": [
+        "scope-2"
+      ],
+      "plan_ids": [
+        "m0-decisions-fixtures-and-20260701-1826"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-01T20:19:58Z",
+      "updated_at": "2026-07-01T20:19:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-224",
+      "subsystem": "plan-step-coordination-readme-md-append",
+      "concern": "steps 1 and 8 both modify readme.md; step 8 must locate the correct insertion point without corrupting step 1's content.",
+      "flag_ids": [
+        "scope-3"
+      ],
+      "plan_ids": [
+        "m0-decisions-fixtures-and-20260701-1826"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-01T20:19:58Z",
+      "updated_at": "2026-07-01T20:19:58Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-225",
+      "subsystem": "verification",
+      "concern": "criterion 10 (subjective_judgment on source provenance) is a 'should' priority criterion that cannot be machine-verified. this is inherent to documentation quality assessment and is accepted as a known limitation of automated gating.",
+      "flag_ids": [
+        ""
+      ],
+      "plan_ids": [
+        "m0-decisions-fixtures-and-20260701-1826"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-01T20:32:31Z",
+      "updated_at": "2026-07-01T20:32:31Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
+    },
+    {
+      "id": "DEBT-226",
+      "subsystem": "documentation-quality",
+      "concern": "criterion 10 requires human verification (subjective_judgment) for source-reference quality \u2014 cannot be fully automated.",
+      "flag_ids": [
+        "FG-001"
+      ],
+      "plan_ids": [
+        "m0-decisions-fixtures-and-20260701-1826"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-01T21:01:23Z",
+      "updated_at": "2026-07-01T21:01:23Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

@@ -1,0 +1,723 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `critique_evaluator`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826`
+Current milestone: `m0-decisions-fixtures`
+
+### Phase Instruction
+Select critique checks that can catch North Star violations, scope substitution, or unsupported claims of alignment.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are the Critique Evaluator. Your job is to decide which critique
+        lenses to fire and to rate each selected lens's difficulty on a 1–5
+        complexity scale. The profile will map your complexity scores to
+        models — you do NOT name models or vendors.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M0: Decisions, Fixtures, And Protocol V0
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Finished plan:
+        # Implementation Plan: M0 Decisions, Fixtures, and Protocol V0
+
+## Overview
+M0 lands durable planning artifacts only. The repository already has SDK literals, process contracts, render planner crosswalks, canary/example material, and foundation docs needed to reconstruct the missing v8 architecture baseline. This plan creates a small `docs/extensions/composition-spine/` artifact set that M1a-M7b can cite, without runtime code, SDK export changes, UI work, runtime implementation, or runtime test execution.
+
+Root-cause check: the gate feedback does not indicate that the plan targets the wrong code, wrong document surface, or wrong milestone root cause. The target remains correct because M0 is documentation-only by milestone scope and by the North Star. The failure is a verification-contract issue: finalize needs non-empty machine-readable scoped selectors, not changed-surface prose or shell-command validation notes alone. This revision keeps the M0 artifact scope intact and materializes the structured `test_blast_radius.selectors` list with one concrete `path` selector for each planned documentation artifact.
+
+The scoped baseline is a bridge, not scope growth. M0 records decisions and anti-scope boundaries; later milestones implement projection, execution, repair, and export. The only tension to preserve explicitly is edge vocabulary wording: the task requires recording that `materializes`, `produces`, and `fallbacks` are deferred, while one test expectation may read as literal absence of those strings from M0 artifacts. Implementation should treat those names as anti-scope/deferred names only, never as public edge discriminants. If a validator requires literal absence from every M0 artifact, that validator conflicts with the M0 brief and should be escalated instead of silently weakening the decision record.
+
+Ticket linkage: do not propose either open ticket as `resolves_on_complete=true`. `01KS384XKZNEWQRSXN2NXQ0DTJ` is related background but broader than M0; `01KV8XVYW2EYDDDY30V48YX520` is unrelated to composition-spine planning.
+
+## Phase 1: Baseline and Artifact Layout
+
+### Step 1: Create the M0 artifact index (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Create** the composition-spine docs directory and an index that lists every M0 artifact, its purpose, and its primary source anchors.
+2. **State** the execution posture clearly: planning artifacts only; no runtime code, no SDK export changes, no process manager, no UI implementation, and no runtime test execution.
+3. **Record** the missing v8 brief as a known source gap and point to the synthesized baseline artifact that replaces it for M0 planning.
+4. **Include** a scoped static validation section that names `docs/extensions/composition-spine/**` as the full changed surface for M0 and lists the exact static commands reviewers should run.
+5. **Mirror** the machine-readable verification contract: `test_blast_radius.strategy` is `scoped`; `test_blast_radius.selectors` must contain seven concrete `path` selectors, one for each planned doc file under `docs/extensions/composition-spine/`; static commands are validation commands in `always_run`, not selector kinds.
+
+### Step 2: Synthesize the v8 architecture baseline (`docs/extensions/composition-spine/v8-architecture-baseline.md`)
+**Complexity:** 3
+1. **Reconstruct** the baseline from `prep.md`, the North Star constraints, milestone briefs, `config/extensions/family-maturity.json`, SDK contract files, and the supported/deferred behavior matrix.
+2. **Capture** the immutable constraints: host-projected `CompositionGraph`, graph-authoritative fact families, V1 target path limits, live/nondeterministic bake-or-promote rules, trusted process/output sidecars outside V1 SDK, and anti-scope exclusions.
+3. **Cite** source file paths for each major claim so later milestones can audit the replacement baseline without relying on the missing `.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md` file.
+
+## Phase 2: Decisions and Fixture Matrices
+
+### Step 3: Write the M0 decision record (`docs/extensions/composition-spine/m0-decisions.md`)
+**Complexity:** 3
+1. **Freeze** route-model decisions: typed `requires`/`consumes` detail, route artifact records, and multi-artifact completion records.
+2. **Declare** public graph edge vocabulary as exactly `consumes`, `animates`, `binds-live`, and `requires`.
+3. **Isolate** deferred edge names in an anti-scope section only, and never list them in the public vocabulary table.
+4. **Assign** ownership: `requires` graph projection in M4; process repair and `start-process` in M6; target-path grammar in M2; executable keyframe patch semantics in M3b; shader assignment execution in M4.
+
+### Step 4: Build fixture matrices (`docs/extensions/composition-spine/m0-fixture-matrices.md`)
+**Complexity:** 4
+1. **Enumerate** version/ref dimensions from `VIDEO_CONTRIBUTION_KINDS`, `DECLARATION_MATURITY_LEVELS`, `EXECUTION_MATURITY_LEVELS`, and package state literals already present in maturity/config sources.
+2. **Enumerate** target/material/process/output dimensions from `RENDER_ROUTES`, `DETERMINISM_STATUSES`, `RENDER_BLOCKER_REASONS`, `ProcessLifecycleState`, `RenderMaterialMediaKind`, `RenderArtifactSidecarKind`, `RenderLocatorKind`, and `ArtifactBoundary` source/target/failure behavior.
+3. **Add** one or more fixture rows per literal and mark the source authority for each row.
+4. **Cross-check** rows against `src/tools/video-editor/runtime/renderPlanner.ts` for route planning, determinism ordering, material state, and blocker reason alignment.
+
+## Phase 3: Release Examples and Capture Profiles
+
+### Step 5: Specify release-example assertions (`docs/extensions/composition-spine/m0-release-examples.md`)
+**Complexity:** 4
+1. **Inventory** the four examples as graph-backed target deliverables, not as already-composed runtime examples.
+2. **For each example**, define graph-path assertions, fixture rows, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates.
+3. **Align** ownership with milestone scope: M4 for clip+shader+keyframes; M5 for effect+live-data and transition+agent-mask-material; M7b for output-format+sidecar/process.
+4. **Reference** existing canary/example files only as source material, making explicit where composed graph-backed examples do not yet exist.
+
+### Step 6: Freeze deterministic-capture profiles (`docs/extensions/composition-spine/deterministic-capture-profiles.md`)
+**Complexity:** 2
+1. **List exactly** four V1 profiles: seed table, event table, scalar table, and structured motion curve table.
+2. **Define** the evidence each profile must capture and which release examples can use it.
+3. **Mark** all additional capture/profile candidates out of V1 unless future release-example evidence justifies a new decision record.
+
+## Phase 4: Process Protocol V0 and Static Verification
+
+### Step 7: Draft JSON-RPC protocol v0 (`docs/extensions/composition-spine/json-rpc-protocol-v0.md`)
+**Complexity:** 3
+1. **Formalize** newline-delimited JSON-RPC 2.0 over stdio for `ProcessSpec.protocol: 'stdio-jsonrpc'`.
+2. **Name** methods `health`, `execute`, `cancel`, and `shutdown`; message types `progress`, `log`, `result`, and `error`; and all 8 `ProcessLifecycleState` values.
+3. **Define** task correlation fields such as `processId`, `operationId`, and `taskId`, consistent with M6a and `ProcessSpec`.
+4. **Define** at least these error classes: `protocol-error`, `timeout`, `process-exited`, and `invalid-request`.
+5. **State** that this is a protocol contract only; no process manager or sidecar runtime is implemented in M0.
+
+### Step 8: Add the M0 validation checklist (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Add** static validation commands and review checks to the README: `git diff --check -- docs/extensions/composition-spine`, `git diff --name-only`, targeted `rg` checks for required names, and source cross-check instructions.
+2. **Document** that runtime tests should not be run for M0 validation because this milestone is artifact-only by constraint.
+3. **Include** a final reviewer checklist for no runtime/SDK/test-file diff, complete fixture coverage, exact capture profiles, protocol naming, ownership alignment, and scoped path verification for `docs/extensions/composition-spine/**`.
+4. **Keep** the scoped baseline contract explicit: machine-readable selectors are concrete path selectors for the seven planned docs files. Static commands are validation commands, not selector kinds. Full-suite fallback is available only if the finalize system cannot accept documentation-only scoped path selectors.
+
+## Execution Order
+1. Create the artifact index first so every later doc has a stable destination and naming convention.
+2. Write the synthesized v8 baseline before decisions and matrices so all M0 artifacts cite one local reference.
+3. Freeze decisions before release examples, because example assertions depend on edge vocabulary and ownership boundaries.
+4. Build fixture matrices before release gates, because release examples should point to concrete fixture rows.
+5. Draft protocol v0 after process/output fixture rows, so protocol state names agree with the matrix.
+6. Finish with static validation notes and diff hygiene.
+
+## Validation Order
+1. Use `git diff --name-only` to confirm only the seven planned docs files under `docs/extensions/composition-spine/` changed.
+2. Use `git diff --check -- docs/extensions/composition-spine` for whitespace and markdown hygiene.
+3. Use targeted `rg` checks over `docs/extensions/composition-spine/**` to confirm required names exist: four public edge discriminants, four deterministic-capture profiles, protocol methods/messages, lifecycle states, and error classes.
+4. Use contextual review for deferred edge names: they may appear only in anti-scope/deferred text, never as public graph edge discriminants.
+5. Compare fixture rows against the SDK const arrays and literal unions in the cited source files.
+6. Do not run unit, integration, e2e, or quality test suites for this milestone unless the M0 artifact-only constraint is changed.
+7. Treat the machine-readable scoped verification surface as the concrete `test_blast_radius.selectors` path-selector list for the seven planned docs files. This is the finalize baseline contract for M0 and replaces prior command-selector metadata or empty selector lists.
+
+
+        Task graph (plan metadata):
+        {
+  "version": 7,
+  "timestamp": "2026-07-01T19:49:39Z",
+  "hash": "sha256:bcd288fdf26dd72a3f733d2982876435274afb786b1a94ca669e4cdedeef5df9",
+  "changes_summary": "Addressed the finalize baseline failure by adding concrete non-empty scoped `path` selectors for all seven planned M0 documentation artifacts, while keeping the plan documentation-only and preserving static validation commands as `always_run` checks rather than selector metadata.",
+  "flags_addressed": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Added a machine-readable scoped verification contract with one concrete `path` selector per planned `docs/extensions/composition-spine/` artifact and kept shell commands in `always_run` only.",
+      "where": "Overview; Phase 1 - Step 1; Phase 4 - Step 8; Validation Order; test_blast_radius.selectors"
+    }
+  ],
+  "questions": [
+    "Should downstream milestones cite these artifacts from `docs/extensions/composition-spine/`, or is a different durable docs path required by release tooling?",
+    "Should deferred edge names be allowed in anti-scope prose, or must automated validation require literal absence of `materializes`, `produces`, and `fallbacks` from every M0 artifact despite the brief requiring that deferral be recorded?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Only planning artifacts under `docs/extensions/composition-spine/**` are created or edited; no runtime source, SDK export, test, script, or config files are changed.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The v8 baseline artifact explicitly documents the missing original v8 brief and cites reconstructive sources instead of claiming the missing file exists.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The M0 decision record names exactly `consumes`, `animates`, `binds-live`, and `requires` as public graph edge discriminants, with deferred edge names excluded from the public vocabulary table.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Ownership assignments match the brief: `requires` in M4, process repair and `start-process` in M6, target-path grammar in M2, keyframe patch execution in M3b, and shader assignment execution in M4.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The deterministic-capture profile document lists exactly seed table, event table, scalar table, and structured motion curve table as V1 profiles, with no extra V1 profiles.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Fixture matrices include at least one row for every literal in the enumerated version/ref and target/material/process/output dimensions and do not introduce states absent from the cited SDK unions or const arrays.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Each of the four release examples has non-empty graph-path assertions, fixture row references, UI surface markers, and release gates aligned to the owning milestone.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "JSON-RPC protocol v0 names `health`, `execute`, `cancel`, `shutdown`, `progress`, `log`, `result`, `error`, all 8 lifecycle states, and at least 3 error classes, while matching `ProcessSpec.protocol: 'stdio-jsonrpc'`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "M0 docs do not imply sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, or V1 SDK inclusion for sidecars/process lifecycle.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The README includes a static validation checklist and states that M0 validation should not execute runtime tests.",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The docs use stable source references to SDK/runtime files rather than copying unverifiable architecture claims without provenance.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The plan metadata exposes a scoped verification surface for finalize baseline selection with non-empty `path` selectors for every planned `docs/extensions/composition-spine/` artifact; command selectors are not used as scoped selectors.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The collective state of `prep.md`, milestone briefs, North Star constraints, SDK contracts, `family-maturity.json`, and behavior matrices is the M0 v8 architecture baseline because the cited v8 brief file is absent.",
+    "Planning artifacts should live in repo docs under `docs/extensions/composition-spine/` so future implementation milestones can cite them without depending on `.megaplan` plan output.",
+    "The edge-vocabulary test expectation means deferred names must not be public edge discriminants; it does not mean the brief-required deferred decision cannot mention those names in anti-scope prose.",
+    "No runtime tests should be added or executed in M0; validation is static review, source cross-checking, and diff hygiene.",
+    "Existing dirty `.megaplan/**` harness files are unrelated and should be ignored by implementation workers.",
+    "The gate failure is satisfied by scoped documentation verification metadata with concrete non-empty path selectors; opting into the full runtime suite would be unjustified scope growth for M0 unless static documentation validation cannot be represented by the finalize system."
+  ],
+  "delta_from_previous_percent": 0.05,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "medium",
+    "selectors": [],
+    "changed_surfaces": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ],
+    "always_run": [
+      "git diff --check -- docs/extensions/composition-spine",
+      "git diff --name-only",
+      "rg \"consumes|animates|binds-live|requires|seed table|event table|scalar table|structured motion curve table|health|execute|cancel|shutdown|progress|log|result|error\" docs/extensions/composition-spine"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/v8-architecture-baseline.md. Candidate: M0 is documentation-only. Scoped finalize baseline selection should use concrete documentation path selectors for every planned artifact, while static shell commands verify diff hygiene and required vocabulary. Runtime test suites are outside M0 unless finalize cannot represent documentation-only scoped validation. Dropped nonexistent pytest path(s) from plan-time baseline metadata: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Idea:
+# M0: Decisions, Fixtures, And Protocol V0
+
+## Outcome
+
+Freeze the composition-spine decisions, fixture matrices, release-example assertions, deterministic-capture profile list, and process protocol v0 before implementation begins. This milestone produces durable planning artifacts only.
+
+## Execution Posture
+
+Make ambiguity explicit and remove it from later implementation sprints. Do not write runtime code, export SDK symbols, or run tests in this milestone; the value is stable contracts that M1a-M7b can cite.
+
+## Scope
+
+IN:
+- Record the route-model decision: use typed `requires`/`consumes` detail, route artifact records, and multi-artifact completion records.
+- Record that public `materializes`, `produces`, and `fallbacks` edge discriminants are deferred for the whole epic.
+- Record `requires` ownership: M4 introduces graph-projected `requires`; process repair becomes executable only in M6.
+- Record keyframe ownership: M2 owns target-path grammar, M3b owns executable keyframe patch semantics for live/bake paths, and M4 owns shader assignment execution.
+- Select the first deterministic-capture profiles: seed table, event table, scalar table, and structured motion curve table.
+- Inventory the four release examples and list graph-path assertions, fixture rows, UI surfaces, and release gates for each.
+- Build version/ref and target/material/process/output fixture matrices.
+- Draft JSON-RPC protocol v0 and process lifecycle state names stable enough for M6a.
+
+OUT:
+- Runtime implementation.
+- Test execution.
+- SDK export changes.
+- Process manager, output-format route implementation, or UI work.
+- Any claim that deferred capture/profile candidates are in V1 unless a release example requires them.
+
+## Locked Decisions
+
+- Output-format route planning stays on typed route requirements, route artifacts, and completion evidence.
+- `requires` edges become graph-visible in M4, not M3.
+- Process lifecycle repair and `start-process` are M6 process-family concerns.
+- Event-table conversion becomes executable only through graph-owned keyframe patch operations after M2 validation.
+- The first deterministic-capture profiles are seed table, event table, scalar table, and structured motion curve table.
+
+## Constraints
+
+- Do not implement code or run tests.
+- Do not add public edge vocabulary beyond v8.
+- Do not expand V1 deterministic capture beyond the selected profiles without release-example evidence.
+- Do not change the trusted-local posture or imply sandbox/permission enforcement.
+- Keep sidecars and process lifecycle out of the V1 composition SDK.
+
+## Done Criteria
+
+- Decision records align with v8 Architecture, M7a, M7b, release gates, and example assertions.
+- Fact authority, proposal/mutation, and milestone acceptance criteria agree on `requires`, process repair, and keyframe execution ownership.
+- The four release examples have assertion lists, fixture rows, UI surfaces, and graph-path markers.
+- Version/ref and target/material/process/output fixture matrices cover the v8 listed states.
+- JSON-RPC protocol v0 names health, execute, cancel, shutdown, progress, log, result, error, lifecycle states, and error classes.
+
+## Touchpoints
+
+- `.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md`
+- `docs/extensions/phase4-readiness.md`
+- `docs/extensions/foundation-closure-assessment.md`
+- `docs/extensions/**`
+- `examples/video-editor-extension/**`
+- `scripts/quality/check-extension-example-readiness.mjs`
+- `scripts/quality/check-docs-maturity-sync.mjs`
+- `scripts/quality/check-extension-family-conformance.mjs`
+- `tests/**/video-editor/**`
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826/critique_evaluator_output.json
+        Read this file first by calling `read_file` with `path` exactly `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826/critique_evaluator_output.json` — it contains the expected JSON structure with all known check IDs pre-populated in `skipped`.
+        If you cannot supply that exact non-empty path, do not call `read_file`.
+        Move checks you are firing to `selections`, fill `why` for the rest, and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        ## Prep that preceded this plan
+
+This plan was produced after a multi-step prep phase (triage -> research
+fan-out -> distill). Use the prep record below when deciding which lenses
+to fire: areas prep researched thoroughly may need less scrutiny, while
+areas prep flagged as gaps, contradictions, or timed-out research warrant
+extra attention from the critics.
+
+**Prep coverage:** area_count=4, fanout_count=4, completed_count=3, partial_count=0, timed_out_count=0, error_count=1
+
+**Gaps prep could not close:**
+- R4: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+**Contradictions surfaced in research:**
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m4-clip-shader-keyframes.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m5-effects-transitions-mask.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m7b-output-format-sidecars.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file config/extensions/family-maturity.json appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file docs/extensions/foundation-closure-assessment.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete, R3=complete
+- file docs/extensions/phase4-readiness.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete, R3=complete
+- file docs/video-editor/extension-platform-supported-deferred.md appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/core/families/maturity.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/index.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/families/processes.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/rendering/artifacts.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/rendering/capabilities.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/rendering/renderability.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+
+**Prep dossier:**
+
+# Prep Research Dossier
+
+## Triage
+
+M0 must freeze composition-spine decisions, fixture matrices, release-example assertions, deterministic-capture profile list, and JSON-RPC protocol v0 before implementation. The chief uncertainty is that the cited v8 Architecture brief (`.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md`) does not exist on disk — all done criteria and constraints reference 'v8 Architecture' and 'v8 listed states' without an authoritative source. A secondary uncertainty is that the four 'release examples' are named conceptually across epic briefs (clip+shader+keyframes, effect+live-data, transition+agent-mask-material, output-format+sidecar/process) but are not yet cataloged against existing canary code. The remaining artifacts (fixture matrices, JSON-RPC protocol v0, deterministic-capture profiles) are well-specified in scope but need baseline surveys of existing types to avoid contradiction.
+
+## Research Areas
+
+1. R1: The M0 done criteria require decisions to align with 'v8 Architecture' and fixture matrices to cover 'v8 listed states,' but the cited brief file does not exist. Investigate what constitutes the v8 Architecture by surveying the current SDK contract surface (renderability types, artifact/material contracts, process lifecycle types, capability types, output-format descriptors, render planner contracts), the supported/deferred matrix, the family maturity registry, the extension schema, and the epic briefs (M1a–M7b) to produce a reconstructed v8 baseline document or explicit finding that the baseline is the collective state of these sources. This is a prerequisite for all other M0 artifacts.
+2. R2: The four composed examples are referenced across epic briefs: (1) clip+shader+keyframes (M4), (2) effect+live-data (M5), (3) transition+agent-mask-material (M5), (4) output-format+sidecar/process (M7b). For each, identify the corresponding existing canary extension(s), example files, and test coverage; catalog which graph-path assertions, fixture rows, UI surfaces, and release gates can be derived from existing code vs. which need new specification. This inventory is input to M0's 'assertion lists, fixture rows, UI surfaces, and graph-path markers' deliverable.
+3. R3: The fixture matrices must cover 'the v8 listed states' but the enumerated state sets for version/ref, target paths, material statuses, process lifecycle, and output format routes are distributed across multiple type definitions and matrices. Survey the existing type literals, union types, and constant arrays for RenderRoute, DeterminismStatus, RenderBlockerReason, ProcessLifecycleState, RenderMaterialMediaKind, RenderLocatorKind, RenderArtifactSidecarKind, ArtifactBoundary source/target, and the supported/deferred matrix rows to produce a complete enumeration of every state value the fixture matrices must represent. This prevents gaps between the matrices and the runtime contracts.
+4. R4: The JSON-RPC protocol v0 must name health, execute, cancel, shutdown, progress, log, result, error, lifecycle states, and error classes, and must be 'stable enough for M6a.' Process lifecycle states already exist in the SDK (`ProcessLifecycleState` union with 8 values), and `stdio-jsonrpc` is referenced throughout tests and examples, but there is no formal protocol document. Survey all existing process types, protocol string references, process operation specs, the M6a brief's lifecycle state list, and the process-example for the current implicit protocol shape. Produce a survey of what's already committed so the protocol v0 draft is consistent.
+
+## Findings
+
+### R1 (complete)
+
+Locate and reconstruct v8 Architecture baseline — the cited brief file does not exist; investigate what constitutes v8 Architecture from the collective state of all planning and SDK sources.
+
+- CRITICAL: The cited file `.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md` does NOT exist in this repository. A recursive search across the entire workspace found zero files matching 'reigh-extension-composition-spine-plan-elegant' or 'elegant-v8'. The file is confirmed absent.
+- The v8 file's original location is documented in `.megaplan/initiatives/reigh-extension-composition-spine-epic/prep.md` line 5: `/Users/peteromalley/Documents/.megaplan-worktrees/reigh-pristine-sdk-boundary-run/.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md`. This was the author's private workspace and was NOT transferred to the target repository.
+- The prep.md is the PRIMARY reconstruction artifact — it explicitly states it was derived from the v8 plan and captures the full v8 blueprint: 13-milestone epic chain, locked decisions, constraints, open questions, and anti-scope.
+- The v8 Architecture IS fully reconstructable from the collective state of: (a) prep.md locked decisions (44 items), (b) NORTHSTAR.md immutable constraints, (c) all 13 milestone briefs (M0-M7b), (d) phase4-readiness.md family maturity snapshot, (e) foundation-closure-assessment.md, (f) the supported/deferred V1 behavior matrix (91 supported + 69 deferred rows), (g) the current SDK contract surface in `src/sdk/index.ts` (153 lines, 30+ exported families), and (h) `config/extensions/family-maturity.json` (827 lines, 21 families).
+- The 'v8 listed states' that fixture matrices must cover are enumerable from the current codebase: (1) version/ref states: contribution identity by (extensionId, kind, contributionId) with versionless lookup; (2) target kind states: clip-param, effect-param, transition-param, shader-uniform (executable), plus output/process/agent/app (reserved, non-executable); (3) material statuses: missing, pending, resolved, stale, failed, with detail.phase (queued, active, live-only) and detail.quality (weaker-provenance, route-incompatible); (4) process lifecycle states: not-installed, stopped, starting, ready, busy, degraded, failed, stopping — defined in `src/sdk/video/families/processes.ts` lines 101-109; (5) determinism statuses: deterministic, preview-only, live-unbaked, process-dependent, unknown — in `src/sdk/video/rendering/renderability.ts` lines 22-27; (6) render routes: preview, browser-export, worker-export, sidecar-export — in `renderability.ts` line 2; (7) render blocker reasons: 9 enumerated values in `renderability.ts` lines 40-49; (8) graph edge vocabulary: consumes, animates, binds-live, requires (materializes/produces/fallbacks deferred per prep.md line 44); (9) planner next actions: select-route, materialize, bake, invoke-agent, open-settings, install-extension, enable-extension; (10) deterministic capture profiles: seed table, event table, scalar table, structured motion curve table.
+- The v8 Architecture's core invariant is fact-scoped graph authority: each composition fact family (shader/ref, target paths, material statuses, keyframes, live bindings, process runtime, output-format routes) transitions to graph-authoritative ownership at a specific milestone, with legacy fields remaining as compatibility inputs only.
+- The four v8 release examples are: (1) clip + shader + shader-uniform keyframes (M4), (2) effect + live data + bake (M5), (3) transition + agent-produced mask material (M5), (4) output format + sidecar/process dependency with non-video artifact output (M7b).
+- The v8 Architecture explicitly bounds the public graph edge vocabulary — the constraint 'Do not add public edge vocabulary beyond v8' (M0 line 41) means the ONLY permitted public graph edges are: consumes, animates, binds-live, and requires. materializes, produces, and fallbacks are deferred for the entire epic.
+- Contradiction noted: M0 done criteria say 'Decision records align with v8 Architecture' and 'fixture matrices cover the v8 listed states', but the v8 file itself is absent. M0 authors must either reconstruct v8 from the prep.md + milestone briefs, or accept these collective sources AS the v8 Architecture baseline.
+
+### R2 (complete)
+
+Inventory the four release examples against existing canary code
+
+- The four release examples do NOT exist as composed, graph-backed entities. They are described across the M4, M5, and M7b briefs as future deliverables to be built or updated from existing canaries.
+- Example 1 (clip+shader+keyframes, M4): Individual pieces exist — clip-local-shader-canary (282 lines, WebGL clip-local shader with uniforms/textures/diagnostics, integration test at clip-local-shader-canary.integration.test.tsx, 371 lines), clip-type-keyframed-example.ts (302 lines, ClipTypeContribution with schema-backed keyframed params via host interpolator), postprocess-shader-canary (290 lines, timeline-scope shader). All three are disjunct; none has been composed into a unified clip+shader+keyframes release example. The M4 brief says 'Update the clip-local-shader-canary into a clip + shader + keyframes example' — explicitly future work.
+- Example 2 (effect+live-data, M5): Individual pieces exist — flagship-local with FlagshipEffectComponent (102-line Remotion component, glow overlay registered via ctx.effects.registerComponent), live-webcam-canary (458 lines, webcam permission/capture/bake, 385-line test), live-generated-frame-canary (607 lines, GenerationSession with steering/cancellation, 409-line test), live-data-bridge.integration.test.tsx (598 lines, bridges webcam + generated frame live sources). Standalone effect-example.ts (151 lines) and live-preview-example.ts (131 lines) also exist. No composed effect+live-data release example binds an effect param to live data through graph target paths with `binds-live` projection — that is described in M5 as future work.
+- Example 3 (transition+agent-mask-material, M5): Individual pieces exist — flagship-local has Flagship Wipe transition (pure CSS renderer, registered via ctx.transitions.registerRenderer, tested in flagship-local-transition.test.ts at 438 lines), agent-tools-canary (497 lines, fake GenerationSession with material/artifact ToolResults), agent-tool-example.ts (156 lines, ToolUISummaryResult). The transition-mask-material consumption via resolved MaterialRef with typed `consumes` edge `{ consumedKind: 'mask-material', targetSlot: 'transition-mask' }` is described in M5 brief but NOT implemented in any canary or test. flagship-local-transition.test.ts does not test mask material consumption.
+- Example 4 (output-format+sidecar/process, M7b): Individual pieces exist — metadata-json-output-example.ts (383 lines, compile-only OutputFormatContribution with deterministic JSON serialization), process-example.ts (162 lines, ProcessSpec with stdio-jsonrpc protocol, env fields, operation specs — explicitly notes 'Process execution is deferred in V1'), agent-tools-export (706 lines, export-planning with CapabilityFinding-shaped records, ToolExportResult family, export context analysis). No composed output-format+sidecar/process release example exists. M7b brief says 'Build output format + sidecar/process release example' — future work.
+- Test coverage exists for individual canaries (clip-local-shader-canary.integration.test.tsx, postprocess-shader-canary.integration.test.tsx, flagship-local-transition.test.ts, live-webcam-canary.test.ts, live-generated-frame-canary.test.ts, live-data-bridge.integration.test.tsx) but NO test covers any of the four composed release examples as graph-backed entities with route requirements, blockers, or artifact completion evidence.
+- No graph-path assertions, fixture rows, release gates, or UI surface specifications exist in code today for any of the four release examples. These are M0 deliverables to be created from this inventory.
+- The agent-tools-copilot and automation-recording-canary exist but are not required by any of the four release examples per the briefs; their relevance is possible future V1 expansion.
+- Foundation-closure-assessment.md confirms: 'Broad Phase 4 family implementation is not cleared' — each contribution family including effect, transition, clip type, keyframes, agent tool, live data, render material, process/sidecar, shader/WebGL 'remains blocked until it passes the checklist in docs/extensions/phase4-readiness.md and participates in render planning through planRender() with visible requirements and failure states.'
+
+### R3 (complete)
+
+Survey fixture matrix source material for version/ref and target/material/process/output states
+
+- The v8-listed states are spread across 7+ canonical files with type-literal unions and frozen const arrays — no single enumeration file covers all dimensions.
+- Version/Ref dimension: ContributionKind (21 literals in src/sdk/video/families/contributionKinds.ts), DeclarationMaturity (3: typed/schema-backed/documented), ExecutionMaturity (5: absent/delegated/runtime-bridged/host-integrated/public-supported), PackageState (7: loaded/disabled-by-user/invalid/incompatible/duplicate/settings-error/runtime-error), CapabilitySourceRef.source (5: extension/built-in/registry/manifest/provider). Family-maturity.json at config/extensions/family-maturity.json maps each of the 21 ContributionKind entries to declarationMaturity/executionMaturity/requiresTrustedCode/bridged/hostAdapter fields.
+- Target/Path dimension: RenderRoute (4: preview/browser-export/worker-export/sidecar-export), RenderLocatorKind (6: asset-registry/artifact-store/url/local-file/inline/provider), ArtifactBoundary.source (5: provider/browser/worker/sidecar-process/artifact-store), ArtifactBoundary.target (6: same 5 plus export-output), VideoEditorSlotName (12: header/toolbar/leftPanel/rightPanel/codePanel/writingPanel/stagePanel/timelineFooter/statusBar/dialogs/assetPanel/inspectorPanel), ShaderPassKind (3: clip/overlay/postprocess), ShaderMaterializerRequirementScope (2: clip/postprocess).
+- Material/Status dimension: DeterminismStatus (5: deterministic/preview-only/live-unbaked/process-dependent/unknown), RenderBlockerReason (9: missing-contribution/route-unsupported/preview-only/live-unbaked/process-dependent/missing-material/materialization-failed/inactive-extension/unknown), RenderCapabilityStatus (3: supported/blocked/unknown), CapabilityFindingSeverity (3: error/warning/info), RenderPlannerMaterialState (4: missing/stale/resolved/unbaked), RenderMaterialMediaKind (8: image/video/audio/text/json/binary/sidecar/unknown), RenderArtifactSidecarKind (12: metadata/thumbnail/scene-report/log/provenance/rendered-pass/cue/label/caption/diagnostics/manifest/other), RenderMaterialRef.replacementPolicy (3: replace-live-ref/preserve-live-ref/materialize-on-export), ArtifactBoundary.failureBehavior (3: block-export/fallback-to-preview/emit-diagnostic), RouteFitMetadata.fit (4: supported/blocked/degraded/unknown).
+- Process/Lifecycle dimension: ProcessLifecycleState (8: not-installed/stopped/starting/ready/busy/degraded/failed/stopping), ProcessSpec.protocol locked at 'stdio-jsonrpc', ProcessSpec.restartPolicy (3: never/always/on-failure), ProcessRoundtripResult.status (3: completed/failed/cancelled), ProcessRoundtripAction (6: insert-as-clip/replace-clip/attach-to-clip/download-sidecar/discard/create-proposal), ProcessOperationSpec.outputKinds members (6: artifact/material/sidecar/diagnostic/planner-result/tool-result), ProcessLogSummary.level (4: debug/info/warning/error).
+- Output/Format Route dimension: SamplingStrategy (6: whole-timeline/clip-slices/frame-extracts/thumbnail-grid/audio-windows/render-groups), SamplingSourceRef.kind (6: timeline/clip/track/asset/material/render-group), ToolResultFamily (7: mutation/proposal, generation/session, material/artifact, enrichment/search, export, process, ui/summary), VideoEditorPlannerNextActionDescriptor.kind (3: select-route/start-process/resolve-blocker), LiveSourceKind (10: webcam/microphone/midi/serial/bluetooth/generated/screen-capture/audio-device/osc/custom), LiveSourceStatus (6: inactive/activating/active/error/disposed/orphaned), LiveChannelKind (6: video/audio/midi/osc/data/control).
+- Maturity/Docs dimension: ConformanceGapCategory (5: unmet-requirement/coherence-violation/schema-coverage-missing/host-adapter-missing/unassessed-requirement). Supported/deferred states documented in extension-platform-supported-deferred.md with exactly 91 supported and 69 deferred row entries, backed by contract-recheck evidence links. Family-maturity.json carries 21 kind entries with coverage, conformance, and legacyCompatibility fields — but this JSON is not a locked fixture matrix; it is a maturity-tracking artifact.
+- Key contradiction/gap: The v8 architecture brief file (.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md) does NOT exist in the repository — the 'v8 listed states' reference must be interpreted from the contract-recheck matrix, supported/deferred matrix, and family-maturity.json, not from a dedicated architecture brief. The phase4-readiness.md and foundation-closure-assessment.md docs also reference a stale contributionFamilies.ts file that no longer exists.
+- The renderPlanner.ts (1010 lines) is the canonical planning contract consumer — it already indexes every state literal from renderability, artifacts, capabilities, and extensionSurface into guard/plan data structures. It directly hardcodes determinism ranking and blocker-reason derivation, making it the most authoritative single-file source for the runtime-level state crosswalk.
+- All type-literal unions are paired with frozen const arrays (e.g. RENDER_ROUTES, DETERMINISM_STATUSES, RENDER_BLOCKER_REASONS, VIDEO_CONTRIBUTION_KINDS, EXECUTION_MATURITY_LEVELS) — the fixture matrices can and should reference these arrays as their runtime-verifiable ground truth rather than duplicating the literal lists.
+
+### R4 (error)
+
+The JSON-RPC protocol v0 must name health, execute, cancel, shutdown, progress, log, result, error, lifecycle states, and error classes, and must be 'stable enough for M6a.' Process lifecycle states already exist in the SDK (`ProcessLifecycleState` union with 8 values), and `stdio-jsonrpc` is referenced throughout tests and examples, but there is no formal protocol document. Survey all existing process types, protocol string references, process operation specs, the M6a brief's lifecycle state list, and the process-example for the current implicit protocol shape. Produce a survey of what's already committed so the protocol v0 draft is consistent.
+
+Error: worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string']
+
+## Adjudication
+
+### Gap Notes
+
+- R4: research failed with worker_structural_audit_failed: model output structural audit failed: type_mismatch at /error: value does not match declared type(s) ['string'].
+
+### Contradiction Notes
+
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m4-clip-shader-keyframes.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m5-effects-transitions-mask.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m7b-output-format-sidecars.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete
+- file config/extensions/family-maturity.json appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file docs/extensions/foundation-closure-assessment.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete, R3=complete
+- file docs/extensions/phase4-readiness.md appears in multiple areas with differing evidence/status: R1=complete, R2=complete, R3=complete
+- file docs/video-editor/extension-platform-supported-deferred.md appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/core/families/maturity.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/index.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/families/processes.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/rendering/artifacts.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/rendering/capabilities.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/sdk/video/rendering/renderability.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/tools/video-editor/runtime/extensionSurface.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+- file src/tools/video-editor/runtime/renderPlanner.ts appears in multiple areas with differing evidence/status: R1=complete, R3=complete
+
+### Overlap Groups
+
+- file: .megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md [R1, R2]
+- file: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m4-clip-shader-keyframes.md [R1, R2]
+- file: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m5-effects-transitions-mask.md [R1, R2]
+- file: .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m7b-output-format-sidecars.md [R1, R2]
+- file: config/extensions/family-maturity.json [R1, R3]
+- file: docs/extensions/foundation-closure-assessment.md [R1, R2, R3]
+- file: docs/extensions/phase4-readiness.md [R1, R2, R3]
+- file: docs/video-editor/extension-platform-supported-deferred.md [R1, R3]
+- file: src/sdk/core/families/maturity.ts [R1, R3]
+- file: src/sdk/index.ts [R1, R3]
+- file: src/sdk/video/families/processes.ts [R1, R3]
+- file: src/sdk/video/rendering/artifacts.ts [R1, R3]
+- file: src/sdk/video/rendering/capabilities.ts [R1, R3]
+- file: src/sdk/video/rendering/renderability.ts [R1, R3]
+- file: src/tools/video-editor/runtime/extensionSurface.ts [R1, R3]
+- file: src/tools/video-editor/runtime/renderPlanner.ts [R1, R3]
+
+### Bounded Cross-Reference
+
+- Performed: yes
+- Shared files: .megaplan/initiatives/reigh-extension-composition-spine-epic/prep.md, config/extensions/family-maturity.json, src/examples/process-example.ts, src/sdk/video/families/contributionKinds.ts, src/sdk/video/families/processes.ts, src/sdk/video/rendering/artifacts.ts, src/sdk/video/rendering/capabilities.ts, src/sdk/video/rendering/renderability.ts, src/tools/video-editor/runtime/renderPlanner.ts
+- Missing files: (none)
+
+## Metrics
+
+- Areas triaged: 4
+- Fan-out units run: 4
+- Complete: 3
+- Partial: 0
+- Timed out: 0
+- Errors: 1
+- Missed units: R4
+
+
+## Revise-Loop Differential Context (Iteration 7)
+
+This is a revise iteration. Use the signals below to assign lenses
+differentially. Do NOT produce a per-section plan diff — use only
+flag-centric signals. Scalar plan delta from previous: **0.1%**.
+
+### Recurring Flag Groups — Escalate
+
+These concerns have appeared across multiple iterations without being
+addressed. Rate complexity higher for lenses touching these concerns.
+
+- Group `FG-001` (6 iters): Criterion 10: requires human verification (subjective_judgment). [flags: verifiability-0]
+
+### Iteration Pressure Summary
+
+```
+Iteration Pressure Analysis:
+Group      Flags  Iters  Reopened  Concern
+------------------------------------------------------------------------
+FG-001     1      6      0         Criterion 10: requires human verification (subject
+```
+
+### Loop Trajectory
+
+Iteration 7. Weighted score trajectory: 0 -> 0 -> 0 -> 0 -> 0 -> 0 -> 0. Plan deltas: 6.9%, 16.1%, 9.2%, 6.5%, 0.1%, 0.1%. Recurring critiques: 0. Addressed-unverified flags: 0. Resolved flags: 0. Open significant flags: 0.
+
+### Differential Assignment Rules
+
+1. **Escalate for recurring/reopened**: For any lens touching a concern
+   resembling an addressed-then-reopened or recurring flag group above,
+   rate the complexity **higher**.
+2. **Verify just-addressed flags**: Fire lenses that can confirm whether
+   flags from the prior critique were genuinely resolved in this revision.
+3. **Skip verified flags**: Lenses whose sole purpose is to re-examine an
+   already-`verified` flag should be skipped (cite the flag id in `why`).
+4. **Flag-centric only**: No per-section plan diff. Reason only from the
+   flag lifecycle and pressure signals above.
+5. **Keep distinct from gate**: This differential assignment is NOT the
+   gate's loop/no-loop decision. Assign lenses based on what needs fresh
+   scrutiny, independent of whether the loop will continue.
+
+
+## Critique Lens Catalog (9 lenses)
+
+        ### Lens: `issue_hints` (tier: core, category: completeness)
+**Question:** Did the work fully address the issue hints, user notes, and approved plan requirements?
+**Guidance:** Cross-check the result against explicit user notes, critique corrections, and watch items. Flag anything the implementation ignored, contradicted, or only partially covered.
+
+### Lens: `correctness` (tier: core, category: correctness)
+**Question:** Are the proposed changes technically correct?
+**Guidance:** Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+### Lens: `scope` (tier: core, category: completeness)
+**Question:** Search for related code that handles the same concept. Is the reported issue a symptom of something broader — and is any single step sized to fit one worker turn?
+**Guidance:** Look at how the changed function is used across the codebase. Does the fix only address one caller's scenario while others remain broken? Flag missing required work or out-of-scope edits. A minimal patch is often right, but check whether the underlying problem is bigger than what the issue describes. Also audit step SIZING: each step/task is executed in ONE worker turn (~15 min, one conversation) and must be fully implemented AND verified there. A single step that bundles multiple concerns — e.g. 'extract this 2000-line file into modules AND write tests', or 'consolidate the roots AND migrate N registries AND add parity tests' — is a god-task: it cannot finish in one turn and the worker will run out of time mid-implementation. Raising complexity does not buy more time, only a stronger model for the same single turn. Flag any such step and recommend splitting along the natural seam (one step to add the abstraction + its unit tests, then one step per consumer/module to migrate, parity tests on the last).
+
+### Lens: `all_locations` (tier: core, category: completeness)
+**Question:** Does the change touch all locations AND supporting infrastructure?
+**Guidance:** Search for all instances of the symbol/pattern being changed. Also ask: does this feature require setup, registration, or integration code beyond the core logic? Missing glue code causes test failures even when the core fix is correct.
+
+### Lens: `callers` (tier: core, category: correctness)
+**Question:** Find the callers of the changed function. What arguments do they actually pass? Does the fix handle all of them?
+**Guidance:** Grep for call sites. For each caller, check what values it passes — especially edge cases like None, zero, empty, or composite inputs. Then ask: should this change be here, or in a caller, callee, or new method?
+
+### Lens: `conventions` (tier: extended, category: maintainability)
+**Question:** Does the approach match how the codebase solves similar problems?
+**Guidance:** Check not just naming/style but how similar PROBLEMS are solved in this codebase. If the codebase adds new methods for similar cases, the plan should too. Do not spend findings on trivial stylistic preferences.
+
+### Lens: `verification` (tier: extended, category: completeness)
+**Question:** Is there convincing verification for the change?
+**Guidance:** Flag missing tests or weak validation. If verification tests exist, trace the test's execution path through your patch — does every branch it exercises produce the expected result? A patch can look correct but fail because it misses one code path the test covers. If you manually verify an edge case because existing tests don't cover it, also test the cases next to it.
+
+### Lens: `criteria_quality` (tier: extended, category: completeness)
+**Question:** Are the success criteria well-prioritized and verifiable?
+**Guidance:** Check that each `must` criterion has a clear yes/no answer verifiable from code, tests, or git diff. Subjective goals, numeric guidelines, and aspirational targets should be `should`, not `must`. Criteria requiring manual testing or human judgment should be `info`. Flag any `must` criterion that is ambiguous, subjective, or unverifiable in the review pipeline.
+
+### Lens: `prerequisite_ordering` (tier: core, category: correctness)
+**Question:** Do tasks that depend on a precondition gracefully handle that precondition only partially holding?
+**Guidance:** Walk the task graph. For each task that depends on a precondition produced by an earlier task (e.g. 'after T5 regen, remove ref()'), check what happens if the precondition only partially holds — some inputs fail, some succeed. Then re-read the brief: does it lock a graceful-fallback policy for the earlier task (e.g. 'failed templates get skipped with a diagnostic') AND simultaneously demand absolute completion for the dependent task (e.g. 'zero callers remain', 'all migrated')? That's a brief contradiction the planner will transcribe faithfully and the executor will hit at runtime. Flag the conflicting paragraphs and recommend conditionalizing the dependent task, or specifying explicit deferral behavior.
+
+
+        ## Complexity Rubric (1–5)
+
+        Rate each selected lens on its **hardest realistic** aspect, not a
+        worst-case imagining. When genuinely torn between two tiers, choose the
+        LOWER one UNLESS you can name the specific cascading, test-evading
+        failure that earns the higher tier in the justification.
+
+        - **1 = trivial, mechanical check.** The lens's question can be
+          answered by pattern-matching a single file or a grep hit. A weak
+          model cannot get it wrong.
+        - **2 = simple, localized check.** The lens touches one or two
+          files, the question has a linear answer, and the failure mode
+          (missing something) is obvious.
+        - **3 = multi-step check with non-trivial reasoning.** The lens
+          requires holding multiple files or a dataflow in your head;
+          correctness is not self-evident from a quick skim.
+        - **4 = cross-cutting or high-stakes check.** A defect this lens would
+          miss is **non-local and not caught by an obvious test** — it
+          propagates through a shared contract or invariant that code the plan
+          does NOT touch relies on. Spanning several modules is NOT sufficient
+          on its own; a lens whose failure is local and obvious is tier 2-3.
+        - **5 = fundamental system-level check.** The lens probes a
+          security-sensitive path, a schema migration, an auth boundary, or
+          a contract relied on by the whole system, where a subtle error would
+          pass the full suite and corrupt state. Only assign tier 5 when the
+          lens genuinely requires system-level reasoning — not merely
+          "important" or central code.
+
+        **FLOOR rules (hard minimum) — these two lenses ONLY:**
+        - `correctness` — NEVER below tier 4. A correctness defect that
+          slips through is the most expensive failure mode.
+        - `prerequisite_ordering` — NEVER below tier 4. Partial-precondition
+          contradictions are subtle and cascade into runtime failures; a
+          weak model will miss them.
+        Every OTHER lens must EARN tier 4-5 under the rubric above; the
+        expected home for an ordinary, locally-verifiable check is tier 2-3.
+        Do not let "this plan is large" inflate a lens whose own question is
+        answerable by a focused read.
+
+        ## Assignment Contract
+
+        Select the FEWEST lenses that cover the real risk; keep the set lean
+        rather than firing broad, overlapping checks. If a check's verification
+        would likely depend on things outside this project root (external or
+        sibling repos), files the plan only creates later, or runtime-only
+        behavior, either scope the lens to what is statically checkable in this
+        repo or name that dependency in its justification so the worker and gate
+        expect a partial or `unverifiable` result.
+
+        - **Select deliberately**: a lens fires only when it covers a concrete
+          risk in this plan.
+        - **Justify to skip**: every skipped lens must include a concrete, specific
+          `why` — a reason grounded in the plan's content, not a generic dismissal.
+        - **Every lens is assigned exactly once**: the union of `selections` and
+          `skipped` must cover all 9 lens ids with no overlap
+          and no omission.
+        - **At least one lens must be selected** — an all-skip verdict is rejected.
+        - **Every selected catalog lens** must emit a `complexity` (int 1–5) and
+          a `complexity_justification` (one or two sentences citing why this
+          lens sits at exactly that tier — reference the lens's question, the
+          plan's concrete files/interfaces/risks). The justification must be
+          defensible against a reviewer who disagrees. A bare restatement of the
+          rubric ("this is complex") is not acceptable.
+        - **`other` custom areas**: an `other` selection is additive (does not
+          replace a catalog lens). It requires `area` (a non-empty name for the
+          custom critique area), `why` (the probe question for the critic),
+          `complexity`, and `complexity_justification`. At most 2
+          `other` areas.
+        - **Do not invent check IDs**: North Star, anchor, product, or project-
+          specific concerns must either use one of the catalog lens IDs above
+          or `check_id: "other"` with the specific concern named in `area`.
+          Values such as `north_star_alignment`, `compatibility_shim_risk`, or
+          `behavior_preservation` are invalid as `check_id`s.
+
+        Your output must be a JSON object with these keys:
+        - `selections`: list of objects. For catalog lenses:
+          {check_id, complexity (int 1–5), complexity_justification, why?}
+          For `other` custom areas:
+          {check_id: "other", area, why, complexity (int 1–5), complexity_justification}
+        - `skipped`: list of {check_id, why} objects
+        - `evaluator_model`: your own model identifier string
+        - `flag_verifications`: list of
+          {flag_id, lens, outcome, rationale} objects where outcome is
+          one of "verified" / "open" / "accepted_tradeoff"; use [] when the
+          Flag Resolution Verification section is absent. `lens` must be
+          exactly one catalog lens id; combined lens strings such as
+          `correctness/all_locations` are invalid.
+
+        Remember: prefer the smallest selected set that still covers the real
+        risk.  Skipping requires a justification.  When you skip, explain *why
+        this specific lens is unnecessary for this specific plan* — do not
+        write generic cop-outs.

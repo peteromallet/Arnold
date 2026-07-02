@@ -1,0 +1,1426 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M0: Decisions, Fixtures, And Protocol V0
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M0 Decisions, Fixtures, and Protocol V0
+
+## Overview
+M0 lands durable planning artifacts only. The repository already has SDK literals, process contracts, render planner crosswalks, canary/example material, and foundation docs needed to reconstruct the missing v8 architecture baseline. This plan creates a small `docs/extensions/composition-spine/` artifact set that M1a-M7b can cite, without runtime code, SDK export changes, UI work, runtime implementation, runtime test-file changes, or runtime test execution.
+
+Root-cause check before addressing the gate finding: the open flags do not suggest that M0 is targeting the wrong code, wrong document surface, wrong milestone root cause, or wrong North Star interpretation. The target remains correct because M0 is documentation-only by milestone scope and by the North Star. The failure is a structured plan-contract failure: the plan must carry non-empty machine-readable scoped selectors, and the structured output must place them in `test_blast_radius.selectors`, not only in prose and not in `missing_test_selectors`.
+
+The scoped baseline is a bridge, not scope growth. M0 records decisions and anti-scope boundaries; later milestones implement projection, execution, repair, and export. Runtime test suites are intentionally outside this milestone unless the finalize system cannot accept documentation-only scoped path selectors and explicitly invokes the full-suite fallback.
+
+The machine-readable scoped verification contract for this plan is: `test_blast_radius.strategy` is `scoped`; `test_blast_radius.selectors` contains seven concrete selector objects of kind `path`, one for each planned documentation artifact; `test_blast_radius.changed_surfaces` contains the same seven repo-relative paths; static validation commands are listed in `always_run`; and `full_suite_fallback` is `true` only as a fallback if code-mode finalize cannot accept documentation-only scoped path selectors.
+
+The only tension to preserve explicitly is edge vocabulary wording: the task requires recording that `materializes`, `produces`, and `fallbacks` are deferred, while one test expectation may read as literal absence of those strings from M0 artifacts. Implementation should treat those names as anti-scope/deferred names only, never as public edge discriminants. If a validator requires literal absence from every M0 artifact, that validator conflicts with the M0 brief and should be escalated instead of silently weakening the decision record.
+
+Ticket linkage: do not propose either open ticket as `resolves_on_complete=true`. `01KS384XKZNEWQRSXN2NXQ0DTJ` is related background but broader than M0; `01KV8XVYW2EYDDDY30V48YX520` is unrelated to composition-spine planning.
+
+## Phase 1: Baseline and Artifact Layout
+
+### Step 1: Create the M0 artifact index (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Create** the composition-spine docs directory and an index that lists every M0 artifact, its purpose, and its primary source anchors.
+2. **State** the execution posture clearly: planning artifacts only; no runtime code, no SDK export changes, no process manager, no UI implementation, no runtime test-file changes, and no runtime test execution.
+3. **Record** the missing v8 brief as a known source gap and point to the synthesized baseline artifact that replaces it for M0 planning.
+4. **Include** a scoped static validation section that names `docs/extensions/composition-spine/**` as the full changed surface for M0 and lists the exact static commands reviewers should run.
+5. **Mirror** the machine-readable verification contract: `test_blast_radius.strategy` is `scoped`; `test_blast_radius.selectors` contains seven concrete selector objects of kind `path`, one for each planned doc file under `docs/extensions/composition-spine/`; static commands belong in `always_run`, not in `selectors`; `missing_test_selectors` is not a valid substitute for scoped selectors.
+6. **List** the seven selector values verbatim in the README validation section: `docs/extensions/composition-spine/README.md`, `docs/extensions/composition-spine/v8-architecture-baseline.md`, `docs/extensions/composition-spine/m0-decisions.md`, `docs/extensions/composition-spine/m0-fixture-matrices.md`, `docs/extensions/composition-spine/m0-release-examples.md`, `docs/extensions/composition-spine/deterministic-capture-profiles.md`, and `docs/extensions/composition-spine/json-rpc-protocol-v0.md`.
+
+### Step 2: Synthesize the v8 architecture baseline (`docs/extensions/composition-spine/v8-architecture-baseline.md`)
+**Complexity:** 3
+1. **Reconstruct** the baseline from `prep.md`, the North Star constraints, milestone briefs, `config/extensions/family-maturity.json`, SDK contract files, and the supported/deferred behavior matrix.
+2. **Capture** the immutable constraints: host-projected `CompositionGraph`, graph-authoritative fact families, V1 target path limits, live/nondeterministic bake-or-promote rules, trusted process/output sidecars outside V1 SDK, and anti-scope exclusions.
+3. **Cite** source file paths for each major claim so later milestones can audit the replacement baseline without relying on the missing `.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md` file.
+
+## Phase 2: Decisions and Fixture Matrices
+
+### Step 3: Write the M0 decision record (`docs/extensions/composition-spine/m0-decisions.md`)
+**Complexity:** 3
+1. **Freeze** route-model decisions: typed `requires`/`consumes` detail, route artifact records, and multi-artifact completion records.
+2. **Declare** public graph edge vocabulary as exactly `consumes`, `animates`, `binds-live`, and `requires`.
+3. **Isolate** deferred edge names in an anti-scope section only, and never list them in the public vocabulary table.
+4. **Assign** ownership: `requires` graph projection in M4; process repair and `start-process` in M6; target-path grammar in M2; executable keyframe patch semantics in M3b; shader assignment execution in M4.
+5. **Make** anti-scope language explicit rather than inferential: sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, and V1 SDK inclusion for sidecars/process lifecycle must appear only as exclusions, deferrals, or out-of-scope notes.
+
+### Step 4: Build fixture matrices (`docs/extensions/composition-spine/m0-fixture-matrices.md`)
+**Complexity:** 4
+1. **Enumerate** version/ref dimensions from `VIDEO_CONTRIBUTION_KINDS`, `DECLARATION_MATURITY_LEVELS`, `EXECUTION_MATURITY_LEVELS`, and package state literals already present in maturity/config sources.
+2. **Enumerate** target/material/process/output dimensions from `RENDER_ROUTES`, `DETERMINISM_STATUSES`, `RENDER_BLOCKER_REASONS`, `ProcessLifecycleState`, `RenderMaterialMediaKind`, `RenderArtifactSidecarKind`, `RenderLocatorKind`, and `ArtifactBoundary` source/target/failure behavior.
+3. **Add** one or more fixture rows per literal and mark the source authority for each row.
+4. **Cross-check** rows against `src/tools/video-editor/runtime/renderPlanner.ts` for route planning, determinism ordering, material state, and blocker reason alignment.
+
+## Phase 3: Release Examples and Capture Profiles
+
+### Step 5: Specify release-example assertions (`docs/extensions/composition-spine/m0-release-examples.md`)
+**Complexity:** 4
+1. **Inventory** the four examples as graph-backed target deliverables, not as already-composed runtime examples.
+2. **For each example**, define graph-path assertions, fixture rows, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates.
+3. **Align** ownership with milestone scope: M4 for clip+shader+keyframes; M5 for effect+live-data and transition+agent-mask-material; M7b for output-format+sidecar/process.
+4. **Reference** existing canary/example files only as source material, making explicit where composed graph-backed examples do not yet exist.
+
+### Step 6: Freeze deterministic-capture profiles (`docs/extensions/composition-spine/deterministic-capture-profiles.md`)
+**Complexity:** 2
+1. **List exactly** four V1 profiles: seed table, event table, scalar table, and structured motion curve table.
+2. **Define** the evidence each profile must capture and which release examples can use it.
+3. **Mark** all additional capture/profile candidates out of V1 unless future release-example evidence justifies a new decision record.
+
+## Phase 4: Process Protocol V0 and Static Verification
+
+### Step 7: Draft JSON-RPC protocol v0 (`docs/extensions/composition-spine/json-rpc-protocol-v0.md`)
+**Complexity:** 3
+1. **Formalize** newline-delimited JSON-RPC 2.0 over stdio for `ProcessSpec.protocol: 'stdio-jsonrpc'`.
+2. **Name** methods `health`, `execute`, `cancel`, and `shutdown`; message types `progress`, `log`, `result`, and `error`; and all 8 `ProcessLifecycleState` values.
+3. **Define** task correlation fields such as `processId`, `operationId`, and `taskId`, consistent with M6a and `ProcessSpec`.
+4. **Define** at least these error classes: `protocol-error`, `timeout`, `process-exited`, and `invalid-request`.
+5. **State** that this is a protocol contract only; no process manager or sidecar runtime is implemented in M0.
+
+### Step 8: Add the M0 validation checklist (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Add** static validation commands and review checks to the README: `git diff --check -- docs/extensions/composition-spine`, `git diff --name-only`, targeted `rg` checks for required names, targeted `rg` checks for anti-scope terms, and source cross-check instructions.
+2. **Document** that runtime tests should not be run for M0 validation because this milestone is artifact-only by constraint.
+3. **Include** a final reviewer checklist for no runtime/SDK/test-file diff, complete fixture coverage, exact capture profiles, protocol naming, ownership alignment, anti-scope wording review, and scoped path verification for `docs/extensions/composition-spine/**`.
+4. **Keep** the scoped baseline contract explicit: machine-readable selectors are concrete path selectors for the seven planned docs files. Static commands are validation commands, not selector kinds. Full-suite fallback is available only if the finalize system cannot accept documentation-only scoped path selectors.
+5. **Ensure** the structured plan output carries the same seven non-empty path selector objects in `test_blast_radius.selectors`; README prose alone is not sufficient for finalize, and `missing_test_selectors` must not be used as the contract surface.
+6. **Escalate** instead of iterating if a later gate again shows `test_blast_radius.selectors: []` after this structured output includes non-empty path selectors, because that would indicate the harness is discarding documentation selectors.
+
+## Execution Order
+1. Create the artifact index first so every later doc has a stable destination and naming convention.
+2. Write the synthesized v8 baseline before decisions and matrices so all M0 artifacts cite one local reference.
+3. Freeze decisions before release examples, because example assertions depend on edge vocabulary and ownership boundaries.
+4. Build fixture matrices before release gates, because release examples should point to concrete fixture rows.
+5. Draft protocol v0 after process/output fixture rows, so protocol state names agree with the matrix.
+6. Finish with static validation notes and diff hygiene.
+
+## Validation Order
+1. Use `git diff --name-only` to confirm only the seven planned docs files under `docs/extensions/composition-spine/` changed.
+2. Use `git diff --check -- docs/extensions/composition-spine` for whitespace and markdown hygiene.
+3. Use targeted `rg` checks over `docs/extensions/composition-spine/**` to confirm required names exist: four public edge discriminants, four deterministic-capture profiles, protocol methods/messages, lifecycle states, and error classes.
+4. Use contextual review for deferred edge names: they may appear only in anti-scope/deferred text, never as public graph edge discriminants.
+5. Use targeted `rg` checks for anti-scope terms, then human review to confirm mentions are exclusions, deferrals, or out-of-scope notes rather than affirmative M0/V1 scope commitments.
+6. Compare fixture rows against the SDK const arrays and literal unions in the cited source files.
+7. Do not run unit, integration, e2e, or quality test suites for this milestone unless the M0 artifact-only constraint is changed or the finalize system explicitly invokes the full-suite fallback.
+8. Treat the machine-readable scoped verification surface as the concrete `test_blast_radius.selectors` path-selector list for the seven planned docs files. This is the finalize baseline contract for M0 and replaces prior command-selector metadata, empty selector lists, or `missing_test_selectors` placeholders.
+9. If the next gate still reports empty `test_blast_radius.selectors` despite this structured revision containing seven path selector objects, stop iterating on plan prose and escalate the selector preservation issue as an orchestrator limitation.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 1: Create `docs/extensions/composition-spine/README.md` and the docs directory. The README must index all seven M0 artifacts, state the planning-only posture, record the missing v8 brief source gap, name `docs/extensions/composition-spine/**` as the changed surface, and list the seven concrete path selectors verbatim while keeping static commands out of selector metadata.",
+      "complexity_justification": "This is a localized documentation scaffold in one README plus directory creation. Correctness depends on faithfully copying the approved selector contract, but it does not alter runtime contracts or shared code.",
+      "executor_notes": "Created docs/extensions/composition-spine/README.md. Verified: (1) indexes all seven M0 artifacts in dependency order, (2) states planning-only posture with explicit 'no runtime implementation, no test execution', (3) records missing v8 brief at .megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md citing prep.md and other reconstructive sources, (4) names docs/extensions/composition-spine/** as the sole changed surface, (5) lists the seven concrete path selectors verbatim with explicit disclaimer that static validation commands are tools not selectors. Also includes static...",
+      "files_changed": [
+        "docs/extensions/composition-spine/README.md"
+      ],
+      "commands_run": [
+        "mkdir -p docs/extensions/composition-spine"
+      ]
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 2: Write `docs/extensions/composition-spine/v8-architecture-baseline.md`. Reconstruct the missing v8 architecture baseline from `prep.md`, North Star constraints, milestone briefs, `config/extensions/family-maturity.json`, SDK contract files, supported/deferred behavior matrices, and cited source paths; include the immutable constraints and explicitly say the original v8 brief is absent.",
+      "complexity_justification": "The task is documentation-only, but it requires reconciling several source artifacts into a coherent baseline with auditable provenance. A mistake would mostly mislead downstream documentation, not change executable behavior, so tier 3 is sufficient.",
+      "executor_notes": "Created docs/extensions/composition-spine/v8-architecture-baseline.md (300 lines). Verified: (1) Provenance Statement explicitly records the missing v8 brief and states it was not transferred. (2) Reconstructive Sources table enumerates 15 source artifacts with paths and roles. (3) Every major claim has explicit source citations with file paths and line numbers \u2014 49 total source-file references confirmed. (4) Immutable North Star constraints verbatim from NORTHSTAR.md. (5) 13-milestone epic chain matches prep.md. (6) Family maturity snapshot reconciles 21 entries from family-maturity.json....",
+      "files_changed": [
+        ".gitignore",
+        "docs/extensions/composition-spine/v8-architecture-baseline.md"
+      ],
+      "commands_run": [
+        "git diff --name-only",
+        "git check-ignore",
+        "patch .gitignore",
+        "git diff --check",
+        "rg source file references (49 matches)",
+        "rg missing v8 brief path",
+        "rg Source: annotations",
+        "rg deferred edge names",
+        "rg anti-scope terms",
+        "git status"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 3: Write `docs/extensions/composition-spine/m0-decisions.md`. Freeze route-model decisions, define the public graph edge vocabulary as exactly `consumes`, `animates`, `binds-live`, and `requires`, isolate `materializes`, `produces`, and `fallbacks` only in anti-scope/deferred prose, assign the M2/M3b/M4/M6 ownership boundaries, and list anti-scope terms only as exclusions or deferrals.",
+      "complexity_justification": "This freezes milestone-facing contract language across multiple later phases, so the executor must be precise about vocabulary and ownership. It is still a bounded documentation artifact rather than a live schema or runtime state machine.",
+      "executor_notes": "Created docs/extensions/composition-spine/m0-decisions.md (335 lines). Verified: (1) Section 2 public edge vocabulary table lists exactly consumes, animates, binds-live, requires \u2014 confirmed 14 matches all in public-vocabulary and ownership-boundary contexts. (2) Deferred names materializes, produces, fallbacks appear ONLY in Section 3 (Deferred Edge Names, lines 127-132) and Section 8 (Anti-Scope Terms, lines 271, 281) \u2014 6 matches, none in public vocabulary table. (3) Ownership boundaries frozen: M2 owns target-path grammar; M3b owns keyframe patch semantics; M4 owns shader assignment, sha...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-decisions.md"
+      ],
+      "commands_run": [
+        "rg 'consumes|animates|binds-live|requires' docs/extensions/composition-spine/m0-decisions.md",
+        "rg 'materializes|produces|fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+        "git diff --check -- docs/extensions/composition-spine/m0-decisions.md",
+        "git status --short -- docs/extensions/composition-spine/",
+        "wc -l docs/extensions/composition-spine/m0-decisions.md"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 4: Write `docs/extensions/composition-spine/m0-fixture-matrices.md`. Enumerate fixture rows for every literal in `VIDEO_CONTRIBUTION_KINDS`, `DECLARATION_MATURITY_LEVELS`, `EXECUTION_MATURITY_LEVELS`, package state literals, `RENDER_ROUTES`, `DETERMINISM_STATUSES`, `RENDER_BLOCKER_REASONS`, `ProcessLifecycleState`, `RenderMaterialMediaKind`, `RenderArtifactSidecarKind`, `RenderLocatorKind`, and `ArtifactBoundary` source/target/failure behavior; cite authorities and cross-check `src/tools...",
+      "complexity_justification": "Coverage is non-local across SDK literals, config, process contracts, artifact contracts, and render planner behavior. A missing or invented row would corrupt the fixture baseline future milestones rely on and may not be caught by a simple grep.",
+      "executor_notes": "Created docs/extensions/composition-spine/m0-fixture-matrices.md (255 lines). The document contains 102 sourced fixture rows covering every literal in VIDEO_CONTRIBUTION_KINDS (21), DECLARATION_MATURITY_LEVELS (3), EXECUTION_MATURITY_LEVELS (5), PackageState (7), RENDER_ROUTES (4), DETERMINISM_STATUSES (5), RENDER_BLOCKER_REASONS (9), ProcessLifecycleState (8), RenderMaterialMediaKind (8), RenderArtifactSidecarKind (12), RenderLocatorKind (6), and ArtifactBoundary source/target/failureBehavior literals (5/6/3). A static Node verification compared the source enums/unions against the markdown...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-fixture-matrices.md"
+      ],
+      "commands_run": [
+        "sed -n '119,145p' .megaplan/plans/m0-decisions-fixtures-and-20260701-1826/critique_evaluator_raw_v11.txt",
+        "nl -ba src/sdk/video/families/contributionKinds.ts | sed -n '1,140p'",
+        "nl -ba src/sdk/core/families/maturity.ts | sed -n '1,140p'",
+        "nl -ba src/sdk/video/rendering/renderability.ts | sed -n '1,140p'",
+        "nl -ba src/sdk/video/families/processes.ts | sed -n '1,180p'",
+        "nl -ba src/sdk/video/rendering/artifacts.ts | sed -n '1,220p'",
+        "nl -ba src/tools/video-editor/runtime/extensionLoader.ts | sed -n '580,660p'",
+        "nl -ba src/tools/video-editor/runtime/renderPlanner.ts | sed -n '1,220p'",
+        "nl -ba src/tools/video-editor/runtime/renderPlanner.ts | sed -n '220,1040p'",
+        "node <<'NODE' ... literal coverage verification against source enums/unions and doc row prefixes ... NODE",
+        "git diff --check -- docs/extensions/composition-spine",
+        "git diff --name-only",
+        "git status --short -- docs/extensions/composition-spine/m0-fixture-matrices.md docs/extensions/composition-spine/README.md docs/extensions/composition-spine/v8-architecture-baseline.md docs/extensions/composition-spine/m0-decisions.md",
+        "wc -l docs/extensions/composition-spine/m0-fixture-matrices.md"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 5: Write `docs/extensions/composition-spine/m0-release-examples.md`. Inventory the four release examples as future graph-backed target deliverables, and for each include graph-path assertions, fixture row references, UI surface markers, blocker scenarios, artifact/completion evidence, release gates, owning milestone alignment, and references to existing canary/example files as source material only.",
+      "complexity_justification": "This task binds decision vocabulary, fixture rows, UI markers, evidence expectations, and milestone ownership into release gates. A wrong mapping would propagate into M4, M5, and M7b planning without an obvious automated test catching it.",
+      "executor_notes": "Created docs/extensions/composition-spine/m0-release-examples.md (348 lines). Verified the document inventories exactly four future graph-backed examples (EX-01 through EX-04) and that each example has non-empty sections for graph-path assertions, fixture row references, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates. Ownership is aligned to M4, M5, M5, and M7b respectively, and every example includes a Source material only section that cites current canary/example files while explicitly stating the composed graph-backed example does not yet exist. gi...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-release-examples.md"
+      ],
+      "commands_run": [
+        "nl -ba .megaplan/initiatives/reigh-extension-composition-spine-epic/prep.md | sed -n '1,176p'",
+        "sed -n '1,220p' .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m4-clip-shader-keyframes.md",
+        "sed -n '1,240p' .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m5-effects-transitions-mask.md",
+        "sed -n '1,240p' .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m7b-output-format-sidecars.md",
+        "nl -ba src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts | sed -n '1,260p'",
+        "nl -ba src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx | sed -n '250,420p'",
+        "nl -ba src/tools/video-editor/examples/extensions/flagship-local/index.ts | sed -n '260,520p'",
+        "nl -ba src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx | sed -n '383,596p'",
+        "nl -ba src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts | sed -n '94,436p'",
+        "nl -ba src/examples/metadata-json-output-example.ts | sed -n '1,220p'",
+        "nl -ba src/examples/process-example.ts | sed -n '1,220p'",
+        "nl -ba src/tools/video-editor/runtime/extensionSurface.test.ts | sed -n '968,1035p'",
+        "nl -ba src/tools/video-editor/runtime/renderPlanner.test.ts | sed -n '670,709p'",
+        "nl -ba src/tools/video-editor/runtime/outputFormatRegistry.test.ts | sed -n '171,200p'",
+        "nl -ba src/tools/video-editor/runtime/outputFormatRegistry.test.ts | sed -n '1394,1472p'",
+        "git diff --check -- docs/extensions/composition-spine/m0-release-examples.md",
+        "rg -n \"^## EX-|^### Graph-path assertions|^### Fixture row references|^### UI surface markers|^### Blocker scenarios|^### Artifact/completion evidence|^### Release gates|^\\*\\*Owning milestone:\\*\\*|Current gap:\" docs/extensions/composition-spine/m0-release-examples.md",
+        "rg -n \"M4|M5|M7b|VK-10|VK-14|VK-15|VK-16|VK-18|RR-04|DS-04|BR-05|PL-01|SK-11|ABS-04|ABT-06|ABF-01\" docs/extensions/composition-spine/m0-release-examples.md",
+        "wc -l docs/extensions/composition-spine/m0-release-examples.md"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 6: Write `docs/extensions/composition-spine/deterministic-capture-profiles.md`. List exactly four V1 profiles, named `seed table`, `event table`, `scalar table`, and `structured motion curve table`; define required evidence and usable release examples for each; mark every additional capture/profile candidate outside V1 unless a later decision record expands scope.",
+      "complexity_justification": "The document is a small bounded decision artifact with four exact names and straightforward evidence fields. The main risk is adding extra V1 profiles, which is easy for review and grep checks to catch.",
+      "executor_notes": "Created docs/extensions/composition-spine/deterministic-capture-profiles.md (267 lines). Verified: (1) Section 1 lists exactly four V1 profiles with dedicated subsections 1.1-1.4: `seed table`, `event table`, `scalar table`, `structured motion curve table` \u2014 confirmed via rg count of 4 subsection headings and summary table with exactly 4 rows. (2) Each profile has Required evidence (non-empty bullet lists covering identity, type preservation, round-trip/query evidence, and scoping to graph-authoritative contributions) and Usable release examples (mapped to EX-01 through EX-04 with concrete...",
+      "files_changed": [
+        "docs/extensions/composition-spine/deterministic-capture-profiles.md"
+      ],
+      "commands_run": [
+        "rg -n 'seed table|event table|scalar table|structured motion curve table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "wc -l docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -n 'histogram|frame-sampled|audio-amplitude|binary blob|array table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -n 'V1' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "git diff --check -- docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -c '^### 1\\.[1-4] ' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -c 'explicitly out of V1 scope' docs/extensions/composition-spine/deterministic-capture-profiles.md"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T6"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 7: Write `docs/extensions/composition-spine/json-rpc-protocol-v0.md`. Formalize newline-delimited JSON-RPC 2.0 over stdio for `ProcessSpec.protocol: 'stdio-jsonrpc'`; name methods `health`, `execute`, `cancel`, `shutdown`; message types `progress`, `log`, `result`, `error`; all eight `ProcessLifecycleState` values; correlation fields `processId`, `operationId`, `taskId`; error classes `protocol-error`, `timeout`, `process-exited`, and `invalid-request`; and state that M0 implements no pr...",
+      "complexity_justification": "The protocol is only documented, but it must match existing `ProcessSpec` and lifecycle names exactly. It does not change the executable wire format yet, so the risk is bounded to planning accuracy rather than runtime compatibility.",
+      "executor_notes": "Created docs/extensions/composition-spine/json-rpc-protocol-v0.md (517 lines). The document formalizes newline-delimited JSON-RPC 2.0 over stdio for ProcessSpec.protocol: 'stdio-jsonrpc'. All requirements verified via rg checks: four methods (health, execute, cancel, shutdown \u00a72.1-2.4), four message types (progress, log, result, error \u00a73.1-3.4), eight lifecycle states (\u00a75 with fixture cross-refs PL-01 through PL-08), three correlation fields (processId, operationId, taskId \u00a74), and four error classes (protocol-error, timeout, process-exited, invalid-request \u00a76.1-6.4). M0 scope boundary (\u00a78)...",
+      "files_changed": [
+        "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+      ],
+      "commands_run": [
+        "rg -n 'health|execute|cancel|shutdown' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'progress|log|result|error' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'protocol-error|timeout|process-exited|invalid-request' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'not-installed|stopped|starting|ready|busy|degraded|failed|stopping' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "git diff --check -- docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "wc -l docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'no runtime|M0 implements no|planning artifact only|no process manager|does not implement' docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "docs",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is a second localized README edit that consolidates validation guidance after the six dependent artifacts exist. The logic is checklist-style and reviewable by direct diff, so it does not warrant a higher tier.",
+      "executor_notes": "Enhanced docs/extensions/composition-spine/README.md (now 178 lines, up from 94). Restructured the validation section into five explicit subsections: (1) Static Command Checklist \u2014 renamed from 'Static Validation Checklist' with added preamble instructing sequential execution; (2) Anti-Scope Review Guidance \u2014 five bulleted anti-scope violation categories (deferred edge names, anti-scope domains, V1 capture/profile overreach, M0 runtime claims, missing source citations); (3) No-Runtime-Tests Rule \u2014 explicit prohibition list covering jest/vitest/playwright, test file creation/modification, SD...",
+      "files_changed": [
+        "docs/extensions/composition-spine/README.md"
+      ],
+      "commands_run": [
+        "git diff --check -- docs/extensions/composition-spine/README.md",
+        "git status --short -- docs/extensions/composition-spine/",
+        "rg '^## (Static Command Checklist|Anti-Scope Review Guidance|No-Runtime-Tests Rule|Final Reviewer Checklist|Selector-Preservation Escalation Instruction)' docs/extensions/composition-spine/README.md",
+        "rg --no-ignore -n 'materiali' docs/extensions/composition-spine/",
+        "rg --no-ignore -c 'consumes|animates|binds-live|requires' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -n 'materializes|produces|fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'seed.table|event.table|scalar.table|structured.motion.curve.table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg --no-ignore -c 'health|execute|cancel|shutdown' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg --no-ignore -c 'progress|log|result|error' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg --no-ignore -c 'protocol-error|timeout|process-exited|invalid-request' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "wc -l docs/extensions/composition-spine/README.md"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T8"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Final validation task: run the M0 static validation checks, not runtime suites. Execute `git diff --name-only`, `git diff --check -- docs/extensions/composition-spine`, targeted `rg` checks for the required edge names, capture profile names, protocol methods/messages/lifecycle states/error classes, targeted `rg` checks for anti-scope terms, and a source-reference review confirming only the seven planned docs files changed.",
+      "complexity_justification": "The task runs scoped static validation commands and a mechanical diff audit over documentation files. It intentionally avoids runtime test suites per the approved M0 scope, so failure modes are local and visible in command output.",
+      "executor_notes": "Static validation complete. All checks pass: (1) git diff --name-only shows only .gitignore + .megaplan harness-internal files; no src/, SDK, or test file changes. (2) git diff --check -- docs/extensions/composition-spine reports no whitespace errors. (3) Seven planned docs confirmed at exact expected paths: README.md (178 lines), v8-architecture-baseline.md (300 lines), m0-decisions.md (335 lines), m0-fixture-matrices.md (255 lines), m0-release-examples.md (348 lines), deterministic-capture-profiles.md (267 lines), json-rpc-protocol-v0.md (517 lines). (4) Four public edge discriminants (co...",
+      "files_changed": [],
+      "commands_run": [
+        "git diff --name-only",
+        "git diff --check -- docs/extensions/composition-spine",
+        "git status --short -- docs/extensions/composition-spine/",
+        "git ls-files --others --exclude-standard -- docs/extensions/composition-spine/",
+        "rg --no-ignore -c 'consumes' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'animates' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'binds-live' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'requires' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -F -n 'materializes' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -F -n 'produces' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -F -n 'fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -n 'seed.table|event.table|scalar.table|structured.motion.curve.table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -n '\"health\"|\"execute\"|\"cancel\"|\"shutdown\"' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n '\"progress\"|\"log\"|\"result\"|\"error\"' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'not-installed|stopped|starting|ready|busy|degraded|failed|stopping' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'protocol-error|timeout|process-exited|invalid-request' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'processId|operationId|taskId' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "git diff --name-only -- src/",
+        "git diff --name-only -- '*.test.*' '*.spec.*' '*.integration.*'",
+        "git diff --name-only -- src/sdk/"
+      ]
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Does the README index exactly the seven planned artifacts, state the planning-only posture, name the v8 brief source gap, and list the seven path selectors verbatim without treating commands as selectors?",
+      "executor_note": "PASS. The README: (a) indexes all seven artifacts \u2014 README.md, v8-architecture-baseline.md, m0-decisions.md, m0-fixture-matrices.md, m0-release-examples.md, deterministic-capture-profiles.md, json-rpc-protocol-v0.md \u2014 each with a description; (b) states the planning-only posture explicitly with 'documentation-only milestone', 'no runtime implementation, no test execution'; (c) names the missing v8 brief at .megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md and cites reconstructive sources; (d) lists all seven path selectors verbatim; (e) explicitly disclaims static comman..."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Does the v8 baseline explicitly cite reconstructive source files for each major claim and avoid claiming the missing `.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md` exists?",
+      "executor_note": "CONFIRMED. The v8 baseline explicitly cites reconstructive source files for every major claim \u2014 the Reconstructive Sources table enumerates 15 source artifacts with paths and roles, and every section has inline 'From ...' or 'Source:' annotations with specific file paths and line numbers (49 total source-file references verified). The document avoids claiming the missing v8 brief exists \u2014 the Provenance Statement explicitly states the file is 'absent' and 'was not transferred to the target repository.' The missing brief path appears only in the Provenance Statement (line 12) where it is ide..."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Does the decision record list only `consumes`, `animates`, `binds-live`, and `requires` as public edge discriminants, with deferred edge names confined to anti-scope or deferral prose?",
+      "executor_note": "PASS. The decision record lists only consumes, animates, binds-live, and requires as public edge discriminants in Section 2 (Public Graph Edge Vocabulary, lines 89-92). Deferred edge names (materializes, produces, fallbacks) appear exclusively in Section 3 (Deferred Edge Names \u2014 Anti-Scope/Deferral, lines 127-132) and Section 8 (Anti-Scope Terms, lines 271, 281). grep confirms 6 occurrences of deferred names, all in anti-scope or deferral prose; zero occurrences in the public edge vocabulary table or any other section claiming public-discriminant status."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Does the fixture matrix include at least one sourced row for every required literal and avoid introducing states absent from the cited config, SDK, process, artifact, or render planner authorities?",
+      "executor_note": "PASS. The fixture matrix includes at least one sourced row for every required literal set, with exact coverage counts verified against source authorities: 21 contribution kinds, 3 declaration-maturity levels, 5 execution-maturity levels, 7 package states, 4 render routes, 5 determinism statuses, 9 blocker reasons, 8 process lifecycle states, 8 material media kinds, 12 sidecar kinds, 6 locator kinds, and ArtifactBoundary source/target/failureBehavior literals (5/6/3). The verification script found zero missing and zero extra literals, and the doc's planner cross-check section stays within th..."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Do all four release examples have non-empty graph-path assertions, fixture references, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates aligned to M4, M5, or M7b ownership?",
+      "executor_note": "PASS. All four release examples are present as EX-01 through EX-04, each with non-empty graph-path assertions, fixture row references, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates. Ownership is aligned to M4 for clip+shader+keyframes, M5 for effect+live-data and transition+agent-mask-material, and M7b for output-format+sidecar/process. Each section also records that existing canary/example files are source material only rather than already-composed graph-backed deliverables."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Does the capture profile document list exactly `seed table`, `event table`, `scalar table`, and `structured motion curve table` as V1 profiles and mark all other candidates outside V1?",
+      "executor_note": "CONFIRMED. The capture profile document lists exactly `seed table`, `event table`, `scalar table`, and `structured motion curve table` as V1 profiles (dedicated subsections 1.1-1.4, plus summary table in Section 2 with exactly 4 rows). All other candidates (histogram table, frame-sampled capture, audio-amplitude table, arbitrary binary blob capture, multi-dimensional array table, plus a catch-all for any unnamed profile) are explicitly marked 'outside V1' / 'explicitly out of V1 scope' in Section 4 (Profile Expansion Gate). No extra profile is introduced as V1. Verified via: rg count of 4 s..."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Does the protocol document match `ProcessSpec.protocol: 'stdio-jsonrpc'`, include the four required methods, four message types, all eight lifecycle states, the required correlation fields, and the four required error classes while disclaiming runtime implementation?",
+      "executor_note": "CONFIRMED. The protocol document matches ProcessSpec.protocol: 'stdio-jsonrpc' (explicitly cited in \u00a71 Transport table and posture statement, sourced to processes.ts:73). Four required methods present: health (\u00a72.1), execute (\u00a72.2), cancel (\u00a72.3), shutdown (\u00a72.4) \u2014 each with dedicated subsection, direction annotation, request/response JSON examples, and source citations. Four message types present: progress (\u00a73.1), log (\u00a73.2), result (\u00a73.3), error (\u00a73.4) \u2014 each with JSON payload examples and notification/response semantics. All eight lifecycle states present in \u00a75 table with fixture row cro..."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Does the README validation section include the static command checklist, anti-scope review guidance, no-runtime-tests rule, final reviewer checklist, and selector-preservation escalation instruction?",
+      "executor_note": "CONFIRMED. The README validation section now includes all five required elements: (1) Static Command Checklist \u2014 lines 73-88 with 10 sequential grep/diff commands; (2) Anti-Scope Review Guidance \u2014 lines 90-117 covering deferred edge names, anti-scope domains, V1 capture overreach, M0 runtime claims, and missing source citations; (3) No-Runtime-Tests Rule \u2014 lines 119-138 with explicit prohibition of jest/vitest/playwright execution, test file creation/modification, SDK/runtime/config/UI edits, and node/npx/yarn validation; (4) Final Reviewer Checklist \u2014 lines 140-169 with 12 signoff items; (..."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Do the final static checks show only the seven planned docs changed, no whitespace errors, required names present, anti-scope terms used only as exclusions or deferrals, and no runtime/SDK/test-file diff?",
+      "executor_note": "CONFIRMED. The final static checks show: (1) Only the seven planned docs changed (as new untracked files), plus .gitignore (T2's un-ignore rule) and .megaplan harness-internal files. No src/, SDK, or test file diffs. (2) git diff --check -- docs/extensions/composition-spine reports zero whitespace errors. (3) All required names present: 4 public edge discriminants in m0-decisions.md \u00a72; 4 V1 capture profiles in deterministic-capture-profiles.md; 4 protocol methods, 4 message types, 8 lifecycle states, 4 error classes, 3 correlation fields in json-rpc-protocol-v0.md. (4) Anti-scope terms (ma..."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T1",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/composition-spine/README.md. Verified: (1) indexes all seven M0 artifacts in dependency order, (2) states planning-only posture with explicit 'no runtime implementation, no test execution', (3) records missing v8 brief at .megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md citing prep.md and other reconstructive sources, (4) names docs/extensions/composition-spine/** as the sole changed surface, (5) lists the seven concrete path selectors verbatim with explicit disclaimer that static validation commands are tools not selectors. Also includes static...",
+      "files_changed": [
+        "docs/extensions/composition-spine/README.md"
+      ],
+      "commands_run": [
+        "mkdir -p docs/extensions/composition-spine"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/composition-spine/v8-architecture-baseline.md (300 lines). Verified: (1) Provenance Statement explicitly records the missing v8 brief and states it was not transferred. (2) Reconstructive Sources table enumerates 15 source artifacts with paths and roles. (3) Every major claim has explicit source citations with file paths and line numbers \u2014 49 total source-file references confirmed. (4) Immutable North Star constraints verbatim from NORTHSTAR.md. (5) 13-milestone epic chain matches prep.md. (6) Family maturity snapshot reconciles 21 entries from family-maturity.json....",
+      "files_changed": [
+        ".gitignore",
+        "docs/extensions/composition-spine/v8-architecture-baseline.md"
+      ],
+      "commands_run": [
+        "git diff --name-only",
+        "git check-ignore",
+        "patch .gitignore",
+        "git diff --check",
+        "rg source file references (49 matches)",
+        "rg missing v8 brief path",
+        "rg Source: annotations",
+        "rg deferred edge names",
+        "rg anti-scope terms",
+        "git status"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/composition-spine/m0-decisions.md (335 lines). Verified: (1) Section 2 public edge vocabulary table lists exactly consumes, animates, binds-live, requires \u2014 confirmed 14 matches all in public-vocabulary and ownership-boundary contexts. (2) Deferred names materializes, produces, fallbacks appear ONLY in Section 3 (Deferred Edge Names, lines 127-132) and Section 8 (Anti-Scope Terms, lines 271, 281) \u2014 6 matches, none in public vocabulary table. (3) Ownership boundaries frozen: M2 owns target-path grammar; M3b owns keyframe patch semantics; M4 owns shader assignment, sha...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-decisions.md"
+      ],
+      "commands_run": [
+        "rg 'consumes|animates|binds-live|requires' docs/extensions/composition-spine/m0-decisions.md",
+        "rg 'materializes|produces|fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+        "git diff --check -- docs/extensions/composition-spine/m0-decisions.md",
+        "git status --short -- docs/extensions/composition-spine/",
+        "wc -l docs/extensions/composition-spine/m0-decisions.md"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/composition-spine/m0-fixture-matrices.md (255 lines). The document contains 102 sourced fixture rows covering every literal in VIDEO_CONTRIBUTION_KINDS (21), DECLARATION_MATURITY_LEVELS (3), EXECUTION_MATURITY_LEVELS (5), PackageState (7), RENDER_ROUTES (4), DETERMINISM_STATUSES (5), RENDER_BLOCKER_REASONS (9), ProcessLifecycleState (8), RenderMaterialMediaKind (8), RenderArtifactSidecarKind (12), RenderLocatorKind (6), and ArtifactBoundary source/target/failureBehavior literals (5/6/3). A static Node verification compared the source enums/unions against the markdown...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-fixture-matrices.md"
+      ],
+      "commands_run": [
+        "sed -n '119,145p' .megaplan/plans/m0-decisions-fixtures-and-20260701-1826/critique_evaluator_raw_v11.txt",
+        "nl -ba src/sdk/video/families/contributionKinds.ts | sed -n '1,140p'",
+        "nl -ba src/sdk/core/families/maturity.ts | sed -n '1,140p'",
+        "nl -ba src/sdk/video/rendering/renderability.ts | sed -n '1,140p'",
+        "nl -ba src/sdk/video/families/processes.ts | sed -n '1,180p'",
+        "nl -ba src/sdk/video/rendering/artifacts.ts | sed -n '1,220p'",
+        "nl -ba src/tools/video-editor/runtime/extensionLoader.ts | sed -n '580,660p'",
+        "nl -ba src/tools/video-editor/runtime/renderPlanner.ts | sed -n '1,220p'",
+        "nl -ba src/tools/video-editor/runtime/renderPlanner.ts | sed -n '220,1040p'",
+        "node <<'NODE' ... literal coverage verification against source enums/unions and doc row prefixes ... NODE",
+        "git diff --check -- docs/extensions/composition-spine",
+        "git diff --name-only",
+        "git status --short -- docs/extensions/composition-spine/m0-fixture-matrices.md docs/extensions/composition-spine/README.md docs/extensions/composition-spine/v8-architecture-baseline.md docs/extensions/composition-spine/m0-decisions.md",
+        "wc -l docs/extensions/composition-spine/m0-fixture-matrices.md"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/composition-spine/m0-release-examples.md (348 lines). Verified the document inventories exactly four future graph-backed examples (EX-01 through EX-04) and that each example has non-empty sections for graph-path assertions, fixture row references, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates. Ownership is aligned to M4, M5, M5, and M7b respectively, and every example includes a Source material only section that cites current canary/example files while explicitly stating the composed graph-backed example does not yet exist. gi...",
+      "files_changed": [
+        "docs/extensions/composition-spine/m0-release-examples.md"
+      ],
+      "commands_run": [
+        "nl -ba .megaplan/initiatives/reigh-extension-composition-spine-epic/prep.md | sed -n '1,176p'",
+        "sed -n '1,220p' .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m4-clip-shader-keyframes.md",
+        "sed -n '1,240p' .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m5-effects-transitions-mask.md",
+        "sed -n '1,240p' .megaplan/initiatives/reigh-extension-composition-spine-epic/briefs/m7b-output-format-sidecars.md",
+        "nl -ba src/tools/video-editor/examples/extensions/clip-local-shader-canary/index.ts | sed -n '1,260p'",
+        "nl -ba src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx | sed -n '250,420p'",
+        "nl -ba src/tools/video-editor/examples/extensions/flagship-local/index.ts | sed -n '260,520p'",
+        "nl -ba src/tools/video-editor/examples/extensions/__tests__/live-data-bridge.integration.test.tsx | sed -n '383,596p'",
+        "nl -ba src/tools/video-editor/examples/extensions/__tests__/flagship-local-transition.test.ts | sed -n '94,436p'",
+        "nl -ba src/examples/metadata-json-output-example.ts | sed -n '1,220p'",
+        "nl -ba src/examples/process-example.ts | sed -n '1,220p'",
+        "nl -ba src/tools/video-editor/runtime/extensionSurface.test.ts | sed -n '968,1035p'",
+        "nl -ba src/tools/video-editor/runtime/renderPlanner.test.ts | sed -n '670,709p'",
+        "nl -ba src/tools/video-editor/runtime/outputFormatRegistry.test.ts | sed -n '171,200p'",
+        "nl -ba src/tools/video-editor/runtime/outputFormatRegistry.test.ts | sed -n '1394,1472p'",
+        "git diff --check -- docs/extensions/composition-spine/m0-release-examples.md",
+        "rg -n \"^## EX-|^### Graph-path assertions|^### Fixture row references|^### UI surface markers|^### Blocker scenarios|^### Artifact/completion evidence|^### Release gates|^\\*\\*Owning milestone:\\*\\*|Current gap:\" docs/extensions/composition-spine/m0-release-examples.md",
+        "rg -n \"M4|M5|M7b|VK-10|VK-14|VK-15|VK-16|VK-18|RR-04|DS-04|BR-05|PL-01|SK-11|ABS-04|ABT-06|ABF-01\" docs/extensions/composition-spine/m0-release-examples.md",
+        "wc -l docs/extensions/composition-spine/m0-release-examples.md"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/composition-spine/deterministic-capture-profiles.md (267 lines). Verified: (1) Section 1 lists exactly four V1 profiles with dedicated subsections 1.1-1.4: `seed table`, `event table`, `scalar table`, `structured motion curve table` \u2014 confirmed via rg count of 4 subsection headings and summary table with exactly 4 rows. (2) Each profile has Required evidence (non-empty bullet lists covering identity, type preservation, round-trip/query evidence, and scoping to graph-authoritative contributions) and Usable release examples (mapped to EX-01 through EX-04 with concrete...",
+      "files_changed": [
+        "docs/extensions/composition-spine/deterministic-capture-profiles.md"
+      ],
+      "commands_run": [
+        "rg -n 'seed table|event table|scalar table|structured motion curve table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "wc -l docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -n 'histogram|frame-sampled|audio-amplitude|binary blob|array table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -n 'V1' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "git diff --check -- docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -c '^### 1\\.[1-4] ' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -c 'explicitly out of V1 scope' docs/extensions/composition-spine/deterministic-capture-profiles.md"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Created docs/extensions/composition-spine/json-rpc-protocol-v0.md (517 lines). The document formalizes newline-delimited JSON-RPC 2.0 over stdio for ProcessSpec.protocol: 'stdio-jsonrpc'. All requirements verified via rg checks: four methods (health, execute, cancel, shutdown \u00a72.1-2.4), four message types (progress, log, result, error \u00a73.1-3.4), eight lifecycle states (\u00a75 with fixture cross-refs PL-01 through PL-08), three correlation fields (processId, operationId, taskId \u00a74), and four error classes (protocol-error, timeout, process-exited, invalid-request \u00a76.1-6.4). M0 scope boundary (\u00a78)...",
+      "files_changed": [
+        "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+      ],
+      "commands_run": [
+        "rg -n 'health|execute|cancel|shutdown' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'progress|log|result|error' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'protocol-error|timeout|process-exited|invalid-request' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'not-installed|stopped|starting|ready|busy|degraded|failed|stopping' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "git diff --check -- docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "wc -l docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'no runtime|M0 implements no|planning artifact only|no process manager|does not implement' docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Enhanced docs/extensions/composition-spine/README.md (now 178 lines, up from 94). Restructured the validation section into five explicit subsections: (1) Static Command Checklist \u2014 renamed from 'Static Validation Checklist' with added preamble instructing sequential execution; (2) Anti-Scope Review Guidance \u2014 five bulleted anti-scope violation categories (deferred edge names, anti-scope domains, V1 capture/profile overreach, M0 runtime claims, missing source citations); (3) No-Runtime-Tests Rule \u2014 explicit prohibition list covering jest/vitest/playwright, test file creation/modification, SD...",
+      "files_changed": [
+        "docs/extensions/composition-spine/README.md"
+      ],
+      "commands_run": [
+        "git diff --check -- docs/extensions/composition-spine/README.md",
+        "git status --short -- docs/extensions/composition-spine/",
+        "rg '^## (Static Command Checklist|Anti-Scope Review Guidance|No-Runtime-Tests Rule|Final Reviewer Checklist|Selector-Preservation Escalation Instruction)' docs/extensions/composition-spine/README.md",
+        "rg --no-ignore -n 'materiali' docs/extensions/composition-spine/",
+        "rg --no-ignore -c 'consumes|animates|binds-live|requires' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -n 'materializes|produces|fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'seed.table|event.table|scalar.table|structured.motion.curve.table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg --no-ignore -c 'health|execute|cancel|shutdown' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg --no-ignore -c 'progress|log|result|error' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg --no-ignore -c 'protocol-error|timeout|process-exited|invalid-request' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "wc -l docs/extensions/composition-spine/README.md"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Static validation complete. All checks pass: (1) git diff --name-only shows only .gitignore + .megaplan harness-internal files; no src/, SDK, or test file changes. (2) git diff --check -- docs/extensions/composition-spine reports no whitespace errors. (3) Seven planned docs confirmed at exact expected paths: README.md (178 lines), v8-architecture-baseline.md (300 lines), m0-decisions.md (335 lines), m0-fixture-matrices.md (255 lines), m0-release-examples.md (348 lines), deterministic-capture-profiles.md (267 lines), json-rpc-protocol-v0.md (517 lines). (4) Four public edge discriminants (co...",
+      "files_changed": [],
+      "commands_run": [
+        "git diff --name-only",
+        "git diff --check -- docs/extensions/composition-spine",
+        "git status --short -- docs/extensions/composition-spine/",
+        "git ls-files --others --exclude-standard -- docs/extensions/composition-spine/",
+        "rg --no-ignore -c 'consumes' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'animates' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'binds-live' docs/extensions/composition-spine/m0-decisions.md",
+        "rg --no-ignore -c 'requires' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -F -n 'materializes' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -F -n 'produces' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -F -n 'fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+        "rg -n 'seed.table|event.table|scalar.table|structured.motion.curve.table' docs/extensions/composition-spine/deterministic-capture-profiles.md",
+        "rg -n '\"health\"|\"execute\"|\"cancel\"|\"shutdown\"' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n '\"progress\"|\"log\"|\"result\"|\"error\"' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'not-installed|stopped|starting|ready|busy|degraded|failed|stopping' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'protocol-error|timeout|process-exited|invalid-request' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "rg -n 'processId|operationId|taskId' docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+        "git diff --name-only -- src/",
+        "git diff --name-only -- '*.test.*' '*.spec.*' '*.integration.*'",
+        "git diff --name-only -- src/sdk/"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC1",
+      "executor_note": "PASS. The README: (a) indexes all seven artifacts \u2014 README.md, v8-architecture-baseline.md, m0-decisions.md, m0-fixture-matrices.md, m0-release-examples.md, deterministic-capture-profiles.md, json-rpc-protocol-v0.md \u2014 each with a description; (b) states the planning-only posture explicitly with 'documentation-only milestone', 'no runtime implementation, no test execution'; (c) names the missing v8 brief at .megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md and cites reconstructive sources; (d) lists all seven path selectors verbatim; (e) explicitly disclaims static comman..."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "CONFIRMED. The v8 baseline explicitly cites reconstructive source files for every major claim \u2014 the Reconstructive Sources table enumerates 15 source artifacts with paths and roles, and every section has inline 'From ...' or 'Source:' annotations with specific file paths and line numbers (49 total source-file references verified). The document avoids claiming the missing v8 brief exists \u2014 the Provenance Statement explicitly states the file is 'absent' and 'was not transferred to the target repository.' The missing brief path appears only in the Provenance Statement (line 12) where it is ide..."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "PASS. The decision record lists only consumes, animates, binds-live, and requires as public edge discriminants in Section 2 (Public Graph Edge Vocabulary, lines 89-92). Deferred edge names (materializes, produces, fallbacks) appear exclusively in Section 3 (Deferred Edge Names \u2014 Anti-Scope/Deferral, lines 127-132) and Section 8 (Anti-Scope Terms, lines 271, 281). grep confirms 6 occurrences of deferred names, all in anti-scope or deferral prose; zero occurrences in the public edge vocabulary table or any other section claiming public-discriminant status."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "PASS. The fixture matrix includes at least one sourced row for every required literal set, with exact coverage counts verified against source authorities: 21 contribution kinds, 3 declaration-maturity levels, 5 execution-maturity levels, 7 package states, 4 render routes, 5 determinism statuses, 9 blocker reasons, 8 process lifecycle states, 8 material media kinds, 12 sidecar kinds, 6 locator kinds, and ArtifactBoundary source/target/failureBehavior literals (5/6/3). The verification script found zero missing and zero extra literals, and the doc's planner cross-check section stays within th..."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "PASS. All four release examples are present as EX-01 through EX-04, each with non-empty graph-path assertions, fixture row references, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates. Ownership is aligned to M4 for clip+shader+keyframes, M5 for effect+live-data and transition+agent-mask-material, and M7b for output-format+sidecar/process. Each section also records that existing canary/example files are source material only rather than already-composed graph-backed deliverables."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "CONFIRMED. The capture profile document lists exactly `seed table`, `event table`, `scalar table`, and `structured motion curve table` as V1 profiles (dedicated subsections 1.1-1.4, plus summary table in Section 2 with exactly 4 rows). All other candidates (histogram table, frame-sampled capture, audio-amplitude table, arbitrary binary blob capture, multi-dimensional array table, plus a catch-all for any unnamed profile) are explicitly marked 'outside V1' / 'explicitly out of V1 scope' in Section 4 (Profile Expansion Gate). No extra profile is introduced as V1. Verified via: rg count of 4 s..."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "CONFIRMED. The protocol document matches ProcessSpec.protocol: 'stdio-jsonrpc' (explicitly cited in \u00a71 Transport table and posture statement, sourced to processes.ts:73). Four required methods present: health (\u00a72.1), execute (\u00a72.2), cancel (\u00a72.3), shutdown (\u00a72.4) \u2014 each with dedicated subsection, direction annotation, request/response JSON examples, and source citations. Four message types present: progress (\u00a73.1), log (\u00a73.2), result (\u00a73.3), error (\u00a73.4) \u2014 each with JSON payload examples and notification/response semantics. All eight lifecycle states present in \u00a75 table with fixture row cro..."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "CONFIRMED. The README validation section now includes all five required elements: (1) Static Command Checklist \u2014 lines 73-88 with 10 sequential grep/diff commands; (2) Anti-Scope Review Guidance \u2014 lines 90-117 covering deferred edge names, anti-scope domains, V1 capture overreach, M0 runtime claims, and missing source citations; (3) No-Runtime-Tests Rule \u2014 lines 119-138 with explicit prohibition of jest/vitest/playwright execution, test file creation/modification, SDK/runtime/config/UI edits, and node/npx/yarn validation; (4) Final Reviewer Checklist \u2014 lines 140-169 with 12 signoff items; (..."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "CONFIRMED. The final static checks show: (1) Only the seven planned docs changed (as new untracked files), plus .gitignore (T2's un-ignore rule) and .megaplan harness-internal files. No src/, SDK, or test file diffs. (2) git diff --check -- docs/extensions/composition-spine reports zero whitespace errors. (3) All required names present: 4 public edge discriminants in m0-decisions.md \u00a72; 4 V1 capture profiles in deterministic-capture-profiles.md; 4 protocol methods, 4 message types, 8 lifecycle states, 4 error classes, 3 correlation fields in json-rpc-protocol-v0.md. (4) Anti-scope terms (ma..."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 9/9. Batch 1: Created docs/extensions/composition-spine/README.md with artifact index, planning-only posture, v8 brief gap record, changed surface declaration, and verbatim path selectors. Batch 2: Batch 3: Created docs/extensions/composition-spine/m0-decisions.md (335 lines, 17,069 bytes). Verified: (1) Public edge vocabulary table lists exactly four discriminants: consumes, animates, binds-live, requires \u2014 confirmed at lines 89-92. (2) Deferred names (materializes, produces, fallbacks) appear ONLY in Section 3 (Deferred Edge Names / Anti-Scope prose, lines 127-132) and Section 8 (Anti-Scope Terms, lines 271, 281) \u2014 never in Section 2 public vocabulary table. (3) Ownership boundaries align with prep.md: M2 owns target-path grammar, M3b owns keyframe patch semantics, M4 owns shader assignment and requires edge introduction, M6 owns process repair and start-process. (4) All 8 anti-scope terms enumerated with source citations. (5) Route-model decisions frozen: four RenderRoute values, five material statuses, seven planner next actions, five determinism statuses, nine blocker reasons, four V1 executable target paths. (6) Decision traceability section lists 9 primary source files with paths. (7) git diff --check reports no whitespace errors. SC3 PASSES: deferred edge names confined to anti-scope/deferral prose only. Batch 4: Created docs/extensions/composition-spine/m0-fixture-matrices.md with sourced fixture rows for every required litera...",
+  "deviations": [
+    "Advisory quality: skipped file growth for .megaplan/epics/m0-decisions-fixtures-and-20260701-1826/events.jsonl: file is binary or not valid UTF-8",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: docs/extensions/composition-spine/README.md",
+    "Advisory audit finding: Executor claimed changed files not present in git status: docs/extensions/composition-spine/README.md",
+    "Advisory audit finding: Sense check SC2 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T2, T3, T4, T5, T6, T7, T8, T9",
+    "Added !docs/extensions/composition-spine/*.md to .gitignore because the existing *.md rule was catching all markdown files in the composition-spine directory. The plan states docs/extensions/composition-spine/** as the sole changed surface, but without this gitignore exception the files cannot be tracked. This matches the pattern already used for other docs/extensions/ files.",
+    "Advisory quality: skipped file growth for .megaplan/epics/m0-decisions-fixtures-and-20260701-1826/events.jsonl: file is binary or not valid UTF-8",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: .gitignore, docs/extensions/composition-spine/v8-architecture-baseline.md",
+    "Advisory audit finding: Executor claimed changed files not present in git status: .gitignore",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    {
+      "omitted_count": 53,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "docs/extensions/composition-spine/README.md",
+    ".gitignore",
+    "docs/extensions/composition-spine/v8-architecture-baseline.md",
+    "docs/extensions/composition-spine/m0-decisions.md",
+    "docs/extensions/composition-spine/m0-fixture-matrices.md",
+    "docs/extensions/composition-spine/m0-release-examples.md",
+    "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+    "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+  ],
+  "commands_run": [
+    "mkdir -p docs/extensions/composition-spine",
+    "git diff --name-only",
+    "git check-ignore docs/extensions/composition-spine/v8-architecture-baseline.md",
+    "grep -n 'docs/extensions' .gitignore",
+    "git diff --check -- docs/extensions/composition-spine",
+    "rg -c for source file references (49 matches)",
+    "rg -n for missing v8 brief path (only in provenance context)",
+    "rg -n for Source: annotations (8 explicit)",
+    "rg -n for deferred edge names (only in anti-scope context)",
+    "rg -n for anti-scope terms (only in anti-scope/trust posture)",
+    "git status --short docs/extensions/composition-spine/ .gitignore",
+    "rg 'consumes|animates|binds-live|requires' docs/extensions/composition-spine/m0-decisions.md",
+    "rg 'materializes|produces|fallbacks' docs/extensions/composition-spine/m0-decisions.md",
+    "git diff --check -- docs/extensions/composition-spine/m0-decisions.md",
+    "git status --short -- docs/extensions/composition-spine/",
+    "wc -l docs/extensions/composition-spine/m0-decisions.md",
+    "sed -n '119,145p' .megaplan/plans/m0-decisions-fixtures-and-20260701-1826/critique_evaluator_raw_v11.txt",
+    "nl -ba src/sdk/video/families/contributionKinds.ts | sed -n '1,140p'",
+    "nl -ba src/sdk/core/families/maturity.ts | sed -n '1,140p'",
+    "nl -ba src/sdk/video/rendering/renderability.ts | sed -n '1,140p'",
+    {
+      "omitted_count": 75,
+      "reason": "prompt projection"
+    }
+  ],
+  "watch_items": [
+    "Do not change runtime source, SDK exports, tests, scripts, config, UI code, process manager code, or existing examples; the allowed write surface is the seven docs under `docs/extensions/composition-spine/`.",
+    "The selector metadata conflict is already escalated by the gate: preserve the README's explicit path-selector contract, but do not broaden M0 into runtime tests to satisfy a harness limitation.",
+    "`materializes`, `produces`, and `fallbacks` may appear only in anti-scope or deferred-edge discussion, never in the public graph edge vocabulary table.",
+    "Anti-scope terms such as sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, and V1 SDK sidecar/process lifecycle inclusion must be exclusions or deferrals only.",
+    "All architecture and fixture claims should cite stable repo sources; avoid unverifiable claims that depend on the missing v8 brief.",
+    "Runtime tests are intentionally out of scope for M0. The final test task is scoped static validation and diff hygiene."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute this as a documentation-only milestone. Keep the DAG mostly linear because each artifact depends on vocabulary and source references from the previous one, and isolate the heavier matrix and release-example work so one worker is not juggling unrelated contracts. The approved plan already settled strategy; do not revisit whether M0 should implement runtime behavior or add tests. If validation discovers that deferred edge names appear outside anti-scope prose, fix the wording rather than deleting the required deferral record. If a harness later reports empty `test_blast_radius.selectors` despite these docs preserving the seven concrete paths, treat that as the known selector-preservation limitation, not as permission to expand M0 scope."
+}
+
+        Plan metadata:
+        {
+  "version": 23,
+  "timestamp": "2026-07-01T23:23:34Z",
+  "hash": "sha256:b0dd8acdf49491e888695fee09549d3856358d10a5249130ddf2f09a3ab9f34a",
+  "changes_summary": "Preserved the documentation-only M0 scope and corrected the structured finalize contract by putting the seven planned documentation paths directly in `test_blast_radius.selectors` as non-empty `path` selector objects, with matching changed surfaces and static validation commands.",
+  "flags_addressed": [
+    {
+      "id": "criteria_quality-2",
+      "resolution": "addressed",
+      "reason": "The revised structured output now uses the actual `test_blast_radius.selectors` field for seven non-empty path selector objects, removing the ambiguity between empty selectors and `missing_test_selectors`.",
+      "where": "Overview; Phase 1 \u2014 Step 1; Phase 4 \u2014 Step 8; Validation Order; structured `test_blast_radius.selectors`"
+    },
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Added machine-readable scoped baseline metadata with concrete documentation path selectors, mirrored changed surfaces, static `always_run` checks, and full-suite fallback only for finalize limitations.",
+      "where": "Overview; Phase 4 \u2014 Step 8; Validation Order; structured `test_blast_radius`"
+    }
+  ],
+  "questions": [
+    "Should downstream milestones cite these artifacts from `docs/extensions/composition-spine/`, or is a different durable docs path required by release tooling?",
+    "Should deferred edge names be allowed in anti-scope prose, or must automated validation require literal absence of `materializes`, `produces`, and `fallbacks` from every M0 artifact despite the brief requiring that deferral be recorded?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Only planning artifacts under `docs/extensions/composition-spine/**` are created or edited; no runtime source, SDK export, test, script, or config files are changed.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The v8 baseline artifact explicitly documents the missing original v8 brief and cites reconstructive sources instead of claiming the missing file exists.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The M0 decision record names exactly `consumes`, `animates`, `binds-live`, and `requires` as public graph edge discriminants, with deferred edge names excluded from the public vocabulary table.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Ownership assignments match the brief: `requires` in M4, process repair and `start-process` in M6, target-path grammar in M2, keyframe patch execution in M3b, and shader assignment execution in M4.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The deterministic-capture profile document lists exactly seed table, event table, scalar table, and structured motion curve table as V1 profiles, with no extra V1 profiles.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Fixture matrices include at least one row for every literal in the enumerated version/ref and target/material/process/output dimensions and do not introduce states absent from the cited SDK unions or const arrays.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Each of the four release examples has non-empty graph-path assertions, fixture row references, UI surface markers, and release gates aligned to the owning milestone.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "JSON-RPC protocol v0 names `health`, `execute`, `cancel`, `shutdown`, `progress`, `log`, `result`, `error`, all 8 lifecycle states, and the four required error classes, while matching `ProcessSpec.protocol: 'stdio-jsonrpc'`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The README includes a static validation checklist, includes targeted anti-scope term checks, and states that M0 validation should not execute runtime tests.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "M0 docs do not imply sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, or V1 SDK inclusion for sidecars/process lifecycle; any mentions are reviewed as exclusions, deferrals, or out-of-scope notes.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "run_shell",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The docs use stable source references to SDK/runtime files rather than copying unverifiable architecture claims without provenance.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The plan metadata exposes a scoped verification surface for finalize baseline selection with non-empty `path` selectors for every planned `docs/extensions/composition-spine/` artifact; command selectors and `missing_test_selectors` are not used as scoped selectors.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "If a subsequent gate still reports `test_blast_radius.selectors` as empty after this structured revision includes seven path selector objects, the issue is escalated as selector preservation failure instead of addressed by adding runtime tests or changing M0 scope.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The collective state of `prep.md`, milestone briefs, North Star constraints, SDK contracts, `family-maturity.json`, and behavior matrices is the M0 v8 architecture baseline because the cited v8 brief file is absent.",
+    "Planning artifacts should live in repo docs under `docs/extensions/composition-spine/` so future implementation milestones can cite them without depending on `.megaplan` plan output.",
+    "The edge-vocabulary expectation means deferred names must not be public edge discriminants; it does not mean the brief-required deferred decision cannot mention those names in anti-scope prose.",
+    "No runtime tests should be added or executed in M0; validation is static review, source cross-checking, and diff hygiene.",
+    "Existing dirty `.megaplan/**` harness files are unrelated and should be ignored by implementation workers.",
+    "The remaining gate failure is satisfied by scoped documentation verification metadata with concrete non-empty path selectors. If the harness again moves those paths to `missing_test_selectors` or drops them, that is a system-level selector preservation issue, not a reason to broaden M0 into runtime testing."
+  ],
+  "delta_from_previous_percent": 1.82,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "medium",
+    "selectors": [],
+    "changed_surfaces": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ],
+    "always_run": [
+      "git diff --check -- docs/extensions/composition-spine",
+      "git diff --name-only",
+      "rg \"consumes|animates|binds-live|requires|seed table|event table|scalar table|structured motion curve table|health|execute|cancel|shutdown|progress|log|result|error\" docs/extensions/composition-spine"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/v8-architecture-baseline.md. Candidate: M0 is documentation-only. Scoped finalize baseline selection is driven by the seven concrete documentation paths planned for creation or edit. Static shell commands validate markdown hygiene and required vocabulary, while runtime suites remain outside M0 unless finalize cannot accept documentation-only scoped path selectors. If these explicit path selectors are dropped by later metadata generation, that is an orchestrator limitation to escalate rather than plan scope to expand. Dropped nonexistent pytest path(s) from plan-time baseline metadata: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "ESCALATE",
+  "passed": false,
+  "rationale_brief": "Iteration 23, hard limit reached. The single open significant flag (criteria_quality-2) concerns a structural metadata mismatch: the plan prose explicitly directs that seven non-empty path selector objects go into `test_blast_radius.selectors`, but every revision across 23 iterations lands with `test_blast_radius.selectors: []` while the seven paths migrate to `missing_test_selectors`. The plan's own assumptions and success criteria anticipate this possibility and explicitly call for escalation: 'If the harness again moves those paths to missing_test_selectors or drops them, that is a system-...",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "M0 is documentation-only: no runtime code, SDK exports, test execution, or UI work. Validation is static review, grep checks, source cross-referencing, and diff hygiene.",
+      "rationale": "Aligned with the North Star constraint that this milestone produces durable planning artifacts for M1a-M7b to cite. The M0 brief, success criteria, and plan all agree on this posture."
+    },
+    {
+      "id": "SD2",
+      "decision": "The seven planned documentation artifacts live at `docs/extensions/composition-spine/` (README, v8-architecture-baseline, m0-decisions, m0-fixture-matrices, m0-release-examples, deterministic-capture-profiles, json-rpc-protocol-v0).",
+      "rationale": "Consistent across plan text, changed_surfaces, missing_test_selectors, and success criteria. This path is the stable citation target for downstream milestones."
+    },
+    {
+      "id": "SD3",
+      "decision": "Deferred edge names (`materializes`, `produces`, `fallbacks`) may appear in anti-scope/deferral prose but must not appear as public graph edge discriminants.",
+      "rationale": "The M0 brief requires recording the deferral decision. Automated validators checking for literal absence of these strings from all M0 artifacts conflict with the brief. This tension was surfaced as an open question in plan metadata and remains a reviewer judgment call."
+    },
+    {
+      "id": "SD4",
+      "decision": "Full-suite test fallback is available only if the finalize system cannot accept documentation-only scoped path selectors, not as a plan-level scope expansion.",
+      "rationale": "The plan's `full_suite_fallback: true` is a harness compatibility escape hatch, not a signal that M0 should include runtime tests. M0 explicitly forbids test execution by milestone scope."
+    }
+  ],
+  "warnings": [
+    "Iteration 23: high iteration count.",
+    "Iteration 23: hard iteration limit reached. Escalation is likely warranted.",
+    "Iteration 23: hard iteration limit reached. Further automated revision loops are unlikely to resolve the selector preservation issue.",
+    "The plan's `test_blast_radius.selectors` remains `[]` after 23 iterations despite explicit plan prose directing seven path selector objects. This is consistent with a harness that cannot represent documentation-only scoped selectors.",
+    "If the finalize system requires non-empty `selectors` to proceed but the harness cannot generate them for documentation-only milestones, the M0 milestone is structurally blocked regardless of plan quality.",
+    "The `plan_v1.meta.json` file shows `strategy: 'none'` and empty selectors, while the plan text describes `strategy: 'scoped'` with seven selectors. These two representations are in conflict and the harness-side metadata generator controls the actual output."
+  ],
+  "orchestrator_guidance": "Gate escalated. Ask the user: force-proceed, add-note, or abort. Verify unresolved flags against the plan and project code before accepting. Recurring critiques (criterion 10: requires human verification (subjective_judgment)., criterion 12: requires human verification (subjective_judgment)., criterion 9: requires human verification (subjective_judgment).); the loop likely can't fix these, so judge if they are real blockers.",
+  "carried_flags": [],
+  "iteration": 23,
+  "produced_at": "2026-07-01T23:30:43Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: M0 is documentation-only: no runtime code, SDK exports, test execution, or UI work. Validation is static review, grep checks, source cross-referencing, and diff hygiene. (Aligned with the North Star constraint that this milestone produces durable planning artifacts for M1a-M7b to cite. The M0 brief, success criteria, and plan all agree on this posture.)
+- SD2: The seven planned documentation artifacts live at `docs/extensions/composition-spine/` (README, v8-architecture-baseline, m0-decisions, m0-fixture-matrices, m0-release-examples, deterministic-capture-profiles, json-rpc-protocol-v0). (Consistent across plan text, changed_surfaces, missing_test_selectors, and success criteria. This path is the stable citation target for downstream milestones.)
+- SD3: Deferred edge names (`materializes`, `produces`, `fallbacks`) may appear in anti-scope/deferral prose but must not appear as public graph edge discriminants. (The M0 brief requires recording the deferral decision. Automated validators checking for literal absence of these strings from all M0 artifacts conflict with the brief. This tension was surfaced as an open question in plan metadata and remains a reviewer judgment call.)
+- SD4: Full-suite test fallback is available only if the finalize system cannot accept documentation-only scoped path selectors, not as a plan-level scope expansion. (The plan's `full_suite_fallback: true` is a harness compatibility escape hatch, not a signal that M0 should include runtime tests. M0 explicitly forbids test execution by milestone scope.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 9: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "criteria_quality-1",
+    "concern": "Are the success criteria well-prioritized and verifiable?: Criterion 9 (must): 'M0 docs do not imply sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, or V1 SDK inclusion for sidecars/process lifecycle.' \u2014 The word 'imply' requires human interpretation. An `rg`/keyword check can detect literal mentions but cannot mechanically determine whether a mention in anti-scope/exclusionary prose 'implies' scope inclusion vs. exclusion. This was flagged in prior iterations (gate_signals_v6, critique_v9) and the wording is identical in v14. A `must` criterion should yield a clear yes/no answer from code, tests, or diff; implication-checking is inherently subjective and belongs at `should` or `info` priority with `subjective_judgment` in its requires array.",
+    "severity": "significant",
+    "status": "verified"
+  },
+  {
+    "id": "criteria_quality-2",
+    "concern": "Are the success criteria well-prioritized and verifiable?: Criterion 12 (must): 'The plan metadata exposes a scoped verification surface for finalize baseline selection with non-empty `path` selectors for every planned `docs/extensions/composition-spine/` artifact; command selectors are not used as scoped selectors.' \u2014 The criterion itself is well-formed and mechanically verifiable (check `test_blast_radius.selectors` for non-empty path entries). However, in plan_v14.meta.json, `test_blast_radius.selectors` is still `[]` (empty) while the seven paths appear only in `missing_test_selectors`. The v14 `changes_summary` claims selectors were added, but the structured data contradicts this. This creates ambiguity about whether a mechanical verifier should inspect `selectors` (would fail \u2014 empty) or `missing_test_selectors` (would pass \u2014 seven paths). The criterion is clear; the plan metadata fails to satisfy it.",
+    "severity": "significant",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 10: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-2",
+    "concern": "Criterion 12: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size looks larger than expected: changed_lines=2201, expected\u2248270, ratio=8.15, files=8, hunks=8.",
+    "severity": "minor",
+    "evidence_file": ".gitignore"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: .gitignore"
+  ],
+  "files_in_diff": [
+    ".gitignore",
+    "docs/extensions/composition-spine/"
+  ],
+  "files_claimed": [
+    ".gitignore",
+    "docs/extensions/composition-spine/README.md",
+    "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+    "docs/extensions/composition-spine/json-rpc-protocol-v0.md",
+    "docs/extensions/composition-spine/m0-decisions.md",
+    "docs/extensions/composition-spine/m0-fixture-matrices.md",
+    "docs/extensions/composition-spine/m0-release-examples.md",
+    "docs/extensions/composition-spine/v8-architecture-baseline.md"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "green_suite: verification suite has collection/import error(s) (1); structural suite failures are not deferred by baseline status",
+    "execution_acceptance_contract: execute acceptance contract verification failed: verification suite has 1 failing test(s)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 0,
+  "would_block_reasons": [
+    "green_suite: verification suite has collection/import error(s) (1); structural suite failures are not deferred by baseline status",
+    "execution_acceptance_contract: execute acceptance contract verification failed: verification suite has 1 failing test(s)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-02T15:10:01Z",
+  "phase": "review",
+  "iteration": 23,
+  "base_sha": "15d53465077f7bed697ceaf8032c5adf4580dbce",
+  "head_sha": "a6876cf33dc291daf69df7816f7c7483a1a29a72",
+  "invocation_id": "47bb28aa5bc743f0",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:b4f51dfd4c975d6dc0123f6d7a9ce5ac86e771ce5d5b55a569da6c1b96e1faf8",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "success",
+        "reason": "execution_batch_9.json",
+        "evidence_id": "sha256:9a577a36ac51ac00f57633607cb4fd05b54b9d909bff4a58b77f92d99458c178"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "satisfied",
+      "summary": "diff present and claim-consistent",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:743eb55b82cd728f4f39fd201ad03423296266276d3b21a136447465df67cdfb",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [],\n  \"files_in_diff\": [\n    \".gitignore\",\n    \"docs/extensions/composition-spine/README.md\",\n    \"docs/extensions/composition-spine/deterministic-capture-profiles.md\",\n    \"docs/extensions/composition-spine/json-rpc-protocol-v0.md\",\n    \"docs/extensions/composition-spine/m0-decisions.md\",\n    \"docs/extensions/composition-spine/m0-fixture-matrices.md\",\n    \"docs/extensions/composition-spine/m0-release-examples.md\",\n    \"docs/extensions/composition-spine/v8-architecture-baseline.md\"\n  ],\n  \"files_in_committed_range\": [],\n  \"files_claimed\": [\n    \".gitignore\",\n    \"docs/extensions/composition-spine/README.md\",\n    \"docs/extensions/composition-spine/deterministic-capture-profiles.md\",\n    \"docs/extensions/composition-spine/json-rpc-protocol-v0.md\",\n    \"docs/extensions/composition-spine/m0-decisions.md\",\n    \"docs/extensions/composition-spine/m0-fixture-matrices.md\",\n    \"docs/extensions/composition-spine/m0-release-examples.md\",\n    \"docs/extensions/composition-spine/v8-architecture-baseline.md\"\n  ],\n  \"skipped\": false,\n  \"skip_reason\": \"\",\n  \"diff_source\": \"heuristic\",\n  \"evidence_window\": {\n    \"source\": \"heuristic_merge_base\",\n    \"base_ref\": null,\n    \"base_sha\": \n\n[truncated 190 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_1.json",
+          "sha256": "sha256:698e54fb55867220ee6cadc086c25cee94ba5ad16c3eaebcbdd092b28423a9ec",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_2.json",
+          "sha256": "sha256:a8ffb4145ee0fe5068ffb667471c3616c66c1e714e2964322113e77ca21f9618",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_3.json",
+          "sha256": "sha256:04315bf60852b11d54ba99d4071719e20f762df340326241ebfee572672c69cb",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_4.json",
+          "sha256": "sha256:076cab30707f18f471a75b681a7e945ecacf896d4f700a1d8dd42b647ed82b80",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_5.json",
+          "sha256": "sha256:ac83e65db0946ce93e5b088909f8e247d5987bd1646f15a8d47db01fee5902ec",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_6.json",
+          "sha256": "sha256:afe4377d53c25f21fd31a86d639ad1bea32d987952827b6833408b37ecef576c",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_7.json",
+          "sha256": "sha256:cb5248a5616149e7934c5936fbabb0d0ab1eaebaa00fe769aa262a021dcfe1c6",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_8.json",
+          "sha256": "sha256:8b4b463df9dea8816938d3f79fd5b42ac6e248f941b17c80bd43c110bd2a53ef",
+          "artifact_type": "application/json"
+        }
+      ],
+      "artifacts_omitted": 1,
+      "details_preview": {
+        "files_changed": 18,
+        "commands_run": 207,
+        "sections_written": 0,
+        "batches": 9,
+        "batch_artifacts": [
+          "execution_batch_1.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json",
+          "execution_batch_9.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:8d348133f08d0352f67c911dbd7b42c67e7770417ebe49467f8be3f56f9eb867"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite has collection/import error(s) (1); structural suite failures are not deferred by baseline status",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:df7a3c30ba2b",
+      "subject": "plan:plan",
+      "observed_at": "1783005001.8616521",
+      "code_hash": "sha256:0c7317339694ec355a8c6b2f666f2b9ee8a5deca5250ffa81bdfdf5e11a1f7f1",
+      "artifact": {
+        "path": "verification/raw_df7a3c30ba2b.log",
+        "sha256": "sha256:6b39adf7d13da65b3f905ab2012395059d072b85a6148df0cfe4e68835df7bb9",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_df7a3c30ba2b.log",
+          "sha256": "sha256:6b39adf7d13da65b3f905ab2012395059d072b85a6148df0cfe4e68835df7bb9",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:9c745cad15f4cd81e2116ff3b335f12c32910ab6c95a72b5cb19da1731c42dea",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"df7a3c30ba2b\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python -m pytest --tb=no -q --no-header -rA\",\n  \"duration\": 0.8660926590091549,\n  \"collected\": 1,\n  \"collected_ids\": [\n    \"vendor/timeline-schema/tests/test_materialize_output.py\"\n  ],\n  \"failure_count\": 1,\n  \"failures\": [\n    \"vendor/timeline-schema/tests/test_materialize_output.py\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"failed\",\n  \"exit_code\": 2,\n  \"code_hash\": \"sha256:0c7317339694ec355a8c6b2f666f2b9ee8a5deca5250ffa81bdfdf5e11a1f7f1\",\n  \"collections_parse_ok\": true,\n  \"collection_errors\": [\n    \"vendor/timeline-schema/tests/test_materialize_output.py\"\n  ],\n  \"raw_log_path\": \"/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826/verification/raw_df7a3c30ba2b.log\",\n  \"freshness_cache_hit\": false,\n  \"baseline_test_command\": null,\n  \"baseline_test_note\": \"test_blast_radius is scoped but contains only documentation surfaces; no pytest baseline applies; no finalize task pytest command or mappable planned files were available\",\n  \"delta\": {\n    \"computable\": true,\n    \"newly_failing\": [\n      \"vendor/timeline-schem\n\n[truncated 1,207 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unsatisfied",
+      "summary": "execute acceptance contract verification failed: verification suite has 1 failing test(s)",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"issue_hints\",\n        \"question\": \"Did the work fully address the issue hints, user notes, and approved plan requirements?\",\n        \"reason\": \"plan_v23.meta.json line 140: 'selectors': [] vs. line 5 changes_summary: 'putting the seven planned documentation paths directly in test_blast_radius.selectors as non-empty path selector objects'\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"criteria_quality\",\n        \"question\": \"Are the success criteria well-prioritized and verifiable?\",\n        \"reason\": \"v1/v3/v8/v10/v19 meta.json all have selectors:[], but changes_summary in each claims selectors were added. v23 metadata (prompt) also has selectors:[] with paths in missing_test_selectors and changed_surfaces. The plan's own criterion 13 anticipates this: 'If a subsequent gate still reports test_blast_radius.selectors as empty... escalate as selector preservation failure.'\",\n        \"complexity\": 2\n      }\n    ]\n  },\n  \"required_check_count\": 2,\n  \"suite_status\": \"failed\",\n  \"suite_run_id\": \"df7a3c30ba2b\",\n  \"evidence_id\": \"sha256:b00994a2a\n\n[truncated 59 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "not_applicable",
+      "summary": "no review.json (review may have been skipped)",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:519e446830e0c539cd39205827fa57231e722b8cf892a97834d8200a3ebfdc63"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": true,
+      "newly_failing": 1,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 1,
+      "flakes": 0,
+      "tests_collected": 1,
+      "duration": 0.8660926590091549,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        M .megaplan/epics/m0-decisions-fixtures-and-20260701-1826/events.jsonl
+ M .megaplan/initiatives/reigh-extension-composition-spine-epic/.megaplan/plans/.chains/chain-842114799446.json
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

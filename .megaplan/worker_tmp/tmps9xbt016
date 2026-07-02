@@ -1,0 +1,471 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826`
+Current milestone: `m0-decisions-fixtures`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M0: Decisions, Fixtures, And Protocol V0
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M0 Decisions, Fixtures, and Protocol V0
+
+## Overview
+M0 lands durable planning artifacts only. The repository already has SDK literals, process contracts, render planner crosswalks, canary/example material, and foundation docs needed to reconstruct the missing v8 architecture baseline. This plan creates a small `docs/extensions/composition-spine/` artifact set that M1a-M7b can cite, without runtime code, SDK export changes, UI work, runtime implementation, or runtime test execution.
+
+Root-cause check: the gate feedback does not suggest the plan targets the wrong code, wrong document surface, or wrong milestone root cause. The target remains correct because M0 is documentation-only by milestone scope and by the North Star. The failure is a verification-contract issue: finalize requires non-empty machine-readable scoped selectors and refused to infer scope from git status or prose. This revision keeps the M0 artifact scope intact and makes `test_blast_radius.selectors` a concrete list of `path` selectors, one for each planned documentation artifact. The structured output is the source of truth for those selectors; README prose mirrors it but does not replace it.
+
+The scoped baseline is a bridge, not scope growth. M0 records decisions and anti-scope boundaries; later milestones implement projection, execution, repair, and export. The only tension to preserve explicitly is edge vocabulary wording: the task requires recording that `materializes`, `produces`, and `fallbacks` are deferred, while one test expectation may read as literal absence of those strings from M0 artifacts. Implementation should treat those names as anti-scope/deferred names only, never as public edge discriminants. If a validator requires literal absence from every M0 artifact, that validator conflicts with the M0 brief and should be escalated instead of silently weakening the decision record.
+
+Ticket linkage: do not propose either open ticket as `resolves_on_complete=true`. `01KS384XKZNEWQRSXN2NXQ0DTJ` is related background but broader than M0; `01KV8XVYW2EYDDDY30V48YX520` is unrelated to composition-spine planning.
+
+## Phase 1: Baseline and Artifact Layout
+
+### Step 1: Create the M0 artifact index (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Create** the composition-spine docs directory and an index that lists every M0 artifact, its purpose, and its primary source anchors.
+2. **State** the execution posture clearly: planning artifacts only; no runtime code, no SDK export changes, no process manager, no UI implementation, and no runtime test execution.
+3. **Record** the missing v8 brief as a known source gap and point to the synthesized baseline artifact that replaces it for M0 planning.
+4. **Include** a scoped static validation section that names `docs/extensions/composition-spine/**` as the full changed surface for M0 and lists the exact static commands reviewers should run.
+5. **Mirror** the machine-readable verification contract: `test_blast_radius.strategy` is `scoped`; `test_blast_radius.selectors` must contain seven concrete selector objects of kind `path`, one for each planned doc file under `docs/extensions/composition-spine/`; static commands belong in `always_run`, not in `selectors`.
+6. **List** the seven selector values verbatim in the README validation section: `docs/extensions/composition-spine/README.md`, `docs/extensions/composition-spine/v8-architecture-baseline.md`, `docs/extensions/composition-spine/m0-decisions.md`, `docs/extensions/composition-spine/m0-fixture-matrices.md`, `docs/extensions/composition-spine/m0-release-examples.md`, `docs/extensions/composition-spine/deterministic-capture-profiles.md`, and `docs/extensions/composition-spine/json-rpc-protocol-v0.md`.
+
+### Step 2: Synthesize the v8 architecture baseline (`docs/extensions/composition-spine/v8-architecture-baseline.md`)
+**Complexity:** 3
+1. **Reconstruct** the baseline from `prep.md`, the North Star constraints, milestone briefs, `config/extensions/family-maturity.json`, SDK contract files, and the supported/deferred behavior matrix.
+2. **Capture** the immutable constraints: host-projected `CompositionGraph`, graph-authoritative fact families, V1 target path limits, live/nondeterministic bake-or-promote rules, trusted process/output sidecars outside V1 SDK, and anti-scope exclusions.
+3. **Cite** source file paths for each major claim so later milestones can audit the replacement baseline without relying on the missing `.megaplan/briefs/reigh-extension-composition-spine-plan-elegant-v8.md` file.
+
+## Phase 2: Decisions and Fixture Matrices
+
+### Step 3: Write the M0 decision record (`docs/extensions/composition-spine/m0-decisions.md`)
+**Complexity:** 3
+1. **Freeze** route-model decisions: typed `requires`/`consumes` detail, route artifact records, and multi-artifact completion records.
+2. **Declare** public graph edge vocabulary as exactly `consumes`, `animates`, `binds-live`, and `requires`.
+3. **Isolate** deferred edge names in an anti-scope section only, and never list them in the public vocabulary table.
+4. **Assign** ownership: `requires` graph projection in M4; process repair and `start-process` in M6; target-path grammar in M2; executable keyframe patch semantics in M3b; shader assignment execution in M4.
+
+### Step 4: Build fixture matrices (`docs/extensions/composition-spine/m0-fixture-matrices.md`)
+**Complexity:** 4
+1. **Enumerate** version/ref dimensions from `VIDEO_CONTRIBUTION_KINDS`, `DECLARATION_MATURITY_LEVELS`, `EXECUTION_MATURITY_LEVELS`, and package state literals already present in maturity/config sources.
+2. **Enumerate** target/material/process/output dimensions from `RENDER_ROUTES`, `DETERMINISM_STATUSES`, `RENDER_BLOCKER_REASONS`, `ProcessLifecycleState`, `RenderMaterialMediaKind`, `RenderArtifactSidecarKind`, `RenderLocatorKind`, and `ArtifactBoundary` source/target/failure behavior.
+3. **Add** one or more fixture rows per literal and mark the source authority for each row.
+4. **Cross-check** rows against `src/tools/video-editor/runtime/renderPlanner.ts` for route planning, determinism ordering, material state, and blocker reason alignment.
+
+## Phase 3: Release Examples and Capture Profiles
+
+### Step 5: Specify release-example assertions (`docs/extensions/composition-spine/m0-release-examples.md`)
+**Complexity:** 4
+1. **Inventory** the four examples as graph-backed target deliverables, not as already-composed runtime examples.
+2. **For each example**, define graph-path assertions, fixture rows, UI surface markers, blocker scenarios, artifact/completion evidence, and release gates.
+3. **Align** ownership with milestone scope: M4 for clip+shader+keyframes; M5 for effect+live-data and transition+agent-mask-material; M7b for output-format+sidecar/process.
+4. **Reference** existing canary/example files only as source material, making explicit where composed graph-backed examples do not yet exist.
+
+### Step 6: Freeze deterministic-capture profiles (`docs/extensions/composition-spine/deterministic-capture-profiles.md`)
+**Complexity:** 2
+1. **List exactly** four V1 profiles: seed table, event table, scalar table, and structured motion curve table.
+2. **Define** the evidence each profile must capture and which release examples can use it.
+3. **Mark** all additional capture/profile candidates out of V1 unless future release-example evidence justifies a new decision record.
+
+## Phase 4: Process Protocol V0 and Static Verification
+
+### Step 7: Draft JSON-RPC protocol v0 (`docs/extensions/composition-spine/json-rpc-protocol-v0.md`)
+**Complexity:** 3
+1. **Formalize** newline-delimited JSON-RPC 2.0 over stdio for `ProcessSpec.protocol: 'stdio-jsonrpc'`.
+2. **Name** methods `health`, `execute`, `cancel`, and `shutdown`; message types `progress`, `log`, `result`, and `error`; and all 8 `ProcessLifecycleState` values.
+3. **Define** task correlation fields such as `processId`, `operationId`, and `taskId`, consistent with M6a and `ProcessSpec`.
+4. **Define** at least these error classes: `protocol-error`, `timeout`, `process-exited`, and `invalid-request`.
+5. **State** that this is a protocol contract only; no process manager or sidecar runtime is implemented in M0.
+
+### Step 8: Add the M0 validation checklist (`docs/extensions/composition-spine/README.md`)
+**Complexity:** 2
+1. **Add** static validation commands and review checks to the README: `git diff --check -- docs/extensions/composition-spine`, `git diff --name-only`, targeted `rg` checks for required names, and source cross-check instructions.
+2. **Document** that runtime tests should not be run for M0 validation because this milestone is artifact-only by constraint.
+3. **Include** a final reviewer checklist for no runtime/SDK/test-file diff, complete fixture coverage, exact capture profiles, protocol naming, ownership alignment, and scoped path verification for `docs/extensions/composition-spine/**`.
+4. **Keep** the scoped baseline contract explicit: machine-readable selectors are concrete path selectors for the seven planned docs files. Static commands are validation commands, not selector kinds. Full-suite fallback is available only if the finalize system cannot accept documentation-only scoped path selectors.
+5. **Ensure** the structured plan output also carries the same seven non-empty path selector objects in `test_blast_radius.selectors`; README prose alone is not sufficient for finalize.
+
+## Execution Order
+1. Create the artifact index first so every later doc has a stable destination and naming convention.
+2. Write the synthesized v8 baseline before decisions and matrices so all M0 artifacts cite one local reference.
+3. Freeze decisions before release examples, because example assertions depend on edge vocabulary and ownership boundaries.
+4. Build fixture matrices before release gates, because release examples should point to concrete fixture rows.
+5. Draft protocol v0 after process/output fixture rows, so protocol state names agree with the matrix.
+6. Finish with static validation notes and diff hygiene.
+
+## Validation Order
+1. Use `git diff --name-only` to confirm only the seven planned docs files under `docs/extensions/composition-spine/` changed.
+2. Use `git diff --check -- docs/extensions/composition-spine` for whitespace and markdown hygiene.
+3. Use targeted `rg` checks over `docs/extensions/composition-spine/**` to confirm required names exist: four public edge discriminants, four deterministic-capture profiles, protocol methods/messages, lifecycle states, and error classes.
+4. Use contextual review for deferred edge names: they may appear only in anti-scope/deferred text, never as public graph edge discriminants.
+5. Compare fixture rows against the SDK const arrays and literal unions in the cited source files.
+6. Do not run unit, integration, e2e, or quality test suites for this milestone unless the M0 artifact-only constraint is changed.
+7. Treat the machine-readable scoped verification surface as the concrete `test_blast_radius.selectors` path-selector list for the seven planned docs files. This is the finalize baseline contract for M0 and replaces prior command-selector metadata or empty selector lists.
+
+
+        Plan metadata:
+        {
+  "version": 9,
+  "timestamp": "2026-07-01T20:12:57Z",
+  "hash": "sha256:a245c2cac3a3e0f0f7c1c2b6990e34f885c8a19c3593f7b2a43840f21181e610",
+  "changes_summary": "Addressed the finalize baseline failure in the actual structured metadata by adding seven non-empty `path` selectors under `test_blast_radius.selectors`, one for each planned documentation artifact. The plan text now clarifies that README prose mirrors this contract but does not replace the machine-readable selectors.",
+  "flags_addressed": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Added concrete machine-readable scoped path selectors for every planned M0 documentation artifact and kept validation commands in `always_run` instead of treating shell commands as selectors.",
+      "where": "Overview; Phase 1 - Step 1; Phase 4 - Step 8; Validation Order; structured `test_blast_radius.selectors`"
+    }
+  ],
+  "questions": [
+    "Should downstream milestones cite these artifacts from `docs/extensions/composition-spine/`, or is a different durable docs path required by release tooling?",
+    "Should deferred edge names be allowed in anti-scope prose, or must automated validation require literal absence of `materializes`, `produces`, and `fallbacks` from every M0 artifact despite the brief requiring that deferral be recorded?"
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Only planning artifacts under `docs/extensions/composition-spine/**` are created or edited; no runtime source, SDK export, test, script, or config files are changed.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The v8 baseline artifact explicitly documents the missing original v8 brief and cites reconstructive sources instead of claiming the missing file exists.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The M0 decision record names exactly `consumes`, `animates`, `binds-live`, and `requires` as public graph edge discriminants, with deferred edge names excluded from the public vocabulary table.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Ownership assignments match the brief: `requires` in M4, process repair and `start-process` in M6, target-path grammar in M2, keyframe patch execution in M3b, and shader assignment execution in M4.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The deterministic-capture profile document lists exactly seed table, event table, scalar table, and structured motion curve table as V1 profiles, with no extra V1 profiles.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Fixture matrices include at least one row for every literal in the enumerated version/ref and target/material/process/output dimensions and do not introduce states absent from the cited SDK unions or const arrays.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "Each of the four release examples has non-empty graph-path assertions, fixture row references, UI surface markers, and release gates aligned to the owning milestone.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "JSON-RPC protocol v0 names `health`, `execute`, `cancel`, `shutdown`, `progress`, `log`, `result`, `error`, all 8 lifecycle states, and at least 3 error classes, while matching `ProcessSpec.protocol: 'stdio-jsonrpc'`.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "M0 docs do not imply sandbox, marketplace, permission enforcement, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, generic texture routing, or V1 SDK inclusion for sidecars/process lifecycle.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_shell"
+      ]
+    },
+    {
+      "criterion": "The README includes a static validation checklist and states that M0 validation should not execute runtime tests.",
+      "priority": "should",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "The docs use stable source references to SDK/runtime files rather than copying unverifiable architecture claims without provenance.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "The plan metadata exposes a scoped verification surface for finalize baseline selection with non-empty `path` selectors for every planned `docs/extensions/composition-spine/` artifact; command selectors are not used as scoped selectors.",
+      "priority": "must",
+      "requires": [
+        "parse_diff",
+        "run_shell"
+      ]
+    }
+  ],
+  "assumptions": [
+    "The collective state of `prep.md`, milestone briefs, North Star constraints, SDK contracts, `family-maturity.json`, and behavior matrices is the M0 v8 architecture baseline because the cited v8 brief file is absent.",
+    "Planning artifacts should live in repo docs under `docs/extensions/composition-spine/` so future implementation milestones can cite them without depending on `.megaplan` plan output.",
+    "The edge-vocabulary expectation means deferred names must not be public edge discriminants; it does not mean the brief-required deferred decision cannot mention those names in anti-scope prose.",
+    "No runtime tests should be added or executed in M0; validation is static review, source cross-checking, and diff hygiene.",
+    "Existing dirty `.megaplan/**` harness files are unrelated and should be ignored by implementation workers.",
+    "The gate failure is satisfied by scoped documentation verification metadata with concrete non-empty path selectors; opting into the full runtime suite would be unjustified scope growth for M0 unless static documentation selectors are rejected by finalize."
+  ],
+  "delta_from_previous_percent": 0.6,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "medium",
+    "selectors": [],
+    "changed_surfaces": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ],
+    "always_run": [
+      "git diff --check -- docs/extensions/composition-spine",
+      "git diff --name-only",
+      "rg \"consumes|animates|binds-live|requires|seed table|event table|scalar table|structured motion curve table|health|execute|cancel|shutdown|progress|log|result|error\" docs/extensions/composition-spine"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Ignored documentation-only change(s) for selector derivation: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/v8-architecture-baseline.md. Candidate: M0 is documentation-only, so scoped finalize baseline selection should be driven by the seven concrete documentation paths planned for creation or edit. Static shell commands validate markdown hygiene and required vocabulary, while runtime suites remain outside M0 unless finalize cannot accept documentation-only scoped path selectors. Dropped nonexistent pytest path(s) from plan-time baseline metadata: docs/extensions/composition-spine/README.md, docs/extensions/composition-spine/v8-architecture-baseline.md, docs/extensions/composition-spine/m0-decisions.md, docs/extensions/composition-spine/m0-fixture-matrices.md, docs/extensions/composition-spine/m0-release-examples.md, docs/extensions/composition-spine/deterministic-capture-profiles.md, docs/extensions/composition-spine/json-rpc-protocol-v0.md.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "docs/extensions/composition-spine/README.md",
+      "docs/extensions/composition-spine/v8-architecture-baseline.md",
+      "docs/extensions/composition-spine/m0-decisions.md",
+      "docs/extensions/composition-spine/m0-fixture-matrices.md",
+      "docs/extensions/composition-spine/m0-release-examples.md",
+      "docs/extensions/composition-spine/deterministic-capture-profiles.md",
+      "docs/extensions/composition-spine/json-rpc-protocol-v0.md"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "M0 is a documentation-only milestone with clear scope boundaries that align tightly with the North Star. The plan correctly identifies that only planning artifacts under docs/extensions/composition-spine/ are created, with zero runtime code, SDK export changes, or test execution. All 12 success criteria are well-formed and verifiable.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "M0 artifacts live under docs/extensions/composition-spine/ as durable planning documents that downstream milestones can cite without depending on .megaplan plan output.",
+      "rationale": "Prep.md open question #1; resolved by plan assumption and artifact layout. This keeps implementation artifacts within the repo's existing docs surface and avoids coupling milestones to ephemeral plan directories."
+    },
+    {
+      "id": "SD2",
+      "decision": "Deferred edge names (materializes, produces, fallbacks) MAY appear in anti-scope/deferred prose sections but MUST NOT appear in the public graph edge vocabulary table.",
+      "rationale": "Prep.md open question #2; resolved by plan assumption. The brief requires recording that these edges are deferred, but the test expectation requires them not to be public discriminants. The anti-scope section pattern satisfies both constraints without silent weakening."
+    },
+    {
+      "id": "SD3",
+      "decision": "Public graph edge vocabulary is exactly four discriminants: consumes, animates, binds-live, and requires.",
+      "rationale": "Locked in prep.md ('Public graph edges remain small: consumes, animates, binds-live, and M4-owned requires') and carried forward into m0-decisions.md. No additional public edge discriminants are added in this epic."
+    },
+    {
+      "id": "SD4",
+      "decision": "V1 deterministic-capture profiles are exactly four: seed table, event table, scalar table, and structured motion curve table. No additional profiles without release-example evidence and a new decision record.",
+      "rationale": "Locked in prep.md scope and M0 brief. Prevents unbounded capture profile proliferation before release examples prove need."
+    },
+    {
+      "id": "SD5",
+      "decision": "JSON-RPC protocol v0 uses newline-delimited JSON-RPC 2.0 over stdio with methods health/execute/cancel/shutdown, message types progress/log/result/error, and all 8 ProcessLifecycleState values.",
+      "rationale": "Protocol contract frozen in M0 so M6a can implement against stable names. ProcessSpec.protocol is locked to 'stdio-jsonrpc'. No process manager or sidecar runtime is implemented in M0."
+    }
+  ],
+  "warnings": [
+    "Iteration 9: high iteration count.",
+    "The blast radius metadata in plan_v1.meta.json still has strategy='none' and selectors=[]; the implementation worker MUST update test_blast_radius to 'scoped' with non-empty path selectors for all seven docs artifacts. This is documented in the plan text but the structured metadata is stale.",
+    "Step 4 (fixture matrices) should use a mechanical enumeration approach: read each SDK source file, extract literal values from const arrays and type unions, and tabulate. Reserve cross-checking renderPlanner.ts for key alignment points (route planning logic, determinism ordering, blocker reasons) rather than exhaustive line-by-line review.",
+    "Step 5 (release examples) should use a consistent template per example to avoid truncation: graph-path assertions, fixture rows, UI surface markers, blocker scenarios, artifact/completion evidence, release gates \u2014 same structure for all four.",
+    "Steps 1 and 8 coordination: Step 1 must leave an unambiguous HTML comment marker (e.g., <!-- M0_VALIDATION_CHECKLIST -->) at the end of README.md so Step 8 can locate the correct insertion point without parsing markdown structure.",
+    "Verify no 'materializes', 'produces', or 'fallbacks' strings leak into public edge vocabulary tables in m0-decisions.md; they may only appear in anti-scope/deferred prose sections."
+  ],
+  "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Verify unresolved flags against the plan and project code before accepting. Recurring critiques (criterion 10: requires human verification (subjective_judgment).); the loop likely can't fix these, so judge if they are real blockers.",
+  "carried_flags": [
+    {
+      "flag_id": "scope-1",
+      "concern_brief": "Search for related code that handles the same concept.",
+      "rationale_brief": "The fixture matrix step enumerates mechanical data from SDK const arrays and type unions (VIDEO_CONTRIBUTION_KINDS has 21 members, DECLARATION_MATURITY_LEVELS has 3, etc.). The enumeration is table-driven \u2014 each row maps one literal to its source authority."
+    },
+    {
+      "flag_id": "scope-2",
+      "concern_brief": "Search for related code that handles the same concept.",
+      "rationale_brief": "All four release examples follow an identical structural template (graph-path assertions, fixture row references, UI surface markers, blocker scenarios, artifact/completion evidence, release gates). The content is repetitive rather than requiring diverse cross-referencing."
+    },
+    {
+      "flag_id": "scope-3",
+      "concern_brief": "Search for related code that handles the same concept.",
+      "rationale_brief": "The README coordination risk is confined to a single markdown file and a single append operation. Step 1 creates the file with index, execution posture, anti-scope, and initial validation section."
+    }
+  ],
+  "iteration": 9,
+  "produced_at": "2026-07-01T20:19:55Z"
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m0-decisions-fixtures-and-20260701-1826/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.
