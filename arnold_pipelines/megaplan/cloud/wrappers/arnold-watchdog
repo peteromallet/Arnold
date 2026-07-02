@@ -227,6 +227,7 @@ plan_attention_status_env() {
   python3 - "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" <<'PY'
 import hashlib
 import json
+import re
 import shlex
 import sys
 from pathlib import Path
@@ -281,6 +282,81 @@ def load_chain_state() -> tuple[dict[str, object], str]:
     return {}, ""
 
 
+def resolve_spec_path() -> Path | None:
+    if not remote_spec_raw:
+        return None
+    try:
+        spec_path = Path(remote_spec_raw)
+        if not spec_path.is_absolute():
+            spec_path = workspace / spec_path
+        try:
+            return spec_path.resolve()
+        except Exception:
+            return spec_path
+    except Exception:
+        return None
+
+
+def spec_milestone_labels() -> tuple[list[str], bool]:
+    spec_path = resolve_spec_path()
+    if spec_path is None:
+        return [], False
+    try:
+        raw = spec_path.read_text(encoding="utf-8")
+    except Exception:
+        return [], False
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(raw)
+        milestones = data.get("milestones") if isinstance(data, dict) else None
+        if isinstance(milestones, list):
+            labels: list[str] = []
+            for item in milestones:
+                if not isinstance(item, dict):
+                    continue
+                label = item.get("label")
+                if isinstance(label, str) and label:
+                    labels.append(label)
+            return labels, True
+    except Exception:
+        pass
+    labels = []
+    in_milestones = False
+    for line in raw.splitlines():
+        if re.match(r"^milestones:\s*$", line):
+            in_milestones = True
+            continue
+        if in_milestones and re.match(r"^[A-Za-z_][\w-]*:", line):
+            break
+        match = re.match(r"^\s*-\s*label:\s*['\"]?([^'\"\s#]+)", line)
+        if in_milestones and match:
+            labels.append(match.group(1))
+    return labels, True
+
+
+def chain_completion_summary(chain_state: dict[str, object]) -> tuple[bool, int, int]:
+    labels, spec_known = spec_milestone_labels()
+    milestone_count = len(labels)
+    completed = chain_state.get("completed")
+    completed_list = completed if isinstance(completed, list) else []
+    completed_labels = {
+        item.get("label")
+        for item in completed_list
+        if isinstance(item, dict) and isinstance(item.get("label"), str)
+    }
+    try:
+        current_index = int(chain_state.get("current_milestone_index") or 0)
+    except Exception:
+        current_index = 0
+    if spec_known and milestone_count == 0:
+        return True, current_index, milestone_count
+    if not spec_known:
+        return False, current_index, milestone_count
+    complete = current_index >= milestone_count or set(labels).issubset(completed_labels)
+    return complete, current_index, milestone_count
+
+
 def missing_base_ref_attention(chain_state: object) -> tuple[bool, str, str, str]:
     try:
         if not isinstance(chain_state, dict):
@@ -320,6 +396,7 @@ if chain_plan_name:
 chain_last_state = chain_state.get("last_state") if isinstance(chain_state, dict) else ""
 if not isinstance(chain_last_state, str):
     chain_last_state = ""
+chain_complete, chain_current_index, chain_milestone_count = chain_completion_summary(chain_state)
 
 plans_dir = workspace / ".megaplan" / "plans"
 state_path = None
@@ -453,7 +530,13 @@ if not current_state and not retry_strategy:
         if missing_base_ref_recorded_at:
             failure_recorded_at = missing_base_ref_recorded_at
 
-if run_kind == "chain" and not resolved_plan_name and not current_state and chain_last_state == "done":
+if (
+    run_kind == "chain"
+    and not resolved_plan_name
+    and not current_state
+    and chain_last_state == "done"
+    and chain_complete
+):
     current_state = "done"
 
 state_mismatch = (
@@ -560,6 +643,9 @@ emit("PLAN_STATUS_AWAITING_HUMAN", "1" if awaiting_human else "0")
 emit("PLAN_STATUS_AWAITING_HUMAN_REASON", awaiting_human_reason)
 emit("PLAN_STATUS_STATE_MISMATCH", "1" if state_mismatch else "0")
 emit("PLAN_STATUS_STATE_MISMATCH_SUMMARY", state_mismatch_summary)
+emit("PLAN_STATUS_CHAIN_COMPLETE", "1" if chain_complete else "0")
+emit("PLAN_STATUS_CHAIN_CURRENT_INDEX", str(chain_current_index))
+emit("PLAN_STATUS_CHAIN_MILESTONE_COUNT", str(chain_milestone_count))
 PY
 }
 
@@ -1808,6 +1894,80 @@ def resolve_chain_state_path() -> Path | None:
     return None
 
 
+def resolve_spec_path() -> Path | None:
+    if not remote_spec_raw:
+        return None
+    try:
+        spec_path = Path(remote_spec_raw)
+        if not spec_path.is_absolute():
+            spec_path = workspace / spec_path
+        try:
+            return spec_path.resolve()
+        except Exception:
+            return spec_path
+    except Exception:
+        return None
+
+
+def spec_milestone_labels() -> tuple[list[str], bool]:
+    spec_path = resolve_spec_path()
+    if spec_path is None:
+        return [], False
+    try:
+        raw = spec_path.read_text(encoding="utf-8")
+    except Exception:
+        return [], False
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(raw)
+        milestones = data.get("milestones") if isinstance(data, dict) else None
+        if isinstance(milestones, list):
+            labels: list[str] = []
+            for item in milestones:
+                if not isinstance(item, dict):
+                    continue
+                label = item.get("label")
+                if isinstance(label, str) and label:
+                    labels.append(label)
+            return labels, True
+    except Exception:
+        pass
+    labels = []
+    in_milestones = False
+    for line in raw.splitlines():
+        if re.match(r"^milestones:\s*$", line):
+            in_milestones = True
+            continue
+        if in_milestones and re.match(r"^[A-Za-z_][\w-]*:", line):
+            break
+        match = re.match(r"^\s*-\s*label:\s*['\"]?([^'\"\s#]+)", line)
+        if in_milestones and match:
+            labels.append(match.group(1))
+    return labels, True
+
+
+def chain_state_is_complete(chain_state: dict[str, object]) -> tuple[bool, int]:
+    labels, spec_known = spec_milestone_labels()
+    milestone_count = len(labels)
+    completed = chain_state.get("completed")
+    completed_list = completed if isinstance(completed, list) else []
+    completed_labels = {
+        item.get("label")
+        for item in completed_list
+        if isinstance(item, dict) and isinstance(item.get("label"), str)
+    }
+    try:
+        current_index = int(chain_state.get("current_milestone_index") or 0)
+    except Exception:
+        current_index = 0
+    if spec_known and milestone_count == 0:
+        return True, milestone_count
+    if not spec_known:
+        return False, milestone_count
+    return current_index >= milestone_count or set(labels).issubset(completed_labels), milestone_count
+
+
 def resolve_chain_log_path() -> Path | None:
     candidates = []
     if session == "megaplan-chain":
@@ -1994,6 +2154,7 @@ current_index = int(chain_state.get("current_milestone_index") or 0)
 completed = chain_state.get("completed")
 completed_list = completed if isinstance(completed, list) else []
 completed_count = len(completed_list)
+chain_complete, milestone_count = chain_state_is_complete(chain_state)
 
 plan_dir = workspace / ".megaplan" / "plans" / current_plan_name if current_plan_name else None
 plan_state_path = plan_dir / "state.json" if plan_dir is not None else None
@@ -2038,6 +2199,8 @@ snapshot = {
     "last_state": last_state,
     "current_milestone_index": current_index,
     "completed_count": completed_count,
+    "milestone_count": milestone_count,
+    "chain_complete": chain_complete,
     "pr_state": pr_state,
     "pr_number": pr_number,
     "events_mtime": events_mtime,
@@ -2054,7 +2217,8 @@ except Exception:
 
 skip_detection = (
     health == "awaiting_pr_merge"
-    or last_state in {"awaiting_pr_merge", "done", "complete"}
+    or last_state == "awaiting_pr_merge"
+    or (last_state in {"done", "complete"} and chain_complete)
     or not chain_state
 )
 if skip_detection:
@@ -2526,6 +2690,7 @@ session_terminal_status() {
 import hashlib
 import json
 import pathlib
+import re
 import sys
 
 session = sys.argv[1]
@@ -2605,6 +2770,39 @@ def latest_chain_state(root: pathlib.Path, remote_spec_value: str) -> pathlib.Pa
     return ordered[0][1] if ordered else None
 
 
+def spec_milestones(root: pathlib.Path, remote_spec_value: str) -> list[dict[str, object]]:
+    if not remote_spec_value:
+        return []
+    spec_path = pathlib.Path(remote_spec_value)
+    if not spec_path.is_absolute():
+        spec_path = root / spec_path
+    try:
+        raw = spec_path.read_text(encoding="utf-8")
+    except Exception:
+        return []
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(raw)
+        milestones = data.get("milestones") if isinstance(data, dict) else None
+        if isinstance(milestones, list):
+            return [item for item in milestones if isinstance(item, dict)]
+    except Exception:
+        pass
+    labels: list[dict[str, object]] = []
+    in_milestones = False
+    for line in raw.splitlines():
+        if re.match(r"^milestones:\s*$", line):
+            in_milestones = True
+            continue
+        if in_milestones and re.match(r"^[A-Za-z_][\w-]*:", line):
+            break
+        match = re.match(r"^\s*-\s*label:\s*['\"]?([^'\"\s#]+)", line)
+        if in_milestones and match:
+            labels.append({"label": match.group(1)})
+    return labels
+
+
 def resolve_plan_state(root: pathlib.Path, preferred_name: str) -> pathlib.Path | None:
     candidates = candidate_plan_states(root)
     if preferred_name:
@@ -2622,12 +2820,12 @@ def is_terminal_plan(plan_state: dict[str, object]) -> tuple[bool, str]:
     return False, ""
 
 
-def chain_completion_reason(chain_state: dict[str, object]) -> str:
+def chain_completion_reason(chain_state: dict[str, object], milestones_from_spec: list[dict[str, object]] | None = None) -> str:
     last_state = str(chain_state.get("last_state") or "").strip().lower()
-    if last_state in {"done", "complete"}:
-        return f"last_state={last_state}"
     milestones = chain_state.get("milestones")
     milestones = milestones if isinstance(milestones, list) else []
+    if not milestones and milestones_from_spec:
+        milestones = milestones_from_spec
     completed = chain_state.get("completed")
     completed = completed if isinstance(completed, list) else []
     milestone_count = len(milestones)
@@ -2654,6 +2852,8 @@ def chain_completion_reason(chain_state: dict[str, object]) -> str:
         return f"all_milestones_completed={len(milestone_labels)}/{milestone_count}"
     if milestone_count and completed_count >= milestone_count:
         return f"completed_entries={completed_count}/{milestone_count}"
+    if last_state in {"done", "complete"} and not milestone_count:
+        return f"last_state={last_state}"
     return ""
 
 
@@ -2742,7 +2942,7 @@ plan_path = resolve_plan_state(workspace, preferred_plan_name) if workspace.exis
 plan_state = load_json(plan_path)
 
 if run_kind == "chain":
-    chain_reason = chain_completion_reason(chain_state)
+    chain_reason = chain_completion_reason(chain_state, spec_milestones(workspace, remote_spec_raw))
     if chain_reason:
         print("\t".join(["chain", chain_reason, str(chain_path or ""), str(plan_path or ""), str(plan_state.get("current_state") or plan_state.get("state") or "")]))
         raise SystemExit(0)
@@ -4469,6 +4669,9 @@ PY
   PLAN_STATUS_AWAITING_HUMAN_REASON=
   PLAN_STATUS_STATE_MISMATCH=0
   PLAN_STATUS_STATE_MISMATCH_SUMMARY=
+  PLAN_STATUS_CHAIN_COMPLETE=0
+  PLAN_STATUS_CHAIN_CURRENT_INDEX=
+  PLAN_STATUS_CHAIN_MILESTONE_COUNT=
   # If the helper emits nothing, keep the tick on the default non-attention path.
   plan_status_env="$(plan_attention_status_env "$workspace" "$remote_spec_path" "$run_kind" "$plan_name" 2>>"$LOG" || true)"
   if [[ -n "$plan_status_env" ]]; then
@@ -4557,7 +4760,7 @@ PY
     notify_needs_human "$report_items" "$session" "$workspace" "$remote_spec" "$run_kind" "$health" "$human_summary"
     return 0
   fi
-  if [[ "$run_kind" == "chain" && -z "${PLAN_STATUS_PLAN_NAME:-}" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" ]]; then
+  if [[ "$run_kind" == "chain" && -z "${PLAN_STATUS_PLAN_NAME:-}" && "${PLAN_STATUS_CURRENT_STATE:-}" == "done" && "${PLAN_STATUS_CHAIN_COMPLETE:-0}" == "1" ]]; then
     log "chain complete; skipping repair/relaunch session=$session state=done"
     report_item "$report_items" "$session" "observe" "complete" "chain complete" "$workspace" "$remote_spec"
     return 0
