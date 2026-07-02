@@ -79,8 +79,8 @@ def resolve_current_target(
     marker_path = markers_root / f"{session}.json"
     marker = _safe_load_dict(marker_path)
     workspace = _safe_path(marker.get("workspace"))
-    run_kind = _safe_text(marker.get("run_kind")) or "unknown"
     remote_spec = _resolve_remote_spec(workspace, marker.get("remote_spec"))
+    run_kind = _resolve_run_kind(marker.get("run_kind"), remote_spec)
     marker_plan_name = _safe_plan_name(marker.get("plan_name"))
 
     chain_state_path = _chain_state_path(workspace, remote_spec, run_kind)
@@ -284,6 +284,17 @@ def _resolve_remote_spec(workspace: Path | None, value: object) -> Path | None:
     if path.is_absolute() or workspace is None:
         return path
     return workspace / path
+
+
+def _resolve_run_kind(value: object, remote_spec: Path | None) -> str:
+    text = _safe_text(value)
+    if text and text != "unknown":
+        return text
+    if remote_spec is not None and remote_spec.name == "chain.yaml":
+        return "chain"
+    if remote_spec is not None and remote_spec.name == "epic-chain.yaml":
+        return "epic_chain"
+    return "unknown"
 
 
 def _chain_state_path(workspace: Path | None, remote_spec: Path | None, run_kind: str) -> Path | None:
