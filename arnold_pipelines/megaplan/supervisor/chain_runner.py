@@ -726,6 +726,33 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             finalize_records = [
                 task for task in finalize_tasks if isinstance(task, dict)
             ]
+            filtered_finalize_records: list[dict[str, Any]] = []
+            batch_task_ids = {
+                str(task.get("task_id") or task.get("id") or "")
+                for task in task_records
+                if isinstance(task, dict)
+            }
+            for task in finalize_records:
+                task_id = str(task.get("task_id") or task.get("id") or "")
+                if task_id and task_id in batch_task_ids:
+                    filtered_finalize_records.append(task)
+                    continue
+                if task.get("status") != "pending":
+                    filtered_finalize_records.append(task)
+                    continue
+                if any(
+                    task.get(field)
+                    for field in (
+                        "files_changed",
+                        "commands_run",
+                        "evidence_files",
+                        "sections_written",
+                        "evidence",
+                        "head_sha",
+                    )
+                ):
+                    filtered_finalize_records.append(task)
+            finalize_records = filtered_finalize_records
             finalize_decisions: dict[str, Any] = {}
             finalize_completed = effective_execute_completed_task_ids(
                 finalize_records,
