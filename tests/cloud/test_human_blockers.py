@@ -13,10 +13,13 @@ from arnold_pipelines.megaplan.cloud.human_blockers import (
     HumanBlockerClassification,
     build_needs_human_marker,
     classify_needs_human_blocker,
+    clear_needs_human_marker,
+    compute_escalation_id,
+    supersede_needs_human_marker,
     write_needs_human_marker_payload,
 )
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
-from arnold_pipelines.megaplan.cloud.repair_contract import read_jsonl_records
+from arnold_pipelines.megaplan.cloud.repair_contract import _sidecar_jsonl_path, read_jsonl_records
 
 
 # ---------------------------------------------------------------------------
@@ -775,6 +778,154 @@ def test_marker_build_with_failed_discord_status(
     assert marker["discord_status"] == "failed:webhook-timeout"
 
 
+def test_supersede_needs_human_marker_rewrites_pointer_and_appends_superseded_record(
+    tmp_path: Path,
+) -> None:
+    sidecar_dir = tmp_path / "sidecars"
+    marker_path = tmp_path / "demo-session.needs-human.json"
+    repair_data_path = tmp_path / "repair-data.json"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    original_payload = {
+        "session": "demo-session",
+        "workspace": "/tmp/workspace",
+        "spec": "/tmp/workspace/.megaplan/initiatives/demo/chain.yaml",
+        "run_kind": "chain",
+        "plan_name": "m1-plan",
+        "current_failure_context": {
+            "resolver_output": {
+                "target_id": "demo-session:m1-plan",
+                "authoritative_source": "chain_state",
+                "current_refs": {
+                    "current_plan_name": "m1-plan",
+                    "chain_current_plan_name": "m1-plan",
+                },
+            }
+        },
+        "iterations": [],
+    }
+    updated_payload = {
+        **original_payload,
+        "plan_name": "m2-plan",
+        "current_failure_context": {
+            "resolver_output": {
+                "target_id": "demo-session:m2-plan",
+                "authoritative_source": "chain_state",
+                "current_refs": {
+                    "current_plan_name": "m2-plan",
+                    "chain_current_plan_name": "m2-plan",
+                },
+            }
+        },
+    }
+
+    original_marker = write_needs_human_marker_payload(
+        marker_path,
+        original_payload,
+        repair_data_path=repair_data_path,
+        discord_status="delivered",
+        recorded_at="2026-07-01T00:00:00+00:00",
+    )
+    original_escalation_id = compute_escalation_id(
+        "demo-session",
+        target_id=original_marker["target_id"],
+        current_plan=original_marker["plan_name"],
+        current_plan_name=original_marker["current_plan_name"],
+        needs_human_path=str(marker_path),
+    )
+    replacement_escalation_id = compute_escalation_id(
+        "demo-session",
+        target_id="demo-session:m2-plan",
+        current_plan="m2-plan",
+        current_plan_name="m2-plan",
+        needs_human_path=str(marker_path),
+    )
+    writer.write_opened(
+        "demo-session",
+        escalation_id=original_escalation_id,
+        current_plan="m1-plan",
+        target_id="demo-session:m1-plan",
+    )
+
+    marker = supersede_needs_human_marker(
+        marker_path,
+        updated_payload,
+        repair_data_path=repair_data_path,
+        discord_status="delivered",
+        previous_escalation_id=original_escalation_id,
+        superseded_by=replacement_escalation_id,
+        ledger_writer=writer,
+        reason="current target moved",
+        recorded_at="2026-07-02T00:00:00+00:00",
+    )
+
+    assert json.loads(marker_path.read_text(encoding="utf-8")) == marker
+    assert marker["target_id"] == "demo-session:m2-plan"
+    assert marker["plan_name"] == "m2-plan"
+
+    records = read_jsonl_records(_sidecar_jsonl_path(sidecar_dir, "escalations"))
+    assert [record["event"] for record in records] == ["opened", "superseded"]
+    assert records[0]["target_id"] == "demo-session:m1-plan"
+    assert records[1]["escalation_id"] == original_escalation_id
+    assert records[1]["superseded_by"] == replacement_escalation_id
+    assert records[1]["previous_target_id"] == "demo-session:m1-plan"
+    assert records[1]["new_target_id"] == "demo-session:m2-plan"
+    assert records[1]["reason"] == "current target moved"
+
+
+def test_clear_needs_human_marker_removes_pointer_without_touching_ledger(tmp_path: Path) -> None:
+    sidecar_dir = tmp_path / "sidecars"
+    marker_path = tmp_path / "demo-session.needs-human.json"
+    repair_data_path = tmp_path / "repair-data.json"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    payload = {
+        "session": "demo-session",
+        "workspace": "/tmp/workspace",
+        "plan_name": "m1-plan",
+        "current_failure_context": {
+            "resolver_output": {
+                "target_id": "demo-session:m1-plan",
+                "authoritative_source": "chain_state",
+                "current_refs": {
+                    "current_plan_name": "m1-plan",
+                    "chain_current_plan_name": "m1-plan",
+                },
+            }
+        },
+        "iterations": [],
+    }
+    marker = write_needs_human_marker_payload(
+        marker_path,
+        payload,
+        repair_data_path=repair_data_path,
+        discord_status="delivered",
+        recorded_at="2026-07-01T00:00:00+00:00",
+    )
+    escalation_id = compute_escalation_id(
+        "demo-session",
+        target_id=marker["target_id"],
+        current_plan=marker["plan_name"],
+        current_plan_name=marker["current_plan_name"],
+        needs_human_path=str(marker_path),
+    )
+    writer.write_opened(
+        "demo-session",
+        escalation_id=escalation_id,
+        current_plan="m1-plan",
+        target_id="demo-session:m1-plan",
+    )
+    ledger_path = _sidecar_jsonl_path(sidecar_dir, "escalations")
+    before = read_jsonl_records(ledger_path)
+
+    assert clear_needs_human_marker(marker_path) is True
+    assert marker_path.exists() is False
+    assert clear_needs_human_marker(marker_path) is False
+    assert read_jsonl_records(ledger_path) == before
+
+
 # ---------------------------------------------------------------------------
 # Escalation ledger writer tests (disabled by default)
 # ---------------------------------------------------------------------------
@@ -835,6 +986,35 @@ def test_ledger_write_classification_when_enabled(tmp_path: Path) -> None:
     assert record["rationale"] == ["references current plan"]
 
 
+def test_compute_escalation_id_is_deterministic() -> None:
+    escalation_a = compute_escalation_id(
+        "demo-session",
+        target_id="demo-session:m1-plan",
+        current_plan="m1-plan",
+        current_plan_name="m1-plan",
+        needs_human_path="/tmp/demo.needs-human.json",
+    )
+    escalation_b = compute_escalation_id(
+        "demo-session",
+        target_id="demo-session:m1-plan",
+        current_plan="m1-plan",
+        current_plan_name="m1-plan",
+        needs_human_path="/tmp/demo.needs-human.json",
+    )
+    escalation_c = compute_escalation_id(
+        "demo-session",
+        target_id="demo-session:m2-plan",
+        current_plan="m2-plan",
+        current_plan_name="m2-plan",
+        needs_human_path="/tmp/demo.needs-human.json",
+    )
+
+    assert escalation_a == escalation_b
+    assert escalation_a.startswith("esc-")
+    assert len(escalation_a) == 20
+    assert escalation_a != escalation_c
+
+
 def test_ledger_write_incident_when_enabled(tmp_path: Path) -> None:
     """When enabled, write_incident appends a generic incident record."""
     sidecar_dir = tmp_path / "sidecars"
@@ -857,6 +1037,115 @@ def test_ledger_write_incident_when_enabled(tmp_path: Path) -> None:
     assert record["kind"] == "manual_override"
     assert record["summary"] == "human confirmed blocker"
     assert record["source"] == "operator"
+
+
+def test_ledger_lifecycle_writes_to_escalations_sidecar(tmp_path: Path) -> None:
+    sidecar_dir = tmp_path / "sidecars"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    escalation_id = compute_escalation_id(
+        "demo-session",
+        target_id="demo-session:m1-plan",
+        current_plan="m1-plan",
+    )
+
+    result = writer.write_opened(
+        "demo-session",
+        escalation_id=escalation_id,
+        current_plan="m1-plan",
+        target_id="demo-session:m1-plan",
+        extra={"detail": "Authorization: Bearer sk-secret-token-value"},
+    )
+
+    assert result == _sidecar_jsonl_path(sidecar_dir, "escalations")
+    records = read_jsonl_records(result)
+    assert len(records) == 1
+    record = records[0]
+    assert record["session"] == "demo-session"
+    assert record["escalation_id"] == escalation_id
+    assert record["event"] == "opened"
+    assert record["current_plan"] == "m1-plan"
+    assert record["target_id"] == "demo-session:m1-plan"
+    assert record["detail"] == f"Authorization: Bearer {REDACTION}"
+
+
+def test_ledger_lifecycle_methods_append_redacted_records(tmp_path: Path) -> None:
+    sidecar_dir = tmp_path / "sidecars"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+
+    escalation_id = compute_escalation_id(
+        "demo-session",
+        target_id="demo-session:m1-plan",
+        current_plan="m1-plan",
+    )
+
+    writer.write_opened(
+        "demo-session",
+        escalation_id=escalation_id,
+        current_plan="m1-plan",
+        target_id="demo-session:m1-plan",
+    )
+    writer.write_delivered(
+        "demo-session",
+        escalation_id=escalation_id,
+        channel_id="chan-1",
+        message_ids=["msg-1", "msg-2"],
+    )
+    writer.write_unavailable(
+        "demo-session",
+        escalation_id=escalation_id,
+        reason="Bearer super-secret-token",
+    )
+    writer.write_answered(
+        "demo-session",
+        escalation_id=escalation_id,
+        responder_user_id="user-1",
+        channel_id="chan-1",
+        message_id="msg-2",
+    )
+    writer.write_superseded(
+        "demo-session",
+        escalation_id=escalation_id,
+        superseded_by="esc-next",
+        reason="current target moved",
+    )
+    writer.write_timed_out(
+        "demo-session",
+        escalation_id=escalation_id,
+        deadline_at="2026-07-02T00:00:00Z",
+    )
+    result = writer.write_resume_attempted(
+        "demo-session",
+        escalation_id=escalation_id,
+        action="resume_repair",
+        resume_status="queued",
+        extra={"note": "token=sk-secret-token-value"},
+    )
+
+    assert result == _sidecar_jsonl_path(sidecar_dir, "escalations")
+    records = read_jsonl_records(result)
+    assert [record["event"] for record in records] == [
+        "opened",
+        "delivered",
+        "unavailable",
+        "answered",
+        "superseded",
+        "timed_out",
+        "resume_attempted",
+    ]
+    assert all(record["session"] == "demo-session" for record in records)
+    assert all(record["escalation_id"] == escalation_id for record in records)
+    assert records[1]["message_ids"] == ["msg-1", "msg-2"]
+    assert records[1]["message_count"] == 2
+    assert records[2]["reason"] == f"Bearer {REDACTION}"
+    assert records[3]["responder_user_id"] == "user-1"
+    assert records[4]["superseded_by"] == "esc-next"
+    assert records[5]["deadline_at"] == "2026-07-02T00:00:00Z"
+    assert records[6]["action"] == "resume_repair"
+    assert records[6]["resume_status"] == "queued"
+    assert records[6]["note"] == f"token={REDACTION}"
 
 
 def test_ledger_disable_then_reenable(tmp_path: Path) -> None:
@@ -990,6 +1279,23 @@ def test_ledger_sidecar_dir_none_after_disable(tmp_path: Path) -> None:
     assert result is None
 
 
+def test_ledger_lifecycle_writes_are_noops_when_disabled(tmp_path: Path) -> None:
+    sidecar_dir = tmp_path / "sidecars"
+    writer = EscalationLedgerWriter()
+    writer.enable(sidecar_dir)
+    writer.disable()
+
+    result = writer.write_delivered(
+        "demo-session",
+        escalation_id="esc-disabled",
+        channel_id="chan-1",
+        message_ids=["msg-1"],
+    )
+
+    assert result is None
+    assert not _sidecar_jsonl_path(sidecar_dir, "escalations").exists()
+
+
 def test_ledger_multiple_verdicts_including_mechanical(tmp_path: Path) -> None:
     """Ledger correctly records MECHANICAL_BLOCKER alongside other verdicts."""
     sidecar_dir = tmp_path / "sidecars"
@@ -1003,8 +1309,6 @@ def test_ledger_multiple_verdicts_including_mechanical(tmp_path: Path) -> None:
             current_plan="m1-plan",
         )
         writer.write_classification(classification)
-
-    from arnold_pipelines.megaplan.cloud.repair_contract import _sidecar_jsonl_path
 
     all_records = read_jsonl_records(_sidecar_jsonl_path(sidecar_dir, "incidents"))
     verdicts = [r["verdict"] for r in all_records if r.get("kind") == "blocker_classified"]

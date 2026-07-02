@@ -4502,7 +4502,7 @@ def test_watchdog_needs_human_discord_dm_is_primary_delivery(tmp_path: Path) -> 
     dm_helper.write_text(
         "#!/usr/bin/env bash\n"
         f"cat > {str(tmp_path / 'dm-payload.json')!r}\n"
-        "printf '%s\\n' '{\"ok\": true, \"message_count\": 1}'\n",
+        "printf '%s\\n' '{\"ok\": true, \"message_ids\": [\"msg-1\"], \"channel_id\": \"channel-1\", \"message_count\": 1}'\n",
         encoding="utf-8",
     )
     dm_helper.chmod(dm_helper.stat().st_mode | stat.S_IXUSR)
@@ -4809,6 +4809,9 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert "repair_recurrence_prepare_attempt()" in text
     assert "render_recurrence_block()" in text
     assert "repair_exhausted_should_retry_without_human()" in text
+    assert 'PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$MARKER_DIR" "$DATA_DIR" "$NEEDS_HUMAN_FILE"' in text
+    assert "classify_needs_human_blocker(" in text
+    assert "classification.should_block" in text
     assert "collect_failure_context_json()" in text
     assert "PLAN_STATUS_STATE_MISMATCH" in _wrapper("arnold-watchdog")
     assert "render_failure_summary()" in text
@@ -4840,8 +4843,13 @@ def test_repair_loop_wrapper_records_accumulated_data_and_escalates_models() -> 
     assert 'repair_data_set_outcome "recurring_retry_pending"' in text
     assert 'repair_data_set_outcome "discord_escalated"' in text
     assert text.index('exit_if_repair_target_complete "post-iterations"') < text.index('repair_data_set_outcome "discord_escalated"')
+    assert 'if [[ "$discord_status" == "delivered" ]]; then' in text
     assert "write_needs_human_marker" in text
     assert "send_discord_escalation" in text
+    assert "EscalationLedgerWriter" in text
+    assert "writer.write_opened(" in text
+    assert "writer.write_delivered(" in text
+    assert "writer.write_unavailable(" in text
     assert "## Incident Snapshot" in text
     assert "## RECURRENCE EVIDENCE" in text
     assert "This is attempt " in text
@@ -7325,9 +7333,15 @@ def test_repair_loop_stops_recurring_retry_for_prep_clarification_gate(tmp_path:
 
     program = _extract_repair_program(
         "repair_exhausted_should_retry_without_human",
-        "python3 - \"$DATA_FILE\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$MARKER_DIR\" \"$DATA_DIR\" \"$NEEDS_HUMAN_FILE\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(data_path))
+    result = _run_embedded_python(
+        program,
+        str(data_path),
+        str(tmp_path / "markers"),
+        str(tmp_path),
+        str(tmp_path / "demo.needs-human.json"),
+    )
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "0"
@@ -7352,9 +7366,15 @@ def test_repair_loop_stops_recurring_retry_for_stale_awaiting_human_context(tmp_
 
     program = _extract_repair_program(
         "repair_exhausted_should_retry_without_human",
-        "python3 - \"$DATA_FILE\" <<'PY'",
+        "PYTHONPATH=\"$ARNOLD_SRC:${PYTHONPATH:-}\" python3 - \"$DATA_FILE\" \"$MARKER_DIR\" \"$DATA_DIR\" \"$NEEDS_HUMAN_FILE\" <<'PY'",
     )
-    result = _run_embedded_python(program, str(data_path))
+    result = _run_embedded_python(
+        program,
+        str(data_path),
+        str(tmp_path / "markers"),
+        str(tmp_path),
+        str(tmp_path / "demo.needs-human.json"),
+    )
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "0"

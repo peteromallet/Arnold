@@ -309,8 +309,13 @@ def build_verification_record(
 # JSONL / NDJSON sidecar helpers (append-only, atomic)
 # ---------------------------------------------------------------------------
 
-_SIDECAR_KINDS = ("events", "incidents", "attempts")
-_SIDECAR_FILENAME = {kind: f"{kind}.jsonl" for kind in _SIDECAR_KINDS}
+_SIDECAR_KINDS = ("events", "incidents", "attempts", "escalations")
+_SIDECAR_FILENAME = {
+    "events": "events.jsonl",
+    "incidents": "incidents.jsonl",
+    "attempts": "attempts.jsonl",
+    "escalations": "escalations.jsonl",
+}
 
 
 def _fsync_dir(path: Path) -> None:
@@ -535,6 +540,15 @@ def append_attempt_record(
     return append_jsonl_record(sidecar_dir, "attempts", record, **kwargs)
 
 
+def append_escalation_record(
+    sidecar_dir: str | Path,
+    record: Mapping[str, Any],
+    **kwargs: Any,
+) -> Path:
+    """Append an escalation lifecycle record to the ``escalations`` sidecar."""
+    return append_jsonl_record(sidecar_dir, "escalations", record, **kwargs)
+
+
 __all__ = [
     "ADDITIVE_FIELD_DEFAULTS",
     "ALL_OUTCOMES",
@@ -553,6 +567,7 @@ __all__ = [
     "SUCCESS_OUTCOMES",
     "TRUE_HUMAN_BLOCKER",
     "append_attempt_record",
+    "append_escalation_record",
     "append_incident_record",
     "append_jsonl_record",
     "append_repair_event",

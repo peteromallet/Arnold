@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import json
 import logging
 import os
+from pathlib import Path
+import re
 from typing import Any
 
 from arnold_pipelines.megaplan.store import ScheduledJobInput, deterministic_idempotency_key
@@ -18,6 +21,7 @@ from .scheduler import ScheduledJobWorker
 LOGGER = logging.getLogger(__name__)
 DISCORD_MESSAGE_LIMIT = 2000
 DISCORD_SAFE_MESSAGE_LIMIT = 1900
+ESCALATION_TAG_RE = re.compile(r"\[escalation:([A-Za-z0-9._:-]+)\]", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,8 @@ class DiscordInboundMessage:
     author_id: str
     target: DiscordDeliveryTarget
     content: str
+    referenced_message_id: str | None = None
+    escalation_id: str | None = None
 
     @classmethod
     def from_discord_message(cls, message: Any) -> "DiscordInboundMessage":
@@ -72,6 +78,12 @@ class DiscordInboundMessage:
             raise ValueError("Discord message author has no stable id")
         if not channel_id:
             raise ValueError("Discord message channel has no stable id")
+        content = str(getattr(message, "content", ""))
+        referenced_message_id = _referenced_message_id(message)
+        escalation_id = (
+            _resolve_escalation_id_from_message_id(referenced_message_id)
+            or _extract_escalation_id_tag(content)
+        )
         return cls(
             message_id=str(message.id),
             author_id=author_id,
@@ -81,7 +93,9 @@ class DiscordInboundMessage:
                 thread_id=thread_id,
                 dm_user_id=dm_user_id,
             ),
-            content=str(getattr(message, "content", "")),
+            content=content,
+            referenced_message_id=referenced_message_id,
+            escalation_id=escalation_id,
         )
 
     def to_inbound_event(self) -> InboundEvent:
@@ -94,8 +108,11 @@ class DiscordInboundMessage:
                 channel_id=self.target.channel_id,
             ),
             content=self.content,
+            escalation_id=self.escalation_id,
             raw={
                 "discord_message_id": self.message_id,
+                "discord_reference_message_id": self.referenced_message_id,
+                "escalation_id": self.escalation_id,
                 "thread_id": self.target.thread_id,
                 "dm_user_id": self.target.dm_user_id,
             },
@@ -165,6 +182,64 @@ def _split_once(text: str, limit: int) -> tuple[str, str]:
         chunk = text[:limit]
         rest = text[limit:]
     return chunk, rest
+
+
+def _extract_escalation_id_tag(content: str) -> str | None:
+    match = ESCALATION_TAG_RE.search(content or "")
+    if not match:
+        return None
+    escalation_id = match.group(1).strip()
+    return escalation_id or None
+
+
+def _referenced_message_id(message: Any) -> str | None:
+    reference = getattr(message, "reference", None)
+    if reference is None:
+        return None
+    message_id = _optional_snowflake(getattr(reference, "message_id", None))
+    if message_id:
+        return message_id
+    resolved = getattr(reference, "resolved", None)
+    if resolved is None:
+        return None
+    return _optional_snowflake(getattr(resolved, "id", None))
+
+
+def _resolve_escalation_id_from_message_id(message_id: str | None) -> str | None:
+    if not message_id:
+        return None
+    ledger_path = _escalations_ledger_path()
+    if ledger_path is None or not ledger_path.exists():
+        return None
+    try:
+        for raw_line in ledger_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                continue
+            if str(record.get("event") or "") != "delivered":
+                continue
+            message_ids = record.get("message_ids")
+            if not isinstance(message_ids, list):
+                continue
+            if message_id not in {str(item) for item in message_ids if str(item).strip()}:
+                continue
+            escalation_id = str(record.get("escalation_id") or "").strip()
+            if escalation_id:
+                return escalation_id
+    except Exception:
+        LOGGER.exception("Failed to resolve escalation id from Discord message reference")
+    return None
+
+
+def _escalations_ledger_path() -> Path | None:
+    for key in ("MEGAPLAN_RESIDENT_REPAIR_DATA_DIR", "CLOUD_WATCHDOG_REPAIR_DATA_DIR"):
+        value = os.environ.get(key, "").strip()
+        if value:
+            return Path(value) / "escalations" / "escalations.jsonl"
+    return None
 
 
 class ResidentDiscordService:

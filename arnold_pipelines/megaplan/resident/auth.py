@@ -17,6 +17,8 @@ ActionKind = Literal[
     "write",
     "cloud_start",
     "cloud_read",
+    "escalation_reply",
+    "escalation_resolve",
     "admin",
     "repo_write",
     "artifact_write",
@@ -40,6 +42,7 @@ HIGH_IMPACT_ACTIONS: frozenset[ActionKind] = frozenset(
 
 CONFIRMED_HIGH_IMPACT_ACTIONS: frozenset[ActionKind] = frozenset(
     {
+        "escalation_resolve",
         "repo_write",
         "artifact_write",
         "export",
