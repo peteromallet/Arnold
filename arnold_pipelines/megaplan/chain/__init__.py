@@ -3191,6 +3191,106 @@ def _ensure_published_claimed_changes_for_pr_progression(
     )
 
 
+def _recover_stale_merged_pr_for_unfinished_plan(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    milestone: MilestoneSpec,
+    plan_state: dict[str, Any],
+    *,
+    writer,
+) -> tuple[ChainState | None, str]:
+    """Retire a merged PR cursor that points at a plan that still must run.
+
+    A previously buggy chain could squash-merge a draft PR while execute output
+    was still local-only. On restart, live GitHub says "merged" but state.json
+    still says finalized/executing. Advancing would drop unfinished tasks; a
+    plain resume would clean the dirty worktree during branch checkout. Preserve
+    claimed local output on the milestone branch first, then clear the stale PR
+    cursor so the normal resume path can continue and create a fresh PR.
+    """
+
+    plan_name = state.current_plan_name
+    if not plan_name or not milestone.branch:
+        return None, "missing active plan or milestone branch for stale merged PR recovery"
+
+    current_state = plan_state.get("current_state")
+    if current_state == STATE_DONE:
+        return None, f"plan {plan_name} is already {STATE_DONE!r}"
+    if not isinstance(current_state, str) or not current_state:
+        return None, f"plan {plan_name} has no usable current_state for stale merged PR recovery"
+    if current_state not in {STATE_FINALIZED, STATE_EXECUTED}:
+        return (
+            None,
+            f"plan {plan_name} current_state={current_state!r} is not terminal-success "
+            f"{STATE_DONE!r}; stale merged PR cannot advance",
+        )
+
+    claimed_root_paths = _claimed_root_paths(root, plan_name)
+    dirty_paths = _root_relative_dirty_paths(root)
+    dirty_claimed = sorted(path for path in dirty_paths if path in claimed_root_paths)
+    unrelated_dirty = sorted(
+        path
+        for path in dirty_paths
+        if path not in claimed_root_paths
+        and path != ".megaplan"
+        and not path.startswith(".megaplan/")
+    )
+    if unrelated_dirty:
+        sample = ", ".join(unrelated_dirty[:5])
+        return (
+            None,
+            f"plan {plan_name} has stale merged PR #{state.pr_number} but unrelated "
+            f"dirty paths prevent recovery: {sample}",
+        )
+
+    old_pr_number = state.pr_number
+    if dirty_claimed:
+        current_branch = _current_branch_name(root)
+        if current_branch != milestone.branch:
+            _run_command(
+                root,
+                ["git", "checkout", "-B", milestone.branch, "HEAD"],
+                writer=writer,
+                error_code="git_branch_failed",
+            )
+        _commit_and_push_phase(
+            root,
+            milestone.branch,
+            plan_name,
+            "stale-merged-pr-recovery",
+            writer=writer,
+            preexisting_dirty_paths=[],
+        )
+        _capture_sync_state(root, spec_path, branch=milestone.branch, pr_number=None)
+        state = chain_spec.load_chain_state(spec_path)
+
+    state.pr_number = None
+    state.pr_state = None
+    state.last_state = current_state
+    state.metadata["stale_merged_pr_recovery"] = {
+        "recovered_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "milestone": milestone.label,
+        "plan": plan_name,
+        "stale_pr_number": old_pr_number,
+        "plan_current_state": current_state,
+        "dirty_claimed_paths": dirty_claimed,
+    }
+    chain_spec.save_chain_state(spec_path, state)
+
+    if dirty_claimed:
+        return (
+            state,
+            f"recovered stale merged PR #{old_pr_number} for unfinished plan {plan_name}; "
+            f"published {len(dirty_claimed)} claimed local change(s) to {milestone.branch}",
+        )
+    return (
+        state,
+        f"recovered stale merged PR #{old_pr_number} for unfinished plan {plan_name}; "
+        "cleared stale PR cursor with no claimed local changes to publish",
+    )
+
+
 def _chain_policy_milestone_label(plan_state: dict[str, Any]) -> str | None:
     meta = plan_state.get("meta")
     if not isinstance(meta, dict):
@@ -4057,6 +4157,31 @@ def run_chain(
             if pr_state == "merged":
                 state.pr_state = "merged"
                 chain_spec.save_chain_state(spec_path, state)
+                plan_state = _plan_state_payload_from_name(root, state.current_plan_name)
+                if plan_state.get("current_state") != STATE_DONE:
+                    recovered_state, recovery_reason = (
+                        _recover_stale_merged_pr_for_unfinished_plan(
+                            root,
+                            spec_path,
+                            state,
+                            milestone,
+                            plan_state,
+                            writer=writer,
+                        )
+                    )
+                    if recovered_state is None:
+                        return _block_pr_progression_guard_failure(
+                            spec_path=spec_path,
+                            spec=spec,
+                            state=state,
+                            milestone=milestone,
+                            reason=recovery_reason,
+                            events=events,
+                            writer=writer,
+                        )
+                    state = recovered_state
+                    log(recovery_reason)
+                    continue
                 publish_ok, publish_reason = _ensure_published_claimed_changes_for_pr_progression(
                     root,
                     spec_path,
@@ -4269,6 +4394,31 @@ def run_chain(
                         spec=spec,
                         reason=f"milestone {milestone.label} PR #{state.pr_number} is {pr_state}",
                     )
+                plan_state = _plan_state_payload_from_name(root, state.current_plan_name)
+                if plan_state.get("current_state") != STATE_DONE:
+                    recovered_state, recovery_reason = (
+                        _recover_stale_merged_pr_for_unfinished_plan(
+                            root,
+                            spec_path,
+                            state,
+                            milestone,
+                            plan_state,
+                            writer=writer,
+                        )
+                    )
+                    if recovered_state is None:
+                        return _block_pr_progression_guard_failure(
+                            spec_path=spec_path,
+                            spec=spec,
+                            state=state,
+                            milestone=milestone,
+                            reason=recovery_reason,
+                            events=events,
+                            writer=writer,
+                        )
+                    state = recovered_state
+                    log(recovery_reason)
+                    continue
                 publish_ok, publish_reason = _ensure_published_claimed_changes_for_pr_progression(
                     root,
                     spec_path,
