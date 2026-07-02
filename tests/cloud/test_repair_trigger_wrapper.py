@@ -89,6 +89,7 @@ def _run_trigger(
 ) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    env["ARNOLD_CLOUD_HOT_ENV"] = str(marker_dir / "missing-hot-env")
     if enabled:
         env["ARNOLD_REPAIR_TRIGGER_ENABLED"] = "1"
     else:
@@ -183,6 +184,29 @@ def test_trigger_dispatches_existing_repair_loop_when_enabled(tmp_path: Path) ->
     assert "repair_trigger_dispatch" in result.stdout
     dispatched = [item for item in _decisions(marker_dir) if item["decision"] == "dispatched"]
     assert len(dispatched) == 1
+    payload = _read_json_eventually(tmp_path / "repair-args.json")
+    assert payload["argv"] == ["demo", str(workspace), str(spec)]
+    assert payload["request_id"] == queued["request"]["request_id"]
+
+
+def test_trigger_loads_hot_env_for_systemd_latency_path(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    workspace = tmp_path / "workspace"
+    spec = _write_marker(marker_dir, workspace)
+    queued = _enqueue(marker_dir, workspace)
+    repair_bin = _repair_stub(tmp_path)
+    hot_env = tmp_path / "cloud-hot-env"
+    hot_env.write_text("ARNOLD_REPAIR_TRIGGER_ENABLED=1\n", encoding="utf-8")
+
+    result = _run_trigger(
+        marker_dir,
+        repair_bin,
+        enabled=False,
+        env_overrides={"ARNOLD_CLOUD_HOT_ENV": str(hot_env)},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "repair_trigger_dispatch" in result.stdout
     payload = _read_json_eventually(tmp_path / "repair-args.json")
     assert payload["argv"] == ["demo", str(workspace), str(spec)]
     assert payload["request_id"] == queued["request"]["request_id"]
