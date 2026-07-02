@@ -266,7 +266,7 @@ def run_native_pipeline(
             (forwarded to ``evaluate_step_io_handoff``).
         initial_envelope: Starting envelope value for ``join_envelope``
             accumulation (default ``None``).
-        trace_dir: Optional directory for parity-trace emission.  When
+        trace_dir: Optional directory for native-trace emission.  When
             set, a :class:`NativeTraceHooks` wrapper is layered over
             *hooks* to write ``state.json``, ``events.ndjson``,
             artifact inventory, stage sequence, and final checkpoint

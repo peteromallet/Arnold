@@ -371,6 +371,16 @@ def test_build_pipeline_is_native_backed() -> None:
     assert emit_stage.edges[0].target == "halt"
 
 
+def test_promoted_package_exports_helpers_from_standalone_path() -> None:
+    from arnold.pipelines import folder_audit as pkg
+    from arnold.pipelines.folder_audit.pipeline import AuditStep, EmitStep, IngestStep
+
+    assert pkg.build_pipeline.__module__ == "arnold.pipelines.folder_audit.pipeline"
+    assert pkg.AuditStep is AuditStep
+    assert pkg.EmitStep is EmitStep
+    assert pkg.IngestStep is IngestStep
+
+
 def test_package_metadata_advertises_native_execution() -> None:
     """Package metadata advertises native execution."""
     from arnold.pipelines import folder_audit as pkg

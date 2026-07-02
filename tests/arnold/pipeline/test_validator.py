@@ -21,6 +21,7 @@ from typing import Any
 
 import pytest
 
+import arnold.pipeline.validator as pipeline_validator_shim
 from arnold.workflow.builder import PipelineBuilder
 from arnold.pipeline.types import Edge, ParallelStage, Pipeline, Port, PortRef, ReadRef, Stage, StepContext, StepResult, WriteRef
 from arnold.execution.step_invocation import (
@@ -36,6 +37,7 @@ from arnold.workflow.validator import (
     ManifestValidationContext,
     MISSING_BINDING_CODE,
     NATIVE_MANIFEST_GRAPH_COMPAT_CODE,
+    NATIVE_MANIFEST_INVALID_METADATA_CODE,
     NATIVE_MANIFEST_MISSING_EXECUTION_CODE,
     PLACEHOLDER_EXECUTION_RESOURCE_CODE,
     UNKNOWN_ADAPTER_CODE,
@@ -194,6 +196,8 @@ class TestManifestValidationContext:
             manifest_path="/tmp/demo/__init__.py",
             compatibility_classification="native",
             source_entrypoint="build_pipeline",
+            default_profile="default",
+            supported_modes=("native",),
             source_entrypoint_metadata={"symbol": "build_pipeline"},
         )
 
@@ -210,6 +214,8 @@ class TestManifestValidationContext:
                 "manifest_path": "/tmp/demo/__init__.py",
                 "compatibility_classification": "native",
                 "source_entrypoint": "build_pipeline",
+                "default_profile": "default",
+                "supported_modes": ["native"],
                 "source_entrypoint_metadata": {"symbol": "build_pipeline"},
             },
             message_contains="declares native driver",
@@ -221,6 +227,9 @@ class TestManifestValidationContext:
             package="demo.pkg",
             name="demo",
             manifest_path="/tmp/demo/__init__.py",
+            source_entrypoint="build_pipeline",
+            default_profile="default",
+            supported_modes=("native",),
         )
 
         diag = validate(
@@ -230,6 +239,30 @@ class TestManifestValidationContext:
 
         assert diag.ok, diag.defects
 
+    def test_m1_dispatch_substrate_proof_native_claim_requires_complete_metadata(self) -> None:
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            source_entrypoint="build_pipeline",
+            default_profile=None,
+            supported_modes=("graph",),
+        )
+
+        diag = validate(_simple_pipeline(), context=context)
+
+        issue_codes = {issue.code for issue in diag.issues}
+        assert NATIVE_MANIFEST_INVALID_METADATA_CODE in issue_codes, (
+            "M1 dispatch substrate proof requires native manifests to carry "
+            "driver/default_profile/supported_modes metadata; this is not final "
+            "report conformance."
+        )
+        assert NATIVE_MANIFEST_MISSING_EXECUTION_CODE in issue_codes, (
+            "M1 dispatch substrate proof requires native manifests to provide "
+            "execution evidence; this is not final report conformance."
+        )
+
     def test_manifest_context_rejects_explicit_graph_compat_native_claim(self) -> None:
         context = ManifestValidationContext(
             manifest_driver=("native", "project+validate"),
@@ -237,6 +270,9 @@ class TestManifestValidationContext:
             name="demo",
             manifest_path="/tmp/demo/__init__.py",
             compatibility_classification="graph-compatible",
+            source_entrypoint="build_pipeline",
+            default_profile="default",
+            supported_modes=("native",),
         )
 
         diag = validate(
@@ -249,6 +285,142 @@ class TestManifestValidationContext:
             code=NATIVE_MANIFEST_GRAPH_COMPAT_CODE,
             stage=None,
             message_contains="classified graph-compatible",
+        )
+
+    def test_manifest_context_accepts_deprecated_bundle_execution_evidence(self) -> None:
+        class _CompatibilityRunner:
+            def run_native_pipeline(self, **kwargs: object) -> dict[str, object]:
+                return {"ok": True, "kwargs": kwargs}
+
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            source_entrypoint="build_pipeline",
+            default_profile="default",
+            supported_modes=("native", "graph"),
+        )
+
+        diag = validate(
+            Pipeline(
+                stages=_simple_pipeline().stages,
+                entry="start",
+                resource_bundles=(_CompatibilityRunner(),),
+            ),
+            context=context,
+        )
+
+        assert diag.ok, diag.defects
+
+    def test_m1_dispatch_substrate_proof_accepts_native_program_or_bundle_evidence(self) -> None:
+        class _CompatibilityRunner:
+            def run_native_pipeline(self, **kwargs: object) -> dict[str, object]:
+                return {"ok": True, "kwargs": kwargs}
+
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            source_entrypoint="build_pipeline",
+            default_profile="default",
+            supported_modes=("native", "graph"),
+        )
+
+        native_diag = validate(
+            _simple_pipeline(native_program=NativeProgram(name="demo")),
+            context=context,
+        )
+        bundle_diag = validate(
+            Pipeline(
+                stages=_simple_pipeline().stages,
+                entry="start",
+                resource_bundles=(_CompatibilityRunner(),),
+            ),
+            context=context,
+        )
+
+        assert native_diag.ok, (
+            "M1 dispatch substrate proof accepts attached native_program evidence "
+            "without claiming final report conformance."
+        )
+        assert bundle_diag.ok, (
+            "M1 dispatch substrate proof keeps execution-bearing resource bundles "
+            "as compatibility evidence, not final report conformance."
+        )
+
+    def test_manifest_context_rejects_placeholder_native_metadata(self) -> None:
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            source_entrypoint="build_pipeline",
+            default_profile="TODO",
+            supported_modes=("native",),
+        )
+
+        diag = validate(
+            _simple_pipeline(native_program=NativeProgram(name="demo")),
+            context=context,
+        )
+
+        _assert_issue(
+            diag,
+            code=NATIVE_MANIFEST_INVALID_METADATA_CODE,
+            stage=None,
+            detail_items={"default_profile": "TODO"},
+            message_contains="metadata is incomplete or malformed",
+        )
+
+    def test_m1_dispatch_substrate_proof_rejects_placeholder_native_metadata(self) -> None:
+        context = ManifestValidationContext(
+            manifest_driver=("native", "project+validate"),
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            source_entrypoint="build_pipeline",
+            default_profile="placeholder",
+            supported_modes=("native",),
+        )
+
+        diag = validate(
+            _simple_pipeline(native_program=NativeProgram(name="demo")),
+            context=context,
+        )
+
+        assert any(
+            issue.code == NATIVE_MANIFEST_INVALID_METADATA_CODE
+            and issue.details.get("default_profile") == "placeholder"
+            for issue in diag.issues
+        ), (
+            "M1 dispatch substrate proof rejects placeholder native metadata and "
+            "does not treat that as final report conformance."
+        )
+
+    def test_manifest_context_rejects_malformed_native_driver_metadata(self) -> None:
+        context = ManifestValidationContext(
+            manifest_driver="native",
+            package="demo.pkg",
+            name="demo",
+            manifest_path="/tmp/demo/__init__.py",
+            source_entrypoint="build_pipeline",
+            default_profile="default",
+            supported_modes=("native",),
+        )
+
+        diag = validate(
+            _simple_pipeline(native_program=NativeProgram(name="demo")),
+            context=context,
+        )
+
+        _assert_issue(
+            diag,
+            code=NATIVE_MANIFEST_INVALID_METADATA_CODE,
+            stage=None,
+            detail_items={"manifest_driver": "native"},
+            message_contains="metadata is incomplete or malformed",
         )
 
     def test_placeholder_execution_resource_is_rejected_with_stable_code(self) -> None:
@@ -312,6 +484,9 @@ class TestManifestValidationContext:
             stage=None,
             detail_items={"pipeline_driver": ["native", "direct"]},
         )
+
+    def test_pipeline_validator_shim_delegates_to_updated_validate(self) -> None:
+        assert pipeline_validator_shim.validate is validate
 
 
 class TestDeterministicOrdering:

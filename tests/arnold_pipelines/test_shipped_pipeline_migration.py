@@ -49,12 +49,12 @@ _LOADABLE_NATIVE_TARGETS = [
 ]
 
 
-def test_template_is_classified_as_workflow_target() -> None:
-    """The canonical scaffold is a workflow target, not a native one."""
+def test_template_is_classified_as_native_target() -> None:
+    """The canonical scaffold is now a native target, not a workflow one."""
     workflow_ids = {pipeline_id for pipeline_id, _ in _WORKFLOW_TARGETS}
     native_ids = {pipeline_id for pipeline_id, _ in _NATIVE_TARGETS}
-    assert "my-pipeline" in workflow_ids
-    assert "my-pipeline" not in native_ids
+    assert "my-pipeline" not in workflow_ids
+    assert "my-pipeline" in native_ids
 
 
 def _import_builder(target: str) -> Any:

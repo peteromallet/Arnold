@@ -32,16 +32,7 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "doc"
-description: str = (
-    "Linear doc pipeline: outline -> per-section drafts (dynamic fanout) "
-    "-> critique -> revise -> assembly. Single-pass; no gate."
-)
 
-driver: tuple[str, str] = ("native", "dynamic-fanout")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("doc",)
 ```
 
 ## Step Surface

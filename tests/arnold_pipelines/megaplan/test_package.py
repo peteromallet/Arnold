@@ -132,7 +132,6 @@ _DELETED_SUBMODULE_IMPORTS = (
     "arnold_pipelines.megaplan._pipeline.types",
     "arnold_pipelines.megaplan.stages",
     "arnold_pipelines.megaplan.stages.inprocess_step",
-    "arnold_pipelines.megaplan._compatibility",
 )
 
 
@@ -157,7 +156,7 @@ def test_deleted_submodules_not_importable_via_from() -> None:
 
 def test_sys_modules_free_of_deleted_prefixes_after_package_import() -> None:
     """After importing arnold_pipelines.megaplan, sys.modules must not contain
-    any key starting with the deleted _pipeline, stages, or _compatibility
+    any key starting with the deleted _pipeline or stages
     prefixes."""
     import sys
 
@@ -167,7 +166,6 @@ def test_sys_modules_free_of_deleted_prefixes_after_package_import() -> None:
     deleted_prefixes = (
         "arnold_pipelines.megaplan._pipeline",
         "arnold_pipelines.megaplan.stages",
-        "arnold_pipelines.megaplan._compatibility",
     )
     leaked = [
         key

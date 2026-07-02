@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
-from arnold.manifest.manifests import WorkflowManifest
 from arnold.pipeline import NativeProgram, Pipeline as NativePipeline
 from arnold_pipelines.discovery import discover_shipped_pipelines
 
@@ -37,14 +36,16 @@ def test_workflow_entries_still_validate_as_workflow_manifests() -> None:
     generator = _load_generator()
     info = _by_id()["evidence_pack_verifier"]
 
-    manifest = generator._compile_and_validate_workflow(info)
-    assert isinstance(manifest, WorkflowManifest)
-    assert manifest.manifest_hash
+    # evidence_pack_verifier migrated to native in M6; validate as loadable-native
+    assert info.load_state == "loadable-native"
+    pipeline = generator._validate_native_builder(info)
+    assert isinstance(pipeline, NativePipeline)
+    assert isinstance(pipeline.native_program, NativeProgram)
 
     rendered_path, rendered = generator._render_example(info)
     assert rendered_path == _example_path(generator, "evidence_pack_verifier")
-    assert "## Dry-run report" in rendered
-    assert f"`arnold workflow check --module {info.canonical_builder_path}`" in rendered
+    assert "## Native builder report" in rendered
+    assert "`build_pipeline()` returns `arnold.pipeline.Pipeline` with `NativeProgram`" in rendered
 
 
 def test_loadable_native_entries_validate_through_native_pipeline_contract() -> None:
@@ -91,15 +92,14 @@ def test_workflow_template_example_renders_dry_run_report() -> None:
     generator = _load_generator()
     info = _by_id()["my-pipeline"]
 
-    assert info.builder_contract == "workflow"
-    assert info.load_state == "workflow"
+    assert info.builder_contract == "native"
+    assert info.load_state == "loadable-native"  # template migrated to native-first in M6
 
     rendered_path, rendered = generator._render_example(info)
     assert rendered_path == _example_path(generator, "my-pipeline")
-    assert "## Dry-run report" in rendered
-    assert "| Contract | workflow|" in rendered
-    assert "`arnold workflow check --module arnold_pipelines._template:build_pipeline`" in rendered
-    assert "native_program" not in rendered
+    assert "## Source Pack" in rendered
+    assert "| Contract | native|" in rendered
+    assert "| Load state | loadable-native|" in rendered
 
 
 def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> None:
@@ -110,9 +110,10 @@ def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> N
 
     assert first == second
     assert "| megaplan.creative | creative | native:creative | arnold_pipelines/megaplan/pipelines/creative | keep|" in first
-    assert "arnold/pipelines/deliberation" not in first
-    assert "arnold/pipelines/folder_audit" not in first
-    assert "| evidence_pack.verifier | evidence_pack_verifier | sha256:" in first
+    # deliberation and folder_audit are public native packages with registry IDs; they appear in the reference
+    assert "| deliberation | deliberation | native:deliberation | arnold/pipelines/deliberation | keep|" in first
+    assert "| folder_audit | folder-audit | native:folder-audit | arnold/pipelines/folder_audit | keep|" in first
+    assert "| evidence_pack.verifier | evidence_pack_verifier | native:evidence_pack |" in first
 
 
 def test_composed_rules_require_workflow_first_authoring() -> None:
@@ -121,7 +122,8 @@ def test_composed_rules_require_workflow_first_authoring() -> None:
 
     assert composed
     for path, text in composed.items():
-        assert "workflow-first" in text
-        assert "arnold.workflow.Pipeline" in text
-        assert "native-first" not in text
-        assert "NativeProgram" not in text
+        assert "native-first" in text
+        assert "@pipeline" in text
+        assert "NativeProgram" in text
+        assert "shim packages" in text  # disallowed
+        assert "workflow-first" not in text

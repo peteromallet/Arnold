@@ -1,0 +1,43 @@
+{
+  "failing_tests": [
+    "tests/archive/m5/_pipeline/test_step_protocol_test_locals.py",
+    "tests/archive/m5/pipelines/test_jokes_pipeline.py",
+    "tests/archive/m5/pipelines/test_select_tournament_pipeline.py",
+    "tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py",
+    "tests/arnold/pipeline/test_profiles.py",
+    "tests/arnold/pipeline/test_profiles_opaque.py",
+    "tests/arnold_pipelines/megaplan/test_hermes_plan_recovery.py",
+    "tests/m8/regression/test_structural_regressions.py"
+  ],
+  "collected_ids": [
+    "tests/archive/m5/_pipeline/test_step_protocol_test_locals.py",
+    "tests/archive/m5/pipelines/test_jokes_pipeline.py",
+    "tests/archive/m5/pipelines/test_select_tournament_pipeline.py",
+    "tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py",
+    "tests/arnold/pipeline/test_profiles.py",
+    "tests/arnold/pipeline/test_profiles_opaque.py",
+    "tests/arnold_pipelines/megaplan/test_hermes_plan_recovery.py",
+    "tests/m8/regression/test_structural_regressions.py"
+  ],
+  "captured_at_sha": "f51f2cd165d7f4d145168ee13ab123ad938465e0",
+  "milestone": "m6-docs-and-scaffolds-native-first",
+  "collection_errors": [
+    "tests/archive/m5/_pipeline/test_step_protocol_test_locals.py",
+    "tests/archive/m5/pipelines/test_jokes_pipeline.py",
+    "tests/archive/m5/pipelines/test_select_tournament_pipeline.py",
+    "tests/archive/m6_deleted_legacy_runtime/arnold/pipeline/test_executor_selection.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_resume_cursor.py",
+    "tests/archive/m6_deleted_legacy_runtime/test_pipeline_runtime_e2e.py",
+    "tests/arnold/pipeline/test_profiles.py",
+    "tests/arnold/pipeline/test_profiles_opaque.py",
+    "tests/arnold_pipelines/megaplan/test_hermes_plan_recovery.py",
+    "tests/m8/regression/test_structural_regressions.py"
+  ]
+}

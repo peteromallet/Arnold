@@ -32,16 +32,7 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name: str = "jokes"
-description: str = (
-    "Joke pipeline: drafts a joke, tightens the beat, and emits the final artifact "
-    "through a direct native program."
-)
 
-driver: tuple[str, str] = ("native", "linear")
-entrypoint: str = "build_pipeline"
-arnold_api_version: str = "1.0"
-capabilities: tuple[str, ...] = ("creative", "joke")
 ```
 
 ## Step Surface
@@ -139,9 +130,13 @@ The following module instructions are extracted verbatim from the pack's `SKILL.
 ````markdown
 # jokes Pipeline
 
-Purpose: provide a tiny standalone SDK pipeline that declares: "I'm a graph
-driver, I need dispatch+emit." It drafts, tightens, and emits a joke artifact
-without delegating to the `creative` pipeline.
+Purpose: provide a tiny standalone native-first pipeline that declares:
+"I'm a native driver, I need dispatch+emit." The native declaration compiles
+a ``NativeProgram`` through ``@pipeline`` / ``@phase`` decorators and
+``compile_pipeline``, and ``build_pipeline()`` returns a projected
+``Pipeline`` shell whose ``native_program`` field is non-null. It drafts,
+tightens, and emits a joke artifact without delegating to the ``creative``
+pipeline.
 
 Topology:
 
@@ -157,6 +152,17 @@ Stages:
 | `tighten` | `tighten_joke` | Reads prior artifacts from state and sharpens the joke beat. |
 | `emit` | `emit_joke` | Emits the final artifact path into `state["joke_artifact"]`. |
 
-Verdicts: no planning gate vocabulary; each stage returns the next graph edge
-label and the final stage returns `halt`.
+Verdicts: no planning gate vocabulary; each stage returns the next native
+phase label and the final stage returns ``halt``.
+
+## Native Dispatch
+
+The ``native_program`` attached to the projected ``Pipeline`` is an
+execution-level dispatch substrate — it describes the phase ordering, entry
+point, and instruction set consumed by the native runtime. It does **not**
+encode final visible compositional semantics (those are deferred to the
+Megaplan composition layer). The graph-projected shell is a structural
+reflection of the native program and exists for inspection, port binding,
+and compatibility; the native program is the authoritative execution
+contract.
 ````

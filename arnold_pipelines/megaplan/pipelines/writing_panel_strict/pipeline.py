@@ -21,6 +21,7 @@ from .steps import (
     _dict_to_step_context,
     _json_safe_step_result,
     _make_agent_step,
+    _make_human_gate_step,
     _make_panel_reviewer_step,
 )
 
@@ -163,7 +164,7 @@ def _build_graph_pipeline(
         ),
         "human_decide": Stage(
             name="human_decide",
-            step=_make_agent_step("human_decide", "", ("revise",), _PANEL_REVIEWER_ORDER),
+            step=_make_human_gate_step("human_decide", "revise"),
             edges=(Edge("continue", "panel_review"), Edge("stop", "halt"), Edge("done", "halt")),
         ),
     }

@@ -605,6 +605,93 @@ def _run_planning_phase(
     plan = _plan_arg(args)
     if plan is None:
         return 1, "", "missing --plan"
+    native_result = _run_native_planning_phase(
+        args,
+        plan=plan,
+        cwd=cwd,
+        progress_env=progress_env,
+        liveness_plan_dir=liveness_plan_dir,
+    )
+    if native_result is not None:
+        return native_result
+    return _run_planning_phase_compatibility_fallback(
+        args,
+        plan=plan,
+        cwd=cwd,
+        progress_env=progress_env,
+        liveness_plan_dir=liveness_plan_dir,
+    )
+
+
+def _run_native_planning_phase(
+    args: list[str],
+    *,
+    plan: str,
+    cwd: Path | None,
+    progress_env: dict[str, str] | None,
+    liveness_plan_dir: Path | None,
+) -> tuple[int, str, str] | None:
+    """Run a canonical phase through the compiled shell's native program."""
+
+    phase = args[0] if args else ""
+    if phase not in PHASE_NAMES:
+        return None
+    try:
+        from arnold.pipeline.native.ir import NativeProgram
+        from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+
+        pipeline = build_and_compile_pipeline()
+        native_program = getattr(pipeline, "native_program", None)
+        if not isinstance(native_program, NativeProgram):
+            return None
+        native_phase = next(
+            (
+                candidate
+                for candidate in native_program.phases
+                if getattr(candidate, "name", None) == phase
+            ),
+            None,
+        )
+        if native_phase is None or not callable(getattr(native_phase, "func", None)):
+            return None
+        payload = native_phase.func(
+            {
+                "__megaplan_auto_phase__": True,
+                "phase": phase,
+                "plan": plan,
+                "cwd": cwd,
+                "plan_dir": liveness_plan_dir,
+                "argv": list(args),
+                "progress_env": dict(progress_env or {}),
+            }
+        )
+    except Exception as error:  # noqa: BLE001 - convert to tuple-shaped phase failure.
+        return 1, "", f"{type(error).__name__}: {error}"
+
+    if not isinstance(payload, dict):
+        return 1, "", f"native phase {phase!r} returned {type(payload).__name__}"
+    exit_code = payload.get("exit_code")
+    stdout = payload.get("stdout")
+    stderr = payload.get("stderr")
+    if not isinstance(exit_code, int):
+        return 1, "", f"native phase {phase!r} did not return exit_code"
+    return (
+        exit_code,
+        stdout if isinstance(stdout, str) else "",
+        stderr if isinstance(stderr, str) else "",
+    )
+
+
+def _run_planning_phase_compatibility_fallback(
+    args: list[str],
+    *,
+    plan: str,
+    cwd: Path | None,
+    progress_env: dict[str, str] | None,
+    liveness_plan_dir: Path | None,
+) -> tuple[int, str, str]:
+    """Explicit compatibility fallback for unsupported native phase dispatch."""
+
     from arnold.execution.operations import OperationKind, OperationRequest
     from arnold_pipelines.megaplan.registry import (
         dispatch_operation_for,

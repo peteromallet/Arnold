@@ -23,6 +23,15 @@ Design contracts (settled — do not re-litigate):
   ``_install_determinism`` monkeypatches ``auto._record_lifecycle_failure``
   to a wrapper that calls the real function AND stashes the failure-record
   dict into a shared sidecar dict.
+
+* **SD4** — The corpus characterizes the 12-step auto-drive loop, not the
+  optional git publish epilogue.  Call ``drive(push=False)`` so native-backed
+  execution changes do not get obscured by tmpdir-specific git repo setup.
+
+* **SD5** — Intentional trace updates for done-path goldens should be limited
+  to semantic verdict metadata (for example the added
+  ``execution_acceptance_contract`` provider) or clearer phase-error text, not
+  changes to the 12-step canonical routing itself.
 """
 
 from __future__ import annotations
@@ -2355,6 +2364,7 @@ def test_auto_drive_branch(
         on_escalate=drive_kwargs.get("on_escalate", "force-proceed"),
         on_phase_complete=on_phase_complete_cb,
         poll_sleep=0,
+        push=False,
         writer=lambda _m: None,
     )
 

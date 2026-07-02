@@ -174,11 +174,10 @@ class TestM4Pipeline:
         "arnold_pipelines.megaplan._pipeline.types",
         "arnold_pipelines.megaplan.stages",
         "arnold_pipelines.megaplan.stages.inprocess_step",
-        "arnold_pipelines.megaplan._compatibility",
     )
 
     def test_deleted_submodules_raise_module_not_found(self) -> None:
-        """Deleted _pipeline, stages, and _compatibility submodules must
+        """Deleted _pipeline and stages submodules must
         raise ModuleNotFoundError on import."""
         import importlib
 
@@ -197,7 +196,6 @@ class TestM4Pipeline:
         deleted_prefixes = (
             "arnold_pipelines.megaplan._pipeline",
             "arnold_pipelines.megaplan.stages",
-            "arnold_pipelines.megaplan._compatibility",
         )
         leaked = [
             key

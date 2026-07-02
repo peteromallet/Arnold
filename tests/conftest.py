@@ -90,6 +90,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Regenerate characterization test fixtures on disk.",
     )
+    parser.addoption(
+        "--record-goldens",
+        action="store_true",
+        default=False,
+        help="Record native golden trace fixtures to disk (multi-file directory format).",
+    )
 
 
 def read_json(path: Path) -> dict:
