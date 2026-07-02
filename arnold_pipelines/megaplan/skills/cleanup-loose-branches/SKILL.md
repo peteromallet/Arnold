@@ -407,6 +407,29 @@ container (`$BOX 'git -C /workspace/<ws> push origin <branch>'`) before any
 `down`/`destroy`. `destroy` drops the provider volume — non-recoverable, same
 blast radius as `rm -rf` on a sibling variant.
 
+Also reconcile the **other direction** when a cloud workspace is done: if the
+latest intended code now lives locally or on GitHub, make sure the Hetzner box is
+not left running a stale checkout. First push the finished branch from the source
+of truth, then update each inactive cloud workspace that should keep existing by
+fetching and checking out that pushed tip inside the container. Do this only for
+dormant/finished workspaces; active tmux sessions stay `keep` until they finish.
+
+```bash
+git push origin <finished-branch>
+$BOX 'git -C /workspace/<ws> fetch origin --prune &&
+      git -C /workspace/<ws> checkout <finished-branch> &&
+      git -C /workspace/<ws> pull --ff-only origin <finished-branch>'
+```
+
+**Arnold-specific branch replacement check.** If the repo is Arnold, verify that
+cloud workspaces no longer depend on the old `editable-install` branch once that
+work has landed or been superseded. Treat any `/workspace/*` Arnold checkout still
+on `editable-install`, or with `editable-install` as its configured branch, as a
+cloud cleanup row: replace it with the intended branch (`main` or the new
+consolidation branch), push/fetch the replacement tip, and only then mark the old
+branch ready to delete. In the survey output, state explicitly: "`editable-install`
+replaced on Hetzner: yes/no; remaining workspaces: <paths>."
+
 ### GitHub Codespaces
 
 ```bash
