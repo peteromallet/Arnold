@@ -67,7 +67,7 @@ fi
 REPAIR_STARTED_AT_EPOCH="$(date -u +%s)"
 REPAIR_DEADLINE_EPOCH="$((REPAIR_STARTED_AT_EPOCH + REPAIR_BUDGET_SECS))"
 
-mkdir -p "$RUN_DIR" "$DATA_DIR" "$FINDINGS_DIR"
+mkdir -p "$RUN_DIR" "$DATA_DIR"
 
 CHILD_PIDS=()
 CLEANUP_CHILDREN_RAN=0
@@ -293,10 +293,10 @@ trap 'shutdown_repair_loop; exit 130' INT
 trap 'shutdown_repair_loop; exit 143' TERM
 
 acquire_repair_lock() {
-  local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json=""
+  local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json="" repair_lock_output=""
   local -a _repair_lock_result=()
   mkdir -p "$(dirname "$REPAIR_PID_FILE")"
-  mapfile -t _repair_lock_result < <(
+  repair_lock_output="$(
     PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$REPAIR_LOCK_DIR" "$SESSION" "$$" "$WORKSPACE" "$0" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" <<'PY'
 import json
 import os
@@ -328,7 +328,12 @@ print(result.status)
 print(owner_pid)
 print(json.dumps(result.stale_evidence or {}, sort_keys=True))
 PY
-  )
+  )" || repair_lock_output=""
+  while IFS= read -r line; do
+    _repair_lock_result+=("$line")
+  done <<EOF
+$repair_lock_output
+EOF
   lock_status="${_repair_lock_result[0]:-}"
   lock_owner_pid="${_repair_lock_result[1]:-}"
   stale_lock_json="${_repair_lock_result[2]:-}"
@@ -3532,13 +3537,12 @@ run_kimi_launch_turn() {
   prompt_path="$RUN_DIR/iter${iteration}-kimi-prompt.md"
   report_path="$RUN_DIR/iter${iteration}-kimi-report.json"
   write_kimi_prompt "$prompt_path" "$relaunch_command" "$report_path"
-  log "iteration=$iteration kimi-launch model=$KIMI_MODEL"
-  local kimi_timeout
-  kimi_timeout="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
+  KIMI_TIMEOUT="$(cap_timeout_to_repair_budget "$KIMI_TIMEOUT" "kimi-dispatch-$iteration")"
+  log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
   (
     cd "$ARNOLD_SRC" &&
     PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
-    timeout "$kimi_timeout" python3 -P -m arnold.agent.run_agent \
+    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \
       --query="$(cat "$prompt_path")" \
       --model="$KIMI_MODEL" \
       --api_key="${KIMI_API_KEY:-}" \
@@ -3716,7 +3720,10 @@ else
   GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
 fi
 
-for ((iteration = 1; iteration <= REPAIR_ITERATION_MAX; iteration++)); do
+for iteration in 1 2 3; do
+  if (( iteration > REPAIR_ITERATION_MAX )); then
+    break
+  fi
   exit_if_repair_target_complete "iteration-$iteration-start"
   case "$iteration" in
     1)
