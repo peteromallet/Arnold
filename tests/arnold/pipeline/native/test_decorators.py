@@ -17,17 +17,24 @@ from arnold.pipeline.native import (
     NativeLoopGuard,
     NativePhase,
     NativePipeline,
+    NativeInvocable,
     decision,
     get_decision_meta,
     get_phase_meta,
     get_pipeline_meta,
+    get_step_meta,
+    get_workflow_meta,
     is_decision,
     is_phase,
     is_pipeline,
+    is_step,
+    is_workflow,
     native_panel,
     parallel,
     phase,
     pipeline,
+    step,
+    workflow,
 )
 
 
@@ -53,9 +60,13 @@ class TestImports:
         assert is_pipeline is not None
         assert is_phase is not None
         assert is_decision is not None
+        assert is_step is not None
+        assert is_workflow is not None
         assert get_pipeline_meta is not None
         assert get_phase_meta is not None
         assert get_decision_meta is not None
+        assert get_step_meta is not None
+        assert get_workflow_meta is not None
 
     def test_ir_types_importable(self) -> None:
         assert NativePipeline is not None
@@ -155,6 +166,187 @@ class TestPhaseDecorator:
         assert is_pipeline(step) is False
 
 
+# ── @step alias tests ──────────────────────────────────────────────────
+
+
+class TestStepDecorator:
+    """``@step`` is a public alias for ``@phase`` — identical behavior."""
+
+    def test_no_parens_attaches_metadata(self) -> None:
+        @step
+        def do_work(ctx: object) -> dict:
+            return {"x": 1}
+
+        # Recognized as both a step and a phase
+        assert is_step(do_work) is True
+        assert is_phase(do_work) is True
+        assert is_pipeline(do_work) is False
+        assert is_decision(do_work) is False
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+        assert meta["name"] == "do_work"
+
+        # get_phase_meta also works (they share the same backing)
+        phase_meta = get_phase_meta(do_work)
+        assert phase_meta is not None
+        assert phase_meta["name"] == "do_work"
+
+    def test_with_name_override(self) -> None:
+        @step(name="custom_step")
+        def do_work(ctx: object) -> dict:
+            return {"x": 1}
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+        assert meta["name"] == "custom_step"
+
+    def test_with_stable_id_and_schemas(self) -> None:
+        @step(
+            name="typed_step",
+            id="my.step.id",
+            inputs={"type": "object", "required": ["text"]},
+            outputs={"type": "object", "required": ["result"]},
+        )
+        def do_work(ctx: object) -> dict:
+            return {"result": "ok"}
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+        assert meta["name"] == "typed_step"
+        assert meta["id"] == "my.step.id"
+        assert meta["inputs"] == {"type": "object", "required": ["text"]}
+        assert meta["outputs"] == {"type": "object", "required": ["result"]}
+
+        # Dunder attributes are also present
+        assert do_work.__step_id__ == "my.step.id"
+        assert do_work.__step_inputs__ == {"type": "object", "required": ["text"]}
+        assert do_work.__step_outputs__ == {"type": "object", "required": ["result"]}
+
+    def test_callable_behavior_preserved(self) -> None:
+        @step
+        def multiply(a: int, b: int) -> int:
+            return a * b
+
+        assert multiply(3, 4) == 12
+
+    def test_not_step_for_undecorated(self) -> None:
+        def plain() -> None:
+            pass
+
+        assert is_step(plain) is False
+        assert get_step_meta(plain) is None
+
+    def test_step_parens_no_name_defaults_to_func_name(self) -> None:
+        @step()
+        def my_fn(ctx: object) -> dict:
+            return {}
+
+        meta = get_step_meta(my_fn)
+        assert meta is not None
+        assert meta["name"] == "my_fn"
+
+    def test_step_is_not_workflow(self) -> None:
+        @step
+        def fn(ctx: object) -> dict:
+            return {}
+
+        assert is_workflow(fn) is False
+
+
+# ── @workflow alias tests ──────────────────────────────────────────────
+
+
+class TestWorkflowDecorator:
+    """``@workflow`` is a public alias for ``@pipeline`` — identical behavior."""
+
+    def test_no_parens_attaches_metadata(self) -> None:
+        @workflow
+        def my_wf(ctx: object) -> str:
+            return "done"
+
+        # Recognized as both a workflow and a pipeline
+        assert is_workflow(my_wf) is True
+        assert is_pipeline(my_wf) is True
+        assert is_phase(my_wf) is False
+        assert is_step(my_wf) is False
+        assert is_decision(my_wf) is False
+
+        meta = get_workflow_meta(my_wf)
+        assert meta is not None
+        assert meta["name"] == "my_wf"
+        assert meta["description"] == ""
+        assert meta["phases"] == []
+        assert meta["decisions"] == []
+
+        # get_pipeline_meta also works (they share the same backing)
+        pipe_meta = get_pipeline_meta(my_wf)
+        assert pipe_meta is not None
+        assert pipe_meta["name"] == "my_wf"
+
+    def test_with_name_and_description(self) -> None:
+        @workflow(name="custom_wf", description="A test workflow")
+        def my_wf(ctx: object) -> str:
+            return "done"
+
+        meta = get_workflow_meta(my_wf)
+        assert meta is not None
+        assert meta["name"] == "custom_wf"
+        assert meta["description"] == "A test workflow"
+
+    def test_with_stable_id_and_schemas(self) -> None:
+        @workflow(
+            name="typed_wf",
+            id="my.workflow.id",
+            inputs={"type": "object", "required": ["query"]},
+            outputs={"type": "object", "required": ["answer"]},
+        )
+        def my_wf(ctx: object) -> str:
+            return "finished"
+
+        meta = get_workflow_meta(my_wf)
+        assert meta is not None
+        assert meta["name"] == "typed_wf"
+        assert meta["id"] == "my.workflow.id"
+        assert meta["inputs"] == {"type": "object", "required": ["query"]}
+        assert meta["outputs"] == {"type": "object", "required": ["answer"]}
+
+        # Dunder attributes are also present
+        assert my_wf.__workflow_id__ == "my.workflow.id"
+        assert my_wf.__workflow_inputs__ == {"type": "object", "required": ["query"]}
+        assert my_wf.__workflow_outputs__ == {"type": "object", "required": ["answer"]}
+
+    def test_callable_behavior_preserved(self) -> None:
+        @workflow
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        assert add(2, 3) == 5
+
+    def test_not_workflow_for_undecorated(self) -> None:
+        def plain() -> None:
+            pass
+
+        assert is_workflow(plain) is False
+        assert get_workflow_meta(plain) is None
+
+    def test_workflow_parens_no_name_defaults_to_func_name(self) -> None:
+        @workflow()
+        def my_fn(ctx: object) -> str:
+            return "ok"
+
+        meta = get_workflow_meta(my_fn)
+        assert meta is not None
+        assert meta["name"] == "my_fn"
+
+    def test_workflow_is_not_step(self) -> None:
+        @workflow
+        def fn(ctx: object) -> str:
+            return "ok"
+
+        assert is_step(fn) is False
+
+
 # ── @decision decorator tests ─────────────────────────────────────────
 
 
@@ -236,12 +428,20 @@ class TestMetadataHelpersCrossCutting:
             return "done"
 
         @phase
-        def step(ctx: object) -> dict:
+        def step_fn(ctx: object) -> dict:
             return {}
 
         @decision
         def decide(ctx: object) -> str:
             return "x"
+
+        @step
+        def step_alias(ctx: object) -> dict:
+            return {}
+
+        @workflow
+        def wf_alias(ctx: object) -> str:
+            return "done"
 
         # Pipeline
         assert is_pipeline(pipe) is True
@@ -249,14 +449,28 @@ class TestMetadataHelpersCrossCutting:
         assert is_decision(pipe) is False
 
         # Phase
-        assert is_pipeline(step) is False
-        assert is_phase(step) is True
-        assert is_decision(step) is False
+        assert is_pipeline(step_fn) is False
+        assert is_phase(step_fn) is True
+        assert is_decision(step_fn) is False
 
         # Decision
         assert is_pipeline(decide) is False
         assert is_phase(decide) is False
         assert is_decision(decide) is True
+
+        # Step alias: recognized as both step and phase, not pipeline/decision
+        assert is_step(step_alias) is True
+        assert is_phase(step_alias) is True
+        assert is_pipeline(step_alias) is False
+        assert is_decision(step_alias) is False
+        assert is_workflow(step_alias) is False
+
+        # Workflow alias: recognized as both workflow and pipeline, not phase/decision
+        assert is_workflow(wf_alias) is True
+        assert is_pipeline(wf_alias) is True
+        assert is_phase(wf_alias) is False
+        assert is_step(wf_alias) is False
+        assert is_decision(wf_alias) is False
 
 
 # ── IR dataclass tests ────────────────────────────────────────────────
@@ -272,6 +486,25 @@ class TestNativePhase:
         np = NativePhase(name="test_phase", func=my_func)
         assert np.name == "test_phase"
         assert np.func is my_func
+        assert np.stable_id is None
+        assert np.inputs_schema is None
+        assert np.outputs_schema is None
+
+    def test_invocable_metadata(self) -> None:
+        def my_func(ctx: object) -> dict:
+            return {}
+
+        np = NativePhase(
+            name="test_phase",
+            func=my_func,
+            stable_id="phase.stable",
+            inputs_schema={"type": "object"},
+            outputs_schema={"type": "object"},
+        )
+        assert isinstance(np, NativeInvocable)
+        assert np.stable_id == "phase.stable"
+        assert np.inputs_schema == {"type": "object"}
+        assert np.outputs_schema == {"type": "object"}
 
     def test_frozen(self) -> None:
         def my_func(ctx: object) -> dict:
@@ -361,6 +594,9 @@ class TestNativePipeline:
         p = NativePipeline(name="test_pipe", func=pipe_fn)
         assert p.name == "test_pipe"
         assert p.func is pipe_fn
+        assert p.stable_id is None
+        assert p.inputs_schema is None
+        assert p.outputs_schema is None
         assert p.phases == ()
         assert p.decisions == ()
         assert p.loop_guards == ()
@@ -399,6 +635,22 @@ class TestNativePipeline:
         assert p.loop_guards == loops
         assert p.description == "A full pipeline"
 
+    def test_invocable_metadata(self) -> None:
+        def pipe_fn(ctx: object) -> str:
+            return "ok"
+
+        p = NativePipeline(
+            name="full_pipe",
+            func=pipe_fn,
+            stable_id="workflow.stable",
+            inputs_schema={"type": "object"},
+            outputs_schema={"type": "object"},
+        )
+        assert isinstance(p, NativeInvocable)
+        assert p.stable_id == "workflow.stable"
+        assert p.inputs_schema == {"type": "object"}
+        assert p.outputs_schema == {"type": "object"}
+
     def test_frozen(self) -> None:
         def pipe_fn(ctx: object) -> str:
             return "ok"
@@ -415,7 +667,12 @@ class TestDecoratorToIR:
     """Smoke test that decorator metadata can feed IR construction."""
 
     def test_phase_to_native_phase(self) -> None:
-        @phase(name="my_step")
+        @phase(
+            name="my_step",
+            id="step.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
         def step(ctx: object) -> dict:
             return {"status": "ok"}
 
@@ -425,6 +682,9 @@ class TestDecoratorToIR:
         ir_phase = NativePhase(name=meta["name"], func=step)
         assert ir_phase.name == "my_step"
         assert ir_phase.func is step
+        assert meta["id"] == "step.stable"
+        assert meta["inputs"] == {"type": "object"}
+        assert meta["outputs"] == {"type": "object"}
         # callable still works
         assert step(None) == {"status": "ok"}
 
@@ -446,7 +706,13 @@ class TestDecoratorToIR:
         assert branch(None) == "left"
 
     def test_pipeline_to_native_pipeline_minimal(self) -> None:
-        @pipeline(name="demo", description="demo pipeline")
+        @pipeline(
+            name="demo",
+            description="demo pipeline",
+            id="workflow.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
         def demo(ctx: object) -> str:
             return "finished"
 
@@ -456,10 +722,70 @@ class TestDecoratorToIR:
         ir_pipe = NativePipeline(
             name=meta["name"],
             func=demo,
+            stable_id=meta["id"],
+            inputs_schema=meta["inputs"],
+            outputs_schema=meta["outputs"],
             description=meta["description"],
         )
         assert ir_pipe.name == "demo"
         assert ir_pipe.description == "demo pipeline"
+        assert ir_pipe.stable_id == "workflow.stable"
+        assert ir_pipe.inputs_schema == {"type": "object"}
+        assert ir_pipe.outputs_schema == {"type": "object"}
+        assert demo(None) == "finished"
+
+    def test_step_alias_to_native_phase(self) -> None:
+        """@step is an alias for @phase; IR construction is identical."""
+
+        @step(
+            name="my_step",
+            id="step.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
+        def do_work(ctx: object) -> dict:
+            return {"status": "ok"}
+
+        meta = get_step_meta(do_work)
+        assert meta is not None
+
+        ir_phase = NativePhase(name=meta["name"], func=do_work)
+        assert ir_phase.name == "my_step"
+        assert ir_phase.func is do_work
+        assert meta["id"] == "step.stable"
+        assert meta["inputs"] == {"type": "object"}
+        assert meta["outputs"] == {"type": "object"}
+        assert do_work(None) == {"status": "ok"}
+
+    def test_workflow_alias_to_native_pipeline(self) -> None:
+        """@workflow is an alias for @pipeline; IR construction is identical."""
+
+        @workflow(
+            name="demo_wf",
+            description="demo workflow",
+            id="workflow.stable",
+            inputs={"type": "object"},
+            outputs={"type": "object"},
+        )
+        def demo(ctx: object) -> str:
+            return "finished"
+
+        meta = get_workflow_meta(demo)
+        assert meta is not None
+
+        ir_pipe = NativePipeline(
+            name=meta["name"],
+            func=demo,
+            stable_id=meta["id"],
+            inputs_schema=meta["inputs"],
+            outputs_schema=meta["outputs"],
+            description=meta["description"],
+        )
+        assert ir_pipe.name == "demo_wf"
+        assert ir_pipe.description == "demo workflow"
+        assert ir_pipe.stable_id == "workflow.stable"
+        assert ir_pipe.inputs_schema == {"type": "object"}
+        assert ir_pipe.outputs_schema == {"type": "object"}
         assert demo(None) == "finished"
 
 

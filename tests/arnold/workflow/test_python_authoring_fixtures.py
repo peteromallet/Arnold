@@ -5,12 +5,16 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 import arnold.workflow as workflow
 from arnold.workflow import diagnostics
 
 
 FIXTURE_DIR = Path("tests/fixtures/workflow_authoring")
+M0_FIXTURE_DIR = FIXTURE_DIR / "m0"
 GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
+M0_GRAMMAR_VERSION = "arnold.workflow.authoring.v2"
 EXPECTED_CASES = {
     "valid_direct_linear": "valid",
     "valid_function_linear": "valid",
@@ -47,9 +51,54 @@ EXPECTED_CASES = {
     "invalid_runtime_arithmetic": "invalid",
     "invalid_runtime_attribute": "invalid",
 }
+M0_EXPECTED_CASES = {
+    "valid_m0_single_workflow": "valid",
+    "invalid_m0_manual_graph_nodes": "invalid",
+    "invalid_m0_manual_path_strings": "invalid",
+    "invalid_m0_validator_directives": "invalid",
+    "invalid_m0_direct_manifest_authoring": "invalid",
+    "invalid_m0_native_program_projection": "invalid",
+    "invalid_m0_megaplan_only_helpers": "invalid",
+    "deferred_m0_nested_child_workflow": "valid",
+    "deferred_m0_repeated_call_sites": "valid",
+    "deferred_m0_review_revise_loop": "valid",
+}
 SUPPORT_MODULES = {"components"}
 SOURCE_SPAN_FIELDS = {"start_line", "start_column", "end_line", "end_column"}
 COMMON_SIDECAR_FIELDS = {"grammar_version", "source_path", "outcome", "expected_diagnostics"}
+M0_VALID_SIDECAR_FIELDS = COMMON_SIDECAR_FIELDS | {"expected_provenance"}
+M0_INVALID_SIDECAR_FIELDS = COMMON_SIDECAR_FIELDS | {"rejection_category"}
+M0_DEFERRED_SIDECAR_FIELDS = M0_VALID_SIDECAR_FIELDS | {
+    "status",
+    "deferred_until",
+    "description",
+}
+M0_DEFERRED_CASES = {
+    "deferred_m0_nested_child_workflow",
+    "deferred_m0_repeated_call_sites",
+    "deferred_m0_review_revise_loop",
+}
+M0_INVALID_REJECTION_CATEGORIES = {
+    "invalid_m0_manual_graph_nodes": "manual_graph_nodes",
+    "invalid_m0_manual_path_strings": "manual_path_strings",
+    "invalid_m0_validator_directives": "validator_directives",
+    "invalid_m0_direct_manifest_authoring": "direct_manifest_authoring",
+    "invalid_m0_native_program_projection": "native_program_projection",
+    "invalid_m0_megaplan_only_helpers": "megaplan_only_helpers",
+}
+M0_AWF2XX_CODES = {
+    "AWF200_MANUAL_GRAPH_NODES",
+    "AWF201_MANUAL_PATH_STRINGS",
+    "AWF202_VALIDATOR_DIRECTIVES",
+    "AWF203_DIRECT_MANIFEST_AUTHORING",
+    "AWF204_NATIVE_PROGRAM_PROJECTION",
+    "AWF205_MEGAPLAN_ONLY_HELPERS",
+}
+M0_DECORATOR_BOUNDARY_CODES = {
+    diagnostics.DiagnosticCode.UNKNOWN_COMPONENT.value,
+    diagnostics.DiagnosticCode.RESERVED_INTRINSIC_SHADOWING.value,
+    diagnostics.DiagnosticCode.MISSING_WORKFLOW_DECLARATION.value,
+}
 
 
 def test_python_authoring_acceptance_fixture_set_is_complete() -> None:
@@ -58,6 +107,17 @@ def test_python_authoring_acceptance_fixture_set_is_complete() -> None:
 
     assert source_cases == set(EXPECTED_CASES)
     assert sidecar_cases == set(EXPECTED_CASES)
+
+
+def test_python_authoring_m0_fixture_set_is_complete() -> None:
+    source_cases = {path.stem for path in M0_FIXTURE_DIR.glob("*.py")}
+    sidecar_cases = {
+        path.name.removesuffix(".expected.json")
+        for path in M0_FIXTURE_DIR.glob("*.expected.json")
+    }
+
+    assert source_cases == set(M0_EXPECTED_CASES)
+    assert sidecar_cases == source_cases
 
 
 def test_python_authoring_fixture_sidecars_match_contract() -> None:
@@ -85,6 +145,42 @@ def test_python_authoring_fixture_sidecars_match_contract() -> None:
                 assert diagnostic["code"] in known_codes
                 assert diagnostic["message"]
                 _assert_span_matches_source(source_path, diagnostic["source_span"])
+
+
+def test_python_authoring_m0_fixture_sidecars_match_contract() -> None:
+    for case_name, outcome in M0_EXPECTED_CASES.items():
+        source_path = M0_FIXTURE_DIR / f"{case_name}.py"
+        sidecar = _load_sidecar_from_dir(M0_FIXTURE_DIR, case_name)
+
+        assert source_path.exists()
+        assert sidecar["grammar_version"] == M0_GRAMMAR_VERSION
+        assert sidecar["source_path"] == source_path.as_posix()
+        assert sidecar["outcome"] == outcome
+
+        if case_name in M0_DEFERRED_CASES:
+            assert set(sidecar) == M0_DEFERRED_SIDECAR_FIELDS
+            assert sidecar["status"] == "deferred"
+            assert sidecar["deferred_until"]
+            assert sidecar["description"]
+            assert sidecar["expected_diagnostics"] == []
+            _assert_m0_valid_provenance_sidecar(sidecar)
+            continue
+
+        if outcome == "valid":
+            assert set(sidecar) == M0_VALID_SIDECAR_FIELDS
+            assert sidecar["expected_diagnostics"] == []
+            _assert_m0_valid_provenance_sidecar(sidecar)
+            continue
+
+        assert set(sidecar) == M0_INVALID_SIDECAR_FIELDS
+        assert sidecar["rejection_category"] == M0_INVALID_REJECTION_CATEGORIES[case_name]
+        expected_diagnostics = sidecar["expected_diagnostics"]
+        assert len(expected_diagnostics) == 1
+        expected = expected_diagnostics[0]
+        assert expected["code"] in M0_AWF2XX_CODES
+        assert expected["rejection_category"] == sidecar["rejection_category"]
+        assert expected["grammar_version"] == M0_GRAMMAR_VERSION
+        assert expected["message"]
 
 
 def test_python_authoring_invalid_fixture_diagnostics_match_sidecars() -> None:
@@ -129,8 +225,46 @@ def test_python_authoring_valid_fixture_provenance_matches_sidecars() -> None:
         } == expected
 
 
+def test_python_authoring_m0_valid_fixture_is_registered_without_requiring_later_lowering() -> None:
+    source_path = M0_FIXTURE_DIR / "valid_m0_single_workflow.py"
+    result = workflow.check_workflow_file(source_path)
+
+    _assert_m0_step_workflow_authoring_shape(source_path)
+    assert _m0_is_currently_decorator_blocked(result) or result.ok
+
+
+@pytest.mark.parametrize("case_name", sorted(M0_DEFERRED_CASES))
+def test_python_authoring_m0_deferred_sidecars_honor_aspirational_cases(case_name: str) -> None:
+    source_path = M0_FIXTURE_DIR / f"{case_name}.py"
+    result = workflow.check_workflow_file(source_path)
+
+    assert _load_sidecar_from_dir(M0_FIXTURE_DIR, case_name)["status"] == "deferred"
+    _assert_m0_deferred_fixture_shape(case_name, source_path)
+    assert _m0_is_currently_decorator_blocked(result) or result.ok
+
+
+@pytest.mark.parametrize(
+    ("case_name", "rejection_category"),
+    sorted(M0_INVALID_REJECTION_CATEGORIES.items()),
+)
+def test_python_authoring_m0_invalid_categories_are_rejected_for_intended_reasons(
+    case_name: str,
+    rejection_category: str,
+) -> None:
+    source_path = M0_FIXTURE_DIR / f"{case_name}.py"
+    result = workflow.check_workflow_file(source_path)
+
+    _assert_m0_invalid_fixture_shape(source_path, rejection_category)
+    assert not result.ok
+    assert _m0_is_currently_decorator_blocked(result)
+
+
 def _load_sidecar(case_name: str) -> dict[str, Any]:
-    with (FIXTURE_DIR / f"{case_name}.expected.json").open(encoding="utf-8") as handle:
+    return _load_sidecar_from_dir(FIXTURE_DIR, case_name)
+
+
+def _load_sidecar_from_dir(fixture_dir: Path, case_name: str) -> dict[str, Any]:
+    with (fixture_dir / f"{case_name}.expected.json").open(encoding="utf-8") as handle:
         return json.load(handle)
 
 
@@ -253,6 +387,128 @@ def _assert_valid_provenance_sidecar(sidecar: dict[str, Any], source_path: Path)
         assert isinstance(intrinsic["arguments"], dict)
         assert all(isinstance(key, str) for key in intrinsic["arguments"])
         _assert_span_matches_source(source_path, intrinsic["source_span"])
+
+
+def _assert_m0_valid_provenance_sidecar(sidecar: dict[str, Any]) -> None:
+    provenance = sidecar["expected_provenance"]
+    assert provenance["source_form"] == "function"
+    assert provenance["grammar_version"] == M0_GRAMMAR_VERSION
+    workflow_payload = provenance["workflow"]
+    assert workflow_payload["id"]
+    assert workflow_payload["name"]
+    assert workflow_payload["inputs_schema"]
+    assert workflow_payload["outputs_schema"]
+    if "steps" in provenance:
+        assert provenance["steps"]
+        for step in provenance["steps"]:
+            assert step["id"]
+            assert step["call_site_path"]
+
+
+def _assert_m0_step_workflow_authoring_shape(source_path: Path) -> None:
+    module = ast.parse(source_path.read_text(encoding="utf-8"))
+    imported_names = {
+        alias.name
+        for node in module.body
+        if isinstance(node, ast.ImportFrom) and node.module == "arnold.pipeline"
+        for alias in node.names
+    }
+    decorated_functions = [
+        node for node in module.body if isinstance(node, ast.FunctionDef) and node.decorator_list
+    ]
+
+    assert {"step", "workflow"} <= imported_names
+    assert any(_decorator_calls_name(node, "step") for node in decorated_functions)
+    assert any(_decorator_calls_name(node, "workflow") for node in decorated_functions)
+
+
+def _assert_m0_deferred_fixture_shape(case_name: str, source_path: Path) -> None:
+    module = ast.parse(source_path.read_text(encoding="utf-8"))
+
+    if case_name == "deferred_m0_nested_child_workflow":
+        workflow_defs = [node for node in module.body if _decorator_calls_name(node, "workflow")]
+        assert len(workflow_defs) >= 2
+        assert any(
+            isinstance(node, ast.Call) and getattr(node.func, "id", None) == "review_subprocess"
+            for node in ast.walk(module)
+        )
+        return
+
+    if case_name == "deferred_m0_repeated_call_sites":
+        review_calls = [
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "review"
+        ]
+        assert len(review_calls) == 2
+        return
+
+    if case_name == "deferred_m0_review_revise_loop":
+        assert any(isinstance(node, ast.For) for node in ast.walk(module))
+        assert any(isinstance(node, ast.Break) for node in ast.walk(module))
+        return
+
+    raise AssertionError(f"unknown deferred M0 fixture: {case_name}")
+
+
+def _assert_m0_invalid_fixture_shape(source_path: Path, rejection_category: str) -> None:
+    module = ast.parse(source_path.read_text(encoding="utf-8"))
+
+    if rejection_category == "manual_graph_nodes":
+        names = {node.id for node in ast.walk(module) if isinstance(node, ast.Name)}
+        assert {"Pipeline", "Stage", "Edge"} <= names
+        return
+
+    if rejection_category == "manual_path_strings":
+        assert any(isinstance(node, ast.JoinedStr) for node in ast.walk(module))
+        return
+
+    if rejection_category == "validator_directives":
+        assert any(
+            isinstance(node, ast.Call) and getattr(node.func, "id", None) == "validate"
+            for node in ast.walk(module)
+        )
+        return
+
+    if rejection_category == "direct_manifest_authoring":
+        assert any(
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "WorkflowManifest" for target in node.targets)
+            for node in ast.walk(module)
+        )
+        return
+
+    if rejection_category == "native_program_projection":
+        assert any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "arnold.pipeline.native.ir"
+            and any(alias.name == "NativeProgram" for alias in node.names)
+            for node in ast.walk(module)
+        )
+        return
+
+    if rejection_category == "megaplan_only_helpers":
+        assert any(isinstance(node, ast.AsyncFunctionDef) for node in ast.walk(module))
+        return
+
+    raise AssertionError(f"unknown rejection category: {rejection_category}")
+
+
+def _decorator_calls_name(node: ast.AST, name: str) -> bool:
+    if not isinstance(node, ast.FunctionDef):
+        return False
+    return any(
+        isinstance(decorator, ast.Call) and getattr(decorator.func, "id", None) == name
+        for decorator in node.decorator_list
+    )
+
+
+def _diagnostic_codes(result: workflow.CheckWorkflowResult) -> set[str]:
+    return {diagnostic.code.value for diagnostic in result.diagnostics}
+
+
+def _m0_is_currently_decorator_blocked(result: workflow.CheckWorkflowResult) -> bool:
+    return bool(_diagnostic_codes(result) & M0_DECORATOR_BOUNDARY_CODES)
 
 
 def _assert_span_matches_source(source_path: Path, span: dict[str, int]) -> None:
