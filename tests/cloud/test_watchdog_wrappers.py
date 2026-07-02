@@ -8460,3 +8460,328 @@ def test_watchdog_scan_once_excludes_sidecar_only_entries(tmp_path: Path) -> Non
     assert result.returncode == 0, result.stderr
     log_text = (tmp_path / "scan.log").read_text(encoding="utf-8")
     assert "scan complete markers=0" in log_text
+
+
+# ---------------------------------------------------------------------------
+# Meta-repair wrapper extraction helpers + tests
+# ---------------------------------------------------------------------------
+
+
+def _meta_repair_wrapper() -> str:
+    return _wrapper("arnold-meta-repair-loop")
+
+
+def _extract_meta_repair_function(name: str) -> str:
+    text = _meta_repair_wrapper()
+    start = text.index(f"{name}() {{")
+    end = text.index("\n}\n", start) + 3
+    return text[start:end]
+
+
+def _extract_meta_repair_embedded_python(marker: str) -> str:
+    text = _meta_repair_wrapper()
+    start = text.index(marker)
+    start = text.index("\n", start) + 1
+    end = text.index("\nPY\n", start)
+    return text[start:end]
+
+
+def _run_meta_embedded_python(program: str, *args: str) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        prog_path = Path(tmpdir) / "_meta_embedded.py"
+        prog_path.write_text(program, encoding="utf-8")
+        env = dict(os.environ)
+        env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+        return subprocess.run(
+            [sys.executable, str(prog_path), *args],
+            capture_output=True,
+            text=True,
+            env=env,
+            check=False,
+        )
+
+
+def test_arnold_meta_repair_loop_wrapper_bash_n_syntax() -> None:
+    """The meta-repair wrapper must pass bash -n."""
+    wrapper_path = WRAPPER_DIR / "arnold-meta-repair-loop"
+    result = subprocess.run(
+        ["bash", "-n", str(wrapper_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"bash -n failed: {result.stderr}"
+
+
+def test_meta_repair_wrapper_has_env_setup_and_redaction() -> None:
+    """Wrapper must source cloud-hot-env, define redaction helpers."""
+    text = _meta_repair_wrapper()
+
+    assert '. /workspace/.cloud-hot-env' in text
+    assert 'redact_inline_text() {' in text
+    assert 'redact_file_in_place() {' in text
+    assert 'from arnold_pipelines.megaplan.cloud.redact import redact_text' in text
+
+
+def test_meta_repair_wrapper_has_feature_flag_gating() -> None:
+    """Wrapper must gate on META_REPAIR_ENABLED and exit early when off."""
+    text = _meta_repair_wrapper()
+
+    assert 'META_REPAIR_ENABLED_VAR="${ARNOLD_META_REPAIR_ENABLED:-0}"' in text
+    assert 'meta-repair disabled' in text
+    assert 'META_REPAIR_COMMIT_ENABLED_VAR="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-0}"' in text
+
+
+def test_meta_repair_wrapper_has_recursion_guard() -> None:
+    """Wrapper must have a recursion guard that checks repair-data/meta/."""
+    text = _meta_repair_wrapper()
+
+    assert 'recursion_check() {' in text
+    assert 'check_meta_repair_recursion' in text
+    assert 'RECURSION:' in text
+    assert 'NEEDS_HUMAN' in text
+    assert 'escalating to NEEDS_HUMAN instead of recursing' in text
+
+
+def test_meta_repair_wrapper_has_codex_dispatch() -> None:
+    """Wrapper must dispatch Codex with danger-full-access sandbox."""
+    text = _meta_repair_wrapper()
+
+    assert 'codex exec --sandbox danger-full-access' in text
+    assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-3600}"' in text
+    assert 'codex CLI missing' in text
+
+
+def test_meta_repair_wrapper_has_deepseek_hermes_subagent_instructions() -> None:
+    """Wrapper must instruct Codex to delegate to DeepSeek/Hermes subagents."""
+    text = _meta_repair_wrapper()
+
+    assert 'DEEPSEEK_MODEL="${MEGAPLAN_META_MODEL:-deepseek:deepseek-v4-pro}"' in text
+    assert 'SUBAGENT_PROFILE="${MEGAPLAN_META_SUBAGENT_PROFILE:-partnered-5}"' in text
+    assert 'launch_hermes_agent.py' in text
+    assert 'SUBAGENT_SKILL' in text
+    assert 'deepseek:deepseek-v4-pro' in text
+    assert 'partnered-5' in text
+    assert 'DeepSeek/Hermes' in text
+
+
+def test_meta_repair_wrapper_has_patch_only_default_policy() -> None:
+    """Wrapper must default to patch-only and gate commits behind flag."""
+    text = _meta_repair_wrapper()
+
+    assert 'Patch-only default' in text
+    assert 'MUST NOT commit or' in text
+    assert 'ARNOLD_META_REPAIR_COMMIT_ENABLED=1' in text
+    assert 'can_commit_changes' in text
+    assert 'can_push_changes' in text
+    assert 'commit_allowed=' in text
+    assert 'push_allowed=' in text
+
+
+def test_meta_repair_wrapper_has_python_handoff() -> None:
+    """Wrapper must hand off to meta_repair.py for classification and prompt."""
+    text = _meta_repair_wrapper()
+
+    assert 'evaluate_meta_repair_triggers' in text
+    assert 'classification_and_prompt() {' in text
+    assert 'NO_TRIGGER' in text
+    assert 'TRIGGER:' in text
+
+
+def test_meta_repair_wrapper_has_retrigger_verification_policy() -> None:
+    """Wrapper must include retrigger + verification contract text."""
+    text = _meta_repair_wrapper()
+
+    assert 'retrigger the ordinary repair loop' in text
+    assert 'REPAIR_LOOP_BIN' in text
+    assert 'SUCCESS outcome' in text
+    assert 'partial_liveness' in text
+    assert 'not terminal success' in text
+
+
+def test_meta_repair_wrapper_has_record_persistence() -> None:
+    """Wrapper must persist redacted meta-repair records."""
+    text = _meta_repair_wrapper()
+
+    assert 'persist_meta_repair_record' in text
+    assert 'MetaRepairRecord' in text
+    assert 'MetaRepairTrigger' in text
+    assert 'META_REPAIR_ID' in text
+
+
+def test_meta_repair_recursion_check_embedded_python_matches_contract(
+    tmp_path: Path,
+) -> None:
+    """The recursion_check embedded Python must match the meta_repair_policy API."""
+    marker = (
+        'python3 - "$SESSION" "$REPAIR_DATA_DIR" <<'
+    )
+    text = _meta_repair_wrapper()
+
+    # Find the recursion_check function body
+    start = text.index("recursion_check() {")
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+
+    prog_path = tmp_path / "_recursion_check.py"
+    prog_path.write_text(program, encoding="utf-8")
+
+    # Create fake repair-data/meta directory with no prior records
+    repair_data = tmp_path / "repair-data"
+    repair_data.mkdir()
+    (repair_data / "meta").mkdir()
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{REPO_ROOT}:{env.get('PYTHONPATH', '')}"
+    result = subprocess.run(
+        [sys.executable, str(prog_path), "test-session", str(repair_data)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK:" in result.stdout
+    assert "safe to proceed" in result.stdout
+
+    # Now create a prior meta-repair record for the same session
+    record = {
+        "meta_repair_id": "existing-001",
+        "session": "test-session",
+        "trigger": "repair_timeout",
+        "outcome": "FIXED",
+    }
+    import json as _json
+
+    (repair_data / "meta" / "existing-001.json").write_text(
+        _json.dumps(record), encoding="utf-8"
+    )
+
+    result2 = subprocess.run(
+        [sys.executable, str(prog_path), "test-session", str(repair_data)],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    # With max_meta_repair_attempts=1, one existing record should trigger recursion
+    assert result2.returncode == 1, result2.stdout
+    assert "RECURSION:" in result2.stdout
+
+
+def test_meta_repair_classification_embedded_python_matches_contract(
+    tmp_path: Path,
+) -> None:
+    """The classification_and_prompt embedded Python must call evaluate_meta_repair_triggers."""
+    marker = (
+        'python3 - "$SESSION" "$REPAIR_DATA_DIR" "$REPAIR_DATA_PATH" '
+        '"$META_REPAIR_ENABLED_VAR" <<'
+    )
+    text = _meta_repair_wrapper()
+
+    start = text.index("classification_and_prompt() {")
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+
+    # Verify the embedded Python compiles
+    prog_path = tmp_path / "_classify.py"
+    prog_path.write_text(program, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "py_compile", str(prog_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"py_compile failed: {result.stderr}"
+
+    # Verify the embedded program imports evaluate_meta_repair_triggers correctly
+    assert "evaluate_meta_repair_triggers" in program
+    assert "NO_TRIGGER" in program
+    assert "PROMPT_START" in program
+    assert "PROMPT_END" in program
+
+
+def test_meta_repair_commit_gate_embedded_python_matches_contract(
+    tmp_path: Path,
+) -> None:
+    """The commit_gate_check embedded Python must call can_commit_changes/can_push_changes."""
+    marker = 'python3 - "$SESSION" <<'
+    text = _meta_repair_wrapper()
+
+    start = text.index("commit_gate_check() {")
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+
+    prog_path = tmp_path / "_commit_gate.py"
+    prog_path.write_text(program, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "py_compile", str(prog_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"py_compile failed: {result.stderr}"
+
+    # Verify the embedded program imports the right policy functions
+    assert "can_commit_changes" in program
+    assert "can_push_changes" in program
+    assert "COMMIT_ALLOWED=" in program
+    assert "PUSH_ALLOWED=" in program
+
+
+def test_meta_repair_record_persistence_embedded_python_matches_contract(
+    tmp_path: Path,
+) -> None:
+    """The persist_record embedded Python must call persist_meta_repair_record."""
+    marker = (
+        'python3 - "$SESSION" "$TRIGGER_TYPE" "$VERDICT" "$RESP_PATH" '
+        '"$BRIEF_PATH" "$REPAIR_DATA_DIR" <<'
+    )
+    text = _meta_repair_wrapper()
+
+    start = text.index("persist_record() {")
+    py_start = text.index(marker, start)
+    py_start = text.index("\n", py_start) + 1
+    py_end = text.index("\nPY\n", py_start)
+    program = text[py_start:py_end]
+
+    prog_path = tmp_path / "_persist.py"
+    prog_path.write_text(program, encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, "-m", "py_compile", str(prog_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, f"py_compile failed: {result.stderr}"
+
+    assert "persist_meta_repair_record" in program
+    assert "MetaRepairRecord" in program
+    assert "MetaRepairTrigger" in program
+
+
+def test_meta_repair_wrapper_has_safe_session_and_logging() -> None:
+    """Wrapper must have safe session naming and log scaffolding."""
+    text = _meta_repair_wrapper()
+
+    assert "SAFE_SESSION=" in text
+    assert "tr -c 'A-Za-z0-9_.-'" in text
+    assert 'log() {' in text
+    assert 'RUN_LOG=' in text
+    assert 'tee -a "$RUN_LOG"' in text
+
+
+def test_meta_repair_wrapper_has_verdict_parsing() -> None:
+    """Wrapper must parse FIXED/ESCALATE/NO_FIX from Codex first line."""
+    text = _meta_repair_wrapper()
+
+    assert 'verdict=FIXED' in text
+    assert 'verdict=ESCALATE' in text
+    assert 'verdict=NO_FIX' in text
+    assert 'verdict=UNKNOWN' in text

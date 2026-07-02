@@ -18,10 +18,18 @@ from unittest.mock import patch
 import pytest
 
 from arnold_pipelines.megaplan.cloud.feature_flags import (
+    audit_autofix_commit_enabled,
+    audit_autofix_commit_on,
+    audit_autofix_enabled,
+    audit_autofix_on,
     autonomy_enabled,
     autonomy_on,
     escalation_ledger_enabled,
     escalation_ledger_on,
+    meta_repair_commit_enabled,
+    meta_repair_commit_on,
+    meta_repair_enabled,
+    meta_repair_on,
     redaction_enabled,
     redaction_on,
     repair_request_queue_enabled,
@@ -373,3 +381,135 @@ class TestResolverObserveIntegration:
             assert result["authoritative_source"] != "resolver_observe_disabled"
             # Should contain filesystem-derived data
             assert result["marker"]["present"] is True
+
+
+# ---------------------------------------------------------------------------
+# M5 meta-repair and auditor feature flags (default OFF)
+# ---------------------------------------------------------------------------
+
+
+class TestM5Defaults:
+    """All M5 meta-repair and auditor flags are off by default."""
+
+    def test_meta_repair_defaults_off(self) -> None:
+        with _clear_env():
+            assert meta_repair_enabled() is False
+            assert meta_repair_on() is False
+
+    def test_audit_autofix_defaults_off(self) -> None:
+        with _clear_env():
+            assert audit_autofix_enabled() is False
+            assert audit_autofix_on() is False
+
+    def test_meta_repair_commit_defaults_off(self) -> None:
+        with _clear_env():
+            assert meta_repair_commit_enabled() is False
+            assert meta_repair_commit_on() is False
+
+    def test_audit_autofix_commit_defaults_off(self) -> None:
+        with _clear_env():
+            assert audit_autofix_commit_enabled() is False
+            assert audit_autofix_commit_on() is False
+
+
+class TestM5ExplicitOptIn:
+    """M5 flags default OFF and require explicit enabling."""
+
+    @pytest.mark.parametrize(
+        "env_var,flag_func",
+        [
+            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
+            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
+        ],
+    )
+    def test_flag_off_by_default(self, env_var: str, flag_func) -> None:
+        with _clear_env():
+            assert flag_func() is False
+
+    @pytest.mark.parametrize(
+        "env_var,flag_func",
+        [
+            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
+            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
+        ],
+    )
+    def test_flag_on_when_env_1(self, env_var: str, flag_func) -> None:
+        with _set_env(**{env_var: "1"}):
+            assert flag_func() is True
+
+    @pytest.mark.parametrize(
+        "env_var,flag_func",
+        [
+            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
+            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
+        ],
+    )
+    def test_flag_off_when_env_0(self, env_var: str, flag_func) -> None:
+        with _set_env(**{env_var: "0"}):
+            assert flag_func() is False
+
+    @pytest.mark.parametrize(
+        "env_var,flag_func",
+        [
+            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
+            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
+        ],
+    )
+    def test_flag_off_when_env_false(self, env_var: str, flag_func) -> None:
+        with _set_env(**{env_var: "false"}):
+            assert flag_func() is False
+
+    @pytest.mark.parametrize(
+        "env_var,flag_func",
+        [
+            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
+            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
+        ],
+    )
+    def test_flag_on_when_env_true(self, env_var: str, flag_func) -> None:
+        with _set_env(**{env_var: "true"}):
+            # "true" is recognized as truthy (not in the disable-values set)
+            assert flag_func() is True
+
+    @pytest.mark.parametrize(
+        "env_var,flag_func",
+        [
+            ("ARNOLD_META_REPAIR_ENABLED", meta_repair_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_ENABLED", audit_autofix_enabled),
+            ("ARNOLD_META_REPAIR_COMMIT_ENABLED", meta_repair_commit_enabled),
+            ("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", audit_autofix_commit_enabled),
+        ],
+    )
+    def test_flag_off_when_env_empty(self, env_var: str, flag_func) -> None:
+        with _set_env(**{env_var: ""}):
+            # Empty string → falls through to default (False for these flags)
+            assert flag_func() is False
+
+
+class TestM5FlagIndependence:
+    """Each M5 flag is gated by its own env var — no cross-flag leakage."""
+
+    def test_meta_repair_independent_of_commits(self) -> None:
+        with _set_env(ARNOLD_META_REPAIR_COMMIT_ENABLED="1"):
+            assert meta_repair_enabled() is False
+
+    def test_audit_autofix_independent_of_commits(self) -> None:
+        with _set_env(ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED="1"):
+            assert audit_autofix_enabled() is False
+
+    def test_m5_flags_independent_of_autonomy(self) -> None:
+        with _set_env(ARNOLD_AUTONOMY="1"):
+            assert meta_repair_enabled() is False
+            assert audit_autofix_enabled() is False
+            assert meta_repair_commit_enabled() is False
+            assert audit_autofix_commit_enabled() is False
