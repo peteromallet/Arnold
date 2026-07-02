@@ -21,10 +21,15 @@ from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WRAPPER_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "wrappers"
+SYSTEMD_DIR = REPO_ROOT / "arnold_pipelines" / "megaplan" / "cloud" / "systemd"
 
 
 def _wrapper(name: str) -> str:
     return (WRAPPER_DIR / name).read_text(encoding="utf-8")
+
+
+def _systemd_file(name: str) -> str:
+    return (SYSTEMD_DIR / name).read_text(encoding="utf-8")
 
 
 def _discover_wrapper() -> str:
@@ -292,6 +297,15 @@ def test_watchdog_defaults_editable_install_to_dedicated_branch() -> None:
     assert 'REPAIR_TRIGGER_BIN="${CLOUD_WATCHDOG_REPAIR_TRIGGER_BIN:-$WRAPPER_REPO_ROOT/arnold_pipelines/megaplan/cloud/wrappers/arnold-repair-trigger}"' not in text
     assert 'SYNC_BRANCH="${CLOUD_WATCHDOG_SYNC_BRANCH:-${MEGAPLAN_REF' not in text
     assert "workflow-manifest-runtime" not in text
+
+
+def test_host_watchdog_ensure_starts_shell_wrapped_watchdog_and_verifies_liveness() -> None:
+    text = _systemd_file("ensure-megaplan-watchdog")
+
+    assert "bash -lc 'exec /usr/local/bin/arnold-watchdog'" in text
+    assert "tmux new-session -d -s watchdog -c /workspace exec /usr/local/bin/arnold-watchdog" not in text
+    assert "watchdog_restart_failed_not_alive" in text
+    assert text.count("tmux has-session -t watchdog") >= 2
 
 
 def test_watchdog_repairs_setup_deviations_instead_of_skipping() -> None:
