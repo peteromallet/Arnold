@@ -531,6 +531,51 @@ def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
     assert any("warning: git rebase --abort failed" in message for message in messages)
 
 
+def test_commit_and_push_phase_pushes_cleanup_only_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    messages: list[str] = []
+    subprocess_calls: list[list[str]] = []
+    run_command_calls: list[list[str]] = []
+    commit_results = iter([None, "cleanup123"])
+
+    def fake_commit_phase(*_args, **_kwargs) -> str | None:
+        return next(commit_results)
+
+    def fake_run(cmd, **_kwargs):
+        subprocess_calls.append(list(cmd))
+        if cmd[:3] == ["git", "fetch", "origin"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "missing remote branch")
+        raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+    def fake_run_command(_root, cmd, **_kwargs):
+        run_command_calls.append(list(cmd))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._commit_phase",
+        fake_commit_phase,
+    )
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=SimpleNamespace(
+                run=fake_run,
+                TimeoutExpired=subprocess.TimeoutExpired,
+            ),
+            _run_command=fake_run_command,
+        ),
+    )
+
+    _commit_and_push_phase(root, "branch-x", "plan-x", "finalize", writer=messages.append)
+
+    assert ["git", "fetch", "origin", "branch-x"] in subprocess_calls
+    assert ["git", "push", "--no-verify", "origin", "HEAD:branch-x"] in run_command_calls
+
+
 def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

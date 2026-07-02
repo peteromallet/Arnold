@@ -1593,14 +1593,15 @@ def _commit_and_push_phase(
     # paths, so that plan-state files (chain-state.json, events.jsonl, etc.)
     # that were modified after the first commit are themselves committed and
     # the worktree is clean before rebase/push.
-    _commit_phase(
+    cleanup_commit_sha = _commit_phase(
         root,
         plan,
         f"{phase}-cleanup",
         writer=writer,
         preexisting_dirty_paths=[],
     )
-    if committed_sha is None:
+    published_sha = cleanup_commit_sha or committed_sha
+    if published_sha is None:
         # Nothing committed (and not an init anchor) — nothing to publish.
         return
     # Reconcile with origin so a resumed chain whose local branch diverged
