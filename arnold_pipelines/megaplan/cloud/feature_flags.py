@@ -29,6 +29,17 @@ repair-trigger        ARNOLD_REPAIR_TRIGGER_ENABLED 0 (off)    Dispatch queued
 autonomy              ARNOLD_AUTONOMY               0 (off)    Enable autonomous
                                                                 trigger / meta /
                                                                 auditor actions.
+meta-repair           ARNOLD_META_REPAIR_ENABLED    0 (off)    Enable meta-repair
+                                                                gating and dispatch.
+audit-autofix         ARNOLD_AUDIT_AUTOFIX_ENABLED  0 (off)    Enable auditor
+                                                                autofix prompt
+                                                                generation.
+meta-repair-commit    ARNOLD_META_REPAIR_COMMIT_
+                      ENABLED                       0 (off)    Allow meta-repair
+                                                                to commit changes.
+audit-autofix-commit  ARNOLD_AUDIT_AUTOFIX_COMMIT_
+                      ENABLED                       0 (off)    Allow auditor
+                                                                autofix commits.
 redaction             ARNOLD_REDACTION_ENABLED      1 (on)     Redact secrets from
                                                                 persisted and
                                                                 outbound artifacts.
@@ -149,6 +160,54 @@ def repair_trigger_enabled() -> bool:
     return _is_enabled("ARNOLD_REPAIR_TRIGGER_ENABLED", False)
 
 
+def meta_repair_enabled() -> bool:
+    """Return ``True`` when meta-repair gating and dispatch are permitted.
+
+    Controlled by ``ARNOLD_META_REPAIR_ENABLED`` — defaults to OFF (``"0"``).
+
+    When enabled, the meta-repair subsystem may evaluate repair outcomes
+    and trigger re-repair loops.  Even when enabled, meta-repair must
+    still satisfy SUCCESS_OUTCOMES verification through the ordinary
+    repair loop — it cannot claim success from process liveness alone.
+    """
+    return _is_enabled("ARNOLD_META_REPAIR_ENABLED", False)
+
+
+def audit_autofix_enabled() -> bool:
+    """Return ``True`` when the auditor may generate autofix prompts.
+
+    Controlled by ``ARNOLD_AUDIT_AUTOFIX_ENABLED`` — defaults to OFF (``"0"``).
+
+    When enabled, the progress auditor may suggest targeted fixes for
+    stalled or failing repairs.  The auditor still requires explicit
+    gating before any autofix is committed.
+    """
+    return _is_enabled("ARNOLD_AUDIT_AUTOFIX_ENABLED", False)
+
+
+def meta_repair_commit_enabled() -> bool:
+    """Return ``True`` when meta-repair is allowed to commit changes.
+
+    Controlled by ``ARNOLD_META_REPAIR_COMMIT_ENABLED`` — defaults to OFF (``"0"``).
+
+    This is a separate gate from ``ARNOLD_META_REPAIR_ENABLED`` so that
+    meta-repair can evaluate and report without committing until the
+    commit gate is explicitly enabled.
+    """
+    return _is_enabled("ARNOLD_META_REPAIR_COMMIT_ENABLED", False)
+
+
+def audit_autofix_commit_enabled() -> bool:
+    """Return ``True`` when auditor autofix commits are permitted.
+
+    Controlled by ``ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED`` — defaults to OFF (``"0"``).
+
+    Separated from ``ARNOLD_AUDIT_AUTOFIX_ENABLED`` so autofix prompts
+    can be generated and reviewed before any commit action is taken.
+    """
+    return _is_enabled("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", False)
+
+
 # ---------------------------------------------------------------------------
 # Convenience re-exports for callers that want a single import
 # ---------------------------------------------------------------------------
@@ -189,11 +248,39 @@ def repair_trigger_on() -> bool:
     return repair_trigger_enabled()
 
 
+def meta_repair_on() -> bool:
+    """Alias for :func:`meta_repair_enabled`."""
+    return meta_repair_enabled()
+
+
+def audit_autofix_on() -> bool:
+    """Alias for :func:`audit_autofix_enabled`."""
+    return audit_autofix_enabled()
+
+
+def meta_repair_commit_on() -> bool:
+    """Alias for :func:`meta_repair_commit_enabled`."""
+    return meta_repair_commit_enabled()
+
+
+def audit_autofix_commit_on() -> bool:
+    """Alias for :func:`audit_autofix_commit_enabled`."""
+    return audit_autofix_commit_enabled()
+
+
 __all__ = [
+    "audit_autofix_commit_enabled",
+    "audit_autofix_commit_on",
+    "audit_autofix_enabled",
+    "audit_autofix_on",
     "autonomy_enabled",
     "autonomy_on",
     "escalation_ledger_enabled",
     "escalation_ledger_on",
+    "meta_repair_commit_enabled",
+    "meta_repair_commit_on",
+    "meta_repair_enabled",
+    "meta_repair_on",
     "redaction_enabled",
     "redaction_on",
     "repair_request_queue_enabled",

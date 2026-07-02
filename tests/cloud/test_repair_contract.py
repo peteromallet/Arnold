@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -389,6 +390,46 @@ def test_jsonl_append_escalation_auto_sequence_and_timestamp(tmp_path: Path) -> 
         datetime.fromisoformat(r["_timestamp"])
 
 
+def test_jsonl_append_cleanup_writes_to_dedicated_sidecar(tmp_path: Path) -> None:
+    sidecar_dir = tmp_path / "repair-data.d"
+
+    repair_contract.append_cleanup_record(
+        sidecar_dir,
+        {
+            "cleanup_id": "cleanup-1",
+            "pruned_counts": {"attempts": 2},
+            "preserved_reasons": ["unresolved escalation"],
+        },
+    )
+
+    path = repair_contract._sidecar_jsonl_path(sidecar_dir, "cleanup")
+    assert path.exists()
+    assert path.name == "cleanup.jsonl"
+    assert path.parent.name == "cleanup"
+
+    records = repair_contract.read_jsonl_records(path)
+    assert len(records) == 1
+    assert records[0]["cleanup_id"] == "cleanup-1"
+    assert records[0]["pruned_counts"] == {"attempts": 2}
+    assert records[0]["preserved_reasons"] == ["unresolved escalation"]
+    assert records[0]["_sequence"] == 1
+
+
+def test_jsonl_typed_helpers_include_cleanup_sidecar(tmp_path: Path) -> None:
+    sidecar_dir = tmp_path / "repair-data.d"
+
+    repair_contract.append_repair_event(sidecar_dir, {"kind": "event"})
+    repair_contract.append_incident_record(sidecar_dir, {"kind": "incident"})
+    repair_contract.append_attempt_record(sidecar_dir, {"kind": "attempt"})
+    repair_contract.append_cleanup_record(sidecar_dir, {"kind": "cleanup"})
+
+    cleanup = repair_contract.read_jsonl_records(
+        repair_contract._sidecar_jsonl_path(sidecar_dir, "cleanup")
+    )
+    assert len(cleanup) == 1
+    assert cleanup[0]["kind"] == "cleanup"
+
+
 def test_jsonl_non_mapping_record_raises(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="must be a mapping"):
         repair_contract.append_jsonl_record(tmp_path, "events", [1, 2, 3])  # type: ignore[arg-type]
@@ -444,6 +485,305 @@ def test_jsonl_concurrent_appends_are_visible(tmp_path: Path) -> None:
         assert "_sequence" in r
         assert "_timestamp" in r
 
+
+# ---------------------------------------------------------------------------
+# repair-data index helpers
+# ---------------------------------------------------------------------------
+
+
+def test_repair_index_load_missing_returns_default_shape(tmp_path: Path) -> None:
+    path = tmp_path / "repair-data" / "index.json"
+
+    loaded = repair_contract.load_repair_index(path)
+
+    assert loaded == {"sessions": {}, "incidents": {}}
+
+
+def test_repair_index_updates_create_and_merge_nested_refs_idempotently(tmp_path: Path) -> None:
+    path = tmp_path / "repair-data" / "index.json"
+
+    first = repair_contract.update_session_index(
+        path,
+        "session-1",
+        {
+            "status": "active",
+            "refs": {
+                "latest-attempt": {"attempt_id": "attempt-1"},
+                "latest-outcome": {"outcome": "repairing"},
+            },
+        },
+    )
+    second = repair_contract.update_session_index(
+        path,
+        "session-1",
+        {
+            "status": "active",
+            "refs": {
+                "latest-outcome": {"outcome": "complete"},
+                "unresolved-escalation": {"escalation_id": "esc-1"},
+            },
+        },
+    )
+    third = repair_contract.update_incident_index(
+        path,
+        "incident-1",
+        {
+            "session_id": "session-1",
+            "state": "open",
+            "refs": {
+                "latest-attempt": {"attempt_id": "attempt-1"},
+                "unresolved-escalation": {"escalation_id": "esc-1"},
+            },
+        },
+    )
+
+    assert first["sessions"]["session-1"]["refs"]["latest-attempt"] == {
+        "attempt_id": "attempt-1"
+    }
+    assert second["sessions"]["session-1"]["refs"] == {
+        "latest-attempt": {"attempt_id": "attempt-1"},
+        "latest-outcome": {"outcome": "complete"},
+        "unresolved-escalation": {"escalation_id": "esc-1"},
+    }
+    assert third["incidents"]["incident-1"]["refs"] == {
+        "latest-attempt": {"attempt_id": "attempt-1"},
+        "unresolved-escalation": {"escalation_id": "esc-1"},
+    }
+
+    loaded = repair_contract.read_repair_index(path)
+    assert loaded == {
+        "sessions": {
+            "session-1": {
+                "status": "active",
+                "refs": {
+                    "latest-attempt": {"attempt_id": "attempt-1"},
+                    "latest-outcome": {"outcome": "complete"},
+                    "unresolved-escalation": {"escalation_id": "esc-1"},
+                },
+            }
+        },
+        "incidents": {
+            "incident-1": {
+                "session_id": "session-1",
+                "state": "open",
+                "refs": {
+                    "latest-attempt": {"attempt_id": "attempt-1"},
+                    "unresolved-escalation": {"escalation_id": "esc-1"},
+                },
+            }
+        },
+    }
+
+
+def test_repair_index_write_redacts_secret_shaped_nested_values(tmp_path: Path) -> None:
+    path = tmp_path / "repair-data" / "index.json"
+
+    persisted = repair_contract.update_session_index(
+        path,
+        "session-secret",
+        {
+            "status": "active",
+            "refs": {
+                "latest-attempt": {
+                    "attempt_id": "attempt-secret",
+                    "command": "Authorization: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+                },
+                "latest-outcome": {
+                    "summary": "export API_TOKEN=abc1234567890",
+                },
+                "unresolved-escalation": {
+                    "message": "Bearer bearer-secret-token-value",
+                },
+            },
+        },
+    )
+
+    refs = persisted["sessions"]["session-secret"]["refs"]
+    assert refs["latest-attempt"]["command"] == f"Authorization: Bearer {REDACTION}"
+    assert refs["latest-outcome"]["summary"] == f"export API_TOKEN={REDACTION}"
+    assert refs["unresolved-escalation"]["message"] == f"Bearer {REDACTION}"
+
+    raw = path.read_text(encoding="utf-8")
+    assert "sk-proj-abcdefghijklmnopqrstuvwxyz123456" not in raw
+    assert "abc1234567890" not in raw
+    assert "bearer-secret-token-value" not in raw
+
+
+def test_save_repair_data_updates_session_index(tmp_path: Path) -> None:
+    repair_dir = tmp_path / "repair-data"
+    repair_dir.mkdir()
+    path = repair_dir / "demo-session.repair-data.json"
+    payload = repair_contract.merge_additive_fields(
+        _legacy_payload(),
+        incident_id="incident-42",
+        attempt_ids=["attempt-demo-0001"],
+        verification={"recorded_at": "2026-07-02T20:00:00+00:00"},
+    )
+
+    repair_contract.save_repair_data(path, payload)
+
+    index_payload = repair_contract.read_repair_index(repair_dir / "index.json")
+    assert index_payload["sessions"]["demo-session"]["status"] == "repairing"
+    assert index_payload["sessions"]["demo-session"]["incident_id"] == "incident-42"
+    assert index_payload["sessions"]["demo-session"]["attempt_ids"] == ["attempt-demo-0001"]
+    assert index_payload["sessions"]["demo-session"]["refs"]["latest-outcome"] == {
+        "incident_id": "incident-42",
+        "outcome": "repairing",
+        "path": str(path),
+        "recorded_at": "2026-07-02T20:00:00+00:00",
+    }
+
+
+def test_retention_cleanup_preserves_protected_artifacts_and_records_cleanup_event(
+    tmp_path: Path,
+) -> None:
+    repair_dir = tmp_path / "repair-data"
+    sidecar_dir = tmp_path / "repair-data.d"
+    audit_dir = tmp_path / "audit-reports"
+    attempts_dir = repair_dir / "attempts"
+    incidents_dir = repair_dir / "incidents"
+    escalations_dir = repair_dir / "escalations"
+    meta_dir = repair_dir / "meta"
+
+    for directory in (
+        repair_dir,
+        attempts_dir,
+        incidents_dir,
+        escalations_dir,
+        meta_dir,
+        audit_dir,
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+
+    def _write_json(path: Path, payload: dict[str, object], *, age_days: int) -> None:
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        stale_ts = datetime(2026, 1, 1, 0, 0, 0).timestamp() - (age_days * 86400)
+        os.utime(path, (stale_ts, stale_ts))
+
+    active_snapshot = repair_dir / "active-session.repair-data.json"
+    _write_json(active_snapshot, {"session": "active-session", "outcome": "repairing"}, age_days=60)
+    stale_snapshot = repair_dir / "stale-session.repair-data.json"
+    _write_json(stale_snapshot, {"session": "stale-session", "outcome": "complete"}, age_days=60)
+
+    for attempt_num in range(21):
+        path = attempts_dir / f"attempt-{attempt_num:02d}.json"
+        _write_json(
+            path,
+            {"attempt_id": f"attempt-{attempt_num:02d}", "session_id": "active-session"},
+            age_days=60 - attempt_num,
+        )
+
+    keep_audit_json = audit_dir / "2026-01-01T000000-audit.json"
+    keep_audit_md = audit_dir / "2026-01-01T000000-audit.md"
+    prune_audit_json = audit_dir / "2026-01-02T000000-audit.json"
+    prune_audit_md = audit_dir / "2026-01-02T000000-audit.md"
+    for path in (keep_audit_json, keep_audit_md, prune_audit_json, prune_audit_md):
+        path.write_text("{}", encoding="utf-8")
+        stale_ts = datetime(2026, 1, 1, 0, 0, 0).timestamp() - (45 * 86400)
+        os.utime(path, (stale_ts, stale_ts))
+
+    _write_json(
+        incidents_dir / "incident-open.json",
+        {
+            "incident_id": "incident-open",
+            "state": "open",
+            "audit_report_paths": [str(keep_audit_json), str(keep_audit_md)],
+        },
+        age_days=45,
+    )
+    _write_json(
+        incidents_dir / "incident-resolved.json",
+        {"incident_id": "incident-resolved", "state": "resolved"},
+        age_days=45,
+    )
+    _write_json(
+        escalations_dir / "escalation-open.json",
+        {"escalation_id": "esc-open", "resolution_state": "unresolved"},
+        age_days=120,
+    )
+    _write_json(
+        escalations_dir / "escalation-resolved.json",
+        {"escalation_id": "esc-resolved", "resolution_state": "resolved"},
+        age_days=120,
+    )
+    _write_json(
+        meta_dir / "meta-old.json",
+        {"meta_repair_id": "meta-1", "status": "complete"},
+        age_days=120,
+    )
+
+    repair_contract.update_session_index(
+        repair_dir / "index.json",
+        "active-session",
+        {
+            "status": "active",
+            "refs": {"latest-outcome": {"outcome": "repairing"}},
+            "latest_meta_repair_id": "meta-1",
+            "latest_meta_outcome": "FIXED",
+            "latest_meta_record_path": str(meta_dir / "meta-old.json"),
+            "latest_meta_recorded_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    repair_contract.update_session_index(
+        repair_dir / "index.json",
+        "stale-session",
+        {"status": "complete", "refs": {"latest-outcome": {"outcome": "complete"}}},
+    )
+    repair_contract.update_incident_index(
+        repair_dir / "index.json",
+        "incident-open",
+        {
+            "state": "open",
+            "audit_report_paths": [str(keep_audit_json), str(keep_audit_md)],
+            "refs": {"unresolved-escalation": {"escalation_id": "esc-open"}},
+        },
+    )
+
+    summary = repair_contract.cleanup_repair_data_retention(
+        repair_dir,
+        sidecar_dir=sidecar_dir,
+        audit_report_dir=audit_dir,
+        now=datetime(2026, 7, 1, 0, 0, 0),
+    )
+
+    assert active_snapshot.exists()
+    assert not stale_snapshot.exists()
+    assert len(list(attempts_dir.glob("*.json"))) == 20
+    assert not (attempts_dir / "attempt-00.json").exists()
+    assert (incidents_dir / "incident-open.json").exists()
+    assert not (incidents_dir / "incident-resolved.json").exists()
+    assert (escalations_dir / "escalation-open.json").exists()
+    assert not (escalations_dir / "escalation-resolved.json").exists()
+    assert not (meta_dir / "meta-old.json").exists()
+    assert keep_audit_json.exists()
+    assert keep_audit_md.exists()
+    assert not prune_audit_json.exists()
+    assert not prune_audit_md.exists()
+
+    assert summary["pruned_counts"]["attempts"] == 1
+    assert summary["pruned_counts"]["incidents"] == 1
+    assert summary["pruned_counts"]["escalations"] == 1
+    assert summary["pruned_counts"]["meta"] == 1
+    assert summary["pruned_counts"]["audit_reports"] == 2
+    assert summary["preserved_reasons"]["active_session_snapshot"] == 1
+    assert summary["preserved_reasons"]["unresolved_incident"] == 1
+    assert summary["preserved_reasons"]["unresolved_escalation"] == 1
+    assert summary["preserved_reasons"]["referenced_audit_report"] == 2
+    assert summary["index_snapshots"]["before"]["incidents"]["incident-open"]["refs"] == {
+        "unresolved-escalation": {"escalation_id": "esc-open"}
+    }
+    assert "stale-session" not in summary["index_snapshots"]["after"]["sessions"]
+    assert summary["index_snapshots"]["after"]["sessions"]["active-session"]["latest_meta_repair_id"] == ""
+    persisted_index = repair_contract.read_repair_index(repair_dir / "index.json")
+    assert persisted_index == summary["index_snapshots"]["after"]
+
+    cleanup_records = repair_contract.read_jsonl_records(
+        repair_contract._sidecar_jsonl_path(sidecar_dir, "cleanup")
+    )
+    assert len(cleanup_records) == 1
+    assert cleanup_records[0]["cleanup_id"] == summary["cleanup_id"]
+    assert cleanup_records[0]["pruned_counts"]["attempts"] == 1
+    assert cleanup_records[0]["preserved_reasons"]["referenced_audit_report"] == 2
 
 # ---------------------------------------------------------------------------
 # Outcome lattice helpers
