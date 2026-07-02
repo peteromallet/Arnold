@@ -1305,14 +1305,18 @@ def _build_completion_manifest(
         if spec.merge_policy == "review":
             pr_number = record.get("pr_number")
             pr_state = record.get("pr_state")
-            if not isinstance(pr_number, int) or pr_state != "merged":
-                raise CliError(
-                    "invalid_chain_state",
-                    f"completed record {milestone.label!r} missing merged PR evidence",
-                )
-            milestone_entry["pr_number"] = pr_number
-            milestone_entry["pr_state"] = "merged"
-            milestone_entry["pr_merge_sha"] = _record_pr_merge_sha(root, record)
+            local_commit_sha = record.get("local_commit_sha")
+            if isinstance(pr_number, int) and pr_state == "merged":
+                milestone_entry["pr_number"] = pr_number
+                milestone_entry["pr_state"] = "merged"
+                milestone_entry["pr_merge_sha"] = _record_pr_merge_sha(root, record)
+            elif isinstance(local_commit_sha, str) and local_commit_sha.strip():
+                milestone_entry["local_commit_sha"] = local_commit_sha
+                plan_branch = record.get("plan_branch")
+                if isinstance(plan_branch, str) and plan_branch.strip():
+                    milestone_entry["plan_branch"] = plan_branch
+            else:
+                milestone_entry["publication_evidence"] = "chain_state_only"
         manifest["milestones"].append(milestone_entry)
     return manifest
 
