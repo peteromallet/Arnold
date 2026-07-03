@@ -249,6 +249,7 @@ def _blocked_phase_rerun_target(
     recovered_state: str,
     source: str | None,
 ) -> ControlTargetRef | None:
+    blocked_rerunnable_phases = {"execute"}
     latest_failure = state.get("latest_failure")
     if not isinstance(latest_failure, Mapping):
         return None
@@ -266,6 +267,8 @@ def _blocked_phase_rerun_target(
         and not rerun_from_stale_recovery_helper
         and not stale_recover_blocked_failure
     ):
+        return None
+    if phase not in blocked_rerunnable_phases:
         return None
     return _workflow_step_target(
         phase,
