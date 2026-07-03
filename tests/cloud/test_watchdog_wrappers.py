@@ -6610,6 +6610,42 @@ def test_plan_phase_health_detects_workspace_drift_without_latest_failure(tmp_pa
     assert "sandbox_refused_outside_project_root" in result
 
 
+def test_plan_phase_health_ignores_sandbox_refusal_after_later_progress(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "active_step": {"phase": "execute", "worker_pid": 1234},
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "\n".join(
+            [
+                "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+                "targets /workspace/arnold, which is outside the sandbox root/project directory "
+                "/workspace/native-composition-followup/Arnold. Run commands relative to the project "
+                "directory; do not `cd` to an absolute path outside the worktree.",
+                "  [done] ┊ 💻 $         cd /workspace/arnold && python -c \"...\"  0.0s (0.0s)",
+                "  [tool] (◕ᴗ◕✿) 💻 python -m pytest tests/arnold/pipeline/native/test_decorators.py",
+                "  [done] ┊ 💻 $         python -m pytest tests/arnold/pipeline/native/test_decorators.py  1.4s (1.6s)",
+                "[auto m2-demo] iter 2 state=critiqued next=gate valid_next=['gate', 'step']",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
+
+
 def _extract_stall_program() -> str:
     """Pull the python body of plan_progress_stall_status() out of the wrapper."""
     text = _wrapper("arnold-watchdog")
