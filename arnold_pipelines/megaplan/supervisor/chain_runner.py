@@ -20,6 +20,10 @@ from arnold_pipelines.megaplan._core.state import write_plan_state
 from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold.control.interface import ControlBinding, RunStateView
 from arnold.runtime.outcome import RunOutcome
+from arnold_pipelines.megaplan.cloud.incident_bridge import (
+    append_chain_lifecycle,
+    append_dispatch_expired,
+)
 from arnold_pipelines.megaplan.supervisor.driver import (
     DefaultRunDriver,
     PackRunner,
@@ -163,6 +167,29 @@ def run_chain(
         events.append(payload)
         writer(f"[supervisor-chain] {kind}: {json.dumps(fields, sort_keys=True)}\n")
 
+    def _bridge_lifecycle(outcome: str, summary: str, **kwargs: Any) -> None:
+        """Best-effort append a chain_lifecycle event to the incident ledger."""
+        try:
+            append_chain_lifecycle(
+                outcome=outcome,
+                summary=summary,
+                root=root,
+                **kwargs,
+            )
+        except Exception:
+            pass
+
+    def _bridge_dispatch_expired(summary: str, **kwargs: Any) -> None:
+        """Best-effort append a dispatch_expired event to the incident ledger."""
+        try:
+            append_dispatch_expired(
+                summary=summary,
+                root=root,
+                **kwargs,
+            )
+        except Exception:
+            pass
+
     start_index = max(chain_state.current_milestone_index, 0)
     if chain_state.current_milestone_index < 0:
         chain_state.current_milestone_index = 0
@@ -177,6 +204,11 @@ def run_chain(
         chain_spec.save_chain_state(spec_path, chain_state)
         save_supervisor_state(root, state_id, supervisor_state)
         event("milestone_start", label=milestone.label, index=index)
+        _bridge_lifecycle(
+            "milestone_start",
+            f"chain milestone {index}: {milestone.label} started",
+            evidence=[{"label": milestone.label, "index": index}],
+        )
 
         while True:
             plan_name = chain_state.current_plan_name
@@ -188,6 +220,11 @@ def run_chain(
                 chain_state.current_plan_name = plan_name
                 chain_spec.save_chain_state(spec_path, chain_state)
                 event("plan_prepared", label=milestone.label, plan=plan_name)
+                _bridge_lifecycle(
+                    "plan_prepared",
+                    f"plan {plan_name} prepared for milestone {milestone.label}",
+                    evidence=[{"label": milestone.label, "plan": plan_name}],
+                )
 
             raw_outcome = driver.drive(_run_request(root, spec, plan_name, writer))
             normalized = normalize_driver_outcome(
@@ -230,6 +267,19 @@ def run_chain(
                 outcome=normalized.outcome.value,
                 attempt=attempt,
             )
+            _bridge_lifecycle(
+                "driver_outcome",
+                f"plan {plan_name} outcome={normalized.outcome.value} status={raw_outcome.status} attempt={attempt}",
+                evidence=[
+                    {
+                        "label": milestone.label,
+                        "plan": plan_name,
+                        "outcome": normalized.outcome.value,
+                        "status": raw_outcome.status,
+                        "attempt": attempt,
+                    }
+                ],
+            )
 
             if (
                 normalized.outcome == RunOutcome.BLOCKED
@@ -239,6 +289,11 @@ def run_chain(
                     "blocked_execute_recovered",
                     label=milestone.label,
                     plan=plan_name,
+                )
+                _bridge_lifecycle(
+                    "blocked_execute_recovered",
+                    f"blocked execute recovered for {plan_name} ({milestone.label})",
+                    evidence=[{"label": milestone.label, "plan": plan_name}],
                 )
                 continue
 
@@ -275,6 +330,19 @@ def run_chain(
                     pr_state=pr_resolution.pr_state,
                     reason=pr_resolution.reason,
                 )
+                _bridge_lifecycle(
+                    "pr_merge_resolution",
+                    f"PR merge resolution for {plan_name}: advanced={pr_resolution.advanced} pr=#{pr_resolution.pr_number}",
+                    evidence=[
+                        {
+                            "label": milestone.label,
+                            "plan": plan_name,
+                            "advanced": pr_resolution.advanced,
+                            "pr_number": pr_resolution.pr_number,
+                            "pr_state": pr_resolution.pr_state,
+                        }
+                    ],
+                )
                 if pr_resolution.advanced:
                     if node.node_id not in supervisor_state.completed_node_ids:
                         supervisor_state.completed_node_ids.append(node.node_id)
@@ -300,6 +368,17 @@ def run_chain(
                     chain_state.current_plan_name = None
                     chain_state.last_state = raw_outcome.status
                     chain_spec.save_chain_state(spec_path, chain_state)
+                    _bridge_lifecycle(
+                        "milestone_complete",
+                        f"milestone {milestone.label} completed via PR merge resolution (plan={plan_name})",
+                        evidence=[
+                            {
+                                "label": milestone.label,
+                                "plan": plan_name,
+                                "pr_number": pr_resolution.pr_number,
+                            }
+                        ],
+                    )
                     if one:
                         return _result(
                             "paused",
@@ -319,6 +398,17 @@ def run_chain(
                         target_id=pr_resolution.decision.target_id,
                         reason=pr_resolution.decision.reason,
                     )
+                    _bridge_lifecycle(
+                        "ladder_decision",
+                        f"ladder decision for {milestone.label}: {pr_resolution.decision.action.value} → {pr_resolution.decision.target_id}",
+                        evidence=[
+                            {
+                                "label": milestone.label,
+                                "action": pr_resolution.decision.action.value,
+                                "target_id": pr_resolution.decision.target_id,
+                            }
+                        ],
+                    )
                     if pr_resolution.decision.action in {
                         LadderAction.RETRY,
                         LadderAction.TRANSITION,
@@ -326,6 +416,17 @@ def run_chain(
                         chain_state.current_plan_name = None
                         chain_spec.save_chain_state(spec_path, chain_state)
                         continue
+                    _bridge_dispatch_expired(
+                        f"milestone {milestone.label} stopped by ladder: {pr_resolution.decision.reason or pr_resolution.decision.action.value}",
+                        evidence=[
+                            {
+                                "label": milestone.label,
+                                "plan": plan_name,
+                                "action": pr_resolution.decision.action.value,
+                                "reason": pr_resolution.decision.reason,
+                            }
+                        ],
+                    )
                     return _result(
                         "stopped",
                         chain_state,
@@ -354,6 +455,18 @@ def run_chain(
                 target_id=decision.target_id,
                 reason=decision.reason,
             )
+            _bridge_lifecycle(
+                "ladder_decision",
+                f"ladder decision for {milestone.label}: {decision.action.value} → {decision.target_id}",
+                evidence=[
+                    {
+                        "label": milestone.label,
+                        "action": decision.action.value,
+                        "target_id": decision.target_id,
+                        "reason": decision.reason,
+                    }
+                ],
+            )
 
             if decision.action == LadderAction.ADVANCE:
                 result = _milestone_result(
@@ -369,6 +482,17 @@ def run_chain(
                 chain_state.current_plan_name = None
                 chain_state.last_state = raw_outcome.status
                 chain_spec.save_chain_state(spec_path, chain_state)
+                _bridge_lifecycle(
+                    "milestone_complete",
+                    f"milestone {milestone.label} completed (plan={plan_name}, outcome={normalized.outcome.value})",
+                    evidence=[
+                        {
+                            "label": milestone.label,
+                            "plan": plan_name,
+                            "outcome": normalized.outcome.value,
+                        }
+                    ],
+                )
                 if one:
                     return _result(
                         "paused",
@@ -386,6 +510,17 @@ def run_chain(
                 chain_spec.save_chain_state(spec_path, chain_state)
                 continue
 
+            _bridge_dispatch_expired(
+                f"milestone {milestone.label} stopped: {decision.reason or decision.action.value}",
+                evidence=[
+                    {
+                        "label": milestone.label,
+                        "plan": plan_name,
+                        "action": decision.action.value,
+                        "reason": decision.reason,
+                    }
+                ],
+            )
             return _result(
                 "stopped",
                 chain_state,
@@ -398,6 +533,11 @@ def run_chain(
 
     supervisor_state.current_node_id = None
     save_supervisor_state(root, state_id, supervisor_state)
+    _bridge_lifecycle(
+        "chain_done",
+        f"chain completed: {len(spec.milestones)} milestones, {len(milestone_results)} results",
+        evidence=[{"total_milestones": len(spec.milestones), "completed": len(milestone_results)}],
+    )
     return _result("done", chain_state, supervisor_state, milestone_results, events, spec=spec)
 
 

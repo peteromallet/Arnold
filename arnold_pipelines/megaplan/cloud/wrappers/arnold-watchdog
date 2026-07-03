@@ -2992,6 +2992,110 @@ repair_outcome_wants_repair_retry() {
   esac
 }
 
+emit_watchdog_incident_bridge_event() {
+  local event_kind="$1"
+  local session="$2"
+  local workspace="$3"
+  local remote_spec="$4"
+  local summary="$5"
+  local status="$6"
+  local repair_actor="${7:-immediate_repair}"
+  local extra_evidence_json="${8:-[]}"
+  PYTHONPATH="${WRAPPER_REPO_ROOT}:${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - \
+    "$event_kind" "$session" "$workspace" "$remote_spec" "$summary" "$status" "$repair_actor" \
+    "${REPAIR_DATA_DIR:-$MARKER_DIR/repair-data}" "$extra_evidence_json" <<'PY' \
+    >> "${LOG:-/dev/null}" 2>&1 || true
+import json
+import pathlib
+import sys
+
+from arnold_pipelines.megaplan.cloud.incident_bridge import (
+    append_watchdog_detection,
+    append_watchdog_dispatch,
+)
+
+(
+    event_kind,
+    session,
+    workspace_raw,
+    remote_spec,
+    summary,
+    status,
+    repair_actor,
+    repair_data_dir_raw,
+    extra_evidence_json,
+) = sys.argv[1:]
+repair_data_dir = pathlib.Path(repair_data_dir_raw)
+data_path = repair_data_dir / f"{session}.repair-data.json"
+if not data_path.exists():
+    raise SystemExit(0)
+try:
+    payload = json.loads(data_path.read_text(encoding="utf-8"))
+except Exception:
+    payload = {}
+if not isinstance(payload, dict):
+    raise SystemExit(0)
+incident_id = str(payload.get("incident_id") or "").strip()
+if not incident_id:
+    raise SystemExit(0)
+problem_id = str(payload.get("problem_id") or "").strip() or None
+workspace = pathlib.Path(workspace_raw) if workspace_raw else pathlib.Path.cwd()
+evidence = [
+    {
+        "kind": "watchdog_observation",
+        "status": status,
+        "repair_actor": repair_actor,
+        "workspace": workspace_raw,
+        "remote_spec": remote_spec,
+    }
+]
+try:
+    loaded_extra = json.loads(extra_evidence_json)
+except Exception:
+    loaded_extra = []
+if isinstance(loaded_extra, list):
+    evidence.extend(loaded_extra)
+elif isinstance(loaded_extra, dict):
+    evidence.append(loaded_extra)
+
+if event_kind == "detection":
+    append_watchdog_detection(
+        incident_id=incident_id,
+        summary=summary,
+        outcome=status,
+        evidence=evidence,
+        session_id=session,
+        problem_id=problem_id,
+        next_expected_event="watchdog.dispatch",
+        root=workspace,
+    )
+    raise SystemExit(0)
+
+next_expected_event = None
+if status == "dispatched":
+    if repair_actor == "meta_repair":
+        next_expected_event = "meta_repair.repair_attempt"
+    else:
+        next_expected_event = "immediate_repair.repair_attempt"
+append_watchdog_dispatch(
+    incident_id=incident_id,
+    summary=summary,
+    outcome=status,
+    evidence=evidence,
+    session_id=session,
+    problem_id=problem_id,
+    next_expected_event=next_expected_event,
+    decision={
+        "repair_actor": repair_actor,
+        "status": status,
+        "workspace": workspace_raw,
+        "remote_spec": remote_spec,
+    },
+    root=workspace,
+)
+PY
+}
+
 # Background-dispatch the bounded repair loop so it never blocks the tick. The
 # loop owns dev-fix -> mechanical-launch -> Kimi-launch escalation and returns
 # immediately so the watchdog can scan the next session and write its report.
@@ -3004,12 +3108,14 @@ dispatch_kimi_repair() {
   local pgid_path repair_busy
   REPAIR_DISPATCH_RESULT="unavailable"
   if [[ ! -x "$PRIMARY_REPAIR_BIN" ]]; then
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop binary unavailable" "unavailable" "immediate_repair"
     return 1
   fi
   repair_busy="$(repair_loop_busy_state "$session")"
   if [[ "$repair_busy" == "same_session" ]]; then
     log "repair loop already active; skipping dispatch session=$session"
     REPAIR_DISPATCH_RESULT="busy"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop already active" "busy" "immediate_repair"
     return 0
   fi
   pgid_path="$(kimi_pgid_path "$session")"
@@ -3025,6 +3131,7 @@ dispatch_kimi_repair() {
   fi
   log "repair loop background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
+  emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop background-dispatched" "dispatched" "immediate_repair"
   return 0
 }
 
@@ -3063,6 +3170,7 @@ dispatch_meta_repair() {
     0|false|False|FALSE|no|No|NO|off|Off|OFF)
     log "meta-repair disabled by feature flag; skipping dispatch session=$session"
     REPAIR_DISPATCH_RESULT="disabled"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair disabled by feature flag" "disabled" "meta_repair"
     if [[ -n "$report_items" ]]; then
       report_item "$report_items" "$session" "meta_repair" "disabled" "meta-repair disabled by feature flag" "$workspace" "$remote_spec"
     fi
@@ -3073,6 +3181,7 @@ dispatch_meta_repair() {
   # Binary must exist and be executable
   if [[ ! -x "$META_REPAIR_BIN" ]]; then
     log "meta-repair binary missing or not executable: $META_REPAIR_BIN session=$session"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair binary unavailable" "unavailable" "meta_repair"
     if [[ -n "$report_items" ]]; then
       report_item "$report_items" "$session" "meta_repair" "unavailable" "meta-repair binary missing: $META_REPAIR_BIN" "$workspace" "$remote_spec"
     fi
@@ -3084,6 +3193,7 @@ dispatch_meta_repair() {
   if [[ "$repair_busy" == "same_session" ]]; then
     log "meta-repair skipped; repair loop already active session=$session"
     REPAIR_DISPATCH_RESULT="busy"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "repair loop already active; meta-repair skipped" "busy" "meta_repair"
     if [[ -n "$report_items" ]]; then
       report_item "$report_items" "$session" "meta_repair" "busy" "repair loop already active" "$workspace" "$remote_spec"
     fi
@@ -3095,6 +3205,7 @@ dispatch_meta_repair() {
   if [[ "$recursion_result" == RECURSION:* ]]; then
     log "meta-repair recursion guard blocked dispatch session=$session detail=$(redact_inline_text "$recursion_result")"
     REPAIR_DISPATCH_RESULT="recursive"
+    emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair recursion guard blocked dispatch" "recursion_blocked" "meta_repair"
     if [[ -n "$report_items" ]]; then
       report_item "$report_items" "$session" "meta_repair" "recursive" "meta-repair recursion guard blocked dispatch" "$workspace" "$remote_spec"
     fi
@@ -3118,6 +3229,7 @@ dispatch_meta_repair() {
   fi
   log "meta-repair background-dispatched session=$session pid=$!"
   REPAIR_DISPATCH_RESULT="dispatched"
+  emit_watchdog_incident_bridge_event "dispatch" "$session" "$workspace" "$remote_spec" "meta-repair background-dispatched" "dispatched" "meta_repair"
   if [[ -n "$report_items" ]]; then
     report_item "$report_items" "$session" "meta_repair" "dispatched" "meta-repair background-dispatched" "$workspace" "$remote_spec"
   fi
@@ -4833,6 +4945,7 @@ PY
       if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
         chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
       fi
+      emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$chain_health_message" "chain_health_failure" "immediate_repair"
       repair_busy="$(repair_loop_busy_state "$session")"
       if [[ "$repair_busy" == "same_session" ]]; then
         log "repairable chain health issue detected; repair already running session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-}"
@@ -4860,6 +4973,7 @@ PY
       if [[ -n "${CHAIN_HEALTH_ARTIFACT_PATH:-}" ]]; then
         chain_health_message="$chain_health_message; artifact=${CHAIN_HEALTH_ARTIFACT_PATH}"
       fi
+      emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$chain_health_message" "chain_health_failure" "immediate_repair"
       log "chain-level health issue detected session=$session status=${CHAIN_HEALTH_STATUS:-unknown} summary=${CHAIN_HEALTH_SUMMARY:-} artifact=${CHAIN_HEALTH_ARTIFACT_PATH:-}"
       repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "${CHAIN_HEALTH_STATUS:-chain_issue}: $chain_health_message" || true
       return 0
@@ -4869,6 +4983,7 @@ PY
   local phase_health
   phase_health="$(plan_phase_health_status "$workspace" "$run_kind" "$plan_name")"
   if [[ "$phase_health" != "ok" ]]; then
+      emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$phase_health" "unhealthy" "immediate_repair"
       local repair_busy
       repair_busy="$(repair_loop_busy_state "$session")"
       if [[ "$repair_busy" == "same_session" ]]; then
@@ -4894,6 +5009,7 @@ PY
     local stall_health
     stall_health="$(plan_progress_stall_status "$workspace" "$run_kind" "$plan_name")"
     if [[ "$stall_health" != "ok" ]]; then
+      emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$stall_health" "progress_stall" "immediate_repair"
       log "progress stall flagged session=$session detail=$stall_health"
       repair_unintended_stop "$report_items" "$session" "$workspace" "$remote_spec" "$stall_health" || true
       return 0
@@ -4963,6 +5079,7 @@ PY
   if [[ "${PLAN_STATUS_STATE_MISMATCH:-0}" == "1" ]]; then
     local mismatch_summary repair_busy
     mismatch_summary="${PLAN_STATUS_STATE_MISMATCH_SUMMARY:-plan/chain state mismatch detected}"
+    emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "$mismatch_summary" "state_mismatch" "immediate_repair"
     repair_busy="$(repair_loop_busy_state "$session")"
     if [[ "$repair_busy" == "same_session" ]]; then
       log "session has plan/chain state mismatch; repair already running session=$session summary=$mismatch_summary"
@@ -5158,6 +5275,11 @@ PY
   fi
 
   local repair_busy
+  if [[ "$health" == "stopped" ]]; then
+    emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "session stopped and needs repair attention" "stopped" "immediate_repair"
+  else
+    emit_watchdog_incident_bridge_event "detection" "$session" "$workspace" "$remote_spec" "session unhealthy and needs repair attention: $health" "$health" "immediate_repair"
+  fi
   repair_busy="$(repair_loop_busy_state "$session")"
   if [[ "$repair_busy" == "same_session" ]]; then
     log "session needs repair attention; repair already running session=$session health=$health"
