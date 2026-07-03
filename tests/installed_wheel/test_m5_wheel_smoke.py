@@ -13,6 +13,17 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _run_checked(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, capture_output=True, text=True, **kwargs)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"command failed ({result.returncode}): {' '.join(args)}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+    return result
+
+
 @pytest.mark.wheel_smoke
 def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -22,17 +33,11 @@ def test_wheel_has_arnold_entrypoint_and_py_typed() -> None:
         sdist_dir = tmp / "sdist"
         sdist_dir.mkdir()
 
-        subprocess.run(
+        _run_checked(
             [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(build_dir), str(REPO_ROOT)],
-            check=True,
-            capture_output=True,
-            text=True,
         )
-        subprocess.run(
+        _run_checked(
             [sys.executable, "-m", "build", "--sdist", "-o", str(sdist_dir), str(REPO_ROOT)],
-            check=True,
-            capture_output=True,
-            text=True,
         )
 
         wheels = list(build_dir.glob("*.whl"))

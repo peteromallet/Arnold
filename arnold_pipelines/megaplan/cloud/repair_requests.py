@@ -174,6 +174,48 @@ def enqueue_repair_request(
     return {"status": "queued", "request": record, "path": str(request_path), "decision": decision}
 
 
+def enqueue_human_gate_repair_request(
+    *,
+    marker_dir: str | Path,
+    session: str,
+    workspace: str | Path,
+    run_kind: str,
+    plan_name: str,
+    pipeline_name: str,
+    artifact_stage: str,
+    step_name: str,
+    prompt: str,
+) -> dict[str, Any] | None:
+    """Megaplan-owned hook used by the neutral human-gate step."""
+
+    from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
+
+    if not repair_request_queue_enabled():
+        return None
+    return enqueue_repair_request(
+        marker_dir=marker_dir,
+        session=session,
+        source="human_gate",
+        workspace=workspace,
+        run_kind=run_kind,
+        target={
+            "plan_dir": str(marker_dir),
+            "plan_name": plan_name,
+            "pipeline_name": pipeline_name,
+            "workspace_path": str(workspace),
+        },
+        problem_signature={
+            "failure_kind": "human_gate",
+            "current_state": pipeline_name,
+            "phase_or_step": artifact_stage,
+            "milestone_or_plan": step_name,
+            "gate_recommendation": "",
+            "blocked_task_id": "",
+        },
+        root_cause_hint=prompt,
+    )
+
+
 def iter_repair_requests(
     marker_dir_or_queue_dir: str | Path,
     *,
@@ -327,6 +369,7 @@ def _malformed_record(path: Path, exc: Exception) -> dict[str, Any]:
 __all__ = [
     "PROBLEM_SIGNATURE_FIELDS",
     "DecisionKind",
+    "enqueue_human_gate_repair_request",
     "enqueue_repair_request",
     "find_pending_by_signature",
     "iter_repair_requests",

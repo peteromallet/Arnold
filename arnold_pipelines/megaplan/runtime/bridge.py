@@ -460,6 +460,14 @@ def run_pipeline_bridged(
         "run_kind": "plan",
         "session": _repair_request_session_name(ctx, artifact_root),
     }
+    try:
+        from arnold_pipelines.megaplan.cloud.repair_requests import (
+            enqueue_human_gate_repair_request,
+        )
+
+        hook_extensions["human_gate_repair_request_hook"] = enqueue_human_gate_repair_request
+    except Exception:
+        pass
 
     neutral_pipeline = _translate_pipeline(pipeline)
     hooks = MegaplanExecutorHooks(plan_dir=artifact_root)

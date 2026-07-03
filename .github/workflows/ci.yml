@@ -66,6 +66,6 @@ jobs:
       - name: Run merge-result gates
         run: |
           python scripts/m6_purge_gate.py
-          python scripts/chain_done_gate.py --blockers-only --blockers .megaplan/briefs/workflow-manifest-runtime/blockers.json
+          python scripts/chain_done_gate.py --blockers-only --blockers docs/arnold/workflow-manifest-runtime-review/blockers.json
       - name: Run installed-artifact smoke tests
         run: python -m pytest -m wheel_smoke tests/installed_wheel tests/arnold_pipelines/megaplan/test_wheel_smoke.py -q

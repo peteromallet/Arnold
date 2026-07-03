@@ -78,11 +78,18 @@ locks, logs, telemetry, verification state, `.DS_Store`, or macOS AppleDouble
 6. Inspect and connect:
 
 ```bash
+python -m arnold_pipelines.megaplan cloud status --all
 python -m arnold_pipelines.megaplan cloud status
 python -m arnold_pipelines.megaplan cloud status --chain
 python -m arnold_pipelines.megaplan cloud logs
 python -m arnold_pipelines.megaplan cloud attach
 ```
+
+On a shared runner, use `cloud status --all` first. It lists all known cloud
+sessions with human names, `should_run=yes/no`, liveness, current plan state,
+and any watchdog repair/escalation status. Use `tmux ls` only for "which runner
+processes are alive right now"; `/workspace/watchdog-report.json` is only the
+last watchdog scan and can be stale.
 
 ## `cloud.yaml` Reference
 

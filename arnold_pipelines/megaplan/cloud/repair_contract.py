@@ -40,6 +40,35 @@ _DICT_FIELDS = {
     "target",
     "verification",
 }
+_INDEX_TOP_LEVEL_KEYS = ("sessions", "incidents")
+_INDEX_REF_KEYS = ("latest-attempt", "latest-outcome", "unresolved-escalation")
+_ACTIVE_SESSION_STATUSES = frozenset(
+    {"active", "running", "repairing", "in_progress", "pending"}
+)
+_RESOLVED_RECORD_STATES = frozenset(
+    {
+        "accepted_blocked",
+        "closed",
+        "complete",
+        "completed",
+        "delivered",
+        "resolved",
+        "satisfied",
+        "waived",
+    }
+)
+_UNRESOLVED_RECORD_STATES = frozenset(
+    {"active", "awaiting_human", "needs_human", "open", "pending", "unresolved"}
+)
+_RETENTION_WINDOWS_DAYS = {
+    "attempts": 14,
+    "incidents": 30,
+    "escalations": 90,
+    "meta": 90,
+    "audit_reports": 30,
+}
+_SNAPSHOT_RETENTION_DAYS = 30
+_MIN_ATTEMPTS_PER_SESSION = 20
 
 
 def load_json(path: str | Path, *, default: Any | None = None) -> Any:
@@ -57,6 +86,22 @@ def atomic_write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
     """Atomically write JSON using the shared fsync/replace runtime primitive."""
 
     _atomic_write_json(Path(path), dict(payload))
+
+
+def read_repair_index(path: str | Path) -> dict[str, Any]:
+    """Strictly read and validate a repair index JSON file."""
+
+    return validate_repair_index(path)
+
+
+def load_repair_index(path: str | Path, *, default: Any | None = None) -> dict[str, Any]:
+    """Load a repair index JSON file, returning *default* when unreadable."""
+
+    fallback = _normalize_repair_index(default or {})
+    try:
+        return validate_repair_index(path)
+    except ValueError:
+        return fallback
 
 
 def validate_repair_data(payload_or_path: Mapping[str, Any] | str | Path) -> dict[str, Any]:
@@ -122,27 +167,214 @@ def save_repair_data(
     """Validate, optionally redact, and atomically persist repair-data JSON."""
 
     prepared = redact_repair_data(payload, redactor=redactor)
+    target = Path(path)
+    atomic_write_json(target, prepared)
+    _update_session_index_from_repair_data(target, prepared, redactor=redactor)
+    return prepared
+
+
+def redact_repair_index(
+    payload: Mapping[str, Any],
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Recursively redact repair index values using the supplied hook."""
+
+    validated = validate_repair_index(payload)
+    if redactor is None:
+        return canonical_redact_payload(validated)
+    return _redact_value(validated, redactor)
+
+
+def atomic_write_repair_index(
+    path: str | Path,
+    payload: Mapping[str, Any],
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Validate, redact, and atomically persist a repair index JSON file."""
+
+    prepared = redact_repair_index(payload, redactor=redactor)
     atomic_write_json(path, prepared)
     return prepared
 
 
+def update_repair_index(
+    path: str | Path,
+    updater: Callable[[dict[str, Any]], Mapping[str, Any]],
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Atomically read-modify-write a repair index, creating it when missing."""
+
+    current = _read_or_initialize_repair_index(path)
+    updated = updater(deepcopy(current))
+    if not isinstance(updated, Mapping):
+        raise ValueError("repair index updater must return a mapping")
+    return atomic_write_repair_index(path, dict(updated), redactor=redactor)
+
+
+def update_session_index(
+    path: str | Path,
+    session_id: str,
+    entry_updates: Mapping[str, Any],
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Merge *entry_updates* into the indexed session entry for *session_id*."""
+
+    return update_repair_index(
+        path,
+        lambda payload: _update_index_entry(payload, "sessions", session_id, entry_updates),
+        redactor=redactor,
+    )
+
+
+def update_incident_index(
+    path: str | Path,
+    incident_id: str,
+    entry_updates: Mapping[str, Any],
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Merge *entry_updates* into the indexed incident entry for *incident_id*."""
+
+    return update_repair_index(
+        path,
+        lambda payload: _update_index_entry(payload, "incidents", incident_id, entry_updates),
+        redactor=redactor,
+    )
+
+
 def _coerce_payload(payload_or_path: Mapping[str, Any] | str | Path) -> dict[str, Any]:
+    return _coerce_json_object(payload_or_path, kind="repair-data payload", path_label="repair-data file")
+
+
+def validate_repair_index(payload_or_path: Mapping[str, Any] | str | Path) -> dict[str, Any]:
+    """Validate the repair index JSON shape used by cleanup/auditor flows."""
+
+    payload = _coerce_json_object(
+        payload_or_path,
+        kind="repair index payload",
+        path_label="repair index file",
+    )
+    return _normalize_repair_index(payload)
+
+
+def _coerce_json_object(
+    payload_or_path: Mapping[str, Any] | str | Path,
+    *,
+    kind: str,
+    path_label: str,
+) -> dict[str, Any]:
     if isinstance(payload_or_path, Mapping):
         return dict(payload_or_path)
     path = Path(payload_or_path)
     try:
-        import json
-
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
-        raise ValueError(f"repair-data file missing: {path}") from exc
+        raise ValueError(f"{path_label} missing: {path}") from exc
     except OSError as exc:
-        raise ValueError(f"repair-data file unreadable: {path}") from exc
+        raise ValueError(f"{path_label} unreadable: {path}") from exc
     except Exception as exc:
-        raise ValueError(f"repair-data file is not valid JSON: {path}") from exc
+        raise ValueError(f"{path_label} is not valid JSON: {path}") from exc
     if not isinstance(payload, dict):
-        raise ValueError("repair-data payload must be a JSON object")
+        raise ValueError(f"{kind} must be a JSON object")
     return payload
+
+
+def _normalize_repair_index(payload: Mapping[str, Any]) -> dict[str, Any]:
+    extras = sorted(set(payload) - set(_INDEX_TOP_LEVEL_KEYS))
+    if extras:
+        raise ValueError(
+            "repair index only supports top-level keys: sessions, incidents"
+        )
+
+    normalized = {bucket: {} for bucket in _INDEX_TOP_LEVEL_KEYS}
+    for bucket in _INDEX_TOP_LEVEL_KEYS:
+        source = payload.get(bucket, {})
+        if not isinstance(source, dict):
+            raise ValueError(f"repair index field {bucket!r} must be an object")
+        normalized[bucket] = {}
+        for entry_id, entry in source.items():
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"repair index entry {bucket}.{entry_id!s} must be an object"
+                )
+            entry_copy = deepcopy(entry)
+            refs = entry_copy.get("refs", {})
+            if refs is None:
+                refs = {}
+            if not isinstance(refs, dict):
+                raise ValueError(
+                    f"repair index entry {bucket}.{entry_id!s}.refs must be an object"
+                )
+            unsupported_refs = sorted(set(refs) - set(_INDEX_REF_KEYS))
+            if unsupported_refs:
+                raise ValueError(
+                    "repair index refs only support: "
+                    + ", ".join(_INDEX_REF_KEYS)
+                )
+            entry_copy["refs"] = {}
+            for ref_key in _INDEX_REF_KEYS:
+                if ref_key not in refs:
+                    continue
+                ref_value = refs[ref_key]
+                if ref_value is not None and not isinstance(ref_value, dict):
+                    raise ValueError(
+                        f"repair index ref {bucket}.{entry_id!s}.refs.{ref_key} "
+                        "must be an object or null"
+                    )
+                entry_copy["refs"][ref_key] = deepcopy(ref_value)
+            normalized[bucket][str(entry_id)] = entry_copy
+    return normalized
+
+
+def _read_or_initialize_repair_index(path: str | Path) -> dict[str, Any]:
+    target = Path(path)
+    if not target.exists():
+        return _normalize_repair_index({})
+    return read_repair_index(target)
+
+
+def _update_index_entry(
+    payload: dict[str, Any],
+    bucket: str,
+    entry_id: str,
+    entry_updates: Mapping[str, Any],
+) -> dict[str, Any]:
+    if bucket not in _INDEX_TOP_LEVEL_KEYS:
+        raise ValueError(f"unsupported repair index bucket: {bucket}")
+    if not isinstance(entry_id, str) or not entry_id.strip():
+        raise ValueError("repair index entry id must be a non-empty string")
+    if not isinstance(entry_updates, Mapping):
+        raise ValueError("repair index entry updates must be a mapping")
+
+    normalized = _normalize_repair_index(payload)
+    current_entry = normalized[bucket].get(entry_id, {"refs": {}})
+    merged = deepcopy(current_entry)
+    for key, value in entry_updates.items():
+        if key == "refs":
+            if not isinstance(value, Mapping):
+                raise ValueError("repair index entry refs updates must be a mapping")
+            merged_refs = dict(merged.get("refs", {}))
+            for ref_key, ref_value in value.items():
+                if ref_key not in _INDEX_REF_KEYS:
+                    raise ValueError(
+                        "repair index refs only support: "
+                        + ", ".join(_INDEX_REF_KEYS)
+                    )
+                if ref_value is not None and not isinstance(ref_value, Mapping):
+                    raise ValueError(
+                        f"repair index ref {bucket}.{entry_id}.refs.{ref_key} "
+                        "must be a mapping or null"
+                    )
+                merged_refs[ref_key] = deepcopy(ref_value)
+            merged["refs"] = merged_refs
+            continue
+        merged[key] = deepcopy(value)
+    normalized[bucket][entry_id] = merged
+    return normalized
 
 
 def _redact_value(value: Any, redactor: Callable[[str], str]) -> Any:
@@ -309,8 +541,14 @@ def build_verification_record(
 # JSONL / NDJSON sidecar helpers (append-only, atomic)
 # ---------------------------------------------------------------------------
 
-_SIDECAR_KINDS = ("events", "incidents", "attempts")
-_SIDECAR_FILENAME = {kind: f"{kind}.jsonl" for kind in _SIDECAR_KINDS}
+_SIDECAR_KINDS = ("events", "incidents", "attempts", "escalations", "cleanup")
+_SIDECAR_FILENAME = {
+    "events": "events.jsonl",
+    "incidents": "incidents.jsonl",
+    "attempts": "attempts.jsonl",
+    "escalations": "escalations.jsonl",
+    "cleanup": "cleanup.jsonl",
+}
 
 
 def _fsync_dir(path: Path) -> None:
@@ -535,6 +773,391 @@ def append_attempt_record(
     return append_jsonl_record(sidecar_dir, "attempts", record, **kwargs)
 
 
+def append_escalation_record(
+    sidecar_dir: str | Path,
+    record: Mapping[str, Any],
+    **kwargs: Any,
+) -> Path:
+    """Append an escalation lifecycle record to the ``escalations`` sidecar."""
+    return append_jsonl_record(sidecar_dir, "escalations", record, **kwargs)
+
+
+def append_cleanup_record(
+    sidecar_dir: str | Path,
+    record: Mapping[str, Any],
+    **kwargs: Any,
+) -> Path:
+    """Append a retention/cleanup lifecycle record to the ``cleanup`` sidecar."""
+    return append_jsonl_record(sidecar_dir, "cleanup", record, **kwargs)
+
+
+def cleanup_repair_data_retention(
+    repair_data_dir: str | Path,
+    *,
+    sidecar_dir: str | Path | None = None,
+    audit_report_dir: str | Path | None = None,
+    index_path: str | Path | None = None,
+    now: datetime | None = None,
+    active_session_ids: set[str] | None = None,
+    redactor: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Prune stale repair artifacts while preserving protected evidence."""
+
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    repair_root = Path(repair_data_dir)
+    cleanup_sidecar_dir = Path(sidecar_dir) if sidecar_dir is not None else repair_root.with_name(f"{repair_root.name}.d")
+    audit_root = Path(audit_report_dir) if audit_report_dir is not None else None
+    effective_index_path = Path(index_path) if index_path is not None else repair_root / "index.json"
+
+    index_before = load_repair_index(effective_index_path)
+    active_sessions = set(active_session_ids or set())
+    active_sessions.update(_active_sessions_from_index(index_before))
+    referenced_audit_reports = _collect_referenced_audit_reports(
+        repair_root,
+        index_before,
+        audit_root,
+    )
+
+    summary: dict[str, Any] = {
+        "cleanup_type": "retention",
+        "repair_data_dir": str(repair_root),
+        "pruned_counts": {},
+        "pruned_paths": {},
+        "preserved_counts": {},
+        "preserved_reasons": {},
+        "index_snapshots": {"before": redact_repair_index(index_before, redactor=redactor), "after": {}},
+    }
+
+    for path in sorted(repair_root.glob("*.repair-data.json")):
+        session_id = path.name[: -len(".repair-data.json")]
+        preserve = session_id in active_sessions or _is_within_days(path, now, _SNAPSHOT_RETENTION_DAYS)
+        if preserve:
+            _record_preserved(summary, "snapshots", "active_session_snapshot" if session_id in active_sessions else "recent_snapshot")
+            continue
+        _prune_path(path, summary, "snapshots")
+
+    _cleanup_attempt_records(repair_root / "attempts", now, summary)
+    _cleanup_json_record_dir(
+        repair_root / "incidents",
+        now,
+        summary,
+        category="incidents",
+        retention_days=_RETENTION_WINDOWS_DAYS["incidents"],
+        preserve_predicate=_is_unresolved_record,
+        preserve_reason="unresolved_incident",
+    )
+    _cleanup_json_record_dir(
+        repair_root / "escalations",
+        now,
+        summary,
+        category="escalations",
+        retention_days=_RETENTION_WINDOWS_DAYS["escalations"],
+        preserve_predicate=_is_unresolved_record,
+        preserve_reason="unresolved_escalation",
+    )
+    _cleanup_json_record_dir(
+        repair_root / "meta",
+        now,
+        summary,
+        category="meta",
+        retention_days=_RETENTION_WINDOWS_DAYS["meta"],
+    )
+    if audit_root is not None:
+        _cleanup_audit_reports(audit_root, now, referenced_audit_reports, summary)
+
+    index_after = _reconcile_repair_index_after_cleanup(
+        index_before,
+        repair_root=repair_root,
+        active_sessions=active_sessions,
+    )
+    atomic_write_repair_index(effective_index_path, index_after, redactor=redactor)
+    summary["index_snapshots"]["after"] = redact_repair_index(index_after, redactor=redactor)
+
+    cleanup_id = f"cleanup-{now.strftime('%Y%m%dT%H%M%SZ')}"
+    record = {
+        "cleanup_id": cleanup_id,
+        "pruned_counts": summary["pruned_counts"],
+        "pruned_paths": summary["pruned_paths"],
+        "preserved_counts": summary["preserved_counts"],
+        "preserved_reasons": summary["preserved_reasons"],
+        "index_snapshots": summary["index_snapshots"],
+    }
+    cleanup_path = append_cleanup_record(cleanup_sidecar_dir, record)
+    summary["cleanup_id"] = cleanup_id
+    summary["cleanup_record_path"] = str(cleanup_path)
+    return summary
+
+
+def _cleanup_attempt_records(attempts_dir: Path, now: datetime, summary: dict[str, Any]) -> None:
+    if not attempts_dir.exists():
+        return
+
+    grouped: dict[str, list[tuple[Path, datetime]]] = {}
+    for path in sorted(attempts_dir.glob("*.json")):
+        payload = load_json(path, default={})
+        session_id = _record_session_id(payload, path)
+        grouped.setdefault(session_id, []).append((path, _path_mtime(path)))
+
+    for entries in grouped.values():
+        entries.sort(key=lambda item: item[1], reverse=True)
+        protected = {path for path, _ in entries[:_MIN_ATTEMPTS_PER_SESSION]}
+        for path, _ in entries:
+            if path in protected:
+                _record_preserved(summary, "attempts", "recent_attempt_floor")
+                continue
+            if _is_within_days(path, now, _RETENTION_WINDOWS_DAYS["attempts"]):
+                _record_preserved(summary, "attempts", "recent_attempt")
+                continue
+            _prune_path(path, summary, "attempts")
+
+
+def _cleanup_json_record_dir(
+    directory: Path,
+    now: datetime,
+    summary: dict[str, Any],
+    *,
+    category: str,
+    retention_days: int,
+    preserve_predicate: Callable[[Mapping[str, Any]], bool] | None = None,
+    preserve_reason: str | None = None,
+) -> None:
+    if not directory.exists():
+        return
+
+    for path in sorted(directory.glob("*.json")):
+        payload = load_json(path, default={})
+        if preserve_predicate is not None and preserve_predicate(payload):
+            _record_preserved(summary, category, preserve_reason or f"{category}_preserved")
+            continue
+        if _is_within_days(path, now, retention_days):
+            _record_preserved(summary, category, f"recent_{category[:-1] if category.endswith('s') else category}")
+            continue
+        _prune_path(path, summary, category)
+
+
+def _cleanup_audit_reports(
+    audit_dir: Path,
+    now: datetime,
+    referenced_reports: set[Path],
+    summary: dict[str, Any],
+) -> None:
+    if not audit_dir.exists():
+        return
+
+    for path in sorted(audit_dir.glob("*-audit.*")):
+        if path.suffix not in {".json", ".md"}:
+            continue
+        if path.resolve() in referenced_reports:
+            _record_preserved(summary, "audit_reports", "referenced_audit_report")
+            continue
+        if _is_within_days(path, now, _RETENTION_WINDOWS_DAYS["audit_reports"]):
+            _record_preserved(summary, "audit_reports", "recent_audit_report")
+            continue
+        _prune_path(path, summary, "audit_reports")
+
+
+def _active_sessions_from_index(index_payload: Mapping[str, Any]) -> set[str]:
+    active: set[str] = set()
+    for session_id, entry in index_payload.get("sessions", {}).items():
+        if not isinstance(entry, Mapping):
+            continue
+        status = str(entry.get("status", "")).strip().lower()
+        if status in _ACTIVE_SESSION_STATUSES:
+            active.add(str(session_id))
+            continue
+        refs = entry.get("refs")
+        if isinstance(refs, Mapping):
+            latest_outcome = refs.get("latest-outcome")
+            if isinstance(latest_outcome, Mapping):
+                if str(latest_outcome.get("outcome", "")).strip().lower() == REPAIRING:
+                    active.add(str(session_id))
+    return active
+
+
+def _update_session_index_from_repair_data(
+    path: Path,
+    payload: Mapping[str, Any],
+    *,
+    redactor: Callable[[str], str] | None = None,
+) -> None:
+    session_id = str(payload.get("session") or "").strip()
+    if not session_id and path.name.endswith(".repair-data.json"):
+        session_id = path.name[: -len(".repair-data.json")]
+    if not session_id:
+        return
+
+    recorded_at = _repair_data_recorded_at(payload)
+    outcome = str(payload.get("outcome") or REPAIRING).strip() or REPAIRING
+    incident_id = str(payload.get("incident_id") or "").strip()
+    latest_outcome_ref: dict[str, Any] = {
+        "outcome": outcome,
+        "recorded_at": recorded_at,
+        "path": str(path),
+    }
+    if incident_id:
+        latest_outcome_ref["incident_id"] = incident_id
+
+    entry_updates: dict[str, Any] = {
+        "session": session_id,
+        "status": outcome,
+        "updated_at": recorded_at,
+        "workspace": str(payload.get("workspace") or ""),
+        "run_kind": str(payload.get("run_kind") or ""),
+        "plan_name": str(payload.get("plan_name") or ""),
+        "incident_id": incident_id,
+        "refs": {"latest-outcome": latest_outcome_ref},
+    }
+    if isinstance(payload.get("attempt_ids"), list):
+        entry_updates["attempt_ids"] = deepcopy(payload.get("attempt_ids"))
+
+    update_session_index(path.parent / "index.json", session_id, entry_updates, redactor=redactor)
+
+
+def _repair_data_recorded_at(payload: Mapping[str, Any]) -> str:
+    verification = payload.get("verification")
+    if isinstance(verification, Mapping):
+        recorded_at = str(verification.get("recorded_at") or "").strip()
+        if recorded_at:
+            return recorded_at
+    for field in ("updated_at", "recorded_at", "created_at"):
+        recorded_at = str(payload.get(field) or "").strip()
+        if recorded_at:
+            return recorded_at
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _reconcile_repair_index_after_cleanup(
+    index_payload: Mapping[str, Any],
+    *,
+    repair_root: Path,
+    active_sessions: set[str],
+) -> dict[str, Any]:
+    normalized = _normalize_repair_index(index_payload)
+    reconciled = _normalize_repair_index({})
+
+    for session_id, entry in normalized["sessions"].items():
+        snapshot_path = repair_root / f"{session_id}.repair-data.json"
+        if not snapshot_path.exists() and session_id not in active_sessions:
+            continue
+        entry_copy = deepcopy(entry)
+        meta_path = str(entry_copy.get("latest_meta_record_path") or "").strip()
+        if meta_path and not Path(meta_path).exists():
+            entry_copy["latest_meta_record_path"] = ""
+            entry_copy["latest_meta_repair_id"] = ""
+            entry_copy["latest_meta_outcome"] = ""
+            entry_copy["latest_meta_recorded_at"] = ""
+        reconciled["sessions"][session_id] = entry_copy
+
+    for incident_id, entry in normalized["incidents"].items():
+        incident_path = repair_root / "incidents" / f"{incident_id}.json"
+        if incident_path.exists():
+            reconciled["incidents"][incident_id] = deepcopy(entry)
+
+    return reconciled
+
+
+def _collect_referenced_audit_reports(
+    repair_root: Path,
+    index_payload: Mapping[str, Any],
+    audit_root: Path | None,
+) -> set[Path]:
+    referenced: set[Path] = set()
+    for path in sorted((repair_root / "incidents").glob("*.json")):
+        payload = load_json(path, default={})
+        if _is_unresolved_record(payload):
+            referenced.update(_extract_audit_report_paths(payload, audit_root))
+    for entry in index_payload.get("incidents", {}).values():
+        if isinstance(entry, Mapping) and _is_unresolved_record(entry):
+            referenced.update(_extract_audit_report_paths(entry, audit_root))
+    return referenced
+
+
+def _extract_audit_report_paths(value: Any, audit_root: Path | None) -> set[Path]:
+    matches: set[Path] = set()
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return matches
+        path = Path(candidate)
+        if _looks_like_audit_report(path, audit_root):
+            matches.add(path.resolve())
+        return matches
+    if isinstance(value, Mapping):
+        for item in value.values():
+            matches.update(_extract_audit_report_paths(item, audit_root))
+        return matches
+    if isinstance(value, list):
+        for item in value:
+            matches.update(_extract_audit_report_paths(item, audit_root))
+    return matches
+
+
+def _looks_like_audit_report(path: Path, audit_root: Path | None) -> bool:
+    name = path.name
+    if name.endswith("-audit.json") or name.endswith("-audit.md"):
+        return True
+    if audit_root is not None:
+        try:
+            path.resolve().relative_to(audit_root.resolve())
+            return path.suffix in {".json", ".md"}
+        except ValueError:
+            return False
+    return False
+
+
+def _record_session_id(payload: Mapping[str, Any], path: Path) -> str:
+    session_id = payload.get("session_id") or payload.get("session")
+    if isinstance(session_id, str) and session_id.strip():
+        return session_id
+    return path.stem
+
+
+def _is_unresolved_record(payload: Mapping[str, Any]) -> bool:
+    for key in ("resolved_at", "closed_at", "completed_at"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return False
+    for key in ("resolved", "closed", "completed"):
+        if payload.get(key) is True:
+            return False
+
+    for key in ("state", "status", "resolution_state", "lifecycle"):
+        value = payload.get(key)
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip().lower()
+        if normalized in _RESOLVED_RECORD_STATES:
+            return False
+        if normalized in _UNRESOLVED_RECORD_STATES:
+            return True
+    return True
+
+
+def _is_within_days(path: Path, now: datetime, days: int) -> bool:
+    cutoff = now.timestamp() - (days * 86400)
+    return path.stat().st_mtime >= cutoff
+
+
+def _path_mtime(path: Path) -> datetime:
+    return datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+
+
+def _prune_path(path: Path, summary: dict[str, Any], category: str) -> None:
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    summary["pruned_counts"][category] = int(summary["pruned_counts"].get(category, 0)) + 1
+    summary["pruned_paths"].setdefault(category, []).append(str(path))
+
+
+def _record_preserved(summary: dict[str, Any], category: str, reason: str) -> None:
+    summary["preserved_counts"][category] = int(summary["preserved_counts"].get(category, 0)) + 1
+    summary["preserved_reasons"][reason] = int(summary["preserved_reasons"].get(reason, 0)) + 1
+
+
 __all__ = [
     "ADDITIVE_FIELD_DEFAULTS",
     "ALL_OUTCOMES",
@@ -553,23 +1176,34 @@ __all__ = [
     "SUCCESS_OUTCOMES",
     "TRUE_HUMAN_BLOCKER",
     "append_attempt_record",
+    "append_cleanup_record",
+    "append_escalation_record",
     "append_incident_record",
     "append_jsonl_record",
     "append_repair_event",
     "atomic_write_json",
+    "atomic_write_repair_index",
     "build_verification_record",
     "classify_verification_outcome",
+    "cleanup_repair_data_retention",
     "compute_deadline",
     "ensure_additive_fields",
     "is_budget_exhausted",
     "is_success_outcome",
     "is_terminal_outcome",
     "load_json",
+    "load_repair_index",
     "merge_additive_fields",
+    "read_repair_index",
     "read_jsonl_records",
+    "redact_repair_index",
     "redact_repair_data",
     "remaining_budget_secs",
     "save_repair_data",
+    "update_incident_index",
+    "update_repair_index",
+    "update_session_index",
     "validate_jsonl_summary",
+    "validate_repair_index",
     "validate_repair_data",
 ]

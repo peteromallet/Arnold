@@ -59,6 +59,7 @@ ARCHIVAL_OR_PENDING_PATHS = (
     Path("scripts/megaplan_live_watchdog.py"),
     Path("scripts/record_workflow_next_parity.py"),
     Path("arnold/pipelines/_template"),
+    Path("arnold_pipelines/_template"),
     Path("arnold/pipelines/megaplan/skills"),
     Path("arnold/pipelines/megaplan/data/_codex_skills"),
     Path("arnold/pipelines/folder_audit/skills"),

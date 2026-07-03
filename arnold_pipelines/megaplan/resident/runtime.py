@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from arnold_pipelines.megaplan.schemas import Message, ProgressEvent, ResidentConversation, SystemLog
@@ -17,8 +18,10 @@ from agentbox.redaction import redact_text
 
 from .agent_loop import AgentRequest, AgentResponse, AgentRunner
 from .auth import AuthorizationSubject, ResidentAuthorizer
+from .cloud import CloudToolRequest
 from .coalescing import AsyncBurstCoalescer, BurstBatch
 from .config import ResidentConfig
+from .escalations import EscalationAnswerDecision, authorize_escalation_answer, confirm_escalation_resolution
 from .profile import MegaplanResidentProfile
 
 
@@ -28,6 +31,9 @@ class InboundEvent:
     conversation_key: str
     subject: AuthorizationSubject
     content: str
+    escalation_id: str | None = None
+    resume_handler: str | None = None
+    target_id: str | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -116,6 +122,42 @@ class ResidentRuntime:
                     idempotency_key=deterministic_idempotency_key("resident-denial", event.idempotency_key),
                 )
             return
+        if event.escalation_id:
+            repair_data_dir = _repair_data_dir_from_config(self.config)
+            if repair_data_dir is None:
+                self.emitter.log_system_event(
+                    level="warn",
+                    category="system",
+                    event_type="escalation_answer_unauthorized",
+                    message="Escalation answer denied before resident mutation",
+                    details={
+                        "reason": "repair_data_dir_unavailable",
+                        "escalation_id": event.escalation_id,
+                        "user_id": event.subject.user_id,
+                        "channel_id": event.subject.channel_id,
+                    },
+                    idempotency_key=deterministic_idempotency_key(
+                        "resident-escalation-denial",
+                        event.idempotency_key,
+                        "repair_data_dir_unavailable",
+                    ),
+                )
+                return
+            escalation_decision = authorize_escalation_answer(
+                authorizer=self.authorizer,
+                subject=event.subject,
+                action="escalation_reply",
+                escalation_id=event.escalation_id,
+                repair_data_dir=repair_data_dir,
+                audit_sink=self.emitter,
+                idempotency_key=event.idempotency_key,
+            )
+            if not escalation_decision.allowed:
+                return
+            if event.resume_handler or (escalation_decision.target and escalation_decision.target.resume_handler):
+                handled = await self._handle_escalation_resolution(event, escalation_decision, repair_data_dir)
+                if handled:
+                    return
         persisted = self._persist_inbound_event(event)
         if persisted.message.bot_turn_id is not None:
             return
@@ -216,6 +258,9 @@ class ResidentRuntime:
             hot_context=hot_context,
             model_seam_metadata=model_seam_metadata,
             subject=items[-1].event.subject,
+            escalation_id=items[-1].event.escalation_id,
+            resume_handler=items[-1].event.resume_handler,
+            target_id=items[-1].event.target_id,
         )
         try:
             response = await self.runner.run(request, self.profile.tools())
@@ -274,6 +319,115 @@ class ResidentRuntime:
                 duration_ms=record.duration_ms,
                 idempotency_key=deterministic_idempotency_key("resident-tool-call", turn_id, record.id),
             )
+
+    async def _handle_escalation_resolution(
+        self,
+        event: InboundEvent,
+        decision: EscalationAnswerDecision,
+        repair_data_dir: str,
+    ) -> bool:
+        target = decision.target
+        if target is None or event.escalation_id is None:
+            return False
+        resume_handler = (event.resume_handler or target.resume_handler or "").strip()
+        if not resume_handler:
+            return False
+
+        confirmation = confirm_escalation_resolution(
+            confirmation_manager=getattr(self.profile, "confirmation_manager", None),
+            subject=event.subject,
+            escalation_id=event.escalation_id,
+            target=target,
+            answer_text=event.content,
+            resume_handler=resume_handler,
+        )
+        if not confirmation.allowed:
+            if confirmation.confirmation_required and confirmation.exact_phrase:
+                await self.outbound.send(
+                    OutboundMessage(
+                        conversation_key=event.conversation_key,
+                        content=f"Confirmation required: {confirmation.exact_phrase}",
+                        idempotency_key=deterministic_idempotency_key(
+                            "resident-escalation-confirmation",
+                            event.idempotency_key,
+                            confirmation.request_id or event.escalation_id,
+                        ),
+                        metadata={
+                            "escalation_id": event.escalation_id,
+                            "confirmation_required": True,
+                            "request_id": confirmation.request_id,
+                        },
+                    )
+                )
+            return True
+
+        lock_dir = _repair_lock_dir_from_config(self.config, target.session, repair_data_dir)
+        from arnold_pipelines.megaplan.cloud.human_blockers import EscalationLedgerWriter, clear_needs_human_marker
+        from arnold_pipelines.megaplan.cloud.repair_lock import acquire_repair_lock, release_repair_lock
+
+        lock = acquire_repair_lock(
+            lock_dir,
+            session=f"resident-escalation:{target.session}",
+            target_id=target.target_id,
+            extra={"escalation_id": event.escalation_id, "resume_handler": resume_handler},
+            is_pid_live=_pid_is_live,
+        )
+        if not lock.acquired:
+            self.emitter.log_system_event(
+                level="warn",
+                category="system",
+                event_type="escalation_resume_deferred",
+                message="Escalation answer confirmed but repair lock is busy",
+                details={
+                    "escalation_id": event.escalation_id,
+                    "session": target.session,
+                    "lock_status": lock.status,
+                    "lock_dir": str(lock_dir),
+                },
+                idempotency_key=deterministic_idempotency_key(
+                    "resident-escalation-lock-busy",
+                    event.idempotency_key,
+                    lock.status,
+                ),
+            )
+            return True
+
+        writer = EscalationLedgerWriter()
+        writer.enable(repair_data_dir)
+        resume_status = "unsupported_handler"
+        try:
+            writer.write_answered(
+                target.session,
+                escalation_id=event.escalation_id,
+                responder_user_id=event.subject.user_id,
+                channel_id=event.subject.channel_id or "",
+                message_id=_optional_string(event.raw.get("discord_message_id")) or "",
+                extra={"resume_handler": resume_handler},
+            )
+            marker_path = Path(repair_data_dir) / f"{target.session}.needs-human.json"
+            if resume_handler == "cloud_resume":
+                cloud_result = await self.profile.cloud_backend.run(
+                    CloudToolRequest(
+                        operation="cloud_resume",
+                        target_id=target.current_plan or target.target_id,
+                        arguments={
+                            "plan": target.current_plan or target.target_id,
+                            "cloud_yaml": str(self.config.cloud_yaml_path),
+                        },
+                        confirmed=True,
+                    )
+                )
+                resume_status = cloud_result.classification
+                clear_needs_human_marker(marker_path)
+            writer.write_resume_attempted(
+                target.session,
+                escalation_id=event.escalation_id,
+                action=resume_handler,
+                resume_status=resume_status,
+            )
+        finally:
+            release_repair_lock(lock_dir, owner=lock.owner)
+        return True
 
     def _build_history(self, conversation_id: str, *, exclude_ids: Sequence[str]) -> tuple[dict[str, Any], ...]:
         """Reconstruct the last N prior messages as user/assistant turns for context.
@@ -355,3 +509,42 @@ def _optional_string(value: object) -> str | None:
 
 def _optional_dict(value: object) -> dict[str, Any] | None:
     return dict(value) if isinstance(value, dict) else None
+
+
+def _repair_data_dir_from_config(config: ResidentConfig) -> str | None:
+    value = getattr(config, "escalation_repair_data_dir", None)
+    if value:
+        return str(value)
+    import os
+
+    for key in ("MEGAPLAN_RESIDENT_REPAIR_DATA_DIR", "CLOUD_WATCHDOG_REPAIR_DATA_DIR"):
+        candidate = os.environ.get(key, "").strip()
+        if candidate:
+            return candidate
+    return None
+
+
+def _repair_lock_dir_from_config(config: ResidentConfig, session: str, repair_data_dir: str) -> Path:
+    value = getattr(config, "escalation_repair_lock_dir", None)
+    if value:
+        return Path(value)
+    import os
+
+    for key in ("MEGAPLAN_RESIDENT_REPAIR_LOCK_DIR", "CLOUD_WATCHDOG_REPAIR_LOCK_DIR"):
+        candidate = os.environ.get(key, "").strip()
+        if candidate:
+            return Path(candidate)
+    safe_session = "".join(ch if ch.isalnum() or ch in "_.-" else "-" for ch in session)
+    return Path(repair_data_dir) / f"{safe_session}.repair-loop.lock"
+
+
+def _pid_is_live(pid: int) -> bool:
+    import os
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True

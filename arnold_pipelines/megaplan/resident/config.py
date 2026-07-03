@@ -47,6 +47,8 @@ class ResidentConfig(BaseModel):
     require_cloud_start_confirmation: bool = True
     cloud_yaml_path: Path = Path("cloud.yaml")
     resident_export_root: Path = Path(".megaplan/resident_exports")
+    escalation_repair_data_dir: Path | None = None
+    escalation_repair_lock_dir: Path | None = None
     history_window: int = Field(default=10, ge=0)
     subagent_model_name: str = "deepseek:deepseek-v4-pro"
     subagent_models: tuple[str, ...] = Field(default_factory=tuple)
@@ -112,6 +114,16 @@ class ResidentConfig(BaseModel):
             ),
             cloud_yaml_path=Path(env.get("MEGAPLAN_RESIDENT_CLOUD_YAML", "cloud.yaml")),
             resident_export_root=Path(env.get("MEGAPLAN_RESIDENT_EXPORT_ROOT", ".megaplan/resident_exports")),
+            escalation_repair_data_dir=(
+                Path(env["MEGAPLAN_RESIDENT_REPAIR_DATA_DIR"])
+                if env.get("MEGAPLAN_RESIDENT_REPAIR_DATA_DIR")
+                else (Path(env["CLOUD_WATCHDOG_REPAIR_DATA_DIR"]) if env.get("CLOUD_WATCHDOG_REPAIR_DATA_DIR") else None)
+            ),
+            escalation_repair_lock_dir=(
+                Path(env["MEGAPLAN_RESIDENT_REPAIR_LOCK_DIR"])
+                if env.get("MEGAPLAN_RESIDENT_REPAIR_LOCK_DIR")
+                else (Path(env["CLOUD_WATCHDOG_REPAIR_LOCK_DIR"]) if env.get("CLOUD_WATCHDOG_REPAIR_LOCK_DIR") else None)
+            ),
             history_window=_env_int(env, "MEGAPLAN_RESIDENT_HISTORY_WINDOW", 10),
             subagent_model_name=env.get("MEGAPLAN_RESIDENT_SUBAGENT_MODEL", "deepseek:deepseek-v4-pro"),
             subagent_models=_split_csv(env.get("MEGAPLAN_RESIDENT_SUBAGENT_MODELS")),

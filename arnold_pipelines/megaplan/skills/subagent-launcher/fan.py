@@ -235,8 +235,8 @@ try:
                 if vendored_agent_str not in sys.path:
                     sys.path.insert(0, vendored_agent_str)
             from arnold.agent.run_agent import AIAgent
-            from arnold.pipelines.megaplan.agent.hermes_state import SessionDB
-            from arnold.pipelines.megaplan.runtime.key_pool import resolve_model
+            from arnold.agent.hermes_state import SessionDB
+            from arnold_pipelines.megaplan.runtime.key_pool import resolve_model
 except Exception:
     _eprint("[fan] FATAL: could not import megaplan/hermes runtime:")
     _eprint(traceback.format_exc())

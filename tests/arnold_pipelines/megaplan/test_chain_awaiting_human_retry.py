@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,11 +10,12 @@ from arnold_pipelines.megaplan.chain import (
     _handle_outcome,
     _record_chain_last_state_after_plan_run,
     _reconcile_chain_from_ground_truth,
+    _recover_stale_prerequisite_block,
     _sync_chain_last_state_from_plan,
     run_chain,
     save_chain_state,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, load_spec
+from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_chain_state, load_spec
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
 
 
@@ -55,6 +57,129 @@ def _write_plan_state(
         % (plan_name, current_state),
         encoding="utf-8",
     )
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_completed_prerequisite_chain(tmp_path: Path) -> Path:
+    prereq_path = tmp_path / "prereq.yaml"
+    brief_path = tmp_path / "m1.md"
+    proof_path = tmp_path / "proof.md"
+    prereq_path.write_text(
+        "milestones:\n  - label: m1\n    idea: m1.md\n",
+        encoding="utf-8",
+    )
+    brief_path.write_text("# M1\n", encoding="utf-8")
+    proof_path.write_text("# Proof\n", encoding="utf-8")
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[{"label": "m1", "status": "done", "plan": "plan-m1"}],
+            metadata={
+                "chain_spec_path": str(prereq_path.resolve(strict=False)),
+                "chain_spec_sha256": _sha256(prereq_path),
+            },
+        ),
+    )
+    prereq_path.with_name("completion-manifest.json").write_text(
+        (
+            "{\n"
+            '  "schema": "arnold.megaplan.chain_completion_manifest.v1",\n'
+            f'  "chain": {{"path": "prereq.yaml", "sha256": "{_sha256(prereq_path)}"}},\n'
+            '  "milestones": [\n'
+            "    {\n"
+            '      "label": "m1",\n'
+            f'      "brief_path": "m1.md", "brief_sha256": "{_sha256(brief_path)}",\n'
+            '      "status": "done", "plan": "plan-m1",\n'
+            f'      "proof_artifacts": [{{"path": "proof.md", "sha256": "{_sha256(proof_path)}"}}]\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+    return prereq_path
+
+
+def test_stale_prerequisite_block_revalidates_chain_preconditions_and_retries(
+    tmp_path: Path,
+) -> None:
+    prereq_path = _write_completed_prerequisite_chain(tmp_path)
+    spec_path = tmp_path / "dependent.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "prereq complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                    "require_manifest": True,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+    plan_dir = tmp_path / ".megaplan" / "plans" / "blocked-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "finalize.json").write_text(
+        (
+            '{"tasks":[{"id":"T12","status":"blocked",'
+            '"description":"conditional prerequisite task",'
+            '"executor_notes":"Blocked by stale prerequisite completion manifest",'
+            '"files_changed":["stale.py"],"commands_run":["pytest"],'
+            '"evidence_files":["old.json"],"reviewer_verdict":"blocked"}]}'
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        (
+            '{"name":"blocked-plan","current_state":"blocked",'
+            '"latest_failure":{"kind":"execution_blocked",'
+            '"message":"execute reported prerequisite-blocked tasks: T12",'
+            '"metadata":{"blocking_reasons":["T12 blocked by completion manifest"]}},'
+            '"resume_cursor":{"phase":"execute"},'
+            '"active_step":{"phase":"execute"},"meta":{}}'
+        ),
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+
+    recovered = _recover_stale_prerequisite_block(
+        tmp_path,
+        spec_path,
+        spec,
+        DriverOutcome(
+            status="blocked",
+            plan="blocked-plan",
+            final_state="blocked",
+            iterations=1,
+            reason="recover-blocked requires every current blocker to be explicitly resolved",
+        ),
+        plan_dir=plan_dir,
+        reason="execution_batch_11.json has no completed tasks",
+        writer=messages.append,
+    )
+
+    assert recovered is True
+    finalize = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    task = finalize["tasks"][0]
+    assert task["status"] == "pending"
+    assert task["executor_notes"] == ""
+    assert task["files_changed"] == []
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "finalized"
+    assert "latest_failure" not in state
+    assert "resume_cursor" not in state
+    assert "active_step" not in state
+    assert state["meta"]["chain_precondition_revalidations"][0]["reset_task_ids"] == ["T12"]
+    assert (plan_dir / "chain_precondition_revalidation.json").is_file()
+    assert any("current launch preconditions now pass" in message for message in messages)
 
 
 def test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions(

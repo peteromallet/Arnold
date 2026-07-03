@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import subprocess
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -46,6 +47,7 @@ VALID_FAILURE_ACTIONS = (
     "bump_robustness",
 )
 VALID_MERGE_POLICIES = ("auto", "review", "manual")
+DEFAULT_MERGE_POLICY = "auto"
 VALID_CHAIN_DEEPSEEK_PROVIDER_CHOICES = ("direct", "fireworks")
 
 # Autonomy-ladder bump ordering. These are the *one-tier-up* escalation maps
@@ -642,7 +644,7 @@ class ChainSpec:
     on_escalate: str = "stop_chain"
     on_failure_policy: FailurePolicy = field(default_factory=FailurePolicy)
     on_escalate_policy: FailurePolicy = field(default_factory=FailurePolicy)
-    merge_policy: str = "auto"
+    merge_policy: str = DEFAULT_MERGE_POLICY
     require_clean_base: bool = False
     prerequisite_policy: str = "none"
     validation_policy: str = "none"
@@ -746,11 +748,19 @@ class ChainSpec:
         on_failure = on_failure_policy.abort
         on_escalate = on_escalate_policy.abort
 
-        merge_policy = raw.get("merge_policy", "auto")
+        explicit_merge_policy = "merge_policy" in raw
+        merge_policy = raw.get("merge_policy", DEFAULT_MERGE_POLICY)
         if merge_policy not in VALID_MERGE_POLICIES:
             raise CliError(
                 "invalid_spec",
                 f"merge_policy must be one of {VALID_MERGE_POLICIES}; got {merge_policy!r}",
+            )
+        if explicit_merge_policy and merge_policy != DEFAULT_MERGE_POLICY:
+            warnings.warn(
+                "merge_policy should only be set away from `auto` when the user "
+                "explicitly requests a human PR merge gate after every milestone; "
+                f"`{merge_policy}` will park unattended/cloud chains at awaiting_pr_merge.",
+                stacklevel=2,
             )
         # "manual" is an operator-facing synonym for human-reviewed merge.
         if merge_policy == "manual":

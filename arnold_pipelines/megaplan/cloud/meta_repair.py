@@ -48,6 +48,7 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
     is_success_outcome,
     load_json,
     remaining_budget_secs,
+    update_session_index,
 )
 
 
@@ -636,6 +637,17 @@ def persist_meta_repair_record(
 
     file_path = meta_dir / f"{record.meta_repair_id}.json"
     atomic_write_json(file_path, payload)
+    update_session_index(
+        repair_root / "index.json",
+        record.session,
+        {
+            "session": record.session,
+            "latest_meta_repair_id": record.meta_repair_id,
+            "latest_meta_outcome": record.outcome,
+            "latest_meta_record_path": str(file_path),
+            "latest_meta_recorded_at": record.created_at,
+        },
+    )
     return file_path
 
 

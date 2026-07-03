@@ -76,10 +76,12 @@ Canonical chain layout on the box:
 The watchdog marker must point `remote_spec` to that real `chain.yaml`, never to
 `<workspace>/chain.yaml` or another guessed path.
 
-Observe: `megaplan cloud status --all --cloud-yaml cloud.<chain>.yaml`, `tmux ls`
-on the box, and the per-chain log under
-`<workspace>/.megaplan/cloud-chain-<session>.log`. Milestone plan state lives
-under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
+Observe first with `megaplan cloud status --all --cloud-yaml cloud.<chain>.yaml`.
+It lists all known shared-runner sessions with human names, `should_run=yes/no`,
+liveness, current plan state, and watchdog repair/escalation status. Use `tmux
+ls` only for live runner processes; the watchdog report is just the last scan
+and can be stale. Per-chain logs live under `<workspace>/.megaplan/cloud-chain-<session>.log`;
+milestone state lives under `.megaplan/plans/<plan>/state.json` + `events.ndjson`.
 
 For lower-level launches or when preparing a shared cloud checkout manually,
 seed durable planning state before `cloud chain`:
@@ -285,7 +287,8 @@ For users running multiple chains across many repos on the shared Hetzner agentb
    - `megaplan cloud launch-epic --cloud-yaml cloud.<chain>.yaml <spec-or-dir>` to validate, materialize, launch, and watchdog-verify.
 
 3. **Observing**:
-   - `megaplan cloud status --chain` for the chain summary.
+   - `megaplan cloud status --all --cloud-yaml cloud.<chain>.yaml` first.
+   - `megaplan cloud status --chain` for one chain's detailed summary.
    - `megaplan cloud logs --no-follow` for build / boot logs.
    - SSH-tail the per-chain log: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tail -f /workspace/<repo>/.megaplan/cloud-chain-<chain-session>.log'`.
-   - List active chains: `ssh root@<box-ip> 'docker exec megaplan-cloud-agent tmux ls'`.
+   - `tmux ls` only shows live runner processes.

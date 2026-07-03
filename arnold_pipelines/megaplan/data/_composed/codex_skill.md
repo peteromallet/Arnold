@@ -18,8 +18,6 @@ arnold workflow check --module <package.module>:build_pipeline
 
 ## Shipped pipelines
 
-- `deliberation` -> native (validate import: `arnold.pipelines.deliberation:build_pipeline`)
-- `folder_audit` -> native (validate import: `arnold.pipelines.folder_audit:build_pipeline`)
 - `evidence_pack.verifier` -> native (validate import: `arnold_pipelines.evidence_pack:build_pipeline`)
 - `megaplan.core` -> `arnold workflow check --module arnold_pipelines.megaplan:build_pipeline`
 - `megaplan.creative` -> native (validate import: `arnold_pipelines.megaplan.pipelines.creative:build_pipeline`)
