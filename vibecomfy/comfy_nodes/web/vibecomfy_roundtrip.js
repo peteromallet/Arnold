@@ -65,6 +65,7 @@ import {
   createAgentEditState,
   createAgentStateCompartments,
   eventSessionMatchesActiveScope,
+  PANEL_STATE,
   RENDER_SECTIONS,
   normalizeDeltaOpsFromSubmit,
   normalizeObligationDirtySections,
@@ -158,6 +159,7 @@ import {
   assertPanelScopeMatchesActiveCanvas,
   assertApplyScopeConsistency,
 } from "./active_canvas_scope_guard.js";
+import { installPreviewPicker } from "./preview_picker.js";
 
 // Re-export diagnostics functions for tests and external callers.
 export {
@@ -309,17 +311,6 @@ console.log("[vibecomfy] vibecomfy_roundtrip_main.mjs module evaluated");
 // matching FailureKind.
 
 const SUPPORTED_FRONTEND = "1.39.x";
-const PANEL_STATE = Object.freeze({
-  IDLE: "IDLE",
-  SUBMITTING: "SUBMITTING",
-  AWAITING_REVIEW: "AWAITING_REVIEW",
-  APPLYING: "APPLYING",
-  // CLARIFY — the agent asked a question instead of producing a candidate.
-  // There is NO candidate to review (the graph is byte-identical), so we never
-  // enter AWAITING_REVIEW for these turns; the prompt stays open for the answer.
-  CLARIFY: "CLARIFY",
-  ERROR: "ERROR",
-});
 
 const ALL_AGENT_PANEL_RENDER_SECTIONS = Object.freeze(Object.values(RENDER_SECTIONS));
 const AGENT_PANEL_SECTION_RENDER_ERROR_LIMIT = 20;
@@ -3712,7 +3703,7 @@ function createAgentPanelShell() {
     });
   }
 
-  return {
+  const panel = {
     panelId,
     root,
     shell,
@@ -3805,6 +3796,23 @@ function createAgentPanelShell() {
       mountContainer: null,
     },
   };
+
+  // ── Demo preview picker (dev-only, gated by localStorage) ──────────────────
+  // When the localStorage flag is absent this is a no-op and leaves the shell
+  // layout and direct ES-module load order unchanged.
+  panel.previewPicker = installPreviewPicker(panel, {
+    headerRight,
+    helpers: {
+      app,
+      applyGraphCandidateInPlace,
+      scheduleRenderAgentPanel,
+      currentAgentPanel,
+      PANEL_STATE,
+      RENDER_SECTIONS,
+    },
+  });
+
+  return panel;
 }
 
 function createAgentPanel() {
@@ -9844,6 +9852,62 @@ function stopAgentSubmit(panel) {
 }
 
 async function applyAgentCandidate(panel) {
+  // ── T6: Demo-only apply branch (local state only, no backend accept) ──
+  if (panel?.state?.__demoMode) {
+    if (!panel.state.candidateGraph) {
+      transition(panel, "APPLY_PREFLIGHT_BLOCKED", { reason: "no_candidate" });
+      return;
+    }
+    try {
+      let repairCandidate = null;
+      applyGraphCandidateInPlace(app, panel.state.candidateGraph, {
+        beforeConfigure(nextCandidate) {
+          decorateIntentGraphPayload(nextCandidate);
+          repairCandidate = clonePlainData(nextCandidate);
+        },
+        afterConfigure(_graph, nextCandidate) {
+          repairLiveIntentNodesFromCandidate(repairCandidate || nextCandidate);
+        },
+        repaint: true,
+      });
+    } catch (e) {
+      const failure = agentPanelFailure("CanvasApplyError", String(e), {
+        retryable: true,
+        graph_unchanged: false,
+        next_action: "Retry demo Apply or choose another scenario.",
+      });
+      const obligations = transition(panel, "CANVAS_APPLY_FAILURE", {
+        failure,
+        syntheticAgentMessage: syntheticFailureAgentMessage(panel, failure, "canvas_apply"),
+        undoStackDepth: panel.state.undoStack.length,
+        debugPayload: {
+          ...failure,
+          demo: true,
+          undo_stack_depth: panel.state.undoStack.length,
+        },
+      });
+      fulfillLifecycleTransitionObligations(panel, obligations);
+      pushHistory(panel, "failure", failure.kind || "CanvasApplyError");
+      renderLifecycleTransition(panel, obligations);
+      return;
+    }
+    const lastAppliedChanges = announceChangedNodes(panel, extractChangedNodeFeedback(panel.state.candidateReport));
+    pushHistory(panel, "applied", panel.state.turnId ? `turn ${panel.state.turnId}` : "candidate");
+    const successObligations = transition(panel, "APPLY_SUCCESS", {
+      accepted: { demo: true },
+      lastAppliedChanges,
+      toast: "Demo candidate applied",
+      debugPayload: {
+        demo: true,
+        undo_stack_depth: panel.state.undoStack.length,
+      },
+    });
+    fulfillLifecycleTransitionObligations(panel, successObligations);
+    renderLifecycleTransition(panel, successObligations);
+    delete panel.state.__demoMode;
+    return;
+  }
+
   if (!panel.state.candidateGraph) {
     transition(panel, "APPLY_PREFLIGHT_BLOCKED", { reason: "no_candidate" });
     return;
@@ -10493,6 +10557,27 @@ async function applyAgentCandidate(panel) {
 }
 
 async function rejectAgentCandidate(panel) {
+  // ── T6: Demo-only reject branch (local state only, no backend reject) ──
+  if (panel?.state?.__demoMode) {
+    if (!panel?.state?.candidateGraph || !panel.state.sessionId || !panel.state.turnId) {
+      return;
+    }
+    pushHistory(panel, "rejected", panel.state.turnId ? `turn ${panel.state.turnId}` : "candidate");
+    const obligations = transition(panel, "REJECT_SUCCESS", {
+      rejected: { demo: true },
+      message: "Demo candidate rejected and cleared from the panel.",
+      toast: "Demo candidate rejected",
+      debugPayload: {
+        demo: true,
+        graph_unchanged: true,
+      },
+    });
+    fulfillLifecycleTransitionObligations(panel, obligations);
+    renderLifecycleTransition(panel, obligations);
+    delete panel.state.__demoMode;
+    return;
+  }
+
   if (!panel?.state?.candidateGraph || !panel.state.sessionId || !panel.state.turnId) {
     return;
   }

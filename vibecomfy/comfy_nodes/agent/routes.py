@@ -142,6 +142,177 @@ def _handle_roundtrip(
         return {"error": str(exc), "kind": type(exc).__name__}
 
 
+# ── Demo scenario helpers (VIBECOMFY_DEMO_PICKER gated) ───────────────────
+
+
+def _demo_repo_root() -> Path:
+    """Return the repository root: vibecomfy/comfy_nodes/agent/routes.py → 3 parents."""
+    return Path(__file__).resolve().parents[3]
+
+
+def _demo_run_root() -> Path:
+    """Fixed run tree for the curated demo scenarios."""
+    return _demo_repo_root() / "out" / "agentic" / "agentic-100-20260630-021138"
+
+
+def _load_demo_manifest() -> dict[str, Any]:
+    path = _demo_repo_root() / "vibecomfy" / "comfy_nodes" / "agent" / "demo_scenarios.json"
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _is_safe_demo_id(scenario_id: str) -> bool:
+    if not isinstance(scenario_id, str) or not scenario_id:
+        return False
+    if any(sep in scenario_id for sep in ("/", "\\", os.sep)):
+        return False
+    if scenario_id in (".", "..") or ".." in scenario_id:
+        return False
+    if scenario_id.startswith("."):
+        return False
+    return True
+
+
+def _load_demo_json_file(run_dir: Path, filename: str | None) -> Any:
+    if not filename:
+        return None
+    path = run_dir / filename
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _resolve_original_graph(
+    response_json: Any,
+    run_dir: Path,
+    run_location: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Load the original UI graph, preferring response.json artifacts mapping."""
+    candidates: list[str] = []
+    if isinstance(response_json, dict):
+        artifacts = response_json.get("artifacts")
+        if isinstance(artifacts, dict):
+            original_ui = artifacts.get("original_ui")
+            if isinstance(original_ui, str):
+                candidates.append(original_ui)
+    candidates.append(run_location.get("original_ui", "original.ui.json"))
+    for filename in candidates:
+        data = _load_demo_json_file(run_dir, filename)
+        if isinstance(data, dict):
+            return data
+    return None
+
+
+def _resolve_candidate_graph(
+    response_json: Any,
+    run_dir: Path,
+    run_location: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve candidate graph in the locked fallback order.
+
+    1. ``response.json.candidate_graph`` or ``response.json.candidate.graph``.
+    2. ``response.json.artifacts.candidate_ui``.
+    3. Sibling ``candidate.ui.json`` under the run directory.
+    """
+    if isinstance(response_json, dict):
+        if isinstance(response_json.get("candidate_graph"), dict):
+            return response_json["candidate_graph"]
+        candidate = response_json.get("candidate")
+        if isinstance(candidate, dict) and isinstance(candidate.get("graph"), dict):
+            return candidate["graph"]
+        artifacts = response_json.get("artifacts")
+        if isinstance(artifacts, dict):
+            candidate_ui = artifacts.get("candidate_ui")
+            if isinstance(candidate_ui, str):
+                data = _load_demo_json_file(run_dir, candidate_ui)
+                if isinstance(data, dict):
+                    return data
+    candidate_ui = run_location.get("candidate_ui", "candidate.ui.json")
+    data = _load_demo_json_file(run_dir, candidate_ui)
+    if isinstance(data, dict):
+        return data
+    return None
+
+
+def _resolve_demo_scenario(scenario_id: str) -> tuple[dict[str, Any], int]:
+    """Load one demo scenario: metadata + original graph + candidate graph."""
+    if not _is_safe_demo_id(scenario_id):
+        return {"ok": False, "error": "Invalid scenario ID"}, 400
+
+    manifest = _load_demo_manifest()
+    scenarios = manifest.get("scenarios", [])
+    record = next((s for s in scenarios if s.get("id") == scenario_id), None)
+    if record is None:
+        return {"ok": False, "error": "Scenario not found"}, 404
+
+    run_location = record.get("run_location", {})
+    run_dir_name = run_location.get("run_dir")
+    if not isinstance(run_dir_name, str) or not run_dir_name:
+        return {"ok": False, "error": "Scenario run_location missing"}, 404
+
+    run_root = _demo_run_root()
+    run_dir = (run_root / run_dir_name).resolve()
+    try:
+        run_dir.relative_to(run_root.resolve())
+    except ValueError:
+        return {"ok": False, "error": "Scenario path escapes run root"}, 404
+
+    response_path = run_dir / run_location.get("response_json", "response.json")
+    try:
+        response_json = json.loads(response_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        response_json = None
+    except Exception as exc:
+        return {"ok": False, "error": f"Failed to load response JSON: {exc}"}, 500
+
+    original_graph = _resolve_original_graph(response_json, run_dir, run_location)
+    if original_graph is None:
+        return {"ok": False, "error": "Original graph not found"}, 404
+
+    candidate_graph = _resolve_candidate_graph(response_json, run_dir, run_location)
+    if candidate_graph is None:
+        return {"ok": False, "error": "Candidate graph not found"}, 404
+
+    if isinstance(response_json, dict):
+        agent_reply = response_json.get("reply") or response_json.get("message") or ""
+        eligibility = response_json.get("apply_eligibility") or response_json.get("eligibility") or {}
+        change_details = response_json.get("change_details") or response_json.get("change") or {}
+        session_id = response_json.get("session_id") or f"demo-{scenario_id}"
+        turn_id = response_json.get("turn_id") or f"demo-{scenario_id}-turn"
+    else:
+        agent_reply = ""
+        eligibility = {}
+        change_details = {}
+        session_id = f"demo-{scenario_id}"
+        turn_id = f"demo-{scenario_id}-turn"
+
+    return {
+        "ok": True,
+        "scenario": record,
+        "source_run_tree": manifest.get("source_run_tree"),
+        "original_graph": original_graph,
+        "candidate_graph": candidate_graph,
+        "agent_reply": agent_reply,
+        "eligibility": eligibility,
+        "change_details": change_details,
+        "session_id": session_id,
+        "turn_id": turn_id,
+    }, 200
+
+
+def _load_demo_scenarios_list() -> tuple[dict[str, Any], int]:
+    """Return the curated list without loading large graph files."""
+    manifest = _load_demo_manifest()
+    return {
+        "ok": True,
+        "scenarios": list(manifest.get("scenarios", [])),
+        "source_run_tree": manifest.get("source_run_tree"),
+    }, 200
+
+
 def _handle_agent_status(params: dict[str, Any] | None = None) -> dict[str, Any]:
     params = params or {}
     route = params.get("route") if isinstance(params.get("route"), str) else None
@@ -1480,6 +1651,37 @@ def register_agent_edit_routes(app) -> None:
             )
         result = await asyncio.to_thread(_handle_node_pack_install, payload)
         status = 200 if result.get("ok") is True else 400
+        return _web.json_response(_to_serializable(result), status=status)
+
+    @app.routes.get("/vibecomfy/demo/scenarios")
+    async def _demo_scenarios_route(request):  # type: ignore[no-untyped-def]
+        if os.environ.get("VIBECOMFY_DEMO_PICKER") != "1":
+            return _web.json_response({"ok": False, "error": "Not found"}, status=404)
+        try:
+            result, status = await asyncio.to_thread(_load_demo_scenarios_list)
+        except Exception as exc:
+            _LOGGER.exception("/vibecomfy/demo/scenarios failed")
+            return _web.json_response(
+                {"ok": False, "error": f"Failed to load demo manifest: {exc}"},
+                status=500,
+            )
+        return _web.json_response(_to_serializable(result), status=status)
+
+    @app.routes.get("/vibecomfy/demo/scenario")
+    async def _demo_scenario_route(request):  # type: ignore[no-untyped-def]
+        if os.environ.get("VIBECOMFY_DEMO_PICKER") != "1":
+            return _web.json_response({"ok": False, "error": "Not found"}, status=404)
+        scenario_id = request.query.get("id")
+        if not isinstance(scenario_id, str) or not scenario_id.strip():
+            return _web.json_response({"ok": False, "error": "id is required"}, status=400)
+        try:
+            result, status = await asyncio.to_thread(_resolve_demo_scenario, scenario_id)
+        except Exception as exc:
+            _LOGGER.exception("/vibecomfy/demo/scenario failed")
+            return _web.json_response(
+                {"ok": False, "error": f"Failed to load scenario: {exc}"},
+                status=500,
+            )
         return _web.json_response(_to_serializable(result), status=status)
 
 # ── Route registration (guarded: no-op when VIBECOMFY_HEADLESS=1) ──────────
