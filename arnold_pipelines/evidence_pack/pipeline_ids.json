@@ -2,7 +2,7 @@
   "pipelines": [
     {
       "m6_disposition": "keep",
-      "manifest_hash": "native:evidence_pack",
+      "manifest_hash": "sha256:32f210b7f187b5f9895d242343fde397a53d8d940eb33052241239cb685cdb70",
       "name": "evidence_pack_verifier",
       "previous_stable_ids": [],
       "seam_ids": [],

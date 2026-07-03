@@ -32,16 +32,7 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name = "writing-panel-strict"
-description = (
-    "Adversarial review of prose drafts by N reviewers, then revise. "
-    "Not for code."
-)
 
-driver = ("native", "panel")
-entrypoint = "build_pipeline"
-arnold_api_version = "1.0"
-capabilities = ("writing", "critique", "revise")
 ```
 
 ## Step Surface

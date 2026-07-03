@@ -32,16 +32,7 @@ Provenance:
 The following snippet is extracted verbatim from the pack's canonical builder source.
 
 ```python
-name = "jokes"
-description = (
-    "Joke pipeline: drafts a joke, tightens the beat, and emits the final artifact "
-    "via a native projected shell."
-)
 
-driver = ("native", "linear")
-entrypoint = "build_pipeline"
-arnold_api_version = "1.0"
-capabilities = ("creative", "joke")
 ```
 
 ## Step Surface

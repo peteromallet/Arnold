@@ -1034,19 +1034,8 @@ def run_native_pipeline(
                 child_artifact_root = Path(artifact_root) / f"_child_{child_name}"
                 child_artifact_root.mkdir(parents=True, exist_ok=True)
 
-                # ── Isolate state: only declared inputs pass to child ──
-                # When input_mapping is declared, only mapped keys cross
-                # the boundary (renamed from parent key → child key).
-                # When absent, the full parent state is copied (legacy /
-                # non-compiler-driven subpipeline fixtures).
-                input_mapping: dict[str, str] = getattr(instr, 'input_mapping', None) or {}
-                if input_mapping:
-                    child_initial_state: dict[str, Any] = {}
-                    for child_key, parent_key in input_mapping.items():
-                        if parent_key in state:
-                            child_initial_state[child_key] = state[parent_key]
-                else:
-                    child_initial_state = dict(state)
+                # ── Isolate state: child receives a copy of parent state ──
+                child_initial_state = dict(state)
 
                 # ── Execute child subpipeline ───────────────────────
                 child_result = run_native_pipeline(
@@ -1062,69 +1051,15 @@ def run_native_pipeline(
                     trace_dir=None,
                 )
 
-                # ── Propagate child suspension to parent ───────────
-                if child_result.suspended:
-                    # Persist parent cursor at current subpipeline pc
-                    # so resume re-enters the subpipeline instruction.
-                    _sub_stage_id = f"{_safe_name(program.name)}__{child_name}__pc{pc}"
-                    _sub_frames = dict(frames)
-                    _sub_frames["__state__"] = _jsonable_value(dict(state))
-                    if envelope is not None:
-                        _sub_frames["__envelope__"] = _serialize_envelope(envelope)
-                    persist_native_cursor(
-                        artifact_root,
-                        stage=_sub_stage_id,
-                        pc=pc,
-                        stages=list(stages),
-                        reentry_stage=_sub_stage_id,
-                        loops=dict(loops),
-                        frames=_sub_frames,
-                        cursor_id=_cursor_id,
-                        native_extra={"suspension_kind": "subpipeline_suspended"},
-                    )
-                    _sub_cursor = _build_cursor_dict(
-                        stage=_sub_stage_id,
-                        pc=pc,
-                        reentry_stage=_sub_stage_id,
-                        stages=list(stages),
-                        loops=dict(loops),
-                        frames=_sub_frames,
-                        state=state,
-                        envelope=envelope,
-                        cursor_id=_cursor_id,
-                        native_extra={"suspension_kind": "subpipeline_suspended"},
-                    )
-                    _hooks.on_checkpoint(_sub_cursor, dict(state))
-                    return NativeExecutionResult(
-                        state=dict(state),
-                        stages=list(stages),
-                        pc=pc,
-                        suspended=True,
-                        cursor_path=str(Path(artifact_root) / "resume_cursor.json"),
-                        envelope=envelope,
-                    )
-
-                # ── Promote only declared outputs back to parent ───
-                # When output_mapping is declared, only mapped keys are
-                # promoted (renamed from child key → parent key).
-                # When absent, the full child final state is merged
-                # (legacy / non-compiler-driven subpipeline fixtures).
-                output_mapping: dict[str, str] = getattr(instr, 'output_mapping', None) or {}
-                if output_mapping:
-                    promoted: dict[str, Any] = {}
-                    for child_key, parent_key in output_mapping.items():
-                        if child_key in child_result.state:
-                            promoted[parent_key] = child_result.state[child_key]
-                    state.update(promoted)
-                    state, owned_keys = _hooks.merge_state(
-                        instr, state, promoted, owned_keys,
-                    )
-                else:
-                    child_outputs = dict(child_result.state)
-                    state.update(child_outputs)
-                    state, owned_keys = _hooks.merge_state(
-                        instr, state, child_outputs, owned_keys,
-                    )
+                # ── Merge child state back into parent state ────────
+                # Update parent state with child outputs first (matching
+                # the phase handler's state.update(outputs) before merge_state).
+                # The hooks.merge_state call can then override or CAS-enforce.
+                child_outputs = dict(child_result.state)
+                state.update(child_outputs)
+                state, owned_keys = _hooks.merge_state(
+                    instr, state, child_outputs, owned_keys,
+                )
 
                 # ── Join child envelope ────────────────────────────
                 envelope = _hooks.join_envelope(

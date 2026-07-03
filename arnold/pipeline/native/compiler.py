@@ -123,12 +123,8 @@ def compile_pipeline(pipeline_func: Callable[..., Any]) -> NativeProgram:
     # as the @pipeline declaration.
     pipeline_globals: dict[str, Any] = getattr(pipeline_func, '__globals__', {})
     compiler = _Compiler(pipeline_name, pipeline_globals=pipeline_globals)
-    compiler.seed_scope(
-        parameter_names=list(inspect.signature(pipeline_func).parameters),
-        declared_inputs=meta.get("inputs"),
-    )
     compiler.lower_body(func_def.body)
-    return compiler.emit(pipeline_func, meta=meta, description=description)
+    return compiler.emit(pipeline_func, description)
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -167,42 +163,6 @@ class _Compiler:
         self._pc: int = 0
         self._pending_halt: bool = False
         self._parallel_block_counter: int = 0
-        self._available_values: set[str] = set()
-        self._ambient_binding_names: set[str] = set()
-        self._subpipeline_callsite_counters: dict[str, int] = {}
-
-    def seed_scope(
-        self,
-        *,
-        parameter_names: Sequence[str],
-        declared_inputs: dict[str, Any] | None,
-    ) -> None:
-        """Seed the compile-time binding table for parent-input validation."""
-        self._available_values.update(parameter_names)
-        self._ambient_binding_names.update(
-            name for name in parameter_names if name in {"ctx", "state", "context"}
-        )
-        if isinstance(declared_inputs, dict):
-            self._available_values.update(str(key) for key in declared_inputs)
-
-    def _build_native_phase(
-        self,
-        func: Callable[..., Any],
-        *,
-        fallback_name: str,
-    ) -> NativePhase:
-        """Build a NativePhase carrying additive decorator metadata."""
-        meta = get_phase_meta(func)
-        name = meta["name"] if meta else fallback_name
-        return NativePhase(
-            name=name,
-            func=func,
-            stable_id=meta.get("id") if meta else None,
-            inputs_schema=meta.get("inputs") if meta else None,
-            outputs_schema=meta.get("outputs") if meta else None,
-            produces=meta.get("produces", ()) if meta else (),
-            consumes=meta.get("consumes", ()) if meta else (),
-        )
 
     # ── emit helpers ──────────────────────────────────────────────
 
@@ -218,8 +178,6 @@ class _Compiler:
         consumes: tuple = (),
         decision_vocabulary: frozenset[str] | None = None,
         subprogram: Any | None = None,
-        input_mapping: dict[str, str] | None = None,
-        output_mapping: dict[str, str] | None = None,
         parallel_index: int | None = None,
     ) -> int:
         """Append an instruction and return its PC."""
@@ -235,8 +193,6 @@ class _Compiler:
             consumes=consumes,
             decision_vocabulary=decision_vocabulary if decision_vocabulary is not None else frozenset(),
             subprogram=subprogram,
-            input_mapping=dict(input_mapping) if input_mapping else {},
-            output_mapping=dict(output_mapping) if output_mapping else {},
             parallel_index=parallel_index,
         )
         self._instructions.append(instr)
@@ -338,22 +294,12 @@ class _Compiler:
 
     def _lower_assign_stmt(self, stmt: ast.Assign) -> None:
         """Handle an assignment statement; value may contain yield."""
-        if isinstance(stmt.value, ast.Call):
-            if self._maybe_lower_subpipeline_call(stmt.value, stmt.targets):
-                self._record_assignment_targets(stmt.targets)
-                return
         self._lower_expr(stmt.value)
-        self._record_assignment_targets(stmt.targets)
 
     def _lower_ann_assign_stmt(self, stmt: ast.AnnAssign) -> None:
         """Handle an annotated assignment; value may contain yield."""
         if stmt.value is not None:
-            if isinstance(stmt.value, ast.Call):
-                if self._maybe_lower_subpipeline_call(stmt.value, [stmt.target]):
-                    self._record_assignment_targets([stmt.target])
-                    return
             self._lower_expr(stmt.value)
-            self._record_assignment_targets([stmt.target])
 
     def _lower_expr(self, expr: ast.expr) -> None:
         """Lower an expression, recognising ``yield <phase_call>``."""
@@ -372,8 +318,6 @@ class _Compiler:
             for elt in expr.elts:
                 self._lower_expr(elt)
         elif isinstance(expr, ast.Call):
-            if self._maybe_raise_on_decorated_non_yield_call(expr):
-                return
             # Non-yield calls (e.g. ``results.append(r)`` inside a parallel body)
             # are allowed as no-ops; we just validate their arguments.
             self._lower_expr(expr.func)
@@ -394,240 +338,6 @@ class _Compiler:
                 f"Unsupported expression type: {type(expr).__name__}",
                 expr,
             )
-
-    def _maybe_raise_on_decorated_non_yield_call(self, call_node: ast.Call) -> bool:
-        """Reject decorated non-yield calls unless they lower as subpipelines."""
-        try:
-            func = self._resolve_callable(call_node.func)
-        except NativeCompileError:
-            return False
-        if is_phase(func):
-            raise NativeCompileError(
-                "Calls to a @phase-decorated function must use 'yield phase(...)'",
-                call_node,
-            )
-        if is_decision(func):
-            raise NativeCompileError(
-                "Calls to a @decision-decorated function must appear in if/while tests",
-                call_node,
-            )
-        return False
-
-    def _record_assignment_targets(self, targets: Sequence[ast.expr]) -> None:
-        for target in targets:
-            if isinstance(target, ast.Name):
-                self._available_values.add(target.id)
-
-    def _maybe_lower_subpipeline_call(
-        self,
-        call_node: ast.Call,
-        targets: Sequence[ast.expr],
-    ) -> bool:
-        """Lower a child @workflow/@pipeline call into a subpipeline instruction."""
-        try:
-            func = self._resolve_callable(call_node.func)
-        except NativeCompileError:
-            return False
-        if not is_pipeline(func):
-            return False
-
-        child_meta = get_pipeline_meta(func)
-        if child_meta is None:  # pragma: no cover - defensive
-            raise NativeCompileError("Child workflow metadata missing", call_node)
-
-        child_program = compile_pipeline(func)
-        child_inputs = self._declared_invocable_inputs(func, child_meta)
-        child_outputs = self._declared_invocable_outputs(child_program, func, child_meta)
-        input_mapping = self._build_subpipeline_input_mapping(
-            child_name=child_program.name,
-            child_inputs=child_inputs,
-            call_node=call_node,
-        )
-        output_mapping = self._build_subpipeline_output_mapping(
-            child_name=child_program.name,
-            child_outputs=child_outputs,
-            targets=targets,
-            node=call_node,
-        )
-        callsite_name = self._next_subpipeline_callsite_name(child_program)
-        self._emit(
-            "subpipeline",
-            name=callsite_name,
-            subprogram=child_program,
-            input_mapping=input_mapping,
-            output_mapping=output_mapping,
-        )
-        return True
-
-    def _declared_invocable_inputs(
-        self,
-        func: Callable[..., Any],
-        meta: dict[str, Any],
-    ) -> list[str]:
-        inputs = meta.get("inputs")
-        if isinstance(inputs, dict):
-            return [str(key) for key in inputs]
-        return list(inspect.signature(func).parameters)
-
-    def _declared_invocable_outputs(
-        self,
-        child_program: NativeProgram,
-        func: Callable[..., Any],
-        meta: dict[str, Any],
-    ) -> list[str]:
-        outputs = meta.get("outputs")
-        if isinstance(outputs, dict):
-            return [str(key) for key in outputs]
-        if child_program.outputs_schema and isinstance(child_program.outputs_schema, dict):
-            return [str(key) for key in child_program.outputs_schema]
-        return ["return"]
-
-    def _build_subpipeline_input_mapping(
-        self,
-        *,
-        child_name: str,
-        child_inputs: Sequence[str],
-        call_node: ast.Call,
-    ) -> dict[str, str]:
-        mapping: dict[str, str] = {}
-        if len(call_node.args) > len(child_inputs):
-            raise NativeCompileError(
-                f"Child workflow {child_name!r} received too many positional arguments",
-                call_node,
-            )
-
-        for child_input, arg_node in zip(child_inputs, call_node.args):
-            mapping[child_input] = self._extract_parent_binding_name(
-                arg_node,
-                child_input=child_input,
-            )
-
-        seen_inputs = set(mapping)
-        for keyword in call_node.keywords:
-            if keyword.arg is None:
-                raise NativeCompileError(
-                    "Child workflow calls do not support **kwargs expansion",
-                    keyword,
-                )
-            if keyword.arg in seen_inputs:
-                raise NativeCompileError(
-                    f"Child workflow input {keyword.arg!r} was provided multiple times",
-                    keyword,
-                )
-            if child_inputs and keyword.arg not in child_inputs:
-                raise NativeCompileError(
-                    f"Child workflow input {keyword.arg!r} is not declared on {child_name!r}",
-                    keyword,
-                )
-            mapping[keyword.arg] = self._extract_parent_binding_name(
-                keyword.value,
-                child_input=keyword.arg,
-            )
-            seen_inputs.add(keyword.arg)
-
-        missing = [name for name in child_inputs if name not in mapping]
-        if missing:
-            raise NativeCompileError(
-                f"Child workflow {child_name!r} requires explicit input mappings for {missing}",
-                call_node,
-            )
-        return mapping
-
-    def _extract_parent_binding_name(
-        self,
-        expr: ast.expr,
-        *,
-        child_input: str,
-    ) -> str:
-        if isinstance(expr, ast.Name):
-            source_name = expr.id
-            if source_name not in self._available_values:
-                raise NativeCompileError(
-                    f"Child workflow input {child_input!r} depends on undeclared ambient binding {source_name!r}",
-                    expr,
-                )
-            if source_name in self._ambient_binding_names and source_name != child_input:
-                raise NativeCompileError(
-                    f"Child workflow input {child_input!r} cannot read ambient state via {source_name!r}; map a declared field instead",
-                    expr,
-                )
-            return source_name
-        if isinstance(expr, ast.Subscript) and isinstance(expr.value, ast.Name):
-            container_name = expr.value.id
-            if container_name not in self._available_values:
-                raise NativeCompileError(
-                    f"Child workflow input {child_input!r} depends on undeclared ambient binding {container_name!r}",
-                    expr,
-                )
-            slice_node = expr.slice
-            if isinstance(slice_node, ast.Constant) and isinstance(slice_node.value, str):
-                return slice_node.value
-        raise NativeCompileError(
-            f"Child workflow input {child_input!r} must map from a declared parent binding or explicit parent-state key",
-            expr,
-        )
-
-    def _build_subpipeline_output_mapping(
-        self,
-        *,
-        child_name: str,
-        child_outputs: Sequence[str],
-        targets: Sequence[ast.expr],
-        node: ast.AST,
-    ) -> dict[str, str]:
-        if not child_outputs or child_outputs == ["return"]:
-            if not targets:
-                return {}
-            if len(targets) != 1 or not isinstance(targets[0], ast.Name):
-                raise NativeCompileError(
-                    f"Child workflow {child_name!r} output must bind to a single name",
-                    node,
-                )
-            return {"return": targets[0].id}
-
-        if not targets:
-            raise NativeCompileError(
-                f"Child workflow {child_name!r} has declared outputs {list(child_outputs)!r}; dropping them implicitly is not allowed",
-                node,
-            )
-        if len(targets) != 1:
-            raise NativeCompileError(
-                f"Child workflow {child_name!r} outputs must bind through a single assignment target",
-                node,
-            )
-        target = targets[0]
-        if isinstance(target, ast.Name):
-            if len(child_outputs) != 1:
-                raise NativeCompileError(
-                    f"Child workflow {child_name!r} declares multiple outputs {list(child_outputs)!r}; use tuple assignment",
-                    target,
-                )
-            return {child_outputs[0]: target.id}
-        if isinstance(target, ast.Tuple):
-            names: list[str] = []
-            for elt in target.elts:
-                if not isinstance(elt, ast.Name):
-                    raise NativeCompileError(
-                        "Child workflow tuple output bindings must be simple names",
-                        elt,
-                    )
-                names.append(elt.id)
-            if len(names) != len(child_outputs):
-                raise NativeCompileError(
-                    f"Child workflow {child_name!r} declares {len(child_outputs)} outputs but assignment targets {len(names)} names",
-                    target,
-                )
-            return dict(zip(child_outputs, names))
-        raise NativeCompileError(
-            "Child workflow outputs must bind to a simple name or tuple of names",
-            target,
-        )
-
-    def _next_subpipeline_callsite_name(self, child_program: NativeProgram) -> str:
-        base_name = child_program.stable_id or child_program.name
-        index = self._subpipeline_callsite_counters.get(base_name, 0)
-        self._subpipeline_callsite_counters[base_name] = index + 1
-        return f"{base_name}[{index}]"
 
     def _lower_yield(self, yield_node: ast.Yield) -> None:
         """Lower ``yield <call>`` where call is a decorated phase."""
@@ -661,23 +371,18 @@ class _Compiler:
                 func_node,
             )
 
-        phase_ir = self._build_native_phase(
-            func,
-            fallback_name=getattr(func, "__name__", "unknown"),
-        )
-        name = phase_ir.name
+        meta = get_phase_meta(func)
+        name = meta["name"] if meta else getattr(func, "__name__", "unknown")
+
+        # Extract typed port metadata from phase decorator
+        phase_produces = meta.get("produces", ()) if meta else ()
+        phase_consumes = meta.get("consumes", ()) if meta else ()
 
         # Track phase
-        self._phases.append(phase_ir)
+        self._phases.append(NativePhase(name=name, func=func, produces=phase_produces, consumes=phase_consumes))
 
         # Emit phase instruction
-        self._emit(
-            "phase",
-            name=name,
-            func=func,
-            produces=phase_ir.produces,
-            consumes=phase_ir.consumes,
-        )
+        self._emit("phase", name=name, func=func, produces=phase_produces, consumes=phase_consumes)
 
     def _lower_yield_parallel(self, yield_node: ast.Yield) -> None:
         """Lower ``yield parallel([...])`` into one resumable parallel instruction.
@@ -708,7 +413,12 @@ class _Compiler:
 
         # Register each branch callable as a known phase (for metadata/reflection)
         for bf, bn in zip(branch_funcs, branch_names):
-            self._phases.append(self._build_native_phase(bf, fallback_name=bn))
+            meta = get_phase_meta(bf)
+            produces = meta.get("produces", ()) if meta else ()
+            consumes = meta.get("consumes", ()) if meta else ()
+            self._phases.append(
+                NativePhase(name=bn, func=bf, produces=produces, consumes=consumes)
+            )
 
         # Build ParallelInstruction metadata and attach to the instruction
         parallel_index = len(self._parallel_blocks)
@@ -735,8 +445,6 @@ class _Compiler:
             decision_vocabulary=old.decision_vocabulary,
             subprogram=parallel_block,
             parallel_index=parallel_index,
-            input_mapping=old.input_mapping,
-            output_mapping=old.output_mapping,
         )
 
 
@@ -1410,8 +1118,6 @@ class _Compiler:
             decision_vocabulary=old_marker.decision_vocabulary,
             subprogram=parallel_block,
             parallel_index=parallel_index,
-            input_mapping=old_marker.input_mapping,
-            output_mapping=old_marker.output_mapping,
         )
 
     def _lower_for_body_with_substitution(
@@ -1444,8 +1150,6 @@ class _Compiler:
     def emit(
         self,
         pipeline_func: Callable[..., Any],
-        *,
-        meta: dict[str, Any],
         description: str,
     ) -> NativeProgram:
         """Assemble and return the final :class:`NativeProgram`."""
@@ -1453,7 +1157,7 @@ class _Compiler:
 
         # Fix up sequential next_pc links for non-branch instructions
         for i, instr in enumerate(self._instructions):
-            if instr.op in ("phase", "jump", "parallel", "subpipeline") and instr.next_pc is None:
+            if instr.op in ("phase", "jump", "parallel") and instr.next_pc is None:
                 next_pc = i + 1
                 if next_pc < len(self._instructions):
                     self._instructions[i] = NativeInstruction(
@@ -1467,16 +1171,11 @@ class _Compiler:
                         consumes=instr.consumes,
                         decision_vocabulary=instr.decision_vocabulary,
                         subprogram=instr.subprogram,
-                        input_mapping=instr.input_mapping,
-                        output_mapping=instr.output_mapping,
                         parallel_index=instr.parallel_index,
                     )
 
         return NativeProgram(
             name=self._pipeline_name,
-            stable_id=meta.get("id"),
-            inputs_schema=meta.get("inputs"),
-            outputs_schema=meta.get("outputs"),
             instructions=tuple(self._instructions),
             phases=tuple(self._phases),
             decisions=tuple(self._decisions),
