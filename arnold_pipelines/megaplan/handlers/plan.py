@@ -18,29 +18,39 @@ from .shared import (
     phase_result_guard,
 )
 
-def _apply_prep_clarify_gate(state: dict, payload: dict) -> str:
-    """Decide whether prep should halt for human clarification.
 
-    Returns STATE_AWAITING_HUMAN when prep_clarify is enabled and at least one
-    blocking open_question exists; otherwise returns STATE_PREPPED.  Mutates
-    state['clarification'] as a side effect on the halt path.
-    """
+def _build_prep_clarify_signal(state: dict, payload: dict) -> dict[str, Any]:
+    """Return a structured clarify signal for prep without naming route targets."""
     if not state["config"].get("prep_clarify", True):
-        return STATE_PREPPED
+        return {"decision": "continue", "suspend": False}
     open_questions = payload.get("open_questions") or []
     blocking = [q for q in open_questions if isinstance(q, dict) and q.get("severity") == "blocking"]
     if not blocking:
-        return STATE_PREPPED
+        return {"decision": "continue", "suspend": False}
     n = len(blocking)
-    state["clarification"] = {
-        "intent_summary": (
-            f"prep surfaced {n} blocking {'ambiguity' if n == 1 else 'ambiguities'}; "
-            "answer and run `megaplan override resume-clarify`"
-        ),
-        "questions": [f"[blocking] {q['question']}" for q in blocking],
-        "source": "prep",
+    return {
+        "decision": "clarify",
+        "suspend": True,
+        "clarification": {
+            "intent_summary": (
+                f"prep surfaced {n} blocking {'ambiguity' if n == 1 else 'ambiguities'}; "
+                "answer and run `megaplan override resume-clarify`"
+            ),
+            "questions": [f"[blocking] {q['question']}" for q in blocking],
+            "source": "prep",
+        },
     }
-    return STATE_AWAITING_HUMAN
+
+
+def _apply_prep_signal(state: dict[str, Any], prep_signal: dict[str, Any]) -> str:
+    """Persist the prep signal into state while leaving route ownership external."""
+    clarification = prep_signal.get("clarification")
+    if prep_signal.get("suspend"):
+        if isinstance(clarification, dict):
+            state["clarification"] = clarification
+        return STATE_AWAITING_HUMAN
+    state.pop("clarification", None)
+    return STATE_PREPPED
 
 
 def _criteria_require_tests(success_criteria: list[dict[str, Any]]) -> bool:
@@ -226,7 +236,8 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                         state["config"]["primary_criterion"] = primary_criterion.strip()
                 code_refs = len(worker.payload.get("relevant_code", []))
                 test_refs = len(worker.payload.get("test_expectations", []))
-                next_state = _apply_prep_clarify_gate(state, worker.payload)
+                prep_signal = _build_prep_clarify_signal(state, worker.payload)
+                next_state = _apply_prep_signal(state, prep_signal)
                 state["current_state"] = next_state
                 if next_state == STATE_AWAITING_HUMAN:
                     blocking_count = len(state["clarification"]["questions"])
@@ -244,7 +255,10 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                     artifacts=[prep_filename],
                     output_file=prep_filename,
                     artifact_hash=artifact_hash,
-                    response_fields={"iteration": state["iteration"]},
+                    response_fields={
+                        "iteration": state["iteration"],
+                        "prep_signal": prep_signal,
+                    },
                 )
             from arnold_pipelines.megaplan.orchestration.prep_research import (
                 run_prep_orchestration,
@@ -257,7 +271,8 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 primary_criterion = worker.payload.get("primary_criterion")
                 if isinstance(primary_criterion, str) and primary_criterion.strip():
                     state["config"]["primary_criterion"] = primary_criterion.strip()
-            next_state = _apply_prep_clarify_gate(state, worker.payload)
+            prep_signal = _build_prep_clarify_signal(state, worker.payload)
+            next_state = _apply_prep_signal(state, prep_signal)
             state["current_state"] = next_state
             if next_state == STATE_AWAITING_HUMAN:
                 blocking_count = len(state["clarification"]["questions"])
@@ -281,6 +296,7 @@ def handle_prep(root: Path, args: argparse.Namespace) -> StepResponse:
                 response_fields={
                     "iteration": state["iteration"],
                     "prep_metrics_hash": orchestration.prep_metrics_hash,
+                    "prep_signal": prep_signal,
                 },
             )
 
