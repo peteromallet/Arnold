@@ -16,6 +16,10 @@ class TestWorkflowComponents:
         for component in workflows.ALL_STEP_COMPONENTS:
             assert isinstance(component, StepComponent)
             assert component.kind == ComponentKind.STEP
+        for component in workflows.WORKFLOW_COMPONENTS:
+            assert component.kind == ComponentKind.WORKFLOW
+            assert component.metadata["input_names"]
+            assert component.metadata["output_names"]
         for prompt in workflows.PROMPT_COMPONENTS:
             assert isinstance(prompt, PromptComponent)
             assert prompt.kind == ComponentKind.PROMPT
@@ -493,6 +497,8 @@ class TestStableIdsAuthoritative:
         for name in sorted(dir(workflows.components)):
             if name.startswith("SOURCE_"):
                 source_comp = getattr(workflows.components, name)
+                if not isinstance(source_comp, StepComponent):
+                    continue
                 step_id = name.removeprefix("SOURCE_").lower()
                 source_id_mappings[name] = (source_comp.id, step_id)
         # Each SOURCE_ component should have an id matching megaplan:{step_id}

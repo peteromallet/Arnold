@@ -13,7 +13,7 @@ from arnold.workflow import diagnostics
 
 def test_diagnostic_contract_exposes_grammar_and_import_metadata() -> None:
     assert diagnostics.GRAMMAR_METADATA == {
-        "grammar_version": "arnold.workflow.authoring.v1",
+        "grammar_version": "arnold.workflow.authoring.v2",
         "source_kind": "python-shaped-workflow",
         "module": "arnold.workflow.authoring",
     }
@@ -75,6 +75,8 @@ def test_diagnostic_codes_are_unique_and_cover_required_families() -> None:
     assert all(spec.severity is diagnostics.DiagnosticSeverity.ERROR for spec in specs)
     assert all(spec.message_template for spec in specs)
     assert all(spec.remediation for spec in specs)
+    assert diagnostics.DiagnosticCode.MANUAL_GRAPH_NODES in codes
+    assert diagnostics.DiagnosticCode.COMPOSITION_EFFECT_SCHEMA_MISMATCH in codes
 
 
 def test_diagnostic_dataclass_carries_stable_shape() -> None:
@@ -84,15 +86,23 @@ def test_diagnostic_dataclass_carries_stable_shape() -> None:
         source_span=SourceSpan("workflow.py", 3, 1, 3, 42),
         import_ref=ImportRef("example.workflow.steps", "plan"),
         component_ref="example.workflow.steps:plan",
+        call_site_path="review/plan",
+        invocable_id="review-plan",
+        policy_category="retry",
+        rejection_category="manual_graph_nodes",
         remediation="import a typed authoring component",
         details={"local_name": "plan", "aliases": ["planner"]},
     )
 
-    assert diagnostic.grammar_version == "arnold.workflow.authoring.v1"
+    assert diagnostic.grammar_version == "arnold.workflow.authoring.v2"
     assert diagnostic.severity is diagnostics.DiagnosticSeverity.ERROR
     assert diagnostic.source_span == SourceSpan("workflow.py", 3, 1, 3, 42)
     assert diagnostic.import_ref == ImportRef("example.workflow.steps", "plan")
     assert diagnostic.component_ref == "example.workflow.steps:plan"
+    assert diagnostic.call_site_path == "review/plan"
+    assert diagnostic.invocable_id == "review-plan"
+    assert diagnostic.policy_category == "retry"
+    assert diagnostic.rejection_category == "manual_graph_nodes"
     assert diagnostic.details["aliases"] == ("planner",)
     assert isinstance(diagnostic.details, MappingProxyType)
     with pytest.raises(TypeError):
@@ -103,17 +113,20 @@ def test_diagnostic_dataclass_carries_stable_shape() -> None:
 
 def test_diagnostic_source_span_serializes_with_required_coordinates() -> None:
     diagnostic = diagnostics.AuthoringDiagnostic(
-        code=diagnostics.DiagnosticCode.RESERVED_CALL_KEYWORD,
-        message="reserved keyword",
+        code=diagnostics.DiagnosticCode.MISSING_CALL_SITE_ID,
+        message="missing call-site id",
         source_span=SourceSpan("workflow.py", 7, 5, 7, 19),
+        call_site_path="review",
+        invocable_id="review-subflow",
+        rejection_category="missing_call_site_id",
         details={"keyword": "policy"},
     )
 
     payload = diagnostic.to_dict()
 
-    assert payload["code"] == "AWF010_RESERVED_CALL_KEYWORD"
+    assert payload["code"] == "AWF220_MISSING_CALL_SITE_ID"
     assert payload["severity"] == "error"
-    assert payload["grammar_version"] == "arnold.workflow.authoring.v1"
+    assert payload["grammar_version"] == "arnold.workflow.authoring.v2"
     assert payload["source_span"] == {
         "path": "workflow.py",
         "start_line": 7,
@@ -121,6 +134,9 @@ def test_diagnostic_source_span_serializes_with_required_coordinates() -> None:
         "end_line": 7,
         "end_column": 19,
     }
+    assert payload["call_site_path"] == "review"
+    assert payload["invocable_id"] == "review-subflow"
+    assert payload["rejection_category"] == "missing_call_site_id"
     assert payload["details"] == {"keyword": "policy"}
 
 
@@ -143,6 +159,13 @@ def test_diagnostic_dataclass_rejects_malformed_required_fields() -> None:
             code=diagnostics.DiagnosticCode.UNKNOWN_COMPONENT,
             message="unknown component",
             component_ref="",
+        )
+
+    with pytest.raises(ValueError, match="call_site_path"):
+        diagnostics.AuthoringDiagnostic(
+            code=diagnostics.DiagnosticCode.MISSING_CALL_SITE_ID,
+            message="missing id",
+            call_site_path="",
         )
 
 

@@ -45,7 +45,15 @@ def test_component_contracts_are_typed_compile_time_data() -> None:
     )
     step = authoring.StepComponent(
         id="plan",
-        provenance=_provenance(),
+        provenance=authoring.ComponentProvenance(
+            module="example.workflow.steps",
+            qualname="plan",
+            export_name="plan",
+            call_site_path="review/plan",
+            parent_path="review",
+            iteration_coordinate="[0]",
+            policy_references=("bounded_retry",),
+        ),
         prompt=prompt,
         policy=policy,
         output_schema=schema,
@@ -55,10 +63,15 @@ def test_component_contracts_are_typed_compile_time_data() -> None:
     assert policy.kind is authoring.ComponentKind.POLICY
     assert schema.kind is authoring.ComponentKind.SCHEMA
     assert subflow.kind is authoring.ComponentKind.SUBFLOW
+    assert authoring.ComponentKind.WORKFLOW.value == "workflow"
     assert step.kind is authoring.ComponentKind.STEP
     assert policy.config["labels"] == ("retryable",)
     assert isinstance(policy.config, MappingProxyType)
     assert prompt.provenance.ref == "example.workflow.steps:planning_prompt"
+    assert step.provenance.call_site_path == "review/plan"
+    assert step.provenance.parent_path == "review"
+    assert step.provenance.iteration_coordinate == "[0]"
+    assert step.provenance.policy_references == ("bounded_retry",)
 
 
 def test_step_component_is_callable_shaped_without_executing_runtime() -> None:
@@ -87,7 +100,7 @@ def test_workflow_authoring_fixture_components_are_typed_step_exports() -> None:
 
 
 def test_reserved_intrinsics_are_declared_and_not_executable() -> None:
-    assert authoring.GRAMMAR_VERSION == "arnold.workflow.authoring.v1"
+    assert authoring.GRAMMAR_VERSION == "arnold.workflow.authoring.v2"
     assert authoring.RESERVED_INTRINSIC_NAMES == (
         "workflow",
         "loop",

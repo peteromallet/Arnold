@@ -31,6 +31,7 @@ M3_VALID_FIXTURES = (
     "valid_m3_policy_refs",
     "valid_m3_subflow_ref",
     "valid_m3_subflow_control_flow",
+    "valid_m3_parallel_map_loop_policy",
 )
 M3_INVALID_FIXTURES = (
     "invalid_m3_non_literal_routing",
@@ -51,6 +52,10 @@ M3_INVALID_FIXTURES = (
     "invalid_m3_unsupported_policy_carrier",
     "invalid_m3_dynamic_subflow_identity",
     "invalid_m3_unreachable_path",
+    "invalid_m3_dynamic_dispatch",
+    "invalid_m3_single_handler_wrapper",
+    "invalid_m3_nonliteral_path_construction",
+    "invalid_m3_megaplan_helper_fanout",
 )
 
 
@@ -1011,6 +1016,13 @@ def test_source_compiler_m3_valid_expectation_fixtures_lower_to_pinned_contract(
         for node_id, metadata_contract in expected_step_metadata.items():
             _assert_contract(dict(nodes[node_id].metadata), metadata_contract)
 
+    expected_fanout_policies = expected.get("fanout_policies", {})
+    if expected_fanout_policies:
+        nodes = {step.id: step for step in pipeline.steps}
+        for node_id, fanout_contract in expected_fanout_policies.items():
+            assert nodes[node_id].policy is not None
+            _assert_contract(_policy_contract(nodes[node_id].policy), {"fanout": fanout_contract})
+
     expected_capabilities = expected.get("capabilities", {})
     if expected_capabilities:
         nodes = {step.id: step for step in pipeline.steps}
@@ -1313,6 +1325,78 @@ def flow(brief):
                 "start_column": 5,
                 "end_line": 9,
                 "end_column": 84,
+            },
+        }
+    ]
+
+
+def test_source_compiler_m3_native_nested_workflow_requires_literal_call_site_id() -> None:
+    source = """
+from arnold.pipeline import step, workflow
+
+@step(id="child_step", inputs={"draft"}, outputs={"verdict"})
+def child_step(draft):
+    ...
+
+@workflow(id="child", inputs={"draft"}, outputs={"verdict"})
+def child(draft):
+    return child_step(id="child_step", draft=draft)
+
+@workflow(id="parent", inputs={"draft"}, outputs={"verdict"})
+def parent(draft):
+    verdict = child(draft=draft)
+    return verdict
+"""
+
+    result = workflow.check_workflow_source(source, source_path="missing_nested_id.py")
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF220_MISSING_CALL_SITE_ID",
+            "message": "nested workflow calls must include a literal id keyword",
+            "component_ref": "missing_nested_id:child",
+            "source_span": {
+                "path": "missing_nested_id.py",
+                "start_line": 14,
+                "start_column": 15,
+                "end_line": 14,
+                "end_column": 33,
+            },
+        }
+    ]
+
+
+def test_source_compiler_m3_native_nested_workflow_validates_child_input_schema() -> None:
+    source = """
+from arnold.pipeline import step, workflow
+
+@step(id="child_step", inputs={"draft"}, outputs={"verdict"})
+def child_step(draft):
+    ...
+
+@workflow(id="child", inputs={"draft"}, outputs={"verdict"})
+def child(draft):
+    return child_step(id="child_step", draft=draft)
+
+@workflow(id="parent", inputs={"brief"}, outputs={"verdict"})
+def parent(brief):
+    verdict = child(id="child_call", missing=brief)
+    return verdict
+"""
+
+    result = workflow.check_workflow_source(source, source_path="bad_nested_schema.py")
+
+    assert _diagnostic_payloads(result) == [
+        {
+            "code": "AWF230_CHILD_INPUT_SCHEMA_MISMATCH",
+            "message": "nested workflow input bindings must exactly match the child workflow inputs",
+            "component_ref": "bad_nested_schema:child",
+            "source_span": {
+                "path": "bad_nested_schema.py",
+                "start_line": 14,
+                "start_column": 15,
+                "end_line": 14,
+                "end_column": 52,
             },
         }
     ]
@@ -2174,11 +2258,11 @@ def test_source_compiler_m3_rejects_unsupported_loop_contracts(
     [
         (
             "        break\n",
-            "bounded loop bodies do not support break or continue",
+            None,
         ),
         (
             "        continue\n",
-            "bounded loop bodies do not support break or continue",
+            "bounded loop bodies do not support continue",
         ),
         (
             "        return verdict\n",
@@ -2210,6 +2294,9 @@ def flow(brief):
 
     result = workflow.check_workflow_source(source, source_path="invalid_loop_control.py")
 
+    if expected_message is None:
+        assert result.ok
+        return
     assert _diagnostic_payloads(result)[0]["code"] == "AWF013_AMBIGUOUS_LOOP"
     assert _diagnostic_payloads(result)[0]["message"] == expected_message
 

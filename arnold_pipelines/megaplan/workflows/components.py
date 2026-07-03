@@ -12,7 +12,15 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Any, Mapping
 
-from arnold.workflow.authoring import ComponentProvenance, PolicyComponent, PromptComponent, SchemaComponent, StepComponent
+from arnold.workflow.authoring import (
+    ComponentContract,
+    ComponentKind,
+    ComponentProvenance,
+    PolicyComponent,
+    PromptComponent,
+    SchemaComponent,
+    StepComponent,
+)
 
 PROMPT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt"
 PROMPT_COMPONENT_RESOLVER_REF = "arnold_pipelines.megaplan.prompts:create_prompt_components"
@@ -163,6 +171,31 @@ def _schema(
         label=label or f"Megaplan {schema_id} schema",
         schema=MappingProxyType(dict(fields)),
         metadata=MappingProxyType({} if metadata is None else dict(metadata)),
+    )
+
+
+def _workflow(
+    *,
+    export_name: str,
+    workflow_id: str,
+    inputs: tuple[str, ...],
+    outputs: tuple[str, ...],
+    label: str,
+    metadata: Mapping[str, Any] | None = None,
+) -> ComponentContract:
+    component_metadata: dict[str, Any] = {
+        "workflow_id": workflow_id,
+        "input_names": inputs,
+        "output_names": outputs,
+    }
+    if metadata:
+        component_metadata.update(metadata)
+    return ComponentContract(
+        id=f"megaplan:{workflow_id}",
+        kind=ComponentKind.WORKFLOW,
+        provenance=_provenance(export_name),
+        label=label,
+        metadata=component_metadata,
     )
 
 
@@ -910,6 +943,51 @@ SOURCE_OVERRIDE = _step(
     outputs=({"name": "override_result"},),
 )
 
+SOURCE_CRITIQUE_PANEL_WORKFLOW = _workflow(
+    export_name="SOURCE_CRITIQUE_PANEL_WORKFLOW",
+    workflow_id="critique_panel",
+    inputs=("plan_payload",),
+    outputs=("critique_payload",),
+    label="Megaplan critique parallel-map child workflow",
+    metadata={
+        "policy_refs": ("megaplan:robustness", "megaplan:model-routing"),
+        "mapper_step_ref": "arnold_pipelines.megaplan.handlers:handle_critique",
+    },
+)
+SOURCE_TIEBREAKER_WORKFLOW = _workflow(
+    export_name="SOURCE_TIEBREAKER_WORKFLOW",
+    workflow_id="tiebreaker_child",
+    inputs=("gate_payload",),
+    outputs=("decision",),
+    label="Megaplan tiebreaker child workflow",
+    metadata={
+        "policy_refs": ("megaplan:tiebreaker", "megaplan:model-routing"),
+        "child_steps": ("tiebreaker_run", "tiebreaker_decide"),
+    },
+)
+SOURCE_EXECUTE_BATCH_WORKFLOW = _workflow(
+    export_name="SOURCE_EXECUTE_BATCH_WORKFLOW",
+    workflow_id="execute_batch",
+    inputs=("finalize_payload",),
+    outputs=("execute_payload",),
+    label="Megaplan execute batch child workflow",
+    metadata={
+        "policy_refs": ("megaplan:default", "megaplan:model-routing"),
+        "batch_source_ref": "finalize.task_batches",
+    },
+)
+SOURCE_REVIEW_PANEL_WORKFLOW = _workflow(
+    export_name="SOURCE_REVIEW_PANEL_WORKFLOW",
+    workflow_id="review_panel",
+    inputs=("execute_payload",),
+    outputs=("review_payload",),
+    label="Megaplan review parallel-map child workflow",
+    metadata={
+        "policy_refs": ("megaplan:review", "megaplan:model-routing"),
+        "fan_in_ref": "review.checks",
+    },
+)
+
 ALL_STEP_COMPONENTS = (
     PREP,
     PLAN,
@@ -944,6 +1022,12 @@ POLICY_COMPONENTS = (
     TIEBREAKER_POLICY,
     REVIEW_POLICY,
     OVERRIDE_POLICY,
+)
+WORKFLOW_COMPONENTS = (
+    SOURCE_CRITIQUE_PANEL_WORKFLOW,
+    SOURCE_TIEBREAKER_WORKFLOW,
+    SOURCE_EXECUTE_BATCH_WORKFLOW,
+    SOURCE_REVIEW_PANEL_WORKFLOW,
 )
 
 LEGACY_ALIASES = MappingProxyType(

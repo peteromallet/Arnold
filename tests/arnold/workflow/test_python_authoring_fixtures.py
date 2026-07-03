@@ -74,8 +74,6 @@ M0_DEFERRED_SIDECAR_FIELDS = M0_VALID_SIDECAR_FIELDS | {
     "description",
 }
 M0_DEFERRED_CASES = {
-    "deferred_m0_nested_child_workflow",
-    "deferred_m0_repeated_call_sites",
     "deferred_m0_review_revise_loop",
 }
 M0_INVALID_REJECTION_CATEGORIES = {
@@ -95,6 +93,8 @@ M0_AWF2XX_CODES = {
     "AWF205_MEGAPLAN_ONLY_HELPERS",
 }
 M0_DECORATOR_BOUNDARY_CODES = {
+    diagnostics.DiagnosticCode.UNSUPPORTED_SYNTAX.value,
+    diagnostics.DiagnosticCode.MALFORMED_COMPONENT_EXPORT.value,
     diagnostics.DiagnosticCode.UNKNOWN_COMPONENT.value,
     diagnostics.DiagnosticCode.RESERVED_INTRINSIC_SHADOWING.value,
     diagnostics.DiagnosticCode.MISSING_WORKFLOW_DECLARATION.value,
@@ -233,6 +233,26 @@ def test_python_authoring_m0_valid_fixture_is_registered_without_requiring_later
     assert _m0_is_currently_decorator_blocked(result) or result.ok
 
 
+@pytest.mark.parametrize(
+    "case_name",
+    ["deferred_m0_nested_child_workflow", "deferred_m0_repeated_call_sites"],
+)
+def test_python_authoring_m0_activated_nested_workflow_fixtures_match_sidecars(
+    case_name: str,
+) -> None:
+    source_path = M0_FIXTURE_DIR / f"{case_name}.py"
+    sidecar = _load_sidecar_from_dir(M0_FIXTURE_DIR, case_name)
+
+    result = workflow.check_workflow_file(source_path)
+    pipeline = workflow.lower_workflow_file(source_path)
+
+    assert result.ok
+    assert result.parsed_source.workflow is not None
+    assert _m0_lowered_provenance_payload(result.parsed_source.workflow, pipeline) == sidecar[
+        "expected_provenance"
+    ]
+
+
 @pytest.mark.parametrize("case_name", sorted(M0_DEFERRED_CASES))
 def test_python_authoring_m0_deferred_sidecars_honor_aspirational_cases(case_name: str) -> None:
     source_path = M0_FIXTURE_DIR / f"{case_name}.py"
@@ -256,7 +276,13 @@ def test_python_authoring_m0_invalid_categories_are_rejected_for_intended_reason
 
     _assert_m0_invalid_fixture_shape(source_path, rejection_category)
     assert not result.ok
-    assert _m0_is_currently_decorator_blocked(result)
+    if _m0_is_currently_decorator_blocked(result):
+        return
+    expected_codes = {
+        diagnostic["code"]
+        for diagnostic in _load_sidecar_from_dir(M0_FIXTURE_DIR, case_name)["expected_diagnostics"]
+    }
+    assert _diagnostic_codes(result) & expected_codes
 
 
 def _load_sidecar(case_name: str) -> dict[str, Any]:
@@ -403,6 +429,62 @@ def _assert_m0_valid_provenance_sidecar(sidecar: dict[str, Any]) -> None:
         for step in provenance["steps"]:
             assert step["id"]
             assert step["call_site_path"]
+
+
+def _m0_lowered_provenance_payload(
+    workflow_declaration: workflow.WorkflowDeclaration,
+    pipeline: Any,
+) -> dict[str, Any]:
+    nested_steps = [
+        step for step in pipeline.steps if step.metadata.get("executable_workflow") is True
+    ]
+    ordinary_steps = [
+        step for step in pipeline.steps if step.metadata.get("executable_workflow") is not True
+    ]
+    return {
+        "source_form": workflow_declaration.source_form,
+        "grammar_version": M0_GRAMMAR_VERSION,
+        "workflow": {
+            "id": workflow_declaration.id,
+            "name": workflow_declaration.function_name,
+            "inputs_schema": list(workflow_declaration.parameters),
+            "outputs_schema": list(_literal_workflow_outputs(workflow_declaration)),
+        },
+        "child_workflows": [
+            {
+                "id": step.metadata["child_workflow_id"],
+                "call_site_path": step.metadata["call_site_path"],
+                "inputs_schema": list(step.metadata["inputs_schema"]),
+                "outputs_schema": list(step.metadata["outputs_schema"]),
+            }
+            for step in nested_steps
+        ],
+        "steps": [
+            {
+                "id": step.id,
+                "call_site_path": f"{workflow_declaration.id}/{step.id}",
+            }
+            for step in ordinary_steps
+        ],
+    }
+
+
+def _literal_workflow_outputs(workflow_declaration: workflow.WorkflowDeclaration) -> tuple[str, ...]:
+    module = ast.parse(Path(workflow_declaration.source_span.path).read_text(encoding="utf-8"))
+    for node in module.body:
+        if not isinstance(node, ast.FunctionDef) or node.name != workflow_declaration.function_name:
+            continue
+        for decorator in node.decorator_list:
+            if not isinstance(decorator, ast.Call) or getattr(decorator.func, "id", None) != "workflow":
+                continue
+            for keyword in decorator.keywords:
+                if keyword.arg == "outputs" and isinstance(keyword.value, (ast.Set, ast.List, ast.Tuple)):
+                    return tuple(
+                        element.value
+                        for element in keyword.value.elts
+                        if isinstance(element, ast.Constant) and isinstance(element.value, str)
+                    )
+    return ()
 
 
 def _assert_m0_step_workflow_authoring_shape(source_path: Path) -> None:

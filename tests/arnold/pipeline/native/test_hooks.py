@@ -60,7 +60,10 @@ def test_subpipeline_completion_flows_through_hook_merge_and_envelope() -> None:
     def child_step(ctx: dict) -> _StepResult:
         return _StepResult({"child": "done"}, envelope={"source": "child"})
 
-    @workflow(name="child_flow")
+    @workflow(
+        name="child_flow",
+        outputs={"type": "object", "required": ["child"]},
+    )
     def child(ctx: dict) -> dict:
         state = yield child_step(ctx)
         return state
@@ -93,7 +96,10 @@ def test_subpipeline_merge_conflict_propagates() -> None:
     def child_step(ctx: dict) -> dict:
         return {"child": "done"}
 
-    @workflow(name="child_flow")
+    @workflow(
+        name="child_flow",
+        outputs={"type": "object", "required": ["child"]},
+    )
     def child(ctx: dict) -> dict:
         state = yield child_step(ctx)
         return state

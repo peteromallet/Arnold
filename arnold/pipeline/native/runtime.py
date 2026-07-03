@@ -21,7 +21,7 @@ Parity with graph executor
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -43,6 +43,8 @@ from arnold.pipeline.native.ir import (
     ParallelInstruction,
 )
 from arnold.pipeline.native.trace import NativeTraceHooks
+
+_MAX_SUBPIPELINE_DEPTH = 32
 
 
 class NativeRuntimeError(Exception):
@@ -195,6 +197,127 @@ def _enforce_native_typed_handoff(
             )
 
 
+def _schema_field_names(schema: Mapping[str, Any] | None) -> tuple[str, ...]:
+    if not isinstance(schema, Mapping):
+        return ()
+    required = schema.get("required")
+    if isinstance(required, (list, tuple)):
+        fields = tuple(name for name in required if isinstance(name, str))
+        if fields:
+            return fields
+    properties = schema.get("properties")
+    if isinstance(properties, Mapping):
+        return tuple(name for name in properties.keys() if isinstance(name, str))
+    return ()
+
+
+def _extract_child_inputs(
+    state: Mapping[str, Any],
+    inputs_schema: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    field_names = _schema_field_names(inputs_schema)
+    if not field_names:
+        return {}
+    return {name: state[name] for name in field_names if name in state}
+
+
+def _extract_child_outputs(
+    state: Mapping[str, Any],
+    outputs_schema: Mapping[str, Any] | None,
+    output_bindings: Mapping[str, str],
+) -> dict[str, Any]:
+    field_names = _schema_field_names(outputs_schema)
+    if not field_names:
+        return {}
+    outputs: dict[str, Any] = {}
+    for child_key in field_names:
+        if child_key not in state:
+            continue
+        parent_key = output_bindings.get(child_key, child_key)
+        outputs[parent_key] = state[child_key]
+    return outputs
+
+
+def _resolve_parallel_map_items(
+    *,
+    items_ref: str,
+    state: Mapping[str, Any],
+    parameter_values: Mapping[str, Any],
+) -> list[Any]:
+    if items_ref in parameter_values:
+        raw_items = parameter_values[items_ref]
+    elif items_ref in state:
+        raw_items = state[items_ref]
+    else:
+        raise NativeRuntimeError(
+            f"parallel_map could not resolve collection {items_ref!r}"
+        )
+    if isinstance(raw_items, (str, bytes)) or isinstance(raw_items, Mapping):
+        raise NativeRuntimeError(
+            f"parallel_map collection {items_ref!r} must resolve to a list-like iterable"
+        )
+    if not isinstance(raw_items, Iterable):
+        raise NativeRuntimeError(
+            f"parallel_map collection {items_ref!r} must resolve to an iterable"
+        )
+    return list(raw_items)
+
+
+def _parallel_map_item_bindings(
+    item: Any,
+    *,
+    index: int,
+    items_ref: str,
+) -> dict[str, Any]:
+    bindings = {"item": item, "index": index, items_ref: item}
+    if isinstance(item, Mapping):
+        for key, value in item.items():
+            if isinstance(key, str):
+                bindings[key] = value
+        return bindings
+    item_dict = getattr(item, "__dict__", None)
+    if isinstance(item_dict, Mapping):
+        for key, value in item_dict.items():
+            if isinstance(key, str):
+                bindings[key] = value
+    return bindings
+
+
+def _parallel_map_item_coordinate(
+    *,
+    path_template: str,
+    item: Any,
+    index: int,
+    items_ref: str,
+) -> str:
+    if not path_template:
+        return f"[{index}]"
+    try:
+        return path_template.format_map(
+            _parallel_map_item_bindings(item, index=index, items_ref=items_ref)
+        )
+    except Exception as exc:
+        raise NativeRuntimeError(
+            f"parallel_map path_template {path_template!r} could not be resolved for item {index}"
+        ) from exc
+
+
+def _parallel_map_item_state(
+    parent_state: Mapping[str, Any],
+    *,
+    item: Any,
+    index: int,
+    items_ref: str,
+    item_path: tuple[str, ...],
+) -> dict[str, Any]:
+    item_state = dict(parent_state)
+    item_state.update(_parallel_map_item_bindings(item, index=index, items_ref=items_ref))
+    item_state["__call_site_path__"] = item_path
+    item_state["__parallel_map_item__"] = item
+    item_state["__parallel_map_index__"] = index
+    return item_state
+
+
 def run_native_pipeline(
     program: NativeProgram,
     *,
@@ -210,6 +333,8 @@ def run_native_pipeline(
     telemetry_path: str | Path | None = None,
     initial_envelope: Any = None,
     trace_dir: str | Path | None = None,
+    _subpipeline_depth: int = 0,
+    _active_subpipelines: tuple[str, ...] = (),
 ) -> NativeExecutionResult:
     """Execute a compiled native pipeline program sequentially.
 
@@ -368,6 +493,9 @@ def run_native_pipeline(
     telemetry_path_str: str | None = None
     if telemetry_path is not None:
         telemetry_path_str = str(telemetry_path)
+    if not _active_subpipelines:
+        _active_subpipelines = (program.stable_id or program.name,)
+    parameter_values = _extract_child_inputs(state, program.inputs_schema)
 
     phase_count = 0
     pc = start_pc
@@ -1027,17 +1155,165 @@ def run_native_pipeline(
             pc = instr.next_pc if instr.next_pc is not None else pc + 1
             continue
 
+        elif instr.op == "parallel_map":
+            parallel_block = getattr(instr, "subprogram", None)
+            if parallel_block is None:
+                pc = instr.next_pc if instr.next_pc is not None else pc + 1
+                forward_visited.clear()
+                continue
+
+            items = _resolve_parallel_map_items(
+                items_ref=parallel_block.items_ref,
+                state=state,
+                parameter_values=parameter_values,
+            )
+            mapper_results: list[Any] = []
+            mapper_envelope: Any = None
+            mapper = parallel_block.mapper
+            if mapper is None:
+                raise NativeRuntimeError(
+                    f"parallel_map {parallel_block.name or instr.name!r} has no mapper"
+                )
+            compiled_mapper_program: NativeProgram | None = None
+            if not getattr(mapper, "__phase__", False):
+                from arnold.pipeline.native.compiler import compile_pipeline
+
+                compiled_mapper_program = compile_pipeline(mapper)
+
+            for index, item in enumerate(items):
+                item_coordinate = _parallel_map_item_coordinate(
+                    path_template=parallel_block.path_template,
+                    item=item,
+                    index=index,
+                    items_ref=parallel_block.items_ref,
+                )
+                item_path = (*instr.call_site_path, item_coordinate)
+                item_state = _parallel_map_item_state(
+                    state,
+                    item=item,
+                    index=index,
+                    items_ref=parallel_block.items_ref,
+                    item_path=item_path,
+                )
+
+                if getattr(mapper, "__phase__", False):
+                    ctx = {
+                        "state": dict(item_state),
+                        "inputs": dict(item_state),
+                        "artifact_root": str(artifact_root),
+                        "item": item,
+                        "item_index": index,
+                        "call_site_path": item_path,
+                    }
+                    result = mapper(ctx)
+                    outputs, _ = _normalize_phase_result(result, parallel_block.name or instr.name)
+                    item_result = dict(outputs)
+                    item_result.update(_extract_state_patch(result))
+                    mapper_envelope = _hooks.join_envelope(
+                        instr,
+                        mapper_envelope,
+                        getattr(result, "envelope", None),
+                    )
+                else:
+                    assert compiled_mapper_program is not None
+                    child_program = compiled_mapper_program
+                    child_name = getattr(child_program, "name", getattr(mapper, "__name__", "item"))
+                    child_identity = child_program.stable_id or child_program.name
+                    if child_identity in _active_subpipelines:
+                        cycle = " -> ".join((*_active_subpipelines, child_identity))
+                        raise NativeRuntimeError(
+                            f"Runtime subpipeline cycle detected: {cycle}"
+                        )
+                    if _subpipeline_depth >= _MAX_SUBPIPELINE_DEPTH:
+                        raise NativeRuntimeError(
+                            "Runtime subpipeline depth exceeded "
+                            f"{_MAX_SUBPIPELINE_DEPTH} at {child_identity}"
+                        )
+                    child_artifact_root = Path(artifact_root) / f"_child_{child_name}" / _safe_name(
+                        item_coordinate
+                    )
+                    child_artifact_root.mkdir(parents=True, exist_ok=True)
+                    child_initial_state = _extract_child_inputs(item_state, child_program.inputs_schema)
+                    child_result = run_native_pipeline(
+                        program=child_program,
+                        artifact_root=child_artifact_root,
+                        initial_state=child_initial_state,
+                        max_phases=None,
+                        resume=False,
+                        hooks=hooks,
+                        schema_registry=schema_registry,
+                        telemetry_path=telemetry_path,
+                        initial_envelope=envelope,
+                        trace_dir=None,
+                        _subpipeline_depth=_subpipeline_depth + 1,
+                        _active_subpipelines=(*_active_subpipelines, child_identity),
+                    )
+                    item_result = _extract_child_outputs(
+                        child_result.state,
+                        child_program.outputs_schema,
+                        {},
+                    )
+                    mapper_envelope = _hooks.join_envelope(
+                        instr,
+                        mapper_envelope,
+                        child_result.envelope,
+                    )
+
+                mapper_results.append(item_result)
+
+            if parallel_block.reducer is not None:
+                reducer_result = parallel_block.reducer(mapper_results)
+                outputs, _ = _normalize_phase_result(
+                    reducer_result,
+                    parallel_block.name or instr.name,
+                )
+                state_patch = _extract_state_patch(reducer_result)
+                parallel_outputs = dict(outputs)
+                parallel_outputs.update(state_patch)
+                mapper_envelope = _hooks.join_envelope(
+                    instr,
+                    mapper_envelope,
+                    getattr(reducer_result, "envelope", None),
+                )
+            else:
+                parallel_outputs = {instr.name: mapper_results}
+
+            state.update(parallel_outputs)
+            state, owned_keys = _hooks.merge_state(
+                instr,
+                state,
+                parallel_outputs,
+                owned_keys,
+            )
+            envelope = _hooks.join_envelope(instr, envelope, mapper_envelope)
+            pc = instr.next_pc if instr.next_pc is not None else pc + 1
+            forward_visited.clear()
+            continue
+
         elif instr.op == "subpipeline":
             child_program = getattr(instr, 'subprogram', None)
             if child_program is not None:
                 child_name = instr.name or "child"
+                child_identity = child_program.stable_id or child_program.name
+
+                if child_identity in _active_subpipelines:
+                    cycle = " -> ".join((*_active_subpipelines, child_identity))
+                    raise NativeRuntimeError(f"Runtime subpipeline cycle detected: {cycle}")
+                if _subpipeline_depth >= _MAX_SUBPIPELINE_DEPTH:
+                    raise NativeRuntimeError(
+                        "Runtime subpipeline depth exceeded "
+                        f"{_MAX_SUBPIPELINE_DEPTH} at {child_identity}"
+                    )
 
                 # ── Isolate artifact root ──────────────────────────
                 child_artifact_root = Path(artifact_root) / f"_child_{child_name}"
                 child_artifact_root.mkdir(parents=True, exist_ok=True)
 
-                # ── Isolate state: child receives a copy of parent state ──
-                child_initial_state = dict(state)
+                # ── Schema-filter child inputs from parent state ───
+                child_initial_state = _extract_child_inputs(
+                    state,
+                    child_program.inputs_schema,
+                )
 
                 # ── Execute child subpipeline ───────────────────────
                 child_result = run_native_pipeline(
@@ -1051,13 +1327,16 @@ def run_native_pipeline(
                     telemetry_path=telemetry_path,
                     initial_envelope=envelope,
                     trace_dir=None,
+                    _subpipeline_depth=_subpipeline_depth + 1,
+                    _active_subpipelines=(*_active_subpipelines, child_identity),
                 )
 
-                # ── Merge child state back into parent state ────────
-                # Update parent state with child outputs first (matching
-                # the phase handler's state.update(outputs) before merge_state).
-                # The hooks.merge_state call can then override or CAS-enforce.
-                child_outputs = dict(child_result.state)
+                # ── Merge declared child outputs back into parent state ─
+                child_outputs = _extract_child_outputs(
+                    child_result.state,
+                    child_program.outputs_schema,
+                    getattr(instr, "output_bindings", {}),
+                )
                 state.update(child_outputs)
                 state, owned_keys = _hooks.merge_state(
                     instr, state, child_outputs, owned_keys,

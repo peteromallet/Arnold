@@ -15,6 +15,7 @@ Ownership:
 from __future__ import annotations
 
 import ast
+import hashlib
 import re
 import sys
 from dataclasses import dataclass, field, replace
@@ -25,6 +26,7 @@ from typing import Any, Mapping, Protocol, Sequence
 from arnold.manifest.manifests import (
     AuthorityRequirement,
     ControlTransitionSlot,
+    FanoutPolicy,
     LoopPolicy,
     RetryPolicy,
     SubpipelineRef,
@@ -37,6 +39,7 @@ from arnold.manifest.refs import ImportRef, SourceSpan
 from arnold.workflow.authoring import (
     ComponentContract,
     ComponentKind,
+    ComponentProvenance,
     PolicyComponent,
     RESERVED_SUBFLOW_CALL_KEYWORDS,
     RESERVED_INTRINSIC_CALL_KEYWORDS,
@@ -183,6 +186,51 @@ class ParsedSubflowCall:
 
 
 @dataclass(frozen=True)
+class ParsedNestedWorkflowCall:
+    """Parsed executable child ``@workflow`` call with authored call-site identity."""
+
+    id: str
+    local_name: str
+    component_ref: str
+    source_span: SourceSpan
+    component: ComponentContract
+    child_workflow_id: str
+    parent_path: str
+    call_site_path: str
+    input_schema: tuple[str, ...] = ()
+    output_schema: tuple[str, ...] = ()
+    arguments: Mapping[str, ast.AST] = field(default_factory=dict)
+    inputs: tuple[StepInputBinding, ...] = ()
+    outputs: tuple[StepOutputBinding, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "input_schema", tuple(self.input_schema))
+        object.__setattr__(self, "output_schema", tuple(self.output_schema))
+        object.__setattr__(self, "arguments", MappingProxyType(dict(self.arguments)))
+        object.__setattr__(self, "inputs", tuple(self.inputs))
+        object.__setattr__(self, "outputs", tuple(self.outputs))
+
+
+@dataclass(frozen=True)
+class ParsedParallelMapCall:
+    """Parsed source-level dynamic fanout over a runtime collection."""
+
+    id: str
+    source_span: SourceSpan
+    items_ref: str
+    mapper_ref: str
+    reducer_ref: str
+    path_template: str
+    iteration_coordinate: str
+    inputs: tuple[StepInputBinding, ...] = ()
+    outputs: tuple[StepOutputBinding, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "inputs", tuple(self.inputs))
+        object.__setattr__(self, "outputs", tuple(self.outputs))
+
+
+@dataclass(frozen=True)
 class ParsedIntrinsicCall:
     """Parsed source-level compiler intrinsic call."""
 
@@ -265,6 +313,8 @@ class ParsedLoopBlock:
 ParsedSourceStatement = (
     ParsedStepCall
     | ParsedSubflowCall
+    | ParsedNestedWorkflowCall
+    | ParsedParallelMapCall
     | ParsedIntrinsicCall
     | ParsedUnsupportedStatement
     | ParsedBranchBlock
@@ -295,6 +345,22 @@ class ParsedSourceBlock:
             statement
             for statement in self.statements
             if isinstance(statement, ParsedSubflowCall)
+        )
+
+    @property
+    def nested_workflows(self) -> tuple[ParsedNestedWorkflowCall, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedNestedWorkflowCall)
+        )
+
+    @property
+    def parallel_maps(self) -> tuple[ParsedParallelMapCall, ...]:
+        return tuple(
+            statement
+            for statement in self.statements
+            if isinstance(statement, ParsedParallelMapCall)
         )
 
     @property
@@ -579,6 +645,7 @@ def parse_workflow_source(
 
     diagnostics: list[AuthoringDiagnostic] = []
     imports = _parse_imports(module, path, resolver, diagnostics)
+    imports = _parse_local_native_components(module, path, imports, diagnostics)
     workflow = _parse_workflow_declaration(module, path, imports, diagnostics)
     local_outputs = {
         output.name: output.source_span
@@ -675,6 +742,24 @@ def _parse_imports(
                         source_span=source_span_for_node(source_path, statement),
                     )
                     continue
+                if module_name == "arnold.pipeline" and alias.name in {"step", "workflow", "parallel_map"}:
+                    if alias.asname is not None and alias.asname != alias.name:
+                        diagnostics.append(
+                            _diagnostic(
+                                DiagnosticCode.RESERVED_INTRINSIC_SHADOWING,
+                                "native authoring decorators cannot be aliased in workflow source",
+                                source_span=source_span_for_node(source_path, statement),
+                                component_ref=import_ref.spec,
+                            )
+                        )
+                        continue
+                    imports[local_name] = ImportBinding(
+                        local_name=local_name,
+                        import_ref=import_ref,
+                        kind="intrinsic",
+                        source_span=source_span_for_node(source_path, statement),
+                    )
+                    continue
                 if local_name in RESERVED_AUTHORING_INTRINSICS:
                     diagnostics.append(
                         _diagnostic(
@@ -732,6 +817,159 @@ def _parse_imports(
     return imports
 
 
+def _parse_local_native_components(
+    module: ast.Module,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+) -> dict[str, ImportBinding]:
+    local_imports = dict(imports)
+    for statement in module.body:
+        if not isinstance(statement, ast.FunctionDef):
+            continue
+        step_decorator = _native_decorator_call(statement, imports, "step")
+        workflow_decorator = _native_decorator_call(statement, imports, "workflow")
+        if step_decorator is not None and workflow_decorator is not None:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.WRONG_COMPONENT_KIND,
+                    "a local function cannot be both a step and workflow component",
+                    source_span=source_span_for_node(source_path, statement),
+                )
+            )
+            continue
+        if step_decorator is not None:
+            component = _local_native_step_component(statement, step_decorator, source_path)
+        elif workflow_decorator is not None:
+            component = _local_native_workflow_component(statement, workflow_decorator, source_path)
+        else:
+            if not any(
+                _is_workflow_call(decorator, imports)
+                for decorator in statement.decorator_list
+            ) and _contains_component_wrapper(statement, imports):
+                diagnostics.append(
+                    _diagnostic(
+                        DiagnosticCode.SINGLE_HANDLER_WRAPPER,
+                        "single-handler wrapper functions hide workflow topology",
+                        source_span=source_span_for_node(source_path, statement),
+                    )
+                )
+            continue
+        local_imports[statement.name] = ImportBinding(
+            local_name=statement.name,
+            import_ref=ImportRef(module=_source_module_for_local_component(source_path), qualname=statement.name),
+            kind=component.kind.value,
+            source_span=source_span_for_node(source_path, statement),
+            component=component,
+        )
+    return local_imports
+
+
+def _contains_component_wrapper(
+    function: ast.FunctionDef,
+    imports: Mapping[str, ImportBinding],
+) -> bool:
+    for child in ast.walk(function):
+        if not isinstance(child, ast.Call) or not isinstance(child.func, ast.Name):
+            continue
+        binding = imports.get(child.func.id)
+        if binding is not None and binding.component is not None and binding.component.kind in {
+            ComponentKind.STEP,
+            ComponentKind.SUBFLOW,
+            ComponentKind.WORKFLOW,
+        }:
+            return True
+    return False
+
+
+def _native_decorator_call(
+    function: ast.FunctionDef,
+    imports: Mapping[str, ImportBinding],
+    name: str,
+) -> ast.Call | None:
+    for decorator in function.decorator_list:
+        if isinstance(decorator, ast.Call):
+            call = decorator
+        elif isinstance(decorator, ast.Name):
+            call = ast.Call(func=decorator, args=[], keywords=[])
+        else:
+            continue
+        if not isinstance(call.func, ast.Name) or call.func.id not in imports:
+            continue
+        binding = imports[call.func.id]
+        if (
+            binding.import_ref.module == "arnold.pipeline"
+            and binding.import_ref.qualname == name
+            and binding.local_name == name
+        ):
+            return call
+    return None
+
+
+def _local_native_step_component(
+    function: ast.FunctionDef,
+    decorator: ast.Call,
+    source_path: str,
+) -> StepComponent:
+    step_id = _string_keyword(decorator, "id") or function.name
+    inputs = _literal_string_set_keyword(decorator, "inputs")
+    outputs = _literal_string_set_keyword(decorator, "outputs")
+    return StepComponent(
+        id=step_id,
+        provenance=ComponentProvenance(
+            module=_source_module_for_local_component(source_path),
+            qualname=function.name,
+            export_name=function.name,
+        ),
+        metadata={
+            "input_names": inputs,
+            "output_names": outputs,
+        },
+    )
+
+
+def _local_native_workflow_component(
+    function: ast.FunctionDef,
+    decorator: ast.Call,
+    source_path: str,
+) -> ComponentContract:
+    workflow_id = _string_keyword(decorator, "id") or function.name
+    inputs = _literal_string_set_keyword(decorator, "inputs")
+    outputs = _literal_string_set_keyword(decorator, "outputs")
+    return ComponentContract(
+        id=workflow_id,
+        kind=ComponentKind.WORKFLOW,
+        provenance=ComponentProvenance(
+            module=_source_module_for_local_component(source_path),
+            qualname=function.name,
+            export_name=function.name,
+        ),
+        metadata={
+            "workflow_id": workflow_id,
+            "input_names": inputs,
+            "output_names": outputs,
+        },
+    )
+
+
+def _literal_string_set_keyword(call: ast.Call, name: str) -> tuple[str, ...]:
+    keyword = _keyword(call, name)
+    if keyword is None:
+        return ()
+    value = keyword.value
+    if not isinstance(value, (ast.Set, ast.List, ast.Tuple)):
+        return ()
+    items: list[str] = []
+    for element in value.elts:
+        if isinstance(element, ast.Constant) and isinstance(element.value, str):
+            items.append(element.value)
+    return tuple(items)
+
+
+def _source_module_for_local_component(source_path: str) -> str:
+    return Path(source_path).with_suffix("").as_posix().replace("/", ".").replace("-", "_")
+
+
 def _parse_workflow_declaration(
     module: ast.Module,
     source_path: str,
@@ -757,6 +995,38 @@ def _parse_workflow_declaration(
                             component_ref=f"{AUTHORING_INTRINSIC_MODULE}:{target.id}",
                         )
                     )
+        elif _contains_manual_graph_authoring(statement):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.MANUAL_GRAPH_NODES,
+                    "manual graph node authoring is rejected by the V2 source contract",
+                    source_span=source_span_for_node(source_path, statement),
+                )
+            )
+        elif _contains_native_program_projection(statement):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.NATIVE_PROGRAM_PROJECTION,
+                    "native program projection is not an authoring source form",
+                    source_span=source_span_for_node(source_path, statement),
+                )
+            )
+        elif _contains_megaplan_only_helper(statement):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.MEGAPLAN_ONLY_HELPERS,
+                    "Megaplan-only helper fanout must be expressed with general workflow constructs",
+                    source_span=source_span_for_node(source_path, statement),
+                )
+            )
+        elif _contains_manual_path_construction(statement):
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.MANUAL_PATH_STRINGS,
+                    "manual call-site path construction is rejected by the V2 source contract",
+                    source_span=source_span_for_node(source_path, statement),
+                )
+            )
     if not declarations:
         fallback_span = (
             source_span_for_node(source_path, module.body[0])
@@ -772,6 +1042,18 @@ def _parse_workflow_declaration(
         )
         return None
     if len(declarations) > 1:
+        native_declarations = [
+            declaration
+            for declaration in declarations
+            if isinstance(declaration, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and any(
+                _is_native_workflow_call(decorator, imports)
+                for decorator in declaration.decorator_list
+            )
+        ]
+        if len(native_declarations) == len(declarations):
+            declaration = native_declarations[-1]
+            return _parse_function_workflow(declaration, source_path, imports, diagnostics)
         first = declarations[1]
         diagnostics.append(
             _diagnostic(
@@ -859,10 +1141,15 @@ def _parse_function_workflow(
             steps=(),
         )
     decorator = next(decorator for decorator in function.decorator_list if _is_workflow_call(decorator, imports))
+    preexisting_wrapper_diagnostic = any(
+        diagnostic.code is DiagnosticCode.SINGLE_HANDLER_WRAPPER
+        for diagnostic in diagnostics
+    )
     header_ok = _validate_workflow_decorator(decorator, source_path, diagnostics)
     policies = _parse_workflow_policy_keywords(decorator, source_path, imports, diagnostics)
     header_ok = policies is not None and header_ok
     header_ok = _validate_function_signature(function, source_path, diagnostics) and header_ok
+    header_ok = _validate_v2_function_body_boundaries(function, source_path, diagnostics) and header_ok
     workflow_id = _string_keyword(decorator, "id")
     if workflow_id is None:
         diagnostics.append(
@@ -874,6 +1161,8 @@ def _parse_function_workflow(
         )
         workflow_id = function.name
         header_ok = False
+    if preexisting_wrapper_diagnostic:
+        header_ok = False
     version = _string_keyword(decorator, "version") or "1.0"
     parameters = _function_parameter_names(function)
     initial_scope_ok = _validate_initial_function_scope(parameters, imports, source_path, function, diagnostics)
@@ -882,6 +1171,7 @@ def _parse_function_workflow(
         if header_ok and initial_scope_ok
         else (ParsedSourceBlock(), {})
     )
+    source_block = _with_nested_workflow_parent_path(source_block, workflow_id)
     return WorkflowDeclaration(
         source_form="function",
         id=workflow_id,
@@ -892,6 +1182,45 @@ def _parse_function_workflow(
         source_block=source_block,
         policies=() if policies is None else policies,
     )
+
+
+def _with_nested_workflow_parent_path(
+    block: ParsedSourceBlock,
+    parent_path: str,
+) -> ParsedSourceBlock:
+    statements: list[ParsedSourceStatement] = []
+    for statement in block.statements:
+        if isinstance(statement, ParsedNestedWorkflowCall):
+            statements.append(
+                replace(
+                    statement,
+                    parent_path=parent_path,
+                    call_site_path=f"{parent_path}/{statement.id}",
+                )
+            )
+        elif isinstance(statement, ParsedBranchBlock):
+            statements.append(
+                replace(
+                    statement,
+                    arms=tuple(
+                        replace(
+                            arm,
+                            body=_with_nested_workflow_parent_path(arm.body, parent_path),
+                        )
+                        for arm in statement.arms
+                    ),
+                )
+            )
+        elif isinstance(statement, ParsedLoopBlock):
+            statements.append(
+                replace(
+                    statement,
+                    body=_with_nested_workflow_parent_path(statement.body, parent_path),
+                )
+            )
+        else:
+            statements.append(statement)
+    return ParsedSourceBlock(tuple(statements))
 
 
 def _validate_workflow_decorator(
@@ -911,7 +1240,7 @@ def _validate_workflow_decorator(
             )
         )
         valid = False
-    allowed_keywords = {"id", "version", "policy", "policies"}
+    allowed_keywords = {"id", "version", "policy", "policies", "inputs", "outputs"}
     for keyword in decorator.keywords:
         if keyword.arg not in allowed_keywords:
             diagnostics.append(
@@ -925,6 +1254,17 @@ def _validate_workflow_decorator(
             continue
         if keyword.arg in {"policy", "policies"}:
             continue
+        if keyword.arg in {"inputs", "outputs"}:
+            if not _is_literal_string_collection(keyword.value):
+                diagnostics.append(
+                    _diagnostic(
+                        DiagnosticCode.UNSUPPORTED_SYNTAX,
+                        "workflow input and output schemas must be literal string collections",
+                        source_span=source_span_for_node(source_path, keyword.value),
+                    )
+                )
+                valid = False
+            continue
         if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, str):
             diagnostics.append(
                 _diagnostic(
@@ -935,6 +1275,13 @@ def _validate_workflow_decorator(
             )
             valid = False
     return valid
+
+
+def _is_literal_string_collection(node: ast.AST) -> bool:
+    return isinstance(node, (ast.Set, ast.List, ast.Tuple)) and all(
+        isinstance(element, ast.Constant) and isinstance(element.value, str)
+        for element in node.elts
+    )
 
 
 def _validate_function_signature(
@@ -993,6 +1340,39 @@ def _validate_initial_function_scope(
                 )
             )
             valid = False
+    return valid
+
+
+def _validate_v2_function_body_boundaries(
+    function: ast.FunctionDef,
+    source_path: str,
+    diagnostics: list[AuthoringDiagnostic],
+) -> bool:
+    checks = (
+        (
+            _contains_megaplan_only_helper,
+            DiagnosticCode.MEGAPLAN_ONLY_HELPERS,
+            "Megaplan-only helper fanout must be expressed with general workflow constructs",
+        ),
+        (
+            _contains_manual_path_construction,
+            DiagnosticCode.MANUAL_PATH_STRINGS,
+            "manual call-site path construction is rejected by the V2 source contract",
+        ),
+    )
+    valid = True
+    for statement in function.body:
+        for predicate, code, message in checks:
+            if predicate(statement):
+                diagnostics.append(
+                    _diagnostic(
+                        code,
+                        message,
+                        source_span=source_span_for_node(source_path, statement),
+                    )
+                )
+                valid = False
+                break
     return valid
 
 
@@ -1096,6 +1476,20 @@ def _parse_statement_block(
                     )
                 )
                 continue
+            fanout = _parse_parallel_map_call(
+                statement.value,
+                source_path,
+                imports,
+                diagnostics,
+                parameters=parameters,
+                local_outputs=local_outputs,
+                output_bindings=targets,
+            )
+            if fanout is not None:
+                statements.append(fanout)
+                for output in targets:
+                    local_outputs[output.name] = output.source_span
+                continue
             step = _parse_component_call(
                 statement.value,
                 source_path,
@@ -1127,6 +1521,17 @@ def _parse_statement_block(
                 if return_is_terminal and intrinsic.name == "halt":
                     terminal = True
                 continue
+            fanout = _parse_parallel_map_call(
+                statement.value,
+                source_path,
+                imports,
+                diagnostics,
+                parameters=parameters,
+                local_outputs=local_outputs,
+            )
+            if fanout is not None:
+                statements.append(fanout)
+                continue
             step = _parse_component_call(
                 statement.value,
                 source_path,
@@ -1141,6 +1546,36 @@ def _parse_statement_block(
         elif isinstance(statement, ast.Return) and _is_none_return_value(statement.value):
             if return_is_terminal:
                 terminal = True
+            continue
+        elif isinstance(statement, ast.Return) and isinstance(statement.value, ast.Call):
+            step = _parse_component_call(
+                statement.value,
+                source_path,
+                imports,
+                diagnostics,
+                parameters=parameters,
+                local_outputs=local_outputs,
+            )
+            if step is not None:
+                statements.append(step)
+            if return_is_terminal:
+                terminal = True
+            continue
+        elif isinstance(statement, ast.Return) and isinstance(statement.value, ast.Name):
+            if return_is_terminal:
+                terminal = True
+            continue
+        elif isinstance(statement, ast.Break):
+            if return_is_terminal:
+                terminal = True
+                continue
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.UNDECLARED_LOOP_EXIT,
+                    "break is only valid as an accepted loop exit inside a bounded loop body",
+                    source_span=source_span_for_node(source_path, statement),
+                )
+            )
             continue
         elif isinstance(statement, ast.If):
             branch, merged_outputs, branch_terminal = _parse_branch_block(
@@ -1548,11 +1983,11 @@ def _diagnose_unsupported_loop_controls(
                     )
                 )
                 invalid = True
-            elif isinstance(node, (ast.Break, ast.Continue)):
+            elif isinstance(node, ast.Continue):
                 diagnostics.append(
                     _diagnostic(
                         DiagnosticCode.AMBIGUOUS_LOOP,
-                        "bounded loop bodies do not support break or continue",
+                        "bounded loop bodies do not support continue",
                         source_span=source_span_for_node(source_path, node),
                     )
                 )
@@ -1595,6 +2030,12 @@ def _source_block_output_spans(
     outputs: dict[str, SourceSpan] = dict(initial_outputs)
     for statement in block.statements:
         if isinstance(statement, ParsedStepCall):
+            for output in statement.outputs:
+                outputs[output.name] = output.source_span
+        elif isinstance(statement, ParsedNestedWorkflowCall):
+            for output in statement.outputs:
+                outputs[output.name] = output.source_span
+        elif isinstance(statement, ParsedParallelMapCall):
             for output in statement.outputs:
                 outputs[output.name] = output.source_span
         elif isinstance(statement, ParsedBranchBlock):
@@ -1742,7 +2183,20 @@ def _parse_component_call(
     parameters: Sequence[str] = (),
     local_outputs: Mapping[str, SourceSpan] | None = None,
     output_bindings: Sequence[StepOutputBinding] = (),
-) -> ParsedStepCall | ParsedSubflowCall | None:
+) -> ParsedStepCall | ParsedSubflowCall | ParsedNestedWorkflowCall | None:
+    if (
+        isinstance(node, ast.Call)
+        and not isinstance(node.func, ast.Name)
+        and not isinstance(node.func, ast.Call)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.DYNAMIC_DISPATCH,
+                "workflow components must be invoked by direct imported names",
+                source_span=source_span_for_node(source_path, node.func),
+            )
+        )
+        return None
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         binding = imports.get(node.func.id)
         if (
@@ -1761,6 +2215,21 @@ def _parse_component_call(
                 local_outputs=local_outputs,
                 output_bindings=output_bindings,
             )
+        if (
+            binding is not None
+            and binding.component is not None
+            and binding.component.kind is ComponentKind.WORKFLOW
+        ):
+            return _parse_nested_workflow_call(
+                node,
+                binding,
+                source_path,
+                imports,
+                diagnostics,
+                parameters=parameters,
+                local_outputs=local_outputs,
+                output_bindings=output_bindings,
+            )
     return _parse_step_call(
         node,
         source_path,
@@ -1770,6 +2239,315 @@ def _parse_component_call(
         local_outputs=local_outputs,
         output_bindings=output_bindings,
     )
+
+
+def _parse_parallel_map_call(
+    node: ast.AST,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    parameters: Sequence[str] = (),
+    local_outputs: Mapping[str, SourceSpan] | None = None,
+    output_bindings: Sequence[StepOutputBinding] = (),
+) -> ParsedParallelMapCall | None:
+    local_outputs = {} if local_outputs is None else local_outputs
+    if not _is_native_parallel_map_call(node, imports):
+        return None
+    assert isinstance(node, ast.Call)
+    valid = True
+    if node.args or any(keyword.arg is None for keyword in node.keywords):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.INVALID_WORKFLOW_INVOCATION,
+                "parallel_map must use keyword-only V2 authoring arguments",
+                source_span=source_span_for_node(source_path, node),
+            )
+        )
+        return None
+    id_keyword = _keyword(node, "id")
+    fanout_id = _validated_string_ref_keyword(
+        node,
+        id_keyword,
+        source_path,
+        diagnostics,
+        code=(
+            DiagnosticCode.MISSING_CALL_SITE_ID
+            if id_keyword is None
+            else DiagnosticCode.NON_LITERAL_CALL_SITE_ID
+        ),
+        missing_message="parallel_map calls must include a literal id keyword",
+        invalid_message="parallel_map call-site id must use the workflow ref alphabet",
+    )
+    valid = fanout_id is not None
+
+    items_keyword = _keyword(node, "items")
+    items_ref = _parallel_map_items_ref(items_keyword.value if items_keyword else None)
+    if items_keyword is None or items_ref is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.INVALID_PARALLEL_MAP_ITEMS,
+                "parallel_map items must reference a workflow parameter, local output, or literal collection ref",
+                source_span=source_span_for_node(source_path, node if items_keyword is None else items_keyword.value),
+            )
+        )
+        valid = False
+    elif (
+        items_ref not in set(parameters)
+        and items_ref not in local_outputs
+        and not is_ref(items_ref)
+    ):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.INVALID_PARALLEL_MAP_ITEMS,
+                "parallel_map items must be a statically declared collection reference",
+                source_span=source_span_for_node(source_path, items_keyword.value),
+                details={"items": items_ref},
+            )
+        )
+        valid = False
+
+    mapper_keyword = _keyword(node, "step")
+    mapper_ref = _parallel_map_callable_ref(mapper_keyword.value if mapper_keyword else None, imports)
+    if mapper_keyword is None or mapper_ref is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.PARALLEL_MAP_ITEM_SCHEMA_MISMATCH,
+                "parallel_map step must reference an imported or local step/workflow component",
+                source_span=source_span_for_node(source_path, node if mapper_keyword is None else mapper_keyword.value),
+            )
+        )
+        valid = False
+
+    reducer_keyword = _keyword(node, "reducer")
+    reducer_ref = _parallel_map_callable_ref(reducer_keyword.value if reducer_keyword else None, imports)
+    if reducer_keyword is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.MISSING_PARALLEL_MAP_REDUCER,
+                "parallel_map is missing a required reducer",
+                source_span=source_span_for_node(source_path, node),
+            )
+        )
+        valid = False
+    elif reducer_ref is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.PARALLEL_MAP_REDUCER_SCHEMA_MISMATCH,
+                "parallel_map reducer must reference an imported or local step/workflow component",
+                source_span=source_span_for_node(source_path, reducer_keyword.value),
+            )
+        )
+        valid = False
+
+    path_keyword = _keyword(node, "path_template")
+    path_template = ""
+    if path_keyword is None:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.MISSING_ITERATION_COORDINATE,
+                "parallel_map requires a literal path_template with an item coordinate",
+                source_span=source_span_for_node(source_path, node),
+            )
+        )
+        valid = False
+    elif isinstance(path_keyword.value, ast.Constant) and isinstance(path_keyword.value.value, str):
+        path_template = path_keyword.value.value
+        if "{item_id}" not in path_template and "{index}" not in path_template:
+            diagnostics.append(
+                _diagnostic(
+                    DiagnosticCode.MISSING_ITEM_COORDINATE,
+                    "parallel_map path_template must include {item_id} or {index}",
+                    source_span=source_span_for_node(source_path, path_keyword.value),
+                )
+            )
+            valid = False
+    else:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.INVALID_PARALLEL_MAP_PATH_TEMPLATE,
+                "parallel_map path_template must be a literal stable coordinate template",
+                source_span=source_span_for_node(source_path, path_keyword.value),
+            )
+        )
+        valid = False
+
+    if not valid:
+        return None
+    assert fanout_id is not None
+    assert items_ref is not None
+    assert mapper_ref is not None
+    assert reducer_ref is not None
+    value_ref = f"param:{items_ref}" if items_ref in set(parameters) else f"output:{items_ref}"
+    if is_ref(items_ref) and items_ref not in set(parameters) and items_ref not in local_outputs:
+        value_ref = items_ref
+    return ParsedParallelMapCall(
+        id=fanout_id,
+        source_span=source_span_for_node(source_path, node),
+        items_ref=items_ref,
+        mapper_ref=mapper_ref,
+        reducer_ref=reducer_ref,
+        path_template=path_template,
+        iteration_coordinate="{item_id}" if "{item_id}" in path_template else "{index}",
+        inputs=(StepInputBinding("items", value_ref, source_span_for_node(source_path, items_keyword)),),
+        outputs=tuple(output_bindings),
+    )
+
+
+def _parallel_map_items_ref(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _parallel_map_callable_ref(
+    node: ast.AST | None,
+    imports: Mapping[str, ImportBinding],
+) -> str | None:
+    if not isinstance(node, ast.Name):
+        return None
+    binding = imports.get(node.id)
+    if binding is None or binding.component is None:
+        return None
+    if binding.component.kind in {ComponentKind.STEP, ComponentKind.WORKFLOW}:
+        return binding.component_ref
+    return None
+
+
+def _parse_nested_workflow_call(
+    node: ast.Call,
+    binding: ImportBinding,
+    source_path: str,
+    imports: Mapping[str, ImportBinding],
+    diagnostics: list[AuthoringDiagnostic],
+    *,
+    parameters: Sequence[str] = (),
+    local_outputs: Mapping[str, SourceSpan] | None = None,
+    output_bindings: Sequence[StepOutputBinding] = (),
+) -> ParsedNestedWorkflowCall | None:
+    local_outputs = {} if local_outputs is None else local_outputs
+    component = binding.component
+    assert component is not None
+    if node.args or any(keyword.arg is None for keyword in node.keywords):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.AMBIGUOUS_CALL_SITE_ID,
+                "nested workflow calls must use keyword-only arguments including literal id=",
+                source_span=source_span_for_node(source_path, node),
+                component_ref=binding.component_ref,
+            )
+        )
+        return None
+
+    id_keyword = _keyword(node, "id")
+    call_site_id = _validated_string_ref_keyword(
+        node,
+        id_keyword,
+        source_path,
+        diagnostics,
+        code=(
+            DiagnosticCode.MISSING_CALL_SITE_ID
+            if id_keyword is None
+            else DiagnosticCode.NON_LITERAL_CALL_SITE_ID
+        ),
+        missing_message="nested workflow calls must include a literal id keyword",
+        invalid_message="nested workflow call-site id must use the workflow ref alphabet",
+        component_ref=binding.component_ref,
+    )
+    if call_site_id is None:
+        return None
+
+    input_schema = tuple(component.metadata.get("input_names", ()))
+    output_schema = tuple(component.metadata.get("output_names", ()))
+    inputs = _parse_subflow_inputs(
+        node,
+        source_path,
+        imports=imports,
+        parameters=parameters,
+        local_outputs=local_outputs,
+        diagnostics=diagnostics,
+    )
+    if inputs is None:
+        return None
+    if not _validate_nested_workflow_schema(
+        node,
+        source_path,
+        binding,
+        inputs,
+        input_schema,
+        output_bindings,
+        output_schema,
+        diagnostics,
+    ):
+        return None
+    child_workflow_id = str(component.metadata.get("workflow_id", component.id))
+    parent_path = _parent_path_for_call_site(source_path, node)
+    return ParsedNestedWorkflowCall(
+        id=call_site_id,
+        local_name=node.func.id,
+        component_ref=binding.component_ref,
+        source_span=source_span_for_node(source_path, node),
+        component=component,
+        child_workflow_id=child_workflow_id,
+        parent_path=parent_path,
+        call_site_path=f"{parent_path}/{call_site_id}",
+        input_schema=input_schema,
+        output_schema=output_schema,
+        arguments={keyword.arg: keyword.value for keyword in node.keywords if keyword.arg},
+        inputs=inputs,
+        outputs=tuple(output_bindings),
+    )
+
+
+def _validate_nested_workflow_schema(
+    node: ast.Call,
+    source_path: str,
+    binding: ImportBinding,
+    inputs: Sequence[StepInputBinding],
+    input_schema: Sequence[str],
+    output_bindings: Sequence[StepOutputBinding],
+    output_schema: Sequence[str],
+    diagnostics: list[AuthoringDiagnostic],
+) -> bool:
+    valid = True
+    actual_inputs = {input_binding.name for input_binding in inputs}
+    expected_inputs = set(input_schema)
+    if expected_inputs and actual_inputs != expected_inputs:
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.CHILD_INPUT_SCHEMA_MISMATCH,
+                "nested workflow input bindings must exactly match the child workflow inputs",
+                source_span=source_span_for_node(source_path, node),
+                component_ref=binding.component_ref,
+                details={
+                    "expected_inputs": tuple(input_schema),
+                    "actual_inputs": tuple(input_binding.name for input_binding in inputs),
+                },
+            )
+        )
+        valid = False
+    if len(output_bindings) > len(output_schema):
+        diagnostics.append(
+            _diagnostic(
+                DiagnosticCode.CHILD_OUTPUT_SCHEMA_MISMATCH,
+                "nested workflow output bindings exceed the child workflow outputs",
+                source_span=source_span_for_node(source_path, node),
+                component_ref=binding.component_ref,
+                details={
+                    "expected_outputs": tuple(output_schema),
+                    "actual_outputs": tuple(output.name for output in output_bindings),
+                },
+            )
+        )
+        valid = False
+    return valid
+
+
+def _parent_path_for_call_site(source_path: str, node: ast.AST) -> str:
+    del source_path, node
+    return "__parent__"
 
 
 def _parse_subflow_call(
@@ -2752,6 +3530,30 @@ def _lower_source_block(
             )
             steps.append(step)
             pending_exits = (step.id,)
+        elif isinstance(statement, ParsedNestedWorkflowCall):
+            step = _lower_nested_workflow_call(statement, source_form)
+            if entry_step_id is None:
+                entry_step_id = step.id
+            routes.extend(
+                _default_route(source_id, step.id, statement.source_span, source_form)
+                for source_id in pending_exits
+            )
+            steps.append(step)
+            pending_exits = (step.id,)
+            for output in statement.outputs:
+                output_producers[output.name] = statement.id
+        elif isinstance(statement, ParsedParallelMapCall):
+            step = _lower_parallel_map_call(statement, source_form)
+            if entry_step_id is None:
+                entry_step_id = step.id
+            routes.extend(
+                _default_route(source_id, step.id, statement.source_span, source_form)
+                for source_id in pending_exits
+            )
+            steps.append(step)
+            pending_exits = (step.id,)
+            for output in statement.outputs:
+                output_producers[output.name] = statement.id
         elif isinstance(statement, ParsedBranchBlock):
             branch = _lower_branch_block(
                 statement,
@@ -3041,6 +3843,83 @@ def _lower_subflow_call(subflow: ParsedSubflowCall, source_form: str) -> Step:
         metadata={
             "component_ref": subflow.component_ref,
             "source_form": source_form,
+        },
+    )
+
+
+def _lower_nested_workflow_call(nested: ParsedNestedWorkflowCall, source_form: str) -> Step:
+    manifest_hash = "sha256:" + hashlib.sha256(
+        f"{nested.component_ref}:{nested.child_workflow_id}".encode("utf-8")
+    ).hexdigest()
+    return Step(
+        id=nested.id,
+        kind="subpipeline",
+        label=nested.component.label,
+        inputs=tuple(
+            Input(
+                name=input_binding.name,
+                value_ref=input_binding.value_ref,
+                source_span=input_binding.source_span,
+            )
+            for input_binding in nested.inputs
+        ),
+        outputs=tuple(
+            Output(
+                name=output_binding.name,
+                source_span=output_binding.source_span,
+            )
+            for output_binding in nested.outputs
+        ),
+        source_span=nested.source_span,
+        subpipeline=SubpipelineRef(
+            manifest_hash=manifest_hash,
+            alias=nested.child_workflow_id,
+        ),
+        metadata={
+            "component_ref": nested.component_ref,
+            "source_form": source_form,
+            "executable_workflow": True,
+            "child_workflow_id": nested.child_workflow_id,
+            "call_site_path": nested.call_site_path,
+            "parent_path": nested.parent_path,
+            "inputs_schema": nested.input_schema,
+            "outputs_schema": nested.output_schema,
+        },
+    )
+
+
+def _lower_parallel_map_call(fanout: ParsedParallelMapCall, source_form: str) -> Step:
+    return Step(
+        id=fanout.id,
+        kind="parallel_map",
+        inputs=tuple(
+            Input(
+                name=input_binding.name,
+                value_ref=input_binding.value_ref,
+                source_span=input_binding.source_span,
+            )
+            for input_binding in fanout.inputs
+        ),
+        outputs=tuple(
+            Output(
+                name=output_binding.name,
+                source_span=output_binding.source_span,
+            )
+            for output_binding in fanout.outputs
+        ),
+        policy=WorkflowPolicy(
+            fanout=FanoutPolicy(mode="dynamic", reducer_ref=fanout.reducer_ref),
+        ),
+        source_span=fanout.source_span,
+        metadata={
+            "source_form": source_form,
+            "parallel_map": True,
+            "items_ref": fanout.items_ref,
+            "mapper_ref": fanout.mapper_ref,
+            "reducer_ref": fanout.reducer_ref,
+            "path_template": fanout.path_template,
+            "iteration_coordinate": fanout.iteration_coordinate,
+            "call_site_path": fanout.id,
         },
     )
 
@@ -3679,6 +4558,35 @@ def _is_workflow_call(node: ast.AST, imports: Mapping[str, ImportBinding]) -> bo
         and binding.import_ref.module == AUTHORING_INTRINSIC_MODULE
         and binding.import_ref.qualname == "workflow"
         and binding.local_name == "workflow"
+    ) or (
+        binding is not None
+        and binding.import_ref.module == "arnold.pipeline"
+        and binding.import_ref.qualname == "workflow"
+        and binding.local_name == "workflow"
+    )
+
+
+def _is_native_workflow_call(node: ast.AST, imports: Mapping[str, ImportBinding]) -> bool:
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return False
+    binding = imports.get(node.func.id)
+    return (
+        binding is not None
+        and binding.import_ref.module == "arnold.pipeline"
+        and binding.import_ref.qualname == "workflow"
+        and binding.local_name == "workflow"
+    )
+
+
+def _is_native_parallel_map_call(node: ast.AST, imports: Mapping[str, ImportBinding]) -> bool:
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return False
+    binding = imports.get(node.func.id)
+    return (
+        binding is not None
+        and binding.import_ref.module == "arnold.pipeline"
+        and binding.import_ref.qualname == "parallel_map"
+        and binding.local_name == "parallel_map"
     )
 
 
@@ -3695,6 +4603,48 @@ def _contains_dynamic_import(node: ast.AST) -> bool:
             )
         )
         for child in ast.walk(node)
+    )
+
+
+def _contains_manual_graph_authoring(node: ast.AST) -> bool:
+    names = {child.id for child in ast.walk(node) if isinstance(child, ast.Name)}
+    return bool({"Pipeline", "Stage", "Edge"} & names)
+
+
+def _contains_native_program_projection(node: ast.AST) -> bool:
+    return any(
+        isinstance(child, ast.ImportFrom)
+        and child.module == "arnold.pipeline.native.ir"
+        and any(alias.name == "NativeProgram" for alias in child.names)
+        for child in ast.walk(node)
+    )
+
+
+def _contains_megaplan_only_helper(node: ast.AST) -> bool:
+    return any(isinstance(child, ast.AsyncFunctionDef) for child in ast.walk(node))
+
+
+def _contains_manual_path_construction(node: ast.AST) -> bool:
+    for child in ast.walk(node):
+        if isinstance(child, ast.JoinedStr):
+            return True
+        if (
+            isinstance(child, ast.BinOp)
+            and isinstance(child.op, ast.Add)
+            and (
+                _stringy_path_operand(child.left)
+                or _stringy_path_operand(child.right)
+            )
+        ):
+            return True
+    return False
+
+
+def _stringy_path_operand(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "/" in node.value
     )
 
 
@@ -3772,6 +4722,7 @@ __all__ = [
     "ParsedIntrinsicCall",
     "ParsedLoopBlock",
     "ParsedLoopPolicy",
+    "ParsedParallelMapCall",
     "ParsedSourceBlock",
     "ParsedSourceStatement",
     "ParsedStepCall",
