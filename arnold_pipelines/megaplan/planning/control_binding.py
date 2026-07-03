@@ -293,6 +293,14 @@ def _awaiting_human_target(state: Mapping[str, object]) -> ControlTargetRef:
     )
 
 
+def _has_prep_clarification(state: Mapping[str, object]) -> bool:
+    clarification = state.get("clarification")
+    return (
+        isinstance(clarification, Mapping)
+        and clarification.get("source") == "prep"
+    )
+
+
 def _state_version(state: Mapping[str, object], key: str) -> int:
     meta = state.get("_state_meta")
     if not isinstance(meta, Mapping):
@@ -806,7 +814,9 @@ class PlanningControlBinding:
             return ()
 
         current_state = state["current_state"]
-        if current_state == STATE_AWAITING_HUMAN:
+        if current_state == STATE_AWAITING_HUMAN or (
+            current_state == STATE_BLOCKED and _has_prep_clarification(state)
+        ):
             return (_awaiting_human_target(state),)
 
         phase, source = _recovery_phase(state)
