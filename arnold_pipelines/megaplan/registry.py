@@ -366,7 +366,7 @@ _GLOBAL_REGISTRY = PipelineRegistry()
 
 
 def _builtin_megaplan_builder() -> Pipeline:
-    from arnold_pipelines.megaplan.pipelines.planning import build_pipeline
+    from arnold_pipelines.megaplan.pipeline import build_pipeline
 
     return build_pipeline()
 
@@ -378,20 +378,22 @@ def _ensure_builtin_pipelines_registered() -> None:
         return
 
     import arnold_pipelines.megaplan as canonical_megaplan
-    from arnold_pipelines.megaplan.pipelines import planning
+    from arnold_pipelines.megaplan import pipeline as pipeline_entry
+    from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
-    module_file = Path(planning.__file__).resolve()
+    module_file = Path(pipeline_entry.__file__).resolve()
     manifest_file = Path(canonical_megaplan.__file__).resolve()
-    description = str(getattr(planning, "description", "") or "")
+    description = str(getattr(canonical_megaplan, "description", "") or "")
     metadata = {
         "description": description,
         "name": CANONICAL_BUILTIN_PIPELINE,
         "source_path": str(module_file),
-        "supported_modes": tuple(getattr(planning, "supported_modes", ()) or ()),
-        "capabilities": tuple(getattr(planning, "capabilities", ()) or ()),
-        "arnold_api_version": str(getattr(planning, "arnold_api_version", "") or ""),
+        "authored_source_path": str(workflow_planning.AUTHORING_SOURCE_PATH.resolve()),
+        "supported_modes": tuple(getattr(canonical_megaplan, "supported_modes", ()) or ()),
+        "capabilities": tuple(getattr(canonical_megaplan, "capabilities", ()) or ()),
+        "arnold_api_version": str(getattr(canonical_megaplan, "arnold_api_version", "") or ""),
     }
-    default_profile = getattr(planning, "default_profile", None)
+    default_profile = getattr(canonical_megaplan, "default_profile", None)
     if default_profile:
         metadata["default_profile"] = default_profile
     if _manifest_discovery_enabled():

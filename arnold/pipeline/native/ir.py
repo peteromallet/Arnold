@@ -271,6 +271,15 @@ class NativeProgram:
     name: str
     """Pipeline name."""
 
+    stable_id: str | None = None
+    """Stable semantic identity declared on the decorator, if any."""
+
+    inputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow input schema metadata, if any."""
+
+    outputs_schema: Mapping[str, Any] | None = field(default=None, compare=False, hash=False)
+    """Declared workflow output schema metadata, if any."""
+
     instructions: tuple[NativeInstruction, ...] = ()
     """Instructions in PC order."""
 

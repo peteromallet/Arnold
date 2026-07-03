@@ -36,7 +36,18 @@
             "test_function": "test_folder_audit_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native runtime stages, event kinds, artifact outputs, and checkpoint generation. Report conformance for Prep/Plan product semantics deferred to M6."
+        "substrate_note": "Substrate proof only: validates native runtime stages, event kinds, artifact outputs, and checkpoint generation. Report conformance for Prep/Plan product semantics deferred to M6.",
+        "obligations": {
+          "expected_files": ["plan_vN.json", "receipt_plan.json", "prep_notes_vN.json"],
+          "schema_keys": ["plan_text", "version", "questions", "success_criteria", "assumptions", "step", "success", "summary", "artifacts"],
+          "receipt_metrics": ["receipt_plan.success==true", "receipt_plan.artifacts non-empty"],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/prep.py",
+            "arnold_pipelines/megaplan/handlers/plan.py",
+            "arnold_pipelines/megaplan/content_types.py"
+          ],
+          "renamed_equivalents": {}
+        }
       },
       {
         "scenario_id": "D2-critique",
@@ -127,7 +138,20 @@
             "test_function": "test_live_supervisor_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native parallel fanout, bracket reduction, and decision emission. Escalate-to-human and replan routes require LLM — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native parallel fanout, bracket reduction, and decision emission. Escalate-to-human and replan routes require LLM — not covered by deterministic runners.",
+        "obligations": {
+          "expected_files": ["tiebreaker_researcher_output.json", "tiebreaker_challenger_output.json", "tiebreaker_decision.json", "receipt_tiebreaker.json"],
+          "schema_keys": ["verdict", "rework_items", "summary", "step", "success"],
+          "receipt_metrics": ["receipt_tiebreaker.success", "researcher+challenger outputs present"],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/tiebreaker_run.py",
+            "arnold_pipelines/megaplan/handlers/tiebreaker_decide.py",
+            "arnold_pipelines/megaplan/workflows/components.py"
+          ],
+          "renamed_equivalents": {
+            "stages/tiebreaker.py": "handlers/tiebreaker_run.py + handlers/tiebreaker_decide.py"
+          }
+        }
       },
       {
         "scenario_id": "D6-finalize",
@@ -159,7 +183,19 @@
             "test_function": "test_deliberation_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native finalize stage artifact output and trace contract. Baseline selection, failure-to-revise, and before-execute gate require LLM — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native finalize stage artifact output and trace contract. Baseline selection, failure-to-revise, and before-execute gate require LLM — not covered by deterministic runners.",
+        "obligations": {
+          "expected_files": ["finalize_plan_vN.json", "receipt_finalize.json", "tasks.json"],
+          "schema_keys": ["plan_text", "version", "success_criteria", "step", "success", "summary", "artifacts", "tasks", "status"],
+          "receipt_metrics": ["receipt_finalize.success==true", "receipt_finalize.artifacts includes task listing", "baseline selection evidence"],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/finalize.py",
+            "arnold_pipelines/megaplan/content_types.py"
+          ],
+          "renamed_equivalents": {
+            "stages/finalize.py": "handlers/finalize.py"
+          }
+        }
       },
       {
         "scenario_id": "D7-execute-dag",
@@ -219,7 +255,21 @@
             "test_function": "test_deliberation_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native human gate suspension/resume mechanism and resume cursor contract. No-review-to-done and protected_action_gate require full product pipeline — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native human gate suspension/resume mechanism and resume cursor contract. No-review-to-done and protected_action_gate require full product pipeline — not covered by deterministic runners.",
+        "obligations": {
+          "expected_files": ["gate_signals_vN.json", "receipt_gate.json", "human_decision.json", "receipt_execute.json"],
+          "schema_keys": ["signals", "robustness", "preflight_results", "unresolved_flags", "step", "success", "summary", "artifacts", "tasks", "status"],
+          "receipt_metrics": ["receipt_gate.success with approval/deny/resume", "receipt_execute.success"],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/gate.py",
+            "arnold_pipelines/megaplan/handlers/execute.py",
+            "arnold_pipelines/megaplan/workflows/components.py"
+          ],
+          "renamed_equivalents": {
+            "stages/gate.py": "handlers/gate.py",
+            "stages/execute.py": "handlers/execute.py"
+          }
+        }
       },
       {
         "scenario_id": "D12-runtime-trace",
@@ -261,7 +311,20 @@
           "typed-loop-outcomes"
         ],
         "reason": "Requires LLM inference for review approval/block/rework decisions and cap-exhaustion logic. No deterministic no-service runner exists.",
-        "target_milestone": "M6/report-conformance"
+        "target_milestone": "M6/report-conformance",
+        "obligations": {
+          "expected_files": ["review_output.json", "receipt_review.json", "rework_items.json", "cap_exhaustion.json"],
+          "schema_keys": ["verdict", "rework_items", "summary", "step", "success", "artifacts"],
+          "receipt_metrics": ["receipt_review.success per iteration", "cap-exhaustion verdict=blocked after M4_LOOP_MAX_ITERATIONS"],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/review.py",
+            "arnold_pipelines/megaplan/workflows/components.py"
+          ],
+          "renamed_equivalents": {
+            "stages/review.py": "handlers/review.py",
+            "review/rework": "review:rework"
+          }
+        }
       },
       {
         "scenario_id": "D11-human-control",

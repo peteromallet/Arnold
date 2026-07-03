@@ -124,7 +124,13 @@ def compile_pipeline(pipeline_func: Callable[..., Any]) -> NativeProgram:
     pipeline_globals: dict[str, Any] = getattr(pipeline_func, '__globals__', {})
     compiler = _Compiler(pipeline_name, pipeline_globals=pipeline_globals)
     compiler.lower_body(func_def.body)
-    return compiler.emit(pipeline_func, description)
+    return compiler.emit(
+        pipeline_func,
+        description,
+        stable_id=meta.get("id"),
+        inputs_schema=meta.get("inputs"),
+        outputs_schema=meta.get("outputs"),
+    )
 
 
 # ── helpers ───────────────────────────────────────────────────────────
@@ -372,6 +378,12 @@ class _Compiler:
             )
 
         func_node = value.func
+        if not isinstance(func_node, ast.Name):
+            raise NativeCompileError(
+                "yield target must be a direct named @phase/@workflow/@pipeline callable; "
+                "dynamic expressions are not supported",
+                func_node,
+            )
         try:
             func = self._resolve_callable(func_node)
         except NativeCompileError:
@@ -380,6 +392,20 @@ class _Compiler:
             raise NativeCompileError(
                 f"Cannot resolve callable for yield: {exc}", func_node
             ) from exc
+
+        if is_pipeline(func):
+            if not isinstance(func_node, ast.Name):
+                raise NativeCompileError(
+                    "yielded child workflow must be a direct named @workflow/@pipeline callable",
+                    func_node,
+                )
+            child_program = compile_pipeline(func)
+            self._emit(
+                "subpipeline",
+                name=child_program.name,
+                subprogram=child_program,
+            )
+            return
 
         if not is_phase(func):
             if callable(func) and getattr(func, "__name__", "") == "parallel":
@@ -1170,13 +1196,17 @@ class _Compiler:
         self,
         pipeline_func: Callable[..., Any],
         description: str,
+        *,
+        stable_id: str | None,
+        inputs_schema: dict[str, Any] | None,
+        outputs_schema: dict[str, Any] | None,
     ) -> NativeProgram:
         """Assemble and return the final :class:`NativeProgram`."""
         self._emit_halt()
 
         # Fix up sequential next_pc links for non-branch instructions
         for i, instr in enumerate(self._instructions):
-            if instr.op in ("phase", "jump", "parallel") and instr.next_pc is None:
+            if instr.op in ("phase", "jump", "parallel", "subpipeline") and instr.next_pc is None:
                 next_pc = i + 1
                 if next_pc < len(self._instructions):
                     self._instructions[i] = NativeInstruction(
@@ -1195,6 +1225,9 @@ class _Compiler:
 
         return NativeProgram(
             name=self._pipeline_name,
+            stable_id=stable_id,
+            inputs_schema=inputs_schema,
+            outputs_schema=outputs_schema,
             instructions=tuple(self._instructions),
             phases=tuple(self._phases),
             decisions=tuple(self._decisions),

@@ -90,7 +90,7 @@ def resume_phase_args(cursor: Mapping[str, Any], plan: str) -> list[str]:
 
 
 def _pipeline():
-    from arnold_pipelines.megaplan.workflows.planning import build_pipeline
+    from arnold_pipelines.megaplan.pipeline import build_pipeline
 
     return build_pipeline()
 
@@ -100,10 +100,10 @@ def canonical_metadata() -> dict[str, Any]:
 
     import arnold_pipelines.megaplan as megaplan_package
     from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+    from arnold_pipelines.megaplan.workflows import planning as workflow_planning
 
     compiled = build_and_compile_pipeline()
     facade_module = import_module("arnold_pipelines.megaplan.pipeline")
-    authored_module = import_module("arnold_pipelines.megaplan.workflows.planning")
     native_program = getattr(compiled, "native_program", None)
     registration_kind = "native" if native_program is not None else "graph_compatibility"
 
@@ -111,7 +111,7 @@ def canonical_metadata() -> dict[str, Any]:
         "name": str(getattr(megaplan_package, "name", "megaplan") or "megaplan"),
         "description": str(getattr(megaplan_package, "description", "") or ""),
         "source_path": str(Path(facade_module.__file__).resolve()),
-        "authored_source_path": str(Path(authored_module.__file__).resolve()),
+        "authored_source_path": str(workflow_planning.AUTHORING_SOURCE_PATH.resolve()),
         "driver": tuple(getattr(megaplan_package, "driver", ()) or ()),
         "supported_modes": tuple(getattr(megaplan_package, "supported_modes", ()) or ()),
         "recommended_profiles": tuple(

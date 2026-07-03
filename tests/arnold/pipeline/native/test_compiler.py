@@ -198,15 +198,70 @@ class TestSequentialCompilation:
             return state
 
         prog = compile_pipeline(my_pipe)
-        # NativePipeline IR should carry the invocable metadata
-        # The program carries a list of phases/decisions/loop_guards.
-        # The pipeline-level metadata is on the program itself.
         assert prog.name == "custom_pipe"
-        # compiler may propagate name but the invocable metadata is on
-        # the program-level NativePipeline produced during graph projection.
-        # Verify that the phase carries its metadata.
-        phase_ir = prog.phases[0]
-        assert phase_ir.name == "step"
+        assert prog.stable_id == "workflow.stable"
+        assert prog.inputs_schema == {"type": "object", "required": ["query"]}
+        assert prog.outputs_schema == {"type": "object", "required": ["answer"]}
+
+    def test_yielded_child_workflow_compiles_to_subpipeline_instruction(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "done"}
+
+        @_workflow(
+            name="child_workflow",
+            id="workflow.child",
+            inputs={"type": "object", "required": ["seed"]},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def parent_step(ctx: object) -> dict:
+            return {"parent": "done"}
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child(ctx)
+            state = yield parent_step(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        assert [instr.op for instr in prog.instructions] == ["subpipeline", "phase", "halt"]
+        child_instr = prog.instructions[0]
+        assert child_instr.name == "child_workflow"
+        assert child_instr.next_pc == 1
+        assert child_instr.subprogram is not None
+        assert isinstance(child_instr.subprogram, NativeProgram)
+        assert child_instr.subprogram.name == "child_workflow"
+        assert child_instr.subprogram.stable_id == "workflow.child"
+        assert child_instr.subprogram.inputs_schema == {"type": "object", "required": ["seed"]}
+        assert child_instr.subprogram.outputs_schema == {"type": "object", "required": ["child"]}
+        assert [instr.op for instr in child_instr.subprogram.instructions] == ["phase", "halt"]
+
+    def test_yielded_dynamic_child_workflow_expression_is_rejected(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "done"}
+
+        @_workflow
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        def select_child() -> object:
+            return child
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield select_child()(ctx)
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(parent)
+        assert "dynamic expressions are not supported" in str(exc_info.value)
 
     def test_step_alias_compiles(self) -> None:
         """@step is an alias for @phase; compilation is identical."""
@@ -773,10 +828,16 @@ class TestInstructionDataclass:
         )
         prog = NativeProgram(
             name="test_prog",
+            stable_id="workflow.test",
+            inputs_schema={"type": "object"},
+            outputs_schema={"type": "object"},
             instructions=instrs,
             description="A test",
         )
         assert prog.name == "test_prog"
+        assert prog.stable_id == "workflow.test"
+        assert prog.inputs_schema == {"type": "object"}
+        assert prog.outputs_schema == {"type": "object"}
         assert len(prog.instructions) == 2
         assert prog.description == "A test"
         assert prog.phases == ()

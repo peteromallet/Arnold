@@ -31,6 +31,7 @@ from arnold.pipeline.native import (
     pipeline,
     project_graph,
     run_native_pipeline,
+    workflow,
 )
 from arnold.pipeline.native.checkpoint import read_native_cursor
 from arnold.pipeline.native.hooks import NullNativeRuntimeHooks
@@ -236,6 +237,75 @@ class TestPcAndStageTracking:
         if halt_instrs:
             assert result.pc == halt_instrs[0].pc
         assert not result.suspended
+
+    def test_subpipeline_instruction_executes_child_program(self) -> None:
+        @phase
+        def child_step(ctx: dict) -> dict:
+            current = ctx["state"].get("visits", 0)
+            return {"visits": current + 1, "child": "done"}
+
+        @workflow(
+            name="child_flow",
+            id="workflow.child",
+            inputs={"type": "object", "required": ["seed"]},
+            outputs={"type": "object", "required": ["child"]},
+        )
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @phase
+        def parent_step(ctx: dict) -> dict:
+            return {"parent": ctx["state"]["child"], "visits": ctx["state"]["visits"] + 1}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx)
+            state = yield parent_step(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        subpipeline_instr = prog.instructions[0]
+        assert subpipeline_instr.op == "subpipeline"
+        assert subpipeline_instr.subprogram is not None
+        assert subpipeline_instr.subprogram.stable_id == "workflow.child"
+        result = run_native_pipeline(prog)
+        assert result.state == {"visits": 2, "child": "done", "parent": "done"}
+        assert result.stages == ["parent__parent_step__pc1"]
+        assert not result.suspended
+
+    def test_subpipeline_uses_isolated_child_artifact_root(
+        self, tmp_path: Path
+    ) -> None:
+        captured_child_root: Path | None = None
+
+        @phase
+        def child_step(ctx: dict) -> dict:
+            nonlocal captured_child_root
+            captured_child_root = Path(ctx["artifact_root"])
+            marker = captured_child_root / "child.txt"
+            marker.write_text("child", encoding="utf-8")
+            return {"child_root_name": captured_child_root.name}
+
+        @workflow(name="child_flow")
+        def child(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog, artifact_root=tmp_path)
+
+        assert captured_child_root == tmp_path / "_child_child_flow"
+        assert result.state["child_root_name"] == "_child_child_flow"
+        assert (tmp_path / "_child_child_flow" / "child.txt").read_text(
+            encoding="utf-8"
+        ) == "child"
+        assert not (tmp_path / "child.txt").exists()
 
     def test_stages_have_correct_format(self) -> None:
         @phase
@@ -714,6 +784,46 @@ class TestWhileLoopExecution:
         assert result.state.get("ready") is True
         assert result.state.get("count") == 2
         assert result.state.get("done") is True
+
+    def test_subpipeline_body_preserves_loop_iteration_tracking(self) -> None:
+        recorded_iterations: list[int] = []
+
+        class RecordingHooks(NullNativeRuntimeHooks):
+            def should_halt_loop(self, instr, state, iteration):
+                recorded_iterations.append(iteration)
+                return False, None
+
+        @phase
+        def child_body(ctx: dict) -> dict:
+            current = ctx["state"].get("count", 0)
+            return {"count": current + 1}
+
+        @workflow(name="child_flow")
+        def child(ctx: dict) -> dict:
+            state = yield child_body(ctx)
+            return state
+
+        @phase
+        def after_child(ctx: dict) -> dict:
+            return {"count": ctx["state"]["count"]}
+
+        @decision
+        def guard(ctx: dict) -> str:
+            return "__truthy__" if ctx["state"].get("count", 0) < 2 else "__falsy__"
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state: dict = {}
+            while guard(ctx):
+                state = yield child(ctx)
+                state = yield after_child(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        result = run_native_pipeline(prog, hooks=RecordingHooks())
+
+        assert result.state["count"] == 2
+        assert recorded_iterations == [1, 2]
 
 
 # ── NativeExecutionResult ─────────────────────────────────────────────

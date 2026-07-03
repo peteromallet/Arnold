@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
@@ -719,6 +720,13 @@ def _force_proceed_blockers(
     return blockers
 
 
+@dataclass(frozen=True)
+class ReviewRouteDecision:
+    result: str
+    next_state: str
+    route_signal: str
+
+
 def _resolve_review_outcome(
     plan_dir: Path,
     review_verdict: str,
@@ -733,11 +741,8 @@ def _resolve_review_outcome(
     criteria: list[dict[str, Any]] | None = None,
     infrastructure_failure: bool = False,
     rework_items: list[dict[str, Any]] | None = None,
-) -> tuple[str, str, str | None]:
-    """Determine review result, next state, and next step.
-
-    Returns (result, next_state, next_step).
-    """
+) -> ReviewRouteDecision:
+    """Determine review result, next state, and review route signal."""
     robustness = normalize_robustness(robustness)
     blocked = (
         infrastructure_failure
@@ -746,7 +751,7 @@ def _resolve_review_outcome(
         or bool(missing_evidence)
     )
     if blocked:
-        return "blocked", STATE_EXECUTED, "review"
+        return ReviewRouteDecision("blocked", STATE_EXECUTED, "blocked")
 
     rework_requested = review_verdict == "needs_rework"
     if rework_requested:
@@ -754,7 +759,7 @@ def _resolve_review_outcome(
             stop_data = _maker_requested_stop(plan_dir)
             if stop_data is not None:
                 _record_maker_stop(state, plan_dir, defense=stop_data.get("defense", ""))
-                return "success", STATE_DONE, None
+                return ReviewRouteDecision("success", STATE_DONE, "pass")
         cap_key = (
             "max_robust_review_rework_cycles"
             if robustness in {"thorough", "extreme"}
@@ -777,15 +782,14 @@ def _resolve_review_outcome(
                     f"{blocker_list}{more}. Resolve them and resume review, or "
                     "`override recover-blocked`/`force-proceed` after operator review to ship anyway."
                 )
-                return "blocked", STATE_BLOCKED, "review"
+                return ReviewRouteDecision("blocked", STATE_BLOCKED, "blocked")
             issues.append(
                 f"Max review rework cycles ({max_review_rework_cycles}) reached. "
                 "Force-proceeding to done despite unresolved review issues "
                 "(all remaining items are non-blocking/cosmetic)."
             )
-            return "force_proceeded", STATE_DONE, None
-        else:
-            return "needs_rework", STATE_FINALIZED, "execute"
+            return ReviewRouteDecision("force_proceeded", STATE_DONE, "force_proceeded")
+        return ReviewRouteDecision("needs_rework", STATE_FINALIZED, "rework")
 
     if criteria:
         has_deferred_must = any(
@@ -799,10 +803,18 @@ def _resolve_review_outcome(
             # because the user still needs to verify. Feedback scaffolding is deferred
             # until the plan actually reaches done (via the existing interactive
             # 'megaplan feedback edit' path after verification).
-            return "success", STATE_AWAITING_HUMAN_VERIFY, None
+            return ReviewRouteDecision("success", STATE_AWAITING_HUMAN_VERIFY, "deferred_human")
 
     with_feedback = state.get("config", {}).get("with_feedback", False)
-    return "success", STATE_REVIEWED if with_feedback else STATE_DONE, None
+    return ReviewRouteDecision("success", STATE_REVIEWED if with_feedback else STATE_DONE, "pass")
+
+
+def _compat_next_step_for_review_route(decision: ReviewRouteDecision) -> str | None:
+    if decision.route_signal == "rework":
+        return "execute"
+    if decision.route_signal == "blocked":
+        return "review"
+    return None
 
 
 def _format_review_success_summary(criteria: list[dict[str, Any]]) -> str:
@@ -1069,7 +1081,7 @@ def _finalize_review_outcome(
     )
     finalize_hash = sha256_file(plan_dir / "finalize.json")
 
-    result, next_state, next_step = _resolve_review_outcome(
+    decision = _resolve_review_outcome(
         plan_dir,
         review_verdict, verdict_count, total_tasks,
         check_count, total_checks, missing_evidence,
@@ -1079,12 +1091,16 @@ def _finalize_review_outcome(
         infrastructure_failure=infrastructure_failure,
         rework_items=worker.payload.get("rework_items", []),
     )
+    result = decision.result
+    next_state = decision.next_state
+    next_step = _compat_next_step_for_review_route(decision)
     worker.payload["issues"] = issues
     worker.payload["outcome"] = {
         "result": result,
         "review_verdict": review_verdict,
         "state": next_state,
         "next_step": next_step,
+        "route_signal": decision.route_signal,
     }
     write_plan_artifact_json(
         plan_dir, "review.json", worker.payload,
@@ -1115,6 +1131,7 @@ def _finalize_review_outcome(
             "review_verdict": review_verdict,
             "state": STATE_EXECUTED,
             "next_step": "review",
+            "route_signal": "blocked",
             "policy_denial": denial_metadata,
         }
         write_plan_artifact_json(
@@ -1259,6 +1276,7 @@ def _finalize_review_outcome(
         "artifacts": ["review.json", "finalize.json", "final.md"],
         "monitor_hint": build_monitor_hint(plan_dir),
         "next_step": next_step,
+        "route_signal": decision.route_signal,
         "state": next_state,
         "issues": issues,
         "rework_items": list(worker.payload.get("rework_items", [])),
