@@ -1858,6 +1858,34 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                         overlaid_finalize_records.append(merged)
                     authoritative_finalize_records = overlaid_finalize_records
 
+    if authoritative_finalize_records:
+        finalize_decisions: dict[str, AuthorityDecision] = {}
+        finalize_completed = effective_execute_completed_task_ids(
+            authoritative_finalize_records,
+            plan_dir=plan_dir,
+            project_dir=project_dir,
+            state=state_payload,
+            evidence_nucleus=evidence_nucleus,
+            current_head=current_head,
+            decisions=finalize_decisions,
+        )
+        pending = _non_authoritative_task_reasons(
+            authoritative_finalize_records,
+            finalize_completed,
+            finalize_decisions,
+        )
+        pending.extend(
+            _finalize_records_missing_authority_fields(
+                authoritative_finalize_records
+            )
+        )
+        if pending:
+            return (
+                False,
+                f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
+            )
+        return True, "finalize.json"
+
     task_records: list[dict[str, Any]] = []
     for key in ("task_updates", "tasks"):
         raw_records = payload.get(key)
@@ -1892,33 +1920,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             return (
                 False,
                 f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
-            )
-
-    if authoritative_finalize_records:
-        finalize_decisions: dict[str, AuthorityDecision] = {}
-        finalize_completed = effective_execute_completed_task_ids(
-            authoritative_finalize_records,
-            plan_dir=plan_dir,
-            project_dir=project_dir,
-            state=state_payload,
-            evidence_nucleus=evidence_nucleus,
-            current_head=current_head,
-            decisions=finalize_decisions,
-        )
-        pending = _non_authoritative_task_reasons(
-            authoritative_finalize_records,
-            finalize_completed,
-            finalize_decisions,
-        )
-        pending.extend(
-            _finalize_records_missing_authority_fields(
-                authoritative_finalize_records
-            )
-        )
-        if pending:
-            return (
-                False,
-                f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
             )
     return True, latest.name
 
