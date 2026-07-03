@@ -296,7 +296,7 @@ if command -v codex >/dev/null 2>&1; then
     export MEGAPLAN_REPAIR_PROFILE="$SUBAGENT_PROFILE"
     export ARNOLD_META_REPAIR_COMMIT_ENABLED="$META_REPAIR_COMMIT_ENABLED_VAR"
     export ARNOLD_SRC="$ARNOLD_SRC"
-    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$BRIEF_PATH")" </dev/null
+    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$BRIEF_PATH"
   ) > "$RESP_PATH" 2>"$ERR_PATH" || true
   redact_file_in_place "$RESP_PATH"
   redact_file_in_place "$ERR_PATH"
