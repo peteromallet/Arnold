@@ -16,6 +16,7 @@ import type {
   TimelineEffectSummary,
   TimelineTransitionSummary,
   TimelineLiveBindingSummary,
+  TimelineAutomationSummary,
   TimelineMaterialRefSummary,
   TimelineSourceRefSummary,
   TimelineShaderSummary,
@@ -39,7 +40,9 @@ import type {
 } from '@/tools/video-editor/types/index';
 import {
   scanTimelineLiveBindings,
+  scanTimelineLiveUniformBindings,
   type TimelineLiveBindingRecord,
+  type TimelineLiveUniformBindingRecord,
 } from '@/tools/video-editor/lib/timeline-domain.ts';
 
 // ---------------------------------------------------------------------------
@@ -217,6 +220,9 @@ function collectLiveBindingRecords(data: TimelineData): TimelineLiveBindingRecor
           ...(typeof binding.targetEffectId === 'string'
             ? { targetEffectId: binding.targetEffectId }
             : {}),
+          ...(typeof binding.targetPath === 'string'
+            ? { targetPath: binding.targetPath }
+            : {}),
           ...(typeof binding.ownerExtensionId === 'string'
             ? { ownerExtensionId: binding.ownerExtensionId }
             : {}),
@@ -238,6 +244,68 @@ function collectLiveBindingRecords(data: TimelineData): TimelineLiveBindingRecor
             : 'active',
         diagnostics: Object.freeze([]),
         blocksExport: binding.resolutionStatus !== 'resolved',
+      });
+    }
+  }
+
+  return records;
+}
+
+function collectLiveUniformBindingRecords(data: TimelineData): TimelineLiveUniformBindingRecord[] {
+  const records = [...scanTimelineLiveUniformBindings(data.config).bindings];
+  const seen = new Set(records.map((record) => `${record.clipId}:${record.binding.bindingId}`));
+
+  for (const clip of data.config.clips) {
+    const appLiveUniformBindings = clip.app?.liveUniformBindings;
+    if (!Array.isArray(appLiveUniformBindings)) continue;
+
+    for (const rawBinding of appLiveUniformBindings) {
+      if (!rawBinding || typeof rawBinding !== 'object' || Array.isArray(rawBinding)) {
+        continue;
+      }
+      const binding = rawBinding as Record<string, unknown>;
+      if (typeof binding.bindingId !== 'string' || binding.bindingId.length === 0) {
+        continue;
+      }
+      const key = `${clip.id}:${binding.bindingId}`;
+      if (seen.has(key)) continue;
+
+      const mapping = binding.mapping;
+      if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) {
+        continue;
+      }
+
+      const uniform = (mapping as Record<string, unknown>).uniform;
+      if (typeof uniform !== 'string' || uniform.length === 0) {
+        continue;
+      }
+
+      seen.add(key);
+      records.push({
+        binding: {
+          bindingId: binding.bindingId,
+          sourceId: typeof binding.sourceId === 'string' ? binding.sourceId : '',
+          sourceKind: (typeof binding.sourceKind === 'string'
+            ? binding.sourceKind
+            : 'custom') as TimelineLiveSourceKind,
+          ...(typeof binding.channelId === 'string' ? { channelId: binding.channelId } : {}),
+          ...(typeof binding.targetMaterialId === 'string'
+            ? { targetMaterialId: binding.targetMaterialId }
+            : {}),
+          ...(typeof binding.targetParamName === 'string'
+            ? { targetParamName: binding.targetParamName }
+            : {}),
+          ...(typeof binding.targetPath === 'string'
+            ? { targetPath: binding.targetPath }
+            : {}),
+          mapping: {
+            ...(mapping as Record<string, unknown>),
+            uniform,
+          } as TimelineLiveUniformBindingRecord['binding']['mapping'],
+        },
+        clipId: clip.id,
+        path: `clips.${clip.id}.app.liveUniformBindings`,
+        diagnostics: Object.freeze([]),
       });
     }
   }
@@ -267,6 +335,47 @@ function isPostprocessShaderMetadata(value: unknown): value is TimelinePostproce
     && typeof (value as Record<string, unknown>).extensionId === 'string'
     && typeof (value as Record<string, unknown>).contributionId === 'string',
   );
+}
+
+function extractAutomationSummary(
+  rawParams: Record<string, unknown> | undefined,
+): TimelineAutomationSummary | undefined {
+  if (!rawParams) return undefined;
+
+  const target = rawParams.target;
+  if (!target || typeof target !== 'object' || Array.isArray(target)) {
+    return undefined;
+  }
+
+  const targetObj = target as Record<string, unknown>;
+  if (
+    typeof targetObj.contributionId !== 'string'
+    || targetObj.contributionId.length === 0
+    || typeof targetObj.parameterPath !== 'string'
+    || targetObj.parameterPath.length === 0
+  ) {
+    return undefined;
+  }
+
+  const keyframes = rawParams.keyframes;
+  if (!Array.isArray(keyframes)) {
+    return undefined;
+  }
+
+  const enabled = rawParams.enabled;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    return undefined;
+  }
+
+  return {
+    contributionId: targetObj.contributionId,
+    parameterPath: targetObj.parameterPath,
+    ...(typeof targetObj.targetPath === 'string' && targetObj.targetPath.length > 0
+      ? { targetPath: targetObj.targetPath }
+      : {}),
+    keyframeCount: keyframes.length,
+    enabled: enabled !== false,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -325,15 +434,23 @@ export function createTimelineReader(
       const effectSummaries: TimelineEffectSummary[] = [];
       const transitionSummaries: TimelineTransitionSummary[] = [];
       const liveBindingSummaries: TimelineLiveBindingSummary[] = [];
+      const automationSummaries: TimelineAutomationSummary[] = [];
       const materialRefSummaries: TimelineMaterialRefSummary[] = [];
       const sourceRefSummaries: TimelineSourceRefSummary[] = [];
       const shaderSummaries: TimelineShaderSummary[] = [];
       const liveBindingsByClip = new Map<string, TimelineLiveBindingRecord[]>();
+      const liveUniformBindingsByClip = new Map<string, TimelineLiveUniformBindingRecord[]>();
 
       for (const record of collectLiveBindingRecords(data)) {
         const records = liveBindingsByClip.get(record.clipId) ?? [];
         records.push(record);
         liveBindingsByClip.set(record.clipId, records);
+      }
+
+      for (const record of collectLiveUniformBindingRecords(data)) {
+        const records = liveUniformBindingsByClip.get(record.clipId) ?? [];
+        records.push(record);
+        liveUniformBindingsByClip.set(record.clipId, records);
       }
 
       for (const clip of config.clips) {
@@ -456,6 +573,20 @@ export function createTimelineReader(
             clipId: clip.id,
             sourceId: record.binding.sourceId,
             sourceKind: record.binding.sourceKind,
+            ...(record.binding.targetEffectId !== undefined
+              ? { targetEffectId: record.binding.targetEffectId }
+              : {}),
+            ...(record.binding.targetPath !== undefined
+              ? { targetPath: record.binding.targetPath }
+              : {}),
+            ...(record.binding.ownerExtensionId !== undefined
+              ? { ownerExtensionId: record.binding.ownerExtensionId }
+              : {}),
+            ...(record.binding.targetEffectId !== undefined
+              ? { targetKind: 'effect-param' as const }
+              : record.binding.targetParamName !== undefined || record.binding.targetPath !== undefined
+                ? { targetKind: 'clip-param' as const }
+                : {}),
             ...(record.binding.targetParamName !== undefined
               ? { targetParamName: record.binding.targetParamName }
               : {}),
@@ -463,6 +594,40 @@ export function createTimelineReader(
           };
           clipLiveBindings.push(binding);
           liveBindingSummaries.push(binding);
+        }
+
+        for (const record of liveUniformBindingsByClip.get(clip.id) ?? []) {
+          const targetPath =
+            typeof record.binding.targetPath === 'string' && record.binding.targetPath.length > 0
+              ? record.binding.targetPath
+              : `uniforms.${record.binding.mapping.uniform}`;
+          const binding: TimelineLiveBindingSummary = {
+            bindingId: record.binding.bindingId,
+            clipId: clip.id,
+            sourceId: record.binding.sourceId,
+            sourceKind: record.binding.sourceKind,
+            targetKind: 'shader-uniform',
+            ...(record.binding.targetMaterialId !== undefined
+              ? { targetMaterialId: record.binding.targetMaterialId }
+              : {}),
+            targetParamName: record.binding.mapping.uniform,
+            targetPath,
+            status: 'resolved',
+          };
+          clipLiveBindings.push(binding);
+          liveBindingSummaries.push(binding);
+        }
+
+        // ── Extract automation summary ───────────────────────────────
+        const clipAutomationSummaries: TimelineAutomationSummary[] = [];
+        if (clip.clipType === 'automation') {
+          const automation = extractAutomationSummary(
+            (clipMeta.params ?? clip.params) as Record<string, unknown> | undefined,
+          );
+          if (automation) {
+            clipAutomationSummaries.push(automation);
+            automationSummaries.push(automation);
+          }
         }
 
         // ── Extract material refs ────────────────────────────────────
@@ -537,6 +702,9 @@ export function createTimelineReader(
           ...(clipTransition !== undefined ? { transition: clipTransition } : {}),
           ...(clipLiveBindings.length > 0
             ? { liveBindings: clipLiveBindings }
+            : {}),
+          ...(clipAutomationSummaries.length > 0
+            ? { automation: clipAutomationSummaries }
             : {}),
           ...(clipMaterialRefs.length > 0
             ? { materialRefs: clipMaterialRefs }
@@ -659,6 +827,8 @@ export function createTimelineReader(
           transitionSummaries.length > 0 ? transitionSummaries : undefined,
         liveBindings:
           liveBindingSummaries.length > 0 ? liveBindingSummaries : undefined,
+        automations:
+          automationSummaries.length > 0 ? automationSummaries : undefined,
         materialRefs:
           materialRefSummaries.length > 0 ? materialRefSummaries : undefined,
         sourceRefs:

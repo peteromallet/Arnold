@@ -6,10 +6,9 @@
  * They are pure data contracts; host projection, resolution, and preview
  * logic live in runtime composition modules and are NOT re-exported here.
  *
- * M1b scope: only shader/ref facts, `consumes` edges, and contribution-index
- * lookups are authoritative through the graph.  Target paths, material
- * promotion, process/output-format vocabularies, and future edge kinds
- * (`animates`, `binds-live`, etc.) are out of scope for M1b.
+ * M1b introduced shader/ref facts and `consumes` edges as the initial graph
+ * authority surface. M2 expands the public edge vocabulary with `animates`
+ * and `binds-live` while keeping node kinds and resolver states stable.
  *
  * @module video/composition/graph
  * @publicContract
@@ -52,16 +51,18 @@ export const COMPOSITION_NODE_KINDS: readonly CompositionNodeKind[] = [
  *
  * - `consumes` — a source node (clip or timeline-postprocess) consumes a
  *                shader contribution from a target contribution node.
- *
- * No other public edge kind is supported in M1b.
+ * - `animates` — an automation clip drives a contribution target path.
+ * - `binds-live` — a clip carries a resolved live binding for a target path.
  */
-export type CompositionEdgeKind = 'consumes';
+export type CompositionEdgeKind = 'consumes' | 'animates' | 'binds-live';
 
 /**
  * The canonical set of M1b public edge kinds.
  */
 export const COMPOSITION_EDGE_KINDS: readonly CompositionEdgeKind[] = [
   'consumes',
+  'animates',
+  'binds-live',
 ] as const;
 
 // ---------------------------------------------------------------------------
@@ -144,14 +145,14 @@ export interface CompositionGraphNode {
 /**
  * A single directed edge in the composition graph.
  *
- * M1b supports only `consumes` edges: a source node (clip or
- * timeline-postprocess) consumes a shader contribution from a target
- * contribution node.
+ * Edge detail is kind-specific: shader assignment metadata for `consumes`,
+ * canonical target-path metadata for `animates` / `binds-live`, and
+ * future per-kind fields as the graph surface evolves.
  */
 export interface CompositionGraphEdge {
   /** Unique edge identifier within the graph (scoped to the projection). */
   readonly id: string;
-  /** Edge kind — only `consumes` in M1b. */
+  /** Edge kind. */
   readonly kind: CompositionEdgeKind;
   /** ID of the source node (clip or timeline-postprocess). */
   readonly sourceNodeId: string;
@@ -217,7 +218,7 @@ export interface CompositionGraphPreviewResult {
  *
  * Fields:
  * - `nodes`           — all projected graph nodes.
- * - `edges`           — all projected graph edges (only `consumes` in M1b).
+ * - `edges`           — all projected graph edges.
  * - `referenceStates` — resolved reference states for every contribution ref
  *                       referenced by graph nodes/edges.
  * - `diagnostics`     — projection-level diagnostics (duplicate scope, etc.).
@@ -228,7 +229,7 @@ export interface CompositionGraphPreviewResult {
 export interface CompositionGraph {
   /** Projected graph nodes (read-only). */
   readonly nodes: readonly CompositionGraphNode[];
-  /** Projected graph edges (read-only, only `consumes` in M1b). */
+  /** Projected graph edges (read-only). */
   readonly edges: readonly CompositionGraphEdge[];
   /** Resolved reference states for every scoped contribution ref. */
   readonly referenceStates: readonly CompositionReferenceStateEntry[];

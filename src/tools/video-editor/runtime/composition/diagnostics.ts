@@ -56,6 +56,27 @@ export const COMPOSITION_DIAGNOSTIC_CODE = {
 
   /** A clip or postprocess scope has multiple shader assignments (duplicate scope). */
   DUPLICATE_SCOPE: 'composition/duplicate-scope',
+
+  /** A canonical target path is malformed or cannot be normalized. */
+  INVALID_TARGET_PATH: 'composition/invalid-target-path',
+
+  /** A target uses a reserved host surface that is not bindable in the current runtime. */
+  UNSUPPORTED_RESERVED_TARGET: 'composition/unsupported-reserved-target',
+
+  /** A target references an unknown contribution or shader ref. */
+  UNKNOWN_TARGET_REF: 'composition/unknown-target-ref',
+
+  /** A shader-uniform target references an undeclared uniform. */
+  UNKNOWN_UNIFORM: 'composition/unknown-uniform',
+
+  /** A target resolves to a surface that cannot be animated or live-bound. */
+  NON_BINDABLE_TARGET: 'composition/non-bindable-target',
+
+  /** A target value does not satisfy the resolved capability value type. */
+  TARGET_VALUE_TYPE_ERROR: 'composition/target-value-type-error',
+
+  /** A target keyframe/live-binding interpolation policy cannot be satisfied. */
+  TARGET_INTERPOLATION_GAP: 'composition/target-interpolation-gap',
 } as const;
 
 export type CompositionDiagnosticCode =
@@ -76,19 +97,45 @@ export type CompositionDiagnosticCode =
 export interface CompositionDiagnosticDetail {
   /** ID of the graph node associated with this diagnostic. */
   nodeId?: string;
+  /** Clip ID when the diagnostic is scoped to a specific timeline clip. */
+  clipId?: string;
+  /** Live binding ID when the diagnostic relates to a binding. */
+  bindingId?: string;
   /** Scoped contribution ref key (`kind:extensionId:contributionId`). */
   refKey?: string;
   /** Resolved reference state for the contribution ref. */
   refState?: ReferenceState;
   /** Shader scope (`clip` or `postprocess`) when applicable. */
   scope?: 'clip' | 'postprocess';
+  /** Canonical target kind when the diagnostic relates to a target path. */
+  targetKind?: string;
+  /** Canonical target path when the diagnostic relates to a target path. */
+  targetPath?: string;
+  /** Uniform name when the diagnostic relates to a shader uniform. */
+  uniformName?: string;
   /** Extension ID of the owning extension. */
   extensionId?: string;
   /** Contribution ID within the owning extension. */
   contributionId?: string;
   /** Shader ID when the diagnostic relates to a shader assignment. */
   shaderId?: string;
+  /** Expected value type for target capability validation. */
+  expectedValueType?: string;
+  /** Actual value type that failed validation. */
+  actualValueType?: string;
+  /** Interpolation mode or policy involved in a target diagnostic. */
+  interpolation?: string;
 }
+
+const BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES = new Set<CompositionDiagnosticCode>([
+  COMPOSITION_DIAGNOSTIC_CODE.INVALID_TARGET_PATH,
+  COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET,
+  COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF,
+  COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_UNIFORM,
+  COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET,
+  COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
+  COMPOSITION_DIAGNOSTIC_CODE.TARGET_INTERPOLATION_GAP,
+]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -145,6 +192,10 @@ export function referenceStateSeverity(state: ReferenceState): DiagnosticSeverit
     default:
       return 'error';
   }
+}
+
+export function isBlockingTargetCompositionDiagnosticCode(code: string): code is CompositionDiagnosticCode {
+  return BLOCKING_TARGET_COMPOSITION_DIAGNOSTIC_CODES.has(code as CompositionDiagnosticCode);
 }
 
 /**

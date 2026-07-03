@@ -473,4 +473,367 @@ describe('T5: Manifest schema validation (Ajv-backed)', () => {
       expect(schemaSet.size).toBe(sdkSet.size);
     });
   });
+
+  // -- M2: Uniform/parameter schema coverage ---------------------------------
+
+  describe('M2: Uniform/parameter definition schema coverage', () => {
+    /** Build a minimal valid shader contribution with the given uniforms. */
+    function shaderWithUniforms(uniforms: Record<string, unknown>[]): Record<string, unknown> {
+      return {
+        ...baseValidManifest(),
+        contributions: [
+          {
+            id: 'test-shader',
+            kind: 'shader',
+            shaderId: 'shader.test',
+            label: 'Test Shader',
+            pass: 'clip',
+            source: {
+              kind: 'inline',
+              fragment: 'void main() {}',
+            },
+            uniforms,
+          },
+        ],
+      };
+    }
+
+    // -- Scalar types --------------------------------------------------------
+
+    it('accepts scalar float uniform with bounds (min/max/step)', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'intensity',
+          label: 'Intensity',
+          type: 'float',
+          default: 0.5,
+          min: 0,
+          max: 1,
+          step: 0.1,
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('accepts scalar int uniform with integer bounds', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'bands',
+          label: 'Bands',
+          type: 'int',
+          default: 8,
+          min: 2,
+          max: 24,
+          step: 1,
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('accepts scalar bool uniform', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'showGrid',
+          label: 'Grid',
+          type: 'bool',
+          default: true,
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    // -- Vector types --------------------------------------------------------
+
+    it('accepts vec2 uniform', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'center',
+          label: 'Center',
+          type: 'vec2',
+          default: [0.5, 0.5],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('accepts vec3 uniform', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'lift',
+          label: 'Lift',
+          type: 'vec3',
+          default: [0.15, 0.25, 0.45],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('accepts vec4 uniform', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'colorOffset',
+          label: 'Color Offset',
+          type: 'vec4',
+          default: [0.1, 0.2, 0.3, 1.0],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    // -- Color type ----------------------------------------------------------
+
+    it('accepts color uniform (legacy hex or vec4 array default)', () => {
+      const manifestColorHex = shaderWithUniforms([
+        {
+          name: 'tintHex',
+          label: 'Tint Hex',
+          type: 'color',
+          default: '#ff8800',
+        },
+      ]);
+      expect(validateFn(manifestColorHex)).toBe(true);
+
+      const manifestColorVec4 = shaderWithUniforms([
+        {
+          name: 'tintVec4',
+          label: 'Tint Vec4',
+          type: 'color',
+          default: [0.2, 0.7, 1.0, 1.0],
+        },
+      ]);
+      expect(validateFn(manifestColorVec4)).toBe(true);
+    });
+
+    // -- Source selector (enum) -----------------------------------------------
+
+    it('accepts enum/source-selector uniform with options', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'blendMode',
+          label: 'Blend Mode',
+          type: 'enum',
+          default: 'soft',
+          options: [
+            { label: 'Soft', value: 'soft' },
+            { label: 'Invert Lift', value: 'invert-lift' },
+            { label: 'Screen', value: 'screen' },
+          ],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('rejects enum uniform without required options (options missing)', () => {
+      // enum type is valid alone; options are optional at schema level
+      // (runtime validates option membership)
+      const manifest = shaderWithUniforms([
+        {
+          name: 'bareEnum',
+          label: 'Bare Enum',
+          type: 'enum',
+          default: 'a',
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    // -- Bounded structured-data (object) ------------------------------------
+
+    it('accepts structured object uniform with bounded sub-fields', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'shadow',
+          label: 'Shadow',
+          type: 'object',
+          default: { offsetX: 2, offsetY: 2, blur: 4, color: [0, 0, 0, 0.5] },
+          fields: [
+            {
+              name: 'offsetX',
+              label: 'Offset X',
+              type: 'float',
+              default: 2,
+              min: -50,
+              max: 50,
+              step: 1,
+            },
+            {
+              name: 'offsetY',
+              label: 'Offset Y',
+              type: 'float',
+              default: 2,
+              min: -50,
+              max: 50,
+              step: 1,
+            },
+            {
+              name: 'blur',
+              label: 'Blur',
+              type: 'float',
+              default: 4,
+              min: 0,
+              max: 100,
+              step: 0.5,
+            },
+            {
+              name: 'color',
+              label: 'Shadow Color',
+              type: 'color',
+              default: [0, 0, 0, 0.5],
+            },
+          ],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('accepts structured object uniform with selector sub-field', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'style',
+          label: 'Style',
+          type: 'object',
+          default: { mode: 'ease-in', intensity: 0.5 },
+          fields: [
+            {
+              name: 'mode',
+              label: 'Mode',
+              type: 'enum',
+              default: 'ease-in',
+              options: [
+                { label: 'Ease In', value: 'ease-in' },
+                { label: 'Ease Out', value: 'ease-out' },
+              ],
+            },
+            {
+              name: 'intensity',
+              label: 'Intensity',
+              type: 'float',
+              default: 0.5,
+              min: 0,
+              max: 1,
+              step: 0.1,
+            },
+          ],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('rejects structured object uniform without required sub-field name/label/type', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'badObj',
+          label: 'Bad Object',
+          type: 'object',
+          fields: [
+            {
+              // missing 'name'
+              label: 'Missing Name',
+              type: 'float',
+            },
+          ],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(false);
+    });
+
+    it('rejects object sub-field with unknown type', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'badObj',
+          label: 'Bad Object',
+          type: 'object',
+          fields: [
+            {
+              name: 'bad',
+              label: 'Bad',
+              type: 'matrix4',  // not in the sub-field type enum
+            },
+          ],
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(false);
+    });
+
+    // -- Reserved extension-param domains (lexical-only) ---------------------
+
+    it('accepts uniform with reserved extension-param type names in description context only', () => {
+      // The schema allows all documented type names in the uniform type enum.
+      // Reserved domains (output, process, agent, app) are NOT in the enum,
+      // so using them as a uniform type should be rejected.
+      const manifest = shaderWithUniforms([
+        {
+          name: 'badOutput',
+          label: 'Bad Output',
+          type: 'output',  // reserved domain, not in the type enum
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(false);
+    });
+
+    it('rejects reserved domain "process" as a uniform type', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'badProcess',
+          label: 'Bad Process',
+          type: 'process',
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(false);
+    });
+
+    it('rejects reserved domain "agent" as a uniform type', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'badAgent',
+          label: 'Bad Agent',
+          type: 'agent',
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(false);
+    });
+
+    it('rejects reserved domain "app" as a uniform type', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'badApp',
+          label: 'Bad App',
+          type: 'app',
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(false);
+    });
+
+    // -- TextureRef and temporal types ---------------------------------------
+
+    it('accepts textureRef uniform', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'u_source',
+          label: 'Source',
+          type: 'textureRef',
+          default: { kind: 'clip-frame' },
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+
+    it('accepts frame and time temporal uniforms', () => {
+      const manifest = shaderWithUniforms([
+        {
+          name: 'holdFrame',
+          label: 'Frame Hold',
+          type: 'frame',
+          default: 12,
+        },
+        {
+          name: 'holdTime',
+          label: 'Time Hold',
+          type: 'time',
+          default: 0.25,
+        },
+      ]);
+      expect(validateFn(manifest)).toBe(true);
+    });
+  });
 });

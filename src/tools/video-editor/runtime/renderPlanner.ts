@@ -15,7 +15,10 @@ import {
   getCapabilityRequirements,
 } from '@reigh/editor-sdk';
 import { shaderMissingMaterializerBlockerMessage } from '@/sdk/video/rendering/capabilities.ts';
-import { COMPOSITION_DIAGNOSTIC_CODE } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
+import {
+  COMPOSITION_DIAGNOSTIC_CODE,
+  isBlockingTargetCompositionDiagnosticCode,
+} from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import {
   projectShaderRefs,
   validateShaderComposition,
@@ -341,9 +344,11 @@ function shaderScopeNodeId(shader: Pick<TimelineShaderSummary, 'scope' | 'clipId
 function compositionDiagnosticReason(code: string): RenderBlockerReason {
   switch (code) {
     case COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF:
+    case COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF:
       return 'missing-contribution';
     case COMPOSITION_DIAGNOSTIC_CODE.DISABLED_REF:
     case COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF:
+    case COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET:
       return 'inactive-extension';
     default:
       return 'unknown';
@@ -359,10 +364,15 @@ function graphDiagnosticFindings(
 
   const findings: CapabilityFinding[] = [];
   compositionGraph.diagnostics.forEach((diagnostic, diagnosticIndex) => {
+    const severity = isBlockingTargetCompositionDiagnosticCode(diagnostic.code)
+      ? 'error'
+      : diagnostic.severity === 'info'
+        ? 'info'
+        : diagnostic.severity;
     for (const route of GRAPH_PLANNER_ROUTES) {
       findings.push({
         id: `${diagnostic.code}.${route}.${diagnosticIndex}`,
-        severity: diagnostic.severity === 'info' ? 'info' : diagnostic.severity,
+        severity,
         route,
         reason: compositionDiagnosticReason(diagnostic.code),
         message: diagnostic.message,

@@ -28,6 +28,7 @@ import type {
 import { createTimelinePostprocessShaderMetadata } from '@/tools/video-editor/lib/shader-catalog.ts';
 import { PostprocessShaderPreviewCanvas } from '@/tools/video-editor/shaders/preview/PostprocessShaderPreviewCanvas.tsx';
 import { ShaderInspector } from '@/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx';
+import { projectCompositionGraph } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import type { ResolvedTimelineConfig } from '@/tools/video-editor/types/index.ts';
 
@@ -303,6 +304,44 @@ function makeShaderSnapshot(config: ResolvedTimelineConfig): TimelineSnapshot {
   };
 }
 
+function makeGraphCoverageSnapshot(config: ResolvedTimelineConfig): TimelineSnapshot {
+  const base = makeShaderSnapshot(config);
+  const shader = config.app?.shaderPostprocess!;
+  return {
+    ...base,
+    clips: [
+      {
+        ...base.clips[0],
+        liveBindings: [{
+          bindingId: 'post-live-binding',
+          clipId: 'clip-base',
+          sourceId: 'live-source',
+          sourceKind: 'generated',
+          targetKind: 'shader-uniform',
+          targetMaterialId: shader.contributionId,
+          targetPath: 'uniforms.intensity',
+          status: 'resolved',
+        }],
+      },
+      {
+        id: 'clip-automation',
+        track: 'V1',
+        at: 12,
+        duration: 12,
+        clipType: 'automation',
+        managed: false,
+        automation: [{
+          contributionId: shader.contributionId,
+          parameterPath: 'params.intensity',
+          targetPath: 'uniforms.intensity',
+          keyframeCount: 2,
+          enabled: true,
+        }],
+      },
+    ],
+  };
+}
+
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
@@ -537,10 +576,16 @@ describe('postprocess-shader-canary extension', () => {
     test.dispose();
   });
 
-  it('graph authority does not leak future surface kinds and keeps checks scoped to M1b shader/ref consumes edges', () => {
+  it('keeps graph node kinds scoped while projecting animates and binds-live edges for postprocess shader timelines', () => {
     const test = activateCanary({ includeDiagnosticShader: false });
     const runtime = normalizeExtensionRuntime([test.extension]);
-    const graph = runtime.compositionGraph;
+    const record = requireCanaryRecord(test.snapshot);
+    const config = makeConfig(record);
+    const snapshot = makeGraphCoverageSnapshot(config);
+    const graph = projectCompositionGraph({
+      snapshot,
+      contributionIndex: runtime.contributionIndex,
+    });
     expect(graph).toBeDefined();
 
     const kinds = new Set(graph.nodes.map((node) => node.kind));
@@ -553,9 +598,23 @@ describe('postprocess-shader-canary extension', () => {
 
     const edgeKinds = new Set(graph.edges.map((edge) => edge.kind));
     expect(edgeKinds.has('consumes')).toBe(true);
-    expect(edgeKinds.size).toBeLessThanOrEqual(1);
-    expect(edgeKinds.has('animates')).toBe(false);
-    expect(edgeKinds.has('binds-live')).toBe(false);
+    expect(edgeKinds.has('animates')).toBe(true);
+    expect(edgeKinds.has('binds-live')).toBe(true);
+    expect(edgeKinds.size).toBe(3);
+
+    const planner = planRender({
+      snapshot,
+      compositionGraph: graph,
+      shaders: runtime.shaders,
+    });
+    expect(planner.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export',
+        reason: 'missing-material',
+        extensionId: POSTPROCESS_SHADER_CANARY_EXTENSION_ID,
+        contributionId: POSTPROCESS_SHADER_CANARY_CONTRIBUTION_ID,
+      }),
+    ]));
 
     const states = new Set(graph.referenceStates.map((entry) => entry.state));
     for (const state of states) {
@@ -564,6 +623,15 @@ describe('postprocess-shader-canary extension', () => {
         'invalid-package', 'duplicate', 'settings-error', 'runtime-error',
         'version-incompatible', 'unknown',
       ]).toContain(state);
+    }
+
+    const targetKinds = new Set(
+      graph.edges
+        .map((edge) => edge.detail?.targetKind)
+        .filter((value): value is string => typeof value === 'string'),
+    );
+    for (const targetKind of targetKinds) {
+      expect(['clip-param', 'effect-param', 'transition-param', 'shader-uniform']).toContain(targetKind);
     }
 
     test.dispose();

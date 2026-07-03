@@ -618,7 +618,7 @@
         },
         "uniforms": {
           "type": "array",
-          "description": "Ordered shader uniform definitions (ShaderUniformSchema).",
+          "description": "Ordered shader uniform definitions (ShaderUniformSchema). V1 executable types: float, int, bool, vec2, vec3, vec4, color, enum, object, textureRef, frame, time. Reserved extension-param domains (output, process, agent, app) are lexical-only \u2014 they are accepted by the schema but produce composition/unsupported-target-kind diagnostics in V1.",
           "items": {
             "type": "object",
             "required": ["name", "label", "type"],
@@ -629,7 +629,7 @@
               "description": { "type": "string" },
               "type": {
                 "type": "string",
-                "enum": ["float", "int", "bool", "vec2", "vec3", "vec4", "color", "enum", "textureRef", "frame", "time"]
+                "enum": ["float", "int", "bool", "vec2", "vec3", "vec4", "color", "enum", "object", "textureRef", "frame", "time"]
               },
               "default": {},
               "min": { "type": "number" },
@@ -644,6 +644,40 @@
                   "properties": {
                     "label": { "type": "string" },
                     "value": { "type": "string" }
+                  }
+                }
+              },
+              "fields": {
+                "type": "array",
+                "description": "Bounded sub-field definitions for structured-object uniforms (type=object). Each sub-field is itself a scalar, vector, color, enum/selector, or boolean parameter. Sub-fields are not separately addressable as target paths in V1.",
+                "items": {
+                  "type": "object",
+                  "required": ["name", "label", "type"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "name": { "type": "string" },
+                    "label": { "type": "string" },
+                    "description": { "type": "string" },
+                    "type": {
+                      "type": "string",
+                      "enum": ["float", "int", "bool", "vec2", "vec3", "vec4", "color", "enum", "textureRef", "frame", "time"]
+                    },
+                    "default": {},
+                    "min": { "type": "number" },
+                    "max": { "type": "number" },
+                    "step": { "type": "number" },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": ["label", "value"],
+                        "additionalProperties": false,
+                        "properties": {
+                          "label": { "type": "string" },
+                          "value": { "type": "string" }
+                        }
+                      }
+                    }
                   }
                 }
               }

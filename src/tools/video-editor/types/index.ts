@@ -210,6 +210,7 @@ export type TimelineLiveBinding = {
   channelId?: string;
   targetParamName?: string;
   targetEffectId?: string;
+  targetPath?: string;
   ownerExtensionId?: string;
   sampling?: {
     mode: TimelineLiveSamplingMode;
@@ -290,6 +291,7 @@ export type TimelineLiveUniformBinding = {
   channelId?: string;
   targetMaterialId?: string;
   targetParamName?: string;
+  targetPath?: string;
   mapping: TimelineLiveUniformBindingMapping;
   metadata?: Record<string, unknown>;
 };

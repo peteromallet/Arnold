@@ -83,10 +83,37 @@ export interface TimelineLiveBindingSummary {
   sourceId: string;
   /** Kind of live source (e.g. 'webcam', 'generated-frame', 'midi'). */
   sourceKind: string;
-  /** Target parameter name on the clip, when applicable. */
+  /** Target kind for the resolved binding target, when known. */
+  targetKind?: 'clip-param' | 'effect-param' | 'shader-uniform';
+  /** Target parameter name on the clip, effect, or shader, when applicable. */
   targetParamName?: string;
+  /** Effect contribution or instance identifier, when the binding targets an effect param. */
+  targetEffectId?: string;
+  /** Shader contribution identifier, when the binding targets a shader uniform. */
+  targetMaterialId?: string;
+  /** Canonical target-path detail, when available. */
+  targetPath?: string;
+  /** Owning extension ID when persisted alongside the binding metadata. */
+  ownerExtensionId?: string;
   /** Resolution status of the binding, when known. */
   status?: string;
+}
+
+/**
+ * M2: Lightweight automation summary extracted from automation clips for
+ * planner and graph inspection.
+ */
+export interface TimelineAutomationSummary {
+  /** Contribution ID referenced by the automation target. */
+  contributionId: string;
+  /** Legacy parameter path stored on the automation clip target. */
+  parameterPath: string;
+  /** Optional canonical target-path detail when persisted explicitly. */
+  targetPath?: string;
+  /** Number of keyframes carried by the automation clip. */
+  keyframeCount: number;
+  /** Whether the automation clip is enabled. */
+  enabled: boolean;
 }
 
 /**
@@ -237,6 +264,8 @@ export interface TimelineSnapshot {
   transitions?: readonly TimelineTransitionSummary[];
   /** M12: Live-binding summaries extracted from clip metadata. */
   liveBindings?: readonly TimelineLiveBindingSummary[];
+  /** M2: Automation summaries extracted from automation clips. */
+  automations?: readonly TimelineAutomationSummary[];
   /** M12: Material-ref summaries extracted from clip data. */
   materialRefs?: readonly TimelineMaterialRefSummary[];
   /** M12: Source-ref summaries extracted from clip provenance. */
@@ -269,6 +298,8 @@ export interface TimelineClipSummary {
   transition?: TimelineTransitionSummary;
   /** M12: Live bindings attached to this clip. */
   liveBindings?: readonly TimelineLiveBindingSummary[];
+  /** M2: Automation summaries attached to this automation clip. */
+  automation?: readonly TimelineAutomationSummary[];
   /** M12: Material refs consumed by this clip. */
   materialRefs?: readonly TimelineMaterialRefSummary[];
   /** M12: Source refs carried by this clip. */

@@ -154,7 +154,7 @@ export { BUILTIN_CLIP_TYPES } from './video/timeline/clipTypes';
 export type { BuiltinClipType } from './video/timeline/clipTypes';
 export { getConfigSignature, getStableConfigSignature } from './video/timeline/configSignature';
 export type { StableTimelineAssetRegistryInput, StableTimelineConfigSignatureInput, TimelineConfigSignatureInput } from './video/timeline/configSignature';
-export type { TimelineEffectSummary, TimelineTransitionSummary, TimelineLiveBindingSummary, TimelineMaterialRefSummary, TimelineRenderPassSummary, TimelineSourceRefSummary, TimelineRenderGroupSummary, TimelineOutputMetadata, TimelineSnapshot, TimelineClipSummary, TimelineTrackSummary, TimelineShaderSummary, TimelineReader, TimelineProposalInput } from './video/timeline/reader';
+export type { TimelineEffectSummary, TimelineTransitionSummary, TimelineLiveBindingSummary, TimelineAutomationSummary, TimelineMaterialRefSummary, TimelineRenderPassSummary, TimelineSourceRefSummary, TimelineRenderGroupSummary, TimelineOutputMetadata, TimelineSnapshot, TimelineClipSummary, TimelineTrackSummary, TimelineShaderSummary, TimelineReader, TimelineProposalInput } from './video/timeline/reader';
 export type { TimelineOps } from './video/timeline/timelineOps';
 export type { ProposalState, ProposalExpiryDetail, TimelineProposal, ProposalListener, ProposalRuntime, ProposalPanelState, ProposalPanelAction, ProposalEnvelope, ProposalImportStatus, ProposalImportDiagnostic, ProposalImportResult } from './video/timeline/proposals';
 export type { SourceMapRuntime, SourceMapEntry, GeneratedObjectMeta } from './video/timeline/sourceMap';

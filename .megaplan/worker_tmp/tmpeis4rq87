@@ -1,0 +1,561 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `finalize`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m2-target-paths-schema-20260703-1550`
+Current milestone: `m2-target-paths-schema`
+
+### Phase Instruction
+Convert the approved plan into executable tasks while preserving North Star constraints and visible alignment checks.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are DECOMPOSING the approved plan below into an ordered task DAG. The plan has been
+        critiqued, gated, and possibly revised. Do NOT re-evaluate strategy or re-litigate
+        decisions - gate has settled those.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M2: Target Paths, Schema Capability, Keyframes, And Live Binding
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M2 Target Paths, Schema Capability, Keyframes, And Live Binding
+
+## Overview
+This is a bridge to the epic North Star, not a contradiction: it makes target paths, parameter capabilities, and `animates`/`binds-live` edges public and graph-authoritative while keeping V1 executable targets limited to `clip-param`, `effect-param`, `transition-param`, and `shader-uniform`. Repository evidence matches the brief: `CompositionEdgeKind` is still only `consumes`, timeline summaries expose live bindings but no automation summary, and `schemaCapabilityRegistry.ts` maps widgets without the seven M2 capability fields.
+
+The safest implementation shape is contracts first, then host adapters, then graph/export/UI consumers. Do not infer behavior from raw value shape; all consumers should use the same `CompositionParamCapability` answer.
+
+## Phase 1: Public SDK Contracts
+
+### Step 1: Add target path contracts and canonicalization (`src/sdk/video/composition/targetPaths.ts`)
+**Complexity: 4**
+1. Define `CompositionTargetPathTargetKind` as `clip-param | effect-param | transition-param | shader-uniform | extension-param`.
+2. Add discriminated `CompositionTargetPath` variants:
+   - non-shader params carry `targetKind`, `parameterPath`, and the relevant clip/effect/transition ref fields.
+   - shader uniforms carry `targetKind: 'shader-uniform'`, `shaderRef`, and `uniformPath` canonicalized as `uniforms.<name>`.
+   - reserved extension params carry `domain: 'output' | 'process' | 'agent' | 'app'` and validate lexically only.
+3. Add pure canonicalizers and diagnostics for empty paths, `params.` stripping on non-shader params, shader `uniforms.` prefixing, invalid segments, and reserved unsupported target kind.
+4. Export the contracts and helpers through `src/sdk/index.ts`.
+5. Add SDK boundary and barrel smoke tests for direct and public-barrel imports.
+
+### Step 2: Add parameter capability contract (`src/sdk/video/composition/capabilities.ts`)
+**Complexity: 4**
+1. Define `CompositionParamCapability` with `targetKind`, `widgetType`, `animatable`, `liveBindable`, `serializable`, `exportDeterministic`, `defaultValue`, `valueType`, `interpolationPolicy`, optional `options`, bounds, and optional structured schema.
+2. Model structured data as `valueType: 'object'` plus bounded sub-fields, not as a target-path kind.
+3. Model source selectors as ordinary enum or bounded integer capabilities with discrete interpolation.
+4. Export through `src/sdk/index.ts` and cover with SDK boundary tests.
+
+## Phase 2: Host Capability Resolution
+
+### Step 3: Extend schema capability registry (`src/tools/video-editor/runtime/schemaCapabilityRegistry.ts`)
+**Complexity: 4**
+1. Add `structured` to `SchemaWidgetType`.
+2. Extend `SchemaCapabilityEntry` or add a parallel resolver output so each built-in host `ParameterType` and SDK `ShaderUniformType` resolves to a complete `CompositionParamCapability`.
+3. Preserve existing widget behavior while adding capability fields for all host and shader types, including `boolean`/`bool`, `select`/`enum`, `audio-binding`, `textureRef`, `frame`, and `time`.
+4. Keep shader color vs host color discriminated by `targetKind`, not by `Array.isArray`.
+5. Add drop-shadow-style structured examples and tests for bounded sub-field validation.
+
+### Step 4: Route controls and validation through capabilities (`SchemaForm`, `KeyframeInspector`, `ShaderInspector`)
+**Complexity: 4**
+1. Update `SchemaForm` to consume capability answers for widget selection and unsupported diagnostics, while preserving existing controls.
+2. Update keyframe validation/interpolation to use capability `valueType` and `interpolationPolicy`, including shader uniform values and structured object sub-fields.
+3. Persist shader-uniform keyframes with explicit `targetPath`; legacy name-keyed records remain compatibility inputs only.
+4. Update inspector tests for scalar, vector, color, structured object, enum/source selector, and textureRef unsupported behavior.
+
+## Phase 3: Legacy Target Adapters
+
+### Step 5: Add host migration adapters (`src/tools/video-editor/runtime/composition/targetPathAdapters.ts`)
+**Complexity: 5**
+1. Normalize the 12 legacy schemes identified in the brief into canonical `CompositionTargetPath` values.
+2. Cover automation `contributionId + parameterPath`, per-clip keyframe names, live binding `targetParamName`, live uniform mapping names, effect params, transition params, shader uniform definitions, clip flat fields, effect dual shape, candidate extraction subtrees, and same-name ambiguity.
+3. Ensure explicit `targetPath` wins over all legacy fields.
+4. Emit structured `composition/` diagnostics for ambiguity, unsupported target kind, invalid path, unknown ref, unknown uniform, non-bindable target, value mismatch, and interpolation mismatch.
+
+### Step 6: Add timeline data type fields without forcing migration (`src/tools/video-editor/types/index.ts`)
+**Complexity: 3**
+1. Add optional `targetPath` fields to keyframe/automation/live binding shapes where persisted explicit paths are needed.
+2. Keep legacy fields readable and serializable so existing projects load unchanged.
+3. Update command/proposal serialization types to preserve explicit target paths and avoid overwriting them from legacy fields.
+
+## Phase 4: Timeline Reader And Graph Projection
+
+### Step 7: Surface automation summaries (`src/sdk/video/timeline/reader.ts`, `src/tools/video-editor/lib/timeline-reader.ts`)
+**Complexity: 3**
+1. Add `TimelineAutomationSummary` and `TimelineClipSummary.automation?: readonly TimelineAutomationSummary[]`.
+2. Use the brief’s bounded shape: `contributionId`, `parameterPath`, optional canonical `targetPath`, `keyframeCount`, and `enabled`.
+3. Extract summaries only from automation clips; disabled automation remains visible but is ignored by graph edge projection.
+4. Add timeline-reader planner contract tests.
+
+### Step 8: Project `animates` and `binds-live` edges (`graph.ts`, `graphProjector.ts`)
+**Complexity: 4**
+1. Expand `CompositionEdgeKind` and `COMPOSITION_EDGE_KINDS` to include `animates` and `binds-live`.
+2. Add graph projector loops for enabled automation summaries and resolved live binding summaries.
+3. Create contribution nodes on demand, using canonical target path detail on edges.
+4. Keep existing shader consumers safe by relying on their existing `edge.kind !== 'consumes'` filters.
+5. Flip canary placeholder assertions to expect the new edge kinds when fixtures include automation/live binding data.
+
+## Phase 5: Export Blockers And Diagnostics
+
+### Step 9: Wire target diagnostics into export guard (`exportGuard.ts`, `diagnostics.ts`)
+**Complexity: 4**
+1. Extend canonical composition diagnostic codes for target-path failures.
+2. Scan graph-backed target diagnostics and add blocking export diagnostics/findings/blockers for invalid paths, unsupported reserved targets, unknown refs/uniforms, non-bindable targets, value type errors, and interpolation gaps.
+3. Keep non-target shader materializer blockers unchanged.
+4. Add focused export guard tests proving invalid graph target facts block export/planning.
+
+## Phase 6: Schema Contract Examples And Final Test Pass
+
+### Step 10: Update manifest/schema examples (`config/contracts/reigh-extension.schema.json`)
+**Complexity: 3**
+1. Add schema coverage for scalar, vector, color, bounded structured-data values, and source selectors where the manifest contract exposes parameter/uniform definitions.
+2. Keep executable extension-param domains out of V1 schema behavior; reserved domains validate only as target-path envelopes.
+3. Update manifest/schema validation tests.
+
+### Step 11: Run focused and broad validation
+**Complexity: 2**
+1. Run targeted tests first:
+   ```bash
+   npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx src/tools/video-editor/examples/extensions/__tests__/postprocess-shader-canary.integration.test.tsx
+   ```
+2. Run SDK boundary and import checks:
+   ```bash
+   npm run test:sdk-boundary
+   ```
+3. Finish with lint and the full Vitest suite if targeted checks pass:
+   ```bash
+   npm run lint
+   npm test
+   ```
+
+## Execution Order
+1. Land SDK types and pure canonicalizers before host runtime wiring.
+2. Extend the capability resolver before changing UI/keyframe/live binding consumers.
+3. Add legacy adapters before graph/export blockers, so diagnostics have one canonical source.
+4. Add timeline reader automation summaries before projecting `animates` edges.
+5. Update canaries after graph projection has real `animates` and `binds-live` data.
+
+## Validation Order
+1. Pure target-path canonicalization and capability unit tests.
+2. Keyframe/schema form tests for capability-driven validation.
+3. Timeline reader and graph projector tests for `animates`/`binds-live` edges.
+4. Export guard tests for blocking diagnostics.
+5. SDK boundary/barrel tests, lint, then full test suite.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-03T16:09:37Z",
+  "hash": "sha256:5b2854ceef8577a2f75a6f5955c56a97ca5ad114ccd1dcf361d50d82438725df",
+  "questions": [
+    "Should explicit `targetPath` persistence for shader-uniform keyframes be added only to new writes, or should existing name-keyed shader uniform keyframes be rewritten on save? The plan assumes new writes persist explicit paths and legacy reads normalize without mutating until a normal save occurs.",
+    "Should `extension-param` reserved domains be exposed in the public SDK canonicalizer immediately even though they always emit `composition/unsupported-target-kind` in V1? The plan assumes yes, because the brief calls for a reserved envelope."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "Public SDK exports include CompositionTargetPath, CompositionParamCapability, canonicalizers, and expanded CompositionEdgeKind values without breaking SDK boundary or barrel import tests.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Non-shader target paths canonicalize relative to params, shader uniform paths canonicalize to uniforms.<name>, invalid paths emit composition/ diagnostics, and reserved extension-param validates lexically while remaining unsupported for execution.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "All host and shader parameter types resolve to a single CompositionParamCapability answer with widgetType, animatable, liveBindable, serializable, exportDeterministic, defaultValue, valueType, and interpolationPolicy populated.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Inspector controls, keyframe validation, live binding validation, proposal serialization, and export blockers consume capability answers rather than inferring capability from raw JavaScript value shape.",
+      "priority": "must",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Legacy target addressing adapters cover the 12 identified schemes, preserve explicit targetPath over legacy fields, and emit ambiguity diagnostics when resolution is not unique.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Timeline snapshots expose automation summaries without host-internal type dependencies, and graph projection emits animates and binds-live edges only for enabled/resolved inputs.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invalid graph-backed target paths and non-bindable or nondeterministic target facts block export/planning with canonical composition/ diagnostics and structured target/ref detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Canary integration tests are updated from absence placeholders to positive coverage for animates and binds-live edges without adding executable target kinds outside V1 scope.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Implementation keeps new helpers pure and SDK-owned where they are public contracts, with host context resolution isolated under runtime/composition.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Structured-data support remains bounded and small, with no generic arbitrary material graph, shader stack, FBO chain, or texture routing behavior introduced.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "This plan narrows M2 to contract/canonicalization/capability/edge/diagnostic plumbing; that is a bridge toward the North Star, not a contradiction, because executable target kinds remain within V1 limits.",
+    "Add `TimelineAutomationSummary` as a public SDK summary shape instead of importing host `AutomationClipTarget`: `{ contributionId: string; parameterPath: string; targetPath?: CompositionTargetPath; keyframeCount: number; enabled: boolean }`.",
+    "Existing project data remains readable. Legacy fields are compatibility inputs and are only canonicalized through adapters; explicit `targetPath` is never overwritten by legacy fields.",
+    "`textureRef` remains shader-only and non-editable/export-sensitive unless a host binding exists; `audio-binding` remains host-only/custom and is not inferred as shader-compatible.",
+    "`effect-param` and `transition-param` target paths can be represented and validated before full vertical execution lands.",
+    "Descriptor-owned source selectors are ordinary clip/effect params represented as enum or bounded integer capabilities with discrete interpolation.",
+    "No anchor conflict is present: the plan does not add sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/sdk/__tests__/sdk-boundary.test.ts",
+        "reason": "Public SDK contract additions and exported type coverage."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/smoke/barrel-import-smoke.test.ts",
+        "reason": "Public barrel export/import coverage for new contracts."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+        "reason": "Capability answer and widget registry behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/keyframes/index.test.ts",
+        "reason": "Capability-driven keyframe validation/interpolation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "New animates and binds-live edge projection."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-reader.test.ts",
+        "reason": "Automation summary extraction in timeline snapshots."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts",
+        "reason": "Planner-facing timeline reader contract changes."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Export blocker diagnostics for invalid target paths."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+        "reason": "Inspector/widget behavior using capability answers."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+        "reason": "Keyframe UI persistence and validation behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx",
+        "reason": "Shader uniform explicit target path and capability behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/LiveSourcesPanel/LiveSourcesPanel.test.tsx",
+        "reason": "Live binding target normalization behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+        "reason": "Canary expectation for new graph edge kinds."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/examples/extensions/__tests__/postprocess-shader-canary.integration.test.tsx",
+        "reason": "Canary expectation for postprocess graph edge behavior."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/video/composition/graph.ts",
+      "src/sdk/video/composition/references.ts",
+      "src/sdk/video/composition/targetPaths.ts",
+      "src/sdk/video/composition/capabilities.ts",
+      "src/sdk/video/timeline/reader.ts",
+      "src/sdk/index.ts",
+      "src/sdk/__tests__/sdk-boundary.test.ts",
+      "src/sdk/smoke/barrel-import-smoke.test.ts",
+      "src/sdk/manifest-schema-validation.test.ts",
+      "config/contracts/reigh-extension.schema.json",
+      "src/tools/video-editor/types/index.ts",
+      "src/tools/video-editor/runtime/schemaCapabilityRegistry.ts",
+      "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts",
+      "src/tools/video-editor/runtime/composition/paramCapabilities.ts",
+      "src/tools/video-editor/runtime/composition/paramCapabilities.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/keyframes/index.ts",
+      "src/tools/video-editor/keyframes/index.test.ts",
+      "src/tools/video-editor/lib/timeline-reader.ts",
+      "src/tools/video-editor/lib/timeline-reader.test.ts",
+      "src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts",
+      "src/tools/video-editor/commands/types.ts",
+      "src/tools/video-editor/commands/runner.ts",
+      "src/tools/video-editor/commands/timelineData.ts",
+      "src/tools/video-editor/hooks/useTimelineCommands.ts",
+      "src/tools/video-editor/components/SchemaForm/SchemaForm.tsx",
+      "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+      "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx",
+      "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+      "src/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx",
+      "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx",
+      "src/tools/video-editor/components/LiveSourcesPanel/LiveSourcesPanel.tsx",
+      "src/tools/video-editor/components/LiveSourcesPanel/LiveSourcesPanel.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx",
+      "src/tools/video-editor/examples/extensions/__tests__/postprocess-shader-canary.integration.test.tsx"
+    ],
+    "always_run": [
+      "npm run lint",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/reigh-extension.schema.json, src/sdk/__tests__/sdk-boundary.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/capabilities.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/references.ts, src/sdk/video/composition/targetPaths.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/commands/runner.ts, src/tools/video-editor/commands/timelineData.ts, src/tools/video-editor/commands/types.ts, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx, src/tools/video-editor/components/LiveSourcesPanel/LiveSourcesPanel.test.tsx, src/tools/video-editor/components/LiveSourcesPanel/LiveSourcesPanel.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx, src/tools/video-editor/examples/extensions/__tests__/clip-local-shader-canary.integration.test.tsx, src/tools/video-editor/examples/extensions/__tests__/postprocess-shader-canary.integration.test.tsx, src/tools/video-editor/hooks/useTimelineCommands.ts, src/tools/video-editor/keyframes/index.test.ts, src/tools/video-editor/keyframes/index.ts, src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts, src/tools/video-editor/lib/timeline-reader.test.ts, src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/paramCapabilities.test.ts, src/tools/video-editor/runtime/composition/paramCapabilities.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.ts, src/tools/video-editor/types/index.ts. Candidate: The change is cross-cutting across SDK contracts, runtime graph projection, export guard, and editor controls. Start with scoped tests tied to changed surfaces, then fall back to the full suite because public SDK and shared runtime types can have broad compile-time impact.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    }
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "This is iteration 1 with zero significant flags, zero unresolved flags, and zero addressed flags. All five critique dimensions (correctness, scope, all_locations, prerequisite_ordering, north_star_and_v1_boundary_alignment) are clear. Preflight checks pass on all five axes.",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "Non-shader parameter paths are relative to params and never start with 'params.' after normalization; shader uniform paths canonicalize to 'uniforms.<name>' and require a ShaderRef",
+      "rationale": "This is the locked decision from the brief and drives all canonicalizer, adapter, and diagnostic behavior across the plan."
+    },
+    {
+      "id": "SD2",
+      "decision": "Explicit targetPath is authoritative over all legacy fields; legacy data is compatibility input only and is never used to overwrite an explicit targetPath",
+      "rationale": "Preserves data integrity during migration and ensures the graph remains the authority for graph-authoritative fact families as required by the North Star."
+    },
+    {
+      "id": "SD3",
+      "decision": "Structured-data params use valueType: 'object', widgetType: 'structured', with bounded sub-field schemas \u2014 they are not a new target-path kind and sub-fields are not separate target paths in V1",
+      "rationale": "Prevents scope creep into arbitrary material graphs or generic sub-path routing; aligns with the North Star constraint that V1 target paths are limited to clip/effect/transition params and shader uniforms."
+    },
+    {
+      "id": "SD4",
+      "decision": "Source selectors are ordinary clip/effect params modeled as enum (valueType: 'string', widgetType: 'select') or bounded integer (valueType: 'integer', min/max/step) capabilities with discrete interpolation",
+      "rationale": "Avoids creating special routing state or a new target-path kind for descriptor-owned selectors; keeps the capability model uniform."
+    },
+    {
+      "id": "SD5",
+      "decision": "Extension-param reserved domains (output, process, agent, app) are exposed in the public SDK canonicalizer immediately but always emit composition/unsupported-target-kind diagnostics in V1",
+      "rationale": "Per the brief, the reserved envelope must exist in the public contract so extension authors can declare portable SDK contracts, even though V1 execution is gated."
+    },
+    {
+      "id": "SD6",
+      "decision": "TimelineAutomationSummary uses a bounded public SDK shape ({ contributionId, parameterPath, targetPath?, keyframeCount, enabled }) without host-internal type dependencies",
+      "rationale": "Keeps the timeline reader contract clean and prevents host internals from leaking into SDK-visible snapshots."
+    }
+  ],
+  "warnings": [
+    "Criteria 9 (helpers pure/SDK-owned) and 10 (bounded structured-data) are 'should' priority and require subjective judgment during review \u2014 the implementer should document architectural choices at these boundaries for post-execution audit.",
+    "The plan metadata contains two open questions (shader-uniform keyframe persistence strategy; extension-param reserved domain canonicalizer exposure) \u2014 both are answered by explicit assumptions in the plan metadata and should not be reopened without new evidence."
+  ],
+  "orchestrator_guidance": "First iteration; follow gate recommendation: PROCEED.",
+  "carried_flags": [],
+  "iteration": 1,
+  "produced_at": "2026-07-03T16:16:17Z"
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m2-target-paths-schema-20260703-1550/finalize_output.json
+        Read this file first — it contains the expected JSON structure (tasks, user_actions, sense_checks, watch_items, meta_commentary).
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Requirements:
+        - Produce structured JSON only.
+        - For each `## Step N:` in the plan, emit 1-N tasks.
+        - For each task, emit one sense_check.
+        - Default `user_actions` to `[]`. Identify a user_action ONLY when the work is genuinely non-mechanical and the executor literally cannot do it (secrets the human alone holds, identity-bound infra access, legal/license signatories, manual UI smoke tests on production). If a check is mechanical, make it a task — not a user_action. See the detailed guidance below.
+        - Do not invent tasks that don't trace to a plan step.
+        - How batching works at runtime — shape `depends_on` with this in mind, not just literal sequencing. Tasks that share the same `depends_on` set form one batch (capped at 5). Each batch dispatches as a SINGLE LLM conversation to a SINGLE model, picked by the max(complexity) in that batch. So a c=4 audit plus three c=2 tweaks sharing a batch all run in one turn on the c=4 model. Two consequences you control via DAG shape:
+          - Routing: every task in a batch runs on the highest-tier task's model — bundle a c=2 task beside a c=4 sibling and it runs on the pricier model.
+          - Cognitive load: one conversation holds all of the batch's tasks in working context. The more disparate the tasks, the higher the risk the model loses the thread or claims completion without doing the work. Wide, mixed batches are the dominant quality failure mode.
+        - Three principles for shaping batches — judgment, not arithmetic (there is no mechanical split rule):
+          1. Isolate heavyweights. A c=4 or c=5 task usually deserves its own batch. Chain lighter tasks through it via `depends_on` rather than placing them as siblings.
+          2. Bundle context-related light work. Several c=2/c=3 tasks touching the same files or contracts batch well together.
+          3. Never emit more than 5 actionable parallel siblings. If a step legitimately fans out wider, linearize via `depends_on` so the runtime batcher sees at most 5 at a time.
+        - Do not include `validation` or `coverage_complete` fields - the harness computes those.
+        - The FINAL task MUST run tests; harness validation will reject finalize output without it.
+        - `tasks` must be an ordered array of task objects. Every task object must include:
+          - `id`: short stable task ID like `T1`
+          - `description`: concrete work item
+          - `depends_on`: array of earlier task IDs or `[]`
+          - `status`: always `"pending"` at finalize time
+          - `executor_notes`: always `""` at finalize time
+          - `reviewer_verdict`: always `""` at finalize time
+          - `kind`: indicating the type of work. One of:
+            - `code`: writes or modifies source files (executor must produce `files_changed`).
+            - `test`: writes or modifies test files, or runs the test suite (executor must produce `files_changed` in tests/ OR `commands_run` containing pytest/test invocations).
+            - `audit`: read-only investigation — grep, code review, schema inspection (executor evidence is `executor_notes` describing findings; no `files_changed` expected).
+            - `research`: external research or non-code investigation (executor evidence is `executor_notes`).
+            - `docs`: writes documentation files (executor must produce `files_changed`).
+            If unsure, default to `code`.
+          - `complexity`: integer 1–5 complexity score. This score routes the task to a
+            model at execution time, so adjudicate it deliberately — do not guess. Use the rubric:
+            - 1 = trivial, mechanical, single-file change with no logic to reason about
+                  (rename, constant bump, comment, import). A weak model cannot get it wrong.
+            - 2 = simple, localized change plus the obvious test update; one file or two,
+                  logic is linear and the failure mode is obvious.
+            - 3 = multi-file change with non-trivial logic, control flow, or data shape the
+                  executor must hold in its head; correctness is not self-evident from the diff.
+            - 4 = a wrong implementation would be NON-LOCAL and not caught by an obvious test:
+                  the error propagates through a shared contract or invariant that code you did
+                  NOT edit relies on. Touching several files is NOT sufficient on its own — a
+                  mechanical multi-file change whose failure is local and test-evident is tier 2-3.
+            - 5 = fundamental system-invariant change with high regression risk: concurrency that
+                  cascades, a schema/wire-format others build on, a state machine, or a security/
+                  auth boundary. ONLY when a subtle error would pass the full suite and corrupt
+                  state or break a system-wide contract — not merely "important" or central code.
+            Score on the hardest REALISTIC aspect of the task, not a worst-case imagining. When
+            genuinely torn between two tiers, choose the LOWER one UNLESS you can name the specific
+            cascading, test-evading failure that earns the higher tier in the justification.
+            You are not the model that executes this task, and the score neither saves nor
+            costs you anything — so do not lowball to seem efficient and do not highball to
+            play safe. Both distort routing: a too-low score sends a hard task to a model
+            that fails it; a too-high score burns a premium model on trivial work. Score
+            what the task honestly requires, no higher and no lower.
+            FLOOR: a task is NEVER below tier 4 only when it GENUINELY changes the semantics of
+            concurrency, a schema/state-machine, a security/auth boundary, or a contract other
+            code actually depends on — because a subtle error there passes tests but is wrong.
+            This floor does NOT apply to mechanical edits that merely sit near such code, or that
+            add a new interface nothing relies on yet; score those on the rubric (usually 2-3).
+          - `complexity_justification`: REQUIRED. One or two sentences that argue, specifically,
+            why this task sits at exactly that tier — cite the concrete files, interfaces, or
+            risk that places it there (e.g. "touches the auth middleware contract used by 4
+            call sites, so a mistake is non-local → tier 4"). A bare restatement of the rubric
+            ("this is complex") is not acceptable; the justification must be defensible against
+            a reviewer who disagrees.
+        - `watch_items` must be an array of strings covering runtime risks, critique concerns, and assumptions to keep visible during execution.
+        - `sense_checks` must be an array with one verification question per task. Every sense-check object must include:
+          - `id`: short stable ID like `SC1`
+          - `task_id`: the related task ID
+          - `question`: reviewer verification question
+          - `verdict`: always `""` at finalize time
+        - `user_actions` should default to `[]`. Emitting a user_action stalls execution on a human gate — it is a load-bearing escape hatch, not a convenience. Prefer to design every step to be fully mechanical: the executor can read files, run commands, query APIs, fetch URLs, parse JSON, edit code, and run tests. If a check is mechanical, write it as a task — not a user_action.
+- Emit a user_action ONLY when the work is *genuinely non-mechanical* and the executor has no path to do it itself: secrets the human alone holds (a real API key the executor cannot mint), infrastructure access bound to the human's identity (cloud console, VPN), legal/license/security-policy judgments that require a human signatory, or out-of-band manual UI smoke tests on production. If you cannot name a specific reason the executor cannot do it, the task is mechanical — make it a task.
+- Anything that touches code, configuration, fixtures, or local files MUST be a task. Reading docs, grepping, editing, running tests, writing SQL, and producing JSON resolution files are tasks. Negative example: writing the migration SQL is a task, not a user_action; verifying a license URL is reachable is a task, not a user_action.
+- When you do emit a user_action, set `requires_human_only_reason` to a specific sentence naming why the executor literally cannot perform it (not just "it's important").
+- If `user_actions` is non-empty, expect that execution will block until the human resolves each one — only emit them when that block is unavoidable.
+- Positive examples (rare, last-resort): `U1: Set ANTHROPIC_API_KEY in .env (before_execute, requires_human_only_reason: "secret the executor cannot mint")`; `U2: Confirm legal sign-off to commit the third-party JSON corpus (before_execute, requires_human_only_reason: "license judgment with legal liability")`.
+        - `meta_commentary` must be a single string with execution guidance, gotchas, or judgment calls that help the executor succeed.
+        - Preserve information that strong existing artifacts already capture well: execution ordering, watch-outs, reviewer checkpoints, and practical context.
+        - The structured output should be self-contained: an executor reading only `finalize.json` should have everything needed to work.
+        - Keep the task count proportional to the work. A simple 1-2 file fix should be 2 tasks: (1) apply the fix, (2) run tests. Do NOT create separate "inspect" or "read" tasks for simple changes — the executor can read and fix in one step. Only create more tasks when the work has genuinely independent stages.
+        - One task is the unit of ONE worker turn: the executor must IMPLEMENT it, VERIFY it, and emit its result envelope inside a single ~15-minute conversation. A task that cannot realistically finish in one turn is mis-sized and WILL fail — the worker reports `blocked: "turn ended before implementation"` or runs out the clock mid-edit. Size every task to fit one turn; raising `complexity` does NOT buy more turns, it only routes to a stronger model for the SAME single turn. When a step is a large mechanical refactor, SPLIT it across tasks instead of bundling: "add the new abstraction + its unit tests" (T1) → "migrate consumer A" (T2, depends_on T1) → "migrate consumer B + parity tests" (T3, depends_on T2). A single task that says "extract this 2000-line file into modules and write tests" or "consolidate the roots AND migrate three registries AND add parity tests" is a god-task — decompose it into one task per consumer/module, each independently completable and verifiable.
+        - - The harness owns test verification — do NOT author a run-until-pass task. If you include a test-related task, scope it to: introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute suite.
+- For code-mode plans, preserve a scoped test contract. Prefer the plan's machine-readable `test_blast_radius`; when it is missing, ensure at least one finalized task carries a concrete scoped pytest command in `commands_run` (for example `pytest tests/test_relevant.py -q`) or mappable `files_changed` paths. Do not rely on an unscoped `pytest` command unless the plan explicitly opts into `test_selection=full`.

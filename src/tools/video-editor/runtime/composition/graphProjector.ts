@@ -72,6 +72,117 @@ function buildContributionNodeDetail(
   });
 }
 
+function buildContributionEntryByContributionId(
+  contributionEntries: readonly (readonly [string, readonly ContributionIndexEntry[]])[],
+): ReadonlyMap<string, ContributionIndexEntry | null> {
+  const byContributionId = new Map<string, ContributionIndexEntry | null>();
+
+  for (const [, entries] of contributionEntries) {
+    const firstEntry = entries[0];
+    if (!firstEntry) {
+      continue;
+    }
+
+    const existing = byContributionId.get(firstEntry.contributionId);
+    if (existing === undefined) {
+      byContributionId.set(firstEntry.contributionId, firstEntry);
+      continue;
+    }
+
+    if (existing && existing.scopedKey === firstEntry.scopedKey) {
+      continue;
+    }
+
+    byContributionId.set(firstEntry.contributionId, null);
+  }
+
+  return byContributionId;
+}
+
+function canonicalizeAutomationParameterPath(parameterPath: string): string | undefined {
+  const trimmed = parameterPath.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  return trimmed.startsWith('params.') ? trimmed.slice('params.'.length) : trimmed;
+}
+
+function canonicalizeShaderUniformPath(parameterPath: string): string | undefined {
+  const trimmed = parameterPath.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  const uniform = trimmed.startsWith('uniforms.') ? trimmed.slice('uniforms.'.length) : trimmed;
+  return uniform.length > 0 ? `uniforms.${uniform}` : undefined;
+}
+
+function canonicalAutomationTargetPath(
+  automation: Readonly<{
+    parameterPath: string;
+    targetPath?: string;
+  }>,
+): string | undefined {
+  if (typeof automation.targetPath === 'string' && automation.targetPath.trim().length > 0) {
+    return canonicalizeAutomationParameterPath(automation.targetPath);
+  }
+
+  return canonicalizeAutomationParameterPath(automation.parameterPath);
+}
+
+function canonicalLiveBindingTargetPath(
+  binding: Readonly<{
+    targetKind?: string;
+    targetParamName?: string;
+    targetPath?: string;
+    targetMaterialId?: string;
+  }>,
+): string | undefined {
+  const targetPath = typeof binding.targetPath === 'string' && binding.targetPath.trim().length > 0
+    ? binding.targetPath
+    : binding.targetParamName;
+  if (typeof targetPath !== 'string' || targetPath.trim().length === 0) {
+    return undefined;
+  }
+
+  const isShaderUniformTarget =
+    binding.targetKind === 'shader-uniform'
+    || typeof binding.targetMaterialId === 'string'
+    || targetPath.trim().startsWith('uniforms.');
+
+  return isShaderUniformTarget
+    ? canonicalizeShaderUniformPath(targetPath)
+    : canonicalizeAutomationParameterPath(targetPath);
+}
+
+function liveBindingTargetKind(
+  binding: Readonly<{
+    targetKind?: string;
+    targetEffectId?: string;
+    targetMaterialId?: string;
+  }>,
+  targetPath: string,
+): 'clip-param' | 'effect-param' | 'shader-uniform' {
+  if (
+    binding.targetKind === 'clip-param'
+    || binding.targetKind === 'effect-param'
+    || binding.targetKind === 'shader-uniform'
+  ) {
+    return binding.targetKind;
+  }
+
+  if (typeof binding.targetMaterialId === 'string' || targetPath.startsWith('uniforms.')) {
+    return 'shader-uniform';
+  }
+
+  if (typeof binding.targetEffectId === 'string') {
+    return 'effect-param';
+  }
+
+  return 'clip-param';
+}
+
 function selectShaderSummaries(input: CompositionGraphInput): readonly TimelineShaderSummary[] {
   const patchOverlayShaders = input.patchOverlay?.shaders;
   if (patchOverlayShaders && patchOverlayShaders.length > 0) {
@@ -184,6 +295,7 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
   const contributionEntries = contributionIndex
     ? Object.entries(contributionIndex).sort(([left], [right]) => left.localeCompare(right))
     : [];
+  const contributionEntryByContributionId = buildContributionEntryByContributionId(contributionEntries);
   for (const [refKey, entries] of contributionEntries) {
     const firstEntry = entries[0];
     if (!firstEntry || contributionNodeByRefKey.has(refKey)) {
@@ -199,6 +311,120 @@ export function projectCompositionGraph(input: CompositionGraphInput): Compositi
     });
     contributionNodeByRefKey.set(refKey, node);
     nodes.push(node);
+  }
+
+  for (const clip of input.snapshot.clips) {
+    const automations = clip.automation;
+    if (!automations?.length) {
+      continue;
+    }
+
+    const sourceNodeId = clipNodeId(clip.id);
+    for (const automation of automations) {
+      if (automation.enabled === false) {
+        continue;
+      }
+
+      const targetPath = canonicalAutomationTargetPath(automation);
+      if (!targetPath) {
+        continue;
+      }
+
+      const contributionEntry = contributionEntryByContributionId.get(automation.contributionId);
+      if (!contributionEntry) {
+        continue;
+      }
+
+      const ref = createContributionRef(contributionEntry);
+      const refKey = contributionRefKey(ref);
+      let contributionNode = contributionNodeByRefKey.get(refKey);
+      if (!contributionNode) {
+        contributionNode = Object.freeze({
+          id: contributionNodeId(ref),
+          kind: 'contribution' as const,
+          ref,
+        });
+        contributionNodeByRefKey.set(refKey, contributionNode);
+        nodes.push(contributionNode);
+      }
+
+      edges.push(Object.freeze({
+        id: `animates:${sourceNodeId}:${contributionNode.id}:${targetPath}`,
+        kind: 'animates',
+        sourceNodeId,
+        targetNodeId: contributionNode.id,
+        detail: Object.freeze({
+          clipId: clip.id,
+          contributionId: automation.contributionId,
+          parameterPath: automation.parameterPath,
+          targetKind: targetPath.startsWith('uniforms.') ? 'shader-uniform' : 'clip-param',
+          targetPath,
+          keyframeCount: automation.keyframeCount,
+          refKey,
+        }),
+      }));
+    }
+  }
+
+  for (const clip of input.snapshot.clips) {
+    const liveBindings = clip.liveBindings;
+    if (!liveBindings?.length) {
+      continue;
+    }
+
+    const sourceNodeId = clipNodeId(clip.id);
+    for (const binding of liveBindings) {
+      if (binding.status !== 'resolved') {
+        continue;
+      }
+
+      const targetPath = canonicalLiveBindingTargetPath(binding);
+      if (!targetPath) {
+        continue;
+      }
+
+      let targetNodeId = sourceNodeId;
+      let refKey: string | undefined;
+      const targetContributionId = binding.targetMaterialId ?? binding.targetEffectId;
+      if (typeof targetContributionId === 'string' && targetContributionId.length > 0) {
+        const contributionEntry = contributionEntryByContributionId.get(targetContributionId);
+        if (contributionEntry) {
+          const ref = createContributionRef(contributionEntry);
+          refKey = contributionRefKey(ref);
+          let contributionNode = contributionNodeByRefKey.get(refKey);
+          if (!contributionNode) {
+            contributionNode = Object.freeze({
+              id: contributionNodeId(ref),
+              kind: 'contribution' as const,
+              ref,
+            });
+            contributionNodeByRefKey.set(refKey, contributionNode);
+            nodes.push(contributionNode);
+          }
+          targetNodeId = contributionNode.id;
+        }
+      }
+
+      edges.push(Object.freeze({
+        id: `binds-live:${sourceNodeId}:${binding.sourceId}:${binding.bindingId}:${targetPath}`,
+        kind: 'binds-live',
+        sourceNodeId,
+        targetNodeId,
+        detail: Object.freeze({
+          bindingId: binding.bindingId,
+          clipId: clip.id,
+          sourceId: binding.sourceId,
+          sourceKind: binding.sourceKind,
+          status: binding.status,
+          targetKind: liveBindingTargetKind(binding, targetPath),
+          targetPath,
+          ...(binding.targetParamName !== undefined ? { targetParamName: binding.targetParamName } : {}),
+          ...(binding.targetEffectId !== undefined ? { targetEffectId: binding.targetEffectId } : {}),
+          ...(binding.targetMaterialId !== undefined ? { targetMaterialId: binding.targetMaterialId } : {}),
+          ...(refKey !== undefined ? { refKey } : {}),
+        }),
+      }));
+    }
   }
 
   const shaders = selectShaderSummaries(input);

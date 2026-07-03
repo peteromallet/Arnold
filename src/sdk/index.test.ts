@@ -4467,11 +4467,11 @@ describe('M1b: CompositionGraph SDK exports', () => {
     expect(COMPOSITION_NODE_KINDS).not.toContain('process');
   });
 
-  it('COMPOSITION_EDGE_KINDS contains only consumes', () => {
-    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes']);
-    expect(COMPOSITION_EDGE_KINDS).toHaveLength(1);
-    expect(COMPOSITION_EDGE_KINDS).not.toContain('animates');
-    expect(COMPOSITION_EDGE_KINDS).not.toContain('binds-live');
+  it('COMPOSITION_EDGE_KINDS contains consumes, animates, and binds-live', () => {
+    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes', 'animates', 'binds-live']);
+    expect(COMPOSITION_EDGE_KINDS).toHaveLength(3);
+    expect(COMPOSITION_EDGE_KINDS).toContain('animates');
+    expect(COMPOSITION_EDGE_KINDS).toContain('binds-live');
     expect(COMPOSITION_EDGE_KINDS).not.toContain('materializes');
   });
 
@@ -4552,9 +4552,9 @@ describe('M1b: CompositionGraph SDK exports', () => {
     expect(kinds).toHaveLength(3);
   });
 
-  it('CompositionEdgeKind only accepts consumes', () => {
-    const kind: CompositionEdgeKind = 'consumes';
-    expect(kind).toBe('consumes');
+  it('CompositionEdgeKind accepts the public edge-kind union', () => {
+    const kinds: CompositionEdgeKind[] = ['consumes', 'animates', 'binds-live'];
+    expect(kinds).toEqual(['consumes', 'animates', 'binds-live']);
   });
 });
 

@@ -72,6 +72,8 @@ export interface AutomationClipTarget {
   contributionId: string;
   /** Dot-separated path to the target parameter within the contribution. */
   parameterPath: string;
+  /** Optional canonical target-path detail when already resolved by the host. */
+  targetPath?: string;
 }
 
 /**

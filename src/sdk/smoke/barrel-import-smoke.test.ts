@@ -2799,8 +2799,8 @@ describe('M1b barrel-import smoke — CompositionGraph', () => {
   });
 
   it('COMPOSITION_EDGE_KINDS is importable from the barrel', () => {
-    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes']);
-    expect(COMPOSITION_EDGE_KINDS).toHaveLength(1);
+    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes', 'animates', 'binds-live']);
+    expect(COMPOSITION_EDGE_KINDS).toHaveLength(3);
   });
 
   it('REFERENCE_STATES is importable from the barrel', () => {
@@ -2901,9 +2901,9 @@ describe('M1b barrel-import smoke — CompositionGraph', () => {
     expect(kinds).toHaveLength(3);
   });
 
-  it('CompositionEdgeKind only accepts consumes', () => {
-    const kind: CompositionEdgeKind = 'consumes';
-    expect(kind).toBe('consumes');
+  it('CompositionEdgeKind accepts the public edge-kind union', () => {
+    const kinds: CompositionEdgeKind[] = ['consumes', 'animates', 'binds-live'];
+    expect(kinds).toEqual(['consumes', 'animates', 'binds-live']);
   });
 });
 

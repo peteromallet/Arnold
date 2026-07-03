@@ -5,6 +5,7 @@ import {
   collectExtensionDeclaredIds,
   scanExportConfig,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
+import { COMPOSITION_DIAGNOSTIC_CODE } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import { planRender } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import {
   getVideoFamilyDefinition,
@@ -15,7 +16,7 @@ import type {
   InactiveKnownIds,
   ExportGuardResult,
 } from '@/tools/video-editor/runtime/exportGuard.ts';
-import type { ExtensionContribution } from '@reigh/editor-sdk';
+import type { CompositionGraph, ExtensionContribution, ExtensionDiagnostic } from '@reigh/editor-sdk';
 import type {
   EffectRegistryRecord,
   EffectRegistrySnapshot,
@@ -135,6 +136,76 @@ function clipTypeSnapshotWith(records: readonly ClipTypeRegistryRecord[]): ClipT
     get: (clipTypeId: string) => byId.get(clipTypeId),
     has: (clipTypeId: string) => byId.has(clipTypeId),
   });
+}
+
+function makeCompositionDiagnostic(
+  code: string,
+  detail: Record<string, unknown>,
+  severity: 'warning' | 'error' = 'warning',
+): ExtensionDiagnostic {
+  return {
+    code,
+    severity,
+    message: `Diagnostic ${code}`,
+    extensionId: detail.extensionId as string | undefined,
+    contributionId: detail.contributionId as string | undefined,
+    detail,
+  };
+}
+
+function makeCompositionGraph(options: {
+  readonly diagnostics?: readonly ExtensionDiagnostic[];
+  readonly includeResolvedClipShader?: boolean;
+} = {}): CompositionGraph {
+  const nodes: CompositionGraph['nodes'][number][] = [
+    {
+      id: 'clip:c1',
+      kind: 'clip',
+      detail: { clipId: 'c1' },
+    },
+    {
+      id: 'timeline-postprocess',
+      kind: 'timeline-postprocess',
+      detail: { scope: 'postprocess' },
+    },
+  ];
+  const edges: CompositionGraph['edges'][number][] = [];
+  const referenceStates: CompositionGraph['referenceStates'][number][] = [];
+
+  if (options.includeResolvedClipShader) {
+    nodes.push({
+      id: 'contribution:shader:ext.shader:clip',
+      kind: 'contribution',
+      ref: {
+        kind: 'shader',
+        extensionId: 'ext.shader',
+        contributionId: 'clip',
+      },
+    });
+    edges.push({
+      id: 'consumes:clip:c1:contribution:shader:ext.shader:clip',
+      kind: 'consumes',
+      sourceNodeId: 'clip:c1',
+      targetNodeId: 'contribution:shader:ext.shader:clip',
+      detail: {
+        scope: 'clip',
+        clipId: 'c1',
+        shaderId: 'shader.clip',
+      },
+    });
+    referenceStates.push({
+      refKey: 'shader:ext.shader:clip',
+      state: 'resolved',
+      nodeIds: ['contribution:shader:ext.shader:clip'],
+    });
+  }
+
+  return {
+    nodes,
+    edges,
+    referenceStates,
+    diagnostics: options.diagnostics ?? [],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1560,6 +1631,224 @@ describe('scanExportConfig — clip-type registry snapshot', () => {
       }),
     ]);
     expect(result.hasBlockingErrors).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Export config scan — composition graph target diagnostics
+// ---------------------------------------------------------------------------
+
+describe('scanExportConfig — composition graph target diagnostics', () => {
+  const builtIn = collectBuiltInKnownIds();
+  const extIds = collectExtensionDeclaredIds([]);
+
+  it.each([
+    {
+      graphCode: COMPOSITION_DIAGNOSTIC_CODE.INVALID_TARGET_PATH,
+      exportCode: 'export/invalid-target-path',
+      reason: 'unknown',
+      detail: {
+        clipId: 'c1',
+        nodeId: 'clip:c1',
+        targetKind: 'clip-param',
+        targetPath: 'params.opacity',
+      },
+    },
+    {
+      graphCode: COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET,
+      exportCode: 'export/unsupported-reserved-target',
+      reason: 'inactive-extension',
+      detail: {
+        clipId: 'c1',
+        nodeId: 'clip:c1',
+        targetKind: 'reserved-target',
+        targetPath: 'timeline.audio.level',
+      },
+    },
+    {
+      graphCode: COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF,
+      exportCode: 'export/unknown-target-ref',
+      reason: 'missing-contribution',
+      detail: {
+        clipId: 'c1',
+        nodeId: 'clip:c1',
+        refKey: 'effect:ext.fx:missing',
+        targetKind: 'effect-param',
+        targetPath: 'gain',
+        extensionId: 'ext.fx',
+        contributionId: 'missing',
+      },
+    },
+    {
+      graphCode: COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_UNIFORM,
+      exportCode: 'export/unknown-uniform',
+      reason: 'unknown',
+      detail: {
+        clipId: 'c1',
+        nodeId: 'clip:c1',
+        refKey: 'shader:ext.shader:clip',
+        targetKind: 'shader-uniform',
+        targetPath: 'uniforms.glow',
+        uniformName: 'glow',
+        extensionId: 'ext.shader',
+        contributionId: 'clip',
+        shaderId: 'shader.clip',
+      },
+    },
+    {
+      graphCode: COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET,
+      exportCode: 'export/non-bindable-target',
+      reason: 'unknown',
+      detail: {
+        clipId: 'c1',
+        nodeId: 'clip:c1',
+        targetKind: 'effect-param',
+        targetPath: 'intensity',
+        extensionId: 'ext.fx',
+        contributionId: 'fx',
+      },
+    },
+    {
+      graphCode: COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR,
+      exportCode: 'export/target-value-type-error',
+      reason: 'unknown',
+      detail: {
+        clipId: 'c1',
+        nodeId: 'clip:c1',
+        targetKind: 'clip-param',
+        targetPath: 'opacity',
+        expectedValueType: 'number',
+        actualValueType: 'string',
+      },
+    },
+    {
+      graphCode: COMPOSITION_DIAGNOSTIC_CODE.TARGET_INTERPOLATION_GAP,
+      exportCode: 'export/target-interpolation-gap',
+      reason: 'unknown',
+      detail: {
+        clipId: 'c1',
+        nodeId: 'clip:c1',
+        targetKind: 'clip-param',
+        targetPath: 'opacity',
+        interpolation: 'linear',
+      },
+    },
+  ])(
+    'promotes $graphCode to blocking export and planning findings',
+    ({ graphCode, exportCode, reason, detail }) => {
+      const graph = makeCompositionGraph({
+        diagnostics: [makeCompositionDiagnostic(graphCode, detail)],
+      });
+
+      const result = scanExportConfig(
+        makeConfig([makeClip('c1')]),
+        builtIn,
+        extIds,
+        undefined,
+        undefined,
+        undefined,
+        graph,
+      );
+
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          severity: 'error',
+          code: exportCode,
+          message: `Diagnostic ${graphCode}`,
+          detail: expect.objectContaining({
+            source: 'composition-graph',
+            graphDiagnosticCode: graphCode,
+            clipId: 'c1',
+            targetKind: detail.targetKind,
+            targetPath: detail.targetPath,
+          }),
+        }),
+      ]);
+      expect(result.findings).toHaveLength(2);
+      expect(result.findings.map((finding) => finding.route).sort()).toEqual(['browser-export', 'worker-export']);
+      expect(result.blockers).toHaveLength(2);
+      expect(result.blockers).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          route: 'browser-export',
+          reason,
+          detail: expect.objectContaining({
+            graphDiagnosticCode: graphCode,
+            targetKind: detail.targetKind,
+            targetPath: detail.targetPath,
+          }),
+        }),
+      ]));
+      expect(result.hasBlockingErrors).toBe(true);
+
+      const planner = planRender({ compositionGraph: graph });
+      expect(planner.canBrowserExport).toBe(false);
+      expect(planner.canWorkerExport).toBe(false);
+      expect(planner.findings).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          severity: 'error',
+          route: 'browser-export',
+          reason,
+          detail: expect.objectContaining({
+            source: 'composition-graph',
+            code: graphCode,
+            targetKind: detail.targetKind,
+            targetPath: detail.targetPath,
+          }),
+        }),
+      ]));
+    },
+  );
+
+  it('keeps graph shader materializer blockers unchanged when target blockers are also present', () => {
+    const graph = makeCompositionGraph({
+      includeResolvedClipShader: true,
+      diagnostics: [
+        makeCompositionDiagnostic(COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_UNIFORM, {
+          clipId: 'c1',
+          nodeId: 'clip:c1',
+          refKey: 'shader:ext.shader:clip',
+          targetKind: 'shader-uniform',
+          targetPath: 'uniforms.glow',
+          uniformName: 'glow',
+          extensionId: 'ext.shader',
+          contributionId: 'clip',
+          shaderId: 'shader.clip',
+        }),
+      ],
+    });
+
+    const result = scanExportConfig(
+      makeConfig([makeClip('c1')]),
+      builtIn,
+      extIds,
+      undefined,
+      undefined,
+      undefined,
+      graph,
+    );
+
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: 'export/unknown-uniform',
+        detail: expect.objectContaining({
+          graphDiagnosticCode: COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_UNIFORM,
+          targetPath: 'uniforms.glow',
+        }),
+      }),
+      expect.objectContaining({
+        code: 'export/unrenderable-shader',
+        message: 'Shader "shader.clip" cannot export because no shader materializer produced RenderMaterial for clip "c1".',
+        detail: expect.objectContaining({
+          clipId: 'c1',
+          shaderId: 'shader.clip',
+          shaderScope: 'clip',
+          renderRoute: 'browser-export',
+        }),
+      }),
+    ]));
+    expect(result.blockers.filter((blocker) => blocker.reason === 'missing-material')).toHaveLength(2);
+    expect(result.blockers.filter((blocker) => blocker.reason === 'unknown')).toHaveLength(2);
   });
 });
 

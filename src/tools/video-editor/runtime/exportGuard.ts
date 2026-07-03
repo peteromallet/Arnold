@@ -49,6 +49,10 @@ import {
   shaderMissingMaterializerBlockerMessage,
   type ShaderMaterializerRequirementScope,
 } from '@/tools/video-editor/runtime/renderability.ts';
+import {
+  COMPOSITION_DIAGNOSTIC_CODE,
+  isBlockingTargetCompositionDiagnosticCode,
+} from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import { validateShaderComposition } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
 import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 import type {
@@ -126,6 +130,7 @@ export interface ExportGuardResult {
 }
 
 const LEGACY_EXPORT_GRAPH_COMPATIBILITY_WARNING_ID = 'exportGuard.compositionGraph.legacy-shader-ref-compatibility';
+const GRAPH_TARGET_BLOCKER_ROUTES: readonly RenderRoute[] = ['browser-export', 'worker-export'];
 
 // ---------------------------------------------------------------------------
 // Built-in ID collection
@@ -304,6 +309,7 @@ export function scanExportConfig(
 
   if (config && config.clips.length > 0) {
     scanLiveBindingExportBlockers(config, diagnostics, findings, blockers);
+    scanCompositionGraphTargetExportBlockers(diagnostics, findings, blockers, compositionGraph);
     scanTimelineShaderExportBlockers(config, diagnostics, findings, blockers, compositionGraph);
     const compatibilityWarning = legacyGraphCompatibilityWarning(config, compositionGraph);
     if (compatibilityWarning) {
@@ -383,6 +389,104 @@ function hasTimelineShaderMetadata(
 }
 
 export { hasTimelineShaderMetadata };
+
+function targetCompositionExportCode(code: string): ExportDiagnostic['code'] | undefined {
+  switch (code) {
+    case COMPOSITION_DIAGNOSTIC_CODE.INVALID_TARGET_PATH:
+      return 'export/invalid-target-path';
+    case COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET:
+      return 'export/unsupported-reserved-target';
+    case COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF:
+      return 'export/unknown-target-ref';
+    case COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_UNIFORM:
+      return 'export/unknown-uniform';
+    case COMPOSITION_DIAGNOSTIC_CODE.NON_BINDABLE_TARGET:
+      return 'export/non-bindable-target';
+    case COMPOSITION_DIAGNOSTIC_CODE.TARGET_VALUE_TYPE_ERROR:
+      return 'export/target-value-type-error';
+    case COMPOSITION_DIAGNOSTIC_CODE.TARGET_INTERPOLATION_GAP:
+      return 'export/target-interpolation-gap';
+    default:
+      return undefined;
+  }
+}
+
+function targetCompositionBlockerReason(code: string): RenderBlockerReason {
+  switch (code) {
+    case COMPOSITION_DIAGNOSTIC_CODE.UNKNOWN_TARGET_REF:
+      return 'missing-contribution';
+    case COMPOSITION_DIAGNOSTIC_CODE.UNSUPPORTED_RESERVED_TARGET:
+      return 'inactive-extension';
+    default:
+      return 'unknown';
+  }
+}
+
+function scanCompositionGraphTargetExportBlockers(
+  diagnostics: ExportDiagnostic[],
+  findings: CapabilityFinding[],
+  blockers: RenderBlocker[],
+  compositionGraph?: CompositionGraph,
+): void {
+  if (!compositionGraph?.diagnostics.length) {
+    return;
+  }
+
+  compositionGraph.diagnostics.forEach((diagnostic, diagnosticIndex) => {
+    if (!isBlockingTargetCompositionDiagnosticCode(diagnostic.code)) {
+      return;
+    }
+
+    const exportCode = targetCompositionExportCode(diagnostic.code);
+    if (!exportCode) {
+      return;
+    }
+
+    const detail = {
+      source: 'composition-graph',
+      graphDiagnosticCode: diagnostic.code,
+      ...(diagnostic.detail ?? {}),
+    };
+    const extensionId = diagnostic.extensionId
+      ?? (diagnostic.detail?.extensionId as string | undefined);
+    const contributionId = diagnostic.contributionId
+      ?? (diagnostic.detail?.contributionId as string | undefined);
+    const clipId = typeof diagnostic.detail?.clipId === 'string'
+      ? diagnostic.detail.clipId
+      : undefined;
+    const reason = targetCompositionBlockerReason(diagnostic.code);
+
+    diagnostics.push({
+      severity: 'error',
+      code: exportCode,
+      message: diagnostic.message,
+      extensionId,
+      contributionId,
+      detail: clipId ? { clipId, ...detail } : detail,
+    });
+
+    for (const route of GRAPH_TARGET_BLOCKER_ROUTES) {
+      const finding: CapabilityFinding = {
+        id: `export.compositionGraph.${diagnostic.code}.${diagnosticIndex}.${route}`,
+        severity: 'error',
+        route,
+        reason,
+        message: diagnostic.message,
+        ...(clipId ? { clipId } : {}),
+        ...(extensionId ? { extensionId } : {}),
+        ...(contributionId ? { contributionId } : {}),
+        detail,
+      };
+      findings.push(finding);
+      blockers.push({
+        ...finding,
+        severity: 'error',
+        route,
+        reason,
+      });
+    }
+  });
+}
 
 function isTimelineShaderMetadata(
   value: unknown,

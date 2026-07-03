@@ -16,6 +16,7 @@ import type {
   TimelineEffectSummary,
   TimelineTransitionSummary,
   TimelineLiveBindingSummary,
+  TimelineAutomationSummary,
   TimelineMaterialRefSummary,
   TimelineSourceRefSummary,
   TimelineRenderGroupSummary,
@@ -124,6 +125,12 @@ describe('M12 planner contract boundary', () => {
       sourceId: 'src1',
       sourceKind: 'webcam',
     };
+    const automation: TimelineAutomationSummary = {
+      contributionId: 'clip.glow',
+      parameterPath: 'params.opacity',
+      keyframeCount: 2,
+      enabled: true,
+    };
     const materialRef: TimelineMaterialRefSummary = {
       id: 'm1',
       clipId: 'c1',
@@ -149,6 +156,7 @@ describe('M12 planner contract boundary', () => {
     expect(effect.effectType).toBe('fade_in');
     expect(transition.duration).toBe(1);
     expect(liveBinding.sourceKind).toBe('webcam');
+    expect(automation.enabled).toBe(true);
     expect(materialRef.assetKey).toBe('asset-1');
     expect(sourceRef.generationId).toBe('gen-1');
     expect(renderGroup.clipIds).toEqual(['c1', 'c2']);
@@ -755,5 +763,102 @@ describe('M12 getCapabilityRequirements', () => {
     //
     // If this file compiles and runs without crashing, the boundary holds.
     expect(typeof createTimelineReader).toBe('function');
+  });
+
+  it('snapshot carries automation summaries on automation clips', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-automation',
+          at: 0,
+          track: 'V1',
+          clipType: 'automation',
+          hold: 1,
+          params: {
+            target: {
+              contributionId: 'clip.glow',
+              parameterPath: 'params.opacity',
+              targetPath: 'opacity',
+            },
+            keyframes: [{ time: 0, value: 1, interpolation: 'hold' }],
+            enabled: true,
+          },
+        },
+      ],
+    };
+    const data = await buildTimelineData(config, emptyRegistry);
+    const reader = createTimelineReader({ data });
+
+    const snap = reader.snapshot();
+
+    expect(snap.clips[0]?.automation).toEqual([
+      {
+        contributionId: 'clip.glow',
+        parameterPath: 'params.opacity',
+        targetPath: 'opacity',
+        keyframeCount: 1,
+        enabled: true,
+      },
+    ]);
+    expect(snap.automations).toEqual(snap.clips[0]?.automation);
+  });
+
+  it('snapshot carries canonical live binding target detail for generic and shader-uniform bindings', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-live',
+          at: 0,
+          track: 'V1',
+          clipType: 'media',
+          hold: 2,
+          app: {
+            liveBindings: [
+              {
+                bindingId: 'lb-clip',
+                sourceId: 'webcam-1',
+                sourceKind: 'webcam',
+                targetParamName: 'params.opacity',
+                targetPath: 'opacity',
+                resolutionStatus: 'resolved',
+              },
+            ],
+            liveUniformBindings: [
+              {
+                bindingId: 'lb-uniform',
+                sourceId: 'midi-1',
+                sourceKind: 'midi',
+                targetMaterialId: 'post-grade',
+                mapping: { kind: 'scalar', uniform: 'intensity' },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const data = await buildTimelineData(config, emptyRegistry);
+    const reader = createTimelineReader({ data });
+
+    const snap = reader.snapshot();
+
+    expect(snap.liveBindings).toEqual([
+      expect.objectContaining({
+        bindingId: 'lb-clip',
+        targetKind: 'clip-param',
+        targetPath: 'opacity',
+        status: 'resolved',
+      }),
+      expect.objectContaining({
+        bindingId: 'lb-uniform',
+        targetKind: 'shader-uniform',
+        targetMaterialId: 'post-grade',
+        targetPath: 'uniforms.intensity',
+        status: 'resolved',
+      }),
+    ]);
   });
 });

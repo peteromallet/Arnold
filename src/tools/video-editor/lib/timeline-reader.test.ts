@@ -270,6 +270,173 @@ describe('createTimelineReader — clip summaries', () => {
     expect(clip!.managedBy).toBe('com.example.ext');
   });
 
+  it('extracts automation summaries from automation clips and preserves explicit targetPath', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-automation',
+          at: 0,
+          track: 'V1',
+          clipType: 'automation',
+          hold: 2,
+          params: {
+            target: {
+              contributionId: 'clip.glow',
+              parameterPath: 'params.opacity',
+              targetPath: 'opacity',
+            },
+            keyframes: [
+              { time: 0, value: 0, interpolation: 'hold' },
+              { time: 1, value: 1, interpolation: 'linear' },
+            ],
+            enabled: true,
+          },
+        },
+      ],
+    };
+    const data = await buildTimelineData(config, emptyRegistry);
+    const reader = createTimelineReader({ data });
+
+    const snap = reader.snapshot();
+    const clip = snap.clips.find((entry) => entry.id === 'clip-automation');
+
+    expect(clip?.automation).toEqual([
+      {
+        contributionId: 'clip.glow',
+        parameterPath: 'params.opacity',
+        targetPath: 'opacity',
+        keyframeCount: 2,
+        enabled: true,
+      },
+    ]);
+    expect(snap.automations).toEqual(clip?.automation);
+  });
+
+  it('keeps disabled automation visible and skips malformed automation params', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-automation-disabled',
+          at: 0,
+          track: 'V1',
+          clipType: 'automation',
+          hold: 2,
+          params: {
+            target: {
+              contributionId: 'clip.glow',
+              parameterPath: 'params.opacity',
+            },
+            keyframes: [],
+            enabled: false,
+          },
+        },
+        {
+          id: 'clip-automation-malformed',
+          at: 2,
+          track: 'V1',
+          clipType: 'automation',
+          hold: 2,
+          params: {
+            target: {
+              contributionId: 'clip.glow',
+            },
+            keyframes: [],
+          },
+        },
+      ],
+    };
+    const data = await buildTimelineData(config, emptyRegistry);
+    const reader = createTimelineReader({ data });
+
+    const snap = reader.snapshot();
+
+    expect(snap.clips.find((entry) => entry.id === 'clip-automation-disabled')?.automation).toEqual([
+      {
+        contributionId: 'clip.glow',
+        parameterPath: 'params.opacity',
+        keyframeCount: 0,
+        enabled: false,
+      },
+    ]);
+    expect(snap.clips.find((entry) => entry.id === 'clip-automation-malformed')?.automation).toBeUndefined();
+    expect(snap.automations).toHaveLength(1);
+  });
+
+  it('extracts canonical target detail for live bindings and live uniform bindings', async () => {
+    const config: TimelineConfig = {
+      output: { resolution: '1920x1080', fps: 30, file: 'out.mp4' },
+      tracks: [{ id: 'V1', kind: 'visual', label: 'V1' }],
+      clips: [
+        {
+          id: 'clip-live-targets',
+          at: 0,
+          track: 'V1',
+          clipType: 'media',
+          hold: 2,
+          app: {
+            liveBindings: [
+              {
+                bindingId: 'lb-effect',
+                sourceId: 'webcam-1',
+                sourceKind: 'webcam',
+                targetEffectId: 'glow',
+                targetParamName: 'params.intensity',
+                targetPath: 'intensity',
+                ownerExtensionId: 'com.example.effect',
+                resolutionStatus: 'resolved',
+              },
+            ],
+            liveUniformBindings: [
+              {
+                bindingId: 'lb-uniform',
+                sourceId: 'midi-1',
+                sourceKind: 'midi',
+                targetMaterialId: 'clip-glow',
+                mapping: { kind: 'scalar', uniform: 'intensity' },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const data = await buildTimelineData(config, emptyRegistry);
+    const reader = createTimelineReader({ data });
+
+    const snap = reader.snapshot();
+    const clip = snap.clips.find((entry) => entry.id === 'clip-live-targets');
+
+    expect(clip?.liveBindings).toEqual([
+      {
+        bindingId: 'lb-effect',
+        clipId: 'clip-live-targets',
+        sourceId: 'webcam-1',
+        sourceKind: 'webcam',
+        targetKind: 'effect-param',
+        targetParamName: 'params.intensity',
+        targetEffectId: 'glow',
+        targetPath: 'intensity',
+        ownerExtensionId: 'com.example.effect',
+        status: 'resolved',
+      },
+      {
+        bindingId: 'lb-uniform',
+        clipId: 'clip-live-targets',
+        sourceId: 'midi-1',
+        sourceKind: 'midi',
+        targetKind: 'shader-uniform',
+        targetParamName: 'intensity',
+        targetMaterialId: 'clip-glow',
+        targetPath: 'uniforms.intensity',
+        status: 'resolved',
+      },
+    ]);
+    expect(snap.liveBindings).toEqual(clip?.liveBindings);
+  });
+
   it('does not mark clip as managed for unknown extension IDs in app', async () => {
     const config: TimelineConfig = {
       ...makeBaseConfig(),

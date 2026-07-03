@@ -54,6 +54,12 @@ import type { VideoEditorSlotDescriptor } from './slotAdapter';
 import { normalizeContributionIndexRouteFit } from '../routeFitMapper';
 import { buildShaderDescriptorsFromGraph } from './projectors/shaderProjector';
 
+function hasConsumesEdges(
+  compositionGraph: Pick<ExtensionRuntime['compositionGraph'], 'edges'>,
+): boolean {
+  return compositionGraph.edges.some((edge) => edge.kind === 'consumes');
+}
+
 // ---------------------------------------------------------------------------
 // Contribution kind labels
 // ---------------------------------------------------------------------------
@@ -780,7 +786,7 @@ export function assembleExtensionRuntime(
   if (
     shaderContributionsForGraph &&
     shaderContributionsForGraph.length > 0 &&
-    compositionGraph.edges.length > 0
+    hasConsumesEdges(compositionGraph)
   ) {
     const graphShaderResult = buildShaderDescriptorsFromGraph(
       shaderContributionsForGraph,

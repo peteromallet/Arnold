@@ -35,6 +35,10 @@ export interface ShaderProjectionResult {
 /** Reference states whose graph-consuming shaders are considered visible. */
 const GRAPH_VISIBLE_REFERENCE_STATES = new Set<string>(['resolved', 'missing']);
 
+function hasConsumesEdges(compositionGraph: CompositionGraph): boolean {
+  return compositionGraph.edges.some((edge) => edge.kind === 'consumes');
+}
+
 // ---------------------------------------------------------------------------
 // Graph-derived shader descriptor shim (M1b)
 // ---------------------------------------------------------------------------
@@ -55,7 +59,7 @@ export function buildShaderDescriptorsFromGraph(
   extensionOrder: ReadonlyMap<string, number> | undefined,
   compositionGraph: CompositionGraph | undefined,
 ): ShaderProjectionResult {
-  if (!compositionGraph || compositionGraph.edges.length === 0) {
+  if (!compositionGraph || !hasConsumesEdges(compositionGraph)) {
     return buildShaderDescriptors(contributions, extensionOrder);
   }
 
