@@ -36,7 +36,35 @@
             "test_function": "test_folder_audit_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native runtime stages, event kinds, artifact outputs, and checkpoint generation. Report conformance for Prep/Plan product semantics deferred to M6."
+        "substrate_note": "Substrate proof only: validates native runtime stages, event kinds, artifact outputs, and checkpoint generation. Report conformance for Prep/Plan product semantics deferred to M6.",
+        "obligations": {
+          "expected_files": [
+            "plan_vN.json",
+            "receipt_plan.json",
+            "prep_notes_vN.json"
+          ],
+          "schema_keys": [
+            "plan_text",
+            "version",
+            "questions",
+            "success_criteria",
+            "assumptions",
+            "step",
+            "success",
+            "summary",
+            "artifacts"
+          ],
+          "receipt_metrics": [
+            "receipt_plan.success==true",
+            "receipt_plan.artifacts non-empty"
+          ],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/prep.py",
+            "arnold_pipelines/megaplan/handlers/plan.py",
+            "arnold_pipelines/megaplan/content_types.py"
+          ],
+          "renamed_equivalents": {}
+        }
       },
       {
         "scenario_id": "D2-critique",
@@ -56,7 +84,7 @@
             "test_function": "test_creative_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native critique stage dispatch and trace event sequence. Parallel lens fanout and evaluator retry require LLM inference — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native critique stage dispatch and trace event sequence. Parallel lens fanout and evaluator retry require LLM inference \u2014 not covered by deterministic runners."
       },
       {
         "scenario_id": "D3-gate-preflight",
@@ -74,7 +102,7 @@
             "test_function": "test_writing_panel_strict_native_truth_route_labels_and_resume"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native suspension mechanism and resume cursor contract. Malformed/empty payload recovery and agent routing require LLM — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native suspension mechanism and resume cursor contract. Malformed/empty payload recovery and agent routing require LLM \u2014 not covered by deterministic runners."
       },
       {
         "scenario_id": "D4-gate-revise",
@@ -90,18 +118,18 @@
             "subpipeline": "creative",
             "canonical_import": "from arnold_pipelines.megaplan.pipelines.creative import build_pipeline",
             "builder": "build_creative",
-            "coverage": "Exercises critique→revise→finalize loop in native program. Covers flag_resolution_success and iterate_to_revise cases through structured stage sequence.",
+            "coverage": "Exercises critique\u2192revise\u2192finalize loop in native program. Covers flag_resolution_success and iterate_to_revise cases through structured stage sequence.",
             "test_function": "test_creative_native_truth_runtime_trace_and_output"
           },
           {
             "subpipeline": "writing_panel_strict",
             "canonical_import": "from arnold_pipelines.megaplan.pipelines.writing_panel_strict import build_pipeline",
             "builder": "build_writing_panel_strict",
-            "coverage": "Exercises panel_review→synth→revise→human_decide loop with native resume. Covers human gate suspension within revise loop.",
+            "coverage": "Exercises panel_review\u2192synth\u2192revise\u2192human_decide loop with native resume. Covers human gate suspension within revise loop.",
             "test_function": "test_writing_panel_strict_native_truth_route_labels_and_resume"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native revise loop stage sequencing and resume after human gate. Flag debt acceptance, reprompt, and typed outcomes require LLM — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native revise loop stage sequencing and resume after human gate. Flag debt acceptance, reprompt, and typed outcomes require LLM \u2014 not covered by deterministic runners."
       },
       {
         "scenario_id": "D5-tiebreaker",
@@ -123,11 +151,38 @@
             "subpipeline": "live_supervisor",
             "canonical_import": "from arnold_pipelines.megaplan.pipelines.live_supervisor import build_pipeline",
             "builder": "build_live_supervisor",
-            "coverage": "Exercises classify→diagnose→repair_decision→recheck_emit stages. Covers decision resolution with structured native output.",
+            "coverage": "Exercises classify\u2192diagnose\u2192repair_decision\u2192recheck_emit stages. Covers decision resolution with structured native output.",
             "test_function": "test_live_supervisor_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native parallel fanout, bracket reduction, and decision emission. Escalate-to-human and replan routes require LLM — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native parallel fanout, bracket reduction, and decision emission. Escalate-to-human and replan routes require LLM \u2014 not covered by deterministic runners.",
+        "obligations": {
+          "expected_files": [
+            "tiebreaker_researcher_output.json",
+            "tiebreaker_challenger_output.json",
+            "tiebreaker_decision.json",
+            "receipt_tiebreaker.json"
+          ],
+          "schema_keys": [
+            "verdict",
+            "rework_items",
+            "summary",
+            "step",
+            "success"
+          ],
+          "receipt_metrics": [
+            "receipt_tiebreaker.success",
+            "researcher+challenger outputs present"
+          ],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/tiebreaker_run.py",
+            "arnold_pipelines/megaplan/handlers/tiebreaker_decide.py",
+            "arnold_pipelines/megaplan/workflows/components.py"
+          ],
+          "renamed_equivalents": {
+            "stages/tiebreaker.py": "handlers/tiebreaker_run.py + handlers/tiebreaker_decide.py"
+          }
+        }
       },
       {
         "scenario_id": "D6-finalize",
@@ -159,7 +214,37 @@
             "test_function": "test_deliberation_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native finalize stage artifact output and trace contract. Baseline selection, failure-to-revise, and before-execute gate require LLM — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native finalize stage artifact output and trace contract. Baseline selection, failure-to-revise, and before-execute gate require LLM \u2014 not covered by deterministic runners.",
+        "obligations": {
+          "expected_files": [
+            "finalize_plan_vN.json",
+            "receipt_finalize.json",
+            "tasks.json"
+          ],
+          "schema_keys": [
+            "plan_text",
+            "version",
+            "success_criteria",
+            "step",
+            "success",
+            "summary",
+            "artifacts",
+            "tasks",
+            "status"
+          ],
+          "receipt_metrics": [
+            "receipt_finalize.success==true",
+            "receipt_finalize.artifacts includes task listing",
+            "baseline selection evidence"
+          ],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/finalize.py",
+            "arnold_pipelines/megaplan/content_types.py"
+          ],
+          "renamed_equivalents": {
+            "stages/finalize.py": "handlers/finalize.py"
+          }
+        }
       },
       {
         "scenario_id": "D7-execute-dag",
@@ -193,7 +278,7 @@
             "test_function": "test_deliberation_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native parallel fanout execution, dependency ordering, and batch stage sequencing. Task complexity model routing requires LLM — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native parallel fanout execution, dependency ordering, and batch stage sequencing. Task complexity model routing requires LLM \u2014 not covered by deterministic runners."
       },
       {
         "scenario_id": "D8-execute-gates",
@@ -219,7 +304,41 @@
             "test_function": "test_deliberation_native_truth_runtime_trace_and_output"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native human gate suspension/resume mechanism and resume cursor contract. No-review-to-done and protected_action_gate require full product pipeline — not covered by deterministic runners."
+        "substrate_note": "Substrate proof only: validates native human gate suspension/resume mechanism and resume cursor contract. No-review-to-done and protected_action_gate require full product pipeline \u2014 not covered by deterministic runners.",
+        "obligations": {
+          "expected_files": [
+            "gate_signals_vN.json",
+            "receipt_gate.json",
+            "human_decision.json",
+            "receipt_execute.json"
+          ],
+          "schema_keys": [
+            "signals",
+            "robustness",
+            "preflight_results",
+            "unresolved_flags",
+            "step",
+            "success",
+            "summary",
+            "artifacts",
+            "tasks",
+            "status"
+          ],
+          "receipt_metrics": [
+            "receipt_gate.success with approval/deny/resume",
+            "receipt_execute.success"
+          ],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/gate.py",
+            "arnold_pipelines/megaplan/handlers/execute.py",
+            "arnold_pipelines/megaplan/workflows/components.py",
+            "arnold_pipelines/megaplan/content_types.py"
+          ],
+          "renamed_equivalents": {
+            "stages/gate.py": "handlers/gate.py",
+            "stages/execute.py": "handlers/execute.py"
+          }
+        }
       },
       {
         "scenario_id": "D12-runtime-trace",
@@ -238,7 +357,7 @@
             "test_function": "test_*_native_truth_runtime_trace_and_output (8 subpipeline tests)"
           }
         ],
-        "substrate_note": "Substrate proof only: validates native trace emission contract (5 canonical files), trace normalization (seq/ts_utc/ts_rel_init_s stripping), directory-level golden regression with explanation-sidecar guard, and checkpoint-driven resume. This is the core D12 proof — golden trace regeneration and semantic diff review are enforced by infrastructure, not product semantics."
+        "substrate_note": "Substrate proof only: validates native trace emission contract (5 canonical files), trace normalization (seq/ts_utc/ts_rel_init_s stripping), directory-level golden regression with explanation-sidecar guard, and checkpoint-driven resume. This is the core D12 proof \u2014 golden trace regeneration and semantic diff review are enforced by infrastructure, not product semantics."
       }
     ],
     "deferred": [
@@ -261,7 +380,35 @@
           "typed-loop-outcomes"
         ],
         "reason": "Requires LLM inference for review approval/block/rework decisions and cap-exhaustion logic. No deterministic no-service runner exists.",
-        "target_milestone": "M6/report-conformance"
+        "target_milestone": "M6/report-conformance",
+        "obligations": {
+          "expected_files": [
+            "review_output.json",
+            "receipt_review.json",
+            "rework_items.json",
+            "cap_exhaustion.json"
+          ],
+          "schema_keys": [
+            "verdict",
+            "rework_items",
+            "summary",
+            "step",
+            "success",
+            "artifacts"
+          ],
+          "receipt_metrics": [
+            "receipt_review.success per iteration",
+            "cap-exhaustion verdict=blocked after M4_LOOP_MAX_ITERATIONS"
+          ],
+          "warrant_source_refs": [
+            "arnold_pipelines/megaplan/handlers/review.py",
+            "arnold_pipelines/megaplan/workflows/components.py"
+          ],
+          "renamed_equivalents": {
+            "stages/review.py": "handlers/review.py",
+            "review/rework": "review:rework"
+          }
+        }
       },
       {
         "scenario_id": "D11-human-control",
@@ -309,7 +456,7 @@
           "source-readability",
           "behavior-parity"
         ],
-        "reason": "Handler purity audit and source-path reconciliation. Not a runtime trace scenario — verified through handler extraction tools and source inventory.",
+        "reason": "Handler purity audit and source-path reconciliation. Not a runtime trace scenario \u2014 verified through handler extraction tools and source inventory.",
         "target_milestone": "M6/report-conformance"
       }
     ]
@@ -317,11 +464,17 @@
   "contract": {
     "golden_root": "tests/arnold_pipelines/megaplan/fixtures/native_goldens/",
     "fixture_format": "multi-file directory",
-    "required_files": ["events.ndjson", "state.json", "stages.json", "artifacts.json", "checkpoint.json"],
+    "required_files": [
+      "events.ndjson",
+      "state.json",
+      "stages.json",
+      "artifacts.json",
+      "checkpoint.json"
+    ],
     "normalization": "events.ndjson: strip seq, ts_utc, ts_rel_init_s; all other files: canonical JSON comparison",
     "regression_guard": "GoldenRegressionRule.directory_digest() with .explanation.md sidecar requirement",
     "recording_flag": "--record-goldens",
     "comparison_helper": "tests/arnold_pipelines/megaplan/fixtures/native_goldens/__init__.py::compare_native_golden_dir"
   },
-  "north_star_note": "This manifest captures native substrate proof only. Final report conformance for visible Megaplan product semantics (including deferred D9-D11 and D13-D15) is owned by composition M6. Committed golden traces prove native runtime behavior (dispatch, fanout, suspension, resume, checkpoint) — not product-level planning correctness."
+  "north_star_note": "This manifest captures native substrate proof only. Final report conformance for visible Megaplan product semantics (including deferred D9-D11 and D13-D15) is owned by composition M6. Committed golden traces prove native runtime behavior (dispatch, fanout, suspension, resume, checkpoint) \u2014 not product-level planning correctness."
 }

@@ -101,6 +101,48 @@ class _NativeDecisionStep:
         return StepResult(next=next_label)
 
 
+class _NativeSubpipelineStep:
+    """Minimal Step adapter wrapping a child :class:`NativeProgram`.
+
+    When the graph executor invokes ``run(ctx)``, the child program is
+    executed via :func:`run_native_pipeline` in an isolated artifact
+    root and the resulting state is returned as outputs.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        child_program: NativeProgram,
+        produces: tuple[Port, ...] = (),
+        consumes: tuple[PortRef, ...] = (),
+    ) -> None:
+        self.name = name
+        self.child_program = child_program
+        self.kind = "native_subpipeline"
+        self.produces: tuple[Port, ...] = produces
+        self.consumes: tuple[PortRef, ...] = consumes
+
+    def run(self, ctx: StepContext) -> StepResult:
+        from pathlib import Path
+
+        from arnold.pipeline.native.runtime import run_native_pipeline
+
+        child_artifact_root = Path(ctx.artifact_root) / f"_child_{self.name}"
+        child_artifact_root.mkdir(parents=True, exist_ok=True)
+
+        child_initial_state: dict[str, Any] = {}
+        if isinstance(ctx.state, Mapping):
+            child_initial_state = dict(ctx.state)
+
+        result = run_native_pipeline(
+            program=self.child_program,
+            artifact_root=child_artifact_root,
+            initial_state=child_initial_state,
+        )
+
+        return StepResult(outputs=dict(result.state), next="halt")
+
+
 # ── default parallel join ───────────────────────────────────────────
 
 
@@ -200,7 +242,7 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
             real_instrs.append(instr)
             continue
 
-        if instr.op not in ("phase", "decision"):
+        if instr.op not in ("phase", "decision", "subpipeline"):
             continue
         if instr.pc in parallel_branch_pcs:
             continue  # Absorbed into a ParallelStage
@@ -230,7 +272,7 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
                 return None
             visited.add(cur)
             instr = instructions[cur]
-            if instr.op in ("phase", "decision", "parallel"):
+            if instr.op in ("phase", "decision", "parallel", "subpipeline"):
                 return cur
             if instr.op == "halt":
                 return None
@@ -338,6 +380,52 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
                 consumes=branch_consumes,
             )
             stages[src_name] = parallel_stage
+            edges_by_src[src_name] = list(edges)
+            continue
+
+        # ── subpipeline stage ────────────────────────────────────
+        if instr.op == "subpipeline":
+            child_prog = instr.subprogram
+            edges = _projected_edges_for_instruction(
+                instr,
+                pc_to_stage=pc_to_stage,
+                resolve_next_real_pc=_resolve_next_real_pc,
+                resolve_next_public_pc=_resolve_next_public_pc,
+            )
+            subpipeline_produces: tuple[Port, ...] = getattr(instr, "produces", ()) or ()
+            subpipeline_consumes: tuple[PortRef, ...] = getattr(instr, "consumes", ()) or ()
+
+            step = _NativeSubpipelineStep(
+                name=src_name,
+                child_program=child_prog if isinstance(child_prog, NativeProgram) else None,  # type: ignore[arg-type]
+                produces=subpipeline_produces,
+                consumes=subpipeline_consumes,
+            )
+
+            if src_name in stages:
+                # Merge duplicate subpipeline names (e.g. same child used twice
+                # with identical stable_id — pc fallback handled by naming).
+                existing = stages[src_name]
+                merged_edges = _merge_edges(existing.edges, edges)
+                merged_produces = _merge_unique(existing.produces, subpipeline_produces)
+                merged_consumes = _merge_unique(existing.consumes, subpipeline_consumes)
+                stages[src_name] = Stage(
+                    name=src_name,
+                    step=existing.step,
+                    edges=merged_edges,
+                    produces=merged_produces,
+                    consumes=merged_consumes,
+                )
+                edges_by_src[src_name] = list(merged_edges)
+                continue
+
+            stages[src_name] = Stage(
+                name=src_name,
+                step=step,
+                edges=tuple(edges),
+                produces=subpipeline_produces,
+                consumes=subpipeline_consumes,
+            )
             edges_by_src[src_name] = list(edges)
             continue
 
@@ -568,6 +656,10 @@ def _public_name_for_instruction(instr: NativeInstruction) -> str:
         decision_name = _decision_attr(func, "name", "")
         if isinstance(decision_name, str) and decision_name:
             return decision_name
+    if instr.op == "subpipeline" and instr.subprogram is not None:
+        sub = instr.subprogram
+        if isinstance(sub, NativeProgram) and sub.stable_id:
+            return sub.stable_id
     return instr.name
 
 
@@ -677,7 +769,7 @@ def _duplicate_public_names(
     skip_pcs = parallel_branch_pcs or set()
     counts: dict[str, int] = {}
     for instr in instructions:
-        if instr.op not in ("phase", "decision"):
+        if instr.op not in ("phase", "decision", "subpipeline"):
             continue
         if instr.pc in skip_pcs:
             continue
@@ -800,7 +892,7 @@ def _resolve_projected_route_target(
             return stage_name
 
     for candidate in instructions:
-        if candidate.op not in ("phase", "decision", "parallel"):
+        if candidate.op not in ("phase", "decision", "parallel", "subpipeline"):
             continue
         if candidate.name != route_target and _public_name_for_instruction(candidate) != route_target:
             continue
@@ -842,7 +934,7 @@ def _projected_edges_for_instruction(
         return list(_normalize_edges(custom_edges))
 
     edges: list[Edge] = []
-    if instr.op == "phase":
+    if instr.op in ("phase", "subpipeline"):
         next_real = resolve_next_public_pc(instr.pc + 1) if instr.next_pc is not None else None
         if next_real is not None and next_real in pc_to_stage:
             target = pc_to_stage[next_real]
