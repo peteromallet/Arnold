@@ -1,0 +1,1835 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+Review the implementation against the success criteria.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M2: Target Paths, Schema Capability, Keyframes, And Live Binding
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Approved plan:
+        # Implementation Plan: M2 Target Paths And Capability Spine
+
+## Overview
+The current code matches the brief: SDK composition graph contracts only allow `consumes` edges, target-path/capability contracts do not exist, `schemaCapabilityRegistry.ts` has the nearest render/type registry but lacks animation/export posture, keyframes still validate against `ParameterDefinition`, live-binding export blocking scans legacy config directly, and graph projection only sees `TimelineSnapshot` summaries. One important repository-backed planning correction is that `TimelineSnapshot.clips` are `TimelineClipSummary` objects, not raw `TimelineClip`s, so graph projection cannot read `clip.keyframes` or raw live metadata unless the reader/snapshot layer exposes target-binding summaries or `CompositionGraphInput` receives a host-owned raw timeline companion. The simpler and cleaner fix is to add SDK summary shapes for target facts and keep raw timeline migration inside host adapters.
+
+Revision check: the finalize feedback does not indicate the plan is aimed at the wrong code or root cause. It identifies a verification-contract failure: scoped baseline selection could not be resolved because executable command checks were mixed into `test_blast_radius.selectors`. The implementation approach remains valid; this revision narrows the machine-readable scoped baseline to concrete test path selectors and moves broad command gates into `always_run`/Validation Order.
+
+This scope is a bridge, not a contradiction, to the North Star: it makes target paths and capabilities public/authoritative for V1 graph facts while keeping extensions away from raw timeline internals. It does not add executable output/process/agent/app targets, material runtime, shader assignment execution, visual graph editing, or texture routing.
+
+## Phase 1: Public Data Contracts
+
+### Step 1: Add `CompositionTargetPath` grammar (`src/sdk/video/composition/targetPath.ts`)
+**Complexity: 3**
+1. Define `CompositionTargetKind` as executable `clip-param | effect-param | transition-param | shader-uniform` plus reserved `extension-param`.
+2. Implement pure parse/stringify/canonicalize helpers: non-shader params drop leading `params.`, shader uniforms canonicalize to `uniforms.<name>`, and reserved domains validate lexically but remain non-executable.
+3. Include ref detail for contribution-owned kinds and require shader-ref detail for `shader-uniform`; do not infer refs from string shape alone.
+4. Export the contracts from `src/sdk/index.ts`.
+5. Add focused contract tests for canonicalization, reserved `extension-param`, unknown kinds, and explicit target-path precedence.
+
+### Step 2: Add `CompositionParamCapability` contracts (`src/sdk/video/composition/capability.ts`)
+**Complexity: 4**
+1. Define the unified capability answer with `targetKind`, `schemaType`, `widgetType`, `status`, `animatable`, `liveBindable`, `serializable`, `exportDeterministic`, `defaultValue`, `valueType`, `interpolationPolicy`, and optional constraints/options/object schema.
+2. Model structured params as `valueType: 'object'` with bounded sub-fields, not as target-path subpaths.
+3. Encode source selectors as normal capabilities: string enum/select with options, or bounded integer with min/max/step, both discrete interpolation.
+4. Encode color discrimination by `targetKind`: host clip/effect/transition colors use hex strings; shader colors use vec4 arrays. Keep `widgetType: 'color'` for both.
+5. Mark `audio-binding` as host-only, `animatable: false`, `liveBindable: true`, `exportDeterministic: false`; keep `textureRef` unsupported.
+6. Export the contracts and examples from `src/sdk/index.ts`; add tests covering all 17 existing schema types plus structured/source-selector examples.
+
+### Step 3: Extend composition graph and diagnostics contracts (`src/sdk/video/composition/graph.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Complexity: 3**
+1. Add `animates` and `binds-live` to `CompositionEdgeKind` and `COMPOSITION_EDGE_KINDS`.
+2. Add stable edge detail fields for `targetPath`, `targetKind`, `contributionId`, `refKey`, `bindingId`, `parameterPath`, and validation posture while preserving existing `consumes` compatibility.
+3. Add diagnostics for unsupported/invalid/ambiguous target paths, unknown refs/uniforms, non-bindable targets, invalid value types, and invalid interpolation.
+4. Extend `CompositionDiagnosticDetail` with target/ref fields such as `targetPath`, `targetKind`, `bindingId`, `uniformName`, and `canonicalTargetPath`.
+
+## Phase 2: Host Adapters And Projection
+
+### Step 4: Build host target migration adapters (`src/tools/video-editor/runtime/composition/targetPathAdapters.ts`)
+**Complexity: 4**
+1. Map raw legacy shapes to canonical target paths: `TimelineClip.keyframes`, automation clip target, `TimelineLiveBinding`, `TimelineLiveUniformBinding`, and descriptor-owned source selectors.
+2. Return canonical path, target kind, source metadata, optional contribution ref, and diagnostics.
+3. Treat explicit `targetPath` as canonical and never override it with legacy fields.
+4. Detect ambiguous flat keys and emit `composition/ambiguous-target-path` instead of silently normalizing.
+
+### Step 5: Surface target facts through timeline summaries (`src/sdk/video/timeline/reader.ts`, `src/tools/video-editor/lib/timeline-reader.ts`)
+**Complexity: 4**
+1. Add SDK summary types for target facts, carrying canonical target paths rather than raw internals.
+2. Update the host timeline reader to derive summaries via migration adapters from raw timeline data.
+3. Keep legacy raw fields out of SDK summaries except compatibility detail needed for diagnostics.
+
+### Step 6: Project `animates` and `binds-live` graph edges (`src/tools/video-editor/runtime/composition/graphProjector.ts`)
+**Complexity: 4**
+1. Consume target summaries from `TimelineSnapshot` and project `animates` edges for keyframes/automation.
+2. Project `binds-live` edges for clip/effect live bindings and shader uniform live bindings.
+3. Ensure contribution nodes exist for referenced contributions when present in `contributionIndex`; emit missing-ref diagnostics otherwise.
+4. Put canonical `targetPath`/`targetKind` into edge detail with deterministic edge IDs.
+
+## Phase 3: Capability Consumers
+
+### Step 7: Wire capability validation into keyframes and automation (`src/tools/video-editor/keyframes/index.ts`)
+**Complexity: 4**
+1. Add capability-aware validation helpers for `animatable`, value type, interpolation policy, constraints/options/object schema, and color shape.
+2. Preserve current `ParameterDefinition` validation by resolving a capability from schema-owned definitions first.
+3. Validate explicit shader-uniform keyframes against shader schema and emit `composition/unknown-ref-uniform` when needed.
+
+### Step 8: Wire capability answers into inspector/schema controls (`src/tools/video-editor/runtime/schemaCapabilityRegistry.ts`, UI controls)
+**Complexity: 4**
+1. Extend the registry from widget-only answers to full `CompositionParamCapability` answers while keeping existing callers compiling.
+2. Add `structured` to widget taxonomy only for bounded object schemas; keep textureRef unsupported.
+3. Update SchemaForm, ParameterControls, KeyframeInspector, ShaderInspector, and SequenceParamEditor to consume unified capabilities.
+
+### Step 9: Wire live binding and proposal/export checks (`src/tools/video-editor/runtime/liveMapping.ts`, `src/tools/video-editor/runtime/exportGuard.ts`, proposal/command paths)
+**Complexity: 4**
+1. Validate live bindings against `liveBindable`; emit `composition/non-bindable-target` for invalid targets.
+2. Persist explicit canonical `targetPath`; legacy fields remain compatibility hints only.
+3. Update export guard to prefer graph `binds-live` and invalid target diagnostics when a composition graph is provided.
+4. Block graph-backed export/planning on invalid target paths, non-deterministic live bindings, and `exportDeterministic: false`.
+
+## Phase 4: Contract Schema And Final Verification
+
+### Step 10: Update extension contract schema (`config/contracts/reigh-extension.schema.json`)
+**Complexity: 3**
+1. Add schema definitions/examples for bounded structured-data and source-selector capabilities.
+2. Keep process/output/agent/app target paths reserved and non-executable.
+
+### Step 11: Prove public exports and compatibility (`src/sdk/index.ts`, contract/SDK tests)
+**Complexity: 2**
+1. Run SDK public export checks and update expected contract surface maps if required.
+2. Verify existing graph/reference exports remain compatible except for new contracts and edge kinds.
+
+### Step 12: Run focused and broad validation
+**Complexity: 2**
+1. Baseline scoped test selection must be path-only and machine-readable: use the `test_blast_radius.selectors` path list for focused baseline selection.
+2. Keep executable command checks out of `test_blast_radius.selectors`; run them through `always_run` and the explicit validation order instead.
+3. Run focused Vitest path selectors for SDK contracts, adapters, timeline reader, graph projector, keyframes, live mapping, export guard, proposal runtime, and UI controls.
+4. Run `npm run check:video-editor-sdk-imports`, `npm run check:sdk-public-exports -- --audit`, `npm run lint`, and `npm run build`.
+5. Finish with `npm test`.
+
+## Execution Order
+1. Land SDK target-path and capability contracts first.
+2. Extend graph and diagnostics before projection.
+3. Build migration adapters before modifying timeline reader.
+4. Add target summaries before graph projection because the projector only receives `TimelineSnapshot`.
+5. Wire keyframes, inspector controls, live binding, proposal serialization, and export blockers after the shared capability answer exists.
+6. Update contract schema and public export checks last.
+
+## Validation Order
+1. Machine-readable scoped baseline: run only path selectors from `test_blast_radius.selectors`; do not include command selectors in that list.
+2. Unit tests first: target-path parser/stringifier, capability examples, diagnostics, and adapters.
+3. Projection tests next: timeline reader summaries and graph projection.
+4. Consumer tests next: keyframes, schema registry, UI controls, live mapping, proposal runtime, and export guard.
+5. Contract checks next: SDK exports, extension schema validation, and import allowlist.
+6. Full gates last: lint, build, and `npm test`.
+
+
+        Review execution context (`finalize.json` + `execution.json`, prompt projection only):
+        {
+  "tasks": [
+    {
+      "id": "T1",
+      "depends_on": [],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 1: Add `src/sdk/video/composition/targetPath.ts` with `CompositionTargetKind`, structured `CompositionTargetPath` data, parse/stringify/canonicalize helpers, reserved `extension-param` lexical validation, shader-ref requirements for `shader-uniform`, SDK exports, and focused target-path contract tests.",
+      "complexity_justification": "This creates a public SDK target-path grammar used by adapters, graph edges, proposal serialization, and extension contracts. A subtle canonicalization or ref-precedence mistake would propagate through later host projection behavior, so it is a shared-contract tier 4 task.",
+      "executor_notes": "Added the public target-path contract and barrel exports, then verified the focused module with `npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/targetPath.test.ts` (7 tests passed). Coverage proves non-shader canonicalization strips leading `params.`, shader uniforms canonicalize to `uniforms.<name>` and require explicit shader refs, reserved `extension-param` paths stay non-executable, and unknown kinds are rejected.",
+      "files_changed": [
+        "src/sdk/index.ts",
+        "src/sdk/video/composition/targetPath.test.ts",
+        "src/sdk/video/composition/targetPath.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/targetPath.test.ts"
+      ]
+    },
+    {
+      "id": "T2",
+      "depends_on": [
+        "T1"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 2: Add `src/sdk/video/composition/capability.ts` with `CompositionParamCapability`, value/widget/interpolation/status contracts, all 17 current schema-type capability examples, structured-object and source-selector examples, host-vs-shader color discrimination, audio-binding posture, unsupported textureRef posture, SDK exports, and capability tests.",
+      "complexity_justification": "This defines the shared capability answer consumed by validation, UI controls, live binding, export guards, and extension schemas. Incorrect field semantics such as `exportDeterministic`, color shape, or object constraints would be non-local across multiple consumers.",
+      "executor_notes": "Added the public composition capability contract, example matrix, and barrel exports, then verified the focused module with `npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/capability.test.ts` (6 tests passed). Coverage proves all 17 current schema-type examples plus structured-object and source-selector examples, host-vs-shader color discrimination, audio-binding posture, and unsupported textureRef behavior.",
+      "files_changed": [
+        "src/sdk/index.ts",
+        "src/sdk/video/composition/capability.test.ts",
+        "src/sdk/video/composition/capability.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/capability.test.ts"
+      ]
+    },
+    {
+      "id": "T3",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 3: Extend composition graph and diagnostics contracts with `animates` and `binds-live` edge kinds, stable edge detail fields for target/ref/binding/validation posture, and structured composition diagnostics for invalid/unsupported/ambiguous targets, unknown refs/uniforms, non-bindable targets, invalid values, and invalid interpolation.",
+      "complexity_justification": "The graph edge and diagnostic shapes are shared runtime contracts in `src/sdk/video/composition/graph.ts` and composition diagnostics. Subtle detail-field drift can break projection, export blockers, and test assertions outside this edit surface.",
+      "executor_notes": "Extended the public composition graph contract with animates/binds-live edge kinds, stable edge detail posture fields, and expanded composition diagnostic codes/detail fields. Updated projector/reference diagnostics to populate the new validation posture/ref detail without changing existing consumes projection behavior, then verified with the focused Vitest run (5 files, 650 tests passed).",
+      "files_changed": [
+        "src/sdk/index.test.ts",
+        "src/sdk/index.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts",
+        "src/sdk/video/composition/graph.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/referenceResolver.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/sdk/manifest-schema-validation.test.ts"
+      ]
+    },
+    {
+      "id": "T4",
+      "depends_on": [
+        "T3"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This adapter is the boundary between raw timeline internals and SDK-owned target facts. Mistakes here can silently change authoritative graph input while later projector tests still see plausible canonical paths, so tier 4 is warranted.",
+      "executor_notes": "Added host-only targetPath adapter seams for keyframes, automation, live bindings, source selectors, and live mapping. Scoped Vitest coverage proved explicit targetPath stays authoritative, ambiguous flat keys emit composition/ambiguous-target-path, shader-uniform paths canonicalize, and reserved extension-param targets are rejected.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts",
+        "src/tools/video-editor/runtime/composition/targetPathAdapters.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "id": "T5",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 5: Add SDK timeline target-summary types and update the host timeline reader to derive canonical animation/live/source-selector target summaries via the migration adapters, with tests proving raw legacy internals stay behind the host reader boundary.",
+      "complexity_justification": "This changes `TimelineSnapshot`-level data flow in `src/sdk/video/timeline/reader.ts` and `src/tools/video-editor/lib/timeline-reader.ts`. A wrong summary shape or missing compatibility detail would affect graph projection and SDK consumers without necessarily failing a single local unit test.",
+      "executor_notes": "Added TimelineAnimationTargetSummary, TimelineLiveTargetSummary, and TimelineSourceSelectorTargetSummary to src/sdk/video/timeline/reader.ts with full canonical target-path shapes. Extended TimelineSnapshot and TimelineClipSummary with animationTargets, liveTargets, and sourceSelectorTargets fields. Updated host timeline reader (src/tools/video-editor/lib/timeline-reader.ts) to derive canonical summaries via adaptKeyframeTarget, adaptLiveBindingTarget, and adaptSourceSelectorTarget from the targetPathAdapters module. Added M2 target-summary tests proving: adapter-derived canonical paths wit...",
+      "files_changed": [
+        "src/sdk/video/timeline/reader.ts",
+        "src/sdk/index.ts",
+        "src/tools/video-editor/lib/timeline-reader.ts",
+        "src/tools/video-editor/lib/timeline-reader.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "id": "T6",
+      "depends_on": [
+        "T5"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 6: Update graph projection to consume timeline target summaries and emit deterministic `animates` and `binds-live` edges with canonical target detail, contribution-node creation from `contributionIndex`, missing-ref diagnostics, and projection tests preserving existing `consumes` behavior.",
+      "complexity_justification": "The projector converts SDK summaries into authoritative graph facts used by export and planning. Edge-ID determinism and contribution/ref diagnostics are shared invariants, so a subtle projector bug is non-local.",
+      "executor_notes": "Updated graphProjector.ts to consume animationTargets, liveTargets, and sourceSelectorTargets from the snapshot. Emitted deterministic animates edges (ID: animates:<sourceNodeId>:<targetPath>) and binds-live edges (ID: binds-live:<sourceNodeId>:<bindingId>) with full canonical detail (targetPath, targetKind, parameterPath, refKey, extensionId, contributionId, validationPosture). Created contribution nodes from contributionIndex where targets carry refs. Pushed refUsages for missing-ref diagnostics via existing resolveCompositionReferences pipeline. Added 9 focused projection tests proving:...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config .../vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts (11/11 passed)"
+      ]
+    },
+    {
+      "id": "T7",
+      "depends_on": [
+        "T4"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 7: Add capability-aware keyframe and automation validation helpers for host clip/effect/transition params, covering `animatable`, value type, interpolation policy, constraints/options/object schemas, host color shape, and preservation of current `ParameterDefinition` validation where schema-owned definitions still apply.",
+      "complexity_justification": "Keyframe validation in `src/tools/video-editor/keyframes/index.ts` affects authored timeline data and must reconcile legacy `ParameterDefinition` logic with new capability semantics. Errors can admit invalid values that later graph/export code treats as authoritative.",
+      "executor_notes": "Added capability-aware keyframe validation helpers validateKeyframeValueCapability and validateKeyframesCapability to src/tools/video-editor/keyframes/index.ts. validateKeyframeValueCapability enforces valueType conformance (string/number/integer/boolean/vector2-4/object/texture-ref), numeric constraints (min/max), string constraints (minLength/maxLength/pattern), host color hex shape validation, select option membership, and structured object field validation (required fields, field value types, field constraints, field patterns). validateKeyframesCapability enforces animatability at the a...",
+      "files_changed": [
+        "src/tools/video-editor/keyframes/index.ts",
+        "src/tools/video-editor/keyframes/index.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "id": "T8",
+      "depends_on": [
+        "T7"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 7: Extend keyframe validation and tests for explicit shader-uniform target paths, shader schema lookup, shader vec4 color/value validation, invalid interpolation, and `composition/unknown-ref-uniform` diagnostics.",
+      "complexity_justification": "This is a multi-file validation extension focused on shader-uniform paths after the host validation helper exists. The logic is non-trivial but narrower than T7 because it is scoped to shader lookup and related diagnostics.",
+      "executor_notes": "Extended keyframe validation with shader-uniform-specific functions: validateShaderUniformKeyframeValue (single value against ShaderUniformDefinition) and validateShaderUniformKeyframes (full keyframe array with schema lookup). Shader schema lookup via schema.find() emits composition/unknown-ref-uniform when uniform name not found, including availableUniforms and optional shaderRefKey in detail. Vec4 color validation enforces 4-number arrays with all components in [0,1]; out-of-range, wrong-length, and non-array values emit keyframes/invalid-shader-color. Invalid interpolation policy enforc...",
+      "files_changed": [
+        "src/tools/video-editor/keyframes/index.ts",
+        "src/tools/video-editor/keyframes/index.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config .../vitest.config.ts src/tools/video-editor/keyframes/index.test.ts (203/203 passed)"
+      ]
+    },
+    {
+      "id": "T9",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 8: Extend `schemaCapabilityRegistry.ts` from widget-only answers to full `CompositionParamCapability` answers, including structured-object widget support, source-selector capabilities, textureRef unsupported handling, compatibility for existing callers, and registry tests.",
+      "complexity_justification": "The registry is the central capability source for UI, keyframes, live mapping, and export posture. A partial compatibility migration could compile while giving downstream controls incomplete capability answers.",
+      "executor_notes": "Extended the schema capability registry with resolveCapability(...) full CompositionParamCapability answers, structured object and source-selector resolution options, and shared textureRef/color/audio-binding posture while preserving resolve/isSupported/isCustom/getDiagnostic compatibility. Verified in the focused Vitest run (5 files, 650 tests passed).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+        "src/tools/video-editor/runtime/schemaCapabilityRegistry.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/sdk/manifest-schema-validation.test.ts"
+      ]
+    },
+    {
+      "id": "T10",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 8: Update `SchemaForm`, `ParameterControls`, and `SequenceParamEditor` to consume unified capabilities for normal params, structured-object params, source selectors, unsupported textureRef cases, and matching UI tests.",
+      "complexity_justification": "This migrates related UI consumers to a new registry answer while preserving existing behavior. The risk is mostly local to form/control rendering and tests, so it is tier 3 rather than a shared-contract tier.",
+      "executor_notes": "Migrated SchemaForm, ParameterControls, and SequenceParamEditor to resolved capability answers, including structured-object widgets, option-backed/source-selector select posture, and unsupported nested-shape diagnostics. After fixing the new UI-test harness/provider expectations, the focused rerun passed 144/144 tests.",
+      "files_changed": [
+        "src/tools/video-editor/components/ParameterControls.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx",
+        "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+        "src/tools/video-editor/components/SchemaForm/SchemaForm.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx"
+      ]
+    },
+    {
+      "id": "T11",
+      "depends_on": [
+        "T8",
+        "T9"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 8: Update `KeyframeInspector` and `ShaderInspector` to consume unified capabilities for target/capability posture, shader-uniform behavior, host-vs-shader color discrimination, and matching UI tests.",
+      "complexity_justification": "This is a focused UI migration for two inspector surfaces that depends on completed validation and registry contracts. The logic is cross-component but the failure modes are visible in component tests and inspector behavior.",
+      "executor_notes": "Updated KeyframeInspector to consume unified capabilities: added targetKind and resolvedCapabilities optional props, capability-aware widget rendering in KeyframeRow via effectiveWidgetType (preferring capability.widgetType with fallback to legacy definition.type mapping), host-vs-shader color discrimination (shader vec4 arrays render as numeric vector inputs, host hex strings render as color picker), vector widget for vec2/vec3/vec4 types, and shader-number widget for float/int/frame/time types. Added 7 capability-aware UI tests. Updated ShaderInspector tests with 5 host-vs-shader color di...",
+      "files_changed": [
+        "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx",
+        "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+        "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "id": "T12",
+      "depends_on": [
+        "T9"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 9: Update `liveMapping.ts` to validate live bindings against `liveBindable`, persist explicit canonical `targetPath`, keep legacy fields as compatibility hints only, emit `composition/non-bindable-target`, and add live-mapping tests.",
+      "complexity_justification": "Live binding validation controls whether nondeterministic inputs can enter authored timeline state. A bug in target persistence or `liveBindable` interpretation affects export blocking and proposal paths beyond this module.",
+      "executor_notes": "Updated liveMapping to canonicalize and persist explicit targetPath, retain legacy parameterPath only as a compatibility hint, resolve capability posture through the registry, and emit composition/non-bindable-target when liveBindable is false. The scoped Vitest run covered authoritative targetPath persistence and non-bindable textureRef rejection.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/liveMapping.test.ts",
+        "src/tools/video-editor/runtime/liveMapping.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "id": "T13",
+      "depends_on": [
+        "T12"
+      ],
+      "status": "skipped",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This touches several command/proposal surfaces, but the invariant is narrow: preserve explicit canonical target paths over legacy fields. The expected failures are testable through proposal serialization and command fixtures.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    },
+    {
+      "id": "T14",
+      "depends_on": [
+        "T6",
+        "T12"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 4,
+      "reviewer_verdict": "",
+      "description": "Step 9: Update `exportGuard.ts` and planning/export checks to prefer graph `binds-live` edges and composition diagnostics when a graph is provided, blocking invalid target paths, unresolved or nondeterministic live bindings, and capabilities with `exportDeterministic: false`; add export-guard tests.",
+      "complexity_justification": "Export blocking is a cross-cutting safety gate that now consumes graph facts and capability posture. A subtle preference-order or diagnostic interpretation bug could allow nondeterministic export despite local validation passing.",
+      "executor_notes": "Updated exportGuard.ts with three new graph-backed scanning functions: scanGraphBindingExportBlockers (scans graph diagnostics + binds-live edges for blocking posture), scanGraphTargetPathBlockers (scans for invalid/unsupported target paths), scanGraphExportDeterministicBlockers (scans for nondeterministic capability posture). Updated scanExportConfig to prefer graph-backed checks when a composition graph is provided. Added 9 graph-backed export guard tests. Scoped vitest: 74/74 exportGuard tests passed.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/exportGuard.ts",
+        "src/tools/video-editor/runtime/exportGuard.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "id": "T15",
+      "depends_on": [
+        "T2"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 3,
+      "reviewer_verdict": "",
+      "description": "Step 10: Update `config/contracts/reigh-extension.schema.json` and manifest schema tests with bounded structured-data and source-selector capability definitions/examples while keeping process/output/agent/app target domains reserved and non-executable.",
+      "complexity_justification": "This modifies a public JSON schema and tests, but it mirrors the capability contract already established in T2. The task is tier 3 because schema drift can affect extension validation, though the accepted examples make failures directly testable.",
+      "executor_notes": "Added manifest-schema helper definitions for CompositionTargetPath and CompositionParamCapability, including bounded structured-data and source-selector examples, and added schema tests that validate the examples plus reserved extension-param process/output/agent/app domains remain non-executable through SDK canonicalization. Verified with jq schema parse plus the focused Vitest run (5 files, 650 tests passed).",
+      "files_changed": [
+        "config/contracts/reigh-extension.schema.json",
+        "src/sdk/manifest-schema-validation.test.ts"
+      ],
+      "commands_run": [
+        "jq empty config/contracts/reigh-extension.schema.json",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/sdk/manifest-schema-validation.test.ts"
+      ]
+    },
+    {
+      "id": "T16",
+      "depends_on": [
+        "T3",
+        "T15"
+      ],
+      "status": "done",
+      "kind": "code",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Step 11: Prove SDK public exports and compatibility by updating `src/sdk/index.ts` exports and any expected contract surface maps needed by the SDK import/public-export checks, preserving existing graph/reference exports except for new contracts and edge kinds.",
+      "complexity_justification": "This is a localized export-surface update after the underlying contracts exist. It is important but mostly mechanical, with dedicated import/export checks expected to catch omissions.",
+      "executor_notes": "Updated SDK public-export verification to cover the target-path and capability contracts through barrel/index tests plus contract-governance artifacts. check-contract-governance, check:sdk-public-exports -- --audit, and the regenerated SDK API manifest baseline all completed successfully.",
+      "files_changed": [
+        "config/contracts/registry.json",
+        "config/governance/sdk-public-api-manifest.json",
+        "src/sdk/index.test.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-contract-governance.mjs",
+        "npm run check:sdk-public-exports -- --audit",
+        "node scripts/quality/check-sdk-api-manifest.mjs --write-baseline",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "id": "T17",
+      "depends_on": [
+        "T10",
+        "T11",
+        "T13",
+        "T14",
+        "T16"
+      ],
+      "status": "done",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This is mechanical focused test execution over the plan's path-only scoped baseline. The executor must route failures to the changed surfaces, but there is no new implementation logic in this task.",
+      "executor_notes": "Ran 11 path-only selectors from test_blast_radius.selectors (no command selectors mixed in). Results: compositionGraphProjector (11/11), schemaCapabilityRegistry (79/79), keyframes/index (203/203), liveMapping (9/9), exportGuard (74/74), timeline-reader (54/54), proposal-runtime (91/91), SchemaForm (142/142), KeyframeInspector (22/22), manifest-schema-validation (31/31) \u2014 716/716 passed. ShaderInspector timed out due to pre-existing jsdom slowness (same issue documented in batch 7, exit 143). baseline_test_failures is null so no baseline comparison possible; treated all failures as would-be...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts [10 path selectors] \u2014 716/716 passed",
+        "npx vitest run --config config/testing/vitest.config.ts ShaderInspector.test.tsx \u2014 timed out (pre-existing)"
+      ]
+    },
+    {
+      "id": "T18",
+      "depends_on": [
+        "T17"
+      ],
+      "status": "skipped",
+      "kind": "test",
+      "complexity": 2,
+      "reviewer_verdict": "deferred_baseline_unavailable",
+      "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+      "complexity_justification": "This final task runs the required project gates and full suite. It is operationally broad but mechanically straightforward, with the harness owning authoritative post-execute validation.",
+      "executor_notes": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative.",
+      "files_changed": [],
+      "commands_run": [],
+      "evidence_files": []
+    }
+  ],
+  "sense_checks": [
+    {
+      "id": "SC1",
+      "task_id": "T1",
+      "verdict": "",
+      "question": "Do target-path tests prove canonicalization strips `params.` for non-shader params, shader uniforms canonicalize to `uniforms.<name>`, shader targets require explicit shader-ref detail, `extension-param` is reserved/non-executable, and unknown executable kinds are rejected?",
+      "executor_note": "Yes. The focused target-path contract tests prove non-shader canonicalization removes leading `params.`, shader uniforms canonicalize to `uniforms.<name>`, bare shader-uniform strings fail without explicit shader ref detail, `extension-param` remains reserved and non-executable with reserved-domain lexical validation, and unknown executable kinds are rejected."
+    },
+    {
+      "id": "SC2",
+      "task_id": "T2",
+      "verdict": "",
+      "question": "Do capability tests cover all 17 existing schema types plus structured-object and source-selector examples, with correct animatable/live/export posture, host hex colors, shader vec4 colors, audio-binding posture, and unsupported textureRef behavior?",
+      "executor_note": "Yes. The new capability tests cover all 17 current schema-type examples plus structured-object and source-selector examples, and assert the expected animatable/live/export posture, host hex color vs shader vec4 color discrimination, audio-binding posture, and unsupported textureRef behavior."
+    },
+    {
+      "id": "SC3",
+      "task_id": "T3",
+      "verdict": "",
+      "question": "Do graph and diagnostic contracts preserve existing `consumes` compatibility while adding `animates`/`binds-live` and structured target/ref/binding diagnostic details?",
+      "executor_note": "Graph and diagnostic contracts now preserve consumes compatibility while adding animates/binds-live kinds, stable edge detail fields for ref/target/binding posture, and structured composition diagnostic codes/detail for target-path, uniform, value, and interpolation failures."
+    },
+    {
+      "id": "SC4",
+      "task_id": "T4",
+      "verdict": "",
+      "question": "Do migration adapters treat explicit `targetPath` as authoritative, avoid silent normalization of ambiguous flat keys, and keep all raw legacy shape handling isolated in host runtime code?",
+      "executor_note": "Adapters keep explicit targetPath authoritative, isolate raw legacy target-shape handling in host runtime code, and emit composition/ambiguous-target-path instead of silently flattening ambiguous keys."
+    },
+    {
+      "id": "SC5",
+      "task_id": "T5",
+      "verdict": "",
+      "question": "Does `TimelineSnapshot` expose canonical target summary facts without leaking raw `TimelineClip` internals, and do timeline-reader tests show summaries derived through adapters?",
+      "executor_note": "CONFIRMED. TimelineSnapshot now exposes animationTargets, liveTargets, and sourceSelectorTargets \u2014 each carrying canonical targetPath, targetKind, and parameterPath derived through the targetPathAdapters. The test 'snapshot does not expose raw legacy internals beyond the adapter boundary' proves that raw rows, meta, registry, config fields, and raw keyframes objects are NOT exposed on snapshots or clip summaries. The test 'derives canonical animation targets from clip keyframes via adapters' proves summaries are adapter-derived with correct canonical target paths and keyframe counts."
+    },
+    {
+      "id": "SC6",
+      "task_id": "T6",
+      "verdict": "",
+      "question": "Do graph projection tests prove deterministic `animates` and `binds-live` edge IDs/details, contribution-node handling from `contributionIndex`, missing-ref diagnostics, and unchanged shader/ref `consumes` behavior?",
+      "executor_note": "VERIFIED. The projection tests prove: (1) deterministic edge IDs \u2014 animates:<clipNode>:<targetPath> and binds-live:<clipNode>:<bindingId> are stable across different snapshot instances with same paths; (2) contribution-node reuse from contributionIndex \u2014 existing contribution nodes are found by refKey and reused instead of duplicated; (3) missing-ref diagnostics \u2014 unknown animation/live refs produce composition/missing-ref diagnostics routed through the existing resolveCompositionReferences pipeline; (4) unchanged consumes behavior \u2014 the 'preserves existing consumes edges alongside animates..."
+    },
+    {
+      "id": "SC7",
+      "task_id": "T7",
+      "verdict": "",
+      "question": "Do host keyframe/automation tests prove capability validation enforces animatability, value shape, interpolation, constraints/options/object schemas, and preserves existing `ParameterDefinition` compatibility?",
+      "executor_note": "CONFIRMED. validateKeyframesCapability enforces animatability (non-animatable targets rejected at array level), interpolation policy compatibility (linear rejected for discrete-only policies, hold accepted for both), value type conformance (number/string/boolean/object), numeric constraints (min/max), string constraints (minLength/maxLength/pattern), host color hex format, select option membership, and structured object schema validation (required fields, field types, field constraints, field patterns). The cross-validator test 'preserves ParameterDefinition compatibility' proves both legac..."
+    },
+    {
+      "id": "SC8",
+      "task_id": "T8",
+      "verdict": "",
+      "question": "Do shader-uniform keyframe tests prove shader schema lookup, vec4 color validation, invalid interpolation diagnostics, and `composition/unknown-ref-uniform` behavior?",
+      "executor_note": "VERIFIED. The shader-uniform tests prove: (1) shader schema lookup \u2014 validateShaderUniformKeyframes successfully finds uniforms by name in the schema and returns empty diagnostics for valid values; (2) vec4 color validation \u2014 tests confirm acceptance of [0,0,0,0] through [1,1,1,1], rejection of out-of-range components [2,-1,0,0], wrong array length [1,0,0], and non-array values '#ff0000', all emitting keyframes/invalid-shader-color; (3) invalid interpolation diagnostics \u2014 linear interpolation on int (discrete-only) emits composition/invalid-interpolation with detail including uniformType, i..."
+    },
+    {
+      "id": "SC9",
+      "task_id": "T9",
+      "verdict": "",
+      "question": "Does the registry return full `CompositionParamCapability` answers without breaking existing callers, and are structured/source-selector/textureRef cases covered?",
+      "executor_note": "The registry now exposes full CompositionParamCapability answers through resolveCapability(...) for structured objects, source selectors, host-vs-shader color, audio-binding, and textureRef unsupported posture, while legacy resolve/isSupported/isCustom/getDiagnostic callers still work."
+    },
+    {
+      "id": "SC10",
+      "task_id": "T10",
+      "verdict": "",
+      "question": "Do SchemaForm, ParameterControls, and SequenceParamEditor render and validate from unified capability answers for normal, structured, source-selector, and unsupported textureRef cases?",
+      "executor_note": "SchemaForm, ParameterControls, and SequenceParamEditor now render from unified capability answers across normal params, structured objects, option-backed/source-selector selects, and unsupported nested/textureRef postures."
+    },
+    {
+      "id": "SC11",
+      "task_id": "T11",
+      "verdict": "",
+      "question": "Do KeyframeInspector and ShaderInspector tests cover target capability posture and host-vs-shader color handling without regressing existing inspector workflows?",
+      "executor_note": "KeyframeInspector tests now cover target capability posture and host-vs-shader color handling: 7 new tests prove shader vec4 color values render as numeric vector inputs (not hex color picker), host color values render as hex color picker, vec2/vec4 values render vector inputs, pre-resolved capability widget types are consumed, unsupported capability renders without crashing, and targetKind prop is accepted. Existing 15 inspector workflow tests continue to pass without regression (22/22 total). ShaderInspector tests add 5 host-vs-shader color discrimination tests proving shader color/vec4/v..."
+    },
+    {
+      "id": "SC12",
+      "task_id": "T12",
+      "verdict": "",
+      "question": "Do live-mapping tests prove `liveBindable` enforcement, `composition/non-bindable-target` diagnostics, explicit canonical `targetPath` persistence, and legacy fields as hints only?",
+      "executor_note": "liveMapping now persists canonical targetPath, treats legacy parameterPath as a hint only, and raises composition/non-bindable-target when the resolved capability is not live-bindable."
+    },
+    {
+      "id": "SC13",
+      "task_id": "T13",
+      "verdict": "",
+      "question": "Do proposal and command tests prove explicit serialized `targetPath` survives round trips and is never overridden by legacy fields?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    },
+    {
+      "id": "SC14",
+      "task_id": "T14",
+      "verdict": "",
+      "question": "Do export-guard tests prove graph-backed export/planning blocks invalid target paths, unresolved or nondeterministic live bindings, and `exportDeterministic: false` capabilities when a graph is provided?",
+      "executor_note": "Export-guard tests prove graph-backed export/planning blocks: invalid-target-path diagnostics block export, unresolved/nondeterministic live bindings are blocked when binds-live edges carry invalid/unsupported/ambiguous posture or non-bindable-target diagnostics, exportDeterministic:false posture is enforced through invalid-value/invalid-interpolation diagnostics. Valid binds-live edges and consumes-only graphs do not trigger false positives. All 9 new graph-backed tests pass alongside 65 existing tests (74/74 total)."
+    },
+    {
+      "id": "SC15",
+      "task_id": "T15",
+      "verdict": "",
+      "question": "Does the extension contract schema accept the new bounded structured-data and source-selector examples while keeping process/output/agent/app domains reserved and non-executable?",
+      "executor_note": "The manifest schema now accepts bounded structured-data and source-selector capability examples, and the reserved process/output/agent/app extension-param domains validate structurally while remaining non-executable via SDK target-path canonicalization."
+    },
+    {
+      "id": "SC16",
+      "task_id": "T16",
+      "verdict": "",
+      "question": "Do SDK export checks see the new target-path, capability, graph, and timeline summary contracts while preserving existing public graph/reference exports?",
+      "executor_note": "Barrel/index smoke coverage plus contract-governance and public-export audits now see the new target-path/capability surfaces without dropping the existing graph/reference export contract."
+    },
+    {
+      "id": "SC17",
+      "task_id": "T17",
+      "verdict": "",
+      "question": "Were only path selectors from `test_blast_radius.selectors` used for the focused baseline, with no command selectors mixed into the scoped selector list?",
+      "executor_note": "CONFIRMED. Only path-kind selectors from test_blast_radius.selectors were used. The 11 selectors (compositionGraphProjector, schemaCapabilityRegistry, keyframes/index, liveMapping, exportGuard, timeline-reader, proposal-runtime, SchemaForm, KeyframeInspector, ShaderInspector, manifest-schema-validation) are all path-kind. No command selectors (npm run check:video-editor-sdk-imports, npm run check:sdk-public-exports, npm run lint, npm run build, npm test) were mixed into this scoped selector list. Command selectors are reserved for T18 (final gate batch)."
+    },
+    {
+      "id": "SC18",
+      "task_id": "T18",
+      "verdict": "",
+      "question": "Did the final gate run the SDK import check, public export audit, lint, build, and full `npm test`, with any failures classified as new versus pre-existing baseline?",
+      "executor_note": "Deferred by harness: baseline_test_failures is null, so this no-new-failures checkpoint cannot compare against a recorded baseline. The harness-owned final verification/review phase remains authoritative."
+    }
+  ],
+  "task_updates": [
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Added TimelineAnimationTargetSummary, TimelineLiveTargetSummary, and TimelineSourceSelectorTargetSummary to src/sdk/video/timeline/reader.ts with full canonical target-path shapes. Extended TimelineSnapshot and TimelineClipSummary with animationTargets, liveTargets, and sourceSelectorTargets fields. Updated host timeline reader (src/tools/video-editor/lib/timeline-reader.ts) to derive canonical summaries via adaptKeyframeTarget, adaptLiveBindingTarget, and adaptSourceSelectorTarget from the targetPathAdapters module. Added M2 target-summary tests proving: adapter-derived canonical paths wit...",
+      "files_changed": [
+        "src/sdk/video/timeline/reader.ts",
+        "src/sdk/index.ts",
+        "src/tools/video-editor/lib/timeline-reader.ts",
+        "src/tools/video-editor/lib/timeline-reader.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Added capability-aware keyframe validation helpers validateKeyframeValueCapability and validateKeyframesCapability to src/tools/video-editor/keyframes/index.ts. validateKeyframeValueCapability enforces valueType conformance (string/number/integer/boolean/vector2-4/object/texture-ref), numeric constraints (min/max), string constraints (minLength/maxLength/pattern), host color hex shape validation, select option membership, and structured object field validation (required fields, field value types, field constraints, field patterns). validateKeyframesCapability enforces animatability at the a...",
+      "files_changed": [
+        "src/tools/video-editor/keyframes/index.ts",
+        "src/tools/video-editor/keyframes/index.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T2",
+      "status": "done",
+      "executor_notes": "Added the public composition capability contract, example matrix, and barrel exports, then verified the focused module with `npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/capability.test.ts` (6 tests passed). Coverage proves all 17 current schema-type examples plus structured-object and source-selector examples, host-vs-shader color discrimination, audio-binding posture, and unsupported textureRef behavior.",
+      "files_changed": [
+        "src/sdk/index.ts",
+        "src/sdk/video/composition/capability.test.ts",
+        "src/sdk/video/composition/capability.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/capability.test.ts"
+      ]
+    },
+    {
+      "task_id": "T3",
+      "status": "done",
+      "executor_notes": "Extended the public composition graph contract with animates/binds-live edge kinds, stable edge detail posture fields, and expanded composition diagnostic codes/detail fields. Updated projector/reference diagnostics to populate the new validation posture/ref detail without changing existing consumes projection behavior, then verified with the focused Vitest run (5 files, 650 tests passed).",
+      "files_changed": [
+        "src/sdk/index.test.ts",
+        "src/sdk/index.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts",
+        "src/sdk/video/composition/graph.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "src/tools/video-editor/runtime/composition/diagnostics.ts",
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/referenceResolver.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/sdk/manifest-schema-validation.test.ts"
+      ]
+    },
+    {
+      "task_id": "T9",
+      "status": "done",
+      "executor_notes": "Extended the schema capability registry with resolveCapability(...) full CompositionParamCapability answers, structured object and source-selector resolution options, and shared textureRef/color/audio-binding posture while preserving resolve/isSupported/isCustom/getDiagnostic compatibility. Verified in the focused Vitest run (5 files, 650 tests passed).",
+      "files_changed": [
+        "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+        "src/tools/video-editor/runtime/schemaCapabilityRegistry.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/sdk/manifest-schema-validation.test.ts"
+      ]
+    },
+    {
+      "task_id": "T15",
+      "status": "done",
+      "executor_notes": "Added manifest-schema helper definitions for CompositionTargetPath and CompositionParamCapability, including bounded structured-data and source-selector examples, and added schema tests that validate the examples plus reserved extension-param process/output/agent/app domains remain non-executable through SDK canonicalization. Verified with jq schema parse plus the focused Vitest run (5 files, 650 tests passed).",
+      "files_changed": [
+        "config/contracts/reigh-extension.schema.json",
+        "src/sdk/manifest-schema-validation.test.ts"
+      ],
+      "commands_run": [
+        "jq empty config/contracts/reigh-extension.schema.json",
+        "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/sdk/manifest-schema-validation.test.ts"
+      ]
+    },
+    {
+      "task_id": "T4",
+      "status": "done",
+      "executor_notes": "Added host-only targetPath adapter seams for keyframes, automation, live bindings, source selectors, and live mapping. Scoped Vitest coverage proved explicit targetPath stays authoritative, ambiguous flat keys emit composition/ambiguous-target-path, shader-uniform paths canonicalize, and reserved extension-param targets are rejected.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts",
+        "src/tools/video-editor/runtime/composition/targetPathAdapters.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T10",
+      "status": "done",
+      "executor_notes": "Migrated SchemaForm, ParameterControls, and SequenceParamEditor to resolved capability answers, including structured-object widgets, option-backed/source-selector select posture, and unsupported nested-shape diagnostics. After fixing the new UI-test harness/provider expectations, the focused rerun passed 144/144 tests.",
+      "files_changed": [
+        "src/tools/video-editor/components/ParameterControls.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx",
+        "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx",
+        "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+        "src/tools/video-editor/components/SchemaForm/SchemaForm.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx"
+      ]
+    },
+    {
+      "task_id": "T12",
+      "status": "done",
+      "executor_notes": "Updated liveMapping to canonicalize and persist explicit targetPath, retain legacy parameterPath only as a compatibility hint, resolve capability posture through the registry, and emit composition/non-bindable-target when liveBindable is false. The scoped Vitest run covered authoritative targetPath persistence and non-bindable textureRef rejection.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/liveMapping.test.ts",
+        "src/tools/video-editor/runtime/liveMapping.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T16",
+      "status": "done",
+      "executor_notes": "Updated SDK public-export verification to cover the target-path and capability contracts through barrel/index tests plus contract-governance artifacts. check-contract-governance, check:sdk-public-exports -- --audit, and the regenerated SDK API manifest baseline all completed successfully.",
+      "files_changed": [
+        "config/contracts/registry.json",
+        "config/governance/sdk-public-api-manifest.json",
+        "src/sdk/index.test.ts",
+        "src/sdk/smoke/barrel-import-smoke.test.ts"
+      ],
+      "commands_run": [
+        "node scripts/quality/check-contract-governance.mjs",
+        "npm run check:sdk-public-exports -- --audit",
+        "node scripts/quality/check-sdk-api-manifest.mjs --write-baseline",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T5",
+      "status": "done",
+      "executor_notes": "Added TimelineAnimationTargetSummary, TimelineLiveTargetSummary, and TimelineSourceSelectorTargetSummary to src/sdk/video/timeline/reader.ts with full canonical target-path shapes. Extended TimelineSnapshot and TimelineClipSummary with animationTargets, liveTargets, and sourceSelectorTargets fields. Updated host timeline reader (src/tools/video-editor/lib/timeline-reader.ts) to derive canonical summaries via adaptKeyframeTarget, adaptLiveBindingTarget, and adaptSourceSelectorTarget from the targetPathAdapters module. Added M2 target-summary tests proving: adapter-derived canonical paths wit...",
+      "files_changed": [
+        "src/sdk/video/timeline/reader.ts",
+        "src/sdk/index.ts",
+        "src/tools/video-editor/lib/timeline-reader.ts",
+        "src/tools/video-editor/lib/timeline-reader.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T7",
+      "status": "done",
+      "executor_notes": "Added capability-aware keyframe validation helpers validateKeyframeValueCapability and validateKeyframesCapability to src/tools/video-editor/keyframes/index.ts. validateKeyframeValueCapability enforces valueType conformance (string/number/integer/boolean/vector2-4/object/texture-ref), numeric constraints (min/max), string constraints (minLength/maxLength/pattern), host color hex shape validation, select option membership, and structured object field validation (required fields, field value types, field constraints, field patterns). validateKeyframesCapability enforces animatability at the a...",
+      "files_changed": [
+        "src/tools/video-editor/keyframes/index.ts",
+        "src/tools/video-editor/keyframes/index.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+      ]
+    },
+    {
+      "task_id": "T6",
+      "status": "done",
+      "executor_notes": "Updated graphProjector.ts to consume animationTargets, liveTargets, and sourceSelectorTargets from the snapshot. Emitted deterministic animates edges (ID: animates:<sourceNodeId>:<targetPath>) and binds-live edges (ID: binds-live:<sourceNodeId>:<bindingId>) with full canonical detail (targetPath, targetKind, parameterPath, refKey, extensionId, contributionId, validationPosture). Created contribution nodes from contributionIndex where targets carry refs. Pushed refUsages for missing-ref diagnostics via existing resolveCompositionReferences pipeline. Added 9 focused projection tests proving:...",
+      "files_changed": [
+        "src/tools/video-editor/runtime/composition/graphProjector.ts",
+        "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config .../vitest.config.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts (11/11 passed)"
+      ]
+    },
+    {
+      "task_id": "T8",
+      "status": "done",
+      "executor_notes": "Extended keyframe validation with shader-uniform-specific functions: validateShaderUniformKeyframeValue (single value against ShaderUniformDefinition) and validateShaderUniformKeyframes (full keyframe array with schema lookup). Shader schema lookup via schema.find() emits composition/unknown-ref-uniform when uniform name not found, including availableUniforms and optional shaderRefKey in detail. Vec4 color validation enforces 4-number arrays with all components in [0,1]; out-of-range, wrong-length, and non-array values emit keyframes/invalid-shader-color. Invalid interpolation policy enforc...",
+      "files_changed": [
+        "src/tools/video-editor/keyframes/index.ts",
+        "src/tools/video-editor/keyframes/index.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config .../vitest.config.ts src/tools/video-editor/keyframes/index.test.ts (203/203 passed)"
+      ]
+    },
+    {
+      "task_id": "T11",
+      "status": "done",
+      "executor_notes": "Updated KeyframeInspector to consume unified capabilities: added targetKind and resolvedCapabilities optional props, capability-aware widget rendering in KeyframeRow via effectiveWidgetType (preferring capability.widgetType with fallback to legacy definition.type mapping), host-vs-shader color discrimination (shader vec4 arrays render as numeric vector inputs, host hex strings render as color picker), vector widget for vec2/vec3/vec4 types, and shader-number widget for float/int/frame/time types. Added 7 capability-aware UI tests. Updated ShaderInspector tests with 5 host-vs-shader color di...",
+      "files_changed": [
+        "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx",
+        "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+        "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "task_id": "T14",
+      "status": "done",
+      "executor_notes": "Updated exportGuard.ts with three new graph-backed scanning functions: scanGraphBindingExportBlockers (scans graph diagnostics + binds-live edges for blocking posture), scanGraphTargetPathBlockers (scans for invalid/unsupported target paths), scanGraphExportDeterministicBlockers (scans for nondeterministic capability posture). Updated scanExportConfig to prefer graph-backed checks when a composition graph is provided. Added 9 graph-backed export guard tests. Scoped vitest: 74/74 exportGuard tests passed.",
+      "files_changed": [
+        "src/tools/video-editor/runtime/exportGuard.ts",
+        "src/tools/video-editor/runtime/exportGuard.test.ts"
+      ],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts",
+        "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx src/tools/video-editor/runtime/exportGuard.test.ts"
+      ]
+    },
+    {
+      "task_id": "T17",
+      "status": "done",
+      "executor_notes": "Ran 11 path-only selectors from test_blast_radius.selectors (no command selectors mixed in). Results: compositionGraphProjector (11/11), schemaCapabilityRegistry (79/79), keyframes/index (203/203), liveMapping (9/9), exportGuard (74/74), timeline-reader (54/54), proposal-runtime (91/91), SchemaForm (142/142), KeyframeInspector (22/22), manifest-schema-validation (31/31) \u2014 716/716 passed. ShaderInspector timed out due to pre-existing jsdom slowness (same issue documented in batch 7, exit 143). baseline_test_failures is null so no baseline comparison possible; treated all failures as would-be...",
+      "files_changed": [],
+      "commands_run": [
+        "npx vitest run --config config/testing/vitest.config.ts [10 path selectors] \u2014 716/716 passed",
+        "npx vitest run --config config/testing/vitest.config.ts ShaderInspector.test.tsx \u2014 timed out (pre-existing)"
+      ]
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "CONFIRMED. TimelineSnapshot now exposes animationTargets, liveTargets, and sourceSelectorTargets \u2014 each carrying canonical targetPath, targetKind, and parameterPath derived through the targetPathAdapters. The test 'snapshot does not expose raw legacy internals beyond the adapter boundary' proves that raw rows, meta, registry, config fields, and raw keyframes objects are NOT exposed on snapshots or clip summaries. The test 'derives canonical animation targets from clip keyframes via adapters' proves summaries are adapter-derived with correct canonical target paths and keyframe counts."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "CONFIRMED. validateKeyframesCapability enforces animatability (non-animatable targets rejected at array level), interpolation policy compatibility (linear rejected for discrete-only policies, hold accepted for both), value type conformance (number/string/boolean/object), numeric constraints (min/max), string constraints (minLength/maxLength/pattern), host color hex format, select option membership, and structured object schema validation (required fields, field types, field constraints, field patterns). The cross-validator test 'preserves ParameterDefinition compatibility' proves both legac..."
+    },
+    {
+      "sense_check_id": "SC2",
+      "executor_note": "Yes. The new capability tests cover all 17 current schema-type examples plus structured-object and source-selector examples, and assert the expected animatable/live/export posture, host hex color vs shader vec4 color discrimination, audio-binding posture, and unsupported textureRef behavior."
+    },
+    {
+      "sense_check_id": "SC3",
+      "executor_note": "Graph and diagnostic contracts now preserve consumes compatibility while adding animates/binds-live kinds, stable edge detail fields for ref/target/binding posture, and structured composition diagnostic codes/detail for target-path, uniform, value, and interpolation failures."
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": "The registry now exposes full CompositionParamCapability answers through resolveCapability(...) for structured objects, source selectors, host-vs-shader color, audio-binding, and textureRef unsupported posture, while legacy resolve/isSupported/isCustom/getDiagnostic callers still work."
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": "The manifest schema now accepts bounded structured-data and source-selector capability examples, and the reserved process/output/agent/app extension-param domains validate structurally while remaining non-executable via SDK target-path canonicalization."
+    },
+    {
+      "sense_check_id": "SC4",
+      "executor_note": "Adapters keep explicit targetPath authoritative, isolate raw legacy target-shape handling in host runtime code, and emit composition/ambiguous-target-path instead of silently flattening ambiguous keys."
+    },
+    {
+      "sense_check_id": "SC10",
+      "executor_note": "SchemaForm, ParameterControls, and SequenceParamEditor now render from unified capability answers across normal params, structured objects, option-backed/source-selector selects, and unsupported nested/textureRef postures."
+    },
+    {
+      "sense_check_id": "SC12",
+      "executor_note": "liveMapping now persists canonical targetPath, treats legacy parameterPath as a hint only, and raises composition/non-bindable-target when the resolved capability is not live-bindable."
+    },
+    {
+      "sense_check_id": "SC16",
+      "executor_note": "Barrel/index smoke coverage plus contract-governance and public-export audits now see the new target-path/capability surfaces without dropping the existing graph/reference export contract."
+    },
+    {
+      "sense_check_id": "SC5",
+      "executor_note": "CONFIRMED. TimelineSnapshot now exposes animationTargets, liveTargets, and sourceSelectorTargets \u2014 each carrying canonical targetPath, targetKind, and parameterPath derived through the targetPathAdapters. The test 'snapshot does not expose raw legacy internals beyond the adapter boundary' proves that raw rows, meta, registry, config fields, and raw keyframes objects are NOT exposed on snapshots or clip summaries. The test 'derives canonical animation targets from clip keyframes via adapters' proves summaries are adapter-derived with correct canonical target paths and keyframe counts."
+    },
+    {
+      "sense_check_id": "SC7",
+      "executor_note": "CONFIRMED. validateKeyframesCapability enforces animatability (non-animatable targets rejected at array level), interpolation policy compatibility (linear rejected for discrete-only policies, hold accepted for both), value type conformance (number/string/boolean/object), numeric constraints (min/max), string constraints (minLength/maxLength/pattern), host color hex format, select option membership, and structured object schema validation (required fields, field types, field constraints, field patterns). The cross-validator test 'preserves ParameterDefinition compatibility' proves both legac..."
+    },
+    {
+      "sense_check_id": "SC6",
+      "executor_note": "VERIFIED. The projection tests prove: (1) deterministic edge IDs \u2014 animates:<clipNode>:<targetPath> and binds-live:<clipNode>:<bindingId> are stable across different snapshot instances with same paths; (2) contribution-node reuse from contributionIndex \u2014 existing contribution nodes are found by refKey and reused instead of duplicated; (3) missing-ref diagnostics \u2014 unknown animation/live refs produce composition/missing-ref diagnostics routed through the existing resolveCompositionReferences pipeline; (4) unchanged consumes behavior \u2014 the 'preserves existing consumes edges alongside animates..."
+    },
+    {
+      "sense_check_id": "SC8",
+      "executor_note": "VERIFIED. The shader-uniform tests prove: (1) shader schema lookup \u2014 validateShaderUniformKeyframes successfully finds uniforms by name in the schema and returns empty diagnostics for valid values; (2) vec4 color validation \u2014 tests confirm acceptance of [0,0,0,0] through [1,1,1,1], rejection of out-of-range components [2,-1,0,0], wrong array length [1,0,0], and non-array values '#ff0000', all emitting keyframes/invalid-shader-color; (3) invalid interpolation diagnostics \u2014 linear interpolation on int (discrete-only) emits composition/invalid-interpolation with detail including uniformType, i..."
+    },
+    {
+      "sense_check_id": "SC11",
+      "executor_note": "KeyframeInspector tests now cover target capability posture and host-vs-shader color handling: 7 new tests prove shader vec4 color values render as numeric vector inputs (not hex color picker), host color values render as hex color picker, vec2/vec4 values render vector inputs, pre-resolved capability widget types are consumed, unsupported capability renders without crashing, and targetKind prop is accepted. Existing 15 inspector workflow tests continue to pass without regression (22/22 total). ShaderInspector tests add 5 host-vs-shader color discrimination tests proving shader color/vec4/v..."
+    },
+    {
+      "sense_check_id": "SC14",
+      "executor_note": "Export-guard tests prove graph-backed export/planning blocks: invalid-target-path diagnostics block export, unresolved/nondeterministic live bindings are blocked when binds-live edges carry invalid/unsupported/ambiguous posture or non-bindable-target diagnostics, exportDeterministic:false posture is enforced through invalid-value/invalid-interpolation diagnostics. Valid binds-live edges and consumes-only graphs do not trigger false positives. All 9 new graph-backed tests pass alongside 65 existing tests (74/74 total)."
+    },
+    {
+      "sense_check_id": "SC17",
+      "executor_note": "CONFIRMED. Only path-kind selectors from test_blast_radius.selectors were used. The 11 selectors (compositionGraphProjector, schemaCapabilityRegistry, keyframes/index, liveMapping, exportGuard, timeline-reader, proposal-runtime, SchemaForm, KeyframeInspector, ShaderInspector, manifest-schema-validation) are all path-kind. No command selectors (npm run check:video-editor-sdk-imports, npm run check:sdk-public-exports, npm run lint, npm run build, npm test) were mixed into this scoped selector list. Command selectors are reserved for T18 (final gate batch)."
+    }
+  ],
+  "output": "Aggregated execute batches: completed 8/8. Batch 1: T5 and T7 executed successfully. Added SDK timeline target-summary types (TimelineAnimationTargetSummary, TimelineLiveTargetSummary, TimelineSourceSelectorTargetSummary) with host reader derivation via adapters, plus capability-aware keyframe validation helpers. All 805 tests pass across the focused suite. Batch 2: Batch 3: Executed batch 3 tasks T3, T9, and T15; focused verification passed. Batch 4: Implemented batch 4 tasks T4/T10/T12/T16, covering host target-path adapters, unified capability-driven UI consumers, live-binding target validation/persistence, and SDK public-export governance checks. Batch 5: T5 and T7 executed successfully. Added SDK timeline target-summary types (TimelineAnimationTargetSummary, TimelineLiveTargetSummary, TimelineSourceSelectorTargetSummary) with host reader derivation via adapters, plus capability-aware keyframe validation helpers. All 805 tests pass across the focused suite. Batch 6: Batch 7: Batch 7 executed successfully. T11 and T14 both completed with all tests passing. Batch 8: T17 scoped verification completed. 10 of 11 path-only selectors passed (716 tests). ShaderInspector timed out due to pre-existing jsdom slowness \u2014 same issue as prior batch. No new failures detected vs the null baseline.",
+  "deviations": [
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/sdk/index.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts",
+    "Advisory audit finding: Executor claimed changed files not present in git status: src/sdk/index.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts",
+    "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+    "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+    "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18",
+    "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: config/contracts/reigh-extension.schema.json, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/graph.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/referenceResolver.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.ts",
+    {
+      "omitted_count": 59,
+      "reason": "prompt projection"
+    }
+  ],
+  "files_changed": [
+    "src/sdk/video/timeline/reader.ts",
+    "src/sdk/index.ts",
+    "src/tools/video-editor/lib/timeline-reader.ts",
+    "src/tools/video-editor/lib/timeline-reader.test.ts",
+    "src/tools/video-editor/keyframes/index.ts",
+    "src/tools/video-editor/keyframes/index.test.ts",
+    "src/sdk/video/composition/capability.test.ts",
+    "src/sdk/video/composition/capability.ts",
+    "config/contracts/reigh-extension.schema.json",
+    "src/sdk/index.test.ts",
+    "src/sdk/manifest-schema-validation.test.ts",
+    "src/sdk/smoke/barrel-import-smoke.test.ts",
+    "src/sdk/video/composition/graph.ts",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "src/tools/video-editor/runtime/composition/referenceResolver.ts",
+    "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+    "src/tools/video-editor/runtime/schemaCapabilityRegistry.ts",
+    "config/contracts/registry.json"
+  ],
+  "commands_run": [
+    "npx vitest run --config /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/config/testing/vitest.config.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/lib/timeline-reader.planner-contract.test.ts src/to...",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/capability.test.ts",
+    "jq empty config/contracts/reigh-extension.schema.json",
+    "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts src/sdk/smoke/barrel-import-smoke.test.ts src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/sdk/manifest-schema-validation.t...",
+    "node scripts/quality/check-contract-governance.mjs",
+    "npm run check:sdk-public-exports -- --audit",
+    "node scripts/quality/check-sdk-api-manifest.mjs --write-baseline",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/Seque...",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx",
+    "npx vitest run --config .../vitest.config.ts .../compositionGraphProjector.test.ts (11/11 passed)",
+    "npx vitest run --config .../vitest.config.ts .../keyframes/index.test.ts (203/203 passed)",
+    "npx vitest run --config .../vitest.config.ts 7-file composite (827/827 passed)",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx (22/22 passed)",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/exportGuard.test.ts (74/74 passed)",
+    "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx src/tools/video-editor/runtime/exportGuard.test.ts (96/96 passed)",
+    "npx vitest run --config config/testing/vitest.config.ts [10 path selectors] \u2014 716/716 passed",
+    "npx vitest run --config config/testing/vitest.config.ts ShaderInspector.test.tsx \u2014 timed out (pre-existing jsdom slowness, SIGTERM ~900s)"
+  ],
+  "watch_items": [
+    "North Star constraint: V1 executable target paths are only clip/effect/transition params and shader uniforms; process/output/agent/app domains must remain reserved or outside the V1 composition SDK.",
+    "Explicit serialized `targetPath` is authoritative everywhere; legacy fields are compatibility hints only and must never override it.",
+    "Raw timeline internals must remain behind host adapters/readers; graph projection should consume SDK-owned summary facts from `TimelineSnapshot`, not raw `TimelineClip` objects.",
+    "Non-shader params canonicalize away leading `params.`; shader uniforms canonicalize to `uniforms.<name>` and require explicit shader-ref detail.",
+    "Structured params are one target with `valueType: object`; do not invent target subpaths for object fields.",
+    "Host colors are hex strings and shader colors are vec4 arrays, both with `widgetType: color`.",
+    "Audio-binding is host-only, live-bindable, not animatable, and not export-deterministic; textureRef remains unsupported.",
+    "Ambiguous legacy flat keys must emit `composition/ambiguous-target-path` rather than being silently normalized.",
+    "Graph-backed export/planning should prefer graph `binds-live` facts and composition diagnostics when a graph is available.",
+    "Keep scoped baseline selectors path-only; broad commands belong to the final validation gates, not `test_blast_radius.selectors`.",
+    "The approved plan noted three nonexistent test files that execution may need to create: targetPath, capability, and targetPathAdapters tests.",
+    "Avoid renderer, marketplace, sandbox, WebGPU, material-runtime, shader-stack, FBO-chain, or generic texture-routing dependencies in this milestone."
+  ],
+  "user_actions": [],
+  "meta_commentary": "Execute in the order encoded by the DAG: public SDK contracts first, then diagnostics/adapters/summaries/projection, then consumers, schema/public exports, and finally validation. Keep the batching narrow: most tier-4 tasks are intentionally isolated because they define shared contracts or graph/export invariants. Treat existing `.megaplan` artifacts as harness context only. Do not re-litigate plan strategy; if an anchor tension appears, stop and surface the exact conflict instead of widening scope."
+}
+
+        Plan metadata:
+        {
+  "version": 2,
+  "timestamp": "2026-07-03T11:52:32Z",
+  "hash": "sha256:757950da68d214e5c6622d616340e27c018be17081c0b73f5bac83865ffd3989",
+  "changes_summary": "Addressed the finalize gate failure by clarifying that the implementation approach is still aimed at the right root cause, then revising the verification contract so scoped baseline selection uses only concrete path selectors. Broad command gates remain required but are moved to `always_run` and the validation order instead of selector entries.",
+  "flags_addressed": [
+    {
+      "id": "finalize-baseline-test-scope",
+      "resolution": "addressed",
+      "reason": "Revised the plan and test metadata so `test_blast_radius.selectors` contains only path selectors, with command gates represented in `always_run` and Validation Order. This gives finalize a trusted scoped baseline contract while preserving full validation gates.",
+      "where": "Overview revision check; Phase 4 \u2014 Step 12; Validation Order; `test_blast_radius`"
+    }
+  ],
+  "questions": [
+    "What exact serialized string grammar should `CompositionTargetPath.stringify` use for contribution refs, if downstream consumers require a specific human-readable format? The plan assumes SDK-owned parse/stringify may choose a stable V1 grammar as long as the structured data form carries kind/ref/path unambiguously.",
+    "Should `TimelineSnapshot` expose target facts as new summary arrays, or is it acceptable for `CompositionGraphInput` to receive a host-only raw timeline/config companion? The plan assumes summary arrays are preferred because they preserve the SDK projection boundary."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`CompositionTargetPath` parses, canonicalizes, and stringifies all V1 executable kinds; rejects unknown executable kinds; and lexically validates reserved `extension-param` without treating it as executable.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Non-shader paths normalize away any leading `params.`, while shader uniform paths canonicalize to `uniforms.<name>` and require shader-ref detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`CompositionParamCapability` covers all 17 existing host/shader schema types and includes widget, animatable, live-bindable, serializable, export-deterministic, default value, value type, and interpolation policy fields.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Host colors validate as hex strings and shader colors validate as vec4 arrays based on `targetKind`; both share color widget posture.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Audio-binding is not keyframe-animatable, is live-bindable, and is not export-deterministic; textureRef remains unsupported with `schema/texture-ref-unsupported`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Legacy keyframes, automation targets, live bindings, live uniform bindings, and source-selector descriptors map to canonical target paths only when unambiguous; ambiguous flat keys emit `composition/ambiguous-target-path`.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`CompositionGraph` supports `animates` and `binds-live` edges with deterministic IDs and structured `targetPath`/`targetKind` detail, while existing `consumes` shader/ref behavior remains compatible.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invalid target paths, unknown shader refs/uniforms, non-bindable targets, invalid value types, and invalid interpolation emit canonical `composition/` diagnostics with structured target/ref detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Graph-backed export/planning blocks on invalid target paths and unresolved/non-deterministic live bindings by walking graph edges when a composition graph is provided.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Explicit serialized `targetPath` persists through proposal/command paths and is never overridden by legacy fields.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Extension contract schema accepts the new bounded structured-data and source-selector capability examples while keeping reserved process/output/agent/app domains non-executable.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Machine-readable scoped baseline metadata uses only path selectors in `test_blast_radius.selectors`; command gates are listed in `always_run` and validation prose, not as selector entries.",
+      "priority": "must",
+      "requires": [
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Focused Vitest selectors, SDK import/export checks, lint, build, and the full `npm test` gate pass after implementation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Adapter and validation helpers remain pure and deterministic with no renderer, marketplace, sandbox, WebGPU, or material-runtime dependencies.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Implementation keeps raw legacy timeline internals behind host adapters and exposes canonical target facts through SDK-owned summaries or graph edges.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No anchor conflict exists: M2 narrows V1 to target paths/capabilities/graph facts and stays within the epic's V1 executable target-kind constraint.",
+    "The finalize feedback is a verification-contract issue, not evidence that the target code or architectural approach is wrong.",
+    "Bounded structured-data params are single clip/effect/transition target paths with `CompositionParamCapability.valueType = 'object'`, `widgetType = 'structured'`, bounded sub-field schemas, and object defaults matching the schema.",
+    "Drop-shadow examples use `offsetX`, `offsetY`, `blur`, and `color` sub-fields with numeric bounds and host hex color shape.",
+    "Source selectors are normal param capabilities: enum selectors use string/select/options/discrete interpolation, and bounded integer selectors use integer/min/max/step/discrete interpolation.",
+    "Shader colors are discriminated by `targetKind = 'shader-uniform'` and may use vec4 defaults; host clip/effect/transition colors use hex strings.",
+    "Timeline target facts should be projected through SDK summary arrays instead of passing raw `TimelineClip` internals into `graphProjector`.",
+    "Contribution nodes referenced by automation/live target facts should be created from `contributionIndex` when available; missing index entries produce composition diagnostics.",
+    "For read-only legacy inspector display, clip-param can remain the compatibility default only where no canonical targetPath is being authored or exported; authoritative paths diagnose ambiguity.",
+    "Existing untracked `.megaplan/` files are harness artifacts and are not part of the implementation plan."
+  ],
+  "delta_from_previous_percent": 4.75,
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Covers projection of `animates` and `binds-live` graph edges with deterministic IDs and target detail."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+        "reason": "Covers registry capability posture, validation paths, structured/source-selector examples, and unsupported schema cases."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/keyframes/index.test.ts",
+        "reason": "Covers capability-backed keyframe value and interpolation validation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/liveMapping.test.ts",
+        "reason": "Covers live-bindable target validation and canonical target path persistence."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Covers graph-backed export blockers for invalid target paths and non-deterministic live facts."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-reader.test.ts",
+        "reason": "Covers canonical target summaries produced before graph projection."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/proposal-runtime.test.ts",
+        "reason": "Covers proposal serialization preserving explicit targetPath over legacy fields."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+        "reason": "Covers schema controls consuming unified capability answers."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+        "reason": "Covers keyframe inspector behavior with target/capability posture."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx",
+        "reason": "Covers shader uniform capability and shader color discrimination UI behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/manifest-schema-validation.test.ts",
+        "reason": "Covers contract schema validation for capability examples and reserved target domains."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/composition/targetPath.ts",
+      "src/sdk/video/composition/targetPath.test.ts",
+      "src/sdk/video/composition/capability.ts",
+      "src/sdk/video/composition/capability.test.ts",
+      "src/sdk/video/composition/graph.ts",
+      "src/sdk/video/timeline/reader.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/schemaCapabilityRegistry.ts",
+      "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+      "src/tools/video-editor/runtime/liveMapping.ts",
+      "src/tools/video-editor/runtime/liveMapping.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/keyframes/index.ts",
+      "src/tools/video-editor/keyframes/index.test.ts",
+      "src/tools/video-editor/lib/timeline-reader.ts",
+      "src/tools/video-editor/lib/timeline-reader.test.ts",
+      "src/tools/video-editor/lib/proposal-runtime.ts",
+      "src/tools/video-editor/lib/proposal-runtime.test.ts",
+      "src/tools/video-editor/commands/timelineData.ts",
+      "src/tools/video-editor/hooks/useTimelineCommands.ts",
+      "src/tools/video-editor/components/SchemaForm/SchemaForm.tsx",
+      "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+      "src/tools/video-editor/components/ParameterControls.tsx",
+      "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx",
+      "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+      "src/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx",
+      "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx",
+      "config/contracts/reigh-extension.schema.json",
+      "src/sdk/manifest-schema-validation.test.ts"
+    ],
+    "always_run": [
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit",
+      "npm run lint",
+      "npm run build",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/reigh-extension.schema.json, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/commands/timelineData.ts, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx, src/tools/video-editor/components/ParameterControls.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx, src/tools/video-editor/hooks/useTimelineCommands.ts, src/tools/video-editor/keyframes/index.test.ts, src/tools/video-editor/keyframes/index.ts, src/tools/video-editor/lib/proposal-runtime.test.ts, src/tools/video-editor/lib/proposal-runtime.ts, src/tools/video-editor/lib/timeline-reader.test.ts, src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/liveMapping.test.ts, src/tools/video-editor/runtime/liveMapping.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.ts. Candidate: The scoped baseline is intentionally path-only so finalize can resolve it deterministically. It targets the SDK contracts, host adapters, projection, capability consumers, proposal/export behavior, UI controls, and manifest schema affected by the planned changes. Broad command gates remain mandatory via `always_run`, with full-suite fallback enabled because the change crosses public SDK contracts and shared video-editor runtime behavior. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/capability.test.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/sdk/video/composition/targetPath.test.ts",
+      "src/sdk/video/composition/capability.test.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Gate summary:
+        {
+  "version": 1,
+  "recommendation": "PROCEED",
+  "passed": true,
+  "rationale_brief": "The plan is thorough, well-scoped, and aligned with both the epic North Star and the current codebase reality. All 15 success criteria are concrete and verifiable. No blocking flags exist (weighted score 0, zero unresolved significant flags, zero addressed-but-unverified flags).",
+  "settled_decisions": [
+    {
+      "id": "SD1",
+      "decision": "V1 executable target kinds are exactly clip-param, effect-param, transition-param, and shader-uniform; extension-param is reserved and lexically validated but non-executable",
+      "rationale": "Matches the epic North Star constraint limiting V1 target paths to clip/effect/transition params and shader uniforms. Process/output/agent/app targets remain namespaced outside the V1 composition SDK per the epic's 'trusted process runtime stays namespaced' constraint."
+    },
+    {
+      "id": "SD2",
+      "decision": "Non-shader parameter paths strip leading 'params.' on canonicalization; shader uniform paths canonicalize to 'uniforms.<name>' and require ShaderRef detail",
+      "rationale": "This is the locked grammar decision from the brief. It keeps host parameter paths clean (relative to params, not a flat string convention) while making shader uniforms unambiguous with explicit ref binding."
+    },
+    {
+      "id": "SD3",
+      "decision": "Explicit serialized targetPath is authoritative and never overridden by legacy fields; ambiguous legacy flat keys emit composition/ambiguous-target-path",
+      "rationale": "Ensures the graph remains the authority for graph-authoritative facts. Legacy fields are compatibility hints only. Once a canonical targetPath is authored, it cannot be silently normalized away."
+    },
+    {
+      "id": "SD4",
+      "decision": "Structured-data params are modeled as CompositionParamCapability with valueType='object', not as target-path subpaths",
+      "rationale": "Keeps the target-path grammar flat and simple. Structured schemas (like drop-shadow with offsetX/offsetY/blur/color sub-fields) are capability-level concerns that describe valid values for a single target path, not a tree of targets."
+    },
+    {
+      "id": "SD5",
+      "decision": "Color discrimination uses targetKind: host clip/effect/transition colors use hex strings; shader colors use vec4 arrays; both share widgetType='color'",
+      "rationale": "The rendering domain determines the color encoding. Host colors are always hex per the existing color picker convention; shader uniforms are always vec4 per GLSL convention. The widget taxonomy stays unified."
+    },
+    {
+      "id": "SD6",
+      "decision": "Timeline target facts are projected through SDK summary arrays (TimelineSnapshot additions), not raw TimelineClip internals passed to graphProjector",
+      "rationale": "Preserves the SDK projection boundary required by the North Star ('extensions never mutate raw timeline internals directly'). The host reader derives summaries via migration adapters; the projector only sees SDK-owned types."
+    },
+    {
+      "id": "SD7",
+      "decision": "Scoped baseline selectors are path-only in test_blast_radius.selectors; command gates are always_run entries and validation prose",
+      "rationale": "This resolves the previous finalize gate failure. Path selectors are machine-readable and deterministic for scoped test selection. Command gates (npm run check:*, npm run lint, npm run build, npm test) are mandatory but belong in the execution order, not as selector entries."
+    }
+  ],
+  "warnings": [
+    "The plan adds three new test files (targetPath.test.ts, capability.test.ts, targetPathAdapters.test.ts) that do not yet exist \u2014 the execution stage must create these, not just modify existing tests.",
+    "Execution is gated on 15 success criteria with 13 'must' and 2 'should' priorities; the 'should' criteria (pure adapters, raw internals behind host adapters) should still be verifiably satisfied but non-blocking if a minor tradeoff is accepted.",
+    "The plan assumes 'src/sdk/video/timeline/reader.ts' exists as an SDK-level timeline reader contract; if it does not exist yet, Step 5 will need to create it alongside the host reader update."
+  ],
+  "orchestrator_guidance": "Plan passed gate and preflight. Proceed to finalize. Recurring critiques (criterion 13: requires human verification (subjective_judgment).); the loop likely can't fix these, so judge if they are real blockers.",
+  "carried_flags": [],
+  "iteration": 2,
+  "produced_at": "2026-07-03T12:00:30Z"
+}
+
+        Settled decisions (verify the executor implemented these correctly):
+- SD1: V1 executable target kinds are exactly clip-param, effect-param, transition-param, and shader-uniform; extension-param is reserved and lexically validated but non-executable (Matches the epic North Star constraint limiting V1 target paths to clip/effect/transition params and shader uniforms. Process/output/agent/app targets remain namespaced outside the V1 composition SDK per the epic's 'trusted process runtime stays namespaced' constraint.)
+- SD2: Non-shader parameter paths strip leading 'params.' on canonicalization; shader uniform paths canonicalize to 'uniforms.<name>' and require ShaderRef detail (This is the locked grammar decision from the brief. It keeps host parameter paths clean (relative to params, not a flat string convention) while making shader uniforms unambiguous with explicit ref binding.)
+- SD3: Explicit serialized targetPath is authoritative and never overridden by legacy fields; ambiguous legacy flat keys emit composition/ambiguous-target-path (Ensures the graph remains the authority for graph-authoritative facts. Legacy fields are compatibility hints only. Once a canonical targetPath is authored, it cannot be silently normalized away.)
+- SD4: Structured-data params are modeled as CompositionParamCapability with valueType='object', not as target-path subpaths (Keeps the target-path grammar flat and simple. Structured schemas (like drop-shadow with offsetX/offsetY/blur/color sub-fields) are capability-level concerns that describe valid values for a single target path, not a tree of targets.)
+- SD5: Color discrimination uses targetKind: host clip/effect/transition colors use hex strings; shader colors use vec4 arrays; both share widgetType='color' (The rendering domain determines the color encoding. Host colors are always hex per the existing color picker convention; shader uniforms are always vec4 per GLSL convention. The widget taxonomy stays unified.)
+- SD6: Timeline target facts are projected through SDK summary arrays (TimelineSnapshot additions), not raw TimelineClip internals passed to graphProjector (Preserves the SDK projection boundary required by the North Star ('extensions never mutate raw timeline internals directly'). The host reader derives summaries via migration adapters; the projector only sees SDK-owned types.)
+- SD7: Scoped baseline selectors are path-only in test_blast_radius.selectors; command gates are always_run entries and validation prose (This resolves the previous finalize gate failure. Path selectors are machine-readable and deterministic for scoped test selection. Command gates (npm run check:*, npm run lint, npm run build, npm test) are mandatory but belong in the execution order, not as selector entries.)
+
+
+Critique flags to re-verify against the final diff:
+            [
+  {
+    "id": "verifiability-0",
+    "concern": "Criterion 13: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  },
+  {
+    "id": "verifiability-1",
+    "concern": "Criterion 14: requires human verification (subjective_judgment).",
+    "severity": "minor",
+    "status": "open"
+  }
+]
+
+            For each flag above that was raised during critique, verify whether the final diff actually addresses the concern.
+            A flag is resolved only if the final diff contains code that directly addresses the concern.
+            Do not trust pre-execute promises or plan claims; check the diff itself.
+            Add resolved flag IDs to `verified_flag_ids`.
+            Add flag IDs that are unresolved only by prose judgment, without a deterministic pre/post failing check, to `disputed_flag_ids`.
+            For any unresolved flag that is backed by a deterministic pre/post failing check, add a `rework_items` entry with a typed `target`, `issue`, `expected`, `actual`, `evidence_file`, `flag_id`, `source: "review_flag_reverify"`, and `deterministic_check`. Use `target.kind: "task"` with `task_id` for a single finalize task, `target.kind: "bulk"` with `task_ids` for a bulk operation that maps to multiple finalize tasks, or `target.kind: "manifest"` with `task_ids` for manifest-backed routes. Only use legacy `task_id: "REVIEW"` when the finding is a review blocker with no routable finalize target; execute treats that as telemetry/blocker compatibility, not runnable rework.
+
+Advisory mechanical pre-check flags:
+            [
+  {
+    "id": "PRECHECK-SOURCE_TOUCH",
+    "check": "source_touch",
+    "detail": "No changed files were detected in the git diff, so review cannot confirm that package source changed.",
+    "severity": "significant"
+  },
+  {
+    "id": "PRECHECK-DIFF_SIZE_SANITY",
+    "check": "diff_size_sanity",
+    "detail": "Diff size sanity check found no changed lines, versus a rough expectation of about 540 lines from the issue context (files=0, hunks=0).",
+    "severity": "significant"
+  }
+]
+
+            Copy this list verbatim into the output `pre_check_flags` field.
+
+        Historical execution audit context (`execution_audit.json`, prompt projection only):
+        {
+  "skipped": false,
+  "reason": "",
+  "findings": [
+    "Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, config/governance/sdk-public-api-manifest.json, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/components/Keyfram..."
+  ],
+  "files_in_diff": [],
+  "files_claimed": [
+    "config/contracts/registry.json",
+    "config/contracts/reigh-extension.schema.json",
+    "config/governance/sdk-public-api-manifest.json",
+    "src/sdk/index.test.ts",
+    "src/sdk/index.ts",
+    "src/sdk/manifest-schema-validation.test.ts",
+    "src/sdk/smoke/barrel-import-smoke.test.ts",
+    "src/sdk/video/composition/capability.test.ts",
+    "src/sdk/video/composition/capability.ts",
+    "src/sdk/video/composition/graph.ts",
+    "src/sdk/video/composition/targetPath.test.ts",
+    "src/sdk/video/composition/targetPath.ts",
+    "src/sdk/video/timeline/reader.ts",
+    "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+    "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx",
+    "src/tools/video-editor/components/ParameterControls.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx",
+    "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx",
+    "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+    "src/tools/video-editor/components/SchemaForm/SchemaForm.tsx",
+    "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx",
+    "src/tools/video-editor/keyframes/index.test.ts",
+    "src/tools/video-editor/keyframes/index.ts",
+    "src/tools/video-editor/lib/timeline-reader.test.ts",
+    "src/tools/video-editor/lib/timeline-reader.ts",
+    "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+    "src/tools/video-editor/runtime/composition/diagnostics.ts",
+    "src/tools/video-editor/runtime/composition/graphProjector.ts",
+    "src/tools/video-editor/runtime/composition/referenceResolver.ts",
+    "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts",
+    "src/tools/video-editor/runtime/composition/targetPathAdapters.ts",
+    "src/tools/video-editor/runtime/exportGuard.test.ts",
+    "src/tools/video-editor/runtime/exportGuard.ts",
+    "src/tools/video-editor/runtime/liveMapping.test.ts",
+    "src/tools/video-editor/runtime/liveMapping.ts",
+    "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+    "src/tools/video-editor/runtime/schemaCapabilityRegistry.ts"
+  ]
+}
+
+        Fresh review-time evidence (`review_evidence.json`):
+        {
+  "projection": "bounded_prompt_summary",
+  "full_artifact": "review_evidence.json",
+  "schema": "megaplan.review_evidence",
+  "schema_version": 1,
+  "evidence_contract_version": 1,
+  "mode": "shadow",
+  "subject": {
+    "kind": "plan",
+    "name": "plan",
+    "to_state": "done",
+    "from_state": "executed",
+    "phase": "review",
+    "plan_name": "plan",
+    "milestone_label": null
+  },
+  "accepted": false,
+  "would_block": false,
+  "failures": [
+    "landed_diff: execution evidence findings: Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, config/governance/sdk-public-api-manifest.json, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx, src/tools/video-editor/components/ParameterControls.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx, src/tools/video-editor/keyframes\n\n[truncated 880 characters for review prompt; full data remains in `review_evidence.json`]",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "providers_used": [
+    "phase_coverage",
+    "landed_diff",
+    "worker_did_work",
+    "green_suite",
+    "execution_acceptance_contract",
+    "review_disposition",
+    "declared_noop"
+  ],
+  "legacy_evidence_count": 0,
+  "unknown_evidence_count": 1,
+  "would_block_reasons": [
+    "landed_diff: execution evidence findings: Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, config/governance/sdk-public-api-manifest.json, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx, src/tools/video-editor/components/ParameterControls.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx, src/tools/video-editor/keyframes\n\n[truncated 880 characters for review prompt; full data remains in `review_evidence.json`]",
+    "green_suite: verification suite ran but delta is not computable (collection parse failure in baseline or verification)"
+  ],
+  "artifact": "review_evidence.json",
+  "generated_at": "2026-07-03T14:57:14Z",
+  "phase": "review",
+  "iteration": 2,
+  "base_sha": "5c1b97432bbdcd903dfefcf9b2f3ae900a8f7c3d",
+  "head_sha": "44c224f420c4144187a2ca72b82d169b26b164fd",
+  "invocation_id": "2b4d9ea0054649a3",
+  "provider_diagnostics": {
+    "phase_coverage": {
+      "ok": true
+    },
+    "landed_diff": {
+      "ok": true
+    },
+    "worker_did_work": {
+      "ok": true
+    },
+    "green_suite": {
+      "ok": true
+    },
+    "execution_acceptance_contract": {
+      "ok": true
+    },
+    "review_disposition": {
+      "ok": true
+    },
+    "declared_noop": {
+      "ok": true
+    }
+  },
+  "diagnostics": {
+    "base_sha": {
+      "ok": true,
+      "source": "state.meta.chain_policy.milestone_base_sha"
+    },
+    "head_sha": {
+      "ok": true,
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "source": "git_rev_parse_head"
+    },
+    "invocation_id": {
+      "ok": true,
+      "source": "state.meta.current_invocation_id"
+    }
+  },
+  "evidence": [
+    {
+      "kind": "phase_coverage",
+      "status": "satisfied",
+      "summary": "all batch tasks done",
+      "trust_class": "judgment",
+      "provider": "PhaseCoverageProvider",
+      "provider_version": "1",
+      "source": "phase_result.json",
+      "subject": "plan",
+      "artifact": {
+        "path": "phase_result.json",
+        "sha256": "sha256:f76012231e5bce1dca6059113c76ef3c8893486f33e9a0ac69a7f621ccd6bfce",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "phase": "execute",
+        "exit_kind": "blocked_by_quality",
+        "reason": "execution_batch_8.json",
+        "evidence_id": "sha256:5552f01dd93524ae8d0eb266072b9174aba661f5a90f6c7cea1fd50843f08e68"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "landed_diff",
+      "status": "unsatisfied",
+      "summary": "execution evidence findings: Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, config/governance/sdk-public-api-manifest.json, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx, src/tools/video-editor/components/ParameterControls.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx, src/tools/video-editor/keyframes/index.test.t\n\n[truncated 867 characters for review prompt; full data remains in `review_evidence.json`]",
+      "trust_class": "judgment",
+      "provider": "LandedDiffProvider",
+      "provider_version": "1",
+      "source": "execution_evidence.validate_execution_evidence",
+      "subject": "plan",
+      "artifact": {
+        "path": "finalize.json",
+        "sha256": "sha256:fcbf3748a1eb47d706b4e57e5a9bab10af7c43b00c466d592de1a3dea75e8775",
+        "artifact_type": "application/json"
+      },
+      "details_preview": {
+        "preview": "{\n  \"findings\": [\n    \"Executor claimed changed files not present in git status: config/contracts/registry.json, config/contracts/reigh-extension.schema.json, config/governance/sdk-public-api-manifest.json, src/sdk/index.test.ts, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/smoke/barrel-import-smoke.test.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx, src/tools/video-editor/components/ParameterControls.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.test.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx, src/tools/video-editor/keyframes/index.test.ts, src\n\n[truncated 3,514 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "worker_did_work",
+      "status": "satisfied",
+      "summary": "worker activity present",
+      "trust_class": "evidence",
+      "provider": "WorkerDidWorkProvider",
+      "provider_version": "1",
+      "source": "execution_batch_*.json",
+      "subject": "plan",
+      "artifacts": [
+        {
+          "path": "execution_batch_1.json",
+          "sha256": "sha256:30d10c5593130e6acd471a78eb53245713742e5bbfc2bdbeca1930eab71fb5f1",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_2.json",
+          "sha256": "sha256:b50c2dfba4fb88348dd93e7adaf72b0a3bdc688f9634efd434a6cc492582b306",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_3.json",
+          "sha256": "sha256:b60efad269b0ac905aae59c6e6f7a4c2e33865449b7a4617d3e5179cbd6f327e",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_4.json",
+          "sha256": "sha256:a887154aa0fdc0af4ffe6e7a8130be5d2c36b25198d1790cda3995bf5015a924",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_5.json",
+          "sha256": "sha256:2ad52817f53748d6547a4cb37a8fe32f3ac7655e66797b48c603edf4f10f1e3a",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_6.json",
+          "sha256": "sha256:474cc7b3d2315bc1ece9326e3674f93afafc4ce9fa2b1748f511b3625a739483",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_7.json",
+          "sha256": "sha256:61d400b193acf68b6ea8eb055dc3900932523243cea132ef5f13f49d8a0b7eb8",
+          "artifact_type": "application/json"
+        },
+        {
+          "path": "execution_batch_8.json",
+          "sha256": "sha256:eae4f024b801718834de9e24d2f7f37d8c716c95f8873e030fb3c15820dbcf4d",
+          "artifact_type": "application/json"
+        }
+      ],
+      "details_preview": {
+        "files_changed": 98,
+        "commands_run": 43,
+        "sections_written": 0,
+        "batches": 8,
+        "batch_artifacts": [
+          "execution_batch_1.json",
+          "execution_batch_2.json",
+          "execution_batch_3.json",
+          "execution_batch_4.json",
+          "execution_batch_5.json",
+          "execution_batch_6.json",
+          "execution_batch_7.json",
+          "execution_batch_8.json"
+        ],
+        "activity_source": "execution_batch_records",
+        "evidence_id": "sha256:3ed9596de52564cb9280278698b1cc3e7adf5d8d35da8f2b727547ee85d53a5a"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "green_suite",
+      "status": "unsatisfied",
+      "summary": "verification suite ran but delta is not computable (collection parse failure in baseline or verification)",
+      "trust_class": "evidence",
+      "provider": "GreenSuiteProvider",
+      "provider_version": "1",
+      "source": "verification:623e928e2e14",
+      "subject": "plan:plan",
+      "observed_at": "1783090634.941539",
+      "code_hash": "sha256:b0f48d1a1b030888cc63d4ca832b4bd8c3db928987e4d29f51d4472270260abe",
+      "artifact": {
+        "path": "verification/raw_623e928e2e14.log",
+        "sha256": "sha256:9f2feca160006549115fbc01d8ac8b92e984a56eb6aa18d50ed36f6e53f6d683",
+        "artifact_type": "text/plain"
+      },
+      "artifacts": [
+        {
+          "path": "verification/raw_623e928e2e14.log",
+          "sha256": "sha256:9f2feca160006549115fbc01d8ac8b92e984a56eb6aa18d50ed36f6e53f6d683",
+          "artifact_type": "text/plain"
+        },
+        {
+          "path": "verification/suite_runs.ndjson",
+          "sha256": "sha256:1177c1e1bb6a17bf437fdae067a24d228e0ac3c5e963559f63d610e893daf420",
+          "artifact_type": "application/x-ndjson"
+        }
+      ],
+      "details_preview": {
+        "preview": "{\n  \"run_id\": \"623e928e2e14\",\n  \"phase\": \"verification\",\n  \"command\": \"/root/.pyenv/versions/3.11.11/bin/python -m pytest src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts src/tools/video-editor/keyframes/index.test.ts src/tools/video-editor/runtime/liveMapping.test.ts src/tools/video-editor/runtime/exportGuard.test.ts src/tools/video-editor/lib/timeline-reader.test.ts src/tools/video-editor/lib/proposal-runtime.test.ts src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx src/sdk/manifest-schema-validation.test.ts --tb=no -q --no-header -rA\",\n  \"duration\": 0.3157925389241427,\n  \"collected\": 0,\n  \"collected_ids\": [],\n  \"failure_count\": 0,\n  \"failures\": [\n    \"runner_error\"\n  ],\n  \"pass_count\": 0,\n  \"status\": \"runner_error\",\n  \"exit_code\": 4,\n  \"code_hash\": \"sha256:b0f48d1a1b030888cc63d4ca832b4bd8c3db928987e4d29f51d4472270260abe\",\n  \"collections_parse_ok\": false,\n  \"collection_errors\": [],\n  \"raw_log_path\": \"/workspace/reigh-extens\n\n[truncated 1,437 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "execution_acceptance_contract",
+      "status": "unknown",
+      "summary": "execute acceptance contract could not be verified because suite evidence is runner_error",
+      "trust_class": "evidence",
+      "provider": "ExecuteAcceptanceContractProvider",
+      "provider_version": "1",
+      "source": "gate.json|gate_signals_v*.json + verification/suite_runs.ndjson",
+      "subject": "plan",
+      "details_preview": {
+        "preview": "{\n  \"contract\": {\n    \"scope\": \"execute\",\n    \"verification_mode\": \"verification_suite\",\n    \"required_checks\": [\n      {\n        \"id\": \"issue_hints\",\n        \"question\": \"Did the work fully address the issue hints, user notes, and approved plan requirements?\",\n        \"reason\": \"Step 3 says to add edge detail fields (targetPath, targetKind, contributionId, refKey, bindingId, parameterPath) but does not specify what sourceNodeId/targetNodeId map to for animates (keyframes\\u2192?) or binds-live (clip\\u2192?). Step 6 says 'Ensure contribution nodes exist for referenced contributions when present in contributionIndex' but does not address non-contribution targets (built-in params).\",\n        \"complexity\": 3\n      },\n      {\n        \"id\": \"correctness\",\n        \"question\": \"Are the proposed changes technically correct?\",\n        \"reason\": \"`src/tools/video-editor/types/index.ts` still models live bindings with `targetParamName` only, `src/tools/video-editor/runtime/liveRecording.ts` still writes `parameterPath`-only outputs, and `src/tools/video-editor/components/LiveSourcesPanel/LiveSourcesPanel.tsx` still derives mappings from `targetParamName`, but none of those files are in the pla\n\n[truncated 1,477 characters for review prompt; full data remains in `review_evidence.json`]",
+        "full_location": "review_evidence.json"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "review_disposition",
+      "status": "not_applicable",
+      "summary": "no review.json (review may have been skipped)",
+      "trust_class": "judgment",
+      "provider": "ReviewDispositionProvider",
+      "provider_version": "1",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:519e446830e0c539cd39205827fa57231e722b8cf892a97834d8200a3ebfdc63"
+      },
+      "details_full_location": "review_evidence.json"
+    },
+    {
+      "kind": "declared_noop",
+      "status": "not_applicable",
+      "summary": "no declared no-op/waiver artifact (absence is not a failure)",
+      "trust_class": "claim",
+      "provider": "DeclaredNoopProvider",
+      "provider_version": "1",
+      "source": "completion/noop.json|completion_noop.json",
+      "subject": "plan",
+      "details_preview": {
+        "evidence_id": "sha256:c5a9ab90387234220c35d0514efb5fab48bd80d5d3066b982919aa7d976625c8"
+      },
+      "details_full_location": "review_evidence.json"
+    }
+  ],
+  "evidence_count": 7,
+  "green_suite": {
+    "delta": {
+      "computable": false,
+      "newly_failing": 0,
+      "newly_passing": 0,
+      "still_red": 0,
+      "still_green": 0,
+      "deleted_tests": 0,
+      "added_tests": 0,
+      "flakes": 0,
+      "tests_collected": 0,
+      "duration": 0.3157925389241427,
+      "flake_retry_skipped": false,
+      "flake_retry_reason": ""
+    }
+  }
+}
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m2-target-paths-schema-20260703-1021/review_output.json
+        Read this file first — it contains the expected JSON structure with pre-populated `task_verdicts`, `sense_check_verdicts`, and `criteria`.
+        Fill the JSON structure with your results and write the file back.
+        If you cannot use file tools, return the populated JSON structure inline as your response instead.
+
+        Git diff summary:
+        ?? .megaplan/epics/m2-target-paths-schema-20260703-1021/
+
+        Requirements:
+        - Verify each success criterion explicitly.
+        - Fresh repository inspection and `review_evidence.json` outrank stale execution-time claims from `execution_audit.json`, `finalize.json`, and executor notes.
+        - Use repository tools to inspect relevant files and run focused verification commands when behavior or tests are part of a criterion; include concrete repository-backed evidence for every criterion verdict.
+        - Each criterion has a `priority` (`must`, `should`, or `info`). Apply these rules:
+          - `must` criteria are hard gates only when backed by a deterministic runnable check that failed on the pre-execute baseline and still fails after execution. Ungrounded prose concerns are advisory.
+          - `should` criteria are quality targets. If the spirit is met but the letter is not, mark `pass` with evidence explaining the gap. Only mark `fail` if the intent was clearly missed. A `should` failure alone does NOT require `needs_rework`.
+          - `info` criteria are for human reference. Mark them `waived` with a note — do not evaluate them.
+          - If a criterion has `requires` capabilities that are not satisfiable by container workers (e.g., `drive_browser`, `subjective_judgment`), mark it `deferred_human` — NOT `fail` or `waived`. Deferred-human criteria do NOT count toward `needs_rework`.
+          - If a criterion (any priority) cannot be verified in this context (e.g., requires manual testing or runtime observation), mark it `waived` with an explanation.
+        - Set `review_verdict` to `needs_rework` only for a rework item with `deterministic_check: {"command": "...", "baseline_status": "failed", "post_status": "failed"}`. Use `approved` for prose-only concerns; record those as advisory issues instead.
+        - Set `review_completion_status` to `"incomplete"` when you could not inspect the repository or run verification commands; otherwise set it to `"complete"`.
+        - The decisions listed above were settled at the gate stage. Verify that the executor implemented each settled decision correctly. Flag deviations from these decisions, but do not question the decisions themselves.
+        - baseline_test_failures in finalize.json lists tests that were already failing before execution. Do not flag these as rework items unless the executor introduced new failures in those same tests.
+        - Cross-reference each task's `files_changed` and `commands_run` against the git diff and any audit findings.
+        - Review every `sense_check` explicitly and treat perfunctory acknowledgments as a reason to dig deeper.
+        - Follow this JSON shape exactly:
+        ```json
+        {
+          "review_verdict": "approved",
+          "review_completion_status": "complete",
+          "criteria": [
+            {
+              "name": "All existing tests pass",
+              "priority": "must",
+              "pass": "pass",
+              "evidence": "Test suite ran green — 42 passed, 0 failed."
+            },
+            {
+              "name": "File under ~300 lines",
+              "priority": "should",
+              "pass": "pass",
+              "evidence": "File is 375 lines — above the target but reasonable given the component's responsibilities. Spirit met."
+            },
+            {
+              "name": "Manual smoke tests pass",
+              "priority": "info",
+              "pass": "waived",
+              "evidence": "Cannot be verified in automated review. Noted for manual QA."
+            }
+          ],
+          "issues": [],
+          "rework_items": [],
+          "summary": "Approved. All must criteria pass. The should criterion on line count is close enough given the component scope.",
+          "task_verdicts": [
+            {
+              "task_id": "T6",
+              "reviewer_verdict": "Pass. Claimed handler changes and command evidence match the repo state.",
+              "evidence_files": ["megaplan/handlers.py", "megaplan/evaluation.py"]
+            }
+          ],
+          "sense_check_verdicts": [
+            {
+              "sense_check_id": "SC6",
+              "verdict": "Confirmed. The execute blocker only fires when both evidence arrays are empty."
+            }
+          ]
+        }
+        ```
+        - `rework_items` must be an array of structured rework directives. When `review_verdict` is `needs_rework`, populate one entry per issue with:
+          - `target`: typed route for the rework. Use `{"kind": "task", "task_id": "T6"}` for one finalize task, `{"kind": "bulk", "id": "bulk-1", "task_ids": ["T6", "T7"]}` for bulk-operation findings, or `{"kind": "manifest", "id": "manifest-path-or-ref", "task_ids": ["T6"]}` for manifest-backed findings.
+          - `task_id`: legacy compatibility only. It may mirror the single task target, or be `"REVIEW"` only for review blockers with no runnable finalize target.
+          - `issue`: what is wrong
+          - `expected`: what correct behavior looks like
+          - `actual`: what was observed
+          - `evidence_file`: file path supporting the finding
+          - `flag_id`: critique/review flag ID when applicable, otherwise `null`
+          - `source`: short machine-readable source tag when applicable, otherwise `null`
+          - `deterministic_check` (required for blocking rework): object with `command`, `baseline_status`, and `post_status`
+        - `issues` must still be populated as a flat one-line-per-item summary derived from `rework_items` (for backward compatibility). When approved, blocking `rework_items` should be empty; prose-only concerns may be summarized in `issues`.
+        - When the work needs another execute pass, keep the same shape and change only `review_verdict` to `needs_rework`; make `issues`, `rework_items`, `summary`, and task verdicts specific enough for the executor to act on directly.

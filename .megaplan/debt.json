@@ -3843,6 +3843,23 @@
       "resolved": false,
       "resolved_by": null,
       "resolved_at": null
+    },
+    {
+      "id": "DEBT-227",
+      "subsystem": "verification",
+      "concern": "criterion 13 requires human verification of test/lint/build output, which is inherently a subjective manual gate rather than a machine-checkable contract",
+      "flag_ids": [
+        "recurring-critique-criterion-13"
+      ],
+      "plan_ids": [
+        "m2-target-paths-schema-20260703-1021"
+      ],
+      "occurrence_count": 1,
+      "created_at": "2026-07-03T12:00:31Z",
+      "updated_at": "2026-07-03T12:00:31Z",
+      "resolved": false,
+      "resolved_by": null,
+      "resolved_at": null
     }
   ]
 }

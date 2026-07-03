@@ -1,0 +1,454 @@
+## Anchor Check: North Star
+
+One or more North Stars are captured for this plan.
+
+Captured anchors:
+- Epic North Star (overall chain/epic objective): `anchors/north_star/epic.md`
+
+Do not restate the North Star. Do not reinterpret approved scope from scratch.
+Raise an explicit anchor conflict/deviation only if the current step visibly violates a captured North Star.
+
+You are an independent reviewer. Critique the plan against the actual repository.
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M2: Target Paths, Schema Capability, Keyframes, And Live Binding
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Plan:
+        # Implementation Plan: M2 Target Paths And Capability Spine
+
+## Overview
+The current code matches the brief: SDK composition graph contracts only allow `consumes` edges, target-path/capability contracts do not exist, `schemaCapabilityRegistry.ts` has the nearest render/type registry but lacks animation/export posture, keyframes still validate against `ParameterDefinition`, live-binding export blocking scans legacy config directly, and graph projection only sees `TimelineSnapshot` summaries. One important repository-backed planning correction is that `TimelineSnapshot.clips` are `TimelineClipSummary` objects, not raw `TimelineClip`s, so graph projection cannot read `clip.keyframes` or raw live metadata unless the reader/snapshot layer exposes target-binding summaries or `CompositionGraphInput` receives a host-owned raw timeline companion. The simpler and cleaner fix is to add SDK summary shapes for target facts and keep raw timeline migration inside host adapters.
+
+This scope is a bridge, not a contradiction, to the North Star: it makes target paths and capabilities public/authoritative for V1 graph facts while keeping extensions away from raw timeline internals. It does not add executable output/process/agent/app targets, material runtime, shader assignment execution, visual graph editing, or texture routing.
+
+## Phase 1: Public Data Contracts
+
+### Step 1: Add `CompositionTargetPath` grammar (`src/sdk/video/composition/targetPath.ts`)
+**Complexity: 3**
+1. Define `CompositionTargetKind` as executable `clip-param | effect-param | transition-param | shader-uniform` plus reserved `extension-param`.
+2. Implement pure parse/stringify/canonicalize helpers: non-shader params drop leading `params.`, shader uniforms canonicalize to `uniforms.<name>`, and reserved domains validate lexically but remain non-executable.
+3. Include ref detail for contribution-owned kinds and require shader-ref detail for `shader-uniform`; do not infer refs from string shape alone.
+4. Export the contracts from `src/sdk/index.ts`.
+5. Add focused contract tests for canonicalization, reserved `extension-param`, unknown kinds, and explicit target-path precedence.
+
+### Step 2: Add `CompositionParamCapability` contracts (`src/sdk/video/composition/capability.ts`)
+**Complexity: 4**
+1. Define the unified capability answer with `targetKind`, `schemaType`, `widgetType`, `status`, `animatable`, `liveBindable`, `serializable`, `exportDeterministic`, `defaultValue`, `valueType`, `interpolationPolicy`, and optional constraints/options/object schema.
+2. Model structured params as `valueType: 'object'` with bounded sub-fields, not as target-path subpaths.
+3. Encode source selectors as normal capabilities: string enum/select with options, or bounded integer with min/max/step, both discrete interpolation.
+4. Encode color discrimination by `targetKind`: host clip/effect/transition colors use hex strings; shader colors use vec4 arrays. Keep `widgetType: 'color'` for both.
+5. Mark `audio-binding` as host-only, `animatable: false`, `liveBindable: true`, `exportDeterministic: false`; keep `textureRef` unsupported.
+6. Export the contracts and examples from `src/sdk/index.ts`; add tests covering all 17 existing schema types plus structured/source-selector examples.
+
+### Step 3: Extend composition graph and diagnostics contracts (`src/sdk/video/composition/graph.ts`, `src/tools/video-editor/runtime/composition/diagnostics.ts`)
+**Complexity: 3**
+1. Add `animates` and `binds-live` to `CompositionEdgeKind` and `COMPOSITION_EDGE_KINDS`.
+2. Add stable edge detail fields for `targetPath`, `targetKind`, `contributionId`, `refKey`, `bindingId`, `parameterPath`, and validation posture while preserving existing `consumes` compatibility.
+3. Add diagnostics for unsupported/invalid/ambiguous target paths, unknown refs/uniforms, non-bindable targets, invalid value types, and invalid interpolation.
+4. Extend `CompositionDiagnosticDetail` with target/ref fields such as `targetPath`, `targetKind`, `bindingId`, `uniformName`, and `canonicalTargetPath`.
+
+## Phase 2: Host Adapters And Projection
+
+### Step 4: Build host target migration adapters (`src/tools/video-editor/runtime/composition/targetPathAdapters.ts`)
+**Complexity: 4**
+1. Map raw legacy shapes to canonical target paths: `TimelineClip.keyframes`, automation clip target, `TimelineLiveBinding`, `TimelineLiveUniformBinding`, and descriptor-owned source selectors.
+2. Return canonical path, target kind, source metadata, optional contribution ref, and diagnostics.
+3. Treat explicit `targetPath` as canonical and never override it with legacy fields.
+4. Detect ambiguous flat keys and emit `composition/ambiguous-target-path` instead of silently normalizing.
+
+### Step 5: Surface target facts through timeline summaries (`src/sdk/video/timeline/reader.ts`, `src/tools/video-editor/lib/timeline-reader.ts`)
+**Complexity: 4**
+1. Add SDK summary types for target facts, carrying canonical target paths rather than raw internals.
+2. Update the host timeline reader to derive summaries via migration adapters from raw timeline data.
+3. Keep legacy raw fields out of SDK summaries except compatibility detail needed for diagnostics.
+
+### Step 6: Project `animates` and `binds-live` graph edges (`src/tools/video-editor/runtime/composition/graphProjector.ts`)
+**Complexity: 4**
+1. Consume target summaries from `TimelineSnapshot` and project `animates` edges for keyframes/automation.
+2. Project `binds-live` edges for clip/effect live bindings and shader uniform live bindings.
+3. Ensure contribution nodes exist for referenced contributions when present in `contributionIndex`; emit missing-ref diagnostics otherwise.
+4. Put canonical `targetPath`/`targetKind` into edge detail with deterministic edge IDs.
+
+## Phase 3: Capability Consumers
+
+### Step 7: Wire capability validation into keyframes and automation (`src/tools/video-editor/keyframes/index.ts`)
+**Complexity: 4**
+1. Add capability-aware validation helpers for `animatable`, value type, interpolation policy, constraints/options/object schema, and color shape.
+2. Preserve current `ParameterDefinition` validation by resolving a capability from schema-owned definitions first.
+3. Validate explicit shader-uniform keyframes against shader schema and emit `composition/unknown-ref-uniform` when needed.
+
+### Step 8: Wire capability answers into inspector/schema controls (`src/tools/video-editor/runtime/schemaCapabilityRegistry.ts`, UI controls)
+**Complexity: 4**
+1. Extend the registry from widget-only answers to full `CompositionParamCapability` answers while keeping existing callers compiling.
+2. Add `structured` to widget taxonomy only for bounded object schemas; keep textureRef unsupported.
+3. Update SchemaForm, ParameterControls, KeyframeInspector, ShaderInspector, and SequenceParamEditor to consume unified capabilities.
+
+### Step 9: Wire live binding and proposal/export checks (`src/tools/video-editor/runtime/liveMapping.ts`, `src/tools/video-editor/runtime/exportGuard.ts`, proposal/command paths)
+**Complexity: 4**
+1. Validate live bindings against `liveBindable`; emit `composition/non-bindable-target` for invalid targets.
+2. Persist explicit canonical `targetPath`; legacy fields remain compatibility hints only.
+3. Update export guard to prefer graph `binds-live` and invalid target diagnostics when a composition graph is provided.
+4. Block graph-backed export/planning on invalid target paths, non-deterministic live bindings, and `exportDeterministic: false`.
+
+## Phase 4: Contract Schema And Final Verification
+
+### Step 10: Update extension contract schema (`config/contracts/reigh-extension.schema.json`)
+**Complexity: 3**
+1. Add schema definitions/examples for bounded structured-data and source-selector capabilities.
+2. Keep process/output/agent/app target paths reserved and non-executable.
+
+### Step 11: Prove public exports and compatibility (`src/sdk/index.ts`, contract/SDK tests)
+**Complexity: 2**
+1. Run SDK public export checks and update expected contract surface maps if required.
+2. Verify existing graph/reference exports remain compatible except for new contracts and edge kinds.
+
+### Step 12: Run focused and broad validation
+**Complexity: 2**
+1. Run focused Vitest selectors for SDK contracts, adapters, timeline reader, graph projector, keyframes, live mapping, export guard, proposal runtime, and UI controls.
+2. Run `npm run check:video-editor-sdk-imports`, `npm run check:sdk-public-exports -- --audit`, `npm run lint`, and `npm run build`.
+3. Finish with `npm test`.
+
+## Execution Order
+1. Land SDK target-path and capability contracts first.
+2. Extend graph and diagnostics before projection.
+3. Build migration adapters before modifying timeline reader.
+4. Add target summaries before graph projection because the projector only receives `TimelineSnapshot`.
+5. Wire keyframes, inspector controls, live binding, proposal serialization, and export blockers after the shared capability answer exists.
+6. Update contract schema and public export checks last.
+
+## Validation Order
+1. Unit tests first: target-path parser/stringifier, capability examples, diagnostics, and adapters.
+2. Projection tests next: timeline reader summaries and graph projection.
+3. Consumer tests next: keyframes, schema registry, UI controls, live mapping, proposal runtime, and export guard.
+4. Contract checks next: SDK exports, extension schema validation, and import allowlist.
+5. Full gates last: lint, build, and `npm test`.
+
+
+        Plan metadata:
+        {
+  "version": 1,
+  "timestamp": "2026-07-03T11:40:09Z",
+  "hash": "sha256:c3aa0d24253e663ab26c2d35d717fefd082479ad35876c0a51bbb2157d3c2262",
+  "questions": [
+    "What exact serialized string grammar should `CompositionTargetPath.stringify` use for contribution refs, if downstream consumers require a specific human-readable format? The plan assumes SDK-owned parse/stringify may choose a stable V1 grammar as long as the structured data form carries kind/ref/path unambiguously.",
+    "Should `TimelineSnapshot` expose target facts as new summary arrays, or is it acceptable for `CompositionGraphInput` to receive a host-only raw timeline/config companion? The plan assumes summary arrays are preferred because they preserve the SDK projection boundary."
+  ],
+  "success_criteria": [
+    {
+      "criterion": "`CompositionTargetPath` parses, canonicalizes, and stringifies all V1 executable kinds; rejects unknown executable kinds; and lexically validates reserved `extension-param` without treating it as executable.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Non-shader paths normalize away any leading `params.`, while shader uniform paths canonicalize to `uniforms.<name>` and require shader-ref detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "`CompositionParamCapability` covers all 17 existing host/shader schema types and includes widget, animatable, live-bindable, serializable, export-deterministic, default value, value type, and interpolation policy fields.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Host colors validate as hex strings and shader colors validate as vec4 arrays based on `targetKind`; both share color widget posture.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Audio-binding is not keyframe-animatable, is live-bindable, and is not export-deterministic; textureRef remains unsupported with `schema/texture-ref-unsupported`.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Legacy keyframes, automation targets, live bindings, live uniform bindings, and source-selector descriptors map to canonical target paths only when unambiguous; ambiguous flat keys emit `composition/ambiguous-target-path`.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "`CompositionGraph` supports `animates` and `binds-live` edges with deterministic IDs and structured `targetPath`/`targetKind` detail, while existing `consumes` shader/ref behavior remains compatible.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Invalid target paths, unknown shader refs/uniforms, non-bindable targets, invalid value types, and invalid interpolation emit canonical `composition/` diagnostics with structured target/ref detail.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Graph-backed export/planning blocks on invalid target paths and unresolved/non-deterministic live bindings by walking graph edges when a composition graph is provided.",
+      "priority": "must",
+      "requires": [
+        "run_tests"
+      ]
+    },
+    {
+      "criterion": "Explicit serialized `targetPath` persists through proposal/command paths and is never overridden by legacy fields.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "parse_diff"
+      ]
+    },
+    {
+      "criterion": "Extension contract schema accepts the new bounded structured-data and source-selector capability examples while keeping reserved process/output/agent/app domains non-executable.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "read_files"
+      ]
+    },
+    {
+      "criterion": "Focused Vitest selectors, SDK import/export checks, lint, build, and the full `npm test` gate pass after implementation.",
+      "priority": "must",
+      "requires": [
+        "run_tests",
+        "run_linter",
+        "read_build_output"
+      ]
+    },
+    {
+      "criterion": "Adapter and validation helpers remain pure and deterministic with no renderer, marketplace, sandbox, WebGPU, or material-runtime dependencies.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    },
+    {
+      "criterion": "Implementation keeps raw legacy timeline internals behind host adapters and exposes canonical target facts through SDK-owned summaries or graph edges.",
+      "priority": "should",
+      "requires": [
+        "read_files",
+        "parse_diff",
+        "subjective_judgment"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No anchor conflict exists: M2 narrows V1 to target paths/capabilities/graph facts and stays within the epic's V1 executable target-kind constraint.",
+    "Bounded structured-data params are single clip/effect/transition target paths with `CompositionParamCapability.valueType = 'object'`, `widgetType = 'structured'`, bounded sub-field schemas, and object defaults matching the schema.",
+    "Drop-shadow examples use `offsetX`, `offsetY`, `blur`, and `color` sub-fields with numeric bounds and host hex color shape.",
+    "Source selectors are normal param capabilities: enum selectors use string/select/options/discrete interpolation, and bounded integer selectors use integer/min/max/step/discrete interpolation.",
+    "Shader colors are discriminated by `targetKind = 'shader-uniform'` and may use vec4 defaults; host clip/effect/transition colors use hex strings.",
+    "Timeline target facts should be projected through SDK summary arrays instead of passing raw `TimelineClip` internals into `graphProjector`.",
+    "Contribution nodes referenced by automation/live target facts should be created from `contributionIndex` when available; missing index entries produce composition diagnostics.",
+    "For read-only legacy inspector display, clip-param can remain the compatibility default only where no canonical targetPath is being authored or exported; authoritative paths diagnose ambiguity.",
+    "Existing untracked `.megaplan/` files are harness artifacts and are not part of the implementation plan."
+  ],
+  "test_blast_radius": {
+    "strategy": "scoped",
+    "confidence": "low",
+    "selectors": [
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+        "reason": "Graph projection for `animates` and `binds-live` edges."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+        "reason": "Registry capability posture, validation paths, structured/source-selector examples."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/keyframes/index.test.ts",
+        "reason": "Capability-backed keyframe value/interpolation validation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/liveMapping.test.ts",
+        "reason": "Live-bindable target validation."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/runtime/exportGuard.test.ts",
+        "reason": "Graph-backed export blockers for target/live facts."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/timeline-reader.test.ts",
+        "reason": "Canonical target summaries are produced before graph projection."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/lib/proposal-runtime.test.ts",
+        "reason": "Proposal serialization preserves explicit targetPath."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+        "reason": "Inspector/schema controls consume unified capability answers."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+        "reason": "Keyframe inspector consumes target/capability posture."
+      },
+      {
+        "kind": "path",
+        "value": "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx",
+        "reason": "Shader uniform capability and color discrimination UI behavior."
+      },
+      {
+        "kind": "path",
+        "value": "src/sdk/manifest-schema-validation.test.ts",
+        "reason": "Contract schema validation for capability examples and reserved target domains."
+      },
+      {
+        "kind": "command",
+        "value": "npm run check:video-editor-sdk-imports",
+        "reason": "SDK boundary/import allowlist may be affected by new public contracts."
+      },
+      {
+        "kind": "command",
+        "value": "npm run check:sdk-public-exports -- --audit",
+        "reason": "Public SDK export surface changes must be audited."
+      },
+      {
+        "kind": "command",
+        "value": "npm run lint",
+        "reason": "Cross-cutting TypeScript/React changes should meet lint rules."
+      },
+      {
+        "kind": "command",
+        "value": "npm run build",
+        "reason": "Cross-module type compatibility gate."
+      },
+      {
+        "kind": "command",
+        "value": "npm test",
+        "reason": "Full regression gate after cross-cutting public contract and runtime changes."
+      }
+    ],
+    "changed_surfaces": [
+      "src/sdk/index.ts",
+      "src/sdk/video/composition/targetPath.ts",
+      "src/sdk/video/composition/targetPath.test.ts",
+      "src/sdk/video/composition/capability.ts",
+      "src/sdk/video/composition/capability.test.ts",
+      "src/sdk/video/composition/graph.ts",
+      "src/sdk/video/timeline/reader.ts",
+      "src/tools/video-editor/runtime/composition/diagnostics.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts",
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts",
+      "src/tools/video-editor/runtime/schemaCapabilityRegistry.ts",
+      "src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts",
+      "src/tools/video-editor/runtime/liveMapping.ts",
+      "src/tools/video-editor/runtime/liveMapping.test.ts",
+      "src/tools/video-editor/runtime/exportGuard.ts",
+      "src/tools/video-editor/runtime/exportGuard.test.ts",
+      "src/tools/video-editor/keyframes/index.ts",
+      "src/tools/video-editor/keyframes/index.test.ts",
+      "src/tools/video-editor/lib/timeline-reader.ts",
+      "src/tools/video-editor/lib/timeline-reader.test.ts",
+      "src/tools/video-editor/lib/proposal-runtime.ts",
+      "src/tools/video-editor/lib/proposal-runtime.test.ts",
+      "src/tools/video-editor/commands/timelineData.ts",
+      "src/tools/video-editor/hooks/useTimelineCommands.ts",
+      "src/tools/video-editor/components/SchemaForm/SchemaForm.tsx",
+      "src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx",
+      "src/tools/video-editor/components/ParameterControls.tsx",
+      "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx",
+      "src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx",
+      "src/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx",
+      "src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx",
+      "src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx",
+      "config/contracts/reigh-extension.schema.json",
+      "src/sdk/manifest-schema-validation.test.ts"
+    ],
+    "always_run": [
+      "npm run check:video-editor-sdk-imports",
+      "npm run check:sdk-public-exports -- --audit",
+      "npm run lint",
+      "npm run build",
+      "npm test"
+    ],
+    "full_suite_fallback": true,
+    "rationale": "Floor: Non-Python data/fixture/golden changes force the full suite because they can affect tests outside the Python import graph: config/contracts/reigh-extension.schema.json, src/sdk/index.ts, src/sdk/manifest-schema-validation.test.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/graph.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts, src/sdk/video/timeline/reader.ts, src/tools/video-editor/commands/timelineData.ts, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.test.tsx, src/tools/video-editor/components/KeyframeInspector/KeyframeInspector.tsx, src/tools/video-editor/components/ParameterControls.tsx, src/tools/video-editor/components/PropertiesPanel/SequenceParamEditor.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.test.tsx, src/tools/video-editor/components/SchemaForm/SchemaForm.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.test.tsx, src/tools/video-editor/components/ShaderInspector/ShaderInspector.tsx, src/tools/video-editor/hooks/useTimelineCommands.ts, src/tools/video-editor/keyframes/index.test.ts, src/tools/video-editor/keyframes/index.ts, src/tools/video-editor/lib/proposal-runtime.test.ts, src/tools/video-editor/lib/proposal-runtime.ts, src/tools/video-editor/lib/timeline-reader.test.ts, src/tools/video-editor/lib/timeline-reader.ts, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.ts, src/tools/video-editor/runtime/exportGuard.test.ts, src/tools/video-editor/runtime/exportGuard.ts, src/tools/video-editor/runtime/liveMapping.test.ts, src/tools/video-editor/runtime/liveMapping.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.test.ts, src/tools/video-editor/runtime/schemaCapabilityRegistry.ts. Candidate: The change is cross-cutting across public SDK contracts, graph projection, timeline summaries, keyframe/live/export consumers, and UI controls. Start with focused tests to keep worker feedback fast, then require full regression because public contracts and shared runtime behavior change. Dropped nonexistent pytest path(s) from plan-time baseline metadata: src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/capability.test.ts, src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts.",
+    "import_graph": {
+      "degraded": false,
+      "dependent_tests": 0,
+      "unresolved": []
+    },
+    "missing_test_selectors": [
+      "src/sdk/video/composition/targetPath.test.ts",
+      "src/sdk/video/composition/capability.test.ts",
+      "src/tools/video-editor/runtime/composition/targetPathAdapters.test.ts"
+    ]
+  },
+  "structure_warnings": []
+}
+
+        Plan structure warnings from validator:
+        []
+
+        Existing flags:
+        []
+
+
+
+        Your output template is at: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m2-target-paths-schema-20260703-1021/critique_check_correctness.json
+Read this file first — it contains 1 check with a question and guidance.
+Investigate only this check, then add your findings to the `findings` array for that check.
+
+Self-monitor for non-convergence before spending more tool calls. This is NOT about duration or difficulty: hard checks that are still making new progress should continue. But if you are spinning — re-reading the same file 3+ times, searching for a file the plan says to CREATE, needing a sibling/external repo or path outside the project root, or making many tool calls without getting closer to a verdict — STOP investigating. Not finding what you need is a finding; emit exactly one non-flagged finding whose detail starts `unverifiable: ` and explains what you could not resolve and exactly why. An unverifiable check is a complete, valid result for this worker; normal code ambiguity that you can inspect should still be flagged per the usual "when in doubt, flag it" rule.
+
+Check ID: correctness
+Question: Are the proposed changes technically correct?
+Guidance: Look for logic errors, invalid assumptions, broken invariants, schema mismatches, or behavior that would fail at runtime. When the fix adds a conditional branch, check whether it handles all relevant cases — not just the one reported in the issue.
+
+Each finding needs:
+- "detail": what you specifically checked and what you found (at least a full sentence)
+- "flagged": true if this describes a difference, risk, or tension — even if you think it's justified. false only if purely informational with no possible downside.
+- This check must end with at least one finding. Never leave its `findings` array empty. If you found no issue, add one detailed `flagged: false` finding explaining what you checked and why it appears clear.
+
+When in doubt, flag it — the gate can accept tradeoffs, but it can't act on findings it never sees.
+
+Good: {"detail": "Checked callers of nthroot_mod in solveset.py line 1205 — passes prime moduli only, consistent with the fix.", "flagged": false}
+Good: {"detail": "The fix handles empty tuples but not single-element tuples which need a trailing comma.", "flagged": true}
+Bad: {"detail": "No issue found", "flagged": false}  ← too brief, will be rejected
+Bad: {"detail": "The hints suggest approach X but the plan uses Y. However Y is consistent with X's intent.", "flagged": false}  ← a different approach than the hints IS a flag. You found a divergence — flag it. The gate decides if it's acceptable.
+
+After filling in checks, add any additional concerns to the `flags` array (e.g., security, performance, dependencies).
+Use the standard format (id, concern, category, severity_hint, evidence). This array can be empty.
+
+Workflow: read the file → investigate → read file again → add finding → write file back. Repeat for this check.
+
+        Additional guidelines:
+        - Robustness level: thorough. Use balanced judgment. Flag significant risks, but do not spend flags on minor polish or executor-obvious boilerplate.
+        - Over-engineering: prefer the simplest approach that fully solves the problem.
+        - Reuse existing flag IDs when the same concern is still open.
+        - `verified_flag_ids`: list flag IDs from prior iterations that the revised plan actually resolves (e.g., if the plan was revised to fix FLAG-001, and you confirm the fix is correct, include "FLAG-001"). Only include flags you've verified — don't guess.
+        - Verify that the plan follows the expected structure when validator warnings or the outline suggest drift.
+        - Additional flags may use these categories: correctness, security, completeness, performance, maintainability, other.
+        - Focus on concrete issues, not structural formatting.
+        - Complexity audit: flag (a) missing complexity scores on plan steps, (b) inflated scores that would waste premium models on trivial work, and (c) under-rated work that should not run on cheap models. Use category `completeness`.

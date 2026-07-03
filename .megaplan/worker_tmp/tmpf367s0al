@@ -1,0 +1,303 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m2-target-paths-schema-20260703-1021`
+Current milestone: `m2-target-paths-schema`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        Define V1 CompositionTargetPath grammar (4 executable kinds: clip-param, effect-param, transition-param, shader-uniform; 1 reserved: extension-param) and a unified CompositionParamCapability shape consumed by inspector controls, keyframe validation, live binding, proposal serialization, and export blockers. Extend the M1b composition graph with 'animates' and 'binds-live' edge kinds. Build host migration adapters to map 5 legacy target-addressing schemes to canonical paths. Add target/schema diagnostics.
+
+        ### Key Evidence
+        - Five distinct legacy target-addressing schemes exist with no cross-kind disambiguation. A param name like 'opacity' can resolve to clip field, clip param, effect param, transition param, or shader uniform — current flat-key schemes (per-clip keyframes as Record<string,ClipKeyframe[]>, AutomationClipTarget.parameterPath) cannot distinguish these, and TimelineLiveBinding only supports effect scoping via targetEffectId (no transition or shader scoping). This is the core motivation for a canonical target-path grammar. (source: legacy-field-inventory area findings — Schemes 1-6 cross-table; relevance: high)
+- Two disjoint parameter type systems exist with no bridging code: host ParameterType (number, select, boolean, color, audio-binding — 5 kinds) vs SDK ShaderUniformType (float, int, bool, vec2, vec3, vec4, color, enum, textureRef, frame, time — 11 kinds). The SchemaCapabilityRegistry already enumerates all 17 types side-by-side in BUILTIN_CAPABILITIES but lacks animatable, live-bindable, serializable, export-deterministic, default-value-shape, value-type, and interpolation-policy fields — these are exactly the fields a CompositionParamCapability must add. (source: capability-type-unification area findings — SchemaCapabilityRegistry.ts BUILTIN_CAPABILITIES + SchemaCapabilityEntry interface; relevance: high)
+- Color type has a critical shape conflict: host ParameterDefinition for type='color' uses hex strings (#rrggbb), while ShaderUniformDefinition for type='color' uses RGBA vec4 arrays [r,g,b,a]. The registry already handles this via separate validation paths ('color-path' for hex, 'shader-color-vector-path' for vec4). A single capability answer cannot serve both without a discriminator — the target-kind (clip-param vs shader-uniform) naturally provides this discrimination. (source: capability-type-unification area findings — schemaCapabilityRegistry.ts lines 381-439; relevance: high)
+- Effect and transition params currently have NO keyframe support — they are stored independently (clip.entrance.params, clip.transition.params) and edited through ParameterControls/SequenceParamEditor, NOT through the KeyframeInspector pipeline. The clip.keyframes Record<string,ClipKeyframe[]> exclusively targets clip-level params. This confirms the task requirement that effect-param and transition-param target paths must be representable before their full verticals land. (source: legacy-field-inventory area findings — ClipPanel.tsx wiring, keyframe consumption flow; relevance: high)
+- Contribution nodes for effects and transitions already exist in the graph projection (e.g., 'contribution:effect:com.example.effects:glow'), built from contributionIndex entries. This means 'animates' and 'binds-live' edges targeting effect/transition params can reference existing contribution nodes as targets without introducing new node kinds — the pattern of carrying targetPath and targetKind in edge.detail suffices. The only risk is when a contribution node doesn't exist because it's not in contributionIndex; automation clips referencing unindexed contributions would need the contribution to appear in the index. (source: graph-edge-projection-impact area findings — graphProjector.ts node construction, contributionNodeId pattern; relevance: high)
+- The export guard currently reads live bindings directly from ResolvedTimelineConfig (scanLiveBindingExportBlockers), NOT from the composition graph. However, scanTimelineShaderExportBlockers already demonstrates the pattern of accepting an optional compositionGraph parameter and walking graph edges. This same pattern can be replicated for 'animates' and 'binds-live' edge consumers when the graph becomes authoritative for those facts. (source: graph-edge-projection-impact area findings — exportGuard.ts patterns; relevance: medium)
+- No legacy flat-key strings encoding target paths differently were found in serialized proposals or timeline-data. The serialize.ts/validateSerializedConfig pathway uses the canonical TIMELINE_CLIP_FIELDS set with 'keyframes' included. This validates the locked decision that legacy flat keys are compatibility/source-shaping data only — no hidden addressing scheme needs to be reverse-engineered from serialized data. (source: legacy-field-inventory area findings — serialize.ts investigation; relevance: medium)
+- The schema-examples-artifact investigation (Area 4) failed with a worker structural audit error (type_mismatch). No concrete CompositionParamCapability schema examples were produced for scalar, vector, color, bounded structured-data, or source-selector values. This is a blocking gap because the task explicitly requests these as a deliverable artifact that the planner needs as input, and no structured-param examples exist anywhere in the current codebase. (source: schema-examples-artifact area findings — worker_structural_audit_failed error; relevance: high)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/sdk/video/composition/graph.ts | CompositionGraphNode, CompositionGraphEdge, CompositionNodeKind, CompositionEdgeKind, COMPOSITION_NODE_KINDS, COMPOSITION_EDGE_KINDS | Public SDK contracts for CompositionGraphNode, CompositionGraphEdge, CompositionNodeKind, and CompositionEdgeKind. Must be extended from 'consumes' only to include 'animates' and 'binds-live' edge kinds, and edge detail must gain targetPath/targetKind fields. Also holds the M1b scope declaration (lines 10-12) confirming target paths are out of scope for M1b. |
+| src/tools/video-editor/runtime/composition/graphProjector.ts | projectCompositionGraph, clipNodeId, contributionNodeId, scopeNodeId | Builds graph nodes and 'consumes' edges from shader summaries. Must be extended to project 'animates' edges from clip.keyframes + AutomationClipTarget data and 'binds-live' edges from TimelineLiveBinding/TimelineLiveUniformBinding records. clipNodeId/contributionNodeId patterns establish node ID construction conventions. |
+| src/tools/video-editor/runtime/composition/diagnostics.ts | COMPOSITION_DIAGNOSTIC_CODE, CompositionDiagnosticDetail, buildCompositionDiagnostic | Defines 10 existing composition/ diagnostic codes and the CompositionDiagnosticDetail interface. Must be extended with new codes: composition/unsupported-target-kind, composition/invalid-target-path, composition/ambiguous-target-path, composition/unknown-ref-uniform, composition/non-bindable-target, composition/invalid-value-type, composition/invalid-interpolation. Detail interface needs targetPath, targetKind fields. |
+| src/tools/video-editor/runtime/schemaCapabilityRegistry.ts | SchemaCapabilityEntry, BUILTIN_CAPABILITIES, BUILTIN_TYPE_KEYS, SchemaWidgetType, SchemaCapabilityStatus | Closest precursor to CompositionParamCapability. SchemaCapabilityEntry already has type, widgetType, status, label, diagnostic, isCustomPlaceholder. Must be extended with animatable, liveBindable, serializable, exportDeterministic, defaultValue, valueType, interpolationPolicy. BUILTIN_CAPABILITIES already enumerates all 17 types from both systems. |
+| src/sdk/video/families/automation.ts | AutomationClipTarget | Defines AutomationClipTarget (contributionId + parameterPath) — the SDK public contract for automation clip target addressing and the input data shape for 'animates' edges from automation clips. |
+| src/tools/video-editor/types/index.ts | TimelineClip, TimelineLiveBinding, TimelineLiveUniformBinding, TimelineLiveUniformBindingMapping, ParameterType, KeyframeInterpolation | Defines all host-internal target-addressing types: TimelineClip.keyframes (Record<string,ClipKeyframe[]>), TimelineLiveBinding (targetParamName, targetEffectId), TimelineLiveUniformBinding, TimelineLiveUniformBindingMapping (uniform, sourcePath, components), KeyframeInterpolation, ParameterType union. These are the migration source shapes. |
+| src/tools/video-editor/runtime/exportGuard.ts | scanLiveBindingExportBlockers, scanTimelineShaderExportBlockers | scanLiveBindingExportBlockers currently reads live bindings from config directly; scanTimelineShaderExportBlockers already demonstrates graph-aware pattern. Both need to consume 'animates'/'binds-live' edges when the graph is authoritative. |
+| src/sdk/video/families/shaders.ts | ShaderUniformType, ShaderUniformDefinition | Defines ShaderUniformType (11 kinds) and ShaderUniformDefinition — the SDK-side type system that must be unified with host ParameterType into CompositionParamCapability. |
+| src/tools/video-editor/keyframes/index.ts | validateKeyframeValue, validateKeyframes, resolveAnimatedParams, extractAutomationParams, applyAutomationOverrides, AutomationTarget | Keyframe validation (validateKeyframeValue, validateKeyframes) validates value shapes against ParameterDefinition but does not validate target path existence or schema match. AutomationTarget/extractAutomationParams mirror AutomationClipTarget for host-side automation override system. resolveAnimatedParams uses flat param-name lookup. |
+| src/sdk/video/composition/references.ts | ContributionRef | ContributionRef type used by graph nodes. The referenceResolver resolves these for contribution-owned params (effects, transitions, shader uniforms) — 'animates' and 'binds-live' edges targeting contribution params need this same resolution path. |
+| src/tools/video-editor/runtime/composition/shaderProjector.ts | buildShaderDescriptorsFromGraph | buildShaderDescriptorsFromGraph demonstrates the pattern of walking graph edges by kind (filtering edge.kind !== 'consumes', indexing nodes by id, using edge.detail.shaderId). This pattern is the template for 'animates' and 'binds-live' consumers. |
+| src/sdk/video/families/effects.ts | EffectParameterDefinition | EffectParameterDefinition.type uses host ParameterType inline union. Effect params must be targetable via effect-param target paths and have their capabilities derived from the unified model. |
+| src/sdk/video/families/transitions.ts | TransitionParameterDefinition | TransitionParameterDefinition.type uses host ParameterType inline union. Transition params must be targetable via transition-param target paths. |
+| src/sdk/video/families/clipTypeContributions.ts | ClipParameterDefinition | ClipParameterDefinition.type uses host ParameterType inline union. Clip params are the primary target for clip-param paths. |
+
+        ### Test Expectations
+        - [fail_to_pass] target-path-canonicalization: CompositionTargetPath.parse canonicalizes clip-param, effect-param, transition-param, shader-uniform paths; rejects unknown kinds; validates extension-param lexically but stores as reserved
+- [fail_to_pass] target-path-disambiguation: Ambiguous legacy flat keys (same param name on clip vs nested effect) produce composition/ambiguous-target-path diagnostic; explicit targetPath always wins over legacy fields
+- [fail_to_pass] shader-uniform-target-validation: Shader-uniform keyframes with explicit targetPath validate against shader schema; missing ShaderRef produces composition/unknown-ref-uniform diagnostic
+- [fail_to_pass] capability-answer-uniformity: Same CompositionParamCapability shape serves inspector widget, keyframe validation, live-bindable flag, serializable flag, and export-deterministic posture for all 17 types across both type systems
+- [fail_to_pass] graph-edge-projection: projectCompositionGraph produces 'animates' edges from clip.keyframes and AutomationClipTarget data, 'binds-live' edges from TimelineLiveBinding and TimelineLiveUniformBinding records
+- [fail_to_pass] export-blocker-integration: Export blockers consume 'animates' and 'binds-live' graph edges; unresolvable target paths block graph-backed export/planning
+- [fail_to_pass] legacy-migration-adapters: Host migration adapters map all 5 legacy schemes to canonical target paths; ambiguous mappings produce diagnostics rather than silent normalization
+- [fail_to_pass] structured-param-capability: Bounded structured-data params validate with bounded schemas; structured params are schema capability (not new target-path kind) per locked decision
+- [fail_to_pass] source-selector-validation: Descriptor-owned source selectors validate as enum or bounded integer clip/effect params; options and range constraints enforced from capability
+- [fail_to_pass] color-type-discrimination: Color capability discriminates hex-string (host) vs vec4-array (shader) value shapes based on target-kind; both share same widget type and animatable posture
+
+        ### Constraints
+        - Do not expand V1 executable target kinds beyond clip-param, effect-param, transition-param, shader-uniform
+- Reserved extension-param envelope validates lexically but emits composition/unsupported-target-kind for output, process, agent, app domains
+- Do not infer animation/export capability from raw JavaScript value shape — derive from schema-owned CompositionParamCapability only
+- Explicit targetPath must not be overridden by legacy fields — targetPath is canonical, legacy fields are migration hints
+- Invalid target paths must block graph-backed export/planning
+- Non-shader parameter paths are relative to params and never start with 'params.' after normalization
+- Shader uniform paths canonicalize to 'uniforms.<name>' and require a ShaderRef
+- Legacy flat keys and live mapping names are compatibility/source-shaping data only
+- Structured params are schema capability, not a new target-path kind
+- Color capability must handle hex-string (host) vs vec4-array (shader) discrimination — target-kind provides the discriminator
+- TextureRef is explicitly unsupported (schema/texture-ref-unsupported diagnostic) and must remain so
+- Audio-binding is host-only, not animatable in the keyframe sense, but live-bindable by nature and not export-deterministic
+
+        ### Suggested Approach
+        Phase 1 — Define CompositionTargetPath contracts in src/sdk/video/composition/targetPath.ts: a discriminated union with kind (clip-param, effect-param, transition-param, shader-uniform, extension-param), canonical parse/stringify, and lexical validation. Extension-param validates structurally but emits composition/unsupported-target-kind. Shader-uniform requires ShaderRef in the path detail. Non-shader paths normalize to drop any 'params.' prefix. Phase 2 — Build CompositionParamCapability in src/sdk/video/composition/capability.ts: extend the SchemaCapabilityEntry shape with animatable, liveBindable, serializable, exportDeterministic, defaultValue, valueType, and interpolationPolicy. Populate BUILTIN_CAPABILITIES for all 17 types. Use target-kind as discriminator for color (hex vs vec4). Mark audio-binding as animatable=false, liveBindable=true, exportDeterministic=false. Mark textureRef as animatable=false, liveBindable=false, status=unsupported. Phase 3 — Extend the graph contracts: add 'animates' and 'binds-live' to CompositionEdgeKind; add targetPath, targetKind, contributionId to CompositionGraphEdge.detail. Add new diagnostic codes to COMPOSITION_DIAGNOSTIC_CODE and extend CompositionDiagnosticDetail with targetPath/targetKind fields. Phase 4 — Extend graphProjector.ts: after building 'consumes' edges, iterate clip.keyframes (flat param-name records) to produce 'animates:clip-param' edges; iterate AutomationClipTarget data to produce 'animates:clip-param' edges with contributionId; iterate TimelineLiveBinding records to produce 'binds-live:clip-param' or 'binds-live:effect-param' edges based on presence of targetEffectId; iterate TimelineLiveUniformBinding records to produce 'binds-live:shader-uniform' edges. Resolve contribution nodes from contributionIndex for effect/transition/shader targets. Phase 5 — Build host migration adapters that map legacy fields to canonical target paths. For per-clip keyframes (Record<string,ClipKeyframe[]>), emit clip-param target paths scoped to the owning clip. For AutomationClipTarget, resolve contributionId + parameterPath to clip-param. For TimelineLiveBinding, use targetEffectId presence to choose effect-param vs clip-param. For TimelineLiveUniformBinding, resolve uniform name + optional targetMaterialId to shader-uniform. Emit diagnostics for ambiguous cases rather than silently normalizing. Phase 6 — Wire capability answers into keyframe validation (validateKeyframeValue consumes CompositionParamCapability for animatable check and value-type coercion), live binding (check liveBindable flag), inspector controls (render widget from capability), proposal serialization (serializable flag), and export blockers (exportDeterministic flag + walk graph edges). Phase 7 — Re-run the schema-examples investigation (failed Area 4) to produce concrete CompositionParamCapability examples for scalar, vector, color, bounded structured-data, and source-selector values. This is blocking — without these examples, the structured-param capability shape cannot be validated against the locked decision.
+
+### Open Questions
+- [blocking] What are the concrete CompositionParamCapability shapes for bounded structured-data values (e.g., drop-shadow with offset, blur, color sub-fields) and source selectors (enum clip-param with options, bounded integer effect-param)? The schema-examples investigation (Area 4) failed with a worker error and produced no output. The locked decision states structured params are schema capability not a new target-path kind, but without examples the exact shape of sub-field typing, nested default values, and bounded validation rules is undefined.
+- [assume_and_proceed] How should the color type capability handle the hex-string vs vec4-array shape conflict in a single CompositionParamCapability? The SchemaCapabilityRegistry already uses separate validation paths (color-path for hex, shader-color-vector-path for vec4). _(assumption: Use the target-kind discriminator: when targetKind is 'shader-uniform', the capability's valueType is 'vec4' and the render widget is a color picker that emits vec4; when targetKind is 'clip-param' | 'effect-param' | 'transition-param', the valueType is 'string' with hex validation. Both share the same widgetType='color', animatable=true, and interpolation='linear' posture. The capability entry itself carries a discriminated union for defaultValue shape (string | number[]).)_
+- [assume_and_proceed] Do automation clips (clipType='automation') that reference effect or transition contributionIds via AutomationClipTarget need those contribution nodes to exist in the graph even if no 'consumes' edge exists for that contribution? The contributionIndex is the source of truth for node construction. _(assumption: Yes. The graph projector must ensure that any contributionId referenced by an AutomationClipTarget has a corresponding contribution node in the graph, building it from the contributionIndex even when no shader consumption edge exists. If the contribution is not in the index, emit composition/missing-ref with the appropriate targetPath detail.)_
+- [assume_and_proceed] For per-clip keyframes (Record<string,ClipKeyframe[]>), what happens when a parameter name matches both a clip-level param AND an effect param on the same clip? The current flat-key scheme cannot disambiguate. Does the migration adapter emit a diagnostic or default to clip-param? _(assumption: The migration adapter emits composition/ambiguous-target-path when a flat parameter name matches multiple targets on the same clip. It does NOT silently default to clip-param. The user must convert to explicit targetPath in the updated keyframe format. For pure read paths (inspector display), clip-param is the safe default because effect/transition params currently have no keyframe support anyway.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M2: Target Paths, Schema Capability, Keyframes, And Live Binding
+
+## Outcome
+
+Define the V1 target-path grammar and schema capability answer used by keyframes, live bindings, proposal serialization, inspector controls, and export blockers.
+
+## Execution Posture
+
+Treat target paths as a public contract. Validate and canonicalize through SDK-owned pure data contracts, while host adapters resolve context from descriptors, schemas, refs, and legacy fields.
+
+## Scope
+
+IN:
+- Add `CompositionTargetPath` contracts and canonicalizers.
+- Limit executable target kinds to `clip-param`, `effect-param`, `transition-param`, and `shader-uniform`.
+- Add reserved non-executable `extension-param` envelope for `output`, `process`, `agent`, and `app`.
+- Add host migration adapters for keyframes, automation, and live binding fields.
+- Add `CompositionParamCapability` with render widget, animatable, live-bindable, serializable, export-deterministic, default value, value type, and interpolation policy.
+- Add schema examples for scalar, vector, color, bounded structured-data values, and source selectors.
+- Project `animates` and `binds-live` graph edges.
+- Add target/schema diagnostics for invalid paths, ambiguity, unsupported target kinds, unknown refs/uniforms, non-bindable targets, value types, and interpolation.
+
+OUT:
+- Executable process/output/agent/app target paths.
+- Material runtime and bake execution.
+- Shader assignment execution.
+- Visual graph editor.
+- Special app/process/output routing state for source selectors.
+
+## Locked Decisions
+
+- Non-shader parameter paths are relative to params and never start with `params.` after normalization.
+- Shader uniform paths canonicalize to `uniforms.<name>` and require a `ShaderRef`.
+- Legacy flat keys and live mapping names are compatibility/source-shaping data only.
+- Structured params are schema capability, not a new target-path kind.
+- Inspector controls, keyframe validation, live binding, proposal serialization, and export blockers consume the same capability answer.
+
+## Constraints
+
+- Do not expand V1 executable target kinds.
+- Reserved domains validate lexically but emit `composition/unsupported-target-kind`.
+- Do not infer animation/export capability from raw JavaScript value shape.
+- Do not let explicit `targetPath` be overridden by legacy fields.
+- Invalid target paths must block graph-backed export/planning.
+
+## Done Criteria
+
+- Shader-uniform keyframes persist explicit `targetPath` and validate against shader schema.
+- Effect and transition param paths can be represented before their full verticals land.
+- Descriptor-owned source selectors validate as enum or bounded integer clip/effect params.
+- Small structured-data params validate with bounded schemas.
+- Legacy target strings normalize only when unambiguous.
+- Target diagnostics include canonical `composition/` codes and structured target/ref detail.
+
+## Touchpoints
+
+- `src/sdk/index.ts`
+- `src/sdk/video/composition/graph.ts`
+- `src/sdk/video/composition/references.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/commands/**`
+- `src/tools/video-editor/hooks/useTimelineCommands.ts`
+- `src/tools/video-editor/components/**`
+- `config/contracts/reigh-extension.schema.json`
+- `tests/**/video-editor/**`
+
+User notes and answers:
+- Unattended auto-approve answer for M2 prep clarification: bounded structured-data params remain one clip/effect/transition target-path with CompositionParamCapability valueType=object, widgetType=structured, bounded schema sub-fields, and object defaultValue matching that schema; sub-fields are validated by capability schema and are not V1 target paths. Drop-shadow examples should use offsetX/offsetY/blur/color sub-fields with numeric bounds and host color shape. Source selectors are normal param capabilities: enum selectors use valueType=string, widgetType=select, explicit options, discrete interpolation; bounded integer selectors use valueType=integer with min/max/step and discrete interpolation. Shader colors are discriminated by targetKind=shader-uniform and may use vec4 defaults, while host clip/effect/transition colors use host color strings. Proceed with these assumptions and let critique/gate/review reject unsafe choices.
+- Unattended auto-approve run: prep clarification halt was converted into planner assumptions so the cloud chain can continue. Questions:
+- [blocking] What are the concrete CompositionParamCapability shapes for bounded structured-data values (e.g., drop-shadow with offset, blur, color sub-fields) and source selectors (enum clip-param with options, bounded integer effect-param)? The schema-examples investigation (Area 4) failed with a worker error and produced no output. The locked decision states structured params are schema capability not a new target-path kind, but without examples the exact shape of sub-field typing, nested default values, and bounded validation rules is undefined.
+Planner/executor must make conservative repo-backed assumptions, encode them in artifacts, and let normal critique/gate/review phases reject unsafe choices.
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

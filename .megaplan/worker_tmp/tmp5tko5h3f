@@ -1,0 +1,239 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M2: Target Paths, Schema Capability, Keyframes, And Live Binding
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 3 of 9.
+        - Actionable task IDs for this batch: ['T3', 'T9', 'T15']
+        - Already completed task IDs available as dependency context: ['T1', 'T2']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T3",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 3: Extend composition graph and diagnostics contracts with `animates` and `binds-live` edge kinds, stable edge detail fields for target/ref/binding/validation posture, and structured composition diagnostics for invalid/unsupported/ambiguous targets, unknown refs/uniforms, non-bindable targets, invalid values, and invalid interpolation.",
+    "complexity_justification": "The graph edge and diagnostic shapes are shared runtime contracts in `src/sdk/video/composition/graph.ts` and composition diagnostics. Subtle detail-field drift can break projection, export blockers, and test assertions outside this edit surface.",
+    "executor_notes": ""
+  },
+  {
+    "id": "T9",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 8: Extend `schemaCapabilityRegistry.ts` from widget-only answers to full `CompositionParamCapability` answers, including structured-object widget support, source-selector capabilities, textureRef unsupported handling, compatibility for existing callers, and registry tests.",
+    "complexity_justification": "The registry is the central capability source for UI, keyframes, live mapping, and export posture. A partial compatibility migration could compile while giving downstream controls incomplete capability answers.",
+    "executor_notes": ""
+  },
+  {
+    "id": "T15",
+    "depends_on": [
+      "T2"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 10: Update `config/contracts/reigh-extension.schema.json` and manifest schema tests with bounded structured-data and source-selector capability definitions/examples while keeping process/output/agent/app target domains reserved and non-executable.",
+    "complexity_justification": "This modifies a public JSON schema and tests, but it mirrors the capability contract already established in T2. The task is tier 3 because schema drift can affect extension validation, though the accepted examples make failures directly testable.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T2",
+    "depends_on": [
+      "T1"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 2: Add `src/sdk/video/composition/capability.ts` with `CompositionParamCapability`, value/widget/interpolation/status contracts, all 17 current schema-type capability examples, structured-object and source-selector examples, host-vs-shader color discrimination, audio-binding posture, unsupported textureRef posture, SDK exports, and capability tests.",
+    "complexity_justification": "This defines the shared capability answer consumed by validation, UI controls, live binding, export guards, and extension schemas. Incorrect field semantics such as `exportDeterministic`, color shape, or object constraints would be non-local across multiple consumers.",
+    "executor_notes": "Added the public composition capability contract, example matrix, and barrel exports, then verified the focused module with `npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/capability.test.ts` (6 tests passed). Coverage proves all 17 current schema-type examples plus structured-object and source-selector examples, host-vs-shader color discrimination, audio-binding posture, and unsupported textureRef behavior.",
+    "files_changed": [
+      "src/sdk/index.ts",
+      "src/sdk/video/composition/capability.test.ts",
+      "src/sdk/video/composition/capability.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/capability.test.ts"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 1: Add `src/sdk/video/composition/targetPath.ts` with `CompositionTargetKind`, structured `CompositionTargetPath` data, parse/stringify/canonicalize helpers, reserved `extension-param` lexical validation, shader-ref requirements for `shader-uniform`, SDK exports, and focused target-path contract tests.",
+    "complexity_justification": "This creates a public SDK target-path grammar used by adapters, graph edges, proposal serialization, and extension contracts. A subtle canonicalization or ref-precedence mistake would propagate through later host projection behavior, so it is a shared-contract tier 4 task.",
+    "executor_notes": "Added the public target-path contract and barrel exports, then verified the focused module with `npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/targetPath.test.ts` (7 tests passed). Coverage proves non-shader canonicalization strips leading `params.`, shader uniforms canonicalize to `uniforms.<name>` and require explicit shader refs, reserved `extension-param` paths stay non-executable, and unknown kinds are rejected.",
+    "files_changed": [
+      "src/sdk/index.ts",
+      "src/sdk/video/composition/targetPath.test.ts",
+      "src/sdk/video/composition/targetPath.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/video/composition/targetPath.test.ts"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/sdk/index.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: src/sdk/index.ts, src/sdk/video/composition/capability.test.ts, src/sdk/video/composition/capability.ts, src/sdk/video/composition/targetPath.test.ts, src/sdk/video/composition/targetPath.ts",
+  "Advisory audit finding: Sense check SC3 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC4 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC5 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC6 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC7 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC8 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC9 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC10 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC11 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC12 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16, T17, T18"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC3",
+    "task_id": "T3",
+    "verdict": "",
+    "question": "Do graph and diagnostic contracts preserve existing `consumes` compatibility while adding `animates`/`binds-live` and structured target/ref/binding diagnostic details?"
+  },
+  {
+    "id": "SC9",
+    "task_id": "T9",
+    "verdict": "",
+    "question": "Does the registry return full `CompositionParamCapability` answers without breaking existing callers, and are structured/source-selector/textureRef cases covered?"
+  },
+  {
+    "id": "SC15",
+    "task_id": "T15",
+    "verdict": "",
+    "question": "Does the extension contract schema accept the new bounded structured-data and source-selector examples while keeping process/output/agent/app domains reserved and non-executable?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: V1 executable target kinds are exactly clip-param, effect-param, transition-param, and shader-uniform; extension-param is reserved and lexically validated but non-executable - Matches the epic North Star constraint limiting V1 target paths to clip/effect/transition params and shader uniforms. Process/output/agent/app targets remain namespaced outside the V1 composition SDK per the epic's 't...
+- SD2: Non-shader parameter paths strip leading 'params.' on canonicalization; shader uniform paths canonicalize to 'uniforms.<name>' and require ShaderRef detail - This is the locked grammar decision from the brief. It keeps host parameter paths clean (relative to params, not a flat string convention) while making shader uniforms unambiguous with explicit ref binding.
+- SD3: Explicit serialized targetPath is authoritative and never overridden by legacy fields; ambiguous legacy flat keys emit composition/ambiguous-target-path - Ensures the graph remains the authority for graph-authoritative facts. Legacy fields are compatibility hints only. Once a canonical targetPath is authored, it cannot be silently normalized away.
+
+        ## Plan execution order rationale
+
+        1. Land SDK target-path and capability contracts first.
+2. Extend graph and diagnostics before projection.
+3. Build migration adapters before modifying timeline reader.
+4. Add target summaries before graph projection because the projector only receives `TimelineSnapshot`.
+5. Wire keyframes, inspector controls, live binding, proposal serialization, and export blockers after the shared capability answer exists.
+6. Update contract schema and public export checks last.
+
+        ## Inter-task guidance from finalize
+
+        Execute in the order encoded by the DAG: public SDK contracts first, then diagnostics/adapters/summaries/projection, then consumers, schema/public exports, and finally validation. Keep the batching narrow: most tier-4 tasks are intentionally isolated because they define shared contracts or graph/export invariants. Treat existing `.megaplan` artifacts as harness context only. Do not re-litigate plan strategy; if an anchor tension appears, stop and surface the exact conflict instead of widening scope.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m2-target-paths-schema-20260703-1021/execute_batch_3_output.json
+        - Only produce `task_updates` for these tasks: [T3, T9, T15]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC3, SC9, SC15]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m2-target-paths-schema-20260703-1021/execution_batch_3.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T3",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T9",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    },
+    {
+      "task_id": "T15",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC3",
+      "executor_note": ""
+    },
+    {
+      "sense_check_id": "SC9",
+      "executor_note": ""
+    },
+    {
+      "sense_check_id": "SC15",
+      "executor_note": ""
+    }
+  ]
+}
+        ```
