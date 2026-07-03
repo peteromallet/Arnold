@@ -29,6 +29,7 @@ from arnold_pipelines.megaplan.cloud.cli import (
     _remote_chain_upload_path,
     _remote_chain_workspace_path,
     _resolve_resume_workspace,
+    _run_preflight,
     _run_sync_megaplan,
     _run_launch_epic_wrapper,
     _run_bootstrap_wrapper,
@@ -215,6 +216,7 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
     monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli.seed_codex_oauth", lambda *_a, **_k: {"status": "skipped"})
     monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._remote_repo_head", lambda *_a, **_k: {"branch": "main", "head": "abc123"})
     monkeypatch.setattr("arnold_pipelines.megaplan.cloud.cli._relay_output", lambda *_a, **_k: None)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
 
     provider = _LaunchEpicProvider()
     rc = _run_launch_epic_wrapper(
@@ -225,7 +227,7 @@ def test_launch_epic_end_to_end_uploads_canonical_spec_and_tracks_watchdog(
             fresh=True,
             no_git_refresh=True,
             no_editable_install_sync=True,
-            cloud_yaml=None,
+            cloud_yaml=str(app / "cloud.yaml"),
         ),
         _cloud_spec(),
         provider,
@@ -474,6 +476,9 @@ def test_durable_megaplan_uploads_exclude_runtime_state(tmp_path: Path) -> None:
     (project / ".megaplan" / "initiatives" / "demo" / "chain.yaml").write_text("milestones: []\n", encoding="utf-8")
     (project / ".megaplan" / "tickets" / "T.md").write_text("ticket\n", encoding="utf-8")
     (project / ".megaplan" / "ideas" / "idea.md").write_text("idea\n", encoding="utf-8")
+    (project / ".megaplan" / "ideas" / "._idea.md").write_text("appledouble\n", encoding="utf-8")
+    (project / ".megaplan" / "tickets" / "._T.md").write_text("appledouble\n", encoding="utf-8")
+    (project / ".megaplan" / "initiatives" / "demo" / ".DS_Store").write_text("finder\n", encoding="utf-8")
     (project / ".megaplan" / "plans" / "run" / "state.json").write_text("{}\n", encoding="utf-8")
 
     uploads = _durable_megaplan_uploads(project, "/workspace/demo/app")
@@ -483,6 +488,122 @@ def test_durable_megaplan_uploads_exclude_runtime_state(tmp_path: Path) -> None:
     assert "/workspace/demo/app/.megaplan/tickets/T.md" in remotes
     assert "/workspace/demo/app/.megaplan/ideas/idea.md" in remotes
     assert all("/.megaplan/plans/" not in remote for remote in remotes)
+    assert all("/._" not in remote for remote in remotes)
+    assert all(not remote.endswith(".DS_Store") for remote in remotes)
+
+
+def test_cloud_preflight_reports_remote_imports_profile_warning_and_expected_spec(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    (spec_dir / "briefs").mkdir()
+    (spec_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n"
+        "    phase_model:\n"
+        "      - plan=claude\n"
+        "      - revise=codex\n"
+        "      - execute=codex\n",
+        encoding="utf-8",
+    )
+    commands: list[str] = []
+
+    class PreflightProvider:
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            commands.append(command)
+            if "MEGAPLAN_IMPORT_CHECK" in command:
+                payload = {
+                    "checks": {
+                        "arnold_pipelines.megaplan": True,
+                        "arnold_pipelines.megaplan.cli": True,
+                        "arnold.pipelines.megaplan": False,
+                    },
+                    "errors": [],
+                }
+                return subprocess.CompletedProcess([], 0, json.dumps(payload) + "\n", "")
+            return subprocess.CompletedProcess([], 0, "\n", "")
+
+    rc = _run_preflight(
+        project,
+        argparse.Namespace(
+            spec=str(spec_path),
+            skip_remote=False,
+            allow_loose_chain_spec=False,
+        ),
+        _cloud_spec(),
+        PreflightProvider(),
+    )
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["success"] is True
+    assert payload["canonical_layout"] is True
+    assert payload["remote"]["expected_remote_spec"].endswith("/.megaplan/initiatives/demo/chain.yaml")
+    assert payload["remote"]["import_check"]["status"] == "ok"
+    assert any("Codex-only cloud workers should use profile all-codex" in warning for warning in payload["warnings"])
+    assert any("MEGAPLAN_IMPORT_CHECK" in command for command in commands)
+
+
+def test_cloud_preflight_fails_on_stale_remote_import(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    project = tmp_path / "app"
+    spec_dir = project / ".megaplan" / "initiatives" / "demo"
+    spec_dir.mkdir(parents=True)
+    subprocess.run(["git", "init"], cwd=project, check=True, capture_output=True, text=True)
+    (spec_dir / "NORTHSTAR.md").write_text("north star\n", encoding="utf-8")
+    (spec_dir / "briefs").mkdir()
+    (spec_dir / "briefs" / "m1.md").write_text("idea\n", encoding="utf-8")
+    spec_path = spec_dir / "chain.yaml"
+    spec_path.write_text(
+        "anchors:\n"
+        "  north_star: NORTHSTAR.md\n"
+        "milestones:\n"
+        "  - label: m1\n"
+        "    idea: .megaplan/initiatives/demo/briefs/m1.md\n",
+        encoding="utf-8",
+    )
+
+    class StaleProvider:
+        def ssh_exec(self, command: str) -> subprocess.CompletedProcess[str]:
+            if "MEGAPLAN_IMPORT_CHECK" in command:
+                payload = {
+                    "checks": {
+                        "arnold_pipelines.megaplan": False,
+                        "arnold_pipelines.megaplan.cli": False,
+                        "arnold.pipelines.megaplan": True,
+                    },
+                    "errors": ["missing modern arnold_pipelines.megaplan import"],
+                }
+                return subprocess.CompletedProcess([], 1, json.dumps(payload) + "\n", "")
+            return subprocess.CompletedProcess([], 0, "\n", "")
+
+    rc = _run_preflight(
+        project,
+        argparse.Namespace(
+            spec=str(spec_path),
+            skip_remote=False,
+            allow_loose_chain_spec=False,
+        ),
+        _cloud_spec(),
+        StaleProvider(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 1
+    assert payload["success"] is False
+    assert "missing modern arnold_pipelines.megaplan import" in payload["errors"]
 
 
 def test_sync_megaplan_uses_derived_chain_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -806,8 +927,39 @@ def test_cloud_chains_command_lists_marker_only_live_process_sessions() -> None:
     assert "marker_dir.glob(\"*.json\")" in script
     assert "process_status" in script
     assert "tmux_status" in script
-    assert "arnold_pipelines.megaplan chain start" in script
-    assert '"status"] = "running" if payload["tmux_status"] == "alive" or payload["process_status"] == "alive"' in script
+    assert '" chain start" in line' in script
+    assert '" epic-chain start" in line' in script
+    assert "def _effective_session_status(payload):" in script
+    assert "return \"running\"" in script
+
+
+def test_cloud_chains_command_lists_all_canonical_markers_not_only_default_prefix() -> None:
+    script = _cloud_chains_command()
+
+    assert "name.startswith" not in script
+    assert "sessions_by_name.setdefault(name, _payload_for(name))" in script
+    assert "untracked_tmux_sessions" in script
+
+
+def test_cloud_chains_command_derives_display_name_from_initiative_path() -> None:
+    script = _cloud_chains_command()
+
+    assert "def _display_name(payload):" in script
+    assert '{"initiatives", "briefs"}' in script
+    assert '"display_name"' in script
+
+
+def test_cloud_chains_command_includes_should_run_and_watchdog_repair_state() -> None:
+    script = _cloud_chains_command()
+
+    assert "def _load_watchdog_sessions():" in script
+    assert "watchdog_by_session" in script
+    assert '"watchdog_evidence"' in script
+    assert '"watchdog_repairing"' in script
+    assert '"should_be_running"' in script
+    assert "def _should_be_running(payload):" in script
+    assert "should_be_running_count" in script
+    assert "watchdog_repairing_count" in script
 
 
 # ── T11: sidecar classification & evidence field tests ──────────────────
@@ -824,17 +976,19 @@ def test_cloud_chains_command_uses_canonical_session_marker_filter() -> None:
 
 def test_cloud_chains_command_emits_separate_evidence_fields() -> None:
     """Every session row must emit distinct ``marker_evidence``, ``tmux_evidence``,
-    ``process_evidence``, and ``active_step_evidence`` fields."""
+    ``process_evidence``, ``chain_health_evidence``, and ``active_step_evidence`` fields."""
     script = _cloud_chains_command()
 
     assert '"marker_evidence"' in script
     assert '"tmux_evidence"' in script
     assert '"process_evidence"' in script
+    assert '"chain_health_evidence"' in script
     assert '"active_step_evidence"' in script
     # Status convenience mirrors
     assert '"marker_status"' in script
     assert '"tmux_status"' in script
     assert '"process_status"' in script
+    assert '"chain_health_status"' in script
     assert '"active_step_status"' in script
 
 
@@ -846,7 +1000,7 @@ def test_cloud_chains_command_marker_only_sessions_have_process_dead_tmux_missin
     # tmux_evidence defaults to missing when session not in tmux_names
     assert '"tmux_evidence": {"status": "alive" if name in tmux_names else "missing"}' in script
     # process_evidence calls _process_status which returns alive/dead/unknown
-    assert "def _process_status(remote_spec):" in script
+    assert "def _process_status(remote_spec, workspace=\"\", plan_name=\"\"):" in script
     assert '"process_evidence"' in script
 
 

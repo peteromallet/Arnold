@@ -1792,6 +1792,7 @@ def _override_resume_clarify(
             "'override add-note' before the plan phase."
         )
     state["current_state"] = STATE_PREPPED
+    state.pop("clarification", None)
     _append_to_meta(
         state,
         "overrides",

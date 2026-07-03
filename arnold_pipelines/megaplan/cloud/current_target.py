@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.cloud.repair_contract import load_json
 from arnold_pipelines.megaplan.cloud.feature_flags import resolver_observe_enabled
 from arnold_pipelines.megaplan.cloud.session_markers import (
@@ -79,8 +80,8 @@ def resolve_current_target(
     marker_path = markers_root / f"{session}.json"
     marker = _safe_load_dict(marker_path)
     workspace = _safe_path(marker.get("workspace"))
-    run_kind = _safe_text(marker.get("run_kind")) or "unknown"
     remote_spec = _resolve_remote_spec(workspace, marker.get("remote_spec"))
+    run_kind = _resolve_run_kind(marker.get("run_kind"), remote_spec)
     marker_plan_name = _safe_plan_name(marker.get("plan_name"))
 
     chain_state_path = _chain_state_path(workspace, remote_spec, run_kind)
@@ -286,15 +287,29 @@ def _resolve_remote_spec(workspace: Path | None, value: object) -> Path | None:
     return workspace / path
 
 
+def _resolve_run_kind(value: object, remote_spec: Path | None) -> str:
+    text = _safe_text(value)
+    if text and text != "unknown":
+        return text
+    if remote_spec is not None and remote_spec.name == "chain.yaml":
+        return "chain"
+    if remote_spec is not None and remote_spec.name == "epic-chain.yaml":
+        return "epic_chain"
+    return "unknown"
+
+
 def _chain_state_path(workspace: Path | None, remote_spec: Path | None, run_kind: str) -> Path | None:
     if workspace is None or remote_spec is None or run_kind != "chain":
         return None
+    canonical_path = chain_spec._state_path_for(remote_spec)
     try:
-        resolved = remote_spec.resolve()
+        candidates = chain_spec._state_path_candidates_for(remote_spec)
     except Exception:
-        resolved = remote_spec
-    digest = hashlib.sha1(str(resolved).encode("utf-8")).hexdigest()[:12]
-    return workspace / ".megaplan" / "plans" / ".chains" / f"chain-{digest}.json"
+        candidates = [canonical_path]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return canonical_path
 
 
 def _plan_state_path(workspace: Path | None, plan_name: str, run_kind: str) -> Path | None:

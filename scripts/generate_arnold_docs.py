@@ -698,6 +698,7 @@ def _registries_to_update() -> dict[Path, tuple[ShippedPipelineInfo, ...]]:
 
     by_registry: dict[Path, list[ShippedPipelineInfo]] = {
         REPO_ROOT / "arnold_pipelines" / "evidence_pack" / "pipeline_ids.json": [],
+        REPO_ROOT / "arnold_pipelines" / "megaplan" / "pipeline_ids.json": [],
     }
     for info in discover_migrated_pipelines():
         if info.registry_id is None:
@@ -705,6 +706,10 @@ def _registries_to_update() -> dict[Path, tuple[ShippedPipelineInfo, ...]]:
         if info.registry_id == "evidence_pack.verifier":
             by_registry[
                 REPO_ROOT / "arnold_pipelines" / "evidence_pack" / "pipeline_ids.json"
+            ].append(info)
+        elif info.registry_id.startswith("megaplan."):
+            by_registry[
+                REPO_ROOT / "arnold_pipelines" / "megaplan" / "pipeline_ids.json"
             ].append(info)
         else:
             continue

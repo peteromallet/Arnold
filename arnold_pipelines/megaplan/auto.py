@@ -2581,6 +2581,52 @@ def _active_step_progress_signature(
     )
 
 
+def _blocked_tasks_require_user_action(
+    plan_dir: Path,
+    blocked_tasks: tuple[Any, ...],
+) -> bool:
+    """Return whether blocked prerequisite tasks are tied to user actions."""
+
+    if not blocked_tasks:
+        return False
+    finalize_path = plan_dir / "finalize.json"
+    try:
+        finalize_data = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return False
+    if not isinstance(finalize_data, dict):
+        return False
+    user_actions = finalize_data.get("user_actions")
+    if not isinstance(user_actions, list) or not user_actions:
+        return False
+
+    blocked_ids = {
+        task_id
+        for blocked in blocked_tasks
+        if isinstance((task_id := getattr(blocked, "task_id", None)), str) and task_id
+    }
+    if not blocked_ids:
+        return False
+
+    for action in user_actions:
+        if not isinstance(action, dict):
+            continue
+        blocks_task_ids = action.get("blocks_task_ids")
+        if isinstance(blocks_task_ids, list):
+            scoped_ids = {
+                task_id
+                for task_id in blocks_task_ids
+                if isinstance(task_id, str) and task_id
+            }
+            if blocked_ids & scoped_ids:
+                return True
+        if action.get("phase") == "before_execute" and (
+            not isinstance(blocks_task_ids, list) or not blocks_task_ids
+        ):
+            return True
+    return False
+
+
 def _heartbeat_stream_counts(payload: Mapping[str, Any]) -> tuple[int, int] | None:
     token_value = payload.get("tokens_emitted_so_far", payload.get("tokens_emitted"))
     reasoning_value = payload.get(
@@ -4361,9 +4407,9 @@ def drive(
                 # Executor succeeded — continue to next phase without retry.
                 pass
             elif ek == ExitKind.blocked_by_prereq.value:
-                # Executor reported tasks blocked by prereq — exit as
-                # awaiting_human. Use result.blocked_tasks directly, no
-                # batch globbing or string prefix matching.
+                # Executor reported tasks blocked by prerequisites. Only
+                # surface awaiting_human when finalize recorded matching user
+                # actions; ordinary dependency blocks are not a human gate.
                 blocked_tasks: tuple[Any, ...] = getattr(result, "blocked_tasks", ())
                 if blocked_tasks:
                     blocked_summaries = [
@@ -4375,32 +4421,74 @@ def drive(
                         )
                         for bt in blocked_tasks
                     ]
-                    reason = (
-                        "execute reported blocked tasks awaiting user action: "
-                        + "; ".join(blocked_summaries)
+                    blocking_reasons = [
+                        (
+                            f"task {getattr(bt, 'task_id', '?')} reported "
+                            f"status=blocked by executor: {getattr(bt, 'notes', '')}"
+                            if getattr(bt, "notes", "")
+                            else f"task {getattr(bt, 'task_id', '?')} reported status=blocked by executor"
+                        )
+                        for bt in blocked_tasks
+                    ]
+                    if _blocked_tasks_require_user_action(plan_dir, blocked_tasks):
+                        reason = (
+                            "execute reported blocked tasks awaiting user action: "
+                            + "; ".join(blocked_summaries)
+                        )
+                        log(
+                            "execute reported task(s) blocked awaiting user action — "
+                            "exiting as awaiting_human without consuming a retry",
+                            blocked_retries_used=blocked_retry_count,
+                            max_blocked_retries=max_blocked_retries,
+                            blocked_task_ids=[getattr(bt, "task_id", "?") for bt in blocked_tasks],
+                        )
+                        return _outcome(
+                            "awaiting_human",
+                            final_state=STATE_FINALIZED,
+                            iterations=iteration,
+                            reason=reason,
+                            last_phase=last_phase,
+                            blocking_reasons=blocking_reasons,
+                        )
+                    reason = "execute reported prerequisite-blocked tasks: " + "; ".join(
+                        blocked_summaries
                     )
                     log(
-                        "execute reported task(s) blocked awaiting user action — "
-                        "exiting as awaiting_human without consuming a retry",
+                        "execute reported prerequisite-blocked task(s) without matching "
+                        "user actions — surfacing as blocked",
                         blocked_retries_used=blocked_retry_count,
                         max_blocked_retries=max_blocked_retries,
                         blocked_task_ids=[getattr(bt, "task_id", "?") for bt in blocked_tasks],
                     )
+                    _record_failure(
+                        plan_dir=plan_dir,
+                        kind="execution_blocked",
+                        message=reason,
+                        current_state=STATE_BLOCKED,
+                        phase=next_step,
+                        resume_cursor={
+                            "phase": next_step,
+                            "batch_index": None,
+                            "retry_strategy": "manual_review",
+                        },
+                        last_artifact=_latest_artifact_name(plan_dir),
+                        suggested_action=(
+                            "Inspect the prerequisite evidence or resolve the blocked task "
+                            "dependency before rerunning execute."
+                        ),
+                        metadata={
+                            "blocked_retries_used": blocked_retry_count,
+                            "max_blocked_retries": max_blocked_retries,
+                            "blocking_reasons": blocking_reasons,
+                        },
+                    )
                     return _outcome(
-                        "awaiting_human",
+                        "blocked",
                         final_state=STATE_FINALIZED,
                         iterations=iteration,
                         reason=reason,
                         last_phase=last_phase,
-                        blocking_reasons=[
-                            (
-                                f"task {getattr(bt, 'task_id', '?')} reported "
-                                f"status=blocked by executor: {getattr(bt, 'notes', '')}"
-                                if getattr(bt, "notes", "")
-                                else f"task {getattr(bt, 'task_id', '?')} reported status=blocked by executor"
-                            )
-                            for bt in blocked_tasks
-                        ],
+                        blocking_reasons=blocking_reasons,
                     )
                 # No blocked tasks but still blocked_by_prereq — treat as
                 # quality blocking via deviations.

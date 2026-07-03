@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from arnold_pipelines.megaplan.chain import spec as chain_spec
 from arnold_pipelines.megaplan.cloud.current_target import (
     _collect_sibling_sessions,
     compare_needs_human_diagnostic,
@@ -261,6 +262,80 @@ def test_resolve_current_target_reports_missing_state_deterministically(tmp_path
             "path": str(workspace / ".megaplan" / "plans" / "m2-plan" / "state.json"),
             "plan_name": "m2-plan",
         },
+    ]
+
+
+def test_resolve_current_target_infers_chain_run_kind_from_legacy_marker(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    state_path = _chain_state_path(workspace, spec_path)
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps({"current_plan_name": "m1-demo", "last_state": "done"}),
+        encoding="utf-8",
+    )
+    _write_marker(
+        marker_dir / "legacy.json",
+        {
+            "session": "legacy",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+        },
+    )
+
+    record = resolve_current_target("legacy", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
+
+    assert record["current_refs"]["run_kind"] == "chain"
+    assert record["authoritative_source"] == "chain_state"
+    assert record["chain_state"]["path"] == str(state_path)
+    assert record["chain_state"]["current_plan_name"] == "m1-demo"
+
+
+def test_resolve_current_target_uses_existing_fallback_chain_state_candidate(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = marker_dir / "repair-data"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo.chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    fallback_state_path = chain_spec._state_path_candidates_for(spec_path)[1]
+    fallback_state_path.parent.mkdir(parents=True, exist_ok=True)
+    fallback_state_path.write_text(
+        json.dumps({"current_plan_name": "m1-demo", "last_state": "finalized"}),
+        encoding="utf-8",
+    )
+    _write_marker(
+        marker_dir / "demo-session.json",
+        {
+            "session": "demo-session",
+            "workspace": str(workspace),
+            "remote_spec": str(spec_path),
+            "run_kind": "chain",
+        },
+    )
+
+    record = resolve_current_target("demo-session", marker_dir=marker_dir, repair_data_dir=repair_data_dir)
+
+    assert record["authoritative_source"] == "chain_state"
+    assert record["chain_state"]["present"] is True
+    assert record["chain_state"]["path"] == str(fallback_state_path)
+    assert record["current_refs"]["chain_current_plan_name"] == "m1-demo"
+    assert record["stale_evidence"] == [
+        {
+            "kind": "missing_plan_state",
+            "path": str(workspace / ".megaplan" / "plans" / "m1-demo" / "state.json"),
+            "plan_name": "m1-demo",
+        }
     ]
 
 

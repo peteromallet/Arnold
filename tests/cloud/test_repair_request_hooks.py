@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -31,8 +32,12 @@ def _make_hook_extensions(
     plan_dir: str = "/tmp/test-plan",
     workspace_path: str = "/tmp/test-workspace",
     session: str = "test-session-001",
-    **extra: str,
-) -> dict[str, str]:
+    **extra: Any,
+) -> dict[str, Any]:
+    from arnold_pipelines.megaplan.cloud.repair_requests import (
+        enqueue_human_gate_repair_request,
+    )
+
     base = {
         "plan_dir": plan_dir,
         "workspace_path": workspace_path,
@@ -40,6 +45,7 @@ def _make_hook_extensions(
         "chain_session": session,
         "run_kind": "plan",
         "plan_name": "test-plan",
+        "human_gate_repair_request_hook": enqueue_human_gate_repair_request,
     }
     base.update(extra)
     return base
@@ -47,7 +53,7 @@ def _make_hook_extensions(
 
 def _make_ctx(
     artifact_root: str = "/tmp/artifact-root",
-    hook_extensions: dict[str, str] | None = None,
+    hook_extensions: dict[str, Any] | None = None,
 ) -> NeutralStepContext:
     return NeutralStepContext(
         artifact_root=artifact_root,

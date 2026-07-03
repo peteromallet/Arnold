@@ -5,6 +5,7 @@ from pathlib import Path
 
 from arnold_pipelines.megaplan import auto
 from arnold_pipelines.megaplan.orchestration.phase_result import (
+    BlockedTask,
     ExitKind,
     PhaseResult,
     atomic_write_phase_result,
@@ -435,3 +436,115 @@ def test_drive_stall_marks_manual_review_origin_auto_stall(
         "iteration": 6,
         "manual_review_origin": "auto_stall",
     }
+
+
+def test_drive_execute_prereq_block_without_user_actions_surfaces_blocked(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "finalized"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps({"user_actions": [], "tasks": []}),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        assert args[0] == "execute"
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="execute",
+                invocation_id="test-invocation",
+                exit_kind=ExitKind.blocked_by_prereq.value,
+                blocked_tasks=(
+                    BlockedTask(task_id="T11", reason="blocked_by_prereq", notes="M7 incomplete"),
+                ),
+            ),
+        )
+        return (0, "", "")
+
+    captured_failures: list[dict[str, object]] = []
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "_record_lifecycle_failure", lambda **kwargs: captured_failures.append(kwargs))
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    assert outcome.status == "blocked"
+    assert outcome.final_state == "finalized"
+    assert "T11" in outcome.reason
+    assert captured_failures[-1]["kind"] == "execution_blocked"
+
+
+def test_drive_execute_prereq_block_with_user_action_stays_awaiting_human(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    plan_dir = tmp_path / "demo"
+    plan_dir.mkdir()
+    (plan_dir / "state.json").write_text(
+        json.dumps({"name": "demo", "current_state": "finalized"}),
+        encoding="utf-8",
+    )
+    (plan_dir / "finalize.json").write_text(
+        json.dumps(
+            {
+                "user_actions": [
+                    {"id": "UA1", "phase": "before_execute", "blocks_task_ids": ["T11"]}
+                ],
+                "tasks": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_status(plan: str, **kwargs):
+        assert plan == "demo"
+        return {
+            "state": "finalized",
+            "next_step": "execute",
+            "valid_next": ["execute"],
+            "progress": {},
+        }
+
+    def fake_run_planning_phase(args, **kwargs):
+        assert args[0] == "execute"
+        atomic_write_phase_result(
+            plan_dir,
+            PhaseResult(
+                phase="execute",
+                invocation_id="test-invocation",
+                exit_kind=ExitKind.blocked_by_prereq.value,
+                blocked_tasks=(
+                    BlockedTask(task_id="T11", reason="blocked_by_prereq", notes="needs user approval"),
+                ),
+            ),
+        )
+        return (0, "", "")
+
+    monkeypatch.setattr(auto, "_resolve_plan_dir", lambda plan, cwd: plan_dir)
+    monkeypatch.setattr(auto, "_status", fake_status)
+    monkeypatch.setattr(auto, "_run_planning_phase", fake_run_planning_phase)
+    monkeypatch.setattr(auto, "emit_event", lambda *args, **kwargs: None)
+
+    outcome = auto.drive("demo", cwd=tmp_path, max_iterations=1, poll_sleep=0)
+
+    assert outcome.status == "awaiting_human"
+    assert outcome.final_state == "finalized"
+    assert "awaiting user action" in outcome.reason

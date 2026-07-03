@@ -20,6 +20,17 @@ import pytest
 pytestmark = pytest.mark.wheel_smoke
 
 
+def _run_checked(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, capture_output=True, text=True, **kwargs)
+    if result.returncode != 0:
+        raise AssertionError(
+            f"command failed ({result.returncode}): {' '.join(args)}\n"
+            f"stdout:\n{result.stdout}\n"
+            f"stderr:\n{result.stderr}"
+        )
+    return result
+
+
 @pytest.fixture
 def built_wheel(tmp_path: Path) -> Path:
     """Build a wheel/sdist and return the wheel path."""
@@ -30,25 +41,16 @@ def built_wheel(tmp_path: Path) -> Path:
 
     # Ensure the test interpreter has pip available for wheel builds.
     try:
-        subprocess.run(
+        _run_checked(
             [sys.executable, "-m", "pip", "--version"],
-            check=True,
-            capture_output=True,
-            text=True,
         )
-    except subprocess.CalledProcessError:
-        subprocess.run(
+    except AssertionError:
+        _run_checked(
             [sys.executable, "-m", "ensurepip"],
-            check=True,
-            capture_output=True,
-            text=True,
         )
 
-    subprocess.run(
+    _run_checked(
         [sys.executable, "-m", "pip", "wheel", "--no-deps", str(repo_root), "-w", str(build_dir)],
-        check=True,
-        capture_output=True,
-        text=True,
         cwd=repo_root,
     )
 

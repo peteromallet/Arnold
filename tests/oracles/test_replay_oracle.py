@@ -620,6 +620,10 @@ def test_routed_recover_blocked_quality_matches_legacy(
         routed=routed,
         fields=("accepted", "response", "state", "artifacts", "events"),
     )
+    assert legacy["state"]["current_state"] == STATE_PREPPED
+    assert routed["state"]["current_state"] == STATE_PREPPED
+    assert "clarification" not in legacy["state"]
+    assert "clarification" not in routed["state"]
 
 
 @pytest.mark.replay_oracle

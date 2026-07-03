@@ -330,33 +330,20 @@ def _enqueue_human_gate_repair_request(
     ).strip()
     if not plan_dir or not workspace_path or not session:
         return
+    hook = hook_extensions.get("human_gate_repair_request_hook")
+    if not callable(hook):
+        return
     try:
-        from arnold_pipelines.megaplan.cloud.feature_flags import repair_request_queue_enabled
-        from arnold_pipelines.megaplan.cloud.repair_requests import enqueue_repair_request
-
-        if not repair_request_queue_enabled():
-            return
-        enqueue_repair_request(
+        hook(
             marker_dir=plan_dir,
             session=session,
-            source="human_gate",
             workspace=workspace_path,
             run_kind=str(hook_extensions.get("run_kind") or "plan"),
-            target={
-                "plan_dir": plan_dir,
-                "plan_name": str(hook_extensions.get("plan_name") or ""),
-                "pipeline_name": pipeline_name,
-                "workspace_path": workspace_path,
-            },
-            problem_signature={
-                "failure_kind": "human_gate",
-                "current_state": pipeline_name,
-                "phase_or_step": artifact_stage,
-                "milestone_or_plan": step_name,
-                "gate_recommendation": "",
-                "blocked_task_id": "",
-            },
-            root_cause_hint=prompt,
+            plan_name=str(hook_extensions.get("plan_name") or ""),
+            pipeline_name=pipeline_name,
+            artifact_stage=artifact_stage,
+            step_name=step_name,
+            prompt=prompt,
         )
     except Exception:
         _LOG.warning(

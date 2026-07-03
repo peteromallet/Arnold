@@ -179,6 +179,24 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     )
     _add_repo_override_args(launch_epic_parser)
 
+    preflight_parser = cloud_sub.add_parser(
+        "preflight",
+        parents=[shared],
+        help="Validate a cloud chain spec and probe the worker before launch",
+    )
+    preflight_parser.add_argument("spec", help="Local .megaplan/initiatives/<initiative>/chain.yaml")
+    preflight_parser.add_argument(
+        "--skip-remote",
+        action="store_true",
+        help="Only run local spec/profile validation; do not SSH to the worker",
+    )
+    preflight_parser.add_argument(
+        "--allow-loose-chain-spec",
+        action="store_true",
+        help="Allow a chain spec outside .megaplan/initiatives/<initiative>/chain.yaml.",
+    )
+    _add_repo_override_args(preflight_parser)
+
     epic_chain_parser = cloud_sub.add_parser(
         "epic-chain",
         parents=[shared],
@@ -227,7 +245,7 @@ def _register_cloud_subcommands(cloud_parser: argparse.ArgumentParser) -> None:
     status_parser.add_argument(
         "--all",
         action="store_true",
-        help="List active cloud chain tmux sessions on the shared runner",
+        help="List all known cloud sessions from the marker registry with live/health evidence",
     )
     status_parser.add_argument(
         "--remote-spec",
@@ -340,6 +358,9 @@ def run_cloud_cli(root: Path, args: argparse.Namespace) -> int:
         if action == "launch-epic":
             with _materialized_deploy_dir(spec):
                 return _run_launch_epic_wrapper(root, args, spec, provider)
+
+        if action == "preflight":
+            return _run_preflight(root, args, spec, provider)
 
         if action == "epic-chain":
             with _materialized_deploy_dir(spec):
@@ -816,6 +837,71 @@ def _run_remote_dependency_check(provider, commands: list[str]) -> list[str]:
         message = (result.stderr or result.stdout or "remote dependency check failed").strip()
         raise CliError("provider_failed", message)
     return sorted({part for part in result.stdout.split() if part})
+
+
+def _remote_megaplan_import_check_command() -> str:
+    script = """
+import importlib.util, json
+
+def present(name):
+    try:
+        return importlib.util.find_spec(name) is not None
+    except Exception as exc:
+        return {"error": str(exc)}
+
+checks = {
+    "arnold_pipelines.megaplan": present("arnold_pipelines.megaplan"),
+    "arnold_pipelines.megaplan.cli": present("arnold_pipelines.megaplan.cli"),
+    "arnold.pipelines.megaplan": present("arnold.pipelines.megaplan"),
+}
+errors = []
+if checks["arnold_pipelines.megaplan"] is not True:
+    errors.append("missing modern arnold_pipelines.megaplan import")
+if checks["arnold_pipelines.megaplan.cli"] is not True:
+    errors.append("missing modern arnold_pipelines.megaplan.cli import")
+print(json.dumps({"checks": checks, "errors": errors}, sort_keys=True))
+raise SystemExit(1 if errors else 0)
+"""
+    return f"python3 - <<'MEGAPLAN_IMPORT_CHECK'\n{script.strip()}\nMEGAPLAN_IMPORT_CHECK"
+
+
+def _run_remote_megaplan_import_check(provider) -> dict[str, Any]:
+    result = provider.ssh_exec(_remote_megaplan_import_check_command())
+    raw = (result.stdout or "").strip().splitlines()
+    try:
+        payload = json.loads(raw[-1] if raw else "{}")
+    except json.JSONDecodeError as exc:
+        payload = {
+            "checks": {},
+            "errors": [f"import check output was not JSON: {exc}"],
+            "raw": result.stdout,
+        }
+    if result.returncode != 0:
+        payload.setdefault("errors", [])
+        if result.stderr:
+            payload["errors"].append(result.stderr.strip())
+    payload["status"] = "ok" if not payload.get("errors") else "failed"
+    return payload
+
+
+def _cloud_profile_warnings(preflight_summary: Mapping[str, Any], spec: CloudSpec) -> list[str]:
+    warnings: list[str] = []
+    required_agents = {
+        str(agent)
+        for agent in preflight_summary.get("required_agents", [])
+        if isinstance(agent, str)
+    }
+    configured_secrets = set(spec.secrets)
+    if "claude" in required_agents or "shannon" in required_agents:
+        if "ANTHROPIC_API_KEY" not in configured_secrets:
+            warnings.append(
+                "resolved chain routing includes Claude/Shannon phases. "
+                "Codex-only cloud workers should use profile all-codex or explicit codex phase_model pins; "
+                "mixed profiles need Claude CLI/auth and ANTHROPIC_API_KEY available on the worker."
+            )
+    if required_agents == {"codex"}:
+        warnings.append("resolved chain routing is Codex-only; this is compatible with all-codex-style cloud workers.")
+    return warnings
 
 
 def _phase_model_by_label_from_preflight(preflight_summary: Mapping[str, Any]) -> dict[str, list[str]]:
@@ -2181,6 +2267,16 @@ else:
 _DURABLE_MEGAPLAN_DIRS = ("initiatives", "tickets", "ideas")
 
 
+def _is_durable_megaplan_upload_file(path: Path) -> bool:
+    if path.name == ".DS_Store":
+        return False
+    if path.name.startswith("._"):
+        return False
+    if "__MACOSX" in path.parts:
+        return False
+    return True
+
+
 def _durable_megaplan_uploads(project_root: Path, workspace: str) -> list[tuple[Path, str]]:
     """Return local durable .megaplan files and their remote workspace paths."""
     root = project_root.expanduser().resolve()
@@ -2192,7 +2288,7 @@ def _durable_megaplan_uploads(project_root: Path, workspace: str) -> list[tuple[
         for path in sorted(local_dir.rglob("*")):
             if not path.is_file():
                 continue
-            if path.name == ".DS_Store":
+            if not _is_durable_megaplan_upload_file(path):
                 continue
             relative = path.relative_to(root)
             remote = str(PurePosixPath(workspace).joinpath(*relative.parts))
@@ -2284,6 +2380,78 @@ def _run_sync_megaplan(root: Path, args: argparse.Namespace, spec: CloudSpec, pr
     }
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     return 0
+
+
+def _run_preflight(root: Path, args: argparse.Namespace, spec: CloudSpec, provider) -> int:
+    from arnold_pipelines.megaplan import chain as chain_module
+    from arnold_pipelines.megaplan.cloud.preflight import resolve_cloud_chain_runtime_dependencies
+
+    local_spec_path = Path(args.spec).expanduser().resolve()
+    project_root = _chain_project_root(local_spec_path, root)
+    _validate_chain_spec_location(
+        local_spec_path,
+        project_root,
+        allow_loose=bool(getattr(args, "allow_loose_chain_spec", False)),
+    )
+    chain_spec = chain_module.load_spec(local_spec_path)
+    anchor_requirement = chain_module.chain_spec.validate_anchor_requirement(chain_spec, local_spec_path)
+    chain_module.chain_spec.validate_paths(chain_spec, project_root, spec_path=local_spec_path)
+    launch_ctx = _derive_chain_launch_context(
+        root=project_root,
+        spec=spec,
+        local_spec_path=local_spec_path,
+        chain_spec=chain_spec,
+    )
+    preflight_summary = resolve_cloud_chain_runtime_dependencies(
+        chain_spec,
+        project_dir=project_root,
+        cloud_default_agent=spec.agents.get("default"),
+    )
+    missing_env = _missing_configured_secrets(spec, os.environ)
+    remote: dict[str, Any] = {"skipped": bool(getattr(args, "skip_remote", False))}
+    if not remote["skipped"]:
+        import_check = _run_remote_megaplan_import_check(provider)
+        missing_commands = _run_remote_dependency_check(
+            provider,
+            list(preflight_summary.get("runtime_commands", [])),
+        )
+        remote.update(
+            {
+                "import_check": import_check,
+                "missing_commands": missing_commands,
+            }
+        )
+    errors: list[str] = []
+    if missing_env:
+        errors.append("missing configured local secrets: " + ", ".join(missing_env))
+    if remote.get("import_check", {}).get("errors"):
+        errors.extend(str(item) for item in remote["import_check"]["errors"])
+    if remote.get("missing_commands"):
+        errors.append("missing remote commands: " + ", ".join(remote["missing_commands"]))
+    payload = {
+        "success": not errors,
+        "event": "cloud_preflight",
+        "project_root": str(project_root),
+        "spec": str(local_spec_path),
+        "canonical_layout": is_canonical_chain_spec(local_spec_path, project_root),
+        "remote": {
+            **remote,
+            "expected_workspace": launch_ctx.workspace,
+            "expected_remote_spec": launch_ctx.remote_spec_path,
+            "expected_session": launch_ctx.session_name,
+        },
+        "anchor": {
+            "require_anchor": anchor_requirement.require_anchor,
+            "north_star": chain_spec.anchors.north_star,
+            "warning": anchor_requirement.warning,
+        },
+        "preflight": preflight_summary,
+        "warnings": _cloud_profile_warnings(preflight_summary, spec),
+        "missing_env": missing_env,
+        "errors": errors,
+    }
+    sys.stdout.write(json.dumps(payload, indent=2) + "\n")
+    return 0 if not errors else 1
 
 
 def _chain_launch_verification_command(
@@ -3262,26 +3430,115 @@ def cloud_status_payload(args: argparse.Namespace, spec: CloudSpec, provider) ->
 
 def _cloud_chains_command() -> str:
     script = f"""
-import json, pathlib, subprocess
+import json, pathlib, subprocess, time
+from datetime import datetime, timezone
 from arnold_pipelines.megaplan.cloud.session_markers import is_canonical_session_marker_path
 marker_dir = pathlib.Path({_CHAIN_SESSION_MARKER_DIR!r})
 proc = subprocess.run(["tmux", "list-sessions", "-F", "#S"], text=True, capture_output=True)
 sessions_by_name = {{}}
 tmux_names = set()
+untracked_tmux_sessions = []
+watchdog_by_session = {{}}
 
-def _process_status(remote_spec):
-    if not remote_spec:
+def _mtime_payload(path):
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return {{"mtime": 0.0, "updated_at": ""}}
+    return {{
+        "mtime": mtime,
+        "updated_at": datetime.fromtimestamp(mtime, timezone.utc).isoformat().replace("+00:00", "Z"),
+    }}
+
+def _process_status(remote_spec, workspace="", plan_name=""):
+    needles = [value for value in (remote_spec, workspace, plan_name) if value]
+    if not needles:
         return "unknown"
     ps = subprocess.run(["ps", "-eww", "-o", "args="], text=True, capture_output=True)
     if ps.returncode != 0:
         return "unknown"
     for line in ps.stdout.splitlines():
-        if (
-            "arnold_pipelines.megaplan chain start" in line
-            or "arnold_pipelines.megaplan epic-chain start" in line
-        ) and "--spec" in line and remote_spec in line:
-            return "alive"
+        if "arnold_pipelines.megaplan" not in line:
+            continue
+        if all(needle in line for needle in needles[:1]):
+            if (
+                " chain start" in line
+                or " epic-chain start" in line
+                or " auto " in line
+            ):
+                return "alive"
     return "dead"
+
+def _load_health(name):
+    path = marker_dir / (name + ".chain-health.progress.json")
+    payload = {{"status": "missing", "path": str(path)}}
+    if not path.exists():
+        return payload
+    payload.update(_mtime_payload(path))
+    try:
+        health = json.loads(path.read_text())
+    except Exception as exc:
+        payload.update({{"status": "invalid", "error": str(exc)}})
+        return payload
+    payload.update({{"status": "present", "payload": health}})
+    return payload
+
+def _load_watchdog_sessions():
+    paths = [
+        pathlib.Path("/workspace/watchdog-report.json"),
+        pathlib.Path("/workspace/.megaplan/watchdog-report.json"),
+    ]
+    for path in paths:
+        if not path.exists():
+            continue
+        evidence = {{"status": "present", "path": str(path), **_mtime_payload(path)}}
+        try:
+            report = json.loads(path.read_text())
+        except Exception as exc:
+            return {{}}, {{"status": "invalid", "path": str(path), "error": str(exc)}}
+        evidence["report_timestamp_utc"] = report.get("timestamp_utc") or report.get("generated_at") or ""
+        by_session = {{}}
+        for section in ("issues", "items"):
+            items = report.get(section)
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                session = item.get("session")
+                if not isinstance(session, str) or not session:
+                    continue
+                by_session[session] = {{
+                    "status": "present",
+                    "source": section,
+                    "path": str(path),
+                    "action": item.get("action") or "",
+                    "watchdog_status": item.get("status") or "",
+                    "message": item.get("message") or "",
+                    "remote_spec": item.get("remote_spec") or "",
+                    "workspace": item.get("workspace") or "",
+                    "report_timestamp_utc": evidence["report_timestamp_utc"],
+                }}
+        return by_session, evidence
+    return {{}}, {{"status": "missing", "path": str(paths[0])}}
+
+def _display_name(payload):
+    remote_spec = payload.get("remote_spec") or payload.get("spec") or ""
+    if remote_spec:
+        parts = pathlib.PurePosixPath(remote_spec).parts
+        for marker in (".megaplan",):
+            if marker not in parts:
+                continue
+            idx = parts.index(marker)
+            if idx + 2 < len(parts) and parts[idx + 1] in {{"initiatives", "briefs"}}:
+                return parts[idx + 2]
+        if "/.megaplan/plans/" in remote_spec:
+            return pathlib.PurePosixPath(remote_spec).name
+    for key in ("plan_name", "name", "chain_slug", "session"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
 
 def _active_step_evidence(workspace, plan_name):
     payload = {{"status": "missing", "path": ""}}
@@ -3295,12 +3552,14 @@ def _active_step_evidence(workspace, plan_name):
         state = json.loads(path.read_text())
     except Exception as exc:
         return {{"status": "invalid", "path": str(path), "error": str(exc)}}
+    current_state = state.get("current_state") or state.get("state") or ""
     active_step = state.get("active_step")
     if not isinstance(active_step, dict) or not active_step:
-        return {{"status": "absent", "path": str(path)}}
+        return {{"status": "absent", "path": str(path), "current_state": current_state}}
     return {{
         "status": "present",
         "path": str(path),
+        "current_state": current_state,
         "phase": active_step.get("phase") or active_step.get("step") or "",
         "name": active_step.get("name") or "",
         "attempt": active_step.get("attempt"),
@@ -3317,40 +3576,154 @@ def _payload_for(name):
         "tmux_evidence": {{"status": "alive" if name in tmux_names else "missing"}},
     }}
     if marker.exists():
+        payload["marker_evidence"].update(_mtime_payload(marker))
         try:
             payload.update(json.loads(marker.read_text()))
-            payload["marker_evidence"] = {{"status": "present", "path": str(marker)}}
+            payload["marker_evidence"].update({{"status": "present", "path": str(marker)}})
         except Exception as exc:
             payload["marker_evidence"] = {{"status": "invalid", "path": str(marker), "error": str(exc)}}
+    payload["chain_health_evidence"] = _load_health(name)
+    health_payload = payload["chain_health_evidence"].get("payload")
+    if isinstance(health_payload, dict):
+        payload["health"] = health_payload
     payload["process_evidence"] = {{
-        "status": _process_status(payload.get("remote_spec")),
+        "status": _process_status(
+            payload.get("remote_spec") or "",
+            payload.get("workspace") or "",
+            payload.get("plan_name") or "",
+        ),
         "remote_spec": payload.get("remote_spec") or "",
     }}
-    payload["active_step_evidence"] = _active_step_evidence(payload.get("workspace"), payload.get("plan_name"))
+    plan_name = payload.get("plan_name")
+    if not plan_name and isinstance(health_payload, dict):
+        plan_name = health_payload.get("current_plan_name")
+    payload["active_step_evidence"] = _active_step_evidence(payload.get("workspace"), plan_name)
+    payload["display_name"] = _display_name(payload)
     payload["marker_status"] = payload["marker_evidence"]["status"]
     payload["tmux_status"] = payload["tmux_evidence"]["status"]
     payload["process_status"] = payload["process_evidence"]["status"]
+    payload["chain_health_status"] = payload["chain_health_evidence"]["status"]
     payload["active_step_status"] = payload["active_step_evidence"]["status"]
-    payload["status"] = "running" if payload["tmux_status"] == "alive" or payload["process_status"] == "alive" else "stopped"
+    payload["status"] = _effective_session_status(payload)
+    payload["watchdog_evidence"] = watchdog_by_session.get(
+        name,
+        {{"status": "missing", "path": "/workspace/watchdog-report.json"}},
+    )
+    payload["watchdog_action"] = payload["watchdog_evidence"].get("action", "")
+    payload["watchdog_status"] = payload["watchdog_evidence"].get("watchdog_status", "")
+    payload["watchdog_repairing"] = _watchdog_is_repairing(payload["watchdog_evidence"])
+    payload["should_be_running"] = _should_be_running(payload)
     return payload
+
+def _watchdog_is_repairing(evidence):
+    if not isinstance(evidence, dict) or evidence.get("status") != "present":
+        return False
+    action = str(evidence.get("action") or "")
+    status = str(evidence.get("watchdog_status") or "")
+    return action == "repair" or status in {{"repair_dispatched", "repairing"}} or "repair" in status
+
+def _should_be_running(payload):
+    status = payload.get("status")
+    if status == "running":
+        return True
+    if status in {{
+        "complete",
+        "awaiting_human_verify",
+        "awaiting_pr_merge",
+        "blocked",
+        "failed",
+        "needs_human",
+        "authority_divergence",
+        "missing_base_ref",
+        "retrying_failure",
+    }}:
+        return False
+    watchdog_status = payload.get("watchdog_status")
+    if watchdog_status in {{"needs_human", "awaiting_pr_merge"}}:
+        return False
+    if status in {{"prepped", "planned", "gated", "finalized", "executed", "reviewed", "stopped"}}:
+        return True
+    return False
+
+def _effective_session_status(payload):
+    if payload.get("tmux_status") == "alive" or payload.get("process_status") == "alive":
+        return "running"
+    active_step = payload.get("active_step_evidence")
+    if isinstance(active_step, dict):
+        current_state = active_step.get("current_state")
+        if current_state == "done":
+            return "complete"
+        if current_state in {{
+            "awaiting_human_verify",
+            "awaiting_pr_merge",
+            "blocked",
+            "failed",
+            "prepped",
+            "planned",
+            "gated",
+            "finalized",
+            "executed",
+            "reviewed",
+        }}:
+            return str(current_state)
+    health = payload.get("health")
+    if isinstance(health, dict):
+        last_state = health.get("last_state")
+        if last_state == "done":
+            return "complete"
+        if last_state in {{
+            "awaiting_human_verify",
+            "awaiting_pr_merge",
+            "needs_human",
+            "blocked",
+            "authority_divergence",
+            "missing_base_ref",
+            "stalled",
+            "retrying_failure",
+        }}:
+            return str(last_state)
+    return "stopped"
+
+watchdog_by_session, watchdog_report_evidence = _load_watchdog_sessions()
 
 if proc.returncode == 0:
     for line in proc.stdout.splitlines():
         name = line.strip()
-        if not name.startswith({CHAIN_SESSION_NAME!r}):
+        if not name:
             continue
         tmux_names.add(name)
-        sessions_by_name[name] = _payload_for(name)
+        marker = marker_dir / (name + ".json")
+        if marker.exists():
+            sessions_by_name[name] = _payload_for(name)
+        else:
+            untracked_tmux_sessions.append(name)
 if marker_dir.exists():
     for marker in sorted(marker_dir.glob("*.json")):
         if not is_canonical_session_marker_path(marker):
             continue
         name = marker.stem
-        if not name.startswith({CHAIN_SESSION_NAME!r}):
-            continue
         sessions_by_name.setdefault(name, _payload_for(name))
 sessions = sorted(sessions_by_name.values(), key=lambda item: item.get("session", ""))
-print(json.dumps({{"success": True, "sessions": sessions}}, sort_keys=True))
+summary = {{}}
+should_be_running_count = 0
+watchdog_repairing_count = 0
+for item in sessions:
+    summary[item.get("status", "unknown")] = summary.get(item.get("status", "unknown"), 0) + 1
+    if item.get("should_be_running"):
+        should_be_running_count += 1
+    if item.get("watchdog_repairing"):
+        watchdog_repairing_count += 1
+print(json.dumps({{
+    "success": True,
+    "marker_dir": str(marker_dir),
+    "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    "sessions": sessions,
+    "summary": summary,
+    "should_be_running_count": should_be_running_count,
+    "watchdog_repairing_count": watchdog_repairing_count,
+    "watchdog_report_evidence": watchdog_report_evidence,
+    "untracked_tmux_sessions": sorted(untracked_tmux_sessions),
+}}, sort_keys=True))
 """
     return f"python3 - <<'MEGAPLAN_CHAINS'\n{script.strip()}\nMEGAPLAN_CHAINS"
 
@@ -3367,11 +3740,42 @@ def _run_cloud_chains(spec: CloudSpec, provider) -> int:
         raise CliError("provider_failed", f"cloud chains did not return JSON: {exc}") from exc
     sessions = payload.get("sessions") if isinstance(payload, dict) else []
     if isinstance(sessions, list):
-        sys.stderr.write(f"active cloud chains: {len(sessions)}\n")
+        sys.stderr.write(
+            f"cloud sessions: {len(sessions)} "
+            f"should_be_running={payload.get('should_be_running_count', 0)} "
+            f"watchdog_repairing={payload.get('watchdog_repairing_count', 0)}\n"
+        )
         for item in sessions:
             if isinstance(item, dict):
+                health = item.get("health") if isinstance(item.get("health"), dict) else {}
+                active = item.get("active_step_evidence") if isinstance(item.get("active_step_evidence"), dict) else {}
+                display_state = active.get("current_state") or (health.get("last_state") if health else "")
+                detail = ""
+                if health:
+                    health_state = health.get("last_state")
+                    health_detail = ""
+                    if display_state and health_state and display_state != health_state:
+                        health_detail = f" health_state={health_state}"
+                    detail = (
+                        f" state={display_state}{health_detail} "
+                        f"plan={health.get('current_plan_name') or ''} "
+                        f"completed={health.get('completed_count')}"
+                    )
+                elif display_state:
+                    detail = f" state={display_state}"
+                watchdog_detail = ""
+                if item.get("watchdog_evidence", {}).get("status") == "present":
+                    watchdog_detail = (
+                        f" watchdog={item.get('watchdog_status') or ''}"
+                        f" watchdog_action={item.get('watchdog_action') or ''}"
+                    )
                 sys.stderr.write(
-                    f"- {item.get('session')} workspace={item.get('workspace')} spec={item.get('remote_spec')}\n"
+                    f"- {item.get('display_name') or item.get('session')} "
+                    f"session={item.get('session')} status={item.get('status')} "
+                    f"should_run={'yes' if item.get('should_be_running') else 'no'} "
+                    f"tmux={item.get('tmux_status')} process={item.get('process_status')}"
+                    f"{watchdog_detail}"
+                    f"{detail} workspace={item.get('workspace')} spec={item.get('remote_spec')}\n"
                 )
     sys.stdout.write(json.dumps(payload, indent=2) + "\n")
     return 0

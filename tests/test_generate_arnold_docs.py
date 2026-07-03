@@ -110,9 +110,8 @@ def test_reference_registry_is_stable_and_reports_non_workflow_identities() -> N
 
     assert first == second
     assert "| megaplan.creative | creative | native:creative | arnold_pipelines/megaplan/pipelines/creative | keep|" in first
-    # deliberation and folder_audit are public native packages with registry IDs; they appear in the reference
-    assert "| deliberation | deliberation | native:deliberation | arnold/pipelines/deliberation | keep|" in first
-    assert "| folder_audit | folder-audit | native:folder-audit | arnold/pipelines/folder_audit | keep|" in first
+    assert "arnold/pipelines/deliberation" not in first
+    assert "arnold/pipelines/folder_audit" not in first
     assert "| evidence_pack.verifier | evidence_pack_verifier | native:evidence_pack |" in first
 
 

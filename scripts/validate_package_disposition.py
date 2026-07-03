@@ -583,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
     errors = validate_manifest(data, tracked_files)
     if args.summary:
         print(render_summary(data, tracked_files))
+        return 0
     if errors:
         for error in errors:
             print(f"ERROR: {error}", file=sys.stderr)

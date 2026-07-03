@@ -2880,9 +2880,11 @@ PY
 repair_clear_stale_state_if_needed() {
   require_repair_lock_held
   ensure_repair_budget_available "stale-state-clear"
-  local failure_context
+  local failure_context failure_context_file
   failure_context="$(collect_failure_context_json "$WORKSPACE" "$SESSION" "$RUN_KIND" "$PLAN_NAME")"
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context" <<'PY'
+  failure_context_file="$(mktemp)"
+  printf '%s' "$failure_context" > "$failure_context_file"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$failure_context_file" <<'PY'
 import datetime as dt
 import json
 import os
@@ -2891,9 +2893,9 @@ import sys
 
 from arnold_pipelines.megaplan.cloud.repair_contract import atomic_write_json, load_json, save_repair_data
 
-data_path_raw, failure_context_raw = sys.argv[1:]
+data_path_raw, failure_context_path_raw = sys.argv[1:]
 data_path = pathlib.Path(data_path_raw)
-failure_context = json.loads(failure_context_raw)
+failure_context = json.loads(pathlib.Path(failure_context_path_raw).read_text(encoding="utf-8"))
 stale_state = failure_context.get("stale_state") if isinstance(failure_context, dict) else {}
 if not isinstance(stale_state, dict):
     stale_state = {}
@@ -3044,6 +3046,9 @@ initial["state_mismatch"] = state_mismatch
 save_repair_data(data_path, payload)
 print("cleared:" + "; ".join(actions))
 PY
+  local rc=$?
+  rm -f "$failure_context_file"
+  return "$rc"
 }
 
 clear_repair_markers() {
@@ -3312,7 +3317,9 @@ PY
 }
 
 repair_exhausted_should_retry_without_human() {
-  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" "$MARKER_DIR" "$DATA_DIR" "$NEEDS_HUMAN_FILE" <<'PY'
+  REPAIR_MARKER_DIR="$MARKER_DIR" REPAIR_DATA_DIR="$DATA_DIR" REPAIR_NEEDS_HUMAN_FILE="$NEEDS_HUMAN_FILE" \
+    PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$DATA_FILE" <<'PY'
+import os
 import pathlib
 import sys
 
@@ -3322,7 +3329,10 @@ from arnold_pipelines.megaplan.cloud.human_blockers import (
 )
 from arnold_pipelines.megaplan.cloud.repair_contract import validate_repair_data
 
-data_path, marker_dir, data_dir, needs_human_path = sys.argv[1:]
+data_path = sys.argv[1]
+marker_dir = os.environ.get("REPAIR_MARKER_DIR", "")
+data_dir = os.environ.get("REPAIR_DATA_DIR", "")
+needs_human_path = os.environ.get("REPAIR_NEEDS_HUMAN_FILE", "")
 payload = validate_repair_data(pathlib.Path(data_path))
 recurrence = payload.get("current_recurrence") or {}
 run_detected = bool(payload.get("run_recurrence_detected")) or bool(recurrence.get("detected"))
@@ -3871,6 +3881,38 @@ if [[ "$INITIAL_HEALTH" == "alive" ]]; then
   exit 0
 fi
 
+
+repair_dependency_manifests_if_possible() {
+  require_repair_lock_held
+  ensure_repair_budget_available "dependency-manifest-repair"
+  local result_path status
+  result_path="$RUN_DIR/dependency-manifest-repair.json"
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 -m arnold_pipelines.megaplan.cloud.dependency_manifest_repair \
+    --workspace "$WORKSPACE" \
+    --remote-spec "$REMOTE_SPEC" \
+    --marker-dir "$MARKER_DIR" >"$result_path" 2>>"$LOG"
+  status=$?
+  if [[ "$status" == "0" ]]; then
+    log "dependency manifest repair succeeded result=$result_path"
+    return 0
+  fi
+  log "dependency manifest repair not applicable status=$status result=$result_path"
+  return 1
+}
+
+if repair_dependency_manifests_if_possible; then
+  mechanical_status="$(mechanical_launch_step "1" "$SESSION" "$WORKSPACE" "$REMOTE_SPEC" "$RUN_KIND" "$PLAN_NAME" "$RELAUNCH_COMMAND")" || {
+    repair_data_record_mechanical "1" "0" "$mechanical_status" "after dependency-manifest repair: $mechanical_status"
+  }
+  if [[ "${mechanical_status:-}" == "running" ]]; then
+    repair_data_record_mechanical "1" "0" "running" "dependency manifest repaired; mechanical launch came up and held"
+    repair_data_set_outcome "running"
+    clear_repair_markers
+    log "repair loop succeeded after dependency manifest repair"
+    exit 0
+  fi
+fi
+
 STALE_CLEAR_STATUS="$(repair_clear_stale_state_if_needed 2>>"$LOG" || true)"
 if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
   log "stale state cleared before dev-fix: ${STALE_CLEAR_STATUS#cleared:}"
@@ -3887,12 +3929,16 @@ if [[ "$STALE_CLEAR_STATUS" == cleared:* ]]; then
 fi
 
 GLM_MODEL=""
-GLM_FALLBACK=""
-if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
-  :
+GLM_FALLBACK="zhipu:glm-5.2 disabled by default for watchdog repair; using gpt-5.4 for iteration 1"
+if [[ "${CLOUD_WATCHDOG_DEV_FIX_ENABLE_GLM:-0}" == "1" ]]; then
+  if GLM_MODEL="$(glm_dispatch_model 2>/dev/null)"; then
+    GLM_FALLBACK=""
+  else
+    GLM_MODEL="gpt-5.4"
+    GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
+  fi
 else
   GLM_MODEL="gpt-5.4"
-  GLM_FALLBACK="zhipu:glm-5.2 unresolved on this box; falling back to gpt-5.4 for iteration 1"
 fi
 
 for iteration in 1 2 3; do

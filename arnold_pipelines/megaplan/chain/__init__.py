@@ -70,7 +70,11 @@ from arnold_pipelines.megaplan.runtime.execution_environment import (
     merge_isolation_evidence,
     resolve_execution_environment,
 )
-from arnold_pipelines.megaplan._core import atomic_write_json, resolve_plan_dir
+from arnold_pipelines.megaplan._core import (
+    atomic_write_json,
+    resolve_plan_dir,
+    save_state_merge_meta,
+)
 from arnold_pipelines.megaplan._core.user_config import VALID_VENDORS
 from arnold_pipelines.megaplan.orchestration.authority_readers import (
     AuthorityDecision,
@@ -2843,6 +2847,8 @@ def _handle_missing_base_ref(
 
 def _recover_blocked_execute_if_tasks_done(
     root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
     outcome: DriverOutcome,
     *,
     writer,
@@ -2863,6 +2869,16 @@ def _recover_blocked_execute_if_tasks_done(
 
     all_done, reason = _latest_execution_batch_all_tasks_done(plan_dir)
     if not all_done:
+        if _recover_stale_prerequisite_block(
+            root,
+            spec_path,
+            spec,
+            outcome,
+            plan_dir=plan_dir,
+            reason=reason,
+            writer=writer,
+        ):
+            return True
         writer(
             f"[chain] execute result=blocked for {outcome.plan}; treating as real block: {reason}\n"
         )
@@ -2876,8 +2892,190 @@ def _recover_blocked_execute_if_tasks_done(
     return True
 
 
+_PREREQUISITE_BLOCK_TOKENS = (
+    "blocked_by_prereq",
+    "prerequisite",
+    "launch gate",
+    "launch precondition",
+    "completion manifest",
+    "proof-map",
+    "proof map",
+    "chain_completed",
+)
+
+
+def _looks_like_prerequisite_block(
+    outcome: DriverOutcome,
+    *,
+    extra_text: str = "",
+) -> bool:
+    if outcome.status not in {
+        "blocked",
+        "worker_blocked",
+        "awaiting_human",
+        "human_required",
+    }:
+        return False
+    text = " ".join(
+        str(part)
+        for part in [
+            outcome.reason,
+            outcome.last_phase,
+            *outcome.blocking_reasons,
+            extra_text,
+        ]
+        if part
+    ).lower()
+    return any(token in text for token in _PREREQUISITE_BLOCK_TOKENS)
+
+
+def _plan_latest_failure_text(plan_dir: Path) -> str:
+    try:
+        raw = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ""
+    if not isinstance(raw, dict):
+        return ""
+    latest_failure = raw.get("latest_failure")
+    parts: list[str] = []
+    if isinstance(latest_failure, dict):
+        for key in ("kind", "message", "suggested_action", "phase"):
+            value = latest_failure.get(key)
+            if isinstance(value, str):
+                parts.append(value)
+        metadata = latest_failure.get("metadata")
+        if isinstance(metadata, dict):
+            blocking_reasons = metadata.get("blocking_reasons")
+            if isinstance(blocking_reasons, list):
+                parts.extend(str(item) for item in blocking_reasons if item)
+    resume_cursor = raw.get("resume_cursor")
+    if isinstance(resume_cursor, dict):
+        parts.extend(str(value) for value in resume_cursor.values() if value)
+    return " ".join(parts)
+
+
+def _clear_execute_task_attempt_fields(task: dict[str, Any]) -> None:
+    task["status"] = "pending"
+    task["executor_notes"] = ""
+    task["files_changed"] = []
+    task["commands_run"] = []
+    task["evidence_files"] = []
+    task["reviewer_verdict"] = ""
+    task.pop("recorded_invocation_id", None)
+
+
+def _reset_stale_prerequisite_blocked_tasks(
+    plan_dir: Path,
+    outcome: DriverOutcome,
+) -> list[str]:
+    finalize_path = plan_dir / "finalize.json"
+    try:
+        finalize_data = json.loads(finalize_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    if not isinstance(finalize_data, dict):
+        return []
+    tasks = finalize_data.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+    outcome_text = " ".join([outcome.reason, *outcome.blocking_reasons]).lower()
+    reset_ids: list[str] = []
+    for task in tasks:
+        if not isinstance(task, dict) or task.get("status") != "blocked":
+            continue
+        task_id = task.get("id")
+        if not isinstance(task_id, str) or not task_id:
+            continue
+        task_text = " ".join(
+            str(task.get(key) or "")
+            for key in ("id", "description", "executor_notes", "reviewer_verdict")
+        ).lower()
+        if task_id.lower() not in outcome_text and not any(
+            token in task_text for token in _PREREQUISITE_BLOCK_TOKENS
+        ):
+            continue
+        _clear_execute_task_attempt_fields(task)
+        reset_ids.append(task_id)
+    if reset_ids:
+        atomic_write_json(finalize_path, finalize_data)
+    return sorted(reset_ids)
+
+
+def _recover_stale_prerequisite_block(
+    root: Path,
+    spec_path: Path,
+    spec: ChainSpec,
+    outcome: DriverOutcome,
+    *,
+    plan_dir: Path,
+    reason: str,
+    writer,
+) -> bool:
+    """Retry a blocked execute when current chain preconditions now pass.
+
+    Executor workers can block from stale prerequisite evidence captured in an
+    earlier plan/gate/audit artifact. The chain has stronger current authority:
+    its launch preconditions and completion manifests. If those pass now, clear
+    the stale blocked attempt and let execute re-run with an explicit audit note.
+    """
+
+    latest_failure_text = _plan_latest_failure_text(plan_dir)
+    if not _looks_like_prerequisite_block(outcome, extra_text=latest_failure_text):
+        return False
+    if not spec.launch_preconditions:
+        return False
+    try:
+        chain_spec.validate_launch_preconditions(spec, root, spec_path)
+    except CliError as exc:
+        writer(
+            "[chain] prerequisite block revalidation did not pass; "
+            f"keeping real block: {exc}\n"
+        )
+        return False
+
+    reset_ids = _reset_stale_prerequisite_blocked_tasks(plan_dir, outcome)
+    audit = {
+        "schema": "arnold.megaplan.chain_precondition_revalidation.v1",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "plan": outcome.plan,
+        "outcome_status": outcome.status,
+        "outcome_reason": outcome.reason,
+        "blocking_reasons": list(outcome.blocking_reasons),
+        "chain_spec_path": str(spec_path),
+        "reset_task_ids": reset_ids,
+        "result": "launch_preconditions_satisfied_retrying_execute",
+    }
+    atomic_write_json(plan_dir / "chain_precondition_revalidation.json", audit)
+    state_path = plan_dir / "state.json"
+    try:
+        state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        state_payload = {}
+    if not isinstance(state_payload, dict):
+        state_payload = {}
+    state_payload["current_state"] = STATE_FINALIZED
+    state_payload.pop("latest_failure", None)
+    state_payload.pop("resume_cursor", None)
+    state_payload.pop("active_step", None)
+    meta = state_payload.setdefault("meta", {})
+    if isinstance(meta, dict):
+        entries = meta.setdefault("chain_precondition_revalidations", [])
+        if isinstance(entries, list):
+            entries.append(audit)
+    save_state_merge_meta(plan_dir, state_payload)
+    writer(
+        f"[chain] execute result=blocked for {outcome.plan}, but current launch "
+        "preconditions now pass; cleared stale prerequisite block"
+    )
+    if reset_ids:
+        writer(f" for tasks {', '.join(reset_ids)}")
+    writer(f" ({reason}); retrying execute\n")
+    return True
+
+
 def _drive_plan_with_blocked_execute_recovery(
     root: Path,
+    spec_path: Path,
     plan: str,
     spec: ChainSpec,
     *,
@@ -2891,7 +3089,13 @@ def _drive_plan_with_blocked_execute_recovery(
         on_phase_complete=on_phase_complete,
         writer=writer,
     )
-    if not _recover_blocked_execute_if_tasks_done(root, outcome, writer=writer):
+    if not _recover_blocked_execute_if_tasks_done(
+        root,
+        spec_path,
+        spec,
+        outcome,
+        writer=writer,
+    ):
         return outcome
     return _drive_plan(
         root,
@@ -3193,7 +3397,7 @@ def _reconcile_chain_from_ground_truth(
     if (
         active_uses_pr
         and state.pr_number is not None
-        and current_plan_state in {STATE_FINALIZED, STATE_DONE}
+        and current_plan_state == STATE_DONE
         and live_active_pr_state == "open"
         and state.last_state != STATE_AWAITING_PR_MERGE
     ):
@@ -3427,7 +3631,13 @@ def _handle_outcome(
     and CANNOT loop forever on a deterministic failure.
     """
     status = outcome.status
-    if status in {"done", "finalized"}:
+    if status == "finalized":
+        writer(
+            f"[chain] plan {outcome.plan} is finalized but not executed; "
+            "stopping before PR progression\n"
+        )
+        return "stop"
+    if status == "done":
         if root is not None:
             authoritative, reason = _plan_terminal_completion_is_authoritative(
                 root, outcome.plan
@@ -3455,6 +3665,16 @@ def _handle_outcome(
     if status == "infrastructure_error":
         writer(
             f"[chain] plan {outcome.plan} stopped on infrastructure error: "
+            f"{outcome.reason}\n"
+        )
+        return "stop"
+    if (
+        status == "blocked"
+        and "prerequisite-blocked" in outcome.reason
+        and "not satisfied" in outcome.reason
+    ):
+        writer(
+            f"[chain] plan {outcome.plan} stopped on unresolved explicit blocker: "
             f"{outcome.reason}\n"
         )
         return "stop"
@@ -3717,6 +3937,7 @@ def run_chain(
             chain_spec.save_chain_state(spec_path, state)
             outcome = _drive_plan_with_blocked_execute_recovery(
                 root,
+                spec_path,
                 spec.seed_plan,
                 spec,
                 writer=writer,
@@ -3751,6 +3972,7 @@ def run_chain(
                 # Recursive retry kept simple: re-drive seed once.
                 outcome = _drive_plan_with_blocked_execute_recovery(
                     root,
+                    spec_path,
                     spec.seed_plan,
                     spec,
                     writer=writer,
@@ -4307,6 +4529,7 @@ def run_chain(
 
         outcome = _drive_plan_with_blocked_execute_recovery(
             root,
+            spec_path,
             plan_name,
             spec,
             on_phase_complete=phase_callback if use_pr else None,

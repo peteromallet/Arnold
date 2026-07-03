@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -9,11 +10,12 @@ from arnold_pipelines.megaplan.chain import (
     _handle_outcome,
     _record_chain_last_state_after_plan_run,
     _reconcile_chain_from_ground_truth,
+    _recover_stale_prerequisite_block,
     _sync_chain_last_state_from_plan,
     run_chain,
     save_chain_state,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState, load_chain_state, load_spec
+from arnold_pipelines.megaplan.chain.spec import ChainSpec, ChainState, load_chain_state, load_spec
 from arnold_pipelines.megaplan.planning.state import STATE_AWAITING_PR_MERGE
 
 
@@ -55,6 +57,129 @@ def _write_plan_state(
         % (plan_name, current_state),
         encoding="utf-8",
     )
+
+
+def _sha256(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_completed_prerequisite_chain(tmp_path: Path) -> Path:
+    prereq_path = tmp_path / "prereq.yaml"
+    brief_path = tmp_path / "m1.md"
+    proof_path = tmp_path / "proof.md"
+    prereq_path.write_text(
+        "milestones:\n  - label: m1\n    idea: m1.md\n",
+        encoding="utf-8",
+    )
+    brief_path.write_text("# M1\n", encoding="utf-8")
+    proof_path.write_text("# Proof\n", encoding="utf-8")
+    save_chain_state(
+        prereq_path,
+        ChainState(
+            current_milestone_index=1,
+            completed=[{"label": "m1", "status": "done", "plan": "plan-m1"}],
+            metadata={
+                "chain_spec_path": str(prereq_path.resolve(strict=False)),
+                "chain_spec_sha256": _sha256(prereq_path),
+            },
+        ),
+    )
+    prereq_path.with_name("completion-manifest.json").write_text(
+        (
+            "{\n"
+            '  "schema": "arnold.megaplan.chain_completion_manifest.v1",\n'
+            f'  "chain": {{"path": "prereq.yaml", "sha256": "{_sha256(prereq_path)}"}},\n'
+            '  "milestones": [\n'
+            "    {\n"
+            '      "label": "m1",\n'
+            f'      "brief_path": "m1.md", "brief_sha256": "{_sha256(brief_path)}",\n'
+            '      "status": "done", "plan": "plan-m1",\n'
+            f'      "proof_artifacts": [{{"path": "proof.md", "sha256": "{_sha256(proof_path)}"}}]\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+        ),
+        encoding="utf-8",
+    )
+    return prereq_path
+
+
+def test_stale_prerequisite_block_revalidates_chain_preconditions_and_retries(
+    tmp_path: Path,
+) -> None:
+    prereq_path = _write_completed_prerequisite_chain(tmp_path)
+    spec_path = tmp_path / "dependent.yaml"
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    spec = ChainSpec.from_dict(
+        {
+            "launch_preconditions": [
+                {
+                    "name": "prereq complete",
+                    "kind": "chain_completed",
+                    "chain": str(prereq_path.relative_to(tmp_path)),
+                    "require_manifest": True,
+                }
+            ],
+            "milestones": [],
+        }
+    )
+    plan_dir = tmp_path / ".megaplan" / "plans" / "blocked-plan"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "finalize.json").write_text(
+        (
+            '{"tasks":[{"id":"T12","status":"blocked",'
+            '"description":"conditional prerequisite task",'
+            '"executor_notes":"Blocked by stale prerequisite completion manifest",'
+            '"files_changed":["stale.py"],"commands_run":["pytest"],'
+            '"evidence_files":["old.json"],"reviewer_verdict":"blocked"}]}'
+        ),
+        encoding="utf-8",
+    )
+    (plan_dir / "state.json").write_text(
+        (
+            '{"name":"blocked-plan","current_state":"blocked",'
+            '"latest_failure":{"kind":"execution_blocked",'
+            '"message":"execute reported prerequisite-blocked tasks: T12",'
+            '"metadata":{"blocking_reasons":["T12 blocked by completion manifest"]}},'
+            '"resume_cursor":{"phase":"execute"},'
+            '"active_step":{"phase":"execute"},"meta":{}}'
+        ),
+        encoding="utf-8",
+    )
+    messages: list[str] = []
+
+    recovered = _recover_stale_prerequisite_block(
+        tmp_path,
+        spec_path,
+        spec,
+        DriverOutcome(
+            status="blocked",
+            plan="blocked-plan",
+            final_state="blocked",
+            iterations=1,
+            reason="recover-blocked requires every current blocker to be explicitly resolved",
+        ),
+        plan_dir=plan_dir,
+        reason="execution_batch_11.json has no completed tasks",
+        writer=messages.append,
+    )
+
+    assert recovered is True
+    finalize = json.loads((plan_dir / "finalize.json").read_text(encoding="utf-8"))
+    task = finalize["tasks"][0]
+    assert task["status"] == "pending"
+    assert task["executor_notes"] == ""
+    assert task["files_changed"] == []
+    state = json.loads((plan_dir / "state.json").read_text(encoding="utf-8"))
+    assert state["current_state"] == "finalized"
+    assert "latest_failure" not in state
+    assert "resume_cursor" not in state
+    assert "active_step" not in state
+    assert state["meta"]["chain_precondition_revalidations"][0]["reset_task_ids"] == ["T12"]
+    assert (plan_dir / "chain_precondition_revalidation.json").is_file()
+    assert any("current launch preconditions now pass" in message for message in messages)
 
 
 def test_handle_outcome_retries_stale_awaiting_human_with_satisfied_resolutions(
@@ -173,6 +298,89 @@ def test_handle_outcome_retries_finalized_plan_when_execute_finds_satisfied_gate
     assert state.retry_counts == {"m7": 1}
 
 
+def test_handle_outcome_stops_finalized_plan_before_pr_progression(
+    tmp_path: Path,
+) -> None:
+    spec = SimpleNamespace(
+        on_failure_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        on_escalate_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        robustness="standard",
+    )
+    milestone = SimpleNamespace(label="m7", profile=None, robustness=None)
+    state = ChainState()
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        DriverOutcome(
+            status="finalized",
+            plan="finalized-plan",
+            final_state="finalized",
+            iterations=1,
+            reason="stopped after finalize",
+        ),
+        spec=spec,
+        writer=messages.append,
+        milestone=milestone,
+        state=state,
+        root=tmp_path,
+    )
+
+    assert decision == "stop"
+    assert state.retry_counts == {}
+    assert any("finalized but not executed" in message for message in messages)
+
+
+def test_handle_outcome_stops_unresolved_prerequisite_block_without_retry(
+    tmp_path: Path,
+) -> None:
+    spec = SimpleNamespace(
+        on_failure_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        on_escalate_policy=SimpleNamespace(
+            retry="retry_milestone",
+            escalate="bump_profile",
+            abort="stop_chain",
+        ),
+        robustness="extreme",
+    )
+    milestone = SimpleNamespace(label="m1", profile=None, robustness="extreme")
+    state = ChainState()
+    messages: list[str] = []
+
+    decision = _handle_outcome(
+        DriverOutcome(
+            status="blocked",
+            plan="m1-plan",
+            final_state="blocked",
+            iterations=1,
+            reason=(
+                "execute reported prerequisite-blocked tasks: T11 "
+                "(M7 prerequisite is not satisfied)"
+            ),
+        ),
+        spec=spec,
+        writer=messages.append,
+        milestone=milestone,
+        state=state,
+        root=tmp_path,
+    )
+
+    assert decision == "stop"
+    assert state.retry_counts == {}
+    assert any("unresolved explicit blocker" in message for message in messages)
+
+
 def test_sync_chain_last_state_refreshes_from_current_plan_state(tmp_path: Path) -> None:
     spec_path = tmp_path / "chain.yaml"
     spec_path.write_text("milestones: []\n", encoding="utf-8")
@@ -238,7 +446,7 @@ def test_record_chain_last_state_after_plan_run_prefers_live_plan_state(
     assert any("awaiting_human -> finalized" in message for message in messages)
 
 
-def test_reconcile_maps_finalized_open_pr_to_awaiting_pr_merge(
+def test_reconcile_leaves_finalized_open_pr_for_execute_resume(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -264,15 +472,15 @@ def test_reconcile_maps_finalized_open_pr_to_awaiting_pr_merge(
         )
 
     saved = load_chain_state(spec_path)
-    assert reconciled.last_state == STATE_AWAITING_PR_MERGE
+    assert reconciled.last_state == "finalized"
     assert reconciled.pr_state == "open"
-    assert saved.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.last_state == "finalized"
     assert saved.pr_state == "open"
     audit = saved.metadata["ground_truth_reconciliation"]
     assert audit["current_state"] == "finalized"
     assert audit["pr_number"] == 122
     assert audit["pr_state"] == "open"
-    assert any("waiting for merge" in message for message in messages)
+    assert not any("waiting for merge" in message for message in messages)
 
 
 def test_reconcile_revalidates_completed_prs_from_live_github(
@@ -309,7 +517,7 @@ def test_reconcile_revalidates_completed_prs_from_live_github(
     assert load_chain_state(spec_path).completed[0]["pr_state"] == "merged"
 
 
-def test_run_chain_waits_when_reconciled_finalized_pr_is_open(
+def test_run_chain_resumes_when_reconciled_finalized_pr_is_open(
     tmp_path: Path,
 ) -> None:
     spec_path = _write_chain_spec(tmp_path)
@@ -328,8 +536,27 @@ def test_run_chain_waits_when_reconciled_finalized_pr_is_open(
     with (
         patch("arnold_pipelines.megaplan.chain._require_git_worktree_root"),
         patch("arnold_pipelines.megaplan.chain._dirty_worktree_paths", return_value=[]),
+        patch(
+            "arnold_pipelines.megaplan.chain._refresh_base_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch(
+            "arnold_pipelines.megaplan.chain._checkout_milestone_branch",
+            lambda *args, **kwargs: None,
+        ),
+        patch("arnold_pipelines.megaplan.chain._capture_sync_state"),
+        patch("arnold_pipelines.megaplan.chain._plan_state", return_value="finalized"),
         patch("arnold_pipelines.megaplan.chain._pr_state", return_value="open"),
-        patch("arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery") as drive,
+        patch(
+            "arnold_pipelines.megaplan.chain._drive_plan_with_blocked_execute_recovery",
+            return_value=DriverOutcome(
+                status="awaiting_human",
+                plan="m7-plan",
+                final_state="awaiting_human",
+                iterations=1,
+                reason="test stop after resume",
+            ),
+        ) as drive,
     ):
         result = run_chain(
             spec_path,
@@ -339,8 +566,8 @@ def test_run_chain_waits_when_reconciled_finalized_pr_is_open(
             missing_anchor_ack_override="unit test uses a minimal chain spec",
         )
 
-    drive.assert_not_called()
-    assert result["status"] == STATE_AWAITING_PR_MERGE
+    drive.assert_called_once()
+    assert result["status"] == "stopped"
     saved = load_chain_state(spec_path)
-    assert saved.last_state == STATE_AWAITING_PR_MERGE
+    assert saved.last_state == "finalized"
     assert saved.pr_state == "open"
