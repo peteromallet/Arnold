@@ -58,11 +58,22 @@ def _ref_token(value: str) -> str:
     return token or "default"
 
 
+def _graph_stage_kind(stage: Any) -> str:
+    step = getattr(stage, "step", None)
+    if step is not None:
+        return _ref_token(str(getattr(step, "kind", "compute")))
+    steps = getattr(stage, "steps", None) or ()
+    kinds = [_ref_token(str(getattr(item, "kind", "compute"))) for item in steps]
+    if not kinds:
+        return "parallel"
+    return _ref_token("parallel:" + "+".join(kinds))
+
+
 def _workflow_from_graph_pipeline(pipeline: GraphPipeline, *, target: str) -> WorkflowPipeline:
     steps = tuple(
         WorkflowStep(
             id=_ref_token(name),
-            kind=_ref_token(str(getattr(stage.step, "kind", "compute"))),
+            kind=_graph_stage_kind(stage),
             label=name,
             metadata={"source": "arnold.pipeline", "builder": target},
         )
