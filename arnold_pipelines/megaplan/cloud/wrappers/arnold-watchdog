@@ -4415,18 +4415,17 @@ active_last_activity = (
     or _parse_timestamp(active.get("started_at"))
 )
 recent_active_state = False
+events_path = state_path.parent / "events.ndjson"
 if active_phase:
     if active_last_activity is not None and (now - active_last_activity) <= dt.timedelta(minutes=5):
         recent_active_state = True
-    else:
-        events_path = state_path.parent / "events.ndjson"
-        if events_path.exists():
-            try:
-                events_mtime = dt.datetime.fromtimestamp(events_path.stat().st_mtime, tz=dt.timezone.utc)
-            except OSError:
-                events_mtime = None
-            if events_mtime is not None and (now - events_mtime) <= dt.timedelta(minutes=5):
-                recent_active_state = True
+if not recent_active_state and events_path.exists():
+    try:
+        events_mtime = dt.datetime.fromtimestamp(events_path.stat().st_mtime, tz=dt.timezone.utc)
+    except OSError:
+        events_mtime = None
+    if events_mtime is not None and (now - events_mtime) <= dt.timedelta(minutes=5):
+        recent_active_state = True
 
 log_candidates = []
 for pattern in ("cloud-chain*.log", "cloud-logs/*.log"):
