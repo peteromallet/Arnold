@@ -6,9 +6,9 @@
 # (arnold-watchdog scan_once) provides the authoritative queue processing;
 # systemd activation is a latency optimization only.
 #
-# Dispatch is always gated by ARNOLD_REPAIR_TRIGGER_ENABLED (default 0/off).
-# Even when systemd fires this service the trigger will ONLY observe and
-# report unless that env var is explicitly set to "1".  The trigger also
+# Dispatch is gated by ARNOLD_REPAIR_TRIGGER_ENABLED (default 1/on).
+# When that env var is explicitly set to 0/false/no/off the trigger only
+# observes and reports without launching repair work.  The trigger also
 # acquires a shared repair lock before any mutation; if the lock is busy
 # (e.g. the watchdog is already processing the queue) this invocation exits
 # cleanly with status=0.

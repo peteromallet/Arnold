@@ -176,6 +176,8 @@ EOF
 
 AUDIT_AUTOFIX_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_enabled)"
 AUDIT_AUTOFIX_COMMIT_ENABLED_FLAG="$(audit_flag_enabled audit_autofix_commit_enabled)"
+export ARNOLD_META_REPAIR_ENABLED="${ARNOLD_META_REPAIR_ENABLED:-1}"
+export ARNOLD_META_REPAIR_COMMIT_ENABLED="${ARNOLD_META_REPAIR_COMMIT_ENABLED:-1}"
 
 # Build the plan worklist from marker, tmux, and workspace-activity discovery.
 python3 - "$MARKER_DIR" "$WORKLIST" "$AUDIT_WINDOW_HOURS" "$DISCOVER_BIN" "/workspace" "$ARNOLD_SRC" <<'PY'
@@ -1760,6 +1762,24 @@ Evaluate these questions in order:
 0. Superfixer health / repair-the-repairer
 - First audit the repair system itself. The watchdog + repair loop + repair trigger
   are the primary machine that should fix unintended stops.
+- Start by writing a short "pipeline friction map": what looks slow, repetitive,
+  disabled, under-instrumented, or misrouted across watchdog, repair-trigger,
+  immediate repair, meta-repair, and this auditor.
+- Treat all repair/autofix systems as intended to be enabled by default. If an
+  env var, wrapper default, service unit, or hot-env setting disables immediate
+  repair, meta-repair, auditor autofix, or commit/push persistence, classify
+  that as a repair-system bug unless the evidence shows an explicit operator
+  maintenance window.
+- Inspect these concrete evidence locations before diagnosing the repair stack:
+  repair data at $REPAIR_DATA_DIR/<session>.repair-data.json; repair sidecars at
+  $REPAIR_DATA_DIR.d/events and $REPAIR_DATA_DIR.d/escalations; meta-repair
+  records at $REPAIR_DATA_DIR/meta; watchdog report $WATCHDOG_REPORT and
+  /workspace/watchdog-reports; audit reports in $REPORT_DIR; watchdog log
+  /workspace/watchdog.log; meta-repair run logs /workspace/.megaplan/meta-runs;
+  immediate repair run logs under repair-data/run_dir when present; chain logs
+  under the audited workspace .megaplan/cloud-chain*.log; and agent transcripts
+  under /root/.codex, /root/.claude, /workspace/.codex, /workspace/.claude, and
+  any explicit log paths cited in repair-data attempts or meta records.
 - If the evidence shows an unintended stop/stall/spec/workspace/chain-health
   failure and there is no active or recent repair attempt, classify that as an
   Arnold superfixer bug. Fix the watchdog/repair-trigger/auditor source in
@@ -1769,6 +1789,19 @@ Evaluate these questions in order:
   stale marker/spec inputs, or repair loops that diagnose without relaunching,
   classify that as a repairer failure unless the issue is genuinely human-only.
   Fix the repairer at root in $ARNOLD_SRC and return FIXED <commit-sha>.
+- If ordinary repair failed, timed out, produced no output, or repeated the same
+  diagnosis, verify whether meta-repair should have launched. Then verify whether
+  arnold-meta-repair-loop actually launched, read its brief, produced a verdict,
+  delegated subagents, wrote a meta record, committed/pushed when allowed, and
+  retriggered ordinary repair. If any of those did not happen, classify
+  META_REPAIR_FAILURE and fix the meta-repairer/watchdog dispatch path first.
+- When META_REPAIR_FAILURE is present, deploy Codex/DeepSeek/Hermes subagents
+  through the subagent-launcher skill for independent log review, wrapper/source
+  tracing, and a bounded fix proposal. Pass each subagent the concrete paths
+  above plus the session, repair-data path, meta-record path(s), and latest
+  watchdog/audit report path. Synthesize their findings, patch Arnold repair
+  code, commit/push when enabled, then relaunch arnold-meta-repair-loop for the same session
+  so it can relaunch ordinary repair.
 - The desired outcome is that the next watchdog/auditor cycle can repair the
   class of failures automatically. Do not patch the running workspace merely to
   make this one session green when the repairer is the broken component.
