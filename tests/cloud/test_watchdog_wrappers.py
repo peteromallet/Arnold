@@ -7191,6 +7191,54 @@ def test_chain_health_status_detects_stuck_nonterminal_across_ticks() -> None:
     assert artifact["chain_state_summary"]["last_state"] == "authority_divergence"
 
 
+def test_chain_health_status_ignores_stuck_nonterminal_while_plan_step_is_active() -> None:
+    tmp = Path(tempfile.mkdtemp())
+    ws = tmp / "ws"
+    marker = tmp / "markers"
+    repair_dir = tmp / "repair-data"
+    _write_chain_state(
+        ws / ".megaplan" / "plans" / ".chains" / "chain-demo.json",
+        {
+            "current_milestone_index": 1,
+            "current_plan_name": "m1-demo-plan",
+            "last_state": "between_milestones",
+            "pr_state": "",
+            "completed": [{"label": "m0"}],
+        },
+    )
+    _write_plan(
+        ws / ".megaplan" / "plans" / "m1-demo-plan",
+        {
+            "current_state": "finalized",
+            "active_step": {"phase": "execute", "started_at": "2026-07-03T16:31:05Z"},
+        },
+    )
+    (ws / ".megaplan" / "cloud-chain-demo.log").parent.mkdir(parents=True, exist_ok=True)
+    (ws / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "[chain] milestone m1 starting\n",
+        encoding="utf-8",
+    )
+
+    first = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+    second = _run_chain_health(
+        ws,
+        marker,
+        repair_dir,
+        health="alive",
+        env_overrides={"CLOUD_WATCHDOG_CHAIN_STUCK_TICKS": "2"},
+    )
+
+    assert first["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_STATUS"] == "ok"
+    assert second["CHAIN_HEALTH_ARTIFACT_PATH"] == ""
+
+
 def test_chain_health_status_classifies_unclean_base_before_generic_stuck() -> None:
     tmp = Path(tempfile.mkdtemp())
     ws = tmp / "ws"
