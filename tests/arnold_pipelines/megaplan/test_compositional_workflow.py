@@ -12,6 +12,10 @@ from arnold.workflow.compiler import compile_pipeline
 from arnold_pipelines.megaplan.pipeline import build_pipeline
 from tests.arnold.execution.conftest import FakeBackend
 
+# ── M2 routing-validator and authoring-boundary imports ───────────────────
+from arnold.pipeline.native import validate_pipeline_purity
+from arnold.pipeline.native.ir import NativeProgram
+
 
 class _BranchSequenceBackend(FakeBackend):
     """Fake backend that chooses route IDs in the supplied order."""
@@ -222,3 +226,206 @@ class TestCompositionalWorkflowScenarios:
 
         assert result.state is ExecutionState.COMPLETED
         assert _completed_node_refs(tmp_path) == ["prep", "plan", "critique", "gate", "halt"]
+
+
+# ── M2 Routing Validator Compatibility Tests ──────────────────────────────
+
+
+class TestMegaplanRoutingValidatorCompatibility:
+    """Assert that the canonical Megaplan pipeline satisfies the M2
+    routing-purity validator and exposes the expected static route
+    topology carriers without requiring any semantic rewrite of
+    workflow.py for this milestone."""
+
+    # ── helpers ───────────────────────────────────────────────────────
+
+    @staticmethod
+    def _native_program() -> NativeProgram:
+        from arnold_pipelines.megaplan.pipeline import build_and_compile_pipeline
+
+        shell = build_and_compile_pipeline()
+        native = shell.native_program
+        assert isinstance(native, NativeProgram), (
+            f"native_program must be NativeProgram, got {type(native).__name__}"
+        )
+        return native
+
+    # ── purity validation ─────────────────────────────────────────────
+
+    def test_native_program_validates_cleanly(self) -> None:
+        """build_pipeline().native_program must produce a clean
+        RoutingPurityReport — zero diagnostics."""
+        program = self._native_program()
+        report = validate_pipeline_purity(program)
+
+        assert report.ok, (
+            f"Routing-purity report must be clean; got "
+            f"{len(report.diagnostics)} diagnostic(s): "
+            f"{[d.code for d in report.diagnostics]}"
+        )
+
+    # ── route topology structure ──────────────────────────────────────
+
+    def test_routing_topology_is_nonempty_dict(self) -> None:
+        """NativeProgram.routing_topology must be a non-empty dict with
+        'nodes' and 'routes' keys."""
+        program = self._native_program()
+        topology = program.routing_topology
+
+        assert isinstance(topology, dict), (
+            f"routing_topology must be dict, got {type(topology).__name__}"
+        )
+        assert topology, "routing_topology must be non-empty"
+        assert "nodes" in topology, "routing_topology must have 'nodes' key"
+        assert "routes" in topology, "routing_topology must have 'routes' key"
+
+    def test_topology_node_count_matches_canonical_steps(self) -> None:
+        """The 12 canonical Megaplan steps must each appear as a node
+        in the routing topology."""
+        program = self._native_program()
+        nodes = program.routing_topology["nodes"]
+
+        assert len(nodes) == 12, (
+            f"Expected 12 topology nodes, got {len(nodes)}"
+        )
+        node_names = {n["name"] for n in nodes}
+        expected = {
+            "prep", "plan", "critique", "gate", "revise",
+            "tiebreaker_run", "tiebreaker_decide", "finalize",
+            "execute", "review", "halt", "override",
+        }
+        assert node_names == expected, (
+            f"Topology node names mismatch: "
+            f"missing={expected - node_names}, extra={node_names - expected}"
+        )
+
+    # ── gate route carriers ───────────────────────────────────────────
+
+    def test_gate_route_carriers_in_topology(self) -> None:
+        """Gate must expose proceed (→finalize), iterate (→revise),
+        tiebreaker (→tiebreaker_run), escalate (→override), abort
+        (→halt), and suspend (→halt) route carriers."""
+        program = self._native_program()
+        routes = program.routing_topology["routes"]
+
+        gate_routes = [r for r in routes if r["source"] == "gate"]
+        gate_labels = {(r["label"], r["target"]) for r in gate_routes}
+
+        expected = {
+            ("proceed", "finalize"),
+            ("iterate", "revise"),
+            ("tiebreaker", "tiebreaker_run"),
+            ("escalate", "override"),
+            ("abort", "halt"),
+            ("suspend", "halt"),
+        }
+        missing = expected - gate_labels
+        assert not missing, (
+            f"Gate missing expected route carriers: {missing}"
+        )
+
+    def test_gate_all_routes_reference_known_targets(self) -> None:
+        """Every gate route target must be a known node in the topology."""
+        program = self._native_program()
+        node_names = {n["name"] for n in program.routing_topology["nodes"]}
+        gate_routes = [
+            r for r in program.routing_topology["routes"]
+            if r["source"] == "gate"
+        ]
+        for route in gate_routes:
+            target = route["target"]
+            assert target in node_names or target == "halt", (
+                f"Gate route target '{target}' not in known nodes: {node_names}"
+            )
+
+    # ── tiebreaker route carriers ─────────────────────────────────────
+
+    def test_tiebreaker_route_carriers_in_topology(self) -> None:
+        """Tiebreaker_decide must expose proceed (→finalize) and
+        escalate (→override) route carriers."""
+        program = self._native_program()
+        routes = program.routing_topology["routes"]
+
+        tb_routes = [r for r in routes if r["source"] == "tiebreaker_decide"]
+        tb_labels = {(r["label"], r["target"]) for r in tb_routes}
+
+        assert ("proceed", "finalize") in tb_labels, (
+            f"Tiebreaker missing 'proceed → finalize' carrier; got {tb_labels}"
+        )
+        assert ("escalate", "override") in tb_labels, (
+            f"Tiebreaker missing 'escalate → override' carrier; got {tb_labels}"
+        )
+
+    # ── review route carriers ─────────────────────────────────────────
+
+    def test_review_route_carriers_in_topology(self) -> None:
+        """Review must expose rework (→revise) route carrier."""
+        program = self._native_program()
+        routes = program.routing_topology["routes"]
+
+        review_routes = [r for r in routes if r["source"] == "review"]
+        review_labels = {(r["label"], r["target"]) for r in review_routes}
+
+        assert ("rework", "revise") in review_labels, (
+            f"Review missing 'rework → revise' carrier; got {review_labels}"
+        )
+
+    # ── override route carriers ───────────────────────────────────────
+
+    def test_override_route_carriers_in_topology(self) -> None:
+        """Override must expose force_proceed (→finalize) and
+        replan (→revise) route carriers."""
+        program = self._native_program()
+        routes = program.routing_topology["routes"]
+
+        override_routes = [r for r in routes if r["source"] == "override"]
+        override_labels = {(r["label"], r["target"]) for r in override_routes}
+
+        assert ("force_proceed", "finalize") in override_labels, (
+            f"Override missing 'force_proceed → finalize' carrier; got {override_labels}"
+        )
+        assert ("replan", "revise") in override_labels, (
+            f"Override missing 'replan → revise' carrier; got {override_labels}"
+        )
+
+    # ── workflow.py semantic stability ────────────────────────────────
+
+    def test_workflow_dsl_compiles_to_same_canonical_steps(self) -> None:
+        """workflow.py must still compile to the same 12 canonical DSL
+        steps — proving no semantic rewrite was needed for this milestone."""
+        pipeline = build_pipeline()
+        steps = pipeline.steps
+        assert len(steps) == 12, (
+            f"Canonical DSL must have 12 steps; got {len(steps)}"
+        )
+
+    def test_compatibility_shell_instruction_count_matches_dsl(self) -> None:
+        """The native compatibility shell must have exactly as many
+        instructions as the DSL has steps."""
+        program = self._native_program()
+        pipeline = build_pipeline()
+
+        assert len(program.instructions) == len(pipeline.steps), (
+            f"Native program has {len(program.instructions)} instructions "
+            f"but DSL has {len(pipeline.steps)} steps"
+        )
+
+    def test_workflow_routes_are_fully_captured_in_topology(self) -> None:
+        """Every DSL route must have a corresponding entry in the
+        routing topology with matching source, label, and target."""
+        program = self._native_program()
+        pipeline = build_pipeline()
+
+        topology_routes = {
+            (r["source"], r["label"], r["target"])
+            for r in program.routing_topology["routes"]
+        }
+
+        dsl_routes = set()
+        for route in pipeline.routes:
+            dsl_routes.add((route.source, route.label, route.target))
+
+        missing = dsl_routes - topology_routes
+        assert not missing, (
+            f"DSL routes not captured in routing topology: {missing}"
+        )

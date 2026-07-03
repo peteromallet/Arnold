@@ -7,6 +7,7 @@ with the native runner's dict-based context and state propagation.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable
 
 
@@ -284,6 +285,15 @@ def decision(
         fn.__decision_choices__ = choices  # type: ignore[attr-defined]
         fn.__decision_resume_input_schema__ = resume_input_schema  # type: ignore[attr-defined]
         fn.__decision_override_routes__ = override_routes  # type: ignore[attr-defined]
+        # Source-location and routing-body marker (attached unconditionally
+        # so the validator can produce line-specific diagnostics).
+        fn.__decision_source_file__ = inspect.getsourcefile(fn)  # type: ignore[attr-defined]
+        try:
+            _, start_lineno = inspect.getsourcelines(fn)
+            fn.__decision_first_lineno__ = start_lineno  # type: ignore[attr-defined]
+        except (OSError, TypeError):
+            fn.__decision_first_lineno__ = None  # type: ignore[attr-defined]
+        fn.__decision_routing_body__ = True  # type: ignore[attr-defined]
         return fn
 
     if callable(name):
@@ -516,6 +526,10 @@ def get_decision_meta(fn: Any) -> dict[str, Any] | None:
     For ordinary decisions the human-gate keys are present at their
     defaults (``human_gate=False``, ``artifact_stage=""``, etc.).
     For human-gate decisions the keys carry the declared metadata.
+
+    Also includes source-location metadata (``source_file``,
+    ``first_lineno``) and a ``routing_body`` marker so the validator
+    can produce line-specific diagnostics.
     """
     if not is_decision(fn):
         return None
@@ -530,6 +544,10 @@ def get_decision_meta(fn: Any) -> dict[str, Any] | None:
         "choices": tuple(getattr(fn, "__decision_choices__", ())),
         "resume_input_schema": getattr(fn, "__decision_resume_input_schema__", None),
         "override_routes": getattr(fn, "__decision_override_routes__", None),
+        # Source-location metadata for validator diagnostics
+        "source_file": getattr(fn, "__decision_source_file__", None),
+        "first_lineno": getattr(fn, "__decision_first_lineno__", None),
+        "routing_body": bool(getattr(fn, "__decision_routing_body__", False)),
     }
 
 

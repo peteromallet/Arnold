@@ -141,6 +141,34 @@ def _stages_from_dsl(pipeline: DslPipeline) -> dict[str, Stage]:
     return stages
 
 
+def _routing_topology_from_dsl(pipeline: DslPipeline) -> dict[str, Any]:
+    """Build generic static routing topology records from authored DSL routes.
+
+    The returned dict uses the product-neutral structure expected by
+    :func:`arnold.pipeline.native.validator._validate_routing_topology`:
+
+    * ``nodes`` – a list of ``{"name": "<step.id>"}`` records for every step.
+    * ``routes`` – a list of ``{"source", "label", "target"[, "condition_ref"]}``
+      records for every authored route.
+
+    This allows the generic native validator to perform static label/target
+    resolution without importing any Megaplan-specific semantics.
+    """
+    nodes: list[dict[str, str]] = [{"name": step.id} for step in pipeline.steps]
+    routes: list[dict[str, str | None]] = []
+    for route in pipeline.routes:
+        record: dict[str, str | None] = {
+            "source": route.source,
+            "label": route.label,
+            "target": route.target,
+        }
+        if route.condition_ref is not None:
+            record["condition_ref"] = route.condition_ref
+        routes.append(record)
+
+    return {"nodes": nodes, "routes": routes}
+
+
 def _native_program_from_dsl(pipeline: DslPipeline) -> NativeProgram:
     routes_by_source: dict[str, list[Any]] = {}
     for route in pipeline.routes:
@@ -169,6 +197,7 @@ def _native_program_from_dsl(pipeline: DslPipeline) -> NativeProgram:
         name=pipeline.id,
         instructions=tuple(instructions),
         phases=tuple(phases),
+        routing_topology=_routing_topology_from_dsl(pipeline),
         description=(
             "Substrate proof only: compatibility projection from authored "
             "Megaplan workflow DSL to neutral native shell."
