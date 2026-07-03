@@ -1,1 +1,1 @@
-/workspace/arnold/arnold_pipelines/megaplan/data/cloud_skill.md
+/workspace/incident-control-plane/Arnold/arnold_pipelines/megaplan/data/cloud_skill.md
