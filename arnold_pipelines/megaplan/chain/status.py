@@ -322,6 +322,8 @@ def _current_plan_facts(
     try:
         loaded_plan_dir, state = load_plan_from_dir(plan_dir)
         current_state = _string_or_none(state.get("current_state")) or "unknown"
+        if _is_stale_completed_current_plan(chain_state, plan_name, state):
+            return {"status": "missing", "reason": "no current plan"}, {"status": "missing"}
         try:
             meta_path = latest_plan_meta_path(loaded_plan_dir, state)
             meta = _read_json_object(meta_path)
@@ -338,6 +340,38 @@ def _current_plan_facts(
     except Exception as exc:
         diagnostics.append(_diagnostic("plan_state", type(exc).__name__, str(exc)))
         return {"status": "unavailable", "reason": str(exc), "plan": plan_name}, {"status": "unavailable"}
+
+
+def _is_stale_completed_current_plan(
+    chain_state: ChainState | None,
+    plan_name: str,
+    plan_state: Mapping[str, Any],
+) -> bool:
+    if chain_state is None or chain_state.current_milestone_index < 0:
+        return False
+    milestone_label = _plan_milestone_label(plan_state)
+    for index, completed in enumerate(chain_state.completed):
+        if not isinstance(completed, Mapping):
+            continue
+        completed_plan = _string_or_none(completed.get("plan"))
+        completed_label = _string_or_none(completed.get("label"))
+        same_plan = completed_plan == plan_name
+        same_milestone = milestone_label is not None and completed_label == milestone_label
+        if not same_plan and not same_milestone:
+            continue
+        if chain_state.current_milestone_index >= index + 1:
+            return True
+    return False
+
+
+def _plan_milestone_label(plan_state: Mapping[str, Any]) -> str | None:
+    meta = plan_state.get("meta")
+    if not isinstance(meta, Mapping):
+        return None
+    chain_policy = meta.get("chain_policy")
+    if not isinstance(chain_policy, Mapping):
+        return None
+    return _string_or_none(chain_policy.get("milestone_label"))
 
 
 def _active_current_plan_name(chain_state: ChainState | None) -> str | None:
