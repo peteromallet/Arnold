@@ -118,6 +118,26 @@ def _load_chain_state_file(path: Path) -> ChainState:
     return ChainState.from_dict(raw)
 
 
+def _normalize_stale_current_plan_reference(state: "ChainState") -> "ChainState":
+    plan_name = state.current_plan_name
+    if not isinstance(plan_name, str) or not plan_name:
+        return state
+    for index, completed in enumerate(state.completed):
+        if not isinstance(completed, dict):
+            continue
+        if completed.get("plan") != plan_name:
+            continue
+        if state.current_milestone_index < index + 1:
+            return state
+        state.current_plan_name = None
+        state.pr_number = None
+        state.pr_state = None
+        if state.last_state in {"blocked", "authority_divergence"}:
+            state.last_state = "done"
+        return state
+    return state
+
+
 def _state_progress_key(state: "ChainState", *, path: Path) -> tuple[int, int, int, int, float]:
     return (
         int(state.current_milestone_index),
@@ -1045,8 +1065,10 @@ def load_chain_state(spec_path: Path) -> ChainState:
         loaded,
         key=lambda item: _state_progress_key(item[1], path=item[0]),
     )
+    original_state = best_state.to_dict()
+    best_state = _normalize_stale_current_plan_reference(best_state)
     canonical_path = _state_path_for(spec_path)
-    if best_path != canonical_path:
+    if best_path != canonical_path or best_state.to_dict() != original_state:
         save_chain_state(spec_path, best_state)
     return best_state
 
