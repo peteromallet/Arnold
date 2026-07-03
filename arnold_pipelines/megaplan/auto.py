@@ -1097,6 +1097,13 @@ def _phase_command(
             "--reason",
             "megaplan auto: recover blocked plan after blocker resolution",
         ]
+    if next_step == "resume-clarify":
+        return [
+            "override",
+            "resume-clarify",
+            "--reason",
+            "megaplan auto: resume prep clarification after answers provided",
+        ]
     return shlex.split(next_step)
 
 
