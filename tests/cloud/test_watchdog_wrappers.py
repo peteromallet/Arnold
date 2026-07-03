@@ -6456,7 +6456,15 @@ def _prepare_meta_repair_launch_chain_tick_fixture(
     }
 
 
-def _run_launch_chain_tick_meta_repair_script(paths: dict[str, Path]) -> subprocess.CompletedProcess[str]:
+def _run_launch_chain_tick_meta_repair_script(
+    paths: dict[str, Path],
+    *,
+    health: str = "dead",
+    mechanical_attempted: bool = True,
+    kimi_failed: bool = False,
+) -> subprocess.CompletedProcess[str]:
+    mechanical_return = 0 if mechanical_attempted else 1
+    kimi_failed_return = 0 if kimi_failed else 1
     script = "\n\n".join(
         [
             _extract_wrapper_function("json_field"),
@@ -6473,7 +6481,7 @@ log() { printf '%s\\n' "$*" >> "$LOG"; }
 plan_attention_status_env() { return 0; }
 plan_terminal_status() { return 1; }
 repair_needs_human_path() { printf '%s\\n' "$REPAIR_DATA_DIR/$1.needs-human.json"; }
-session_health_status() { echo dead; }
+session_health_status() { echo HEALTH_PLACEHOLDER; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 chain_health_status() {
@@ -6486,8 +6494,8 @@ repair_loop_busy_state() { echo none; }
 repair_unhealthy_session() { echo REPAIR >&2; return 1; }
 dispatch_meta_repair() { echo META_DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
 dispatch_kimi_repair() { echo SHOULD_NOT_DISPATCH_KIMI >&2; return 0; }
-mechanical_relaunch_attempted_previously() { return 0; }
-kimi_dispatch_failed_previously() { return 1; }
+mechanical_relaunch_attempted_previously() { return MECHANICAL_RETURN_PLACEHOLDER; }
+kimi_dispatch_failed_previously() { return KIMI_FAILED_RETURN_PLACEHOLDER; }
 kimi_dispatch_marker_set() { :; }
 kimi_dispatch_marker_clear() { :; }
 ensure_install_or_repair() { return 0; }
@@ -6500,7 +6508,10 @@ tmux() {
   echo "TMUX $*" >&2
   return 0
 }
-""".strip(),
+""".replace("HEALTH_PLACEHOLDER", health)
+                .replace("MECHANICAL_RETURN_PLACEHOLDER", str(mechanical_return))
+                .replace("KIMI_FAILED_RETURN_PLACEHOLDER", str(kimi_failed_return))
+                .strip(),
             (
                 f"launch_chain_tick demo-session {str(paths['workspace'])!r} "
                 f"{str(paths['spec_path'])!r} {str(paths['report_path'])!r} chain '' ''"
@@ -6538,6 +6549,32 @@ def test_launch_chain_tick_dispatches_meta_repair_on_recurring_retry_trigger(tmp
     assert "META_DISPATCH" in result.stderr
     assert "TMUX" not in result.stderr
     assert "trigger=persistent_recurring_retry" in paths["log_path"].read_text(encoding="utf-8")
+
+
+def test_launch_chain_tick_dispatches_meta_repair_after_failed_stopped_repair(tmp_path: Path) -> None:
+    paths = _prepare_meta_repair_launch_chain_tick_fixture(
+        tmp_path,
+        payload_overrides={
+            "attempts": [
+                {"attempt_id": 1, "failure_classification": "timeout_or_hang"},
+                {"attempt_id": 2, "failure_classification": "timeout_or_hang"},
+                {"attempt_id": 3, "failure_classification": "timeout_or_hang"},
+            ],
+        },
+    )
+    result = _run_launch_chain_tick_meta_repair_script(
+        paths,
+        health="stopped",
+        mechanical_attempted=False,
+        kimi_failed=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "META_DISPATCH" in result.stderr
+    assert "SHOULD_NOT_DISPATCH_KIMI" not in result.stderr
+    assert "TMUX" not in result.stderr
+    log_text = paths["log_path"].read_text(encoding="utf-8")
+    assert "trigger=persistent_recurring_retry" in log_text
+    assert "session stopped after repair failure; meta-repair background-dispatched" in log_text
 
 
 def test_launch_chain_tick_dispatches_meta_repair_on_state_inspection_trigger(tmp_path: Path) -> None:

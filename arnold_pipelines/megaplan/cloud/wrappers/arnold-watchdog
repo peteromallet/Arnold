@@ -5417,21 +5417,8 @@ PY
     return 0
   fi
 
-  # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
-  # it never blocks the tick (it can run up to its 60-min timeout and relaunches
-  # the run itself on success). The watchdog's direct tmux relaunch runs only as
-  # a fallback: when repair is unavailable, or when it was already dispatched
-  # and has since exited without reviving the session (marker present + not
-  # running).
-  if [[ "$health" != "stopped" ]]; then
-    if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"; then
-      # Repair running or just background-dispatched; it owns the relaunch.
-      report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
-      return 0
-    fi
-    local meta_repair_trigger meta_dispatch_result
-    meta_repair_trigger="$(
-      PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
+  meta_repair_trigger_status() {
+    PYTHONPATH="${SRC_DIR:-$PWD}:${PYTHONPATH:-}" python3 - "$session" "$REPAIR_DATA_DIR" "$MARKER_DIR" "$current_target_observation" <<'PY'
 import json
 import pathlib
 import sys
@@ -5650,9 +5637,6 @@ classification, _ = evaluate_meta_repair_triggers(
     discord_delivery_failed=discord_delivery_failed,
     discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
     repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
-    # Trigger probing must stay cheap here. The watchdog only needs a yes/no
-    # dispatch verdict; full evidence loading and prompt assembly belong in the
-    # meta-repair loop after dispatch.
     load_evidence=False,
 )
 
@@ -5661,7 +5645,22 @@ if classification.should_dispatch and classification.trigger_label:
 else:
     print("NO_TRIGGER")
 PY
-    )"
+  }
+
+  # Repair + relaunch. The primary repair operator is BACKGROUND-DISPATCHED so
+  # it never blocks the tick (it can run up to its 60-min timeout and relaunches
+  # the run itself on success). The watchdog's direct tmux relaunch runs only as
+  # a fallback: when repair is unavailable, or when it was already dispatched
+  # and has since exited without reviving the session (marker present + not
+  # running).
+  if [[ "$health" != "stopped" ]]; then
+    if repair_unhealthy_session "$session" "$workspace" "$remote_spec" "$health"; then
+      # Repair running or just background-dispatched; it owns the relaunch.
+      report_item "$report_items" "$session" "repair" "repair_running" "$health" "$workspace" "$remote_spec"
+      return 0
+    fi
+    local meta_repair_trigger meta_dispatch_result
+    meta_repair_trigger="$(meta_repair_trigger_status)"
     if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
       if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
         meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
@@ -5688,6 +5687,20 @@ PY
       fi
       log "session stopped after mechanical relaunch; repair loop missing -> direct relaunch session=$session"
     elif kimi_dispatch_failed_previously "$session"; then
+      local meta_repair_trigger meta_dispatch_result
+      meta_repair_trigger="$(meta_repair_trigger_status)"
+      if [[ "$meta_repair_trigger" == TRIGGER:* ]]; then
+        if dispatch_meta_repair "$session" "$workspace" "$remote_spec" "$report_items"; then
+          meta_dispatch_result="${REPAIR_DISPATCH_RESULT:-}"
+          if [[ "$meta_dispatch_result" == "dispatched" ]]; then
+            log "session stopped after repair failure; meta-repair background-dispatched session=$session trigger=${meta_repair_trigger#TRIGGER:}"
+            return 0
+          fi
+          log "session stopped after repair failure; meta-repair trigger matched but fell through to direct relaunch session=$session trigger=${meta_repair_trigger#TRIGGER:} dispatch=${meta_dispatch_result:-unknown}"
+        else
+          log "session stopped after repair failure; meta-repair trigger matched but dispatch unavailable session=$session trigger=${meta_repair_trigger#TRIGGER:}"
+        fi
+      fi
       log "session stopped; repair loop tried and exited without recovery -> direct relaunch session=$session"
       kimi_dispatch_marker_clear "$session"
     else
