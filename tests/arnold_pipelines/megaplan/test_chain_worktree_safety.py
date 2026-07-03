@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 import arnold_pipelines.megaplan.chain as chain_module
+import arnold_pipelines.megaplan.chain.git_ops as git_ops
 from arnold_pipelines.megaplan.auto import DriverOutcome
 from arnold_pipelines.megaplan.chain import (
     _drive_plan,
@@ -656,6 +657,7 @@ def test_commit_and_push_phase_continues_when_rebase_abort_has_no_rebase(
                 TimeoutExpired=subprocess.TimeoutExpired,
             ),
             _run_command=fake_run_command,
+            _run_git_push_command=git_ops._run_git_push_command,
         ),
     )
 
@@ -702,6 +704,7 @@ def test_commit_and_push_phase_pushes_cleanup_only_commit(
                 TimeoutExpired=subprocess.TimeoutExpired,
             ),
             _run_command=fake_run_command,
+            _run_git_push_command=git_ops._run_git_push_command,
         ),
     )
 
@@ -709,6 +712,46 @@ def test_commit_and_push_phase_pushes_cleanup_only_commit(
 
     assert ["git", "fetch", "origin", "branch-x"] in subprocess_calls
     assert ["git", "push", "--no-verify", "origin", "HEAD:branch-x"] in run_command_calls
+
+
+def test_commit_and_push_phase_uses_extended_timeout_for_push(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    push_timeouts: list[float | None] = []
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._commit_phase",
+        lambda *_args, **_kwargs: "abc123",
+    )
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:3] == ["git", "fetch", "origin"]:
+            return subprocess.CompletedProcess(cmd, 1, "", "missing remote branch")
+        raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+    def fake_run_command(_root, cmd, **kwargs):
+        if cmd[:2] == ["git", "push"]:
+            push_timeouts.append(kwargs.get("timeout"))
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(
+        "arnold_pipelines.megaplan.chain.git_ops._compat",
+        lambda: SimpleNamespace(
+            subprocess=SimpleNamespace(
+                run=fake_run,
+                TimeoutExpired=subprocess.TimeoutExpired,
+            ),
+            _run_command=fake_run_command,
+            _run_git_push_command=git_ops._run_git_push_command,
+        ),
+    )
+
+    _commit_and_push_phase(root, "branch-x", "plan-x", "finalize", writer=lambda _msg: None)
+
+    assert push_timeouts == [git_ops._GIT_PUSH_TIMEOUT_SECONDS]
 
 
 def test_run_chain_resume_refreshes_milestone_branch_and_pr_context(
