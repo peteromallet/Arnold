@@ -456,6 +456,53 @@ class TestLoadRedactedEvidence:
         assert "super-secret-webhook-key" not in str(repair_data)
         assert REDACTION in str(repair_data)
 
+    def test_partial_liveness_history_is_filtered_to_session(self, tmp_path: Path) -> None:
+        session = "target-session"
+        repair_root = _make_session_dir(tmp_path, session)
+        sidecar_dir = repair_root.with_name(f"{repair_root.name}.d")
+        events_dir = sidecar_dir / "events"
+        events_dir.mkdir(parents=True, exist_ok=True)
+        events_path = events_dir / "events.jsonl"
+        records = [
+            {
+                "session": f"other-{idx}",
+                "outcome": PARTIAL_LIVENESS,
+                "recorded_at": f"2026-07-03T19:{idx:02d}:00Z",
+            }
+            for idx in range(5)
+        ]
+        records.append(
+            {
+                "session": session,
+                "outcome": PARTIAL_LIVENESS,
+                "recorded_at": "2026-07-03T19:12:01Z",
+            }
+        )
+        events_path.write_text(
+            "\n".join(json.dumps(record) for record in records) + "\n",
+            encoding="utf-8",
+        )
+
+        evidence = load_redacted_evidence(
+            session,
+            repair_data_dir=repair_root,
+            max_attempts=20,
+        )
+        history = evidence["partial_liveness_history"]
+        assert len(history) == 1
+        assert history[0]["session"] == session
+
+        classification, _ = evaluate_meta_repair_triggers(
+            session,
+            repair_data_dir=repair_root,
+            repair_outcome=REPAIRING,
+            attempt_outcomes=[REPAIRING],
+            failure_kinds=["timeout_or_hang"],
+            load_evidence=True,
+        )
+        assert classification.should_dispatch is False
+        assert classification.trigger is None
+
 
 # ---------------------------------------------------------------------------
 # Prompt assembly

@@ -200,7 +200,11 @@ def load_redacted_evidence(
                 partial_liveness_history = [
                     redact_payload(e, secret_names=list(secret_names))
                     for e in all_events
-                    if isinstance(e, dict) and e.get("outcome") == PARTIAL_LIVENESS
+                    if (
+                        isinstance(e, dict)
+                        and e.get("outcome") == PARTIAL_LIVENESS
+                        and str(e.get("session") or "").strip() == session
+                    )
                 ][-max_attempts:]
             except Exception:
                 pass
