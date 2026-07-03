@@ -239,3 +239,232 @@ Installing collected packages: arnold
 Successfully installed arnold-0.23.0
 WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager, possibly rendering your system unusable. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv. Use the --root-user-action option if you know what you are doing and want to suppress this warning.
 [megaplan-refresh] done
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.0s total (2.0s)
+  [tool] (◕ᴗ◕✿) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 4 tools concurrently
+  [done] ⚡ 4/4 tools completed in 5.7s total (2.1s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.4s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.3s total (1.5s)
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 *
+  [done] ┊ 🔎 find      *  1.2s (1.5s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.5s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+[chain] reconciled cursor index: -1 -> 0 from completed milestones
+[chain] milestone m1-ledger-core-and-brief starting
+[chain] git ls-remote --exit-code --heads origin main -> rc=0
+[chain] git fetch origin main -> rc=0
+[chain] git rev-parse --verify refs/remotes/origin/main^{commit} -> rc=0
+[chain] git symbolic-ref --short HEAD -> rc=0
+[chain] git pull --ff-only origin main -> rc=0
+[chain] git ls-remote --heads origin incident-control-plane-m1-ledger-brief -> rc=0
+[chain] cleaning worktree for automated branch checkout
+[chain] git reset --hard HEAD -> rc=0
+[chain] git clean -fd -e .megaplan -> rc=0
+[chain] git clean -fd .megaplan/epics -> rc=0
+[chain] git clean -fd .megaplan/schemas -> rc=0
+[chain] git clean -fd .megaplan/.state-locks -> rc=0
+[chain] git fetch origin incident-control-plane-m1-ledger-brief -> rc=0
+[chain] git ls-remote --exit-code --heads origin main -> rc=0
+[chain] git fetch origin main -> rc=0
+[chain] git rev-parse --verify refs/remotes/origin/main^{commit} -> rc=0
+[chain] git checkout -B incident-control-plane-m1-ledger-brief origin/incident-control-plane-m1-ledger-brief -> rc=0
+[chain] git merge-base --is-ancestor origin/main HEAD -> rc=1
+[chain] git rebase origin/main -> rc=0
+[chain] git push --no-verify --force-with-lease origin incident-control-plane-m1-ledger-brief -> rc=0
+[chain] initializing plan from /workspace/incident-control-plane/Arnold/.megaplan/initiatives/incident-control-plane/briefs/m1-ledger-core-and-brief.md
+[chain] launched plan=m1-ledger-core-and-incident-20260703-1919
+[chain] git add -A -> rc=0
+[chain] git reset -- .megaplan/cloud-chain-incident-control-plane.log -> rc=0
+[chain] git commit --allow-empty --no-verify -m megaplan: m1-ledger-core-and-incident-20260703-1919 init -> rc=0
+[chain] git add -A -> rc=0
+[chain] git commit --no-verify -m megaplan: m1-ledger-core-and-incident-20260703-1919 init-cleanup -> rc=0
+[chain] git fetch origin incident-control-plane-m1-ledger-brief -> rc=0
+[chain] git rebase origin/incident-control-plane-m1-ledger-brief -> rc=0
+[chain] git push --no-verify origin HEAD:incident-control-plane-m1-ledger-brief -> rc=0
+[chain] gh pr list --head incident-control-plane-m1-ledger-brief --state open --json number,state -> rc=0
+[chain] gh pr create --draft --base main --head incident-control-plane-m1-ledger-brief --title m1-ledger-core-and-brief: megaplan milestone --body Automated megaplan chain milestone `m1-ledger-core-and-brief`.
+
+Idea file: `.megaplan/initiatives/incident-control-plane/briefs/m1-ledger-core-and-brief.md`
+ -> rc=0
+[auto m1-ledger-core-and-incident-20260703-1919] iter 1 state=initialized next=prep valid_next=['prep', 'prep']
+[auto m1-ledger-core-and-incident-20260703-1919] running: megaplan prep --plan m1-ledger-core-and-incident-20260703-1919
+  ┊ 📖 read      ...t-control-plane-plan-20260703.md  1.7s
+  ┊ 📖 read      ...lane-deepseek-review-20260703.md  1.7s
+  ┊ 📖 read      ...l-plane-codex-review-20260703.md  1.7s
+  ┊ 📖 read      ...t-control-plane-plan-20260703.md  1.6s
+  ┊ 🔎 find      *  1.2s
+  ┊ 🔎 find      *.py  1.2s
+  ┊ 🔎 find      *.py  0.8s
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.7s
+  ┊ 📖 read      .../Arnold/arnold/kernel/journal.py  1.6s
+  ┊ 📖 read      ...d/arnold/kernel/effect_ledger.py  1.6s
+  ┊ 📖 read      ...ne/Arnold/arnold/cli/__init__.py  1.8s
+  ┊ 🔎 find      *.py  0.8s
+  ┊ 🔎 find      *.md  0.8s
+  ┊ 🔎 find      test_*.py  0.8s
+  ┊ 📖 read      ...trol-plane/Arnold/pyproject.toml  1.2s
+  ┊ 📖 read      ...ntrol-plane/Arnold/NEXT_STEPS.md  1.2s
+  ┊ 📖 read      ...ld/runtime/test_event_journal.py  1.6s
+  ┊ 📖 read      ...lity-and-introspection-design.md  1.6s
+  ┊ 🔎 grep      megaplan  0.8s
+  ┊ 📖 read      ...d_pipelines/megaplan/__init__.py  2.2s
+  ┊ 🔎 find      __init__.py  1.0s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      ...gaplan/observability/__init__.py  1.6s
+  ┊ 📖 read      ...plan/observability/event_sink.py  1.6s
+  ┊ 📖 read      ...megaplan/observability/events.py  1.6s
+  ┊ 📖 read      ...servability/events_projection.py  1.6s
+  [tool] (◕ᴗ◕✿) ⚡ running 3 tools concurrently
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 4 tools concurrently
+  [tool] ヾ(＾∇＾) ⚡ running 4 tools concurrently
+  [done] ⚡ 3/3 tools completed in 5.1s total (2.0s)
+  [done] ⚡ 4/4 tools completed in 6.7s total (2.0s)
+  [done] ⚡ 4/4 tools completed in 7.2s total (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.5s total (2.0s)
+  [done] ⚡ 3/3 tools completed in 4.2s total (2.1s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [tool] ( ˘▽˘)っ 🔎 *
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 3 tools concurrently
+  [done] ┊ 🔎 find      *  1.0s (1.5s)
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] (★ω★) 📖 /workspace/incident-control...
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 2 tools concurrently
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.8s (2.0s)
+  [tool] ♪(´ε` ) 📖 /workspace/incident-control...
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.8s (2.0s)
+  [done] ⚡ 3/3 tools completed in 3.2s total (2.0s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.4s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.0s total (2.0s)
+Tool search_files returned error (0.40s): {"total_count": 0, "error": "Path not found: /workspace/incident-control-plane/Arnold/arnold/observability. Verify the path exists (use 'terminal' to check)."}
+  [done] ⚡ 3/3 tools completed in 4.0s total (2.0s)
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.6s total (1.5s)
+  [tool] (｡◕‿◕｡) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] (｡◕‿◕｡) ⚡ running 3 tools concurrently
+  [tool] (◕‿◕✿) 🔎 ^import |^from
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [done] ┊ 🔎 grep      ^import |^from   0.8s (1.0s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [tool] (★ω★) 🔎 incident.ledger|incident[_-...
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [done] ┊ 🔎 grep      incident.ledger|incident[_-]ledg...  0.8s (1.0s)
+  [done] ⚡ 2/2 tools completed in 3.4s total (2.0s)
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.2s total (2.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.6s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 2 tools concurrently
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      .../Arnold/arnold/kernel/journal.py  1.8s (2.1s)
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.8s
+  ┊ 📖 read      .../Arnold/arnold/kernel/journal.py  1.6s
+  ┊ 📖 read      ...plan/observability/event_sink.py  1.6s
+  ┊ 📖 read      ...megaplan/observability/events.py  1.6s
+  ┊ 📖 read      ...servability/events_projection.py  1.6s
+  ┊ 📖 read      ...d/arnold/kernel/effect_ledger.py  1.6s
+  ┊ 📖 read      ...megaplan/observability/events.py  1.7s
+  ┊ 📖 read      ...ld/runtime/test_event_journal.py  1.6s
+  ┊ 📖 read      ...ld/runtime/test_event_journal.py  1.6s
+  ┊ 📖 read      ...e/Arnold/arnold/kernel/events.py  1.6s
+  ┊ 📖 read      ...t-control-plane-plan-20260703.md  1.7s
+  ┊ 📖 read      ...lity-and-introspection-design.md  1.7s
+  ┊ 🔎 grep      from arnold\.runtime  1.3s
+  ┊ 🔎 grep      from arnold_pipelines  1.3s
+  ┊ 📖 read      ...lane-deepseek-review-20260703.md  1.6s
+  ┊ 📖 read      ...l-plane-codex-review-20260703.md  1.6s
+  [tool] (✿◠‿◠) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...servability/events_projection.py  2.1s (2.5s)
+  ┊ 📖 read      ...t-control-plane-plan-20260703.md  1.8s
+  ┊ 📖 read      ...l-plane-codex-review-20260703.md  1.6s
+  ┊ 📖 read      ...lane-deepseek-review-20260703.md  1.8s
+  ┊ 📖 read      ...e/Arnold/arnold/kernel/events.py  1.8s
+  ┊ 📖 read      ...t-control-plane-plan-20260703.md  1.8s
+  ┊ 🔎 find      *.py  1.2s
+  ┊ 🔎 find      incident  1.2s
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s
+  ┊ 📖 read      ...lane/Arnold/arnold/kernel/ids.py  1.6s
+  ┊ 🔎 find      *.py  0.8s
+  ┊ 📖 read      ...ne/Arnold/arnold/cli/__init__.py  1.6s
+  ┊ 🔎 find      test_*event*  0.8s
+  ┊ 🔎 find      test_*journal*  0.8s
+  ┊ 📖 read      ...ld/runtime/test_event_journal.py  1.6s
+  ┊ 🔎 find      *  0.4s [error]
+  ┊ 🔎 find      *observability*  0.8s
+  ┊ 🔎 find      *.jsonl  0.8s
+  ┊ 🔎 find      incident*  0.8s
+  ┊ 📖 read      ...rnold/execution/observability.py  1.7s
+  ┊ 📖 read      ...lity-and-introspection-design.md  1.7s
+  ┊ 🔎 find      *.md  0.8s
+  ┊ 📖 read      ...Arnold/arnold/kernel/__init__.py  1.6s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      ...d_pipelines/megaplan/__init__.py  1.6s
+  ┊ 📖 read      ...gaplan/observability/__init__.py  1.8s
+  ┊ 📖 read      ...rnold/arnold/runtime/__init__.py  1.6s
+  ┊ 📖 read      ...megaplan/observability/events.py  1.6s
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s
+  ┊ 🔎 grep      subparsers|add_parser|incident  1.2s
+  ┊ 🔎 find      *  0.8s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      ...old/runtime/state_persistence.py  1.6s
+  ┊ 🔎 grep      COMMAND_HANDLERS  0.8s
+  ┊ 🔎 find      *  0.8s
+  ┊ 🔎 find      *  0.8s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 🔎 find      __init__.py  0.8s
+  ┊ 📖 read      ...t-control-plane-plan-20260703.md  1.6s
+  ┊ 📖 read      ...trol-plane/Arnold/pyproject.toml  1.6s
+  ┊ 📖 read      ...megaplan/observability/events.py  1.6s
+  ┊ 🔎 find      incident  0.6s
+  ┊ 📖 read      ...t-control-plane-plan-20260703.md  1.6s
+  ┊ 📖 read      ...lane-deepseek-review-20260703.md  1.8s
+  ┊ 📖 read      ...l-plane-codex-review-20260703.md  1.8s
+  ┊ 📖 read      ...plan/observability/event_sink.py  1.6s
+  ┊ 📖 read      ...lines/megaplan/_core/__init__.py  1.6s
+  ┊ 📖 read      ...trol-plane/Arnold/pyproject.toml  1.6s
+  ┊ 🔎 grep      megaplan  0.8s
+  [tool] (≧◡≦) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.4s total (1.5s)
+  [tool] (◕ᴗ◕✿) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  2.0s (2.5s)
+  [tool] (★ω★) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  2.0s (2.5s)
+  [tool] ٩(◕‿◕｡)۶ 🔎 COMMAND_HANDLERS
+  [done] ┊ 🔎 grep      COMMAND_HANDLERS  1.0s (1.5s)
+  [tool] (★ω★) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s (2.0s)
+  [tool] (◕‿◕✿) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s (2.0s)
+set_active_step was bypassed for phase='prep' — skipping phase_result.json emission
