@@ -64,6 +64,14 @@ import {
   assignTimelinePostprocessShader,
 } from '@/tools/video-editor/lib/timeline-domain';
 
+import type { CompositionGraphInput } from '@/tools/video-editor/runtime/composition/graphProjector.ts';
+import {
+  applyGraphPreviewOperations,
+  type GraphPreviewOperation,
+  type GraphShaderAssignOp,
+  type GraphShaderRemoveOp,
+} from '@/tools/video-editor/runtime/composition/patchPreview.ts';
+
 // ---------------------------------------------------------------------------
 // Reserved operation families
 // ---------------------------------------------------------------------------
@@ -840,9 +848,17 @@ const getIncomingPostprocessShader = (
   if (target !== TIMELINE_POSTPROCESS_SHADER_APP_KEY) {
     return undefined;
   }
-  return payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload as TimelinePostprocessShaderMetadata
-    : undefined;
+  if (
+    !payload
+    || typeof payload !== 'object'
+    || Array.isArray(payload)
+    || typeof payload.shaderId !== 'string'
+    || payload.shaderId.length === 0
+    || payload.scope !== 'postprocess'
+  ) {
+    return undefined;
+  }
+  return payload as TimelinePostprocessShaderMetadata;
 };
 
 /** Mutable track fields (excludes structural id). */
@@ -1852,4 +1868,148 @@ export function previewTimelinePatch(
     fullyPreviewable: !hasReserved && compiled.valid,
     diagnostics: allDiags,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Graph preview bridge — M1b
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract internal graph preview operations from legacy timeline patch
+ * shader mutations.
+ *
+ * Walks the patch operations and maps `clip.update` / `app.update` shader
+ * payloads to {@link GraphShaderAssignOp} / {@link GraphShaderRemoveOp}
+ * when sufficient shader identity data is present.  This is a pure function
+ * — it never mutates state or commits.
+ *
+ * @param operations  The patch operation list to scan.
+ * @returns Internal graph preview operations for shader mutations.
+ */
+export function extractGraphPreviewOps(
+  operations: readonly TimelinePatchOperation[],
+): GraphPreviewOperation[] {
+  const previewOps: GraphPreviewOperation[] = [];
+
+  for (const op of operations) {
+    // ── clip.update ────────────────────────────────────────────────────
+    if (op.op === 'clip.update') {
+      const payload = op.payload ?? {};
+      const incomingShader = getIncomingClipShader(payload);
+
+      if (incomingShader) {
+        const assignOp: GraphShaderAssignOp = {
+          kind: 'shader.assign',
+          shader: {
+            id: `clip:${op.target}:shader:${incomingShader.shaderId}`,
+            shaderId: incomingShader.shaderId,
+            scope: 'clip',
+            clipId: op.target,
+            extensionId: incomingShader.extensionId,
+            contributionId: incomingShader.contributionId,
+            enabled: true,
+          },
+        };
+        previewOps.push(assignOp);
+        continue;
+      }
+
+      // Detect explicit shader removal via app=null or app.shader=null
+      if (payload.app === null || (payload.app !== undefined && typeof payload.app === 'object' && !Array.isArray(payload.app) && (payload.app as Record<string, unknown>).shader === null)) {
+        // We don't know the current shaderId from the patch alone, but we
+        // can issue a scope-wide remove.  The patchPreview module removes
+        // any shader matching scope + clipId.  Use a sentinel '*' which
+        // patchPreview.applyShaderRemove will match (it compares by exact
+        // shaderId, so we handle this via scope+clipId matching below).
+        const removeOp: GraphShaderRemoveOp = {
+          kind: 'shader.remove',
+          shaderId: '*',
+          scope: 'clip',
+          clipId: op.target,
+        };
+        previewOps.push(removeOp);
+        continue;
+      }
+    }
+
+    // ── app.update (postprocess shader) ────────────────────────────────
+    if (op.op === 'app.update' && op.target === TIMELINE_POSTPROCESS_SHADER_APP_KEY) {
+      const payload = op.payload ?? {};
+      const incomingShader = getIncomingPostprocessShader(op.target, payload);
+
+      if (incomingShader) {
+        const assignOp: GraphShaderAssignOp = {
+          kind: 'shader.assign',
+          shader: {
+            id: `postprocess:shader:${incomingShader.shaderId}`,
+            shaderId: incomingShader.shaderId,
+            scope: 'postprocess',
+            extensionId: incomingShader.extensionId,
+            contributionId: incomingShader.contributionId,
+            enabled: true,
+          },
+        };
+        previewOps.push(assignOp);
+        continue;
+      }
+
+      // Detect explicit postprocess shader removal (null / empty payload)
+      const updateKeys = Object.keys(payload).filter((k) => k !== 'mode');
+      if (updateKeys.length === 0 || payload === null) {
+        const removeOp: GraphShaderRemoveOp = {
+          kind: 'shader.remove',
+          shaderId: '*',
+          scope: 'postprocess',
+        };
+        previewOps.push(removeOp);
+      }
+    }
+  }
+
+  return previewOps;
+}
+
+/**
+ * Produce graph-derived diagnostics for a timeline patch by mapping legacy
+ * shader mutations to internal graph preview operations and projecting them
+ * through the composition graph.
+ *
+ * When `graphInput` is provided and the patch carries shader mutations,
+ * this function applies the extracted preview operations to a clone of the
+ * graph input, re-projects, and returns the resulting diagnostics.  These
+ * diagnostics can be merged with the standard timeline-patch diagnostics
+ * to give callers a graph-authoritative preview without changing public
+ * timeline patch operation families.
+ *
+ * @param patch       The patch to inspect for shader mutations.
+ * @param graphInput  The composition graph input to preview against.
+ * @returns Graph-derived diagnostics, or `undefined` when no shader
+ *          mutations are present or the graph input is absent.
+ */
+export function previewTimelinePatchGraphDiagnostics(
+  patch: TimelinePatch,
+  graphInput: CompositionGraphInput,
+): readonly TimelinePatchDiagnostic[] | undefined {
+  const previewOps = extractGraphPreviewOps(patch.operations);
+  if (previewOps.length === 0) {
+    return undefined;
+  }
+
+  const graphPreview = applyGraphPreviewOperations(graphInput, previewOps);
+  if (!graphPreview || graphPreview.diagnostics.length === 0) {
+    return undefined;
+  }
+
+  // Convert ExtensionDiagnostic[] → TimelinePatchDiagnostic[]
+  return Object.freeze(
+    graphPreview.diagnostics.map((diag) => ({
+      severity: diag.severity,
+      code: `timeline-patch/graph/${diag.code}` as const,
+      message: diag.message,
+      detail: {
+        kind: 'composition-graph' as const,
+        ...(diag as Record<string, unknown>),
+      },
+    })) as TimelinePatchDiagnostic[],
+  );
 }

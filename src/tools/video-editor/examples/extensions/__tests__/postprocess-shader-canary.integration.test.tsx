@@ -500,4 +500,72 @@ describe('postprocess-shader-canary extension', () => {
 
     test.dispose();
   });
+
+  it('graph-present planRender uses compositionGraph shader authority and emits legacy warning when graph is absent', () => {
+    const test = activateCanary({ includeDiagnosticShader: false });
+    const record = requireCanaryRecord(test.snapshot);
+    const config = makeConfig(record);
+    const snapshot = makeShaderSnapshot(config);
+    const runtime = normalizeExtensionRuntime([test.extension]);
+
+    const plannerWithGraph = planRender({ snapshot, extensionRuntime: runtime });
+    expect(plannerWithGraph.canBrowserExport).toBe(false);
+    expect(plannerWithGraph.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export', reason: 'missing-material',
+        extensionId: POSTPROCESS_SHADER_CANARY_EXTENSION_ID,
+        contributionId: POSTPROCESS_SHADER_CANARY_CONTRIBUTION_ID,
+      }),
+    ]));
+
+    const plannerWithoutGraph = planRender({ snapshot });
+    expect(plannerWithoutGraph.canBrowserExport).toBe(false);
+    expect(plannerWithoutGraph.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export', reason: 'missing-material',
+        extensionId: POSTPROCESS_SHADER_CANARY_EXTENSION_ID,
+        contributionId: POSTPROCESS_SHADER_CANARY_CONTRIBUTION_ID,
+      }),
+    ]));
+
+    const legacyWarning = plannerWithoutGraph.findings.find(
+      (finding) => finding.id.startsWith('planner.compositionGraph.legacy'),
+    );
+    expect(legacyWarning).toBeDefined();
+    expect(legacyWarning?.severity).toBe('warning');
+
+    test.dispose();
+  });
+
+  it('graph authority does not leak future surface kinds and keeps checks scoped to M1b shader/ref consumes edges', () => {
+    const test = activateCanary({ includeDiagnosticShader: false });
+    const runtime = normalizeExtensionRuntime([test.extension]);
+    const graph = runtime.compositionGraph;
+    expect(graph).toBeDefined();
+
+    const kinds = new Set(graph.nodes.map((node) => node.kind));
+    expect(kinds.has('clip')).toBe(true);
+    expect(kinds.has('timeline-postprocess')).toBe(true);
+    expect(kinds.has('contribution')).toBe(true);
+    expect(kinds.has('track')).toBe(false);
+    expect(kinds.has('output')).toBe(false);
+    expect(kinds.has('process')).toBe(false);
+
+    const edgeKinds = new Set(graph.edges.map((edge) => edge.kind));
+    expect(edgeKinds.has('consumes')).toBe(true);
+    expect(edgeKinds.size).toBeLessThanOrEqual(1);
+    expect(edgeKinds.has('animates')).toBe(false);
+    expect(edgeKinds.has('binds-live')).toBe(false);
+
+    const states = new Set(graph.referenceStates.map((entry) => entry.state));
+    for (const state of states) {
+      expect([
+        'resolved', 'missing', 'disabled', 'inactive-reserved',
+        'invalid-package', 'duplicate', 'settings-error', 'runtime-error',
+        'version-incompatible', 'unknown',
+      ]).toContain(state);
+    }
+
+    test.dispose();
+  });
 });

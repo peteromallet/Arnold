@@ -1,6 +1,8 @@
 import {
+  contributionRefKey,
   type CapabilityFinding,
   type CapabilityRequirement,
+  type CompositionGraph,
   type DeterminismStatus,
   type ProcessStatus,
   type RenderBlocker,
@@ -12,6 +14,8 @@ import {
   type TimelineShaderSummary,
   getCapabilityRequirements,
 } from '@reigh/editor-sdk';
+import { shaderMissingMaterializerBlockerMessage } from '@/sdk/video/rendering/capabilities.ts';
+import { COMPOSITION_DIAGNOSTIC_CODE } from '@/tools/video-editor/runtime/composition/diagnostics.ts';
 import {
   projectShaderRefs,
   validateShaderComposition,
@@ -47,7 +51,11 @@ export interface RenderPlannerMaterialStatus {
 export interface RenderPlannerInput {
   readonly snapshot?: TimelineSnapshot | null;
   readonly requirements?: readonly CapabilityRequirement[];
-  readonly extensionRuntime?: Pick<ExtensionRuntime, 'outputFormats' | 'processes' | 'shaders' | 'contributionIndex'>;
+  readonly compositionGraph?: CompositionGraph;
+  readonly extensionRuntime?: Pick<
+    ExtensionRuntime,
+    'outputFormats' | 'processes' | 'shaders' | 'contributionIndex' | 'compositionGraph'
+  >;
   readonly outputFormats?: readonly VideoEditorOutputFormatDescriptor[];
   readonly processes?: readonly VideoEditorProcessDescriptor[];
   readonly shaders?: readonly VideoEditorShaderDescriptor[];
@@ -112,11 +120,24 @@ interface PlanAccumulator {
   routeDeterminism: Map<RenderRoute, DeterminismStatus[]>;
 }
 
+interface ShaderCompositionDiagnosis {
+  readonly snapshot: TimelineSnapshot | null | undefined;
+  readonly shaders: readonly TimelineShaderSummary[] | undefined;
+  readonly findings: CapabilityFinding[];
+}
+
 const EMPTY_IDS = Object.freeze({
   effectIds: Object.freeze(new Set<string>()),
   transitionIds: Object.freeze(new Set<string>()),
   clipTypeIds: Object.freeze(new Set<string>()),
 });
+
+const GRAPH_PLANNER_ROUTES = [
+  'browser-export',
+  'worker-export',
+] as const satisfies readonly RenderRoute[];
+
+const LEGACY_GRAPH_COMPATIBILITY_WARNING_ID = 'planner.compositionGraph.legacy-shader-ref-compatibility';
 
 const DETERMINISM_RANK: Record<DeterminismStatus, number> = {
   deterministic: 0,
@@ -267,12 +288,13 @@ function shaderDescriptorKey(extensionId: string | undefined, contributionId: st
 function projectSnapshotShaderRefs(
   snapshot: TimelineSnapshot | null | undefined,
   contributionIndex: ContributionIndex | undefined,
+  compositionGraph?: CompositionGraph,
 ): TimelineSnapshot | null | undefined {
   if (!snapshot?.shaders) {
     return snapshot;
   }
 
-  const shaders = projectShaderRefs(snapshot.shaders, contributionIndex);
+  const shaders = projectShaderRefs(snapshot.shaders, contributionIndex, compositionGraph);
   if (shaders === snapshot.shaders) {
     return snapshot;
   }
@@ -280,6 +302,165 @@ function projectSnapshotShaderRefs(
   return {
     ...snapshot,
     shaders: shaders && shaders.length > 0 ? shaders : undefined,
+  };
+}
+
+function stripSnapshotShaders(
+  snapshot: TimelineSnapshot | null | undefined,
+): TimelineSnapshot | null | undefined {
+  if (!snapshot?.shaders) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    shaders: undefined,
+  };
+}
+
+function plannerCompositionGraph(input: RenderPlannerInput): CompositionGraph | undefined {
+  return input.compositionGraph ?? input.extensionRuntime?.compositionGraph;
+}
+
+function shaderRefKey(
+  shader: Pick<TimelineShaderSummary, 'extensionId' | 'contributionId'>,
+): string {
+  return contributionRefKey({
+    kind: 'shader',
+    extensionId: shader.extensionId,
+    contributionId: shader.contributionId,
+  });
+}
+
+function shaderScopeNodeId(shader: Pick<TimelineShaderSummary, 'scope' | 'clipId'>): string {
+  return shader.scope === 'clip'
+    ? `clip:${shader.clipId ?? 'unknown'}`
+    : 'timeline-postprocess';
+}
+
+function compositionDiagnosticReason(code: string): RenderBlockerReason {
+  switch (code) {
+    case COMPOSITION_DIAGNOSTIC_CODE.MISSING_REF:
+      return 'missing-contribution';
+    case COMPOSITION_DIAGNOSTIC_CODE.DISABLED_REF:
+    case COMPOSITION_DIAGNOSTIC_CODE.INACTIVE_RESERVED_REF:
+      return 'inactive-extension';
+    default:
+      return 'unknown';
+  }
+}
+
+function graphDiagnosticFindings(
+  compositionGraph: CompositionGraph | undefined,
+): CapabilityFinding[] {
+  if (!compositionGraph || compositionGraph.diagnostics.length === 0) {
+    return [];
+  }
+
+  const findings: CapabilityFinding[] = [];
+  compositionGraph.diagnostics.forEach((diagnostic, diagnosticIndex) => {
+    for (const route of GRAPH_PLANNER_ROUTES) {
+      findings.push({
+        id: `${diagnostic.code}.${route}.${diagnosticIndex}`,
+        severity: diagnostic.severity === 'info' ? 'info' : diagnostic.severity,
+        route,
+        reason: compositionDiagnosticReason(diagnostic.code),
+        message: diagnostic.message,
+        extensionId: diagnostic.extensionId
+          ?? (diagnostic.detail?.extensionId as string | undefined),
+        contributionId: diagnostic.contributionId
+          ?? (diagnostic.detail?.contributionId as string | undefined),
+        detail: {
+          source: 'composition-graph',
+          code: diagnostic.code,
+          ...(diagnostic.detail ?? {}),
+        },
+      });
+    }
+  });
+
+  return findings;
+}
+
+function graphShaderMaterializerRequirements(
+  shaders: readonly TimelineShaderSummary[] | undefined,
+  compositionGraph: CompositionGraph | undefined,
+): CapabilityRequirement[] {
+  if (!compositionGraph || !shaders?.length) {
+    return [];
+  }
+
+  const refStateByKey = new Map(
+    compositionGraph.referenceStates.map((entry) => [entry.refKey, entry.state]),
+  );
+  const requirements: CapabilityRequirement[] = [];
+  let shaderOrdinal = 0;
+  for (const shader of shaders) {
+    if (shader.enabled === false) {
+      continue;
+    }
+
+    const refState = refStateByKey.get(shaderRefKey(shader));
+    if (refState !== 'resolved') {
+      continue;
+    }
+
+    const sourceRef: CapabilityRequirement['sourceRef'] = {
+      source: 'extension',
+      extensionId: shader.extensionId,
+      contributionId: shader.contributionId,
+    };
+
+    for (const route of GRAPH_PLANNER_ROUTES) {
+      requirements.push({
+        id: `graph.shader.${shaderOrdinal}.${route}`,
+        sourceRef,
+        route,
+        requiredCapabilities: ['render-material', 'shader-materializer'],
+        determinism: 'preview-only',
+        blocking: true,
+        routeFit: {
+          route,
+          fit: 'blocked',
+          reason: 'missing-material',
+          message: shaderMissingMaterializerBlockerMessage(
+            shader.shaderId,
+            shader.scope,
+            shader.clipId,
+          ),
+        },
+      });
+    }
+    shaderOrdinal += 1;
+  }
+
+  return requirements;
+}
+
+function legacyGraphCompatibilityWarning(
+  snapshot: TimelineSnapshot | null | undefined,
+  requirements: readonly CapabilityRequirement[] | undefined,
+  compositionGraph: CompositionGraph | undefined,
+): CapabilityFinding | undefined {
+  if (compositionGraph) {
+    return undefined;
+  }
+
+  const hasLegacyShaderFacts = Boolean(snapshot?.shaders?.some((shader) => shader.enabled !== false))
+    || Boolean(requirements?.some(isShaderMaterializerRequirement));
+  if (!hasLegacyShaderFacts) {
+    return undefined;
+  }
+
+  return {
+    id: LEGACY_GRAPH_COMPATIBILITY_WARNING_ID,
+    severity: 'warning',
+    message:
+      'CompositionGraph was not provided; planner shader/ref decisions are using legacy compatibility inputs and are not authoritative for M1b.',
+    detail: {
+      source: 'composition-graph-compatibility',
+      compatibilityMode: 'legacy-shader-ref',
+    },
   };
 }
 
@@ -423,15 +604,86 @@ function shaderCompositionScopeLabel(shader: TimelineShaderSummary): string {
 function diagnoseSnapshotShaderComposition(
   snapshot: TimelineSnapshot | null | undefined,
   contributionIndex: ContributionIndex | undefined,
-): { snapshot: TimelineSnapshot | null | undefined; findings: CapabilityFinding[] } {
+  compositionGraph?: CompositionGraph,
+): ShaderCompositionDiagnosis {
+  if (compositionGraph) {
+    const validation = validateShaderComposition(undefined, compositionGraph);
+    const graphShaders = validation.shaders && validation.shaders.length > 0
+      ? validation.shaders
+      : undefined;
+    const graphSnapshot = snapshot
+      ? {
+          ...snapshot,
+          shaders: graphShaders,
+        }
+      : snapshot;
+
+    if (!graphShaders || graphShaders.length === 0) {
+      return {
+        snapshot: graphSnapshot,
+        shaders: graphShaders,
+        findings: graphDiagnosticFindings(compositionGraph),
+      };
+    }
+
+    const findings = graphDiagnosticFindings(compositionGraph);
+    const refStateByKey = new Map(
+      compositionGraph.referenceStates.map((entry) => [entry.refKey, entry.state]),
+    );
+
+    for (const occupied of validation.occupied) {
+      const shader = occupied.incoming;
+      const refKey = shaderRefKey(shader);
+      const refState = refStateByKey.get(refKey);
+      for (const route of GRAPH_PLANNER_ROUTES) {
+        findings.push({
+          id: `${COMPOSITION_DIAGNOSTIC_CODE.SCOPE_OCCUPIED}.${route}.${shaderCompositionScopeLabel(shader)}.${shader.shaderId}`,
+          severity: 'error',
+          route,
+          reason: 'unknown',
+          message: occupied.message,
+          extensionId: shader.extensionId,
+          contributionId: shader.contributionId,
+          detail: {
+            source: 'composition-graph',
+            code: COMPOSITION_DIAGNOSTIC_CODE.SCOPE_OCCUPIED,
+            nodeId: shaderScopeNodeId(shader),
+            refKey,
+            refState,
+            scope: occupied.scope,
+            extensionId: shader.extensionId,
+            contributionId: shader.contributionId,
+            shaderId: shader.shaderId,
+            clipId: occupied.clipId,
+            existingShaderId: occupied.existing.shaderId,
+            incomingShaderId: occupied.incoming.shaderId,
+          },
+        });
+      }
+    }
+
+    const updatedGraphSnapshot = graphSnapshot
+      ? {
+          ...graphSnapshot,
+          shaders: validation.shaders && validation.shaders.length > 0 ? validation.shaders : undefined,
+        }
+      : graphSnapshot;
+
+    return {
+      snapshot: updatedGraphSnapshot,
+      shaders: validation.shaders && validation.shaders.length > 0 ? validation.shaders : undefined,
+      findings,
+    };
+  }
+
   const projectedSnapshot = projectSnapshotShaderRefs(snapshot, contributionIndex);
   if (!projectedSnapshot?.shaders || projectedSnapshot.shaders.length === 0) {
-    return { snapshot: projectedSnapshot, findings: [] };
+    return { snapshot: projectedSnapshot, shaders: projectedSnapshot?.shaders, findings: [] };
   }
 
   const validation = validateShaderComposition(projectedSnapshot.shaders);
   if (validation.occupied.length === 0) {
-    return { snapshot: projectedSnapshot, findings: [] };
+    return { snapshot: projectedSnapshot, shaders: validation.shaders, findings: [] };
   }
 
   const findings: CapabilityFinding[] = [];
@@ -462,6 +714,7 @@ function diagnoseSnapshotShaderComposition(
       ...projectedSnapshot,
       shaders: validation.shaders && validation.shaders.length > 0 ? validation.shaders : undefined,
     },
+    shaders: validation.shaders && validation.shaders.length > 0 ? validation.shaders : undefined,
     findings,
   };
 }
@@ -908,13 +1161,24 @@ function emptyGuard(
 
 export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const acc = createAccumulator();
+  const compositionGraph = plannerCompositionGraph(input);
+  const nonShaderSnapshot = compositionGraph ? stripSnapshotShaders(input.snapshot) : input.snapshot;
   const shaderComposition = diagnoseSnapshotShaderComposition(
     input.snapshot,
     input.extensionRuntime?.contributionIndex,
+    compositionGraph,
   );
-  const requirements = input.requirements ?? (shaderComposition.snapshot
-    ? getCapabilityRequirements(shaderComposition.snapshot)
-    : []);
+  const requirements = compositionGraph
+    ? [
+        ...(input.requirements
+          ?? (nonShaderSnapshot
+            ? getCapabilityRequirements(nonShaderSnapshot)
+            : [])),
+        ...graphShaderMaterializerRequirements(shaderComposition.shaders, compositionGraph),
+      ]
+    : (input.requirements ?? (shaderComposition.snapshot
+      ? getCapabilityRequirements(shaderComposition.snapshot)
+      : []));
   const outputFormats = input.outputFormats ?? input.extensionRuntime?.outputFormats ?? [];
   const processes = input.processes ?? input.extensionRuntime?.processes ?? [];
   const shaders = input.shaders ?? input.extensionRuntime?.shaders ?? [];
@@ -922,6 +1186,11 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   const processById = createProcessDescriptorMap(processes);
   const shaderBySourceRef = createShaderDescriptorMap(shaders);
   const materialStatusById = createMaterialStatusMap(input.materialStatuses);
+  const legacyCompatibilityWarning = legacyGraphCompatibilityWarning(
+    input.snapshot,
+    requirements,
+    compositionGraph,
+  );
   const requestedOutputFormat = input.request?.outputFormatId
     ? outputFormats.find((format) => format.id === input.request?.outputFormatId)
     : undefined;
@@ -956,6 +1225,9 @@ export function planRender(input: RenderPlannerInput): RenderPlannerResult {
   }
   collectRenderGroups(acc, input.snapshot);
   acc.findings.push(...shaderComposition.findings);
+  if (legacyCompatibilityWarning) {
+    acc.findings.push(legacyCompatibilityWarning);
+  }
   acc.findings.push(...(input.diagnostics ?? []));
 
   if (input.request?.outputFormatId && !outputFormats.some((format) => format.id === input.request?.outputFormatId)) {

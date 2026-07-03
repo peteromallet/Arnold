@@ -83,32 +83,96 @@ const buildConfig = (clip: ResolvedTimelineConfig['clips'][number]): ResolvedTim
 });
 
 function emptyExtensionRuntime(): ExtensionRuntime {
+  const config = {
+    slots: {},
+    dialogHost: { dialogs: [] },
+    registry: { panels: [], inspectorSections: [] },
+    overlays: [],
+    assetParsers: [],
+    outputFormats: [],
+    processes: [],
+    searchProviders: [],
+    metadataFacets: [],
+    assetDetailSections: [],
+    effects: [],
+    transitions: [],
+    shaders: [],
+    agentTools: [],
+  } as ExtensionRuntime['config'];
+
   return {
-    config: {
-      slots: {},
-      dialogHost: { dialogs: [] },
-      registry: { panels: [], inspectorSections: [] },
-    } as ExtensionRuntime['config'],
+    config,
     extensions: [],
     diagnostics: [],
     inactiveReserved: [],
     knownRenderIds: new Set(),
+    contributionIndex: {},
+    compositionGraph: {
+      nodes: [{ id: 'timeline-postprocess', kind: 'timeline-postprocess', detail: { scope: 'postprocess' } }],
+      edges: [],
+      referenceStates: [],
+      diagnostics: [],
+    },
     settingsDefaults: {},
+    assetParsers: config.assetParsers,
+    outputFormats: config.outputFormats,
+    processes: config.processes,
+    searchProviders: config.searchProviders,
+    metadataFacets: config.metadataFacets,
+    assetDetailSections: config.assetDetailSections,
+    effects: config.effects,
+    transitions: config.transitions,
+    shaders: config.shaders,
+    agentTools: config.agentTools,
+    requirements: [],
+    packageStateInventory: [],
   };
 }
 
 function makeExtensionRuntime(overrides?: Partial<ExtensionRuntime>): ExtensionRuntime {
+  const config = (overrides?.config ?? {
+    slots: {},
+    dialogHost: { dialogs: [] },
+    registry: { panels: [], inspectorSections: [] },
+    overlays: [],
+    assetParsers: [],
+    outputFormats: [],
+    processes: [],
+    searchProviders: [],
+    metadataFacets: [],
+    assetDetailSections: [],
+    effects: [],
+    transitions: [],
+    shaders: [],
+    agentTools: [],
+  }) as ExtensionRuntime['config'];
+
   return {
-    config: {
-      slots: {},
-      dialogHost: { dialogs: [] },
-      registry: { panels: [], inspectorSections: [] },
-    } as ExtensionRuntime['config'],
+    config,
     extensions: [],
     diagnostics: [],
     inactiveReserved: [],
     knownRenderIds: new Set(),
+    contributionIndex: {},
+    compositionGraph: {
+      nodes: [{ id: 'timeline-postprocess', kind: 'timeline-postprocess', detail: { scope: 'postprocess' } }],
+      edges: [],
+      referenceStates: [],
+      diagnostics: [],
+    },
     settingsDefaults: {},
+    assetParsers: overrides?.assetParsers ?? config.assetParsers,
+    outputFormats: overrides?.outputFormats ?? config.outputFormats,
+    processes: overrides?.processes ?? config.processes,
+    searchProviders: overrides?.searchProviders ?? config.searchProviders,
+    metadataFacets: overrides?.metadataFacets ?? config.metadataFacets,
+    assetDetailSections: overrides?.assetDetailSections ?? config.assetDetailSections,
+    effects: overrides?.effects ?? config.effects,
+    transitions: overrides?.transitions ?? config.transitions,
+    shaders: overrides?.shaders ?? config.shaders,
+    agentTools: overrides?.agentTools ?? config.agentTools,
+    requirements: [],
+    packageStateInventory: [],
     ...overrides,
   };
 }

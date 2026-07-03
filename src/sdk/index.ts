@@ -114,6 +114,26 @@ export type { ContributionRef, LiveSourceRef, MaterialRef } from './video/compos
 export { contributionRefKey } from './video/composition/references';
 
 // ===========================================================================
+// Video: Composition (graph contracts — M1b)
+// ===========================================================================
+
+export type {
+  CompositionNodeKind,
+  CompositionEdgeKind,
+  ReferenceState,
+  CompositionGraphNode,
+  CompositionGraphEdge,
+  CompositionReferenceStateEntry,
+  CompositionGraphPreviewResult,
+  CompositionGraph,
+} from './video/composition/graph';
+export {
+  COMPOSITION_NODE_KINDS,
+  COMPOSITION_EDGE_KINDS,
+  REFERENCE_STATES,
+} from './video/composition/graph';
+
+// ===========================================================================
 // Video: Rendering
 // ===========================================================================
 

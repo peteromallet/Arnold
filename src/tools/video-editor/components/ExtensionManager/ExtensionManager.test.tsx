@@ -68,6 +68,13 @@ function makeRuntime(entries: PackageEntryInput[], extensions: unknown[] = []) {
     diagnostics: [],
     inactiveReserved: [],
     knownRenderIds: new Set<string>(),
+    contributionIndex: {},
+    compositionGraph: {
+      nodes: [{ id: 'timeline-postprocess', kind: 'timeline-postprocess', detail: { scope: 'postprocess' } }],
+      edges: [],
+      referenceStates: [],
+      diagnostics: [],
+    },
     settingsDefaults: {},
     assetParsers: [],
     outputFormats: [],

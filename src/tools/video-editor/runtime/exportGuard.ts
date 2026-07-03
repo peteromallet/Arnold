@@ -12,6 +12,7 @@
 
 import type {
   ExportDiagnostic,
+  CompositionGraph,
   ContributionKind,
   ExtensionContribution,
 } from '@reigh/editor-sdk';
@@ -48,6 +49,7 @@ import {
   shaderMissingMaterializerBlockerMessage,
   type ShaderMaterializerRequirementScope,
 } from '@/tools/video-editor/runtime/renderability.ts';
+import { validateShaderComposition } from '@/tools/video-editor/runtime/composition/shaderValidation.ts';
 import type { TransitionRegistryRecord, TransitionRegistrySnapshot } from '@/tools/video-editor/transitions/registry/types.ts';
 import type {
   ClipTypeRegistryRecord,
@@ -122,6 +124,8 @@ export interface ExportGuardResult {
   /** Whether any blocking error diagnostics were emitted. */
   readonly hasBlockingErrors: boolean;
 }
+
+const LEGACY_EXPORT_GRAPH_COMPATIBILITY_WARNING_ID = 'exportGuard.compositionGraph.legacy-shader-ref-compatibility';
 
 // ---------------------------------------------------------------------------
 // Built-in ID collection
@@ -289,6 +293,7 @@ export function scanExportConfig(
   effectRegistrySnapshot?: EffectRegistrySnapshot,
   transitionRegistrySnapshot?: TransitionRegistrySnapshot,
   clipTypeRegistrySnapshot?: ClipTypeRegistrySnapshot,
+  compositionGraph?: CompositionGraph,
 ): ExportGuardResult {
   const diagnostics: ExportDiagnostic[] = [];
   const findings: CapabilityFinding[] = [];
@@ -299,7 +304,11 @@ export function scanExportConfig(
 
   if (config && config.clips.length > 0) {
     scanLiveBindingExportBlockers(config, diagnostics, findings, blockers);
-    scanTimelineShaderExportBlockers(config, diagnostics, findings, blockers);
+    scanTimelineShaderExportBlockers(config, diagnostics, findings, blockers, compositionGraph);
+    const compatibilityWarning = legacyGraphCompatibilityWarning(config, compositionGraph);
+    if (compatibilityWarning) {
+      findings.push(compatibilityWarning);
+    }
 
     const allKnown = buildAllKnown(builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
 
@@ -343,10 +352,34 @@ function scanLiveBindingExportBlockers(
   }
 }
 
-function hasTimelineShaderMetadata(config: ResolvedTimelineConfig | null | undefined): boolean {
+function legacyTimelineShaderMetadata(config: ResolvedTimelineConfig | null | undefined): boolean {
   if (!config) return false;
   if (isTimelineShaderMetadata(config.app?.shaderPostprocess, 'postprocess')) return true;
   return config.clips.some((clip) => isTimelineShaderMetadata(clip.app?.shader, 'clip'));
+}
+
+function graphShaderSummaries(
+  compositionGraph: CompositionGraph | undefined,
+) {
+  if (!compositionGraph) {
+    return undefined;
+  }
+
+  const validation = validateShaderComposition(undefined, compositionGraph);
+  return validation.shaders && validation.shaders.length > 0
+    ? validation.shaders
+    : undefined;
+}
+
+function hasTimelineShaderMetadata(
+  config: ResolvedTimelineConfig | null | undefined,
+  compositionGraph?: CompositionGraph,
+): boolean {
+  if (compositionGraph) {
+    return Boolean(graphShaderSummaries(compositionGraph)?.some((shader) => shader.enabled !== false));
+  }
+
+  return legacyTimelineShaderMetadata(config);
 }
 
 export { hasTimelineShaderMetadata };
@@ -377,7 +410,23 @@ function scanTimelineShaderExportBlockers(
   diagnostics: ExportDiagnostic[],
   findings: CapabilityFinding[],
   blockers: RenderBlocker[],
+  compositionGraph?: CompositionGraph,
 ): void {
+  if (compositionGraph) {
+    for (const shader of graphShaderSummaries(compositionGraph) ?? []) {
+      if (shader.enabled === false) continue;
+      pushShaderMaterializerFindingAndBlocker(diagnostics, findings, blockers, {
+        shaderId: shader.shaderId,
+        extensionId: shader.extensionId,
+        contributionId: shader.contributionId,
+        scope: shader.scope,
+        clipId: shader.scope === 'clip' ? shader.clipId : undefined,
+        source: 'composition-graph',
+      });
+    }
+    return;
+  }
+
   for (const clip of config.clips) {
     const shader = isTimelineShaderMetadata(clip.app?.shader, 'clip') ? clip.app.shader : undefined;
     if (!shader || shader.enabled === false) continue;
@@ -387,6 +436,7 @@ function scanTimelineShaderExportBlockers(
       contributionId: shader.contributionId,
       scope: 'clip',
       clipId: clip.id,
+      source: 'timeline-shader-metadata',
     });
   }
 
@@ -399,8 +449,29 @@ function scanTimelineShaderExportBlockers(
       extensionId: postprocessShader.extensionId,
       contributionId: postprocessShader.contributionId,
       scope: 'postprocess',
+      source: 'timeline-shader-metadata',
     });
   }
+}
+
+function legacyGraphCompatibilityWarning(
+  config: ResolvedTimelineConfig,
+  compositionGraph: CompositionGraph | undefined,
+): CapabilityFinding | undefined {
+  if (compositionGraph || !legacyTimelineShaderMetadata(config)) {
+    return undefined;
+  }
+
+  return {
+    id: LEGACY_EXPORT_GRAPH_COMPATIBILITY_WARNING_ID,
+    severity: 'warning',
+    message:
+      'CompositionGraph was not provided; export shader/ref decisions are using legacy compatibility inputs and are not authoritative for M1b.',
+    detail: {
+      source: 'composition-graph-compatibility',
+      compatibilityMode: 'legacy-shader-ref',
+    },
+  };
 }
 
 function pushShaderMaterializerFindingAndBlocker(
@@ -413,6 +484,7 @@ function pushShaderMaterializerFindingAndBlocker(
     readonly contributionId: string;
     readonly scope: ShaderMaterializerRequirementScope;
     readonly clipId?: string;
+    readonly source: 'composition-graph' | 'timeline-shader-metadata';
   },
 ): void {
   const routes: readonly RenderRoute[] = ['browser-export', 'worker-export'];
@@ -448,7 +520,7 @@ function pushShaderMaterializerFindingAndBlocker(
       detail: {
         shaderId: input.shaderId,
         shaderScope: input.scope,
-        source: 'timeline-shader-metadata',
+        source: input.source,
       },
     };
     findings.push(finding);

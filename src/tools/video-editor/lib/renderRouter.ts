@@ -35,10 +35,12 @@ import {
 import { materializeSequenceConfig } from '@/tools/video-editor/sequences/materialize.ts';
 import {
   planRender,
+  type RenderPlannerInput,
   type RenderPlannerResult,
 } from '@/tools/video-editor/runtime/renderPlanner.ts';
 import type {
   CapabilityRequirement,
+  CompositionGraph,
   RenderBlockerReason,
 } from '@reigh/editor-sdk';
 import type { ContributionRenderability } from '@/tools/video-editor/runtime/renderability.ts';
@@ -119,6 +121,10 @@ export interface RenderRouteDecision {
 interface PlannerRouteDecisionContext {
   readonly plannerResult: RenderPlannerResult;
   readonly selectedPlannerRoute: 'preview' | 'browser-export' | 'worker-export' | 'sidecar-export';
+}
+
+export interface RenderRouterPlannerInput {
+  readonly compositionGraph?: CompositionGraph;
 }
 
 export interface PlannerBackedRenderRouteDecision extends RenderRouteDecision {
@@ -303,6 +309,7 @@ function selectPlannerRoute(result: RenderPlannerResult): PlannerRouteDecisionCo
 export function decideRenderRoute(
   timeline: RouterTimelineShape | null | undefined,
   contributedClipRecords?: ReadonlyArray<ContributedClipRecord>,
+  plannerInput?: RenderRouterPlannerInput,
 ): PlannerBackedRenderRouteDecision {
   const clips = (timeline?.clips ?? []) as ReadonlyArray<RouterClipShape>;
   const contributedIndex = indexContributedRecords(contributedClipRecords);
@@ -314,7 +321,10 @@ export function decideRenderRoute(
       hasMediaClip: false,
       hasContributedClip: false,
       reason: 'no_clips',
-      planner: selectPlannerRoute(planRender({ requirements: [] })),
+      planner: selectPlannerRoute(planRender({
+        requirements: [],
+        compositionGraph: plannerInput?.compositionGraph,
+      } satisfies RenderPlannerInput)),
     };
   }
 
@@ -421,7 +431,10 @@ export function decideRenderRoute(
     }
   });
 
-  const planner = selectPlannerRoute(planRender({ requirements }));
+  const planner = selectPlannerRoute(planRender({
+    requirements,
+    compositionGraph: plannerInput?.compositionGraph,
+  } satisfies RenderPlannerInput));
 
   if (blockedReason) {
     return {
@@ -451,7 +464,8 @@ export function decideRenderRoute(
             'route-unsupported',
           ),
         ],
-      }));
+        compositionGraph: plannerInput?.compositionGraph,
+      } satisfies RenderPlannerInput));
       return {
         route: 'preview-only',
         hasThemedClip,

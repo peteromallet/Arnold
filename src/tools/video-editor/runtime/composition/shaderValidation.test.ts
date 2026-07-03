@@ -1,3 +1,4 @@
+import { contributionRefKey, type CompositionGraph, type ContributionRef } from '@reigh/editor-sdk';
 import { describe, expect, it } from 'vitest';
 import {
   createShaderScopeOccupied,
@@ -62,6 +63,81 @@ function shaderContributionIndex(
   }
 
   return index;
+}
+
+function shaderRef(contributionId: string): ContributionRef {
+  return {
+    kind: 'shader',
+    extensionId: 'com.example.shader',
+    contributionId,
+  };
+}
+
+function graphShader(
+  edgeId: string,
+  overrides: {
+    sourceNodeId?: string;
+    shaderId?: string;
+    clipId?: string;
+    contributionId?: string;
+    refState?: 'resolved' | 'missing' | 'disabled';
+  } = {},
+): CompositionGraph {
+  const ref = shaderRef(overrides.contributionId ?? edgeId);
+  const sourceNodeId = overrides.sourceNodeId ?? 'clip:clip-1';
+  const sourceNode = sourceNodeId === 'timeline-postprocess'
+    ? {
+      id: 'timeline-postprocess',
+      kind: 'timeline-postprocess' as const,
+      detail: {
+        scope: 'postprocess',
+      },
+    }
+    : {
+      id: sourceNodeId,
+      kind: 'clip' as const,
+      detail: {
+        clipId: overrides.clipId ?? 'clip-1',
+      },
+    };
+  const targetNodeId = `contribution:${contributionRefKey(ref)}`;
+
+  return {
+    nodes: [
+      sourceNode,
+      {
+        id: targetNodeId,
+        kind: 'contribution',
+        ref,
+      },
+    ],
+    edges: [{
+      id: edgeId,
+      kind: 'consumes',
+      sourceNodeId,
+      targetNodeId,
+      detail: {
+        shaderId: overrides.shaderId ?? `shader.${edgeId}`,
+        scope: sourceNodeId === 'timeline-postprocess' ? 'postprocess' : 'clip',
+        clipId: sourceNodeId === 'timeline-postprocess' ? undefined : (overrides.clipId ?? 'clip-1'),
+      },
+    }],
+    referenceStates: [{
+      refKey: contributionRefKey(ref),
+      state: overrides.refState ?? 'resolved',
+      nodeIds: [sourceNodeId],
+    }],
+    diagnostics: [],
+  };
+}
+
+function mergeGraphs(...graphs: readonly CompositionGraph[]): CompositionGraph {
+  return {
+    nodes: graphs.flatMap((graph) => graph.nodes),
+    edges: graphs.flatMap((graph) => graph.edges),
+    referenceStates: graphs.flatMap((graph) => graph.referenceStates),
+    diagnostics: [],
+  };
 }
 
 describe('shaderValidation', () => {
@@ -209,6 +285,68 @@ describe('shaderValidation', () => {
     expect(projected).toEqual([visible]);
   });
 
+  it('projects graph shader refs from graph authority without falling back to legacy summaries or the contribution index', () => {
+    const graph = mergeGraphs(
+      graphShader('clip-glow', {
+        shaderId: 'shader.clipGlow',
+        contributionId: 'clip-glow-shader',
+        refState: 'resolved',
+      }),
+      graphShader('clip-disabled', {
+        shaderId: 'shader.clipDisabled',
+        contributionId: 'clip-disabled-shader',
+        refState: 'disabled',
+      }),
+      graphShader('post-missing', {
+        sourceNodeId: 'timeline-postprocess',
+        shaderId: 'shader.postMissing',
+        contributionId: 'post-missing-shader',
+        refState: 'missing',
+      }),
+    );
+
+    const projected = projectShaderRefs(
+      [
+        {
+          id: 'legacy:shader',
+          shaderId: 'shader.legacyOnly',
+          scope: 'clip',
+          clipId: 'clip-legacy',
+          extensionId: 'com.legacy.shader',
+          contributionId: 'legacy-only',
+          enabled: true,
+        },
+      ],
+      shaderContributionIndex([
+        { contributionId: 'clip-glow-shader' },
+        { contributionId: 'clip-disabled-shader' },
+        { contributionId: 'post-missing-shader' },
+      ]),
+      graph,
+    );
+
+    expect(projected).toEqual([
+      {
+        id: 'graph:clip-glow',
+        shaderId: 'shader.clipGlow',
+        scope: 'clip',
+        clipId: 'clip-1',
+        extensionId: 'com.example.shader',
+        contributionId: 'clip-glow-shader',
+        enabled: true,
+      },
+      {
+        id: 'graph:post-missing',
+        shaderId: 'shader.postMissing',
+        scope: 'postprocess',
+        clipId: undefined,
+        extensionId: 'com.example.shader',
+        contributionId: 'post-missing-shader',
+        enabled: true,
+      },
+    ]);
+  });
+
   it('validates shader composition by preserving winners and reporting each occupied duplicate', () => {
     const first = {
       id: 'clip-1:shader:shader.clipGlow',
@@ -240,6 +378,69 @@ describe('shaderValidation', () => {
           clipId: 'clip-1',
           existing: first,
           incoming: duplicate,
+          shaderCount: 2,
+          message: 'Cannot add shader "shader.clipEdge" to clip "clip-1" because shader "shader.clipGlow" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
+        },
+      ],
+    });
+  });
+
+  it('validates shader composition from graph edges in graph order and ignores legacy stack authority', () => {
+    const graph = mergeGraphs(
+      graphShader('winner', {
+        shaderId: 'shader.clipGlow',
+        contributionId: 'clip-glow-shader',
+      }),
+      graphShader('loser', {
+        shaderId: 'shader.clipEdge',
+        contributionId: 'clip-edge-shader',
+      }),
+    );
+
+    expect(validateShaderComposition([
+      {
+        id: 'legacy:wrong-order',
+        shaderId: 'shader.legacyOnly',
+        scope: 'clip',
+        clipId: 'clip-9',
+        extensionId: 'com.legacy.shader',
+        contributionId: 'legacy-only',
+        enabled: true,
+      },
+    ], graph)).toEqual({
+      shaders: [
+        {
+          id: 'graph:winner',
+          shaderId: 'shader.clipGlow',
+          scope: 'clip',
+          clipId: 'clip-1',
+          extensionId: 'com.example.shader',
+          contributionId: 'clip-glow-shader',
+          enabled: true,
+        },
+      ],
+      occupied: [
+        {
+          scope: 'clip',
+          clipId: 'clip-1',
+          existing: {
+            id: 'graph:winner',
+            shaderId: 'shader.clipGlow',
+            scope: 'clip',
+            clipId: 'clip-1',
+            extensionId: 'com.example.shader',
+            contributionId: 'clip-glow-shader',
+            enabled: true,
+          },
+          incoming: {
+            id: 'graph:loser',
+            shaderId: 'shader.clipEdge',
+            scope: 'clip',
+            clipId: 'clip-1',
+            extensionId: 'com.example.shader',
+            contributionId: 'clip-edge-shader',
+            enabled: true,
+          },
           shaderCount: 2,
           message: 'Cannot add shader "shader.clipEdge" to clip "clip-1" because shader "shader.clipGlow" is already assigned. V1 supports one clip shader per clip. Remove the existing shader before assigning another.',
         },

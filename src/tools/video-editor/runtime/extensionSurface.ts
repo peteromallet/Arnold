@@ -7,6 +7,7 @@ import type {
   TimelinePlaybackContextValue,
 } from '@/tools/video-editor/hooks/useTimelineState.types.ts';
 import type {
+  CompositionGraph,
   ReighExtension,
   ExtensionContribution,
   ExtensionDiagnostic,
@@ -517,6 +518,14 @@ export interface ExtensionRuntime {
    * **Not** exposed through SDK descriptor pointer types or manifest schema.
    */
   readonly contributionIndex: ContributionIndex;
+  /**
+   * Eager composition-graph projection built from the contribution index.
+   *
+   * This is the M1b graph authority surface for shader/ref consumers.
+   * Legacy descriptor arrays and the contribution index remain attached for
+   * compatibility callers that have not migrated yet.
+   */
+  readonly compositionGraph: CompositionGraph;
   /** Extension-scoped settings defaults keyed by extension ID. */
   readonly settingsDefaults: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
   /** M6: Normalized parser descriptors, ordered by extension order then contribution order. */
@@ -634,6 +643,19 @@ export const DEFAULT_VIDEO_EDITOR_EXTENSION_RUNTIME: VideoEditorExtensionRuntime
   agentTools: EMPTY_AGENT_TOOLS,
 });
 
+const EMPTY_RUNTIME_COMPOSITION_GRAPH: CompositionGraph = Object.freeze({
+  nodes: Object.freeze([
+    Object.freeze({
+      id: 'timeline-postprocess',
+      kind: 'timeline-postprocess',
+      detail: Object.freeze({ scope: 'postprocess' }),
+    }),
+  ]),
+  edges: Object.freeze([]),
+  referenceStates: Object.freeze([]),
+  diagnostics: Object.freeze([]),
+});
+
 /**
  * Host-owned runtime normalization: converts a list of ReighExtension objects
  * into a frozen, deterministic, provider-scoped {@link ExtensionRuntime}.
@@ -681,6 +703,7 @@ const EMPTY_EXTENSION_RUNTIME: ExtensionRuntime = Object.freeze({
   inactiveReserved: Object.freeze([]),
   knownRenderIds: Object.freeze(new Set<string>()),
   contributionIndex: Object.freeze({}),
+  compositionGraph: EMPTY_RUNTIME_COMPOSITION_GRAPH,
   settingsDefaults: Object.freeze({}),
   assetParsers: EMPTY_ASSET_PARSERS,
   outputFormats: EMPTY_OUTPUT_FORMATS,

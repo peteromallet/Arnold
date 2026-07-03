@@ -1,0 +1,71 @@
+{
+  "id": "log_a7967611438c",
+  "level": "debug",
+  "category": "system",
+  "event_type": "authority_divergence",
+  "message": "authority_divergence emitted",
+  "details": {
+    "event": {
+      "seq": 21530,
+      "schema_version": 1,
+      "ts_utc": "2026-07-03T06:38:31.642767+00:00",
+      "ts_rel_init_s": 52507.704834,
+      "kind": "authority_divergence",
+      "phase": "execute",
+      "payload": {
+        "diagnostic_version": 1,
+        "task_id": "T15",
+        "raw_terminal_status": "done",
+        "authority_status": "unsatisfied",
+        "authoritative": false,
+        "reason": "missing_output:commands_run:npm run check:sdk-public-exports -- --release",
+        "missing_outputs": [
+          "commands_run:npm run check:sdk-public-exports -- --release",
+          "commands_run:npm run check:contracts",
+          "commands_run:npm run lint",
+          "commands_run:NODE_OPTIONS=--max-old-space-size=8192 npm run build",
+          "commands_run:npm run test"
+        ],
+        "stale_evidence": [],
+        "would_block_reasons": [
+          "missing_output:commands_run:npm run check:sdk-public-exports -- --release",
+          "missing_output:commands_run:npm run check:contracts",
+          "missing_output:commands_run:npm run lint",
+          "missing_output:commands_run:NODE_OPTIONS=--max-old-space-size=8192 npm run build",
+          "missing_output:commands_run:npm run test"
+        ],
+        "error": null,
+        "diagnostics": {
+          "task_id": "T15",
+          "declared_outputs": {
+            "commands_run": [
+              "npm run check:video-editor-sdk-imports",
+              "npm run check:sdk-public-exports -- --release",
+              "npm run check:contracts",
+              "npm run lint",
+              "NODE_OPTIONS=--max-old-space-size=8192 npm run build",
+              "npm run test"
+            ]
+          },
+          "linked_evidence_count": 16,
+          "evidence_count": 168,
+          "normalization": "iterable",
+          "effective_linked_evidence_count": 4,
+          "status": "unsatisfied",
+          "evidence_sources": [
+            "provided",
+            "plan_artifacts"
+          ],
+          "loaded_evidence_count": 84,
+          "raw_terminal_status": "done"
+        },
+        "ts_utc": "2026-07-03T06:38:31.640426+00:00"
+      },
+      "transaction_id": "22ba3df5dd12aec4",
+      "store_method": "log_system_event"
+    }
+  },
+  "turn_id": null,
+  "epic_id": "m1a-reference-identity-patch-20260702-1603",
+  "occurred_at": "2026-07-03T06:38:31.642863Z"
+}

@@ -13,6 +13,7 @@
  */
 
 import type {
+  TimelineSnapshot,
   ExtensionContribution,
   ExtensionDiagnostic,
 } from '@reigh/editor-sdk';
@@ -22,11 +23,12 @@ import type {
   NormalizeFamilyInput,
   FamilyNormalizeResult,
 } from '@reigh/editor-sdk';
-import type { FamilyContributionSequence } from './FamilyContributionSequence';
+import type { FamilyContributionSequence, CollectedContribution } from './FamilyContributionSequence';
 import { contributionScopedKey } from './FamilyContributionSequence';
 import { VIDEO_EDITOR_FAMILY_ADAPTER_REGISTRY } from './familyAdapterRegistry';
 import type {
   ExtensionRuntime,
+  ContributionIndex,
   ContributionIndexEntry,
   VideoEditorExtensionRuntimeConfig,
   VideoEditorSlotRenderer,
@@ -47,8 +49,10 @@ import type {
   VideoEditorAgentToolDescriptor,
   PackageStateInventoryEntry,
 } from '../extensionSurface';
+import { projectCompositionGraph } from '../composition/graphProjector';
 import type { VideoEditorSlotDescriptor } from './slotAdapter';
 import { normalizeContributionIndexRouteFit } from '../routeFitMapper';
+import { buildShaderDescriptorsFromGraph } from './projectors/shaderProjector';
 
 // ---------------------------------------------------------------------------
 // Contribution kind labels
@@ -205,6 +209,25 @@ const ADAPTER_DISPATCH: Readonly<Record<string, DispatchConfig>> = {
   shader: { field: 'shaders', source: 'bridged' },
   agentTool: { field: 'agentTools', source: 'bridged' },
 };
+
+const EMPTY_RUNTIME_COMPOSITION_SNAPSHOT: TimelineSnapshot = Object.freeze({
+  projectId: null,
+  baseVersion: 0,
+  currentVersion: 0,
+  extensionRequirements: Object.freeze([]),
+  clips: Object.freeze([]),
+  tracks: Object.freeze([]),
+  assetKeys: Object.freeze([]),
+  app: Object.freeze({}),
+  shaders: Object.freeze([]),
+});
+
+function buildCompositionGraph(contributionIndex: ContributionIndex) {
+  return projectCompositionGraph({
+    snapshot: EMPTY_RUNTIME_COMPOSITION_SNAPSHOT,
+    contributionIndex,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Main assembly function
@@ -673,6 +696,8 @@ export function assembleExtensionRuntime(
     return freezeContributionIndex(contributionIndex);
   }
 
+  let shaderContributionsForGraph: readonly CollectedContribution[] | undefined;
+
   for (const [kind, config] of Object.entries(ADAPTER_DISPATCH)) {
     const adapter = registry.get(kind) as HostFamilyAdapter<string, unknown, unknown> | null | undefined;
     if (!adapter || adapter === null) {
@@ -717,6 +742,11 @@ export function assembleExtensionRuntime(
       continue;
     }
 
+    // Capture shader contributions for graph-derived projection later
+    if (kind === 'shader') {
+      shaderContributionsForGraph = contributions;
+    }
+
     const target = getDescriptorArray(config.field);
     if (target) {
       const descriptors = result.descriptors as unknown[];
@@ -737,6 +767,32 @@ export function assembleExtensionRuntime(
   ];
   const routeFitContributionIndex =
     normalizeContributionIndexRouteFit(contributionIndex, descriptorBlockers);
+  const compositionGraph = buildCompositionGraph(routeFitContributionIndex);
+
+  // ---- Graph-derived shader descriptor shim (M1b) ---------------------------
+  // When the composition graph carries shader consumes edges it becomes the
+  // authority for which shader contributions produce descriptors.  The
+  // independently-built shaderDescriptors array is replaced with a
+  // graph-derived projection so it cannot act as a second authority for
+  // M1b shader/ref resolution.
+  // Graph-absent (edge-less) assembly preserves the adapter-built descriptors
+  // and diagnostics exactly as they were, avoiding duplicated diagnostics.
+  if (
+    shaderContributionsForGraph &&
+    shaderContributionsForGraph.length > 0 &&
+    compositionGraph.edges.length > 0
+  ) {
+    const graphShaderResult = buildShaderDescriptorsFromGraph(
+      shaderContributionsForGraph,
+      extensionOrder,
+      compositionGraph,
+    );
+    shaderDescriptors.length = 0;
+    shaderDescriptors.push(...graphShaderResult.descriptors);
+    if (graphShaderResult.diagnostics.length > 0) {
+      diagnostics.push(...graphShaderResult.diagnostics);
+    }
+  }
 
   // ---- Phase 5: assemble and freeze ----------------------------------------
   /** Whether any contributions — bridged or M6-reserved — affect the config. */
@@ -819,6 +875,7 @@ export function assembleExtensionRuntime(
     inactiveReserved: Object.freeze(inactiveReserved),
     knownRenderIds: Object.freeze(new Set(knownRenderIds)),
     contributionIndex: routeFitContributionIndex,
+    compositionGraph,
     settingsDefaults: Object.freeze(
       Object.fromEntries(
         Object.entries(settingsDefaults).map(([k, v]) => [k, Object.freeze(v)]),

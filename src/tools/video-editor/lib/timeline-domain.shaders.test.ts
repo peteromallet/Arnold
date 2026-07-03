@@ -171,4 +171,61 @@ describe('timeline shader metadata domain helpers', () => {
       }],
     });
   });
+
+  // M1b T20: prove legacy shader mutations still work and no public patch family exposure
+  it('assignTimelineClipShader — legacy single-occupancy clip mutation still works', () => {
+    const clip = makeClip();
+    const result = assignTimelineClipShader(clip, clipShader);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.app?.shader).toEqual(clipShader);
+    }
+  });
+
+  it('assignTimelinePostprocessShader — legacy postprocess mutation still works', () => {
+    const config = makeConfig();
+    const result = assignTimelinePostprocessShader(config, postprocessShader);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.app?.[TIMELINE_POSTPROCESS_SHADER_APP_KEY]).toEqual(postprocessShader);
+    }
+  });
+
+  it('getTimelineClipShader — legacy accessor resolves clip shader from app data', () => {
+    const clip = makeClip({ app: { shader: clipShader } });
+    expect(getTimelineClipShader(clip)).toEqual(clipShader);
+  });
+
+  it('getTimelinePostprocessShader — legacy accessor resolves postprocess shader from config app data', () => {
+    const config = makeConfig();
+    config.app = { [TIMELINE_POSTPROCESS_SHADER_APP_KEY]: postprocessShader };
+    expect(getTimelinePostprocessShader(config)).toEqual(postprocessShader);
+  });
+
+  it('serializeTimelineConfigSnapshot — round-trips clip shader metadata without loss', () => {
+    const clip = makeClip({ app: { shader: clipShader } });
+    const serialized = serializeTimelineConfigSnapshot(makeConfig(clip));
+    expect(serialized.config.clips[0].app?.shader).toEqual(clipShader);
+  });
+
+  it('no public shader.assign / shader.remove patch operation families are exposed by domain helpers', () => {
+    // The domain module only exposes assignment helpers using domain-level
+    // shader_scope_occupied semantics. It does not expose any patch operation
+    // families named shader.assign or shader.remove.
+    const exportedNames = [
+      'assignTimelineClipShader',
+      'assignTimelinePostprocessShader',
+      'getTimelineClipShader',
+      'getTimelinePostprocessShader',
+      'serializeTimelineConfigSnapshot',
+      'validateTimelineConfigSnapshot',
+      'TIMELINE_POSTPROCESS_SHADER_APP_KEY',
+      'sameTimelineShaderIdentity',
+      'timelineShaderScopeOccupiedMessage',
+    ];
+    for (const name of exportedNames) {
+      expect(name).not.toContain('shader.assign');
+      expect(name).not.toContain('shader.remove');
+    }
+  });
 });

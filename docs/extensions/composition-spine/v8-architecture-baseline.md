@@ -125,6 +125,7 @@ From `prep.md` Locked Decisions (lines 45–46) and `m0-decisions-fixtures.md` L
 
 | Artifact | Owning Milestone |
 |----------|-----------------|
+| CompositionGraph projection, `consumes` edge, shader/ref authority | M1b |
 | Target-path grammar and validation | M2 |
 | Keyframe patch semantics (live/bake paths) | M3b |
 | Shader assignment execution and shader-uniform render-path integration | M4 |
@@ -132,6 +133,109 @@ From `prep.md` Locked Decisions (lines 45–46) and `m0-decisions-fixtures.md` L
 | Process repair and `start-process` | M6 |
 | Output-format route planning | M7a |
 | Sidecar/process execution for output-format routes | M7b |
+
+### M1b Scope: Composition Graph Projection — Shader/Ref Authority
+
+M1b makes `CompositionGraph` projection the **authoritative** source for shader/ref
+facts and contribution-index lookups. When a `CompositionGraph` is present on
+`ExtensionRuntime`, it replaces — not supplements — legacy shader summaries and
+direct contribution-index access for all M1b-owned fact families.
+
+#### What M1b Owns
+
+| Surface | Description |
+|---------|-------------|
+| `consumes` edges | The only public edge kind in M1b. A source node (clip or timeline-postprocess) consumes a shader contribution from a target contribution node. |
+| Shader reference resolution | All 10 resolver states (`resolved`, `missing`, `disabled`, `inactive-reserved`, `invalid-package`, `duplicate`, `settings-error`, `runtime-error`, `version-incompatible`, `unknown`) with locked precedence: package failures before inactive/reserved before resolved. |
+| Composition diagnostics | Canonical `composition/` diagnostic codes with structured detail fields (`nodeId`, `refKey`, `refState`, `scope`, `extensionId`, `contributionId`, `shaderId`). |
+| Graph preview | Internal `shader.assign` and `shader.remove` preview operations applied to a cloned graph; returns updated nodes, edges, reference states, and diagnostics without mutating the original. |
+| Graph-first planner authority | `planRender` derives shader materializer requirements and scope validation from graph nodes/edges/reference states when a graph is present. |
+| Graph-first export authority | `scanExportConfig` derives shader blockers from graph-resolved facts when a graph is present. |
+| Graph-first shader validation | `validateShaderComposition` derives projected shaders and first-wins occupancy from graph edges when a graph is present. |
+
+#### Legacy Inputs: Compatibility Sources Only
+
+Legacy `TimelineShaderSummary[]`, `ContributionIndex`, and descriptor arrays remain
+in the runtime surface for **graph-absent compatibility callers**, but they are
+**not alternate authority** for M1b-owned facts:
+
+- Graph-present planner calls **ignore** legacy snapshot shader refs and derive all
+  shader/ref facts from the graph.
+- Graph-present export guard calls do **not** read legacy timeline shader metadata.
+- Graph-present shader validation does **not** consult legacy shader summaries or
+  direct contribution-index candidates.
+- Graph-absent callers continue to work through legacy paths but emit a
+  **compatibility warning** diagnostic.
+
+Legacy descriptor arrays (e.g. `VideoEditorShaderDescriptor[]`) remain populated
+for existing consumers but are derived from the graph when one is present, ensuring
+they cannot become a second authority pathway.
+
+#### Out of Scope for M1b
+
+The following surfaces are **explicitly out of scope** for M1b and belong to later
+milestones or are excluded from the entire epic:
+
+| Surface | Owner / Status |
+|---------|---------------|
+| Target paths (`clip-param`, `effect-param`, `transition-param`, `shader-uniform`) | M2 |
+| `animates` edges (keyframe-driven parameter animation) | M2 |
+| `binds-live` edges (live data binding) | M2 |
+| `requires` edges (graph-projected requirements) | M4 |
+| Material statuses (`missing`, `pending`, `resolved`, `stale`, `failed`) | M3a |
+| Live material promotion (bake live inputs to durable artifacts) | M3b |
+| Agent material promotion (promote masks/materials to `RenderMaterial`) | M3c |
+| Process vocabularies (lifecycle, JSON-RPC protocol, runtime overlays) | M6a/M6b |
+| Output-format vocabularies (route artifacts, manifest profiles, sidecars) | M7a/M7b |
+| `materializes`, `produces`, `fallbacks` edge discriminants | Excluded from entire epic |
+| Node kinds beyond `clip`, `timeline-postprocess`, `contribution` | Later milestones |
+| Public `shader.assign` / `shader.remove` SDK patch families | Excluded from entire epic |
+
+### M1b Composition Graph Contracts
+
+#### Node Kinds
+
+M1b supports exactly three node kinds:
+
+- `clip` — a timeline clip (shader-assignable scope).
+- `timeline-postprocess` — the timeline-wide postprocess scope.
+- `contribution` — a contribution declared by an extension (shader, effect, parser, etc.).
+
+These are exposed as the `COMPOSITION_NODE_KINDS` constant in the SDK barrel and are
+the only node kinds for M1b graph authority. Future milestones may add nodes for
+tracks, outputs, processes, and other surfaces.
+
+#### Edge Kinds
+
+M1b supports exactly one public edge kind:
+
+- `consumes` — a source node (clip or timeline-postprocess) consumes a shader
+  contribution from a target contribution node.
+
+This is exposed as the `COMPOSITION_EDGE_KINDS` constant containing only `'consumes'`.
+Future milestones will add `animates` (M2), `binds-live` (M2), and `requires` (M4).
+
+#### Resolver States
+
+The M1b resolver produces exactly 10 reference states with locked precedence:
+
+| Precedence | State | Meaning |
+|-----------|-------|---------|
+| 1 (highest) | `invalid-package` | Package marked invalid by the loader |
+| 2 | `settings-error` | Package loaded but settings migration failed |
+| 3 | `runtime-error` | Package loaded but runtime activation error |
+| 4 | `version-incompatible` | Package incompatible with current host version |
+| 5 | `disabled` | User-disabled package |
+| 6 | `duplicate` | Exact scoped-key duplicate (first-wins loser) |
+| 7 | `inactive-reserved` | Kind not yet bridged in this runtime |
+| 8 | `missing` | No scoped candidate exists in the index |
+| 9 | `unknown` | Fallback for unrecognised states |
+| 10 (lowest) | `resolved` | Valid, active, package-healthy contribution ref |
+
+**Critical semantics**: `missing` is defined **only** as zero scoped candidates.
+It is never used when candidates exist but are in a non-resolved state. Package-failure
+states classify before inactive/reserved states, and all non-resolved states classify
+before `resolved`.
 
 ### Material Status Model
 

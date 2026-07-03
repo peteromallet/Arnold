@@ -355,13 +355,15 @@ export function useRenderState(
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'export-guard');
     diagnosticCollection?.remove((diagnostic) => diagnostic.detail?.source === 'render-planner');
 
+    const compositionGraph = extensionRuntime?.compositionGraph;
+
     // Skip guard work only when there is no active extension/provider registry input.
     if (
       isExtensionRuntimeEmpty(extensionRuntime)
       && effectRegistrySnapshot.records.length === 0
       && transitionRegistrySnapshot.records.length === 0
       && clipTypeRegistrySnapshot.records.length === 0
-      && !hasTimelineShaderMetadata(resolvedConfig)
+      && !hasTimelineShaderMetadata(resolvedConfig, compositionGraph)
     ) {
       return true; // no blocker
     }
@@ -373,7 +375,7 @@ export function useRenderState(
     const builtIn = collectBuiltInKnownIds();
     const allContributions = extensionRuntime ? buildExtensionContributions(extensionRuntime) : [];
     const extIds = collectExtensionDeclaredIds(allContributions);
-    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot);
+    const guardResult = scanExportConfig(resolvedConfig, builtIn, extIds, effectRegistrySnapshot, transitionRegistrySnapshot, clipTypeRegistrySnapshot, compositionGraph);
     const plannerResult = planFromExportGuardResult(guardResult);
 
     guardResult.diagnostics.forEach((diagnostic, index) => {
@@ -515,6 +517,7 @@ export function useRenderState(
     const outputPlan = planRender({
       outputFormats: plannerOutputFormats,
       processes: extensionRuntime?.processes ?? [],
+      compositionGraph: extensionRuntime?.compositionGraph,
       request: {
         outputFormatId: formatId,
         routes: ['browser-export'],

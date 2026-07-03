@@ -23,6 +23,9 @@ import {
   DETERMINISM_STATUSES,
   RENDER_BLOCKER_REASONS,
   RENDER_ROUTES,
+  COMPOSITION_NODE_KINDS,
+  COMPOSITION_EDGE_KINDS,
+  REFERENCE_STATES,
 } from '@/sdk/index';
 import { createExtensionContext, setEditorShellRoot, getEditorShellRoot } from '@/tools/video-editor/runtime/extensionContextFactory';
 import type {
@@ -132,6 +135,15 @@ import type {
   ParserInput,
   ParserResult,
   SearchMatch,
+  // M1b CompositionGraph types
+  CompositionNodeKind,
+  CompositionEdgeKind,
+  ReferenceState,
+  CompositionGraphNode,
+  CompositionGraphEdge,
+  CompositionReferenceStateEntry,
+  CompositionGraphPreviewResult,
+  CompositionGraph,
 } from '@/sdk/index';
 
 // ---------------------------------------------------------------------------
@@ -4439,6 +4451,110 @@ describe('M14: Type shapes are constructable', () => {
     expect(result.valid).toBe(true);
     expect(result.errors).toHaveLength(0);
     expect(result.warnings).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M1b: CompositionGraph SDK exports
+// ---------------------------------------------------------------------------
+
+describe('M1b: CompositionGraph SDK exports', () => {
+  it('COMPOSITION_NODE_KINDS contains exactly the 3 M1b node kinds', () => {
+    expect(COMPOSITION_NODE_KINDS).toEqual(['clip', 'timeline-postprocess', 'contribution']);
+    expect(COMPOSITION_NODE_KINDS).toHaveLength(3);
+    expect(COMPOSITION_NODE_KINDS).not.toContain('track');
+    expect(COMPOSITION_NODE_KINDS).not.toContain('output');
+    expect(COMPOSITION_NODE_KINDS).not.toContain('process');
+  });
+
+  it('COMPOSITION_EDGE_KINDS contains only consumes', () => {
+    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes']);
+    expect(COMPOSITION_EDGE_KINDS).toHaveLength(1);
+    expect(COMPOSITION_EDGE_KINDS).not.toContain('animates');
+    expect(COMPOSITION_EDGE_KINDS).not.toContain('binds-live');
+    expect(COMPOSITION_EDGE_KINDS).not.toContain('materializes');
+  });
+
+  it('REFERENCE_STATES contains exactly the 10 M1b resolver states', () => {
+    expect(REFERENCE_STATES).toEqual([
+      'resolved', 'missing', 'disabled', 'inactive-reserved',
+      'invalid-package', 'duplicate', 'settings-error', 'runtime-error',
+      'version-incompatible', 'unknown',
+    ]);
+    expect(REFERENCE_STATES).toHaveLength(10);
+  });
+
+  it('CompositionGraphNode is constructable', () => {
+    const node: CompositionGraphNode = {
+      id: 'node-1',
+      kind: 'clip',
+      ref: { extensionId: 'test.ext', contributionId: 'contr-1', kind: 'shader' },
+      detail: { scope: 'clip' },
+    };
+    expect(node.id).toBe('node-1');
+    expect(node.kind).toBe('clip');
+  });
+
+  it('CompositionGraphEdge is constructable with consumes kind', () => {
+    const edge: CompositionGraphEdge = {
+      id: 'edge-1',
+      kind: 'consumes',
+      sourceNodeId: 'node-clip-1',
+      targetNodeId: 'node-contrib-shader',
+      detail: { shaderId: 'shader.clipGlow' },
+    };
+    expect(edge.kind).toBe('consumes');
+  });
+
+  it('CompositionReferenceStateEntry is constructable', () => {
+    const entry: CompositionReferenceStateEntry = {
+      refKey: 'shader:test.ext:contr-1',
+      state: 'resolved',
+      nodeIds: ['node-contrib-shader'],
+    };
+    expect(entry.refKey).toBe('shader:test.ext:contr-1');
+    expect(entry.state).toBe('resolved');
+  });
+
+  it('CompositionGraphPreviewResult is constructable', () => {
+    const preview: CompositionGraphPreviewResult = {
+      nodes: [], edges: [], referenceStates: [], diagnostics: [],
+    };
+    expect(preview.nodes).toEqual([]);
+  });
+
+  it('CompositionGraph is constructable', () => {
+    const graph: CompositionGraph = {
+      nodes: [], edges: [], referenceStates: [], diagnostics: [],
+    };
+    expect(graph.nodes).toEqual([]);
+  });
+
+  it('CompositionGraph.preview can return a preview result', () => {
+    const graph: CompositionGraph = {
+      nodes: [], edges: [], referenceStates: [], diagnostics: [],
+      preview: () => ({ nodes: [], edges: [], referenceStates: [], diagnostics: [] }),
+    };
+    expect(graph.preview?.()).toBeDefined();
+  });
+
+  it('ReferenceState only accepts the 10 M1b resolver states', () => {
+    const states: ReferenceState[] = [
+      'resolved', 'missing', 'disabled', 'inactive-reserved',
+      'invalid-package', 'duplicate', 'settings-error', 'runtime-error',
+      'version-incompatible', 'unknown',
+    ];
+    expect(states).toHaveLength(10);
+  });
+
+  it('CompositionNodeKind only accepts the 3 M1b node kinds', () => {
+    const kinds: CompositionNodeKind[] = ['clip', 'timeline-postprocess', 'contribution'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('CompositionEdgeKind only accepts consumes', () => {
+    const kind: CompositionEdgeKind = 'consumes';
+    expect(kind).toBe('consumes');
   });
 });
 

@@ -1,0 +1,365 @@
+Execute the approved plan in the repository.
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+        Brief summary: # M1b: Composition Graph Projection Becomes Shader/Ref Fact Authority
+(Full brief in state.idea; success criteria in plan_v1.meta.json.)
+
+        Batch framing:
+        - Execute batch 10 of 20.
+        - Actionable task IDs for this batch: ['T13']
+        - Already completed task IDs available as dependency context: ['T1', 'T10', 'T11', 'T12', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'T8', 'T9']
+
+        Actionable tasks for this batch:
+        [
+  {
+    "id": "T13",
+    "depends_on": [
+      "T10",
+      "T12"
+    ],
+    "status": "pending",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 9: Wire planner graph authority in src/tools/video-editor/runtime/renderPlanner.ts and src/tools/video-editor/lib/renderRouter.ts. Add optional compositionGraph to planner input, use graph-derived reference states, scope validation, and materializer requirements when present, keep legacy fallback warning-only for graph-absent callers, and leave renderRouter behavior unchanged except for passing graph data through when available.",
+    "complexity_justification": "Render planning is a shared runtime contract, and this task changes which source of truth it trusts. The key risk is a non-local fallback bug where legacy fields satisfy graph-required gates.",
+    "executor_notes": ""
+  }
+]
+
+        Completed task context (already satisfied, do not re-execute unless directly required by current edits):
+        [
+  {
+    "id": "T5",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 3: Implement graphProjector.ts and the CompositionGraphInput shape over TimelineSnapshot, ContributionIndex, optional runtime overlay, and optional patch overlay. Project clip nodes, timeline-postprocess nodes, contribution nodes, and shader consumes edges using existing contribution ref identity; treat undefined runtime overlay and explicitly empty runtime overlay as equivalent no-ops.",
+    "complexity_justification": "The projector creates the graph-authoritative facts that downstream planner/export code will trust. Errors in identity, edge construction, or overlay handling affect multiple consumers and are not confined to one call site.",
+    "executor_notes": "Implemented src/tools/video-editor/runtime/composition/graphProjector.ts with a host-owned CompositionGraphInput over TimelineSnapshot, ContributionIndex, optional runtime overlay, and optional patch overlay. The projector now emits clip, timeline-postprocess, and contribution nodes, builds consumes edges from enabled shader summaries using ContributionRef identity, synthesizes missing contribution nodes when refs are absent from the index, resolves graph reference states/diagnostics through the shared resolver, and treats an explicitly empty runtime overlay as a no-op. Added focused projec...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/graphProjector.ts",
+      "src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition"
+    ]
+  },
+  {
+    "id": "T3",
+    "depends_on": [
+      "T1",
+      "T2"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 4: Implement referenceResolver.ts so it resolves all 10 reference states with locked precedence: package failures before inactive/reserved before resolved. Preserve invalid-package, settings-error, runtime-error, version-incompatible, duplicate, disabled, inactive-reserved, missing, unknown, and resolved distinctions; define missing only as zero scoped candidates; emit canonical composition/ diagnostics for non-resolved refs used by graph edges.",
+    "complexity_justification": "The resolver becomes the shared authority for state semantics consumed by projector, planner, export, and preview paths. A precedence mistake can propagate non-locally and may not be obvious from local type checks.",
+    "executor_notes": "Implemented src/tools/video-editor/runtime/composition/referenceResolver.ts with host-owned resolver helpers that preserve all 10 public reference states, keep missing limited to zero scoped candidates, and enforce package-failure precedence before inactive-reserved before resolved. Added graph-edge diagnostic emission through resolveCompositionReferences() using canonical composition/ codes plus structured detail fields (nodeId, refKey, refState, scope, extensionId, contributionId, shaderId). Verified with npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runti...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/referenceResolver.ts",
+      "src/tools/video-editor/runtime/composition/referenceResolver.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/referenceResolver.test.ts"
+    ]
+  },
+  {
+    "id": "T11",
+    "depends_on": [
+      "T10"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 7: Attach compositionGraph to the internal extension runtime surface in src/tools/video-editor/runtime/extensionSurface.ts and construct it eagerly after contribution-index assembly in src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts. Keep ContributionIndex and descriptor arrays for legacy consumers, and preserve package-state information needed by resolver distinctions.",
+    "complexity_justification": "ExtensionRuntime is a shared internal surface used by multiple render and export paths. A subtle construction-order or package-state loss would be non-local and could collapse resolver distinctions downstream.",
+    "executor_notes": "Attached compositionGraph to ExtensionRuntime, built it eagerly in FamilyRuntimeAssembly immediately after route-fit-normalized contribution-index assembly, and kept descriptor arrays plus ContributionIndex in place for compatibility callers. Added runtime-surface coverage for the empty graph shell and disabled-package contribution nodes so graph construction still flows through package-state-preserving contribution-index entries. Scoped vitest ran once: extensionSurface coverage passed; useRenderState helper coverage exposed 12 compile-only export helper regressions from the widened runtim...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/extensionSurface.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts",
+      "src/tools/video-editor/runtime/extensionSurface.test.ts",
+      "src/tools/video-editor/hooks/useRenderState.test.tsx",
+      "src/tools/video-editor/pages/ExtensionHarnessPage.tsx",
+      "src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/hooks/useRenderState.test.tsx"
+    ]
+  },
+  {
+    "id": "T2",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 2,
+    "reviewer_verdict": "",
+    "description": "Step 2: Add canonical composition diagnostics in src/tools/video-editor/runtime/composition/diagnostics.ts. Define composition/ codes for reference failures and scope conflicts, and standardize structured detail fields nodeId, refKey, refState, scope, extensionId, contributionId, and shaderId.",
+    "complexity_justification": "This is a localized vocabulary module with straightforward constants/types. The main risk is naming drift from the plan, which is easy to review in one file.",
+    "executor_notes": "Created src/tools/video-editor/runtime/composition/diagnostics.ts with canonical composition/ diagnostic codes: missing-ref, disabled-ref, inactive-reserved-ref, invalid-package-ref, duplicate-ref, settings-error-ref, runtime-error-ref, version-incompatible-ref, unknown-ref, scope-occupied, duplicate-scope. Defined CompositionDiagnosticDetail with all 7 structured detail fields (nodeId, refKey, refState, scope, extensionId, contributionId, shaderId). Added helper functions referenceStateDiagnosticCode, referenceStateSeverity, and buildCompositionDiagnostic. Module is marked @hostOwned and n...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/diagnostics.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts"
+    ]
+  },
+  {
+    "id": "T7",
+    "depends_on": [
+      "T4",
+      "T5"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 5: Add internal graph patch preview support in src/tools/video-editor/runtime/composition/patchPreview.ts. Support graph-level shader.assign and shader.remove preview operations, apply them to a cloned graph by adding/removing consumes edges, recompute affected reference states and diagnostics, and return data through the graph preview shape without adding public SDK timeline patch families.",
+    "complexity_justification": "This is internal graph mutation preview logic built on the resolver and projector contracts. It has non-trivial edge updates, but the blast radius is constrained to the new preview module.",
+    "executor_notes": "Created src/tools/video-editor/runtime/composition/patchPreview.ts implementing internal graph patch preview support. Defines GraphShaderAssignOp (shader.assign) and GraphShaderRemoveOp (shader.remove) preview operations. Exports applyGraphPreviewOperations() which clones the CompositionGraphInput, applies ops by adding/removing shaders on the snapshot, re-projects via projectCompositionGraph(), and returns CompositionGraphPreviewResult with recomputed nodes, edges, referenceStates, and diagnostics. Also exports createGraphPreview() and createGraphPreviewWithOps() factory functions for buil...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/patchPreview.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/config/testing/vitest.config.ts src/tools/video-editor/runtime/composition"
+    ]
+  },
+  {
+    "id": "T10",
+    "depends_on": [
+      "T9"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The test update spans both graph-present and graph-absent behavior in an existing suite. The logic is focused, but the test fixtures must distinguish authority from compatibility.",
+    "executor_notes": "Ran full runtime/composition vitest scope once in the foreground (workdir=/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app). All 15 tests pass with zero failures: shaderValidation (9), referenceResolver (4), compositionGraphProjector (2). No new failures vs baseline (baseline_test_failures was null; baseline capture failed with exit code 4). The shaderValidation.test.ts now includes 9 tests \u2014 up from 7 before T9 \u2014 covering both graph-present authority (projection from graph edges, composition validation from graph edges ignoring legacy) and graph-absent legacy compatibil...",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition"
+    ]
+  },
+  {
+    "id": "T8",
+    "depends_on": [
+      "T7"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The tests must verify both graph edge mutation and resolver-derived outputs. They remain module-local and can use focused fixtures.",
+    "executor_notes": "Ran full runtime/composition vitest scope once in the foreground (workdir=/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app). All 13 tests pass with zero failures: shaderValidation (7), referenceResolver (4), compositionGraphProjector (2). No new failures vs baseline (baseline_test_failures was null). No dedicated patchPreview.test.ts file exists to prove assign/remove edge changes \u2014 patchPreview.ts source has no test coverage. The existing projector and resolver tests pass cleanly.",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition"
+    ]
+  },
+  {
+    "id": "T12",
+    "depends_on": [
+      "T11"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 8: Add a graph-derived shader descriptor shim in src/tools/video-editor/runtime/families/projectors/shaderProjector.ts and wire it through FamilyRuntimeAssembly.ts. Descriptor-array output must remain stable for existing callers, but arrays must not become a second authority for M1b shader/ref resolution.",
+    "complexity_justification": "This is a compatibility shim across projector and assembly code. The behavior is multi-file but bounded: preserve existing descriptor shape while sourcing facts from the graph when available.",
+    "executor_notes": "Added buildShaderDescriptorsFromGraph() in shaderProjector.ts \u2014 a graph-derived shader descriptor shim that walks composition graph consumes edges targeting shader contribution nodes, looks up contribution data by ref key, and produces VideoEditorShaderDescriptor[] with identical shape to the legacy buildShaderDescriptors(). Falls back to buildShaderDescriptors() when the graph is absent or has no edges. Wired through FamilyRuntimeAssembly.ts by capturing shader contributions during adapter dispatch and, when the composition graph has edges, replacing the independently-built shaderDescripto...",
+    "files_changed": [
+      "src/tools/video-editor/runtime/families/projectors/shaderProjector.ts",
+      "src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/composition",
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition src/tools/video-editor/runtime/extensionSurface.test.ts src/tools/video-editor/runtime/families/ src/tools/video-editor/hooks/useRenderState.test.tsx"
+    ]
+  },
+  {
+    "id": "T4",
+    "depends_on": [
+      "T3"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The test matrix is broader than a single branch because it must cover every resolver state and precedence interaction. It is still focused on one module and should be completable in one worker turn.",
+    "executor_notes": "Re-ran the full runtime/composition vitest scope once in the foreground. Existing resolver coverage in src/tools/video-editor/runtime/composition/referenceResolver.test.ts still passes and covers all 10 public states, locked precedence, missing-only-on-zero-candidates semantics, and canonical composition/ diagnostics for non-resolved refs.",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition"
+    ]
+  },
+  {
+    "id": "T1",
+    "depends_on": [],
+    "status": "done",
+    "kind": "code",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Step 1: Add public SDK CompositionGraph contracts in src/sdk/video/composition/graph.ts and export them from src/sdk/index.ts. Include nodes, edges, referenceStates, diagnostics, preview, node kinds clip/timeline-postprocess/contribution, the public consumes edge kind only, and the exact 10 resolver states.",
+    "complexity_justification": "This introduces a new SDK data shape and barrel export, but it is additive and limited to types. The executor must align names and states precisely because later runtime code and SDK tests will depend on the contract.",
+    "executor_notes": "Created src/sdk/video/composition/graph.ts with CompositionGraph interface containing nodes, edges, referenceStates, diagnostics, and preview fields. Defined exactly 3 M1b node kinds (clip, timeline-postprocess, contribution), only the public consumes edge kind, and exactly the 10 resolver states (resolved, missing, disabled, inactive-reserved, invalid-package, duplicate, settings-error, runtime-error, version-incompatible, unknown). Exported all types and constants (COMPOSITION_NODE_KINDS, COMPOSITION_EDGE_KINDS, REFERENCE_STATES) from src/sdk/index.ts in the Composition section. All 508 S...",
+    "files_changed": [
+      "src/sdk/video/composition/graph.ts",
+      "src/sdk/index.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/index.test.ts",
+      "npx vitest run --config config/testing/vitest.config.ts src/sdk/smoke/barrel-import-smoke.test.ts"
+    ]
+  },
+  {
+    "id": "T9",
+    "depends_on": [
+      "T6",
+      "T8"
+    ],
+    "status": "done",
+    "kind": "code",
+    "complexity": 4,
+    "reviewer_verdict": "",
+    "description": "Step 6: Refactor src/tools/video-editor/runtime/composition/shaderValidation.ts to use graph-derived facts when a CompositionGraph is present. Keep existing TimelineShaderSummary[] behavior for graph-absent compatibility callers, preserve M1a single-occupancy and first-wins semantics, and ensure graph-present validation does not read legacy shader summaries or direct contribution-index candidates as alternate authority.",
+    "complexity_justification": "This changes the authority source for an existing validation path while preserving legacy compatibility. A wrong fallback or scope calculation can silently affect planner/export behavior outside this file.",
+    "executor_notes": "Added graph-aware overloads for projectShaderRefs() and validateShaderComposition() so graph-present callers derive projected shaders and first-wins occupancy only from graph nodes/edges plus referenceStates; graph-absent callers keep the legacy TimelineShaderSummary[] plus ContributionIndex path unchanged. Verified with npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts (1 file, 9 tests passed).",
+    "files_changed": [
+      "src/tools/video-editor/runtime/composition/shaderValidation.ts",
+      "src/tools/video-editor/runtime/composition/shaderValidation.test.ts"
+    ],
+    "commands_run": [
+      "npx vitest run --config config/testing/vitest.config.ts src/tools/video-editor/runtime/composition/shaderValidation.test.ts"
+    ]
+  },
+  {
+    "id": "T6",
+    "depends_on": [
+      "T5"
+    ],
+    "status": "done",
+    "kind": "test",
+    "complexity": 3,
+    "reviewer_verdict": "",
+    "description": "Introduce no new failures vs the recorded baseline; do not try to make pre-existing baseline failures pass; do not narrow to individual functions. The harness will run the authoritative post-execute verification \u2014 do not loop the suite.",
+    "complexity_justification": "The tests need realistic fixture shapes across timeline and contribution index inputs. The scope is still limited to projector behavior and overlay equivalence.",
+    "executor_notes": "Ran full runtime/composition vitest scope (3 test files, 13 tests). All pass with zero failures: shaderValidation (7), referenceResolver (4), compositionGraphProjector (2). The projector tests already prove graph construction, edge identity, and undefined versus empty overlay equivalence (SC6). No new failures vs baseline (baseline_test_failures was null; all 13 tests pass cleanly).",
+    "files_changed": [],
+    "commands_run": [
+      "npx vitest run --config /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/config/testing/vitest.config.ts src/tools/video-editor/runtime/composition"
+    ]
+  }
+]
+
+        Prior batch deviations (address if applicable):
+        [
+  "Advisory observation mismatch: executor claimed files not observed in git status/content hash delta: src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/families/projectors/shaderProjector.ts",
+  "Advisory audit finding: Executor claimed changed files not present in git status: src/sdk/index.ts, src/sdk/video/composition/graph.ts, src/tools/video-editor/components/ExtensionManager/ExtensionManager.test.tsx, src/tools/video-editor/hooks/useRenderState.test.tsx, src/tools/video-editor/pages/ExtensionHarnessPage.tsx, src/tools/video-editor/runtime/composition/compositionGraphProjector.test.ts, src/tools/video-editor/runtime/composition/diagnostics.ts, src/tools/video-editor/runtime/composition/graphProjector.ts, src/tools/video-editor/runtime/composition/patchPreview.ts, src/tools/video-editor/runtime/composition/referenceResolver.test.ts, src/tools/video-editor/runtime/composition/referenceResolver.ts, src/tools/video-editor/runtime/composition/shaderValidation.test.ts, src/tools/video-editor/runtime/composition/shaderValidation.ts, src/tools/video-editor/runtime/extensionSurface.test.ts, src/tools/video-editor/runtime/extensionSurface.ts, src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts, src/tools/video-editor/runtime/families/projectors/shaderProjector.ts",
+  "Advisory audit finding: Sense check SC13 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC14 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC15 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC16 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC17 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC18 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC19 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC20 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC21 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC22 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC23 is missing an executor acknowledgment.",
+  "Advisory audit finding: Sense check SC24 is missing an executor acknowledgment.",
+  "Advisory audit finding: Tasks left pending after execute (executor never started them): T13, T14, T15, T16, T17, T18, T19, T20, T21, T22, T23, T24"
+]
+
+        User action prerequisites:
+        No user_action prerequisites for this batch.
+
+
+        Batch-scoped sense checks:
+        [
+  {
+    "id": "SC13",
+    "task_id": "T13",
+    "verdict": "",
+    "question": "Does planRender use graph-derived shader/ref facts, scope validation, and materializer requirements when compositionGraph is present, with legacy fallback warning-only when absent?"
+  }
+]
+
+
+        ## Execution context (settled - DO NOT re-litigate)
+
+        - SD1: CompositionGraph is constructed eagerly during extension runtime assembly and attached to ExtensionRuntime, matching the existing eager contribution-index assembly pattern. - Consistent with existing runtime assembly conventions and avoids introducing lazy/async graph construction complexity for M1b.
+- SD2: shader.assign and shader.remove are internal graph preview operations for M1b, derived from existing timeline patch semantics, not new public SDK timeline patch operation families. - Preserves the locked constraint that no public SDK patch family is added for M1b while still enabling preview-driven diagnostics for shader assignment changes.
+- SD3: version-incompatible resolver state is driven by existing package-level incompatible state; contribution-level version metadata is added only if the current manifest/contributio... - Avoids introducing new manifest schema or contribution metadata fields during M1b while still surfacing the version-incompatible distinction that was previously collapsed.
+
+        ## Plan execution order rationale
+
+        1. Add SDK contracts and diagnostic vocabulary first.
+2. Implement projector, resolver, and preview with focused tests before consumer migration.
+3. Migrate shader validation and runtime assembly before planner/export wiring.
+4. Wire planner, export guard, and production hook after graph helpers are stable.
+5. Update release examples and docs last.
+
+        ## Inter-task guidance from finalize
+
+        Execute the DAG in order and keep heavyweight authority changes isolated: resolver, projector, shader validation, runtime assembly, planner, and export guard are intentionally serialized to avoid wide mixed batches. The North Star constraint to preserve is narrow graph authority for shader/ref consumes edges only; any pressure to add target paths, live material promotion, process/output vocabularies, shader stacks, or public shader.assign/shader.remove patch families is out of scope for M1b. Legacy fields remain compatibility inputs for graph-absent callers, but when compositionGraph is present they must not satisfy planner/export/shader validation gates. The final validation task should run the scoped vitest command and npm run build once, record failures, and avoid chasing unrelated baseline failures inside that task.
+
+        Note: User chose auto-approve mode. This execution was not manually reviewed at the gate. Exercise extra caution on destructive operations.
+        Robustness level: thorough.
+
+        Requirements:
+        - Execute only the actionable tasks in this batch.
+        - Treat completed tasks as dependency context, not new work.
+        - Return structured JSON only.
+        - Fill in the following template and return it as your JSON response. Only update the entries for this batch's tasks/sense checks.
+        - Template file already written for reference: /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1b-composition-graph-20260703-0638/execute_batch_10_output.json
+        - Only produce `task_updates` for these tasks: [T13]
+        - `task_updates[].status` must be one of `done`, `skipped`, `completed`, or `blocked`; never `pending` or `in_progress`.
+        - Only produce `sense_check_acknowledgments` for these sense checks: [SC13]
+        - Do not include updates for tasks or sense checks outside this batch.
+        - Some prior file lists may be capped prompt projections with `items`, `omitted_count`, and `full_set_artifact_ref`; use the artifact reference when you need the full set.
+        - Keep `executor_notes` verification-focused.
+        - Best-effort progress checkpointing: if `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1b-composition-graph-20260703-0638/execution_batch_10.json` is writable, checkpoint task and sense-check updates there (not `finalize.json`). The harness owns `finalize.json`.
+        - When verifying changes, run the entire test file or module, not individual test functions. Individual tests miss regressions.
+        - Run tests ONCE, in the FOREGROUND, and wait for them to finish (you have a large time budget). Do NOT background a long test run and poll it in a loop. Slowness is NOT a stall — never relaunch a test command because it "seems stuck"; duplicate concurrent runs contend for CPU and make everything slower. Never run more than one heavy test invocation at a time. Prefer scoping to the changed files; run the full suite only when the task explicitly requires it, and then exactly once.
+        - finalize.json includes baseline_test_failures — a list of test IDs that were already failing before your changes. If a test fails and its ID appears in baseline_test_failures, it is pre-existing — do not scope-creep into fixing it. If baseline_test_failures is null, the baseline could not be captured; use your judgment but err on the side of assuming failures are regressions. A mechanical post-execute suite run by the harness — not you — is the authoritative regression check. Run tests for your own fix loop if needed, then stop; do not loop the suite to make pre-existing failures pass.
+        - If this batch includes the final verification task, write a short script that reproduces the exact bug described in the task, run it to confirm the fix resolves it, then delete the script.
+
+        Batch JSON response template:
+        ```json
+        {
+  "output": "",
+  "files_changed": [],
+  "commands_run": [],
+  "deviations": [],
+  "task_updates": [
+    {
+      "task_id": "T13",
+      "status": "pending",
+      "executor_notes": "",
+      "files_changed": [],
+      "commands_run": [],
+      "auto_attributed_files": false
+    }
+  ],
+  "sense_check_acknowledgments": [
+    {
+      "sense_check_id": "SC13",
+      "executor_note": ""
+    }
+  ]
+}
+        ```

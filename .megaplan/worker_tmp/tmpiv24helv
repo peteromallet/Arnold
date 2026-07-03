@@ -1,0 +1,302 @@
+You are already running inside the megaplan harness for this step. Do the requested planning/review/execution work directly. Do NOT invoke the `megaplan` CLI, do NOT read or activate the `megaplan` skill, do NOT start nested megaplan plans, and do NOT recurse into another planning harness. Treat mentions of megaplan in the repository or environment as implementation context only.
+
+WRITE ACCESS CONTRACT: You are running with auto-approved writes inside a writable workspace. Treat the working directory as fully writable. Do NOT preemptively skip or block tasks on permission, sandbox, or read-only grounds. Attempt every required edit; only report failure AFTER a real OS-level rejection from a specific shell command. Do not infer 'read-only' from absence of activity; absence is not denial. If a single shell command unexpectedly fails, retry with a different invocation before concluding the environment is restricted.
+
+## Anchor Context: North Star
+
+These anchors are durable alignment targets captured at plan initialization. They are not ordinary notes, generated success criteria, or optional background. Use them to keep this stage aligned with the end-state intent.
+
+Scope map:
+- Epic North Star: overall chain/epic objective. Preserve this across all milestones.
+- Plan/Sprint/Milestone North Star: current plan or milestone objective. It extends or operationalizes the epic North Star for this sprint; it does not override it.
+
+If local instructions, generated plan content, or a plan-level anchor appear to conflict with an epic anchor, do not resolve the conflict silently. Surface an explicit anchor conflict and explain what decision, replan, or user approval would be needed.
+
+### Epic North Star: North Star: Reigh Extension Composition Spine
+Source: `.megaplan/initiatives/reigh-extension-composition-spine-epic/NORTHSTAR.md`
+Captured artifact: `anchors/north_star/epic.md`
+Checksum: `86a16a045065f6e734002db219d336c2168cf7cdd0652a4b1bf616640f4119ad`
+
+```md
+# North Star: Reigh Extension Composition Spine
+
+## What we are building
+
+A unified composition spine for Reigh extensions. Clips, shaders, effects, transitions, live data, agent-produced materials, and output formats all participate through a host-projected `CompositionGraph` of contribution refs, typed target paths, graph edges, route requirements, and artifact manifests.
+
+## Why it matters
+
+Without this spine, every new extension family invents its own identity, validation, and mutation path. The spine makes extension contributions first-class, auditable, and composable while keeping the host in control of projection, validation, and execution.
+
+## Immutable constraints
+
+- Extensions and processes never mutate raw timeline internals directly.
+- The graph is the authority for graph-authoritative fact families; legacy fields are compatibility inputs only.
+- V1 target paths are limited to clip/effect/transition params and shader uniforms.
+- Live or nondeterministic inputs must bake or promote to durable materials/artifacts/captures before authoritative export.
+- Trusted process runtime and output-format sidecars are real, but they stay namespaced outside the V1 composition SDK.
+- No sandbox, marketplace, headless renderer, WebGPU, arbitrary material graphs, shader stacks, FBO chains, or generic texture routing in this epic.
+
+## Success in one sentence
+
+Users can compose, preview, bake, repair, and export video projects using contributions from multiple extensions, and extension authors can declare portable SDK contracts without leaking into host internals.
+```
+
+### Current Stage
+Stage: `plan`
+Plan directory: `/workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app/.megaplan/plans/m1b-composition-graph-20260703-0638`
+Current milestone: `m1b-shader-graph-authority`
+
+### Phase Instruction
+Build a plan that advances the local brief while preserving the North Star. If scope is narrowed, state whether the narrowing is a bridge or a contradiction.
+
+### Conflict Note
+Plan-level anchors extend epic anchors. They do not override them silently. When in doubt, flag the tension rather than optimizing around it.
+
+You are creating an implementation plan for the following idea.
+
+        Engineering brief produced from the codebase and task details:
+
+        ### Task Summary
+        M1b introduces CompositionGraph as the authoritative projection for all shader/ref facts and contribution-index lookups. The graph is entirely new infrastructure (no graph.ts exists) that must coexist with legacy TimelineSnapshot/ContributionIndex inputs via compatibility shims. Five workstreams converge: (1) SDK graph contracts with nodes (clip/timeline-postprocess/contribution), consumes edges, 10-state referenceStates resolver, composition/ diagnostics, and preview; (2) a host projector from CompositionGraphInput (snapshot + index + runtime/patch overlays) with v8-state resolver precedence; (3) patch preview for shader.assign/remove and canonical diagnostic catalog; (4) RenderPlanner refactored to graph-first authority; (5) caller audit identifying 14 consumers across must-switch, shim-compatible, and out-of-scope categories.
+
+        ### Key Evidence
+        - CompositionGraph is pure greenfield — zero matches for 'CompositionGraph' or 'compositionGraph' across all source files. No graph.ts exists in src/sdk/video/composition/, which currently only exports ContributionRef, LiveSourceRef, MaterialRef, and contributionRefKey from references.ts. (source: All five areas confirm no existing graph infrastructure; sdk-graph-contracts search of src/sdk/video/composition/; relevance: high)
+- The SDK barrel insertion point is established at src/sdk/index.ts lines 110-114 ('Video: Composition (reference identity)'), currently exporting ContributionRef, LiveSourceRef, MaterialRef, contributionRefKey. Natural placement for CompositionGraph exports immediately after line 114. (source: sdk-graph-contracts area, confirmed by code read of src/sdk/index.ts; relevance: high)
+- M1b requires 10 resolver states (resolved, missing, disabled, inactive-reserved, invalid-package, duplicate, settings-error, runtime-error, version-incompatible, unknown) that must be derived from the combination of ContributionIndexStatus (4 states: active, inactive-reserved, disabled, invalid) and PackageState (7 states: loaded, disabled-by-user, invalid, incompatible, duplicate, settings-error, runtime-error). The existing packageStateToIndexStatus() in FamilyRuntimeAssembly.ts collapses incompatible/duplicate/settings-error/runtime-error all to 'disabled' — M1b must distinguish these. (source: sdk-graph-contracts and host-projector-resolver areas, FamilyRuntimeAssembly.ts:543-559; relevance: high)
+- Locked resolver precedence: package failures (invalid-package, settings-error, runtime-error, version-incompatible) classify BEFORE inactive-reserved and resolved states. 'Missing' means the scoped key has zero entries in the contribution index — explicitly NOT the same as duplicate, inactive, or version-incompatible per constraints. (source: host-projector-resolver area, locked decisions in task brief; relevance: high)
+- The current shader ref projection path is: planRender → diagnoseSnapshotShaderComposition → projectSnapshotShaderRefs → projectShaderRefs (shaderValidation.ts:117). projectShaderRefs filters TimelineShaderSummary[] against ContributionIndex using scoped keys format 'shader:extensionId:contributionId', removing non-active/non-projected entries. This entire chain must be replaced by graph-derived referenceStates. (source: planner-graph-integration and host-projector-resolver areas, renderPlanner.ts:267-284, shaderValidation.ts:117-149; relevance: high)
+- M1a shader-scope validation (validateShaderComposition, validateShaderAssignment) already enforces per-scope single-occupancy with first-wins dedup. The done criterion requires this validation be consumed through graph projection rather than called directly on TimelineShaderSummary[]. (source: sdk-graph-contracts and planner-graph-integration areas, shaderValidation.ts:157-191; relevance: high)
+- The main production UI consumer (useRenderState.ts) does NOT currently pass extensionRuntime or contributionIndex to planRender for shader/ref facts. It calls planRender({ diagnostics }) at line 234 and planRender({ outputFormats, processes, request }) at line 515. The extensionRuntime?.contributionIndex path is only exercised in tests. Wiring the production hook to pass the CompositionGraph is a required integration step. (source: planner-graph-integration area, useRenderState.ts:234, 515; relevance: high)
+- Fourteen callers of shader/ref facts were identified and classified: (A) Must switch to graph-derived facts — shaderProjector.buildShaderDescriptors, shaderAdapter, FamilyRuntimeAssembly (shader descriptor + contribution index assembly), RenderPlanner.planRender, ExportGuard scanExportConfig/scanTimelineShaderExportBlockers, shaderValidation.projectShaderRefs. (B) Stay on legacy input with compatibility shim — compilePatch (timeline-patch.ts), ShaderInspector UI, timeline-domain helpers (getTimelineClipShader/assignTimelineClipShader). (C) Out of scope — RenderRouter, RenderPipeline. (D) Indirectly affected — routeFitMapper.resolveScopedKey, getCapabilityRequirements (SDK). (source: caller-compat-audit area, consolidated from 14 identified consumers; relevance: high)
+- No shader.assign or shader.remove patch operation families exist in the SDK's TIMELINE_PATCH_OP_FAMILIES. Shader mutation currently flows through clip.update and app.update families via app.shader/app.shaderPostprocess payload fields. The patch preview mechanism for shader.assign/remove must either introduce new graph-level patch operations or map through the existing clip.update/app.update families onto the CompositionGraph. (source: patch-preview-diagnostics and caller-compat-audit areas, patch.ts, timeline-patch.ts, timeline-domain.ts; relevance: high)
+- No version-incompatible check logic exists anywhere in the codebase. The extension loader's satisfiesSemverRange() (extensionLoader.ts:87) can serve as a reference implementation. The ContributionIndexEntry type lacks version/compatibility-range fields needed for this resolver state. (source: sdk-graph-contracts area, extensionLoader.ts:87, extensionSurface.ts:457-481; relevance: high)
+- The ExportGuard has a parallel shader-authority path (hasTimelineShaderMetadata → pushShaderMaterializerFindingAndBlocker, exportGuard.ts:346-422) that operates directly on ResolvedTimelineConfig, not through the planner's snapshot/contributionIndex path. This second authority must be unified through the graph. (source: planner-graph-integration area, exportGuard.ts:346-422; relevance: medium)
+- Existing shader scope type ShaderMaterializerRequirementScope = 'clip' | 'postprocess' is already SDK-exported from src/sdk/video/rendering/capabilities.ts and consumed by TimelineShaderSummary.scope. CompositionGraph node kinds should reuse this rather than creating a parallel type. (source: sdk-graph-contracts area, capabilities.ts:14; relevance: medium)
+- No composition/ diagnostic codes exist yet. Current diagnostics use 'loader/' prefix codes (loader/missing-required-dependency, loader/dependency-version-mismatch), 'timeline-patch/shader-scope-occupied' (patch compiler), and 'planner.shaderComposition.<scope>.<shaderId>.<route>.scope-occupied' (RenderPlanner). ExtensionDiagnostic.detail already has optional shaderId and shaderScope fields supporting structured ref/state detail for composition/ diagnostics. (source: patch-preview-diagnostics area, diagnostics.ts:222-223, renderPlanner.ts:442-443; relevance: medium)
+- The ContributionIndex is built in FamilyRuntimeAssembly.buildContributionIndexEntries from three sources: active bridged contributions, inactive-reserved contributions, and disabled/invalid package contributions. The M1b graph projector must mirror this tripartite structure to produce referenceStates for all entries, including non-active packages for diagnostic display. (source: host-projector-resolver area, FamilyRuntimeAssembly.ts:561-673; relevance: medium)
+- The v8 architecture baseline (docs/extensions/composition-spine/v8-architecture-baseline.md:111-115) specifies four public edge discriminants: consumes, animates, binds-live, requires. M1b owns only 'consumes'. The task constraint 'Do not add public edge kinds beyond consumes' is consistent with this. Consumes edges model clip/postprocess nodes → shader contribution nodes for shader material/resource assignment. (source: sdk-graph-contracts and host-projector-resolver areas, v8-architecture-baseline.md:111-115; relevance: low)
+
+        ### Relevant Code
+        | File | Functions | Why |
+| --- | --- | --- |
+| src/sdk/video/composition/references.ts | ContributionRef (interface, lines 27-36), contributionRefKey (lines 87-89, format: kind:extensionId:contributionId) | Only existing composition SDK module. Defines ContributionRef, LiveSourceRef, MaterialRef, contributionRefKey. M1b graph contracts will be a sibling module (graph.ts) exported alongside these from the barrel. |
+| src/sdk/index.ts | Video: Composition (reference identity) barrel section (lines 110-114) | SDK barrel insertion point for CompositionGraph exports. Current composition section at lines 110-114 exports references types only. |
+| src/sdk/video/timeline/reader.ts | TimelineSnapshot (interface, line 205), TimelineShaderSummary (interface, lines 291-299) | Defines TimelineSnapshot (line 205) with clips[] and shaders[], and TimelineShaderSummary (lines 291-299) with id, shaderId, scope, clipId, extensionId, contributionId, enabled — primary data source for clip and timeline-postprocess graph nodes. |
+| src/sdk/diagnostics.ts | ExtensionDiagnostic (interface, lines 210-225), ExtensionDiagnosticSeverity (enum) | Defines ExtensionDiagnostic with code, severity, message, extensionId, contributionId, detail (Record<string, unknown>) — supports structured ref/state detail for composition/ diagnostics. Already has optional shaderId and shaderScope detail fields (lines 222-223). |
+| src/sdk/video/timeline/patch.ts | TimelinePatchOpFamily (type), TimelinePatchReservedOpFamily (type), TimelinePreviewResult (interface) | Defines TimelinePatchOpFamily and TimelinePatchReservedOpFamily. Current families lack shader.assign/remove; reserved graph.node.*, graph.edge.*, graph.group.* are placeholders. TimelinePreviewResult carries diff and diagnostics — template for graph-preview result. |
+| src/tools/video-editor/runtime/composition/shaderValidation.ts | CompositionShaderIdentity (lines 5-10), CompositionShaderStackEntry (lines 12-14), projectShaderRefs (lines 117-149), validateShaderComposition (lines 157-191), validateShaderAssignment, sameCompositionShaderIdentity (lines 36-46), shaderCompositionKey (lines 151-155) | Central shader ref projection and scope validation layer. projectShaderRefs filters shaders through ContributionIndex; validateShaderComposition enforces scope occupancy. Both must become graph-projection consumers rather than direct index/snapshot readers. |
+| src/tools/video-editor/runtime/renderPlanner.ts | planRender (lines 909-1004), RenderPlannerInput (lines 47-59), projectSnapshotShaderRefs (lines 267-284), diagnoseSnapshotShaderComposition (lines 423-467), collectShaderMaterializerRequirement (line 389), shaderCompositionScopeLabel (lines 419-421) | Central planner consuming shader/ref facts through three paths: (a) snapshot.shaders for materializer requirements, (b) contributionIndex via projectShaderRefs for ref filtering, (c) shaderDescriptors via createShaderDescriptorMap for lookups. Must switch to graph-first authority. planRender entry at line 909. |
+| src/tools/video-editor/runtime/extensionSurface.ts | ContributionIndex (type, line 493), ContributionIndexEntry (interface, lines 457-481), ContributionIndexStatus (type, lines 421-426), ExtensionRuntime.contributionIndex (line 519), PackageStateInventoryEntry (lines 567-577) | Defines ContributionIndex (Readonly<Record<string, readonly ContributionIndexEntry[]>>, line 493), ContributionIndexEntry (lines 457-481 with scopedKey, kind, status, packageState, diagnostics, duplicateOrdinal, projection), ContributionIndexStatus (4 states, lines 421-426), and ExtensionRuntime.contributionIndex (line 519). Primary data source for graph referenceStates resolution. |
+| src/tools/video-editor/runtime/extensionLoader.ts | PackageState (type, lines 589-596), satisfiesSemverRange (line 87) | Defines PackageState (7 states: loaded, disabled-by-user, invalid, incompatible, duplicate, settings-error, runtime-error, lines 589-596) and satisfiesSemverRange (line 87) — reference for version-incompatible resolver state. |
+| src/tools/video-editor/runtime/families/FamilyRuntimeAssembly.ts | assembleExtensionRuntime (line 227), buildContributionIndexEntries (lines 561-673), packageStateToIndexStatus (lines 543-559) | Builds shader descriptors array and ContributionIndex via assembleExtensionRuntime and buildContributionIndexEntries. packageStateToIndexStatus (line 543) collapses incompatible/duplicate/settings-error/runtime-error to 'disabled'. Must switch to graph-projection-based assembly. |
+| src/tools/video-editor/runtime/families/projectors/shaderProjector.ts | buildShaderDescriptors (lines 24-69) | Primary shader descriptor entry point. buildShaderDescriptors reads ShaderContribution objects from CollectedContribution[] to produce VideoEditorShaderDescriptor[]. Must switch to graph-derived facts (M1b-owned). |
+| src/tools/video-editor/runtime/exportGuard.ts | scanExportConfig (line 285), scanTimelineShaderExportBlockers (line 375), hasTimelineShaderMetadata (line 346), pushShaderMaterializerFindingAndBlocker (line 406) | Parallel shader authority path operating on ResolvedTimelineConfig. scanTimelineShaderExportBlockers and pushShaderMaterializerFindingAndBlocker check clip-level and postprocess shader metadata. Must switch to graph-derived facts. |
+| src/tools/video-editor/hooks/useRenderState.ts | useRenderState (line 290), runExportGuard (line 354) | Primary UI orchestrator that calls planRender and scanExportConfig. Does not currently pass extensionRuntime/contributionIndex for shader/ref facts in production. Must be wired to pass CompositionGraph. |
+| src/tools/video-editor/lib/timeline-patch.ts | compilePatch | Patch compiler that validates shader scope occupancy via assignTimelineClipShader/assignTimelinePostprocessShader against legacy timeline state. Does not read contribution-index or shader descriptors directly. Stays legacy-compatible with shim; patch preview for shader.assign/remove needs graph projection. |
+| src/tools/video-editor/lib/timeline-domain.ts | getTimelineClipShader (line 328), assignTimelineClipShader (line 373), getTimelinePostprocessShader, assignTimelinePostprocessShader | Legacy timeline helpers (getTimelineClipShader, getTimelinePostprocessShader, assignTimelineClipShader, assignTimelinePostprocessShader) operating on TimelineClip/TimelineConfig. Use validateShaderAssignment from shaderValidation for scope checks. Stay on legacy input with shim. |
+| src/tools/video-editor/lib/renderRouter.ts | decideRenderRoute (line 303) | Calls planRender internally but does not read shader descriptors, shader summaries, or contribution-index entries directly. Out of scope for M1b shader/ref authority shift. |
+| docs/extensions/composition-spine/v8-architecture-baseline.md | CompositionGraph section (line 57), Edge discriminants (lines 111-115) | Specifies four public edge discriminants (consumes, animates, binds-live, requires) with consumes being M1b ownership for shader material/resource consumption. Confirms edge direction: clip/postprocess → shader contribution. |
+
+        ### Test Expectations
+        - [fail_to_pass] m1b-graph-required: New shader/ref planner and export tests fail with a clear diagnostic if CompositionGraph is not constructed — verifying graph-first authority is enforced, not optional.
+- [fail_to_pass] m1b-legacy-shim-parity: Legacy-only planner input (snapshot + shaders without CompositionGraph) remains supported but produces a compatibility-mode warning. Release example tests fail if shader/ref gates are satisfied through legacy-only inputs.
+- [fail_to_pass] m1b-resolver-precedence: Resolver precedence is asserted with duplicate, package-failure (invalid-package/settings-error/runtime-error/version-incompatible), inactive-reserved, and missing candidates. Package failures classify before inactive/resolved. Missing means no scoped candidate exists — not confused with duplicate/disabled/version-incompatible.
+- [fail_to_pass] m1b-graph-scope-validation: M1a shader-scope validation (single-occupancy per clip/postprocess scope) is consumed through graph projection — validateShaderComposition reads graph nodes/edges rather than raw TimelineShaderSummary[].
+- [fail_to_pass] m1b-canonical-diagnostics: M1b diagnostics use canonical composition/ codes (e.g., composition/shader-ref-missing, composition/shader-ref-disabled, composition/shader-ref-version-incompatible, composition/shader-scope-occupied, composition/shader-duplicate-scope) with structured ref/state detail including nodeId, refState, and scope.
+- [fail_to_pass] m1b-patch-preview: Patch preview for shader.assign produces a preview graph with a new consumes edge from clip/postprocess node to shader contribution node. Patch preview for shader.remove clears that edge. Both return a preview graph with updated referenceStates and diagnostics.
+- [fail_to_pass] m1b-no-legacy-authority: Planner and export behavior do NOT read legacy shader/ref fields from TimelineSnapshot.shaders or direct ContributionIndex access as alternate authority when CompositionGraph is present. Graph is single source of truth.
+- [fail_to_pass] m1b-runtime-overlay-noop: Undefined runtime overlay and all-empty runtime overlay produce identical CompositionGraph projection results (verified no-op equivalence per locked decision).
+
+        ### Constraints
+        - Keep old callers supported through compatibility shims — do not break existing consumers of TimelineSnapshot.shaders, ContributionIndex, or shader descriptor arrays.
+- Do not add public edge kinds beyond 'consumes'. animates, binds-live, requires are reserved for future milestones.
+- Do not bypass graph projection for M1b-owned facts — once CompositionGraph is constructed, all shader/ref facts and contribution-index lookups must flow through it.
+- Do not expose contribution-index internals through SDK contracts — the graph is a projection, not a re-export.
+- Do not treat duplicate, inactive, or version-incompatible refs as missing — each has a distinct resolver state.
+- Release examples cannot satisfy shader/ref gates through legacy-only inputs — legacy path is compatibility-only, not a valid release path.
+- Resolver state precedence is locked: package failures (invalid-package, settings-error, runtime-error, version-incompatible) classify before inactive-reserved, which classifies before resolved. Missing means zero scoped candidates in the index.
+- Undefined runtime overlay and all-empty runtime overlay are equivalent no-ops.
+- Target paths, animates/binds-live edges, material statuses, agent/live material promotion, process vocabularies, and output-format vocabularies are OUT of scope.
+
+        ### Suggested Approach
+        1. Define SDK CompositionGraph contracts in src/sdk/video/composition/graph.ts: CompositionGraph (nodes, edges, referenceStates, diagnostics, preview), CompositionGraphNode (kind: clip|timeline-postprocess|contribution with identity fields), CompositionGraphEdge (kind: consumes, source, target), ReferenceState (refKey, resolverState, entry metadata), CompositionGraphDiagnostic (code with composition/ prefix, structured detail). Export from barrel at index.ts:114. Reuse ShaderMaterializerRequirementScope for node kind scoping. Map resolver states from ContributionIndexStatus + PackageState combinations with the locked precedence. 2. Build host projector (CompositionGraphProjector) in src/tools/video-editor/runtime/composition/ that accepts CompositionGraphInput { snapshot, contributionIndex, runtimeOverlay?, patchOverlay? } and produces CompositionGraph. Derive clip nodes from snapshot.clips, timeline-postprocess nodes from snapshot.shaders with scope='postprocess', contribution nodes from ContributionIndex entries. Project consumes edges from clip/postprocess nodes to their shader contribution nodes via TimelineShaderSummary.{extensionId,contributionId} lookup. 3. Implement v8 resolver (resolveReferenceStates) that iterates contribution-index scoped keys with precedence: first check packageState for invalid-package/settings-error/runtime-error/version-incompatible, then check ContributionIndexStatus for inactive-reserved, then resolved (active+loaded). Mark keys absent from index as missing. 4. Add patch preview (previewPatch) that clones the base graph and applies shader.assign (add consumes edge, update referenceStates) or shader.remove (remove consumes edge, update referenceStates). Return preview graph with diagnostics. 5. Define canonical composition/ diagnostic codes in a diagnostic catalog: composition/shader-ref-missing, composition/shader-ref-disabled, composition/shader-ref-version-incompatible, composition/shader-scope-occupied, composition/shader-duplicate-scope, composition/shader-ref-invalid-package, composition/shader-ref-settings-error, composition/shader-ref-runtime-error, composition/shader-ref-inactive-reserved, composition/shader-ref-unknown. Attach structured detail (nodeId, refState, scope, extensionId, contributionId). 6. Refactor RenderPlanner.planRender to accept optional compositionGraph input. When present, graph-derived facts replace: (a) projectSnapshotShaderRefs reads graph referenceStates instead of raw ContributionIndex, (b) validateShaderComposition reads graph nodes/edges instead of raw TimelineShaderSummary[], (c) collectShaderMaterializerRequirement reads graph edges for shader assignments. When absent, fall back to legacy path with compatibility deprecation warning. 7. Wire FamilyRuntimeAssembly.assembleExtensionRuntime to construct CompositionGraph via the projector and attach it to ExtensionRuntime. Wire useRenderState to pass the graph to planRender and exportGuard. 8. Refactor ExportGuard to consume graph-derived shader facts for export blockers. Unify the parallel shader-authority path. 9. Implement compatibility shims: shaderProjector.buildShaderDescriptors accepts optional graph and derives descriptors from graph nodes/edges when available; shaderValidation.projectShaderRefs accepts optional graph and reads referenceStates; timeline-patch compilePatch stays on legacy input for mutations but validates against graph when available; timeline-domain helpers remain legacy-compatible. 10. Write tests in order: (a) graph construction from snapshot+index, (b) resolver precedence with all 10 states, (c) patch preview for assign/remove, (d) planner graph-first path with fallback, (e) export guard graph-first path, (f) diagnostics with canonical codes, (g) legacy shim parity (graph-absent still works, graph-present is authoritative). Ensure release example tests fail when only legacy inputs are used.
+
+### Open Questions
+- [assume_and_proceed] Should the CompositionGraph be constructed eagerly during FamilyRuntimeAssembly.assembleExtensionRuntime and stored on ExtensionRuntime, or constructed lazily on first access? The findings show useRenderState does not currently pass extensionRuntime to planRender for shader/ref facts, so eager construction at assembly time and attachment to ExtensionRuntime is the natural path — but this adds construction cost to every runtime assembly even when the graph is never consumed. _(assumption: Construct eagerly during assembleExtensionRuntime and attach to ExtensionRuntime as a new `compositionGraph` field. This matches the existing pattern where ContributionIndex is always built during assembly. If performance becomes a concern, lazy construction with a memoized getter can be added later without changing the public contract.)_
+- [assume_and_proceed] How should shader.assign and shader.remove patch operations be represented — as new first-class patch operation families in the SDK contract, or as graph-level operations that are invoked internally by the projector when it encounters clip.update/app.update patches with shader payload changes? The former introduces new public API surface; the latter keeps the patch vocabulary unchanged but makes the preview mechanism less explicit. _(assumption: Introduce shader.assign and shader.remove as graph-level preview operations internal to the projector/preview layer, mapping from existing clip.update/app.update patch families. Do NOT add new SDK-level patch operation families for M1b. The patch preview function accepts a base CompositionGraph and an array of graph-level shader operations (assign/remove) derived by the caller from pending timeline patches. This keeps the SDK patch contract stable while enabling explicit graph preview semantics.)_
+- [assume_and_proceed] The version-incompatible resolver state has no existing infrastructure — no version fields on ContributionIndexEntry, no compatibility-range metadata, and no existing check logic beyond satisfiesSemverRange in extensionLoader.ts. What metadata schema should the graph use to determine version incompatibility at the contribution level? _(assumption: Add optional `requiredVersion` and `compatibleVersionRange` fields to the graph's ReferenceState metadata, populated from the shader contribution's manifest if available. Use satisfiesSemverRange as the check implementation. For M1b, version-incompatible is only flagged when a shader contribution declares a version requirement that the loaded package does not satisfy. If no version metadata exists, this state is never produced — the ref falls through to other resolver classifications.)_
+
+        The engineering brief above is evidence gathered from the codebase. Treat it as the default working context, challenge its conclusions when the code disagrees, and only do targeted repository lookups when a concrete gap remains. Open questions in the brief are candidate concerns, not mandates — act on ones that materially affect the plan, dismiss immaterial or already-resolved ones with a brief reason, and treat question count as noise.
+
+        Idea:
+# M1b: Composition Graph Projection Becomes Shader/Ref Fact Authority
+
+## Outcome
+
+Make `CompositionGraph` projection authoritative for shader/ref facts and contribution-index lookups. Legacy inputs remain compatibility sources, but new shader/ref planner and export behavior must consume graph facts.
+
+## Execution Posture
+
+This is the first graph-authority handoff. Be strict about resolver precedence, package-state interpretation, graph-derived diagnostics, and legacy shim parity.
+
+## Scope
+
+IN:
+- Add SDK `CompositionGraph` contracts with M1b fields: `nodes`, `edges`, `referenceStates`, `diagnostics`, and `preview`.
+- Support node kinds `clip`, `timeline-postprocess`, and `contribution`.
+- Support `consumes` edges for clip/postprocess shader assignment.
+- Add host projector from `CompositionGraphInput` over snapshot, contribution index, optional runtime overlay, and optional patch overlay.
+- Add host resolver over contribution refs and package state with exact v8 resolver states and precedence.
+- Add patch preview for `shader.assign` and `shader.remove`.
+- Add canonical M1b ref/preview diagnostics.
+- Change planner input to graph-first authority for shader/ref facts and contribution-index lookups.
+- Add tests for graph-derived shader diagnostics, missing/disabled/version-incompatible refs, duplicate scope, and legacy shim parity.
+
+OUT:
+- Target paths.
+- `animates` or `binds-live`.
+- Material statuses.
+- Agent/live material promotion.
+- Process or output-format vocabularies.
+- New planner/export behavior that reads legacy shader/ref fields as alternate authority.
+
+## Locked Decisions
+
+- Resolver states are `resolved`, `missing`, `disabled`, `inactive-reserved`, `invalid-package`, `duplicate`, `settings-error`, `runtime-error`, `version-incompatible`, and `unknown`.
+- No scoped index entry is `missing`; missing means no scoped candidate exists.
+- Package failures classify before inactive/resolved states in the v8 order.
+- `undefined` runtime overlay and all-empty runtime overlay are equivalent no-ops.
+- Release examples cannot satisfy shader/ref gates through legacy-only inputs.
+
+## Constraints
+
+- Keep old callers supported through compatibility shims.
+- Do not add public edge kinds beyond `consumes`.
+- Do not bypass graph projection for M1b-owned facts.
+- Do not expose contribution-index internals through SDK contracts.
+- Do not treat duplicate, inactive, or version-incompatible refs as missing.
+
+## Done Criteria
+
+- New shader/ref planner/export tests fail if `CompositionGraph` is not constructed.
+- Legacy-only planner input remains supported but compatibility-only in tests/docs.
+- M1a shader-scope validation is consumed through graph projection.
+- Resolver precedence is asserted with duplicate, package failure, inactive-reserved, version-incompatible, and missing candidates.
+- M1b diagnostics use canonical `composition/` codes and include structured ref/state detail.
+
+## Touchpoints
+
+- `src/sdk/index.ts`
+- `src/sdk/video/composition/graph.ts`
+- `src/sdk/video/composition/references.ts`
+- `src/tools/video-editor/runtime/composition/**`
+- `src/tools/video-editor/runtime/FamilyRuntimeAssembly.ts`
+- `src/tools/video-editor/lib/renderRouter.ts`
+- `src/tools/video-editor/rendering/**`
+- `tests/**/video-editor/**`
+- `docs/extensions/**`
+
+
+
+        Project directory:
+        /workspace/reigh-extension-composition-spine-epic-12d49a3e/reigh-app
+
+
+
+
+
+        No prior clarification artifact exists. Identify ambiguities, ask clarifying questions, and state your assumptions inside the plan output.
+
+
+
+        Requirements:
+        - If the engineering brief suggests an approach, use it as your starting hypothesis — but before committing, consider if there's a simpler or more fundamental fix. The brief is well-researched input, not a final answer.
+        - If the brief is absent, incomplete, or says "skip", inspect the repository yourself before planning.
+        - Stay focused on the requested idea. If repo exploration surfaces unrelated issues or docs, ignore them and return to the task.
+        - Prefer source code, tests, and directly relevant config files. Avoid `.megaplan/`, prior plan artifacts, and unrelated `docs/` or ops/deployment material unless the task explicitly depends on them.
+        - Stop exploring once you have enough evidence to name the concrete touch points and validation path. Do not keep browsing after you can write the plan.
+        - Produce a concrete implementation plan in markdown.
+        - Define observable success criteria as objects with `criterion` (string) and `priority` (`must`, `should`, or `info`):
+          - `must` — hard gate. The reviewer will block on failure. Use for correctness, functional requirements, and verifiable outcomes (e.g., "all existing tests pass", "API returns 200 for valid input"). Every `must` criterion must have a clear yes/no answer.
+          - `should` — quality target. The reviewer flags but does not block. Use for subjective goals, numeric guidelines, and best-effort improvements (e.g., "file under ~300 lines", "no deeply nested conditionals", "each function has a single responsibility").
+          - `info` — documented for humans, reviewer skips. Use for criteria that cannot be verified in this pipeline (e.g., "13 manual smoke tests pass", "stakeholder sign-off obtained").
+        - Each success criterion should include a `requires` field listing the capabilities needed for verification. Valid capability strings: `run_shell`, `read_files`, `run_tests`, `parse_diff`, `read_build_output`, `run_linter` (container), `drive_browser`, `inspect_runtime_ui`, `observe_runtime_logs`, `subjective_judgment`, `verify_physical_device` (human). `must` criteria MUST have non-empty `requires`. Example: `{"criterion": "All tests pass", "priority": "must", "requires": ["run_tests"]}`.
+        - Use the `questions` field for ambiguities that would materially change implementation.
+        - Use the `assumptions` field for defaults you are making so planning can proceed now.
+        - Prefer cheap validation steps early.
+        - Keep the plan proportional to the task. A 1-line fix needs a 2-step plan (apply fix + run tests), not a 5-step investigation.
+        - Size each step so it can be implemented AND verified in a single worker turn (~15 min, one model conversation). A step that bundles "create the abstraction AND migrate every consumer AND write all the tests" is too large to finish in one turn and will fail (the worker runs out of time before it can implement, leaving the step blocked). For large mechanical refactors, split along the natural seam — one step to add the new abstraction + its unit tests, then one step per consumer to migrate (the last migration step also adds parity tests) — rather than one giant step. Higher complexity does not earn a step more time; it only routes to a stronger model for the same single turn.
+        - If user notes answer earlier questions, incorporate them into the draft plan instead of re-asking them.
+        - Fix the problem fully. Do not limit scope just to avoid breaking existing tests — update the tests too if needed.
+        - Prefer the simplest, most direct fix. No fallbacks, type conversions, or defensive wrappers without concrete evidence they are needed.
+        - If the task or issue hints suggest a specific approach, follow it. Only deviate with concrete counter-evidence.
+        - Assign every plan step a complexity score 1–5 before finalize. Reason about complexity in the plan markdown (e.g. "Complexity: 2" per step), and surface it informally so the reviewer can audit:
+          - 1 = trivial single-file mechanical change
+          - 2 = simple change with tests to update
+          - 3 = multi-file change with non-trivial logic
+          - 4 = cross-cutting change with architecture implications
+          - 5 = fundamental system change with high regression risk
+        - Populate `changed_surfaces` with every concrete file path your plan will change or create. Include both source files and test files. Use repo-relative paths (e.g., `src/prompts.py`, `tests/test_prompts.py`). This list drives the deterministic test-selection blast radius; be complete. If your plan touches a file, list it.
+        - (Optional) Populate `test_blast_radius` with your own scoped test-selection proposal. This complements the deterministic floor the system computes from `changed_surfaces`. Provide `strategy` ("scoped", "full", or "none"), `selectors` (array of `{"kind": "path", "value": "<path>", "reason": "<why>"}` objects), and a `rationale` string. The system merges your proposal with the deterministic floor; you cannot narrow below the floor, but you can widen with additional selectors or escalate to full. If you intend a scoped finalize baseline while keeping the full suite as a hard gate, set `strategy` to "scoped", include concrete `selectors`, and set `full_suite_fallback` to true; the floor's full-suite requirement will be honored by the fallback without forcing the baseline strategy to "full".
+
+        Plan template — simple format (adapt to the actual repo and scope):
+````md
+# Implementation Plan: [Title]
+
+## Overview
+Summarize the goal, current repository shape, and the constraints that matter.
+
+## Main Phase
+
+### Step 1: Audit the current behavior (`src/prompts.py`)
+**Scope:** Small
+1. **Inspect** the current implementation and call out the exact insertion points (`src/prompts.py:29`).
+
+### Step 2: Add the first change (`src/evaluation.py`)
+**Scope:** Medium
+1. **Implement** the smallest viable change with exact file references (`src/evaluation.py:1`).
+2. **Capture** any tricky behavior with a short example.
+   ```python
+   issues = validate_plan_structure(plan_text)
+   ```
+
+### Step 3: Wire downstream behavior (`src/handlers.py`, `src/workers.py`)
+**Scope:** Medium
+1. **Update** the runtime flow in the touched files (`src/handlers.py:400`, `src/workers.py:199`).
+
+### Step 4: Prove the change (`tests/test_validator.py`, `tests/test_integration.py`)
+**Scope:** Small
+1. **Run** the cheapest targeted checks first (`tests/test_validator.py:1`).
+2. **Finish** with broader verification once the wiring is in place (`tests/test_integration.py:1`).
+
+## Execution Order
+1. Update prompts and mocks before enforcing stricter validation.
+2. Land higher-risk wiring after the validator and tests are ready.
+
+## Validation Order
+1. Start with focused unit tests.
+2. Run the broader suite after the flow changes are in place.
+````
+
+For complex plans, use multiple phases:
+````md
+## Phase 1: Foundation — Dependencies, DB, Types
+
+### Step 1: Install dependencies (`package.json`)
+...
+
+### Step 2: Create database migration (`supabase/migrations/`)
+...
+
+## Phase 2: Core Integration
+
+### Step 3: Port the main component (`src/components/`)
+...
+````
+
+Template guidance:
+- Simple plans: use `## Main Phase` with `### Step N:` sections underneath.
+- Complex plans: use multiple `## Phase N:` sections, each containing `### Step N:` steps. Step numbers are global (not per-phase).
+- The flat `## Step N:` format (without phases) also works for backwards compatibility.
+- Key invariants: one H1 title, one `## Overview`, numbered step sections (`### Step N:` or `## Step N:`), and at least one ordering section.

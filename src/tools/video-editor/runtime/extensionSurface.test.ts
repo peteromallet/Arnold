@@ -99,6 +99,20 @@ describe('normalizeExtensionRuntime — empty input', () => {
     expect(Object.isFrozen(rt.inactiveReserved)).toBe(true);
     expect(Object.isFrozen(rt.settingsDefaults)).toBe(true);
   });
+
+  it('attaches an eager composition graph surface', () => {
+    const rt = normalizeExtensionRuntime([]);
+    expect(rt.compositionGraph.nodes).toEqual([
+      {
+        id: 'timeline-postprocess',
+        kind: 'timeline-postprocess',
+        detail: { scope: 'postprocess' },
+      },
+    ]);
+    expect(rt.compositionGraph.edges).toEqual([]);
+    expect(rt.compositionGraph.referenceStates).toEqual([]);
+    expect(rt.compositionGraph.diagnostics).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2641,6 +2655,22 @@ describe('normalizeExtensionRuntime — contribution index for disabled/invalid 
         source: 'preserved-record',
       },
     });
+    expect(rt.compositionGraph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'contribution:panel:com.example.disabled:disabled-panel',
+          kind: 'contribution',
+          ref: {
+            kind: 'panel',
+            extensionId: 'com.example.disabled',
+            contributionId: 'disabled-panel',
+          },
+          detail: expect.objectContaining({
+            projected: false,
+          }),
+        }),
+      ]),
+    );
   });
 
   it('populates index entries for invalid packages with manifest contributions', () => {

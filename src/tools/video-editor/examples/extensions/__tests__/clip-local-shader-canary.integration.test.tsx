@@ -368,4 +368,83 @@ describe('clip-local-shader-canary extension', () => {
 
     test.dispose();
   });
+
+  it('graph-present planRender uses compositionGraph shader authority and emits legacy warning when graph is absent', () => {
+    const test = activateCanary({ includeDiagnosticShader: false });
+    const record = requireCanaryRecord(test.snapshot);
+    const clip = makeClip(record);
+    const snapshot = makeShaderSnapshot(clip);
+    const runtime = normalizeExtensionRuntime([test.extension]);
+
+    // Graph-present: planRender derives shader facts from the compositionGraph.
+    const plannerWithGraph = planRender({ snapshot, extensionRuntime: runtime });
+
+    // The graph-present planner still reports the missing-material blocker
+    // because the canary shader has no export materializer — this is derived
+    // from graph edges, not legacy snapshot shader fields.
+    expect(plannerWithGraph.canBrowserExport).toBe(false);
+    expect(plannerWithGraph.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export', reason: 'missing-material',
+        extensionId: CLIP_LOCAL_SHADER_CANARY_EXTENSION_ID,
+        contributionId: CLIP_LOCAL_SHADER_CANARY_CONTRIBUTION_ID,
+      }),
+    ]));
+
+    // Legacy (graph-absent): planRender falls back to snapshot shader metadata
+    // and emits a compatibility warning.
+    const plannerWithoutGraph = planRender({ snapshot });
+    expect(plannerWithoutGraph.canBrowserExport).toBe(false);
+    expect(plannerWithoutGraph.blockers).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        route: 'browser-export', reason: 'missing-material',
+        extensionId: CLIP_LOCAL_SHADER_CANARY_EXTENSION_ID,
+        contributionId: CLIP_LOCAL_SHADER_CANARY_CONTRIBUTION_ID,
+      }),
+    ]));
+
+    // The legacy path should include a compatibility warning finding
+    const legacyWarning = plannerWithoutGraph.findings.find(
+      (finding) => finding.id.startsWith('planner.compositionGraph.legacy'),
+    );
+    expect(legacyWarning).toBeDefined();
+    expect(legacyWarning?.severity).toBe('warning');
+
+    test.dispose();
+  });
+
+  it('graph authority does not leak future surface kinds and keeps checks scoped to M1b shader/ref consumes edges', () => {
+    const test = activateCanary({ includeDiagnosticShader: false });
+    const runtime = normalizeExtensionRuntime([test.extension]);
+    const graph = runtime.compositionGraph;
+    expect(graph).toBeDefined();
+
+    // Only M1b node kinds are present
+    const kinds = new Set(graph.nodes.map((node) => node.kind));
+    expect(kinds.has('clip')).toBe(true);
+    expect(kinds.has('timeline-postprocess')).toBe(true);
+    expect(kinds.has('contribution')).toBe(true);
+    expect(kinds.has('track')).toBe(false);
+    expect(kinds.has('output')).toBe(false);
+    expect(kinds.has('process')).toBe(false);
+
+    // Only consumes edges
+    const edgeKinds = new Set(graph.edges.map((edge) => edge.kind));
+    expect(edgeKinds.has('consumes')).toBe(true);
+    expect(edgeKinds.size).toBeLessThanOrEqual(1);
+    expect(edgeKinds.has('animates')).toBe(false);
+    expect(edgeKinds.has('binds-live')).toBe(false);
+
+    // Reference states only use the 10 M1b states
+    const states = new Set(graph.referenceStates.map((entry) => entry.state));
+    for (const state of states) {
+      expect([
+        'resolved', 'missing', 'disabled', 'inactive-reserved',
+        'invalid-package', 'duplicate', 'settings-error', 'runtime-error',
+        'version-incompatible', 'unknown',
+      ]).toContain(state);
+    }
+
+    test.dispose();
+  });
 });

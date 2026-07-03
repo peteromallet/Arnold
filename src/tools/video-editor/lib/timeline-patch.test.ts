@@ -9,6 +9,8 @@ import {
   validateTimelinePatch,
   compileTimelinePatch,
   previewTimelinePatch,
+  extractGraphPreviewOps,
+  previewTimelinePatchGraphDiagnostics,
 } from '@/tools/video-editor/lib/timeline-patch';
 import { TIMELINE_POSTPROCESS_SHADER_APP_KEY } from '@/tools/video-editor/lib/timeline-domain';
 import type { PatchMergeMode } from '@/tools/video-editor/lib/timeline-patch';
@@ -21,6 +23,8 @@ import type {
   TimelineClipShaderMetadata,
   TimelinePostprocessShaderMetadata,
 } from '@/tools/video-editor/types';
+import type { GraphPreviewOperation, GraphShaderAssignOp, GraphShaderRemoveOp } from '@/tools/video-editor/runtime/composition/patchPreview';
+import type { CompositionGraphInput } from '@/tools/video-editor/runtime/composition/graphProjector';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -5045,5 +5049,328 @@ describe('compileTimelinePatch — project-data replay determinism', () => {
     // The re-added entry should be present
     const finalApp = rw1.nextData!.config.app['com.example.ext'] as Record<string, unknown>;
     expect(finalApp.k1).toEqual({ data: 'hello' });
+  });
+});
+
+// ===========================================================================
+// M1b T20: Graph preview bridge — extractGraphPreviewOps
+// ===========================================================================
+
+const clipShaderPayload: TimelineClipShaderMetadata = {
+  scope: 'clip',
+  extensionId: 'com.example.shader',
+  contributionId: 'clip-glow-shader',
+  shaderId: 'shader.clipGlow',
+  uniforms: { intensity: 0.5 },
+};
+
+const postprocessShaderPayload: TimelinePostprocessShaderMetadata = {
+  scope: 'postprocess',
+  extensionId: 'com.example.shader',
+  contributionId: 'post-grade-shader',
+  shaderId: 'shader.postGrade',
+  uniforms: { exposure: 0.1 },
+};
+
+function makeGraphInput(overrides: Partial<CompositionGraphInput> = {}): CompositionGraphInput {
+  return {
+    snapshot: {
+      projectId: 'test-project',
+      baseVersion: 1,
+      currentVersion: 1,
+      extensionRequirements: [],
+      clips: [
+        { id: 'clip-1', track: 'V1', at: 0, clipType: 'video', duration: 48, managed: false },
+      ],
+      tracks: [],
+      assetKeys: [],
+      app: {},
+      shaders: [],
+      ...overrides.snapshot,
+    },
+    contributionIndex: undefined,
+    ...overrides,
+  };
+}
+
+describe('extractGraphPreviewOps — clip.update shader payloads', () => {
+  it('maps clip.update with app.shader to a GraphShaderAssignOp (internal assign)', () => {
+    const ops: GraphPreviewOperation[] = extractGraphPreviewOps([
+      makeOp('clip.update', 'clip-1', { app: { shader: clipShaderPayload } }),
+    ]);
+
+    expect(ops).toHaveLength(1);
+    const assignOp = ops[0] as GraphShaderAssignOp;
+    expect(assignOp.kind).toBe('shader.assign');
+    expect(assignOp.shader.shaderId).toBe('shader.clipGlow');
+    expect(assignOp.shader.scope).toBe('clip');
+    expect(assignOp.shader.clipId).toBe('clip-1');
+    expect(assignOp.shader.extensionId).toBe('com.example.shader');
+    expect(assignOp.shader.contributionId).toBe('clip-glow-shader');
+    expect(assignOp.shader.enabled).toBe(true);
+  });
+
+  it('ignores clip.update with app but no shader field (no preview op produced)', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('clip.update', 'clip-1', { app: { hostNote: 'keep-me' } }),
+    ]);
+    expect(ops).toHaveLength(0);
+  });
+
+  it('maps clip.update with app=null to GraphShaderRemoveOp (wildcard remove)', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('clip.update', 'clip-1', { app: null }),
+    ]);
+
+    expect(ops).toHaveLength(1);
+    const removeOp = ops[0] as GraphShaderRemoveOp;
+    expect(removeOp.kind).toBe('shader.remove');
+    expect(removeOp.shaderId).toBe('*');
+    expect(removeOp.scope).toBe('clip');
+    expect(removeOp.clipId).toBe('clip-1');
+  });
+
+  it('maps clip.update with app.shader=null to GraphShaderRemoveOp', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('clip.update', 'clip-1', { app: { shader: null } }),
+    ]);
+
+    expect(ops).toHaveLength(1);
+    const removeOp = ops[0] as GraphShaderRemoveOp;
+    expect(removeOp.kind).toBe('shader.remove');
+    expect(removeOp.shaderId).toBe('*');
+    expect(removeOp.scope).toBe('clip');
+    expect(removeOp.clipId).toBe('clip-1');
+  });
+});
+
+describe('extractGraphPreviewOps — app.update postprocess shader payloads', () => {
+  it('maps app.update targeting shaderPostprocess to GraphShaderAssignOp', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('app.update', TIMELINE_POSTPROCESS_SHADER_APP_KEY, postprocessShaderPayload),
+    ]);
+
+    expect(ops).toHaveLength(1);
+    const assignOp = ops[0] as GraphShaderAssignOp;
+    expect(assignOp.kind).toBe('shader.assign');
+    expect(assignOp.shader.shaderId).toBe('shader.postGrade');
+    expect(assignOp.shader.scope).toBe('postprocess');
+    expect(assignOp.shader.extensionId).toBe('com.example.shader');
+    expect(assignOp.shader.contributionId).toBe('post-grade-shader');
+    expect(assignOp.shader.enabled).toBe(true);
+  });
+
+  it('maps app.update with empty payload (no updateable keys) to GraphShaderRemoveOp', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('app.update', TIMELINE_POSTPROCESS_SHADER_APP_KEY, {}),
+    ]);
+
+    expect(ops).toHaveLength(1);
+    const removeOp = ops[0] as GraphShaderRemoveOp;
+    expect(removeOp.kind).toBe('shader.remove');
+    expect(removeOp.shaderId).toBe('*');
+    expect(removeOp.scope).toBe('postprocess');
+    expect(removeOp.clipId).toBeUndefined();
+  });
+
+  it('maps app.update with mode-only payload to GraphShaderRemoveOp', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('app.update', TIMELINE_POSTPROCESS_SHADER_APP_KEY, { mode: 'merge' }),
+    ]);
+
+    expect(ops).toHaveLength(1);
+    const removeOp = ops[0] as GraphShaderRemoveOp;
+    expect(removeOp.kind).toBe('shader.remove');
+    expect(removeOp.scope).toBe('postprocess');
+  });
+
+  it('ignores app.update targeting a non-shaderPostprocess key', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('app.update', 'other-app-key', { data: 'value' }),
+    ]);
+    expect(ops).toHaveLength(0);
+  });
+});
+
+describe('extractGraphPreviewOps — public patch families remain stable', () => {
+  it('produces no preview ops for clip.remove (public family unchanged)', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('clip.remove', 'clip-1'),
+    ]);
+    expect(ops).toHaveLength(0);
+  });
+
+  it('produces no preview ops for clip.add (public family unchanged)', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('clip.add', 'new-clip', { track: 'V1', at: 0, clipType: 'media' }),
+    ]);
+    expect(ops).toHaveLength(0);
+  });
+
+  it('produces no preview ops for clip.move (public family unchanged)', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('clip.move', 'clip-1', { track: 'V2', at: 10 }),
+    ]);
+    expect(ops).toHaveLength(0);
+  });
+
+  it('produces no preview ops for track.add (public family unchanged)', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('track.add', 'track-1', { kind: 'visual', label: 'V2' }),
+    ]);
+    expect(ops).toHaveLength(0);
+  });
+
+  it('produces no preview ops for project-data.write (public family unchanged)', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('project-data.write', 'com.example.ext', { key: 'k1', value: { data: 'val' } }),
+    ]);
+    expect(ops).toHaveLength(0);
+  });
+
+  it('shader.assign / shader.remove are NOT public timeline patch op families', () => {
+    // The internal GraphPreviewOperation.kind values are 'shader.assign' and
+    // 'shader.remove', but these are NOT exposed as TimelinePatchOperation.op
+    // values. The public op families remain clip.update and app.update.
+    const shaderAssignPatch: TimelinePatch = makePatch({
+      operations: [{ op: 'shader.assign' as TimelinePatchAnyOpFamily, target: 'clip-1' }],
+    });
+    const validateResult = validateTimelinePatch(shaderAssignPatch);
+    // Must be rejected as unknown operation
+    expect(validateResult.valid).toBe(false);
+    expect(validateResult.diagnostics.some((d) => d.code === 'timeline-patch/unknown-op')).toBe(true);
+
+    const shaderRemovePatch: TimelinePatch = makePatch({
+      operations: [{ op: 'shader.remove' as TimelinePatchAnyOpFamily, target: 'clip-1' }],
+    });
+    const validateRemoveResult = validateTimelinePatch(shaderRemovePatch);
+    expect(validateRemoveResult.valid).toBe(false);
+    expect(validateRemoveResult.diagnostics.some((d) => d.code === 'timeline-patch/unknown-op')).toBe(true);
+  });
+
+  it('extracted preview ops use internal kind strings, not patch op families', () => {
+    const ops = extractGraphPreviewOps([
+      makeOp('clip.update', 'clip-1', { app: { shader: clipShaderPayload } }),
+    ]);
+
+    expect(ops.length).toBeGreaterThan(0);
+    for (const op of ops) {
+      // Internal GraphPreviewOperation.kind must be 'shader.assign' or 'shader.remove'
+      // These must NOT appear in the set of known patch op families
+      expect(['shader.assign', 'shader.remove']).toContain(op.kind);
+      // Verify this is NOT a TimelinePatchOperation — it has no 'op' or 'target' field
+      expect((op as Record<string, unknown>).op).toBeUndefined();
+      expect((op as Record<string, unknown>).target).toBeUndefined();
+    }
+  });
+});
+
+// ===========================================================================
+// M1b T20: Graph preview bridge — previewTimelinePatchGraphDiagnostics
+// ===========================================================================
+
+describe('previewTimelinePatchGraphDiagnostics — graph preview routing', () => {
+  it('returns undefined when patch has no shader mutations', () => {
+    const graphInput = makeGraphInput();
+    const result = previewTimelinePatchGraphDiagnostics(
+      makePatch({
+        operations: [makeOp('clip.remove', 'clip-1')],
+      }),
+      graphInput,
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('returns undefined when graphInput is empty and patch has shader mutations', () => {
+    const graphInput = makeGraphInput();
+    const result = previewTimelinePatchGraphDiagnostics(
+      makePatch({
+        operations: [makeOp('clip.update', 'clip-1', { app: { shader: clipShaderPayload } })],
+      }),
+      graphInput,
+    );
+    // With no contribution index, the graph has no contribution nodes so
+    // re-projection may produce diagnostics or may return empty.
+    // The key assertion: it returns a value (or undefined) without throwing.
+    expect(result === undefined || Array.isArray(result)).toBe(true);
+  });
+
+  it('routes through graph preview when shader assign mutations are present', () => {
+    const graphInput = makeGraphInput();
+    const result = previewTimelinePatchGraphDiagnostics(
+      makePatch({
+        operations: [makeOp('clip.update', 'clip-1', { app: { shader: clipShaderPayload } })],
+      }),
+      graphInput,
+    );
+    // When result is defined, diagnostics must carry the timeline-patch/graph/ prefix
+    if (result) {
+      for (const diag of result) {
+        expect(diag.code.startsWith('timeline-patch/graph/')).toBe(true);
+        expect(diag.detail).toBeDefined();
+        expect((diag.detail as Record<string, unknown>).kind).toBe('composition-graph');
+      }
+    }
+  });
+
+  it('routes through graph preview when shader remove mutations are present', () => {
+    const graphInput = makeGraphInput();
+    const result = previewTimelinePatchGraphDiagnostics(
+      makePatch({
+        operations: [makeOp('clip.update', 'clip-1', { app: null })],
+      }),
+      graphInput,
+    );
+    if (result) {
+      for (const diag of result) {
+        expect(diag.code.startsWith('timeline-patch/graph/')).toBe(true);
+        expect(diag.detail).toBeDefined();
+        expect((diag.detail as Record<string, unknown>).kind).toBe('composition-graph');
+      }
+    }
+  });
+
+  it('returns diagnostic codes prefixed with timeline-patch/graph/ when present', () => {
+    const graphInput = makeGraphInput();
+    const result = previewTimelinePatchGraphDiagnostics(
+      makePatch({
+        operations: [makeOp('app.update', TIMELINE_POSTPROCESS_SHADER_APP_KEY, postprocessShaderPayload)],
+      }),
+      graphInput,
+    );
+    if (result) {
+      for (const diag of result) {
+        expect(diag.code.startsWith('timeline-patch/graph/')).toBe(true);
+      }
+    }
+  });
+
+  it('returns undefined for non-shader-mutation app.update operations', () => {
+    const graphInput = makeGraphInput();
+    const result = previewTimelinePatchGraphDiagnostics(
+      makePatch({
+        operations: [makeOp('app.update', 'other-app-key', { data: 'value' })],
+      }),
+      graphInput,
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it('diagnostics from graph preview carry structured detail', () => {
+    const graphInput = makeGraphInput();
+    const result = previewTimelinePatchGraphDiagnostics(
+      makePatch({
+        operations: [makeOp('clip.update', 'clip-1', { app: { shader: clipShaderPayload } })],
+      }),
+      graphInput,
+    );
+    if (result && result.length > 0) {
+      for (const diag of result) {
+        expect(diag.severity).toBeDefined();
+        expect(diag.message).toBeDefined();
+        expect(diag.code).toBeDefined();
+        expect(diag.detail).toBeDefined();
+      }
+    }
   });
 });

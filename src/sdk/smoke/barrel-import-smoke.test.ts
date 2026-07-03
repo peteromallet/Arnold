@@ -41,6 +41,10 @@ import {
   validateInstalledPackage,
   // settings
   createExtensionSettingsService,
+  // M1b CompositionGraph
+  COMPOSITION_NODE_KINDS,
+  COMPOSITION_EDGE_KINDS,
+  REFERENCE_STATES,
 } from '@/sdk/index';
 import type {
   // ids
@@ -202,6 +206,15 @@ import type {
   ProposalImportStatus,
   ProposalImportDiagnostic,
   ProposalImportResult,
+  // M1b CompositionGraph types
+  CompositionNodeKind,
+  CompositionEdgeKind,
+  ReferenceState,
+  CompositionGraphNode,
+  CompositionGraphEdge,
+  CompositionReferenceStateEntry,
+  CompositionGraphPreviewResult,
+  CompositionGraph,
 } from '@/sdk/index';
 
 // ===========================================================================
@@ -451,6 +464,21 @@ import type {
   LiveBinding as LiveBinding_Direct,
   LiveSessionsService as LiveSessionsService_Direct,
 } from '../video/liveData';
+
+// M1b CompositionGraph direct imports
+import {
+  type CompositionNodeKind as CompNodeKind_Direct,
+  type CompositionEdgeKind as CompEdgeKind_Direct,
+  type ReferenceState as RefState_Direct,
+  type CompositionGraphNode as CompGraphNode_Direct,
+  type CompositionGraphEdge as CompGraphEdge_Direct,
+  type CompositionReferenceStateEntry as CompRefStateEntry_Direct,
+  type CompositionGraphPreviewResult as CompGraphPreview_Direct,
+  type CompositionGraph as CompGraph_Direct,
+  COMPOSITION_NODE_KINDS as COMP_NODE_KINDS_Direct,
+  COMPOSITION_EDGE_KINDS as COMP_EDGE_KINDS_Direct,
+  REFERENCE_STATES as REF_STATES_Direct,
+} from '../video/composition/graph';
 
 // ===========================================================================
 // Smoke coverage: each module family is exercised through a focused test
@@ -2757,6 +2785,125 @@ describe('M2b barrel-import smoke — source maps', () => {
     };
     expect(meta.extensionId).toBe('direct.ext');
     expect(meta.generatedAt).toBe(0);
+  });
+});
+
+// ===========================================================================
+// M1b: CompositionGraph barrel-import smoke
+// ===========================================================================
+
+describe('M1b barrel-import smoke — CompositionGraph', () => {
+  it('COMPOSITION_NODE_KINDS is importable from the barrel', () => {
+    expect(COMPOSITION_NODE_KINDS).toEqual(['clip', 'timeline-postprocess', 'contribution']);
+    expect(COMPOSITION_NODE_KINDS).toHaveLength(3);
+  });
+
+  it('COMPOSITION_EDGE_KINDS is importable from the barrel', () => {
+    expect(COMPOSITION_EDGE_KINDS).toEqual(['consumes']);
+    expect(COMPOSITION_EDGE_KINDS).toHaveLength(1);
+  });
+
+  it('REFERENCE_STATES is importable from the barrel', () => {
+    expect(REFERENCE_STATES).toHaveLength(10);
+    expect(REFERENCE_STATES).toContain('resolved');
+    expect(REFERENCE_STATES).toContain('missing');
+    expect(REFERENCE_STATES).toContain('disabled');
+    expect(REFERENCE_STATES).toContain('inactive-reserved');
+    expect(REFERENCE_STATES).toContain('invalid-package');
+    expect(REFERENCE_STATES).toContain('duplicate');
+    expect(REFERENCE_STATES).toContain('settings-error');
+    expect(REFERENCE_STATES).toContain('runtime-error');
+    expect(REFERENCE_STATES).toContain('version-incompatible');
+    expect(REFERENCE_STATES).toContain('unknown');
+  });
+
+  it('CompositionGraphNode is constructable from the barrel', () => {
+    const node: CompositionGraphNode = { id: 'node-1', kind: 'clip' };
+    expect(node.kind).toBe('clip');
+  });
+
+  it('CompositionGraphEdge is constructable from the barrel', () => {
+    const edge: CompositionGraphEdge = {
+      id: 'edge-1', kind: 'consumes', sourceNodeId: 'src', targetNodeId: 'tgt',
+    };
+    expect(edge.kind).toBe('consumes');
+  });
+
+  it('CompositionReferenceStateEntry is constructable from the barrel', () => {
+    const entry: CompositionReferenceStateEntry = {
+      refKey: 'shader:ext:contrib', state: 'resolved', nodeIds: ['n1'],
+    };
+    expect(entry.state).toBe('resolved');
+  });
+
+  it('CompositionGraphPreviewResult is constructable from the barrel', () => {
+    const preview: CompositionGraphPreviewResult = {
+      nodes: [], edges: [], referenceStates: [], diagnostics: [],
+    };
+    expect(preview.diagnostics).toEqual([]);
+  });
+
+  it('CompositionGraph is constructable from the barrel', () => {
+    const graph: CompositionGraph = {
+      nodes: [], edges: [], referenceStates: [], diagnostics: [],
+    };
+    expect(graph.nodes).toEqual([]);
+  });
+
+  it('canonical direct import yields the same constants', () => {
+    expect(COMP_NODE_KINDS_Direct).toEqual(COMPOSITION_NODE_KINDS);
+    expect(COMP_EDGE_KINDS_Direct).toEqual(COMPOSITION_EDGE_KINDS);
+    expect(REF_STATES_Direct).toEqual(REFERENCE_STATES);
+  });
+
+  it('CompositionGraphNode is importable from canonical direct path', () => {
+    const node: CompGraphNode_Direct = { id: 'direct-node', kind: 'timeline-postprocess' };
+    expect(node.kind).toBe('timeline-postprocess');
+  });
+
+  it('CompositionGraphEdge is importable from canonical direct path', () => {
+    const edge: CompGraphEdge_Direct = {
+      id: 'direct-edge', kind: 'consumes', sourceNodeId: 's', targetNodeId: 't',
+    };
+    expect(edge.kind).toBe('consumes');
+  });
+
+  it('CompositionReferenceStateEntry is importable from canonical direct path', () => {
+    const entry: CompRefStateEntry_Direct = { refKey: 'k', state: 'missing', nodeIds: [] };
+    expect(entry.state).toBe('missing');
+  });
+
+  it('CompositionGraphPreviewResult is importable from canonical direct path', () => {
+    const preview: CompGraphPreview_Direct = {
+      nodes: [], edges: [], referenceStates: [], diagnostics: [],
+    };
+    expect(preview.nodes).toEqual([]);
+  });
+
+  it('CompositionGraph is importable from canonical direct path', () => {
+    const graph: CompGraph_Direct = {
+      nodes: [], edges: [], referenceStates: [], diagnostics: [],
+    };
+    expect(graph.edges).toEqual([]);
+  });
+
+  it('ReferenceState only accepts the 10 M1b states from the barrel', () => {
+    const states: ReferenceState[] = [
+      'resolved', 'missing', 'disabled', 'inactive-reserved',
+      'invalid-package', 'duplicate', 'settings-error', 'runtime-error',
+      'version-incompatible', 'unknown',
+    ];
+    expect(states).toHaveLength(10);
+  });
+
+  it('CompositionNodeKind only accepts the 3 M1b kinds', () => {
+    const kinds: CompositionNodeKind[] = ['clip', 'timeline-postprocess', 'contribution'];
+    expect(kinds).toHaveLength(3);
+  });
+
+  it('CompositionEdgeKind only accepts consumes', () => {
+    const kind: CompositionEdgeKind = 'consumes';
+    expect(kind).toBe('consumes');
   });
 });
 
