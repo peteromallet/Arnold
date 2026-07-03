@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,21 @@ _INCIDENT_LEDGER_DIR = Path(".megaplan") / "incident-ledger"
 _EVENTS_FILE = "events.jsonl"
 _INCIDENTS_FILE = "incidents.json"
 _PROBLEMS_FILE = "problems.json"
+_TRANSIENT_PATH_RE = re.compile(
+    r"(?:(?:/tmp|/var/tmp|/private/tmp|/run/user/\d+|/workspace)/[^\s]+)"
+)
+_ISO_TIMESTAMP_RE = re.compile(
+    r"\b\d{4}-\d{2}-\d{2}[tT ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?\b"
+)
+_DATE_ONLY_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_HEXISH_TOKEN_RE = re.compile(r"\b[a-f0-9]{12,64}\b", re.IGNORECASE)
+_ATTEMPT_TOKEN_RE = re.compile(r"\battempt[-_ ]?\d+\b", re.IGNORECASE)
+_PID_TOKEN_RE = re.compile(r"\bpid[-_ :=#]*\d+\b", re.IGNORECASE)
+_BARE_NUMBER_RE = re.compile(r"\b\d+\b")
+_VOLATILE_TOKEN_RE = re.compile(
+    r"\b(?:session|worker|container|sandbox|tmp|temp|run|job|exec|process|proc)\b",
+    re.IGNORECASE,
+)
 
 
 def rebuild_projections(root: Path | None = None) -> dict[str, Any]:
@@ -766,7 +782,14 @@ def _problem_id_for_payload(payload: dict[str, Any]) -> str:
 
 
 def _normalized_signature(payload: dict[str, Any]) -> str:
-    summary = payload["summary"].lower()
+    summary = str(payload["summary"]).lower()
+    summary = _TRANSIENT_PATH_RE.sub(" transient_path ", summary)
+    summary = _ISO_TIMESTAMP_RE.sub(" timestamp ", summary)
+    summary = _DATE_ONLY_RE.sub(" date ", summary)
+    summary = _PID_TOKEN_RE.sub(" pid ", summary)
+    summary = _ATTEMPT_TOKEN_RE.sub(" attempt ", summary)
+    summary = _HEXISH_TOKEN_RE.sub(" transient_id ", summary)
+    summary = _BARE_NUMBER_RE.sub(" ", summary)
     normalized_parts: list[str] = []
     current = []
     for char in summary:
@@ -778,7 +801,12 @@ def _normalized_signature(payload: dict[str, Any]) -> str:
             current = []
     if current:
         normalized_parts.append("".join(current))
-    return " ".join(normalized_parts) or "unknown"
+    filtered = [
+        token
+        for token in normalized_parts
+        if not _VOLATILE_TOKEN_RE.fullmatch(token)
+    ]
+    return " ".join(filtered) or "unknown"
 
 
 def _extract_fix_commit(payload: dict[str, Any]) -> str | None:

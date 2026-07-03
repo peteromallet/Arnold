@@ -41,10 +41,35 @@ _EVENT_PREFIXES = {
     "watchdog_dispatch": "wdd",
     "meta_repair_classification": "mrc",
     "meta_repair_attempt": "mra",
+    "six_hour_auditor_diagnosis": "sha",
+    "six_hour_auditor_audit_complete": "shc",
+    "github_issue_published": "ghp",
+    "github_issue_publish_failed": "ghf",
     "install_sync_applied": "isa",
     "install_sync_failed": "isf",
     "repair_retriggered": "rr",
     "verified_recovered": "vr",
+}
+
+_AUDIT_COMPLETE_OUTCOMES = {
+    "recovered",
+    "escalated",
+    "audit_cycle_complete",
+}
+
+_SIX_HOUR_AUDITOR_HANDOFFS = {
+    None,
+    "immediate_repair.repair_attempt",
+    "meta_repair.repair_attempt",
+    "github_sync.publish",
+    "six_hour_auditor.diagnosis",
+}
+
+_GITHUB_SYNC_HANDOFFS = {
+    None,
+    "github_sync.publish",
+    "github_sync.retry",
+    "six_hour_auditor.diagnosis",
 }
 
 
@@ -69,6 +94,21 @@ def _append(root: Path | str | None, event: dict[str, Any]) -> dict[str, Any]:
     """Validate and append *event* to the incident ledger, return the envelope."""
     ledger = IncidentLedger(_resolve_root(root))
     return ledger.append_event(event)
+
+
+def _require_handoff(next_expected_event: str | None, *, allowed: set[str | None], helper: str) -> None:
+    if next_expected_event not in allowed:
+        raise ValueError(
+            f"{helper} next_expected_event must be one of "
+            f"{sorted(value for value in allowed if value is not None)!r} or null"
+        )
+
+
+def _require_allowed_outcome(outcome: str, *, allowed: set[str], helper: str) -> None:
+    if outcome not in allowed:
+        raise ValueError(
+            f"{helper} outcome must be one of {sorted(allowed)!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +298,109 @@ def append_meta_repair_attempt(
     return _append(root, event)
 
 
+def append_six_hour_auditor_diagnosis(
+    *,
+    incident_id: str,
+    summary: str,
+    outcome: str = "diagnosed",
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = "six_hour_auditor.audit_complete",
+    decision: dict[str, Any] | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a six-hour auditor diagnosis event."""
+    _require_handoff(
+        next_expected_event,
+        allowed=_SIX_HOUR_AUDITOR_HANDOFFS | {"six_hour_auditor.audit_complete"},
+        helper="append_six_hour_auditor_diagnosis",
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["six_hour_auditor_diagnosis"]),
+        "ts": _utc_now_iso(),
+        "type": "six_hour_auditor.diagnosis",
+        "actor": "six_hour_auditor",
+        "scope": "repair_system",
+        "outcome": outcome,
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+        "incident_id": incident_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if decision is not None:
+        event["decision"] = decision
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
+def append_six_hour_auditor_audit_complete(
+    *,
+    incident_id: str,
+    summary: str,
+    outcome: str,
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    problem_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = None,
+    decision: dict[str, Any] | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a six-hour auditor audit_complete handoff event."""
+    _require_allowed_outcome(
+        outcome,
+        allowed=_AUDIT_COMPLETE_OUTCOMES,
+        helper="append_six_hour_auditor_audit_complete",
+    )
+    _require_handoff(
+        next_expected_event,
+        allowed=_SIX_HOUR_AUDITOR_HANDOFFS,
+        helper="append_six_hour_auditor_audit_complete",
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["six_hour_auditor_audit_complete"]),
+        "ts": _utc_now_iso(),
+        "type": "six_hour_auditor.audit_complete",
+        "actor": "six_hour_auditor",
+        "scope": "repair_system",
+        "outcome": outcome,
+        "summary": summary,
+        "evidence": evidence if evidence is not None else [],
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+        "incident_id": incident_id,
+    }
+    if session_id:
+        event["session_id"] = session_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if decision is not None:
+        event["decision"] = decision
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
 # ---------------------------------------------------------------------------
 # Install-sync helpers
 # ---------------------------------------------------------------------------
@@ -439,6 +582,124 @@ def append_verified_recovered(
     return _append(root, event)
 
 
+def append_github_issue_published(
+    *,
+    summary: str,
+    repo: str,
+    number: int,
+    url: str,
+    action: str,
+    incident_id: str | None = None,
+    problem_id: str | None = None,
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = None,
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a successful GitHub issue publication event."""
+    _require_handoff(
+        next_expected_event,
+        allowed=_GITHUB_SYNC_HANDOFFS,
+        helper="append_github_issue_published",
+    )
+    event_evidence = list(evidence or [])
+    event_evidence.append(
+        {
+            "kind": "github.issue",
+            "repo": repo,
+            "number": number,
+            "url": url,
+            "action": action,
+        }
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["github_issue_published"]),
+        "ts": _utc_now_iso(),
+        "type": "github_sync.issue_published",
+        "actor": "github_sync",
+        "scope": "repair_system",
+        "outcome": "published",
+        "summary": summary,
+        "evidence": event_evidence,
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+    }
+    if incident_id:
+        event["incident_id"] = incident_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if session_id:
+        event["session_id"] = session_id
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
+def append_github_issue_publish_failed(
+    *,
+    summary: str,
+    repo: str,
+    action: str,
+    error: str,
+    incident_id: str | None = None,
+    problem_id: str | None = None,
+    evidence: list[Any] | None = None,
+    session_id: str | None = None,
+    parent_event_ids: list[str] | None = None,
+    trigger_event_id: str | None = None,
+    deadline_ts: str | None = None,
+    next_expected_event: str | None = "github_sync.retry",
+    links: dict[str, Any] | None = None,
+    root: Path | str | None = None,
+) -> dict[str, Any]:
+    """Append a failed GitHub issue publication event."""
+    _require_handoff(
+        next_expected_event,
+        allowed=_GITHUB_SYNC_HANDOFFS,
+        helper="append_github_issue_publish_failed",
+    )
+    event_evidence = list(evidence or [])
+    event_evidence.append(
+        {
+            "kind": "github.issue",
+            "repo": repo,
+            "action": action,
+            "error": error,
+        }
+    )
+    event: dict[str, Any] = {
+        "schema_version": 1,
+        "event_id": _new_event_id(_EVENT_PREFIXES["github_issue_publish_failed"]),
+        "ts": _utc_now_iso(),
+        "type": "github_sync.issue_publish_failed",
+        "actor": "github_sync",
+        "scope": "repair_system",
+        "outcome": "failed",
+        "summary": summary,
+        "evidence": event_evidence,
+        "parent_event_ids": parent_event_ids if parent_event_ids is not None else [],
+        "trigger_event_id": trigger_event_id,
+        "next_expected_event": next_expected_event,
+        "deadline_ts": deadline_ts,
+    }
+    if incident_id:
+        event["incident_id"] = incident_id
+    if problem_id:
+        event["problem_id"] = problem_id
+    if session_id:
+        event["session_id"] = session_id
+    if links is not None:
+        event["links"] = links
+    return _append(root, event)
+
+
 # ---------------------------------------------------------------------------
 # Chain-runner helpers
 # ---------------------------------------------------------------------------
@@ -539,11 +800,15 @@ def append_dispatch_expired(
 __all__ = [
     "append_chain_lifecycle",
     "append_dispatch_expired",
+    "append_github_issue_publish_failed",
+    "append_github_issue_published",
     "append_install_sync_applied",
     "append_install_sync_failed",
     "append_meta_repair_attempt",
     "append_meta_repair_classification",
     "append_repair_retriggered",
+    "append_six_hour_auditor_audit_complete",
+    "append_six_hour_auditor_diagnosis",
     "append_verified_recovered",
     "append_watchdog_detection",
     "append_watchdog_dispatch",

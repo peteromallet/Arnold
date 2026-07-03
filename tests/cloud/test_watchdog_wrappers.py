@@ -7697,7 +7697,12 @@ def test_arnold_progress_auditor_wrapper_has_bash_n_syntax_and_contract() -> Non
     # Evidence-citing required output shape.
     assert "hypothesis" in text
     assert "recommendation" in text
-    assert "You are auditing a cloud megaplan SESSION, not just one plan." in text
+    assert "You are reconciling a cloud megaplan SESSION, not just one plan." in text
+    assert "Reconciler findings:" in text
+    assert "Primary evidence contract:" in text
+    assert "Treat bounded incident brief and projection records as the source of truth." in text
+    assert "Use live-process discovery, repair-data sidecars, tmux state, and watchdog archives only as corroboration." in text
+    assert "Reconcile contradictions explicitly instead of letting corroboration override the ledger." in text
     assert "Superfixer health / repair-the-repairer" in text
     assert "pipeline friction map" in text
     assert "Treat all repair/autofix systems as intended to be enabled by default" in text

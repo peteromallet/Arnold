@@ -209,6 +209,35 @@ def _run_dispatch_one(
     return brief, resp, err, updated
 
 
+def _run_record_incident_audits(tmp_path: Path, findings_data: dict) -> list[dict]:
+    gather_dir = tmp_path / "gather"
+    gather_dir.mkdir(parents=True, exist_ok=True)
+    findings_path = gather_dir / "findings.json"
+    findings_path.write_text(json.dumps(findings_data), encoding="utf-8")
+
+    script = "\n\n".join(
+        [
+            _extract_auditor_function("record_incident_audits"),
+            f"WRAPPER_REPO_ROOT={shlex.quote(str(REPO_ROOT))}",
+            f"ARNOLD_SRC={shlex.quote(str(REPO_ROOT))}",
+            f"GATHER_DIR={shlex.quote(str(gather_dir))}",
+            "AUDIT_GITHUB_REPO=''",
+            "AUDIT_GITHUB_REPO_PATH=''",
+            "AUDIT_GITHUB_LABELS='incident-control-plane,persistent-problem'",
+            "record_incident_audits " + shlex.quote(str(findings_path)),
+        ]
+    )
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+
+    events_path = tmp_path / "workspace" / ".megaplan" / "incident-ledger" / "events.jsonl"
+    return [
+        json.loads(line)
+        for line in events_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 class TestGreenChecksNoFindings:
     """Report shape when all plans are healthy (no suspicious signals)."""
 
@@ -892,8 +921,75 @@ class TestAuditorAutofixPromptGates:
         assert REDACTION in updated["deepseek_response"]
         assert "No-secrets rule:" in brief
 
+    def test_prompt_uses_reconciler_language_and_brief_first_evidence(self, tmp_path: Path) -> None:
+        brief, _resp, _err, _updated = _run_dispatch_one(
+            tmp_path,
+            gather_payload={
+                "plan": "audit-reconciler",
+                "reasons": ["reconciler watchdog=watchdog_report_stale: stale watchdog evidence"],
+                "session_header": {"kind": "chain"},
+            },
+        )
+
+        assert "Reconciler findings:" in brief
+        assert "Treat bounded incident brief and projection records as the source of truth." in brief
+        assert "Use live-process discovery, repair-data sidecars, tmux state, and watchdog archives only as corroboration." in brief
+        assert "You are reconciling a cloud megaplan SESSION" in brief
+        assert "ledger reconciliation is required" in brief
+
 
 class TestAuditorCrossReferences:
+    def test_gather_prefers_incident_brief_and_projection_records(self, tmp_path: Path) -> None:
+        from arnold_pipelines.megaplan.cloud.incident_bridge import append_watchdog_detection
+
+        workspace = tmp_path / "workspace" / "demo"
+        plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        (plan_dir / "state.json").write_text(
+            json.dumps(
+                {
+                    "name": "demo-plan",
+                    "created_at": "2026-07-02T20:00:00+00:00",
+                    "current_state": "executing",
+                    "iteration": 2,
+                    "last_gate": {"recommendation": "iterate"},
+                    "history": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        (plan_dir / "events.ndjson").write_text("", encoding="utf-8")
+
+        append_watchdog_detection(
+            incident_id="inc-demo",
+            session_id="demo-session",
+            summary="repair stalled waiting on watchdog follow-up",
+            outcome="progress_stall",
+            next_expected_event="immediate_repair.repair_attempt",
+            deadline_ts="2026-07-02T19:00:00+00:00",
+            root=workspace,
+        )
+
+        findings = _run_gather_program(
+            [
+                {
+                    "workspace": str(workspace),
+                    "plan": "demo-plan",
+                    "session": "demo-session",
+                    "kind": "plan",
+                    "sources": ["marker"],
+                }
+            ],
+            tmp_path,
+        )
+
+        assert len(findings["findings"]) == 1
+        finding = findings["findings"][0]
+        assert finding["incident_brief"]["incident_id"] == "inc-demo"
+        assert finding["incident_audit"]["incident_id"] == "inc-demo"
+        assert finding["reasons"][0].startswith("reconciler ")
+        assert Path(finding["source_refs"]["incident_summary_path"]).exists()
+
     def test_gather_populates_bounded_redacted_cross_references(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace" / "demo"
         plan_dir = workspace / ".megaplan" / "plans" / "demo-plan"
@@ -1138,6 +1234,60 @@ class TestAuditorCrossReferences:
         assert payload["related_prior_incidents"] == [
             {"incident_id": "incident-prior", "path": "/tmp/incident-prior.json", "session": "demo-session", "state": "resolved", "source": "incident_record"}
         ]
+
+    def test_record_incident_audits_appends_diagnosis_and_audit_complete(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        findings_data = {
+            "findings": [
+                {
+                    "plan": "demo-plan",
+                    "workspace": str(workspace),
+                    "session": "demo-session",
+                    "incident_brief": {
+                        "incident_id": "inc-123",
+                        "summary": "watchdog reconciliation pending",
+                        "deadline_ts": "2026-07-04T00:00:00+00:00",
+                        "last_timestamp": "2026-07-03T20:00:00+00:00",
+                    },
+                    "incident_projection": {"incident_id": "inc-123"},
+                    "problem_projection": {"problem_id": "problem-123"},
+                    "incident_audit": {
+                        "incident_id": "inc-123",
+                        "problem_id": "problem-123",
+                        "findings": [
+                            {
+                                "layer": "watchdog",
+                                "status": "error",
+                                "severity": "error",
+                                "code": "watchdog_report_stale",
+                                "message": "The watchdog report is older than the configured audit cadence.",
+                            }
+                        ],
+                        "diagnosis": {"summary": "Audit found stale watchdog evidence.", "finding_count": 1, "highest_severity": "error"},
+                        "audit_complete": {
+                            "outcome": "escalated",
+                            "summary": "Audit found stale watchdog evidence.",
+                            "next_expected_event": "watchdog.dispatch",
+                        },
+                    },
+                    "source_refs": {
+                        "incident_summary_path": str(workspace / ".megaplan" / "incident-ledger" / "summaries" / "incidents" / "inc-123.json"),
+                        "problem_summary_path": str(workspace / ".megaplan" / "incident-ledger" / "summaries" / "problems" / "problem-123.json"),
+                    },
+                }
+            ],
+            "green_checks": [],
+        }
+
+        events = _run_record_incident_audits(tmp_path, findings_data)
+
+        assert [event["payload"]["type"] for event in events] == [
+            "six_hour_auditor.diagnosis",
+            "six_hour_auditor.audit_complete",
+        ]
+        assert events[0]["payload"]["next_expected_event"] == "six_hour_auditor.audit_complete"
+        assert events[1]["payload"]["next_expected_event"] == "six_hour_auditor.diagnosis"
 
 
 class TestRootCausePatternsJsonSchema:

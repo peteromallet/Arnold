@@ -38,7 +38,7 @@ class IncidentLedger:
         return self._ledger_dir / _EVENTS_FILE
 
     def append_event(self, event: dict[str, Any]) -> dict[str, Any]:
-        """Validate and append one incident event to the canonical ledger."""
+        """Redact, validate, and append one incident event to the canonical ledger."""
         payload = validate_incident_event(event)
         return self._journal.emit(
             f"incident.{payload['type']}",
