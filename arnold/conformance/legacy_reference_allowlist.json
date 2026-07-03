@@ -31,36 +31,6 @@
       "reason": "Policy catalogue references the pre-migration source path as historical migration context."
     },
     {
-      "path": "arnold_pipelines/megaplan/skills/megaplan-bakeoff/SKILL.md",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Skill documentation references the deleted legacy package in migration context."
-    },
-    {
-      "path": "arnold_pipelines/megaplan/skills/megaplan-bakeoff/SKILL.md",
-      "pattern": "python -m arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Skill documentation references the deleted legacy CLI command in migration context."
-    },
-    {
-      "path": "arnold_pipelines/megaplan/skills/megaplan-cloud/SKILL.md",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Skill documentation references the deleted legacy package in migration context."
-    },
-    {
-      "path": "arnold_pipelines/megaplan/skills/megaplan/SKILL.md",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Skill documentation references the deleted legacy package in migration context."
-    },
-    {
-      "path": "arnold_pipelines/megaplan/skills/megaplan/SKILL.md",
-      "pattern": "python -m arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Skill documentation references the deleted legacy CLI command in migration context."
-    },
-    {
       "path": "arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
