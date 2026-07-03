@@ -3668,11 +3668,7 @@ def _handle_outcome(
             f"{outcome.reason}\n"
         )
         return "stop"
-    if (
-        status == "blocked"
-        and "prerequisite-blocked" in outcome.reason
-        and "not satisfied" in outcome.reason
-    ):
+    if status == "blocked" and "prerequisite-blocked" in outcome.reason:
         writer(
             f"[chain] plan {outcome.plan} stopped on unresolved explicit blocker: "
             f"{outcome.reason}\n"
