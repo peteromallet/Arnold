@@ -6646,6 +6646,36 @@ def test_plan_phase_health_ignores_sandbox_refusal_after_later_progress(tmp_path
     assert result == "ok"
 
 
+def test_plan_phase_health_ignores_sandbox_refusal_with_recent_active_step(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    plan = workspace / ".megaplan" / "plans" / "m2-demo"
+    plan.mkdir(parents=True)
+    (plan / "state.json").write_text(
+        json.dumps(
+            {
+                "current_state": "finalized",
+                "active_step": {
+                    "phase": "execute",
+                    "worker_pid": 1234,
+                    "last_activity_at": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+                },
+                "history": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (workspace / ".megaplan" / "cloud-chain-demo.log").write_text(
+        "sandbox refused terminal: refusing terminal command: leading `cd /workspace/arnold` "
+        "targets /workspace/arnold, which is outside the sandbox root/project directory "
+        "/workspace/native-composition-followup/Arnold\n",
+        encoding="utf-8",
+    )
+
+    result = _run_phase(workspace)
+
+    assert result == "ok"
+
+
 def _extract_stall_program() -> str:
     """Pull the python body of plan_progress_stall_status() out of the wrapper."""
     text = _wrapper("arnold-watchdog")
