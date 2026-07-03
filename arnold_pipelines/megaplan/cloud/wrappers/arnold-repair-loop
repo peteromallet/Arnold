@@ -278,19 +278,105 @@ PY
   fi
 }
 
+run_with_bounded_env() {
+  local timeout_secs="$1"
+  local stdin_path="$2"
+  shift 2
+  PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" python3 - "$timeout_secs" "$stdin_path" "$@" <<'PY'
+import os
+import subprocess
+import sys
+
+timeout_secs = int(float(sys.argv[1]))
+stdin_path = sys.argv[2]
+argv = sys.argv[3:]
+
+whitelist = (
+    "ANTHROPIC_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GH_TOKEN",
+    "HOME",
+    "KIMI_API_KEY",
+    "KIMI_BASE_URL",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "LOGNAME",
+    "MEGAPLAN_DEFAULT_PROFILE",
+    "MEGAPLAN_REPAIR_PROFILE",
+    "NO_COLOR",
+    "OPENAI_API_KEY",
+    "OPENROUTER_API_KEY",
+    "PATH",
+    "PYENV_VERSION",
+    "PYTHONPATH",
+    "PYTHONSAFEPATH",
+    "TERM",
+    "TMPDIR",
+    "USER",
+    "ZHIPU_API_KEY",
+)
+env = {}
+for key in whitelist:
+    value = os.environ.get(key)
+    if value:
+        env[key] = value
+
+stdin_handle = None
+try:
+    if stdin_path:
+        stdin_handle = open(stdin_path, "rb")
+    completed = subprocess.run(
+        argv,
+        check=False,
+        env=env,
+        stdin=stdin_handle,
+        timeout=timeout_secs,
+    )
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+finally:
+    if stdin_handle is not None:
+        stdin_handle.close()
+
+raise SystemExit(completed.returncode)
+PY
+}
+
+finalize_nonterminal_repair_outcome() {
+  local exit_code="${1:-0}"
+  local current_outcome="" final_outcome=""
+  if [[ "$exit_code" == "0" || ! -f "$DATA_FILE" || "$REPAIR_LOCK_DIR_OWNED" != "1" ]]; then
+    return
+  fi
+  current_outcome="$(json_field "$DATA_FILE" outcome 2>/dev/null || true)"
+  case "${current_outcome:-}" in
+    ""|repairing|running)
+      final_outcome="repair_exhausted"
+      if [[ "$(repair_exhausted_should_retry_without_human 2>/dev/null || true)" == "1" ]]; then
+        final_outcome="recurring_retry_pending"
+      fi
+      repair_data_set_outcome "$final_outcome"
+      log "repair loop exited unexpectedly with non-terminal outcome=${current_outcome:-unset}; finalized outcome=$final_outcome session=$SESSION exit_code=$exit_code"
+      ;;
+  esac
+}
+
 shutdown_repair_loop() {
+  local exit_code="${1:-0}"
   if [[ "$REPAIR_SHUTDOWN_RAN" == "1" ]]; then
     return
   fi
   REPAIR_SHUTDOWN_RAN=1
+  finalize_nonterminal_repair_outcome "$exit_code"
   cleanup_children
   release_repair_lock
 }
 
-trap 'shutdown_repair_loop' EXIT
-trap 'shutdown_repair_loop; exit 129' HUP
-trap 'shutdown_repair_loop; exit 130' INT
-trap 'shutdown_repair_loop; exit 143' TERM
+trap 'shutdown_repair_loop $?' EXIT
+trap 'shutdown_repair_loop 129; exit 129' HUP
+trap 'shutdown_repair_loop 130; exit 130' INT
+trap 'shutdown_repair_loop 143; exit 143' TERM
 
 acquire_repair_lock() {
   local existing_pid="" live_pid="" lock_owner_pid="" lock_status="" stale_lock_json="" repair_lock_output=""
@@ -3726,7 +3812,7 @@ run_dev_fix_turn() {
   if [[ "$dispatch_kind" == "hermes" ]]; then
     (
       cd "$ARNOLD_SRC" &&
-      timeout "$dev_timeout" env PYENV_VERSION="${PYENV_VERSION:-3.11.11}" python "$HERMES_LAUNCHER" \
+      run_with_bounded_env "$dev_timeout" "" python "$HERMES_LAUNCHER" \
         --model="$dispatch_model" \
         --toolsets="file,web,terminal" \
         --query_file="$prompt_path" \
@@ -3735,11 +3821,11 @@ run_dev_fix_turn() {
   else
     (
       cd "$ARNOLD_SRC" &&
-      timeout "$dev_timeout" codex exec \
+      run_with_bounded_env "$dev_timeout" "$prompt_path" codex exec \
         --sandbox danger-full-access \
         -c model="$dispatch_model" \
         -c model_reasoning_effort="$reasoning_effort" \
-        - < "$prompt_path"
+        -
     ) >> "$LOG" 2>&1 &
   fi
   local child_pid=$!
@@ -3769,8 +3855,7 @@ run_kimi_launch_turn() {
   log "iteration=$iteration kimi-launch model=$KIMI_MODEL timeout=$KIMI_TIMEOUT"
   (
     cd "$ARNOLD_SRC" &&
-    PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}" \
-    timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \
+    run_with_bounded_env "$KIMI_TIMEOUT" "" python3 -P -m arnold.agent.run_agent \
       --query_file="$prompt_path" \
       --model="$KIMI_MODEL" \
       --api_key="${KIMI_API_KEY:-}" \

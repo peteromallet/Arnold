@@ -5542,13 +5542,16 @@ def test_repair_loop_wrapper_bounds_mechanical_and_kimi_launch_steps() -> None:
     assert "verify_started_and_holding()" in text
     assert "mechanical_launch_step()" in text
     assert "run_kimi_launch_turn()" in text
-    assert 'timeout "$dev_timeout"' in text
-    assert '- < "$prompt_path"' in text
-    assert 'timeout "$KIMI_TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
+    assert "run_with_bounded_env()" in text
+    assert 'run_with_bounded_env "$dev_timeout" "" python "$HERMES_LAUNCHER" \\' in text
+    assert 'run_with_bounded_env "$dev_timeout" "$prompt_path" codex exec \\' in text
+    assert 'run_with_bounded_env "$KIMI_TIMEOUT" "" python3 -P -m arnold.agent.run_agent \\' in text
     assert '--query_file="$prompt_path"' in text
     assert '--query="$(cat "$prompt_path")"' not in text
     assert 'tmux new-session -d -s "$session"' in text
     assert 'repair_data_record_kimi "$iteration" "$CURRENT_ATTEMPT_ID" "running"' in text
+    assert "finalize_nonterminal_repair_outcome()" in text
+    assert "trap 'shutdown_repair_loop $?'" in text
 
 
 def test_repair_loop_health_treats_orphaned_chain_process_as_alive(tmp_path: Path) -> None:
