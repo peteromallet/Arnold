@@ -3044,7 +3044,7 @@ PY
 
 repair_outcome_wants_repair_retry() {
   case "${1:-}" in
-    recurring_retry_pending|repair_timeout|repair_exhausted)
+    recurring_retry_pending)
       return 0
       ;;
     *)
