@@ -118,10 +118,10 @@ on_failure:
 on_escalate:
   abort: stop_chain
 
-merge_policy: review
+merge_policy: auto
 
 driver:
-  auto_approve: false
+  auto_approve: true
   max_iterations: 80
   require_clean_base: true
   robustness: thorough
