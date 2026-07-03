@@ -486,7 +486,7 @@ def _run_command(
     return proc
 
 
-def _run_git_push_command(
+def _run_command(
     root: Path,
     cmd: list[str],
     *,
@@ -760,7 +760,7 @@ def _checkout_milestone_branch(
                             "stderr": rebase.stderr,
                         },
                     )
-                _compat()._run_git_push_command(
+                _compat()._run_command(
                     root,
                     ["git", "push", "--no-verify", "--force-with-lease", "origin", branch],
                     writer=writer,
@@ -1312,7 +1312,7 @@ def commit_plan_artifacts_to_base(
             )
         pushed = False
         if push_enabled:
-            _run_git_push_command(
+            _run_command(
                 root,
                 ["git", "push", "--no-verify", "origin", base_branch],
                 writer=writer,
@@ -1712,14 +1712,14 @@ def _commit_and_push_phase(
                     "continuing to force-with-lease push"
                     f"{(': ' + abort_detail) if abort_detail else ''}\n"
                 )
-            _compat()._run_git_push_command(
+            _compat()._run_command(
                 root,
                 ["git", "push", "--no-verify", "--force-with-lease", "origin", f"HEAD:{branch}"],
                 writer=writer,
                 error_code="git_push_failed",
             )
             return
-    _compat()._run_git_push_command(
+    _compat()._run_command(
         root,
         ["git", "push", "--no-verify", "origin", f"HEAD:{branch}"],
         writer=writer,
