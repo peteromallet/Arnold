@@ -37,6 +37,35 @@ from arnold_pipelines.megaplan.cloud.repair_contract import (
 # ---------------------------------------------------------------------------
 
 
+_CODEX_LAUNCH_FAILURE_NEEDLES = (
+    "Codex meta-repair orchestrator returned no output",
+    "Not inside a trusted directory",
+    "--skip-git-repo-check was not specified",
+    "codex CLI missing; no automated meta-repair",
+)
+
+
+def _is_unrecordable_launch_failure(data: dict) -> bool:
+    """Return True for historical records that never launched meta-repair.
+
+    Older wrappers persisted UNKNOWN/no-output records even when Codex failed
+    before reaching the prompt.  Counting those as meta-repair attempts poisons
+    the no-recursion guard and prevents the fixed wrapper from running.
+    """
+    outcome = str(data.get("outcome") or "")
+    if outcome and outcome not in {"UNKNOWN", "NO_FIX"}:
+        return False
+    haystacks = [
+        str(data.get("diagnosis") or ""),
+        str(data.get("reason") or ""),
+    ]
+    subagent_results = data.get("subagent_results")
+    if isinstance(subagent_results, dict):
+        haystacks.extend(str(value or "") for value in subagent_results.values())
+    joined = "\n".join(haystacks)
+    return any(needle in joined for needle in _CODEX_LAUNCH_FAILURE_NEEDLES)
+
+
 @dataclass(frozen=True)
 class RecursionCheckResult:
     """Result of a meta-repair recursion safety check.
@@ -96,6 +125,8 @@ def check_meta_repair_recursion(
         try:
             data = load_json(record_file, default={})
             if isinstance(data, dict) and data.get("session") == session:
+                if _is_unrecordable_launch_failure(data):
+                    continue
                 record_id = record_file.stem
                 matching_ids.append(record_id)
         except Exception:

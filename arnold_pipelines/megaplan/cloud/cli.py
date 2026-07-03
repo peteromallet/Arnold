@@ -3818,6 +3818,12 @@ def _operator_status(payload):
             "reason": f"merge_policy={{policy.get('merge_policy') or 'review'}} requires human PR merge",
             "next_action": "merge the PR, or use merge_policy: auto for unattended cloud chains",
         }}
+    if status == "running" and _watchdog_is_repairing(payload.get("watchdog_evidence")):
+        return {{
+            "status": "running_repairing",
+            "reason": "runner process is alive, but watchdog has dispatched repair/meta-repair",
+            "next_action": "observe repair artifacts and verify the session advances before relaunching",
+        }}
     if status == "running":
         return {{
             "status": "running_phase",
@@ -4091,6 +4097,7 @@ def _run_cloud_chains(spec: CloudSpec, provider) -> int:
                     f"- {item.get('display_name') or item.get('session')} "
                     f"session={item.get('session')} status={item.get('status')} "
                     f"should_run={'yes' if item.get('should_be_running') else 'no'} "
+                    f"repairing={'yes' if item.get('watchdog_repairing') else 'no'} "
                     f"tmux={item.get('tmux_status')} process={item.get('process_status')}"
                     f"{watchdog_detail}"
                     f"{policy_detail}"
