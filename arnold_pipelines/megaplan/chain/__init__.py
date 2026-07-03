@@ -1784,7 +1784,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         return overrides
 
     authoritative_batch_overrides = _authoritative_batch_task_overrides()
-    authoritative_batch_override_ids = set(authoritative_batch_overrides)
     batches = sorted(
         plan_dir.glob("execution_batch_*.json"),
         key=_execution_batch_sort_key,
@@ -1834,16 +1833,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                     for task in finalize_records
                     if str(task.get("id") or "") not in baseline_unavailable_task_ids
                 ]
-                authoritative_finalize_records = [
-                    task
-                    for task in authoritative_finalize_records
-                    if not (
-                        str(state_payload.get("current_state") or "")
-                        in {"finalized", "executed", "done"}
-                        and str(task.get("id") or "") not in authoritative_batch_override_ids
-                        and str(task.get("status") or "") in {"pending", "blocked", "in_progress"}
-                    )
-                ]
                 if authoritative_batch_overrides:
                     overlaid_finalize_records: list[dict[str, Any]] = []
                     for task in authoritative_finalize_records:
@@ -1853,16 +1842,15 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                             overlaid_finalize_records.append(task)
                             continue
                         merged = dict(task)
-                        if override.get("status") != task.get("status"):
-                            for field in (
-                                "files_changed",
-                                "commands_run",
-                                "evidence_files",
-                                "sections_written",
-                                "evidence",
-                            ):
-                                if field not in override:
-                                    merged.pop(field, None)
+                        for field in (
+                            "files_changed",
+                            "commands_run",
+                            "evidence_files",
+                            "sections_written",
+                            "evidence",
+                        ):
+                            if field not in override:
+                                merged.pop(field, None)
                         for key, value in override.items():
                             if key == "task_id":
                                 continue
@@ -1884,7 +1872,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
         if str(task.get("task_id") or task.get("id") or "")
         not in baseline_unavailable_task_ids
     ]
-    batch_authority_failure: str | None = None
     if authoritative_task_records:
         batch_decisions: dict[str, AuthorityDecision] = {}
         completed = effective_execute_completed_task_ids(
@@ -1897,15 +1884,14 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
             decisions=batch_decisions,
         )
         if not completed:
-            batch_authority_failure = (
-                f"{latest.name} has no corroborated completed task IDs"
-            )
+            return False, f"{latest.name} has no corroborated completed task IDs"
         incomplete = _non_authoritative_task_reasons(
             authoritative_task_records, completed, batch_decisions
         )
         if incomplete:
-            batch_authority_failure = (
-                f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}"
+            return (
+                False,
+                f"{latest.name} has non-authoritative tasks: {', '.join(incomplete)}",
             )
 
     if authoritative_finalize_records:
@@ -1934,10 +1920,6 @@ def _latest_execution_batch_all_tasks_done(plan_dir: Path) -> tuple[bool, str]:
                 False,
                 f"finalize.json has non-authoritative tasks: {', '.join(pending)}",
             )
-        if batch_authority_failure is not None:
-            return True, "finalize.json"
-    if batch_authority_failure is not None:
-        return False, batch_authority_failure
     return True, latest.name
 
 
@@ -3434,17 +3416,10 @@ def _reconcile_chain_from_ground_truth(
                 f"-> {next_index}\n"
             )
             state.current_milestone_index = next_index
-            if next_index >= len(spec.milestones):
+            if next_index < len(spec.milestones):
                 state.current_plan_name = None
                 state.pr_number = None
                 state.pr_state = None
-                state.last_state = "done"
-            else:
-                state.current_plan_name = None
-                state.pr_number = None
-                state.pr_state = None
-                if state.last_state in {STATE_BLOCKED, "authority_divergence"}:
-                    state.last_state = "done"
 
     _append_reconciliation_audit(
         state,
@@ -3693,7 +3668,11 @@ def _handle_outcome(
             f"{outcome.reason}\n"
         )
         return "stop"
-    if status == "blocked" and "prerequisite-blocked" in outcome.reason:
+    if (
+        status == "blocked"
+        and "prerequisite-blocked" in outcome.reason
+        and "not satisfied" in outcome.reason
+    ):
         writer(
             f"[chain] plan {outcome.plan} stopped on unresolved explicit blocker: "
             f"{outcome.reason}\n"
@@ -3835,6 +3814,78 @@ def _assert_clean_base(
         f"working base carries uncommitted WIP ({sample}). Commit, stash, or run "
         f"off a clean fork of {root.name}.",
     )
+
+
+def _preserve_carried_wip_before_retry(
+    root: Path,
+    spec_path: Path,
+    state: ChainState,
+    milestone: "MilestoneSpec",
+    plan_name: str | None,
+    *,
+    writer,
+) -> None:
+    """Stash abandoned attempt WIP before re-initializing a milestone retry.
+
+    This runs only when the chain has decided the current plan is not resumable
+    and will force a fresh init. Without preserving the failed attempt's working
+    tree, the next ``require_clean_base`` check reports the abandoned WIP as the
+    root failure and hides the original blocker.
+    """
+    carried = _carried_wip_paths(root)
+    if not carried:
+        return
+
+    sample = ", ".join(p.name for p in carried[:5])
+    message = (
+        f"megaplan-chain retry-preserve {milestone.label}"
+        + (f" plan={plan_name}" if plan_name else "")
+    )
+    writer(
+        f"[chain] retry for {milestone.label} would re-init over carried WIP "
+        f"({sample}); preserving via git stash before retry\n"
+    )
+    proc = subprocess.run(
+        ["git", "stash", "push", "--include-untracked", "-m", message],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if proc.returncode != 0:
+        raise CliError(
+            "retry_preserve_failed",
+            "retry could not preserve carried WIP before re-init for "
+            f"{milestone.label}: {proc.stderr.strip() or proc.stdout.strip()}",
+        )
+
+    stash_proc = subprocess.run(
+        ["git", "stash", "list", "--format=%gd", "-n", "1"],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    if stash_proc.returncode != 0:
+        raise CliError(
+            "retry_preserve_failed",
+            "retry preserved carried WIP but could not resolve the stash ref: "
+            f"{stash_proc.stderr.strip() or stash_proc.stdout.strip()}",
+        )
+    stash_ref = stash_proc.stdout.strip()
+    metadata = state.metadata.setdefault("retry_preserved_wip", [])
+    if isinstance(metadata, list):
+        metadata.append(
+            {
+                "milestone": milestone.label,
+                "plan": plan_name,
+                "stash_ref": stash_ref,
+                "sample_paths": [p.as_posix() for p in carried[:20]],
+            }
+        )
+    chain_spec.save_chain_state(spec_path, state)
 
 
 def _maybe_file_ladder_ticket(
@@ -4638,6 +4689,14 @@ def run_chain(
                 )
             else:
                 log(f"retrying milestone {milestone.label}")
+                _preserve_carried_wip_before_retry(
+                    root,
+                    spec_path,
+                    state,
+                    milestone,
+                    state.current_plan_name,
+                    writer=writer,
+                )
                 state.current_plan_name = None  # force re-init next loop
             state.pr_number = None
             state.pr_state = None
