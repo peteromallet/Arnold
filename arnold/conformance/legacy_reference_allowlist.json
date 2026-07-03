@@ -1,6 +1,48 @@
 {
   "references": [
     {
+      "path": "arnold_pipelines/discovery.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Discovery inventory retains legacy source paths as migration/deletion scanner data."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/audits/hermes_vendoring.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Git-history inspection commands that reference the old deleted path for audit trail purposes."
+    },
+    {
+      "path": "scripts/render_package_disposition_md.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Package disposition renderer preserves the historical migration target path required by the generated disposition document."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/cloud/cli.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Cloud compatibility probe intentionally checks for the deleted legacy import root."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/data/cloud_skill.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Generated cloud skill documentation references the pre-migration package layout as historical compatibility context."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/policy_catalogue.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Policy catalogue references the pre-migration source path as historical migration context."
+    },
+    {
+      "path": "arnold_pipelines/megaplan/skills/subagent-launcher/SKILL.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Subagent launcher skill documents legacy runtime discovery fallback context."
+    },
+    {
       "path": "arnold/__init__.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
@@ -73,10 +115,28 @@
       "reason": "Conformance scanner target for detecting the legacy Megaplan reference pattern in repository files."
     },
     {
+      "path": "arnold/conformance/deleted_surfaces.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Deleted-surface inventory intentionally names the legacy package root as a forbidden surface."
+    },
+    {
+      "path": "arnold/conformance/deleted_surfaces.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Deleted-surface inventory intentionally names the legacy source path as a forbidden surface."
+    },
+    {
       "path": "arnold/conformance/workflow_manifest_runtime.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
       "reason": "Neutral-product import boundary scanner target for the deleted legacy Megaplan package root."
+    },
+    {
+      "path": "arnold/pipeline/native/decorators.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Sphinx cross-reference to deleted legacy module; retained as historical documentation of the interface ancestry."
     },
     {
       "path": "arnold/pipeline/native/MILESTONE_3_HANDOFF.md",
@@ -115,12 +175,6 @@
       "reason": "Historical milestone handoff document referencing the pre-migration package layout."
     },
     {
-      "path": "arnold/pipeline/native/decorators.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Sphinx cross-reference to deleted legacy module; retained as historical documentation of the interface ancestry."
-    },
-    {
       "path": "arnold/runtime/CONTRACT.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
@@ -131,12 +185,6 @@
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
       "reason": "Workflow validation denylist target for the deleted legacy Megaplan package root."
-    },
-    {
-      "path": "arnold_pipelines/megaplan/audits/hermes_vendoring.py",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "scanner-target",
-      "reason": "Git-history inspection commands that reference the old deleted path for audit trail purposes."
     },
     {
       "path": "chain_run.log",
@@ -217,6 +265,18 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
+      "path": "docs/arnold/m3-5-canonical-megaplan-source-path-reconciliation.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical migration report references the pre-migration source path."
+    },
+    {
+      "path": "docs/arnold/m3-merge-result-closeout-20260626.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Merge-result closeout checklist verifying the legacy root is absent from HEAD."
+    },
+    {
       "path": "docs/arnold/m5-cli-dispatch-chain.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
@@ -289,6 +349,18 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
+      "path": "docs/arnold/m8-merge-result-conformance-report.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical conformance report references the pre-migration package layout."
+    },
+    {
+      "path": "docs/arnold/megaplan-native-representation-report.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical native-representation report references the pre-migration package layout."
+    },
+    {
       "path": "docs/arnold/megaplan-plugin-clean-gap.md",
       "pattern": "arnold.pipelines.megaplan",
       "category": "historical-non-shipped",
@@ -313,16 +385,52 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
-      "path": "docs/arnold/m3-merge-result-closeout-20260626.md",
+      "path": "docs/arnold/megaplan-subpipeline-path-authority.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "historical-non-shipped",
-      "reason": "Merge-result closeout checklist verifying the legacy root is absent from HEAD."
+      "reason": "Historical path-authority report references the pre-migration source path."
     },
     {
       "path": "docs/arnold/package-disposition.md",
       "pattern": "arnold/pipelines/megaplan",
       "category": "historical-non-shipped",
       "reason": "Historical documentation referencing the pre-migration package layout."
+    },
+    {
+      "path": "docs/arnold/pipelines/migration-final-import-inventory.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical migration inventory references the pre-migration package layout."
+    },
+    {
+      "path": "docs/arnold/pipelines/migration-final-import-inventory.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical migration inventory references the pre-migration source path."
+    },
+    {
+      "path": "docs/arnold/pipelines/native-python-completion-sense-check-deepseek.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical native-python sense-check report references the pre-migration package layout."
+    },
+    {
+      "path": "docs/arnold/pipelines/native-python-completion-sense-check-deepseek.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical native-python sense-check report references the pre-migration source path."
+    },
+    {
+      "path": "docs/arnold/pipelines/native-python-completion-sense-check.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical native-python sense-check report references the pre-migration package layout."
+    },
+    {
+      "path": "docs/arnold/pipelines/native-python-completion-sense-check.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Historical native-python sense-check report references the pre-migration source path."
     },
     {
       "path": "docs/arnold/runtime-salvage-deletion-map.md",
@@ -391,16 +499,94 @@
       "reason": "Historical documentation referencing the pre-migration package layout."
     },
     {
+      "path": "NEXT_STEPS.md",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Working next-steps document referencing the pre-migration package layout."
+    },
+    {
+      "path": "NEXT_STEPS.md",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Working next-steps document referencing the pre-migration package layout."
+    },
+    {
+      "path": "pyproject.toml",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Packaging configuration excludes the deleted legacy source path."
+    },
+    {
       "path": "scripts/check_workflow_pipeline_inventory.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
       "reason": "Denylist entry that names the deleted legacy package for inventory validation."
     },
     {
+      "path": "tests/arnold_pipelines/megaplan/fixtures/native_goldens/legacy_baseline_inventory.json",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Golden legacy baseline inventory records pre-migration package paths."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/fixtures/native_goldens/legacy_baseline_inventory.json",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "historical-non-shipped",
+      "reason": "Golden legacy baseline inventory records pre-migration source paths."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_import_boundaries.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Canonical-package import-boundary test intentionally names the deleted legacy package root."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_import_smoke.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Import smoke tests intentionally verify legacy package prefixes remain unavailable."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_legacy_baseline_inventory.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Test intentionally checks legacy baseline inventory path handling."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_package.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Canonical package tests intentionally assert the deleted legacy package root does not import."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_workflows_components.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Workflow component tests intentionally check that importing canonical modules does not load deleted legacy modules."
+    },
+    {
+      "path": "tests/arnold_pipelines/megaplan/test_workflows_planning.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Workflow planning tests intentionally check that importing canonical modules does not load deleted legacy modules."
+    },
+    {
       "path": "tests/arnold/conformance/test_conformance_gates.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
       "reason": "Negative import and conformance tests intentionally name the deleted legacy Megaplan package root."
+    },
+    {
+      "path": "tests/arnold/conformance/test_deleted_surfaces.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Test intentionally references the deleted legacy package as a negative-import assertion."
+    },
+    {
+      "path": "tests/arnold/conformance/test_deleted_surfaces.py",
+      "pattern": "arnold/pipelines/megaplan",
+      "category": "scanner-target",
+      "reason": "Test intentionally references the deleted legacy source path as a negative-path assertion."
     },
     {
       "path": "tests/arnold/conformance/test_legacy_reference_allowlist.py",
@@ -445,36 +631,6 @@
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
     },
     {
-      "path": "tests/arnold_pipelines/megaplan/test_import_boundaries.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Canonical-package import-boundary test intentionally names the deleted legacy package root."
-    },
-    {
-      "path": "tests/arnold_pipelines/megaplan/test_import_smoke.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Import smoke tests intentionally verify legacy package prefixes remain unavailable."
-    },
-    {
-      "path": "tests/arnold_pipelines/megaplan/test_package.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Canonical package tests intentionally assert the deleted legacy package root does not import."
-    },
-    {
-      "path": "tests/arnold_pipelines/megaplan/test_workflows_components.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Workflow component tests intentionally check that importing canonical modules does not load deleted legacy modules."
-    },
-    {
-      "path": "tests/arnold_pipelines/megaplan/test_workflows_planning.py",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "scanner-target",
-      "reason": "Workflow planning tests intentionally check that importing canonical modules does not load deleted legacy modules."
-    },
-    {
       "path": "tests/boundary/test_deliberation_import_leak.py",
       "pattern": "arnold.pipelines.megaplan",
       "category": "scanner-target",
@@ -491,6 +647,12 @@
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
+    },
+    {
+      "path": "tests/cloud/test_cloud_chain_command.py",
+      "pattern": "arnold.pipelines.megaplan",
+      "category": "scanner-target",
+      "reason": "Cloud-chain test intentionally references the legacy import path for compatibility checks."
     },
     {
       "path": "tests/docs/test_m5_generated_scans.py",
@@ -539,18 +701,6 @@
       "pattern": "arnold/pipelines/megaplan",
       "category": "scanner-target",
       "reason": "Test intentionally references the deleted legacy Megaplan path/package as a scanner fixture or negative-import assertion."
-    },
-    {
-      "path": "NEXT_STEPS.md",
-      "pattern": "arnold.pipelines.megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Working next-steps document referencing the pre-migration package layout."
-    },
-    {
-      "path": "NEXT_STEPS.md",
-      "pattern": "arnold/pipelines/megaplan",
-      "category": "historical-non-shipped",
-      "reason": "Working next-steps document referencing the pre-migration package layout."
     }
   ]
 }

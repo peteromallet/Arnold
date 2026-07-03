@@ -159,7 +159,7 @@ INVENTORIED_RAW_AUTHORITY_SNIPPETS = {
     },
     "arnold_pipelines/megaplan/chain/__init__.py": {
         "verdict = compute_verdict(": "STATUS-06",
-        'if status in {"done", "finalized"}:': "CHAIN-02",
+        'if status == "done":': "CHAIN-02",
     },
     "arnold_pipelines/megaplan/cli/status_view.py": {
         'tasks_done = sum(1 for t in tasks if t.get("status") == "done")': "STATUS-01",

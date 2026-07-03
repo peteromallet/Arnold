@@ -44,14 +44,23 @@ python -m arnold_pipelines.megaplan cloud deploy
 
 ```bash
 python -m arnold_pipelines.megaplan cloud bootstrap .megaplan/initiatives/tiny-plan/briefs/tiny-plan.md
-python -m arnold_pipelines.megaplan cloud chain .megaplan/initiatives/my-epic/chain.yaml
+python -m arnold_pipelines.megaplan cloud preflight .megaplan/initiatives/my-epic/chain.yaml
+python -m arnold_pipelines.megaplan cloud sync-megaplan .megaplan/initiatives/my-epic/chain.yaml --clean
+python -m arnold_pipelines.megaplan cloud launch-epic .megaplan/initiatives/my-epic --fresh
 ```
 
 Durable chain specs are expected at `.megaplan/initiatives/<initiative>/chain.yaml`.
 Milestone briefs, north-star anchors, research notes, and related durable
 planning inputs belong in the same initiative directory. Runtime state stays
 under `.megaplan/plans/` and `.megaplan/epics/` and is not uploaded as planning
-source.
+source. Epic chain specs require `anchors.north_star`, with paths resolved
+relative to the `chain.yaml` directory.
+
+`cloud preflight` validates the canonical spec layout, North Star, milestone
+brief paths, resolved cloud routing, configured secrets, required remote
+commands, and the worker's modern `arnold_pipelines.megaplan` import. Its JSON
+output includes the derived workspace, session, and canonical `remote_spec` that
+`launch-epic` will use.
 
 To seed a cloud checkout with the local durable planning state before or after a
 chain launch:
@@ -63,16 +72,24 @@ python -m arnold_pipelines.megaplan cloud sync-megaplan .megaplan/initiatives/my
 When a chain spec is supplied, `sync-megaplan` uses the same derived per-chain
 workspace as `cloud chain`, then uploads `.megaplan/initiatives/`, `.megaplan/tickets/`,
 and `.megaplan/ideas/`. It deliberately does not upload generated plans, epics,
-locks, logs, telemetry, or verification state.
+locks, logs, telemetry, verification state, `.DS_Store`, or macOS AppleDouble
+`._*` files.
 
 6. Inspect and connect:
 
 ```bash
+python -m arnold_pipelines.megaplan cloud status --all
 python -m arnold_pipelines.megaplan cloud status
 python -m arnold_pipelines.megaplan cloud status --chain
 python -m arnold_pipelines.megaplan cloud logs
 python -m arnold_pipelines.megaplan cloud attach
 ```
+
+On a shared runner, use `cloud status --all` first. It lists all known cloud
+sessions with human names, `should_run=yes/no`, liveness, current plan state,
+and any watchdog repair/escalation status. Use `tmux ls` only for "which runner
+processes are alive right now"; `/workspace/watchdog-report.json` is only the
+last watchdog scan and can be stale.
 
 ## `cloud.yaml` Reference
 
@@ -253,7 +270,7 @@ Useful environment variables:
 | `CLOUD_WATCHDOG_LOG` | `/workspace/watchdog.log` | Watchdog log path. |
 | `CLOUD_WATCHDOG_REPORT_PATH` | `/workspace/watchdog-report.json` | Latest structured scan report. |
 | `CLOUD_WATCHDOG_REPORT_WEBHOOK` | unset | Optional HTTP endpoint that receives the full report JSON after each scan. |
-| `CLOUD_WATCHDOG_CODEX_REPAIR` | `0` | Set to `1` to let the watchdog run `codex exec` against the Arnold source checkout when editable-install import checks fail. |
+| `ARNOLD_REPAIR_TRIGGER_ENABLED` | `0` | Set to `1` to let the watchdog dispatch repair loops for unintended stops and run editable-install repair when import checks fail. |
 | `CLOUD_WATCHDOG_PUSH_REPAIRS` | `0` | Set to `1` to push watchdog repair commits after a successful Codex repair. |
 | `CLOUD_WATCHDOG_ARNOLD_SRC` | `/workspace/arnold` | Arnold source checkout used for Codex repair. |
 | `CLOUD_WATCHDOG_SYNC_ENABLED` | `1` | Set to `0` to disable the hourly editable-install source sync. |

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+from argparse import Namespace
 from pathlib import Path
 
+import arnold_pipelines.megaplan.chain as chain_cli
 from arnold_pipelines.megaplan.chain.epic_chain import (
     _state_path_for,
     load_epic_chain_spec,
@@ -11,7 +14,12 @@ from arnold_pipelines.megaplan.chain.epic_chain import (
     run_epic_chain,
     save_epic_chain_state,
 )
-from arnold_pipelines.megaplan.chain.spec import ChainState, save_chain_state
+from arnold_pipelines.megaplan.chain.spec import (
+    ChainState,
+    _state_path_for as _chain_state_path_for,
+    load_chain_state,
+    save_chain_state,
+)
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -44,6 +52,39 @@ def _write_plan_state(root: Path, plan_name: str, current_state: str) -> None:
         plan_state,
         json.dumps({"name": plan_name, "current_state": current_state}) + "\n",
     )
+
+
+def test_chain_start_cli_treats_awaiting_pr_merge_as_success(
+    tmp_path: Path, monkeypatch
+) -> None:
+    spec_path = tmp_path / "chain.yaml"
+    _write_text(tmp_path / "NORTHSTAR.md", "# North Star\n")
+    _write_text(
+        spec_path,
+        "base_branch: main\nanchors:\n  north_star: NORTHSTAR.md\nmilestones: []\n",
+    )
+
+    def fake_run_chain(*args, **kwargs):
+        return {"status": "awaiting_pr_merge", "reason": "PR #42 is open"}
+
+    monkeypatch.setattr(chain_cli, "run_chain", fake_run_chain)
+
+    rc = chain_cli.run_chain_cli(
+        tmp_path,
+        Namespace(
+            chain_action="start",
+            spec=str(spec_path),
+            project_dir=str(tmp_path),
+            no_git_refresh=False,
+            no_push=False,
+            one=False,
+            fresh=False,
+            require_anchor=None,
+            missing_anchor_ack=None,
+        )
+    )
+
+    assert rc == 0
 
 
 def _write_parent_spec(
@@ -257,6 +298,63 @@ def test_epic_chain_launches_not_started_child_via_chain_start(tmp_path: Path) -
     assert payload["status"] == "done"
     state = load_epic_chain_state(parent_spec)
     assert state.completed[0]["status"] == "done"
+
+
+def test_chain_state_uses_project_root_path_for_symlinked_chain_spec(tmp_path: Path) -> None:
+    spec_path = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    root_alias = tmp_path / "chain.yaml"
+    root_alias.symlink_to(spec_path.relative_to(tmp_path))
+
+    save_chain_state(
+        root_alias,
+        ChainState(
+            current_milestone_index=0,
+            current_plan_name="m1-plan",
+            last_state="awaiting_pr_merge",
+        ),
+    )
+
+    canonical_path = _chain_state_path_for(root_alias)
+    nested_path = spec_path.parent / ".megaplan" / "plans" / ".chains" / canonical_path.name
+
+    assert canonical_path.parent == tmp_path / ".megaplan" / "plans" / ".chains"
+    assert canonical_path.exists()
+    assert not nested_path.exists()
+    assert load_chain_state(spec_path).current_plan_name == "m1-plan"
+
+
+def test_chain_state_load_prefers_more_advanced_nested_symlink_state(tmp_path: Path) -> None:
+    spec_path = _write_child_chain_spec(tmp_path, "python-shaped-workflow-authoring")
+    root_alias = tmp_path / "chain.yaml"
+    root_alias.symlink_to(spec_path.relative_to(tmp_path))
+
+    save_chain_state(root_alias, ChainState())
+
+    nested_state_path = (
+        spec_path.parent
+        / ".megaplan"
+        / "plans"
+        / ".chains"
+        / f"{spec_path.stem}-{hashlib.sha1(str(spec_path.resolve()).encode('utf-8')).hexdigest()[:12]}.json"
+    )
+    nested_state_path.parent.mkdir(parents=True, exist_ok=True)
+    nested_state_path.write_text(
+        json.dumps(
+            ChainState(
+                current_milestone_index=0,
+                current_plan_name="m1-plan",
+                last_state="awaiting_pr_merge",
+            ).to_dict(),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_chain_state(spec_path)
+
+    assert loaded.current_plan_name == "m1-plan"
+    assert load_chain_state(root_alias).current_plan_name == "m1-plan"
 
 
 def test_epic_chain_treats_already_running_launch_as_live_child(tmp_path: Path) -> None:
