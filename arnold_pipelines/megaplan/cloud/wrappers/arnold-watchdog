@@ -542,10 +542,12 @@ if (
 ):
     current_state = "done"
 
+human_gate_states = {"awaiting_human", "awaiting_human_verify", "human_prerequisite"}
+
 state_mismatch = (
     run_kind == "chain"
     and current_state == "finalized"
-    and chain_last_state in {"awaiting_human", "blocked"}
+    and chain_last_state in {"awaiting_human", "awaiting_human_verify", "blocked"}
     and bool(resolved_plan_name)
     and not bool(failure_kind or failure_message)
 )
@@ -556,7 +558,7 @@ if state_mismatch:
         f"chain last_state={chain_last_state} is stale; repair-loop should sync chain last_state"
     )
 
-if (current_state == "awaiting_human" or chain_last_state == "awaiting_human") and not state_mismatch:
+if (current_state in human_gate_states or chain_last_state in human_gate_states) and not state_mismatch:
     metadata = chain_state.get("metadata") if isinstance(chain_state, dict) else None
     metadata_reason = ""
     if isinstance(metadata, dict):
@@ -628,7 +630,7 @@ for raw in (
     add_unique(pushed_commits, raw if isinstance(raw, str) else None)
 
 manual_review = current_state == "manual_review" or retry_strategy == "manual_review"
-awaiting_human = (current_state == "awaiting_human" or chain_last_state == "awaiting_human") and not state_mismatch
+awaiting_human = (current_state in human_gate_states or chain_last_state in human_gate_states) and not state_mismatch
 
 emit("PLAN_STATUS_FOUND", "1" if state else "0")
 emit("PLAN_STATUS_PLAN_NAME", resolved_plan_name)
