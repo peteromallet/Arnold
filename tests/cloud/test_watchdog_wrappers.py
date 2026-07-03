@@ -5103,6 +5103,8 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert 'cd "$RUN_CWD"' in text
     assert 'PYTHONSAFEPATH=1 PYTHONPATH="$ARNOLD_SRC:${PYTHONPATH:-}"' in text
     assert 'timeout "$TIMEOUT" python3 -P -m arnold.agent.run_agent \\' in text
+    assert '--query_file="$PROMPT"' in text
+    assert '--query="$(cat "$PROMPT")"' not in text
     assert "Do not let MEGAPLAN_REF or the active workflow workspace branch" in text
     assert "Your Codex brief should contain the core issue, evidence, constraints, and plausible hypotheses only" in text
     assert "do not prescribe the implementation" in text
