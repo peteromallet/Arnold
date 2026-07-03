@@ -5650,7 +5650,10 @@ classification, _ = evaluate_meta_repair_triggers(
     discord_delivery_failed=discord_delivery_failed,
     discord_escalation_is_true_blocker=discord_escalation_is_true_blocker,
     repair_budget_exhausted=repair_outcome in {"repair_timeout", "repair_exhausted"},
-    load_evidence=True,
+    # Trigger probing must stay cheap here. The watchdog only needs a yes/no
+    # dispatch verdict; full evidence loading and prompt assembly belong in the
+    # meta-repair loop after dispatch.
+    load_evidence=False,
 )
 
 if classification.should_dispatch and classification.trigger_label:
