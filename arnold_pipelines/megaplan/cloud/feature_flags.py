@@ -1,9 +1,9 @@
 """Centralized env-backed feature-flag defaults for the cloud-safe repair substrate.
 
-In M1 every behaviour-changing path is **disabled by default** unless the
-env var is explicitly set to ``"1"``.  The *observe-only* resolver and
-redaction are **enabled by default** because they are additive diagnostics
-and security boundaries, not behavior changes.
+Repair automation is **enabled by default**. Operators can still explicitly
+disable individual paths with ``"0"``, ``"false"``, ``"no"``, or ``"off"``.
+Safety comes from scoped prompts, redaction, recursion guards, structured logs,
+and tests rather than assuming the repair system should be inert unless opted in.
 
 Flags
 -----
@@ -24,21 +24,21 @@ escalation-ledger     ARNOLD_ESCALATION_LEDGER      0 (off)    Enable append-onl
 repair-request-queue  ARNOLD_REPAIR_REQUEST_QUEUE   1 (on)     Persist observe-only
                                                                 repair request
                                                                 markers.
-repair-trigger        ARNOLD_REPAIR_TRIGGER_ENABLED 0 (off)    Dispatch queued
+repair-trigger        ARNOLD_REPAIR_TRIGGER_ENABLED 1 (on)     Dispatch queued
                                                                 repair requests.
 autonomy              ARNOLD_AUTONOMY               0 (off)    Enable autonomous
                                                                 trigger / meta /
                                                                 auditor actions.
-meta-repair           ARNOLD_META_REPAIR_ENABLED    0 (off)    Enable meta-repair
+meta-repair           ARNOLD_META_REPAIR_ENABLED    1 (on)     Enable meta-repair
                                                                 gating and dispatch.
-audit-autofix         ARNOLD_AUDIT_AUTOFIX_ENABLED  0 (off)    Enable auditor
+audit-autofix         ARNOLD_AUDIT_AUTOFIX_ENABLED  1 (on)     Enable auditor
                                                                 autofix prompt
                                                                 generation.
 meta-repair-commit    ARNOLD_META_REPAIR_COMMIT_
-                      ENABLED                       0 (off)    Allow meta-repair
+                      ENABLED                       1 (on)     Allow meta-repair
                                                                 to commit changes.
 audit-autofix-commit  ARNOLD_AUDIT_AUTOFIX_COMMIT_
-                      ENABLED                       0 (off)    Allow auditor
+                      ENABLED                       1 (on)     Allow auditor
                                                                 autofix commits.
 redaction             ARNOLD_REDACTION_ENABLED      1 (on)     Redact secrets from
                                                                 persisted and
@@ -112,7 +112,7 @@ def repair_request_queue_enabled() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Public API — behavior-changing flags (default OFF)
+# Public API — behavior-changing flags
 # ---------------------------------------------------------------------------
 
 
@@ -155,57 +155,56 @@ def autonomy_enabled() -> bool:
 def repair_trigger_enabled() -> bool:
     """Return ``True`` when queued failure-triggered repair may dispatch.
 
-    Controlled by ``ARNOLD_REPAIR_TRIGGER_ENABLED`` — defaults to OFF (``"0"``).
+    Controlled by ``ARNOLD_REPAIR_TRIGGER_ENABLED`` — defaults to ON (``"1"``).
     """
-    return _is_enabled("ARNOLD_REPAIR_TRIGGER_ENABLED", False)
+    return _is_enabled("ARNOLD_REPAIR_TRIGGER_ENABLED", True)
 
 
 def meta_repair_enabled() -> bool:
     """Return ``True`` when meta-repair gating and dispatch are permitted.
 
-    Controlled by ``ARNOLD_META_REPAIR_ENABLED`` — defaults to OFF (``"0"``).
+    Controlled by ``ARNOLD_META_REPAIR_ENABLED`` — defaults to ON (``"1"``).
 
     When enabled, the meta-repair subsystem may evaluate repair outcomes
     and trigger re-repair loops.  Even when enabled, meta-repair must
     still satisfy SUCCESS_OUTCOMES verification through the ordinary
     repair loop — it cannot claim success from process liveness alone.
     """
-    return _is_enabled("ARNOLD_META_REPAIR_ENABLED", False)
+    return _is_enabled("ARNOLD_META_REPAIR_ENABLED", True)
 
 
 def audit_autofix_enabled() -> bool:
     """Return ``True`` when the auditor may generate autofix prompts.
 
-    Controlled by ``ARNOLD_AUDIT_AUTOFIX_ENABLED`` — defaults to OFF (``"0"``).
+    Controlled by ``ARNOLD_AUDIT_AUTOFIX_ENABLED`` — defaults to ON (``"1"``).
 
     When enabled, the progress auditor may suggest targeted fixes for
     stalled or failing repairs.  The auditor still requires explicit
     gating before any autofix is committed.
     """
-    return _is_enabled("ARNOLD_AUDIT_AUTOFIX_ENABLED", False)
+    return _is_enabled("ARNOLD_AUDIT_AUTOFIX_ENABLED", True)
 
 
 def meta_repair_commit_enabled() -> bool:
     """Return ``True`` when meta-repair is allowed to commit changes.
 
-    Controlled by ``ARNOLD_META_REPAIR_COMMIT_ENABLED`` — defaults to OFF (``"0"``).
+    Controlled by ``ARNOLD_META_REPAIR_COMMIT_ENABLED`` — defaults to ON (``"1"``).
 
-    This is a separate gate from ``ARNOLD_META_REPAIR_ENABLED`` so that
-    meta-repair can evaluate and report without committing until the
-    commit gate is explicitly enabled.
+    This remains a separate opt-out gate from ``ARNOLD_META_REPAIR_ENABLED`` so
+    operators can disable commits while leaving meta-repair diagnostics running.
     """
-    return _is_enabled("ARNOLD_META_REPAIR_COMMIT_ENABLED", False)
+    return _is_enabled("ARNOLD_META_REPAIR_COMMIT_ENABLED", True)
 
 
 def audit_autofix_commit_enabled() -> bool:
     """Return ``True`` when auditor autofix commits are permitted.
 
-    Controlled by ``ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED`` — defaults to OFF (``"0"``).
+    Controlled by ``ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED`` — defaults to ON (``"1"``).
 
-    Separated from ``ARNOLD_AUDIT_AUTOFIX_ENABLED`` so autofix prompts
-    can be generated and reviewed before any commit action is taken.
+    Separated from ``ARNOLD_AUDIT_AUTOFIX_ENABLED`` so commits can be explicitly
+    disabled while autofix diagnosis remains active.
     """
-    return _is_enabled("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", False)
+    return _is_enabled("ARNOLD_AUDIT_AUTOFIX_COMMIT_ENABLED", True)
 
 
 # ---------------------------------------------------------------------------
