@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 from arnold.workflow.refs import require_ref
 
-GRAMMAR_VERSION = "arnold.workflow.authoring.v1"
+GRAMMAR_VERSION = "arnold.workflow.authoring.v2"
 
 
 class ComponentKind(StrEnum):

@@ -7,6 +7,8 @@ with the native runner's dict-based context and state propagation.
 
 from __future__ import annotations
 
+import inspect
+import builtins
 from typing import Any, Callable
 
 
@@ -284,6 +286,15 @@ def decision(
         fn.__decision_choices__ = choices  # type: ignore[attr-defined]
         fn.__decision_resume_input_schema__ = resume_input_schema  # type: ignore[attr-defined]
         fn.__decision_override_routes__ = override_routes  # type: ignore[attr-defined]
+        # Source-location and routing-body marker (attached unconditionally
+        # so the validator can produce line-specific diagnostics).
+        fn.__decision_source_file__ = inspect.getsourcefile(fn)  # type: ignore[attr-defined]
+        try:
+            _, start_lineno = inspect.getsourcelines(fn)
+            fn.__decision_first_lineno__ = start_lineno  # type: ignore[attr-defined]
+        except (OSError, TypeError):
+            fn.__decision_first_lineno__ = None  # type: ignore[attr-defined]
+        fn.__decision_routing_body__ = True  # type: ignore[attr-defined]
         return fn
 
     if callable(name):
@@ -303,6 +314,7 @@ class _ParallelBranchList(list):
     __parallel_branches__: tuple[Callable[..., Any], ...] = ()
     __parallel_reducer__: Callable[..., Any] | None = None
     __parallel_name__: str | None = None
+    __parallel_id__: str | None = None
 
 
 def parallel(
@@ -310,6 +322,7 @@ def parallel(
     *,
     reducer: Callable[..., Any] | None = None,
     name: str | None = None,
+    id: str | None = None,
 ) -> _ParallelBranchList:
     """Declare a parallel fan-out block for use in native pipelines.
 
@@ -331,6 +344,10 @@ def parallel(
     name:
         Optional human-readable name for the parallel block (defaults to
         a generated name like ``parallel_0``).
+    id:
+        Optional stable call-site identity for this parallel block.
+        When set, this becomes the ``call_site_path`` in the compiled
+        instruction rather than an auto-generated name.
 
     Returns
     -------
@@ -354,7 +371,7 @@ def parallel(
             raise TypeError(
                 f"parallel() branch {i} ({getattr(b, '__name__', b)!r}) is not a @phase-decorated function"
             )
-        bid = id(b)
+        bid = builtins.id(b)
         if bid in seen:
             raise ValueError(
                 f"parallel() contains duplicate branch: {getattr(b, '__name__', b)!r}"
@@ -365,6 +382,7 @@ def parallel(
     result.__parallel_branches__ = tuple(branches)
     result.__parallel_reducer__ = reducer
     result.__parallel_name__ = name
+    result.__parallel_id__ = id
     return result
 
 
@@ -385,6 +403,7 @@ class _ParallelMapDeclaration:
     __parallel_map_reducer__: Callable[..., Any] | None = None
     __parallel_map_path_template__: str = ""
     __parallel_map_name__: str | None = None
+    __parallel_map_id__: str | None = None
 
 
 def parallel_map(
@@ -394,6 +413,7 @@ def parallel_map(
     reducer: Callable[..., Any] | None = None,
     path_template: str = "",
     name: str | None = None,
+    id: str | None = None,
 ) -> _ParallelMapDeclaration:
     """Declare a dynamic runtime-list fan-out for use in native pipelines.
 
@@ -434,6 +454,10 @@ def parallel_map(
     name:
         Optional human-readable name for the parallel_map block
         (defaults to a generated name like ``parallel_map_0``).
+    id:
+        Optional stable call-site identity for this parallel_map block.
+        When set, this becomes the ``call_site_path`` in the compiled
+        instruction rather than an auto-generated name.
 
     Returns
     -------
@@ -454,6 +478,7 @@ def parallel_map(
     result.__parallel_map_reducer__ = reducer
     result.__parallel_map_path_template__ = path_template
     result.__parallel_map_name__ = name
+    result.__parallel_map_id__ = id
     return result
 
 
@@ -607,6 +632,10 @@ def get_decision_meta(fn: Any) -> dict[str, Any] | None:
     For ordinary decisions the human-gate keys are present at their
     defaults (``human_gate=False``, ``artifact_stage=""``, etc.).
     For human-gate decisions the keys carry the declared metadata.
+
+    Also includes source-location metadata (``source_file``,
+    ``first_lineno``) and a ``routing_body`` marker so the validator
+    can produce line-specific diagnostics.
     """
     if not is_decision(fn):
         return None
@@ -621,6 +650,10 @@ def get_decision_meta(fn: Any) -> dict[str, Any] | None:
         "choices": tuple(getattr(fn, "__decision_choices__", ())),
         "resume_input_schema": getattr(fn, "__decision_resume_input_schema__", None),
         "override_routes": getattr(fn, "__decision_override_routes__", None),
+        # Source-location metadata for validator diagnostics
+        "source_file": getattr(fn, "__decision_source_file__", None),
+        "first_lineno": getattr(fn, "__decision_first_lineno__", None),
+        "routing_body": bool(getattr(fn, "__decision_routing_body__", False)),
     }
 
 

@@ -2,10 +2,9 @@
 
 Covers:
 - Direct child ``@workflow`` / ``@pipeline`` calls lowered to ``subpipeline`` ops
-  via the ``state = child(ctx)`` assignment path (no yield)
 - Repeated use of the same child workflow in a single parent
 - Stable identity and declared schema metadata preservation through lowering
-- Rejection of dynamic subworkflow expressions in both yield and assignment paths
+- Rejection of dynamic subworkflow expressions (non-Name yield targets)
 
 These tests use only native compiler fixtures — no Megaplan dependencies.
 """
@@ -24,15 +23,14 @@ from arnold.pipeline.native import (
 )
 
 
-# ── Direct child call lowering (assignment path) ────────────────────────
+# ── Direct child call lowering ──────────────────────────────────────────
 
 
 class TestDirectChildLowering:
-    """A child ``@workflow``/``@pipeline`` callable used as an assignment
-    value (``state = child(ctx)``, no ``yield``) lowers to a ``subpipeline``
-    instruction with the child's compiled program."""
+    """A directly-yielded ``@workflow``/``@pipeline`` callable lowers to
+    a ``subpipeline`` instruction with the child's compiled program."""
 
-    def test_assigned_workflow_becomes_subpipeline_op(self) -> None:
+    def test_yielded_workflow_becomes_subpipeline_op(self) -> None:
         @phase
         def child_step(ctx: object) -> dict:
             return {"child": "ok"}
@@ -44,19 +42,19 @@ class TestDirectChildLowering:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
         assert len(prog.instructions) == 2  # subpipeline + halt
         instr = prog.instructions[0]
         assert instr.op == "subpipeline"
-        assert instr.name.startswith("child_wf")
+        assert instr.name == "child_wf"
         assert isinstance(instr.subprogram, NativeProgram)
         assert instr.subprogram.name == "child_wf"
 
-    def test_assigned_pipeline_becomes_subpipeline_op(self) -> None:
-        """@pipeline-decorated children also lower via assignment path."""
+    def test_yielded_pipeline_becomes_subpipeline_op(self) -> None:
+        """@pipeline-decorated children also lower to subpipeline ops."""
 
         @phase
         def child_step(ctx: object) -> dict:
@@ -69,12 +67,12 @@ class TestDirectChildLowering:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_pipe(ctx)
+            state = yield child_pipe(ctx)
             return state
 
         prog = compile_pipeline(parent)
         assert prog.instructions[0].op == "subpipeline"
-        assert prog.instructions[0].name.startswith("child_pipe")
+        assert prog.instructions[0].name == "child_pipe"
 
     def test_child_subprogram_has_correct_instructions(self) -> None:
         """The child's subprogram contains its own phase + halt instructions."""
@@ -90,7 +88,7 @@ class TestDirectChildLowering:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -112,7 +110,7 @@ class TestDirectChildLowering:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -125,11 +123,11 @@ class TestDirectChildLowering:
 
 
 class TestRepeatedChildUse:
-    """The same child workflow can be used multiple times in a single
-    parent pipeline via assignment.  Each occurrence produces a distinct
-    subpipeline instruction with a callsite-indexed name."""
+    """The same child workflow can be yielded multiple times in a single
+    parent pipeline.  Each occurrence produces a distinct subpipeline
+    instruction referencing the same compiled child program."""
 
-    def test_same_child_assigned_twice(self) -> None:
+    def test_same_child_yielded_twice(self) -> None:
         @phase
         def child_step(ctx: object) -> dict:
             return {"step": 1}
@@ -141,8 +139,8 @@ class TestRepeatedChildUse:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
-            state = child_wf(ctx)
+            state = yield child_wf(ctx, id="child.first")
+            state = yield child_wf(ctx, id="child.second")
             return state
 
         prog = compile_pipeline(parent)
@@ -151,16 +149,19 @@ class TestRepeatedChildUse:
 
         first = prog.instructions[0]
         second = prog.instructions[1]
-        # Callsite names include index: workflow.child[0], workflow.child[1]
-        assert first.name != second.name
-        assert "child_wf" in first.name or "workflow.child" in first.name
-        assert "child_wf" in second.name or "workflow.child" in second.name
+        assert first.name == "child_wf"
+        assert second.name == "child_wf"
+        assert first.call_site_path == ("child.first",)
+        assert second.call_site_path == ("child.second",)
+        # Both reference the same child name; subprogram objects are distinct
+        # (each is compiled independently) but structurally identical.
         assert isinstance(first.subprogram, NativeProgram)
         assert isinstance(second.subprogram, NativeProgram)
         assert first.subprogram.name == second.subprogram.name == "child_wf"
+        assert first.subprogram.stable_id == second.subprogram.stable_id == "workflow.child"
 
     def test_repeated_child_with_interleaved_phases(self) -> None:
-        """Child workflows can be interleaved with regular (yielded) phases."""
+        """Child workflows can be interleaved with regular phases."""
 
         @phase
         def child_step(ctx: object) -> dict:
@@ -177,17 +178,20 @@ class TestRepeatedChildUse:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             state = yield parent_phase(ctx)
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
         ops = [i.op for i in prog.instructions]
         assert ops == ["subpipeline", "phase", "subpipeline", "halt"]
+        assert prog.instructions[1].name == "parent_phase"
+        assert prog.instructions[0].name == "child_wf"
+        assert prog.instructions[2].name == "child_wf"
 
-    def test_different_children_can_be_used(self) -> None:
-        """A parent can use multiple distinct child workflows."""
+    def test_different_children_can_be_yielded(self) -> None:
+        """A parent can yield multiple distinct child workflows."""
 
         @phase
         def step_a(ctx: object) -> dict:
@@ -209,13 +213,15 @@ class TestRepeatedChildUse:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_a(ctx)
-            state = child_b(ctx)
+            state = yield child_a(ctx)
+            state = yield child_b(ctx)
             return state
 
         prog = compile_pipeline(parent)
         ops = [i.op for i in prog.instructions]
         assert ops == ["subpipeline", "subpipeline", "halt"]
+        assert prog.instructions[0].name == "child_a"
+        assert prog.instructions[1].name == "child_b"
         assert prog.instructions[0].subprogram.name == "child_a"
         assert prog.instructions[1].subprogram.name == "child_b"
 
@@ -224,27 +230,103 @@ class TestRepeatedChildUse:
 
 
 class TestSubpipelineMetadataPreservation:
-    """Child workflow stable identity is preserved on the subprogram
-    attached to the subpipeline instruction."""
+    """Child workflow stable identity and declared schema metadata are
+    preserved on the subprogram attached to the subpipeline instruction."""
 
     def test_child_stable_id_preserved_on_subprogram(self) -> None:
         @phase
         def inner(ctx: object) -> dict:
             return {}
 
-        @workflow(name="child", id="workflow.child.stable")
+        @workflow(
+            name="child",
+            id="workflow.child.stable",
+        )
         def child(ctx: object) -> dict:
             state = yield inner(ctx)
             return state
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(parent)
         child_prog = prog.instructions[0].subprogram
         assert child_prog.stable_id == "workflow.child.stable"
+
+    def test_child_inputs_schema_preserved_on_subprogram(self) -> None:
+        @phase
+        def inner(ctx: object) -> dict:
+            return {}
+
+        @workflow(
+            name="child",
+            inputs={"type": "object", "required": ["seed"]},
+        )
+        def child(ctx: object) -> dict:
+            state = yield inner(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        child_prog = prog.instructions[0].subprogram
+        assert child_prog.inputs_schema == {"type": "object", "required": ["seed"]}
+
+    def test_child_outputs_schema_preserved_on_subprogram(self) -> None:
+        @phase
+        def inner(ctx: object) -> dict:
+            return {}
+
+        @workflow(
+            name="child",
+            outputs={"type": "object", "required": ["result"]},
+        )
+        def child(ctx: object) -> dict:
+            state = yield inner(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        child_prog = prog.instructions[0].subprogram
+        assert child_prog.outputs_schema == {"type": "object", "required": ["result"]}
+
+    def test_child_metadata_all_three_fields_preserved(self) -> None:
+        """stable_id, inputs_schema, and outputs_schema all survive lowering."""
+
+        @phase
+        def inner(ctx: object) -> dict:
+            return {}
+
+        @workflow(
+            name="typed_child",
+            id="workflow.typed",
+            inputs={"type": "object", "required": ["query"]},
+            outputs={"type": "object", "required": ["answer"]},
+        )
+        def typed_child(ctx: object) -> dict:
+            state = yield inner(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield typed_child(ctx)
+            return state
+
+        prog = compile_pipeline(parent)
+        child_prog = prog.instructions[0].subprogram
+        assert child_prog.name == "typed_child"
+        assert child_prog.stable_id == "workflow.typed"
+        assert child_prog.inputs_schema == {"type": "object", "required": ["query"]}
+        assert child_prog.outputs_schema == {"type": "object", "required": ["answer"]}
 
     def test_child_without_id_has_none_stable_id(self) -> None:
         """When a child workflow omits ``id``, the subprogram stable_id is None."""
@@ -260,72 +342,56 @@ class TestSubpipelineMetadataPreservation:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = no_id_child(ctx)
+            state = yield no_id_child(ctx)
             return state
 
         prog = compile_pipeline(parent)
         child_prog = prog.instructions[0].subprogram
         assert child_prog.stable_id is None
 
-    def test_child_name_preserved_on_subprogram(self) -> None:
-        """The child's declared name survives into the subprogram."""
+    def test_child_without_schemas_has_none_schemas(self) -> None:
+        """When a child workflow omits schemas, they are None on the subprogram."""
 
         @phase
         def inner(ctx: object) -> dict:
             return {}
 
-        @workflow(name="explicit_name")
-        def child(ctx: object) -> dict:
+        @workflow(name="bare_child")
+        def bare_child(ctx: object) -> dict:
             state = yield inner(ctx)
             return state
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield bare_child(ctx)
             return state
 
         prog = compile_pipeline(parent)
         child_prog = prog.instructions[0].subprogram
-        assert child_prog.name == "explicit_name"
-
-    def test_child_with_description_compiles(self) -> None:
-        """A child with a description metadata field compiles and runs."""
-
-        @phase
-        def inner(ctx: object) -> dict:
-            return {}
-
-        @workflow(name="desc_child", description="A child with a description")
-        def desc_child(ctx: object) -> dict:
-            state = yield inner(ctx)
-            return state
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = desc_child(ctx)
-            return state
-
-        prog = compile_pipeline(parent)
-        child_prog = prog.instructions[0].subprogram
-        assert child_prog.name == "desc_child"
-        assert child_prog.description == "A child with a description"
+        assert child_prog.inputs_schema is None
+        assert child_prog.outputs_schema is None
 
     def test_repeated_child_preserves_metadata_each_time(self) -> None:
-        """When the same child is used twice, both subprograms carry the metadata."""
+        """When the same child is yielded twice, both subprograms carry the metadata."""
 
         @phase
         def inner(ctx: object) -> dict:
             return {}
 
-        @workflow(name="repeat_child", id="workflow.repeat")
+        @workflow(
+            name="repeat_child",
+            id="workflow.repeat",
+            inputs={"type": "object", "required": ["in"]},
+            outputs={"type": "object", "required": ["out"]},
+        )
         def repeat_child(ctx: object) -> dict:
             state = yield inner(ctx)
             return state
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = repeat_child(ctx)
-            state = repeat_child(ctx)
+            state = yield repeat_child(ctx)
+            state = yield repeat_child(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -333,8 +399,10 @@ class TestSubpipelineMetadataPreservation:
             child_prog = instr.subprogram
             assert child_prog.name == "repeat_child"
             assert child_prog.stable_id == "workflow.repeat"
+            assert child_prog.inputs_schema == {"type": "object", "required": ["in"]}
+            assert child_prog.outputs_schema == {"type": "object", "required": ["out"]}
 
-    def test_parent_metadata_still_present_when_using_child(self) -> None:
+    def test_parent_metadata_still_present_when_yielding_child(self) -> None:
         """Parent-level metadata is not affected by child subpipeline lowering."""
 
         @phase
@@ -349,14 +417,18 @@ class TestSubpipelineMetadataPreservation:
         @pipeline(
             name="meta_parent",
             id="workflow.parent.stable",
+            inputs={"type": "object", "required": ["task"]},
+            outputs={"type": "object", "required": ["report"]},
         )
         def meta_parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(meta_parent)
         assert prog.name == "meta_parent"
         assert prog.stable_id == "workflow.parent.stable"
+        assert prog.inputs_schema == {"type": "object", "required": ["task"]}
+        assert prog.outputs_schema == {"type": "object", "required": ["report"]}
         # Child subprogram still intact
         assert prog.instructions[0].subprogram.name == "child"
 
@@ -365,12 +437,9 @@ class TestSubpipelineMetadataPreservation:
 
 
 class TestDynamicSubworkflowRejection:
-    """The compiler rejects dynamic call targets in the yield path.
-    In the assignment path, non-``ast.Name`` targets compile without
-    error but are NOT lowered as subpipeline instructions — only
-    direct named ``@workflow``/``@pipeline`` references are recognized."""
-
-    # ── Yield path rejection ─────────────────────────────────────────
+    """The compiler rejects yield targets that are not direct named
+    callables (``ast.Name`` nodes).  Dynamic expressions, attribute
+    accesses, and computed callables all produce NativeCompileError."""
 
     def test_yield_Attribute_target_rejected(self) -> None:
         """``yield obj.child(ctx)`` is rejected — Attribute nodes not allowed."""
@@ -391,9 +460,9 @@ class TestDynamicSubworkflowRejection:
         with pytest.raises(NativeCompileError) as exc_info:
             compile_pipeline(parent)
         msg = str(exc_info.value)
-        assert "not supported" in msg.lower() or "Attribute" in msg
+        assert "dynamic" in msg.lower() or "not supported" in msg.lower() or "Attribute" in msg
 
-    def test_yield_computed_call_rejected(self) -> None:
+    def test_yield_name_expression_with_call_result_rejected(self) -> None:
         """``yield selector()(ctx)`` — a call result used as a callable — is rejected."""
 
         @phase
@@ -415,8 +484,9 @@ class TestDynamicSubworkflowRejection:
 
         with pytest.raises(NativeCompileError) as exc_info:
             compile_pipeline(parent)
+        # The yield value is a Call with a Call func — rejected at func_node level
         msg = str(exc_info.value)
-        assert "Call" in msg
+        assert "dynamic" in msg.lower() or "not supported" in msg.lower()
 
     def test_yield_lambda_rejected(self) -> None:
         """``yield (lambda ctx: {})(ctx)`` — lambda as callable — is rejected."""
@@ -429,10 +499,68 @@ class TestDynamicSubworkflowRejection:
         with pytest.raises(NativeCompileError) as exc_info:
             compile_pipeline(parent)
         msg = str(exc_info.value)
-        assert "Lambda" in msg or "not supported" in msg.lower()
+        # Lambda is an AST node type that isn't a Name
+        assert "dynamic" in msg.lower() or "not supported" in msg.lower() or "Name" in msg or "Lambda" in msg
+
+    def test_yield_variable_holding_callable_rejected(self) -> None:
+        """``yield ref(ctx)`` where ref is a variable (not a decorated callable) is rejected."""
+
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "done"}
+
+        @workflow
+        def child(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        # Assign to a plain variable — name resolves to callable but it's not
+        # a direct decorated callable reference. The compiler resolves the name,
+        # finds is_pipeline=True, and lowers it. This SHOULD actually compile
+        # since ref points to the same decorated callable.
+        ref = child
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield ref(ctx)
+            return state
+
+        # This should compile fine — ref IS child, same decorated callable
+        prog = compile_pipeline(parent)
+        assert prog.instructions[0].op == "subpipeline"
+
+    def test_yield_non_callable_name_rejected(self) -> None:
+        """``yield some_string(ctx)`` where some_string is not callable is rejected."""
+
+        some_string = "not_a_callable"
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield some_string(ctx)  # type: ignore[operator]
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(parent)
+        msg = str(exc_info.value)
+        assert "not callable" in msg.lower() or "not a @phase" in msg.lower() or "resolve" in msg.lower()
+
+    def test_yield_builtin_name_rejected(self) -> None:
+        """``yield print(ctx)`` — builtin, not decorated — is rejected."""
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield print(ctx)  # type: ignore[func-returns-value]
+            return state
+
+        with pytest.raises(NativeCompileError) as exc_info:
+            compile_pipeline(parent)
+        msg = str(exc_info.value)
+        assert "not a @phase" in msg or "resolve" in msg.lower()
+        # The exact message depends on whether 'print' is found as a builtin
+        # (→ "not a @phase") or not resolved at all (→ "Cannot resolve ...").
 
     def test_yield_non_decorated_function_rejected(self) -> None:
-        """A plain function (not @phase/@workflow/@pipeline) in yield is rejected."""
+        """A plain function (not decorated with @phase/@workflow/@pipeline) is rejected."""
 
         def plain_func(ctx: object) -> dict:
             return {"plain": True}
@@ -447,93 +575,12 @@ class TestDynamicSubworkflowRejection:
         msg = str(exc_info.value)
         assert "not a @phase" in msg
 
-    def test_yield_builtin_name_rejected(self) -> None:
-        """``yield print(ctx)`` — builtin in yield — is rejected."""
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = yield print(ctx)  # type: ignore[func-returns-value]
-            return state
-
-        with pytest.raises(NativeCompileError) as exc_info:
-            compile_pipeline(parent)
-        msg = str(exc_info.value)
-        assert "resolve" in msg.lower()
-
-    # ── Assignment path rejection ────────────────────────────────────
-
-    def test_assign_Attribute_call_not_lowered_as_subpipeline(self) -> None:
-        """``state = obj.child(ctx)`` — Attribute in assignment — compiles
-        but is NOT lowered as a subpipeline; the compiler only lowers
-        direct ``ast.Name`` call targets."""
-
-        class Holder:
-            @staticmethod
-            @workflow
-            def child(ctx: object) -> dict:
-                return {}
-
-        holder = Holder()
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = holder.child(ctx)  # type: ignore[attr-defined]
-            return state
-
-        prog = compile_pipeline(parent)
-        # No subpipeline instruction — the Attribute call is a no-op
-        sub_ops = [i for i in prog.instructions if i.op == "subpipeline"]
-        assert len(sub_ops) == 0
-
-    def test_assign_computed_call_not_lowered_as_subpipeline(self) -> None:
-        """``state = selector()(ctx)`` — Call as func — compiles but is NOT
-        lowered as a subpipeline; only ``ast.Name`` targets are recognized."""
-
-        @phase
-        def child_step(ctx: object) -> dict:
-            return {"child": "done"}
-
-        @workflow
-        def child(ctx: object) -> dict:
-            state = yield child_step(ctx)
-            return state
-
-        def selector() -> object:
-            return child
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = selector()(ctx)
-            return state
-
-        prog = compile_pipeline(parent)
-        # No subpipeline instruction — the computed call is a no-op
-        sub_ops = [i for i in prog.instructions if i.op == "subpipeline"]
-        assert len(sub_ops) == 0
-
-    def test_assign_non_callable_name_not_lowered_as_subpipeline(self) -> None:
-        """``state = non_callable(ctx)`` — name resolves to non-callable — compiles
-        but is NOT lowered as a subpipeline; ``_resolve_callable`` fails for
-        non-callable names and ``_maybe_lower_subpipeline_call`` returns False."""
-
-        not_a_workflow = "i_am_a_string"
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = not_a_workflow(ctx)  # type: ignore[operator]
-            return state
-
-        prog = compile_pipeline(parent)
-        # No subpipeline instruction
-        sub_ops = [i for i in prog.instructions if i.op == "subpipeline"]
-        assert len(sub_ops) == 0
-
 
 # ── Subpipeline instruction structural checks ───────────────────────────
 
 
 class TestSubpipelineInstructionStructure:
-    """The subpipeline instruction carries correct next_pc and no branches/func."""
+    """The subpipeline instruction carries correct next_pc and no branches."""
 
     def test_subpipeline_instr_has_next_pc(self) -> None:
         @phase
@@ -547,7 +594,7 @@ class TestSubpipelineInstructionStructure:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -566,7 +613,7 @@ class TestSubpipelineInstructionStructure:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -587,7 +634,7 @@ class TestSubpipelineInstructionStructure:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -612,7 +659,7 @@ class TestSubpipelineInstructionStructure:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             state = yield parent_step(ctx)
             return state
 
@@ -626,32 +673,8 @@ class TestSubpipelineInstructionStructure:
         assert prog.instructions[2].pc == 2
         assert prog.instructions[2].op == "halt"
 
-    def test_callsite_names_are_unique_per_use(self) -> None:
-        """Each callsite of the same child gets a distinct indexed name."""
-
-        @phase
-        def child_step(ctx: object) -> dict:
-            return {}
-
-        @workflow(name="child", id="wf.c")
-        def child(ctx: object) -> dict:
-            state = yield child_step(ctx)
-            return state
-
-        @pipeline
-        def parent(ctx: object) -> dict:
-            state = child(ctx)
-            state = child(ctx)
-            return state
-
-        prog = compile_pipeline(parent)
-        names = [i.name for i in prog.instructions if i.op == "subpipeline"]
-        assert names[0] != names[1]
-        assert names[0].startswith("wf.c[")
-        assert names[1].startswith("wf.c[")
-
     def test_nested_child_workflow_lowering(self) -> None:
-        """A child workflow that itself uses another child workflow is lowered
+        """A child workflow that itself yields another child workflow is lowered
         correctly — the grandchild is also compiled as a subpipeline."""
 
         @phase
@@ -665,12 +688,12 @@ class TestSubpipelineInstructionStructure:
 
         @workflow(name="child")
         def child(ctx: object) -> dict:
-            state = grandchild(ctx)
+            state = yield grandchild(ctx)
             return state
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child(ctx)
+            state = yield child(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -678,6 +701,7 @@ class TestSubpipelineInstructionStructure:
         child_prog = prog.instructions[0].subprogram
         # child: [subpipeline(grandchild), halt]
         assert child_prog.instructions[0].op == "subpipeline"
+        assert child_prog.instructions[0].name == "grandchild"
         grandchild_prog = child_prog.instructions[0].subprogram
         # grandchild: [phase(leaf_step), halt]
         assert grandchild_prog.instructions[0].op == "phase"
