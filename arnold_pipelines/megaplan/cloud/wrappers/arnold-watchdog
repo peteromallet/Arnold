@@ -4705,6 +4705,36 @@ if not remote_spec.is_absolute():
 repair_data_dir = pathlib.Path(repair_data_raw)
 
 
+def spec_milestone_count() -> int | None:
+    try:
+        raw = remote_spec.read_text(encoding="utf-8")
+    except Exception:
+        return None
+    try:
+        import yaml  # type: ignore
+
+        data = yaml.safe_load(raw)
+        milestones = data.get("milestones") if isinstance(data, dict) else None
+        if isinstance(milestones, list):
+            return len(milestones)
+    except Exception:
+        pass
+    count = 0
+    in_milestones = False
+    for line in raw.splitlines():
+        if line.startswith("milestones:"):
+            in_milestones = True
+            continue
+        if in_milestones and line and not line.startswith((" ", "-")):
+            break
+        if in_milestones and line.lstrip().startswith("-"):
+            count += 1
+    return count if in_milestones else None
+
+
+SPEC_MILESTONE_COUNT = spec_milestone_count()
+
+
 def is_complete_state(payload: object) -> bool:
     if not isinstance(payload, dict):
         return False
@@ -4714,21 +4744,29 @@ def is_complete_state(payload: object) -> bool:
         return False
     milestones = payload.get("milestones")
     completed = payload.get("completed")
+    completed_list = completed if isinstance(completed, list) else []
     if isinstance(milestones, list) and milestones:
-        if not isinstance(completed, list) or len(completed) < len(milestones):
+        if len(completed_list) < len(milestones):
             return False
-    if isinstance(completed, list) and completed:
+    elif SPEC_MILESTONE_COUNT is not None and SPEC_MILESTONE_COUNT > 0:
+        try:
+            current_index = int(payload.get("current_milestone_index") or 0)
+        except Exception:
+            current_index = 0
+        if len(completed_list) < SPEC_MILESTONE_COUNT and current_index < SPEC_MILESTONE_COUNT:
+            return False
+    if completed_list:
         incomplete = [
-            item for item in completed
+            item for item in completed_list
             if isinstance(item, dict) and str(item.get("status") or "").strip() not in {"done", "complete", "completed"}
         ]
         if incomplete:
             return False
     events = payload.get("events")
+    event_items = events if isinstance(events, list) else []
     event_text = " ".join(
         str(item.get("msg") or item.get("message") or item)
-        for item in events
-        if isinstance(events, list)
+        for item in event_items
     )
     if current_plan and "all milestones complete" not in event_text:
         return False
