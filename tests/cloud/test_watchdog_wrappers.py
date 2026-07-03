@@ -4058,16 +4058,21 @@ def test_repair_unhealthy_session_retries_root_cause_repair_after_recurring_outc
             _extract_wrapper_function("kimi_dispatch_marker_clear"),
             _extract_wrapper_function("kimi_dispatch_failed_previously"),
             _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_data_source_head_for_session"),
+            _extract_wrapper_function("editable_source_head"),
+            _extract_wrapper_function("repair_source_changed_since_last_attempt"),
             _extract_wrapper_function("repair_outcome_wants_repair_retry"),
             _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
             _extract_wrapper_function("repair_unhealthy_session"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(tmp_path / 'src')!r}",
             """
 log() { echo "LOG $*" >&2; }
 kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+git() { return 1; }
 tmux() { echo "TMUX $*" >&2; return 0; }
 repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
 """.strip(),
@@ -4100,16 +4105,21 @@ def test_repair_unhealthy_session_retries_root_cause_repair_after_timeout(tmp_pa
             _extract_wrapper_function("kimi_dispatch_marker_clear"),
             _extract_wrapper_function("kimi_dispatch_failed_previously"),
             _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_data_source_head_for_session"),
+            _extract_wrapper_function("editable_source_head"),
+            _extract_wrapper_function("repair_source_changed_since_last_attempt"),
             _extract_wrapper_function("repair_outcome_wants_repair_retry"),
             _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
             _extract_wrapper_function("repair_unhealthy_session"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(tmp_path / 'src')!r}",
             """
 log() { echo "LOG $*" >&2; }
 kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+git() { return 1; }
 tmux() { echo "TMUX $*" >&2; return 0; }
 repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
 """.strip(),
@@ -4142,16 +4152,21 @@ def test_repair_unhealthy_session_preserves_direct_relaunch_for_non_retry_repair
             _extract_wrapper_function("kimi_dispatch_marker_clear"),
             _extract_wrapper_function("kimi_dispatch_failed_previously"),
             _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_data_source_head_for_session"),
+            _extract_wrapper_function("editable_source_head"),
+            _extract_wrapper_function("repair_source_changed_since_last_attempt"),
             _extract_wrapper_function("repair_outcome_wants_repair_retry"),
             _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
             _extract_wrapper_function("repair_unhealthy_session"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(tmp_path / 'src')!r}",
             """
 log() { echo "LOG $*" >&2; }
 kimi_operator_running() { return 1; }
 repair_loop_busy_state() { echo none; }
 dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+git() { return 1; }
 tmux() { echo "TMUX $*" >&2; return 0; }
 repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
 """.strip(),
@@ -4161,6 +4176,68 @@ repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/d
     assert result.returncode == 1, result.stderr
     assert "repair loop tried and exited without recovery -> direct relaunch" in result.stderr
     assert "DISPATCH" not in result.stderr
+
+
+def test_repair_unhealthy_session_retries_root_cause_repair_after_editable_source_changes(
+    tmp_path: Path,
+) -> None:
+    marker_dir = tmp_path / "markers"
+    repair_data_dir = tmp_path / "repair-data"
+    src_dir = tmp_path / "src"
+    marker_dir.mkdir()
+    repair_data_dir.mkdir()
+    (src_dir / ".git").mkdir(parents=True)
+    session = "demo-session"
+    (marker_dir / f"{session}.kimi-dispatch").write_text("2026-07-02T00:00:00Z\n", encoding="utf-8")
+    (marker_dir / f"{session}.kimi-pgid").write_text("12345\n", encoding="utf-8")
+    (repair_data_dir / f"{session}.repair-data.json").write_text(
+        json.dumps(
+            {
+                "outcome": "discord_escalated",
+                "source_git": "editible-install\n1253056b Sync cloud editable install and skills",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_clear"),
+            _extract_wrapper_function("kimi_dispatch_failed_previously"),
+            _extract_wrapper_function("repair_data_outcome_for_session"),
+            _extract_wrapper_function("repair_data_source_head_for_session"),
+            _extract_wrapper_function("editable_source_head"),
+            _extract_wrapper_function("repair_source_changed_since_last_attempt"),
+            _extract_wrapper_function("repair_outcome_wants_repair_retry"),
+            _extract_wrapper_function("mechanical_relaunch_attempted_previously"),
+            _extract_wrapper_function("repair_unhealthy_session"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_data_dir)!r}",
+            f"SRC_DIR={str(src_dir)!r}",
+            """
+log() { echo "LOG $*" >&2; }
+kimi_operator_running() { return 1; }
+repair_loop_busy_state() { echo none; }
+dispatch_kimi_repair() { echo DISPATCH >&2; REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+git() {
+  if [[ "$1" == "-C" ]]; then
+    echo aff659bc1234567890
+    return 0
+  fi
+  return 1
+}
+tmux() { echo "TMUX $*" >&2; return 0; }
+repair_unhealthy_session demo-session /workspace/example .megaplan/initiatives/demo/briefs/demo.md stopped
+""".strip(),
+        ]
+    )
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert "editable source advanced since failed repair; retrying root-cause repair" in result.stderr
+    assert "DISPATCH" in result.stderr
 
 
 def test_watchdog_manual_review_chain_state_reports_needs_human_without_relaunch_or_kimi(
