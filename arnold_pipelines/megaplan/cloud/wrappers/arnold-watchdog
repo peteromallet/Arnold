@@ -1305,7 +1305,7 @@ EOF
   log "starting Codex editable-install repair in $SRC_DIR"
   (
     cd "$SRC_DIR" &&
-    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access "$(cat "$prompt")" </dev/null
+    timeout "$CODEX_TIMEOUT" codex exec --sandbox danger-full-access - < "$prompt"
   ) >> "$LOG" 2>&1
   local rc=$?
   rm -f "$prompt"

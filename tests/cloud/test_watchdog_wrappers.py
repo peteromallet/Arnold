@@ -5211,7 +5211,7 @@ def test_kimi_goal_operator_runs_from_editable_install_checkout() -> None:
     assert "then dispatch Codex through that skill" in text
     assert "If \\$subagent-launcher or Codex cannot be launched" in text
     assert "launching Codex repair subagent" in text
-    assert 'codex exec --sandbox danger-full-access "$(cat "$CODEX_PROMPT")" </dev/null' in text
+    assert 'codex exec --sandbox danger-full-access - < "$CODEX_PROMPT"' in text
     assert 'capture "codex repair subagent result"' in text
     assert "launching Kimi goal operator" in text
     assert text.index("launching Codex repair subagent") < text.index("launching Kimi goal operator")
@@ -8205,6 +8205,7 @@ def test_progress_auditor_dispatch_redacts_brief_and_codex_response_files(tmp_pa
     codex.write_text(
         "#!/usr/bin/env bash\n"
         "printf '%s\\n' \"$*\"\n"
+        "cat\n"
         "printf '%s\\n' 'stderr Authorization: Bearer bearer-secret-token-value' >&2\n",
         encoding="utf-8",
     )
@@ -9049,6 +9050,8 @@ def test_meta_repair_wrapper_has_codex_dispatch() -> None:
     text = _meta_repair_wrapper()
 
     assert 'codex exec --sandbox danger-full-access' in text
+    assert 'codex exec --sandbox danger-full-access - < "$BRIEF_PATH"' in text
+    assert '$(cat "$BRIEF_PATH")' not in text
     assert 'CODEX_TIMEOUT="${MEGAPLAN_META_CODEX_TIMEOUT_SECS:-3600}"' in text
     assert 'codex CLI missing' in text
 
