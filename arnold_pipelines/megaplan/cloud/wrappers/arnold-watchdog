@@ -1241,21 +1241,27 @@ sync_editable_source_branch() {
     return 1
   }
 
-  status="$(cd "$SRC_DIR" && git status --porcelain)"
+  status="$(cd "$SRC_DIR" && git status --porcelain -- arnold_pipelines/megaplan/skills)"
   if [[ -n "$status" ]]; then
-    log "committing editable source drift"
+    log "committing editable skill sync drift"
     (
       cd "$SRC_DIR" &&
-      git add -A &&
+      git add -A -- arnold_pipelines/megaplan/skills &&
       git commit -m "Sync cloud editable install and skills" &&
       git push origin "$SYNC_BRANCH"
     ) >> "$LOG" 2>&1 || {
-      log "editable source commit/push failed"
-      report_item "$report_items" "editable-install" "sync" "sync_failed" "commit/push failed" "$SRC_DIR" "$SYNC_BRANCH"
+      log "editable skill sync commit/push failed"
+      report_item "$report_items" "editable-install" "sync" "sync_failed" "skill sync commit/push failed" "$SRC_DIR" "$SYNC_BRANCH"
       return 1
     }
   else
-    log "editable source has no drift to push"
+    log "editable source has no skill sync drift to push"
+  fi
+
+  status="$(cd "$SRC_DIR" && git status --porcelain)"
+  if [[ -n "$status" ]]; then
+    log "editable source has non-sync drift; leaving uncommitted"
+    report_item "$report_items" "editable-install" "sync" "sync_dirty" "source checkout has non-sync drift; not auto-committing" "$SRC_DIR" "$SYNC_BRANCH"
   fi
 
   refresh_editable_install || {
