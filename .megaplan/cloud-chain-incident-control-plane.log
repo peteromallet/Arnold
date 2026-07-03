@@ -468,3 +468,241 @@ Tool search_files returned error (0.40s): {"total_count": 0, "error": "Path not 
   [tool] (◕‿◕✿) 📖 /workspace/incident-control...
   [done] ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s (2.0s)
 set_active_step was bypassed for phase='prep' — skipping phase_result.json emission
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      ...d_pipelines/megaplan/__init__.py  1.6s
+  ┊ 📖 read      ...rnold/arnold/runtime/__init__.py  1.6s
+  ┊ 🔎 grep      subparsers|add_parser  1.2s
+  ┊ 🔎 grep      def main|def _build_parser|def _...  1.2s
+[auto m1-ledger-core-and-incident-20260703-1919] iter 2 state=prepped next=plan valid_next=['plan']
+[auto m1-ledger-core-and-incident-20260703-1919] running: megaplan plan --plan m1-ledger-core-and-incident-20260703-1919
+[chain] git add -A -> rc=0
+[chain] git reset -- .megaplan/cloud-chain-incident-control-plane.log -> rc=0
+[chain] no changes to commit after plan
+[chain] git add -A -> rc=0
+[chain] git commit --no-verify -m megaplan: m1-ledger-core-and-incident-20260703-1919 plan-cleanup -> rc=0
+[chain] git fetch origin incident-control-plane-m1-ledger-brief -> rc=0
+[chain] git rebase origin/incident-control-plane-m1-ledger-brief -> rc=0
+[chain] git push --no-verify origin HEAD:incident-control-plane-m1-ledger-brief -> rc=0
+[auto m1-ledger-core-and-incident-20260703-1919] iter 3 state=planned next=critique valid_next=['critique', 'plan', 'step']
+[auto m1-ledger-core-and-incident-20260703-1919] running: megaplan critique --plan m1-ledger-core-and-incident-20260703-1919
+  [tool] ( ˘▽˘)っ 📖 /workspace/incident-control...
+  [tool] (｡◕‿◕｡) 📖 /workspace/incident-control...
+  [tool] (✿◠‿◠) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...critique_check_verification.json  1.6s (2.0s)
+  [done] ┊ 📖 read      ...ritique_check_all_locations.json  1.5s (1.6s)
+  [done] ┊ 📖 read      .../critique_check_issue_hints.json  1.7s (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [tool] ヾ(＾∇＾) ⚡ running 3 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.2s total (1.5s)
+  [tool] (★ω★) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 3.4s total (1.5s)
+Tool read_file returned error (0.87s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: /workspace/incident-control-plane/Arnold/anchors/north_star/epic.
+  [done] ⚡ 3/3 tools completed in 4.1s total (2.0s)
+  [tool] (｡◕‿◕｡) ⚡ running 3 tools concurrently
+  [tool] (｡◕‿◕｡) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 2.7s total (1.0s)
+Tool read_file returned error (0.91s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: /workspace/incident-control-plane/Arnold/arnold_pipelines/megapla
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  [done] ⚡ 2/2 tools completed in 2.5s total (2.0s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (｡◕‿◕｡) 📖 /workspace/incident-control...
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s (2.0s)
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] ヾ(＾∇＾) 📖 /workspace/incident-control...
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ┊ 📖 read      ...Arnold/arnold_pipelines/megaplan  0.8s [error] (1.0s)
+Tool read_file returned error (0.81s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: /workspace/incident-control-plane/Arnold/arnold_pipelines/megapla
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] ( ˘▽˘)っ 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [tool] (｡◕‿◕｡) 📖 /workspace/incident-control...
+  [done] ⚡ 3/3 tools completed in 2.4s total (1.0s)
+Tool read_file returned error (0.81s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: /workspace/incident-control-plane/Arnold/arnold_pipelines/megapla
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s (2.0s)
+  [tool] (◕‿◕✿) ⚡ running 3 tools concurrently
+  [tool] (✿◠‿◠) 🔎 ^def main\(
+  [done] ┊ 🔎 grep      ^def main\(  0.8s (1.0s)
+  [done] ⚡ 3/3 tools completed in 4.9s total (2.0s)
+  [tool] (✿◠‿◠) 📖 /workspace/incident-control...
+  [tool] ٩(◕‿◕｡)۶ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.1s)
+  [done] ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.5s (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 2.6s total (2.0s)
+  [done] ⚡ 2/2 tools completed in 2.6s total (2.0s)
+Tool read_file returned error (0.88s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: /workspace/incident-control-plane/Arnold/anchors/north_star/epic.
+  [tool] (✿◠‿◠) ⚡ running 3 tools concurrently
+  [done] ⚡ 3/3 tools completed in 4.8s total (2.0s)
+  [tool] (✿◠‿◠) 🔎 COMMAND_HANDLERS
+  [tool] (✿◠‿◠) ⚡ running 2 tools concurrently
+  [tool] (◕‿◕✿) ⚡ running 2 tools concurrently
+  [done] ┊ 🔎 grep      COMMAND_HANDLERS  0.8s (1.1s)
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [tool] (★ω★) ⚡ running 2 tools concurrently
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] ♪(´ε` ) ⚡ running 2 tools concurrently
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [done] ⚡ 2/2 tools completed in 3.3s total (2.0s)
+  [tool] ♪(´ε` ) 🔎 test_.*megaplan
+  [done] ┊ 🔎 find      test_.*megaplan  0.8s (1.0s)
+  [tool] ヾ(＾∇＾) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [tool] ٩(◕‿◕｡)۶ 📖 /workspace/incident-control...
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [done] ┊ 📖 read      ...trol-plane/Arnold/tests/megaplan  0.8s [error] (1.0s)
+Tool read_file returned error (0.81s): {"content": "", "total_lines": 0, "file_size": 0, "truncated": false, "is_binary": false, "is_image": false, "error": "File not found: /workspace/incident-control-plane/Arnold/tests/megaplan", "simila
+  [tool] (◕ᴗ◕✿) 📖 /workspace/incident-control...
+  [tool] (｡◕‿◕｡) 🔎 .megaplan/**
+  [done] ┊ 📖 read      ...authority_divergence_recovery.py  1.6s (2.0s)
+  [done] ┊ 🔎 find      .megaplan/**  1.0s (1.5s)
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [tool] (★ω★) 🔎 tests/megaplan/*
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [done] ┊ 🔎 find      tests/megaplan/*  0.8s (1.0s)
+  [tool] (≧◡≦) ⚡ running 2 tools concurrently
+  [tool] ヾ(＾∇＾) 🔎 \.py$
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+  [done] ┊ 🔎 find      \.py$  0.8s (1.1s)
+  [tool] ヾ(＾∇＾) 🔎 *
+  [tool] (★ω★) 📖 /workspace/incident-control...
+  [tool] ( ˘▽˘)っ ⚡ running 2 tools concurrently
+  [done] ┊ 🔎 find      *  0.8s (1.0s)
+  [done] ┊ 📖 read      ...pelines/megaplan/resident/cli.py  1.6s (2.0s)
+  [done] ⚡ 2/2 tools completed in 2.4s total (2.0s)
+  [tool] ヾ(＾∇＾) 🔎 ^tests/megaplan/
+  [done] ┊ 🔎 find      ^tests/megaplan/  0.8s (1.0s)
+  [tool] (✿◠‿◠) 🔎 test_authority_divergence
+  [done] ┊ 🔎 find      test_authority_divergence  0.8s (1.0s)
+  [tool] ♪(´ε` ) 📖 /workspace/incident-control...
+  [tool] (◕‿◕✿) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...authority_divergence_recovery.py  1.6s (2.0s)
+  [done] ┊ 📖 read      ...critique_check_verification.json  1.8s (2.0s)
+  [tool] (✿◠‿◠) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [tool] (◕‿◕✿) 📖 /workspace/incident-control...
+  [tool] (◕ᴗ◕✿) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s (1.7s)
+  [done] ┊ 📖 read      ...trol-plane/Arnold/pyproject.toml  1.5s (1.5s)
+  [tool] (≧◡≦) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ..._pipelines/megaplan/cloud/cli.py  1.6s (2.0s)
+  [tool] (◕‿◕✿) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...pelines/megaplan/resident/cli.py  1.6s (2.0s)
+  [tool] (◕‿◕✿) ✍️ /workspace/incident-control...
+  [done] ┊ ✍️  write     ...critique_check_verification.json  1.2s (1.6s)
+  [tool] ♪(´ε` ) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...critique_check_verification.json  1.6s (2.0s)
+  [tool] (｡◕‿◕｡) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 3.2s total (2.0s)
+[megaplan] Could not locate codex rollout for session 019f2976-c6fc-7ea3-8bc2-9d5dd011c19e; step cost will be recorded as $0.00
+[hermes-worker] Read JSON from template file: /workspace/incident-control-plane/Arnold/.megaplan/plans/m1-ledger-core-and-incident-20260703-1919/critique_check_verification.json
+  ┊ 🔎 find      arnold_pipelines/megaplan/*  1.3s
+  ┊ 🔎 find      tests/megaplan/*  1.3s
+  ┊ 📖 read      ...rnold/anchors/north_star/epic.md  0.9s [error]
+  ┊ 🔎 find      arnold_pipelines/megaplan/cli/__...  0.8s
+  ┊ 🔎 find      arnold/runtime/event_journal.py  0.8s
+  ┊ 🔎 find      tests/megaplan/test_cli_commands.py  0.8s
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s
+  ┊ 🔎 find      arnold_pipelines/megaplan/cli  0.8s
+  ┊ 🔎 find      **/megaplan/cli/**  0.8s
+  ┊ 🔎 find      **/megaplan/__init__.py  0.8s
+  ┊ 🔎 find      arnold_pipelines/megaplan/cli*  0.8s
+  ┊ 🔎 grep      def main|click\.group|argparse|d...  0.8s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      ...pelines/megaplan/cli/__main__.py  1.6s
+  ┊ 📖 read      ...es/megaplan/test_cli_commands.py  1.7s
+  ┊ 🔎 grep      incident  0.9s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      ...Arnold/tests/bakeoff/test_cli.py  1.6s
+  ┊ 📖 read      ...ld/runtime/test_event_journal.py  1.6s
+  ┊ 📖 read      ...rnold/arnold/runtime/__init__.py  1.6s
+  ┊ 🔎 find      state.idea  0.8s
+  ┊ 🔎 find      plan_v1.meta.json  0.8s
+  ┊ 📖 read      ..._megaplan_coupling_allowlist.txt  1.6s
+  ┊ 📖 read      ...rnold/conformance/_allowlist.txt  1.6s
+  [tool] (✿◠‿◠) 🔎 read_event_journal_paged
+  [done] ┊ 🔎 grep      read_event_journal_paged  0.8s (1.0s)
+  [tool] ٩(◕‿◕｡)۶ ✍️ /workspace/incident-control...
+  [tool] (◕ᴗ◕✿) ⚡ running 2 tools concurrently
+  [done] ⚡ 2/2 tools completed in 1.6s total (1.0s)
+  [done] ┊ ✍️  write     .../critique_check_issue_hints.json  1.2s (1.7s)
+  [tool] (✿◠‿◠) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      .../critique_check_issue_hints.json  1.6s (2.0s)
+[hermes-worker] Read JSON from template file: /workspace/incident-control-plane/Arnold/.megaplan/plans/m1-ledger-core-and-incident-20260703-1919/critique_check_issue_hints.json
+  ┊ 🔎 find      arnold_pipelines/megaplan/incide...  1.1s
+  ┊ 🔎 find      tests/megaplan/test_incident*.py  1.1s
+  ┊ 🔎 find      arnold_pipelines/megaplan/incide...  0.9s
+  ┊ 📖 read      ...Arnold/arnold_pipelines/megaplan  0.9s [error]
+  ┊ 🔎 find      tests/megaplan/*  0.9s
+  ┊ 📖 read      ...d_pipelines/megaplan/__init__.py  1.6s
+  ┊ 🔎 find      arnold_pipelines/megaplan/cli/__...  0.8s
+  ┊ 📖 read      ...Arnold/arnold_pipelines/megaplan  0.8s [error]
+  ┊ 🔎 find      *.idea*  0.8s
+  ┊ 🔎 find      *  0.8s
+  ┊ 📖 read      ...t-20260703-1919/idea_snapshot.md  1.6s
+  ┊ 📖 read      ...incident-20260703-1919/prep.json  1.7s
+  ┊ 📖 read      ...dent-20260703-1919/research.json  1.6s
+  ┊ 📖 read      ...0703-1919/evaluator_verdict.json  1.6s
+  ┊ 📖 read      ...9/critique_evaluator_output.json  1.6s
+  ┊ 📖 read      ...critique_check_verification.json  1.6s
+  ┊ 📖 read      ...ritique_check_all_locations.json  1.6s
+  ┊ 📖 read      .../critique_check_correctness.json  1.6s
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s
+  ┊ 📖 read      ...-1919/anchors/north_star/epic.md  1.6s
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.7s
+  ┊ 📖 read      ...ncident-20260703-1919/state.json  1.6s
+  ┊ 📖 read      ...t-20260703-1919/prep_triage.json  1.6s
+  ┊ 🔎 grep      incident  0.8s
+  ┊ 📖 read      ...trol-plane/Arnold/pyproject.toml  1.6s
+  [tool] (｡◕‿◕｡) ✍️ /workspace/incident-control...
+  [done] ┊ ✍️  write     ...ritique_check_all_locations.json  1.4s (1.7s)
+  [tool] (★ω★) 📖 /workspace/incident-control...
+  [done] ┊ 📖 read      ...ritique_check_all_locations.json  1.6s (2.0s)
+[hermes-worker] Read JSON from template file: /workspace/incident-control-plane/Arnold/.megaplan/plans/m1-ledger-core-and-incident-20260703-1919/critique_check_all_locations.json
+  ┊ 🔎 find      arnold_pipelines/megaplan/incident  1.2s
+  ┊ 🔎 grep      NdjsonEventJournal  1.2s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.6s
+  ┊ 📖 read      .../arnold/runtime/event_journal.py  1.6s
+  ┊ 🔎 grep      ^def main\(  0.8s
+  ┊ 🔎 grep      def main\(  0.8s
+  ┊ 🔎 grep      COMMAND_HANDLERS  0.8s
+  ┊ 🔎 find      incident  0.8s
+  ┊ 📖 read      ...rnold/anchors/north_star/epic.md  0.9s [error]
+  ┊ 📖 read      ...pelines/megaplan/cli/__init__.py  1.7s
+  ┊ 🔎 find      anchors/north_star  0.8s
+  ┊ 🔎 find      tests/megaplan  0.8s
+  ┊ 🔎 find      tests/megaplan/  0.8s
+  ┊ 🔎 find      test_incident  0.8s
+  ┊ 🔎 find      tests/arnold_pipelines/megaplan  0.8s
+  ┊ 🔎 grep      _register_.*_subcommands  0.8s
+  ┊ 🔎 find      test_cli_commands  0.8s
+  ┊ 🔎 grep      from arnold_pipelines.megaplan  0.8s
+  ┊ 🔎 find      pyproject.toml  0.8s
+  ┊ 🔎 find      setup.py  0.8s
+  ┊ 📖 read      ...lines/megaplan/cloud/__init__.py  1.6s
+  ┊ 📖 read      ...nes/megaplan/bakeoff/__init__.py  1.6s
+  ┊ 🔎 find      conftest  0.8s
+  ┊ 🔎 find      __init__  0.8s
+[megaplan] WARNING: critique degraded: 3 checks unverifiable because /runtime/event_journal.py (issue_hints, all_locations, verification) — likely a missing repo, dependency, or wrong project root; fix and re-run.
+[megaplan] WARNING: critique degraded: high-complexity check(s) unverifiable (correctness); operator attention required before treating critique as complete.
