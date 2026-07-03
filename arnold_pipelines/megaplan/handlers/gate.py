@@ -205,6 +205,18 @@ def _gate_response_fields(state: PlanState, gate_summary: dict[str, Any], debt_e
         "debt_entries_added": debt_entries_added,
     }
 
+
+def _gate_debt_payload(gate_summary: dict[str, Any], debt_entries_added: int) -> dict[str, Any]:
+    return {
+        "recommendation": gate_summary["recommendation"],
+        "entries_added": debt_entries_added,
+        "accepted_tradeoffs": sum(
+            1
+            for item in gate_summary.get("flag_resolutions", [])
+            if isinstance(item, dict) and item.get("action") == "accept_tradeoff"
+        ),
+    }
+
 def _brief_text(value: object, *, sentences: int = 3, max_chars: int = 600) -> str:
     text = str(value or "").strip()
     if not text:
@@ -347,7 +359,7 @@ def _prior_iterate_rounds(state: PlanState) -> int:
     """Count completed critique→gate→revise ITERATE rounds in history.
 
     The current gate pass is not yet recorded in history when
-    ``_apply_gate_outcome`` runs, so this counts only *prior* rounds — the
+    ``_build_gate_route_signal`` runs, so this counts only *prior* rounds — the
     same convention as ``prior_rework_count`` in the review handler.
     """
     return sum(
@@ -416,7 +428,7 @@ def _critique_no_progress_streak(
     P4 — replay/resume consistency. ``_prior_iterate_rounds`` is history-based
     (one entry per completed gate→revise round) while this streak is computed
     from the per-iteration ``gate_signals`` files. To keep the two counters
-    from diverging when ``_apply_gate_outcome`` runs more than once for the same
+    from diverging when ``_build_gate_route_signal`` runs more than once for the same
     ``state['iteration']`` (the reprompt path calls it twice; a resumed gate
     re-runs the whole handler), the streak is updated AT MOST ONCE per
     iteration. We stamp ``critique_no_progress_iteration`` with the iteration we
@@ -455,7 +467,7 @@ def _critique_terminate_branch(
     state: PlanState,
     gate_summary: dict[str, Any],
     reason: str,
-) -> tuple[str, str, str, list[str]]:
+) -> dict[str, Any]:
     """Severity-gated termination shared by the hard cap and the stall stop.
 
     The auto/chain loop is STATUS-DRIVEN: ``auto.drive`` re-derives the next
@@ -481,24 +493,44 @@ def _critique_terminate_branch(
             "flag(s). Plan BLOCKED for human review — the critique loop will not "
             "ship an unresolved correctness/security concern."
         )
-        return "blocked", "override add-note", summary, []
+        return {
+            "result": "blocked",
+            "route_signal": "escalate",
+            "summary": summary,
+            "blocking_unresolved_ids": [],
+            "fallback_payload": {
+                "kind": "critique_cap",
+                "reason": "correctness_or_security_flags",
+            },
+        }
     state["current_state"] = STATE_GATED
     summary = (
         f"{reason}. Force-proceeding to finalize despite remaining cosmetic flags "
         "(deferred and recorded for audit)."
     )
-    return "blocked", "finalize", summary, []
+    return {
+        "result": "blocked",
+        "route_signal": "force_proceed",
+        "summary": summary,
+        "blocking_unresolved_ids": [],
+        "fallback_payload": {
+            "kind": "critique_cap",
+            "reason": "cosmetic_flags_only",
+        },
+    }
 
 
-def _apply_gate_outcome(
+def _build_gate_route_signal(
     state: PlanState,
     gate_summary: dict[str, Any],
     *,
     robustness: str,
     plan_dir: Path,
-) -> tuple[str, str, str, list[str]]:
+) -> dict[str, Any]:
     result = "success"
     summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
+    route_signal = str(gate_summary["recommendation"]).lower()
+    fallback_payload: dict[str, Any] | None = None
 
     # Process explicit flag resolutions when the gate recommends PROCEED.
     if gate_summary["recommendation"] == "PROCEED":
@@ -565,12 +597,27 @@ def _apply_gate_outcome(
 
         if blocking_unresolved_ids:
             state["current_state"] = STATE_CRITIQUED
-            return "unresolved_flags", "gate", summary, blocking_unresolved_ids
+            return {
+                "result": "unresolved_flags",
+                "route_signal": "retry_gate",
+                "summary": summary,
+                "blocking_unresolved_ids": blocking_unresolved_ids,
+                "fallback_payload": {
+                    "kind": "blocking_flag_reprompt",
+                    "blocking_unresolved_ids": list(blocking_unresolved_ids),
+                },
+            }
 
     if gate_summary["recommendation"] == "PROCEED" and gate_summary["passed"]:
         state["current_state"] = STATE_GATED
         state["meta"].pop("user_approved_gate", None)
-        return result, "finalize", summary, []
+        return {
+            "result": result,
+            "route_signal": route_signal,
+            "summary": summary,
+            "blocking_unresolved_ids": [],
+            "fallback_payload": None,
+        }
     state["current_state"] = STATE_CRITIQUED
     if gate_summary["recommendation"] == "PROCEED":
         result = "blocked"
@@ -583,9 +630,30 @@ def _apply_gate_outcome(
                 "Gate recommended PROCEED, but agent availability preflight failed. "
                 "Repair the command PATH and rerun gate, or use force-proceed."
             )
-            return result, "override force-proceed", summary, []
+            fallback_payload = {
+                "kind": "preflight_failed",
+                "reason": "agent_availability_only",
+                "allow_force_proceed": True,
+            }
+            return {
+                "result": result,
+                "route_signal": "blocked_preflight",
+                "summary": summary,
+                "blocking_unresolved_ids": [],
+                "fallback_payload": fallback_payload,
+            }
         summary = "Gate recommended PROCEED, but preflight checks are still blocking execution."
-        return result, "gate", summary, []
+        return {
+            "result": result,
+            "route_signal": "blocked_preflight",
+            "summary": summary,
+            "blocking_unresolved_ids": [],
+            "fallback_payload": {
+                "kind": "preflight_failed",
+                "reason": "blocking_checks",
+                "allow_force_proceed": False,
+            },
+        }
     if gate_summary["recommendation"] == "ITERATE":
         # Layer 0 backstop: bound the critique loop. Mirror the execute-review
         # rework cap (review.py:238-254). Count prior ITERATE rounds; at the
@@ -607,14 +675,41 @@ def _apply_gate_outcome(
                 gate_summary,
                 f"Critique loop made no net progress for {no_progress_streak} consecutive rounds",
             )
-        return result, "revise", summary, []
+        return {
+            "result": result,
+            "route_signal": route_signal,
+            "summary": summary,
+            "blocking_unresolved_ids": [],
+            "fallback_payload": None,
+        }
     if gate_summary["recommendation"] == "ESCALATE":
-        return result, "override add-note", summary, []
+        return {
+            "result": result,
+            "route_signal": route_signal,
+            "summary": summary,
+            "blocking_unresolved_ids": [],
+            "fallback_payload": None,
+        }
     if gate_summary["recommendation"] == "TIEBREAKER":
-        return "tiebreaker_recommended", "tiebreaker", summary, []
+        return {
+            "result": "tiebreaker_recommended",
+            "route_signal": route_signal,
+            "summary": summary,
+            "blocking_unresolved_ids": [],
+            "fallback_payload": None,
+        }
     result = "unknown_recommendation"
     summary = f"Gate returned unknown recommendation '{gate_summary['recommendation']}'; treating as escalation."
-    return result, "override add-note", summary, []
+    return {
+        "result": result,
+        "route_signal": "escalate",
+        "summary": summary,
+        "blocking_unresolved_ids": [],
+        "fallback_payload": {
+            "kind": "unknown_recommendation",
+            "recommendation": gate_summary["recommendation"],
+        },
+    }
 
 def _merge_gate_worker_attempt(base: WorkerResult, retry: WorkerResult) -> WorkerResult:
     base.payload = retry.payload
@@ -874,16 +969,26 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
 
         if len(state["meta"].get("weighted_scores", [])) < iteration:
             _append_to_meta(state, "weighted_scores", gate_signals["signals"]["weighted_score"])
-        result, next_step, summary, blocking_unresolved_ids = _apply_gate_outcome(
+        route_signal = _build_gate_route_signal(
             state,
             gate_summary,
             robustness=gate_signals["robustness"],
             plan_dir=plan_dir,
         )
+        result = route_signal["result"]
+        summary = route_signal["summary"]
+        blocking_unresolved_ids = list(route_signal["blocking_unresolved_ids"])
         if result == "tiebreaker_recommended":
             result, next_step, summary = _validate_tiebreaker(
                 state, gate_summary, plan_dir, worker, args, agent,
                 resolved, signals_artifact, gate_signals, root,
+            )
+            route_signal["result"] = result
+            route_signal["summary"] = summary
+            route_signal["route_signal"] = (
+                "proceed" if next_step == "finalize"
+                else "iterate" if next_step == "revise"
+                else "escalate"
             )
         if blocking_unresolved_ids:
             reprompt_prompt = _build_gate_prompt_override(
@@ -958,12 +1063,15 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 orchestrator_guidance=guidance,
             )
             gate_summary["reprompted"] = True
-            result, next_step, summary, blocking_unresolved_ids = _apply_gate_outcome(
+            route_signal = _build_gate_route_signal(
                 state,
                 gate_summary,
                 robustness=gate_signals["robustness"],
                 plan_dir=plan_dir,
             )
+            result = route_signal["result"]
+            summary = route_signal["summary"]
+            blocking_unresolved_ids = list(route_signal["blocking_unresolved_ids"])
             if blocking_unresolved_ids:
                 gate_summary["recommendation"] = "ITERATE"
                 gate_summary["passed"] = False
@@ -977,7 +1085,16 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                     "unresolved after reprompt. Revise the plan."
                 )
                 result = "blocked"
-                next_step = "revise"
+                route_signal = {
+                    "result": result,
+                    "route_signal": "iterate",
+                    "summary": f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}",
+                    "blocking_unresolved_ids": [],
+                    "fallback_payload": {
+                        "kind": "reprompt_downgrade",
+                        "blocking_unresolved_ids": list(blocking_unresolved_ids),
+                    },
+                }
                 summary = f"Gate recommendation {gate_summary['recommendation']}: {gate_summary['rationale']}"
         _normalize_settled_decisions(gate_summary)
         _merge_resolution_tradeoffs_into_payload(gate_summary, worker.payload)
@@ -1020,7 +1137,7 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
                 summary=summary,
                 recommendation=gate_summary["recommendation"],
                 rationale=gate_summary["rationale"],
-                next_step=next_step,
+                next_step=response_next_step if (response_next_step := route_signal.get("route_signal")) else None,
                 state=state["current_state"],
             )
         return _finish_step(
@@ -1038,8 +1155,17 @@ def handle_gate(root: Path, args: argparse.Namespace) -> StepResponse:
             artifact_hash=gate_hash,
             result=result,
             success=gate_summary["recommendation"] != "PROCEED" or gate_summary["passed"],
-            next_step=next_step,
-            response_fields=_gate_response_fields(state, gate_summary, debt_entries_added),
+            response_fields={
+                **_gate_response_fields(state, gate_summary, debt_entries_added),
+                "route_signal": route_signal.get("route_signal"),
+                "gate_signal": {
+                    "recommendation": gate_summary["recommendation"],
+                    "route_signal": route_signal.get("route_signal"),
+                    "result": result,
+                },
+                "debt_payload": _gate_debt_payload(gate_summary, debt_entries_added),
+                "fallback_payload": route_signal.get("fallback_payload") or {},
+            },
             history_fields={"recommendation": gate_summary["recommendation"]},
         )
 

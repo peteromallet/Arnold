@@ -33,13 +33,13 @@ from .plan import handle_plan, handle_prep, _build_verifiability_flags
 from .critique import handle_critique, handle_revise, _validate_tiebreaker
 from .gate import (
     _build_gate_signals_artifact,
+    _build_gate_route_signal,
     _record_gate_debt_entries,
     _resolve_revise_transition,
     _next_progress_step,
     _remaining_significant_flags,
     _gate_response_fields,
     _write_gate_carry,
-    _apply_gate_outcome,
     _merge_gate_worker_attempt,
     _merge_resolution_tradeoffs_into_payload,
     handle_gate,
