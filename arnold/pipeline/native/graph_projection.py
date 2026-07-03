@@ -15,7 +15,17 @@ from collections.abc import Iterable, Mapping
 from typing import Any, Callable
 
 from arnold.pipeline.declaration_lowering import derive_binding_map
-from arnold.pipeline.native.ir import NativeInstruction, NativeProgram, ParallelInstruction
+from arnold.pipeline.native.ir import (
+    NativeInstruction,
+    NativeProgram,
+    ParallelInstruction,
+    ParallelMapInstruction,
+)
+from arnold.pipeline.pattern_dynamic import (
+    FanoutConcurrency,
+    FanoutJoinContract,
+    FanoutMetadata,
+)
 from arnold.pipeline.types import (
     Edge,
     ParallelStage,
@@ -112,27 +122,39 @@ class _NativeSubpipelineStep:
     def __init__(
         self,
         name: str,
-        child_program: NativeProgram,
+        child_program: NativeProgram | None,
+        output_bindings: Mapping[str, str] | None = None,
         produces: tuple[Port, ...] = (),
         consumes: tuple[PortRef, ...] = (),
     ) -> None:
         self.name = name
         self.child_program = child_program
         self.kind = "native_subpipeline"
+        self.output_bindings = dict(output_bindings or {})
         self.produces: tuple[Port, ...] = produces
         self.consumes: tuple[PortRef, ...] = consumes
 
     def run(self, ctx: StepContext) -> StepResult:
         from pathlib import Path
 
-        from arnold.pipeline.native.runtime import run_native_pipeline
+        from arnold.pipeline.native.runtime import (
+            _extract_child_inputs,
+            _extract_child_outputs,
+            run_native_pipeline,
+        )
+
+        if self.child_program is None:
+            return StepResult(outputs={}, next="halt")
 
         child_artifact_root = Path(ctx.artifact_root) / f"_child_{self.name}"
         child_artifact_root.mkdir(parents=True, exist_ok=True)
 
         child_initial_state: dict[str, Any] = {}
         if isinstance(ctx.state, Mapping):
-            child_initial_state = dict(ctx.state)
+            child_initial_state = _extract_child_inputs(
+                ctx.state,
+                self.child_program.inputs_schema,
+            )
 
         result = run_native_pipeline(
             program=self.child_program,
@@ -140,7 +162,130 @@ class _NativeSubpipelineStep:
             initial_state=child_initial_state,
         )
 
-        return StepResult(outputs=dict(result.state), next="halt")
+        return StepResult(
+            outputs=_extract_child_outputs(
+                result.state,
+                self.child_program.outputs_schema,
+                self.output_bindings,
+            ),
+            next="halt",
+        )
+
+
+class _NativeParallelMapStep:
+    """Step adapter for a runtime-list dynamic fan-out block."""
+
+    def __init__(
+        self,
+        name: str,
+        parallel_map: ParallelMapInstruction,
+        call_site_path: tuple[str, ...],
+    ) -> None:
+        self.name = name
+        self.parallel_map = parallel_map
+        self.call_site_path = call_site_path
+        self.kind = "native_parallel_map"
+        self.produces: tuple[Port, ...] = ()
+        self.consumes: tuple[PortRef, ...] = ()
+        self.fanout_metadata = FanoutMetadata(
+            concurrency=FanoutConcurrency(mode="sequential"),
+            join_contract=FanoutJoinContract(
+                arity="many",
+                result_kind="reduce" if parallel_map.reducer is not None else "collect",
+            ),
+        )
+
+    def run(self, ctx: StepContext) -> StepResult:
+        from pathlib import Path
+
+        from arnold.pipeline.native.compiler import compile_pipeline
+        from arnold.pipeline.native.runtime import (
+            _extract_child_inputs,
+            _extract_child_outputs,
+            _extract_state_patch,
+            _normalize_phase_result,
+            _parallel_map_item_coordinate,
+            _parallel_map_item_state,
+            _resolve_parallel_map_items,
+            run_native_pipeline,
+        )
+
+        state = dict(ctx.state) if isinstance(ctx.state, Mapping) else {}
+        inputs = dict(ctx.inputs) if isinstance(ctx.inputs, Mapping) else {}
+        items = _resolve_parallel_map_items(
+            items_ref=self.parallel_map.items_ref,
+            state=state,
+            parameter_values=inputs,
+        )
+
+        mapper = self.parallel_map.mapper
+        if mapper is None:
+            return StepResult(outputs={}, next="halt")
+
+        mapper_results: list[Any] = []
+        compiled_mapper_program: NativeProgram | None = None
+        if not getattr(mapper, "__phase__", False):
+            compiled_mapper_program = compile_pipeline(mapper)
+
+        for index, item in enumerate(items):
+            item_coordinate = _parallel_map_item_coordinate(
+                path_template=self.parallel_map.path_template,
+                item=item,
+                index=index,
+                items_ref=self.parallel_map.items_ref,
+            )
+            item_path = (*self.call_site_path, item_coordinate)
+            item_state = _parallel_map_item_state(
+                state,
+                item=item,
+                index=index,
+                items_ref=self.parallel_map.items_ref,
+                item_path=item_path,
+            )
+            if getattr(mapper, "__phase__", False):
+                result = mapper(
+                    {
+                        "state": dict(item_state),
+                        "inputs": dict(item_state),
+                        "artifact_root": ctx.artifact_root,
+                        "item": item,
+                        "item_index": index,
+                        "call_site_path": item_path,
+                    }
+                )
+                outputs, _ = _normalize_phase_result(result, self.parallel_map.name or self.name)
+                item_result = dict(outputs)
+                item_result.update(_extract_state_patch(result))
+            else:
+                assert compiled_mapper_program is not None
+                child_artifact_root = (
+                    Path(ctx.artifact_root)
+                    / f"_child_{compiled_mapper_program.name}"
+                    / _safe_name(item_coordinate)
+                )
+                child_artifact_root.mkdir(parents=True, exist_ok=True)
+                child_result = run_native_pipeline(
+                    program=compiled_mapper_program,
+                    artifact_root=child_artifact_root,
+                    initial_state=_extract_child_inputs(
+                        item_state,
+                        compiled_mapper_program.inputs_schema,
+                    ),
+                )
+                item_result = _extract_child_outputs(
+                    child_result.state,
+                    compiled_mapper_program.outputs_schema,
+                    {},
+                )
+            mapper_results.append(item_result)
+
+        if self.parallel_map.reducer is not None:
+            reducer_result = self.parallel_map.reducer(mapper_results)
+            outputs, _ = _normalize_phase_result(reducer_result, self.parallel_map.name or self.name)
+            reduced = dict(outputs)
+            reduced.update(_extract_state_patch(reducer_result))
+            return StepResult(outputs=reduced, next="halt")
+        return StepResult(outputs={self.name: mapper_results}, next="halt")
 
 
 # ── default parallel join ───────────────────────────────────────────
@@ -232,12 +377,19 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
 
     for instr in instructions:
         # Parallel markers become ParallelStage entries.
-        if instr.op == "parallel":
+        if instr.op in ("parallel", "parallel_map"):
             pi = parallel_blocks.get(instr.pc)
             block_name = pi.name if pi is not None else f"parallel_{instr.pc}"
-            stage_name = _parallel_stage_name(
-                block_name, instr.pc, key_mode=key_mode, prefix=prefix
-            )
+            if instr.op == "parallel_map":
+                stage_name = _parallel_map_stage_name(
+                    instr,
+                    key_mode=key_mode,
+                    prefix=prefix,
+                )
+            else:
+                stage_name = _parallel_stage_name(
+                    block_name, instr.pc, key_mode=key_mode, prefix=prefix, instr=instr
+                )
             pc_to_stage[instr.pc] = stage_name
             real_instrs.append(instr)
             continue
@@ -383,6 +535,29 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
             edges_by_src[src_name] = list(edges)
             continue
 
+        if instr.op == "parallel_map":
+            block = instr.subprogram if isinstance(instr.subprogram, ParallelMapInstruction) else None
+            if block is None:
+                continue
+            edges = _projected_edges_for_instruction(
+                instr,
+                pc_to_stage=pc_to_stage,
+                resolve_next_real_pc=_resolve_next_real_pc,
+                resolve_next_public_pc=_resolve_next_public_pc,
+            )
+            step = _NativeParallelMapStep(
+                name=src_name,
+                parallel_map=block,
+                call_site_path=instr.call_site_path,
+            )
+            stages[src_name] = Stage(
+                name=src_name,
+                step=step,
+                edges=tuple(edges),
+            )
+            edges_by_src[src_name] = list(edges)
+            continue
+
         # ── subpipeline stage ────────────────────────────────────
         if instr.op == "subpipeline":
             child_prog = instr.subprogram
@@ -398,26 +573,10 @@ def project_graph(program: NativeProgram, key_mode: str = "pc") -> Pipeline:
             step = _NativeSubpipelineStep(
                 name=src_name,
                 child_program=child_prog if isinstance(child_prog, NativeProgram) else None,  # type: ignore[arg-type]
+                output_bindings=getattr(instr, "output_bindings", {}),
                 produces=subpipeline_produces,
                 consumes=subpipeline_consumes,
             )
-
-            if src_name in stages:
-                # Merge duplicate subpipeline names (e.g. same child used twice
-                # with identical stable_id — pc fallback handled by naming).
-                existing = stages[src_name]
-                merged_edges = _merge_edges(existing.edges, edges)
-                merged_produces = _merge_unique(existing.produces, subpipeline_produces)
-                merged_consumes = _merge_unique(existing.consumes, subpipeline_consumes)
-                stages[src_name] = Stage(
-                    name=src_name,
-                    step=existing.step,
-                    edges=merged_edges,
-                    produces=merged_produces,
-                    consumes=merged_consumes,
-                )
-                edges_by_src[src_name] = list(merged_edges)
-                continue
 
             stages[src_name] = Stage(
                 name=src_name,
@@ -663,6 +822,12 @@ def _public_name_for_instruction(instr: NativeInstruction) -> str:
     return instr.name
 
 
+def _call_site_identity(instr: NativeInstruction) -> str:
+    if not instr.call_site_path:
+        return ""
+    return "/".join(str(segment) for segment in instr.call_site_path if str(segment))
+
+
 def _normalized_route_map(raw: Any) -> dict[str, str | None]:
     if not isinstance(raw, Mapping):
         return {}
@@ -789,12 +954,38 @@ def _parallel_stage_name(
     *,
     key_mode: str,
     prefix: str,
+    instr: NativeInstruction | None = None,
 ) -> str:
-    """Return a stable stage name for a parallel block."""
+    """Return a stable stage name for a parallel block.
+
+    When *instr* carries a ``call_site_path``, the call-site identity is
+    preferred over *block_name*, matching the behaviour of
+    :func:`_parallel_map_stage_name` and subpipeline stage naming.
+    """
+    if instr is not None:
+        identity = _call_site_identity(instr)
+        if identity:
+            safe_block = identity.replace(" ", "_").replace("-", "_").replace("/", "__")
+            if key_mode == "pc":
+                return f"{prefix}__{safe_block}__pc{pc}"
+            return safe_block
     safe_block = block_name.replace(" ", "_").replace("-", "_")
     if key_mode == "pc":
         return f"{prefix}__{safe_block}__pc{pc}"
     return safe_block
+
+
+def _parallel_map_stage_name(
+    instr: NativeInstruction,
+    *,
+    key_mode: str,
+    prefix: str,
+) -> str:
+    name = _call_site_identity(instr) or instr.name
+    safe_name = name.replace(" ", "_").replace("-", "_").replace("/", "__")
+    if key_mode == "pc":
+        return f"{prefix}__{safe_name}__pc{instr.pc}"
+    return safe_name
 
 
 def _stage_name_for_instruction(
@@ -811,6 +1002,13 @@ def _stage_name_for_instruction(
         return f"{prefix}__{public_name}__pc{instr.pc}"
     if func is not None and _projection_flag(func, "merge_stage", False):
         return public_name
+    if instr.op == "subpipeline":
+        call_site_identity = _call_site_identity(instr)
+        if call_site_identity:
+            safe_identity = call_site_identity.replace(" ", "_").replace("-", "_").replace("/", "__")
+            if public_name in duplicate_names:
+                return f"{public_name}__{safe_identity}"
+            return safe_identity
     if public_name in duplicate_names:
         return f"{public_name}__pc{instr.pc}"
     return public_name

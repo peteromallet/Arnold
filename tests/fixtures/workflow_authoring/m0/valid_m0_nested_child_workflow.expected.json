@@ -1,10 +1,10 @@
 {
   "grammar_version": "arnold.workflow.authoring.v2",
-  "source_path": "tests/fixtures/workflow_authoring/m3/valid_m3_subflow_ref.py",
+  "source_path": "tests/fixtures/workflow_authoring/m0/valid_m0_nested_child_workflow.py",
   "outcome": "valid",
-  "group": "subflow",
+  "group": "m0",
   "expected_lowering": {
-    "workflow_id": "m3-subflow-ref",
+    "workflow_id": "m0-nested-child",
     "nodes": [
       "plan",
       "execute",
@@ -12,11 +12,9 @@
     ],
     "subflows": {
       "nested-review": {
-        "manifest_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
-        "alias": "review"
+        "manifest_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
       }
     }
   },
   "expected_diagnostics": []
 }
-

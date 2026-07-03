@@ -13,7 +13,7 @@ from arnold.workflow import diagnostics
 
 def test_diagnostic_contract_exposes_grammar_and_import_metadata() -> None:
     assert diagnostics.GRAMMAR_METADATA == {
-        "grammar_version": "arnold.workflow.authoring.v1",
+        "grammar_version": "arnold.workflow.authoring.v2",
         "source_kind": "python-shaped-workflow",
         "module": "arnold.workflow.authoring",
     }
@@ -88,7 +88,7 @@ def test_diagnostic_dataclass_carries_stable_shape() -> None:
         details={"local_name": "plan", "aliases": ["planner"]},
     )
 
-    assert diagnostic.grammar_version == "arnold.workflow.authoring.v1"
+    assert diagnostic.grammar_version == "arnold.workflow.authoring.v2"
     assert diagnostic.severity is diagnostics.DiagnosticSeverity.ERROR
     assert diagnostic.source_span == SourceSpan("workflow.py", 3, 1, 3, 42)
     assert diagnostic.import_ref == ImportRef("example.workflow.steps", "plan")
@@ -113,7 +113,7 @@ def test_diagnostic_source_span_serializes_with_required_coordinates() -> None:
 
     assert payload["code"] == "AWF010_RESERVED_CALL_KEYWORD"
     assert payload["severity"] == "error"
-    assert payload["grammar_version"] == "arnold.workflow.authoring.v1"
+    assert payload["grammar_version"] == "arnold.workflow.authoring.v2"
     assert payload["source_span"] == {
         "path": "workflow.py",
         "start_line": 7,

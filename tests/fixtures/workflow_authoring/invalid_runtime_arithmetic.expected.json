@@ -1,5 +1,5 @@
 {
-  "grammar_version": "arnold.workflow.authoring.v1",
+  "grammar_version": "arnold.workflow.authoring.v2",
   "source_path": "tests/fixtures/workflow_authoring/invalid_runtime_arithmetic.py",
   "outcome": "invalid",
   "expected_diagnostics": [

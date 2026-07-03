@@ -64,6 +64,19 @@ def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def _trace_stage_id(stage_id: str) -> str:
+    """Normalize runtime stage ids to the short trace form.
+
+    Runtime cursors store stable ids like ``program__step__pc1`` while
+    trace fixtures historically record ``step__pc1``. Keep that public
+    trace shape stable across fresh and resumed runs.
+    """
+    parts = stage_id.split("__")
+    if len(parts) >= 2:
+        return "__".join(parts[-2:])
+    return stage_id
+
+
 def write_artifact_inventory(root: str | Path) -> dict[str, str]:
     """Walk *root* and return a ``{relpath: sha256:<hex>}`` mapping.
 
@@ -139,6 +152,10 @@ class NativeTraceHooks:
             self._journal = NdjsonEventJournal(self._trace_dir)
             self._journal.emit("pipeline.init", payload={"status": "started"})
             self._write_state_json({})
+
+    def seed_stage_sequence(self, stages: list[str]) -> None:
+        """Seed the trace stage sequence from restored runtime stages."""
+        self._stage_seq = [_trace_stage_id(stage_id) for stage_id in stages]
 
     # ── private helpers ─────────────────────────────────────────────
 
@@ -278,7 +295,7 @@ class NativeTraceHooks:
     ) -> None:
         self._inner.on_stage_complete(instr, ctx, result, state, owned_keys)
         # Build stage id the same way the runtime does
-        stage_id = f"{instr.name}__pc{instr.pc}"
+        stage_id = _trace_stage_id(f"{instr.name}__pc{instr.pc}")
         self._stage_seq.append(stage_id)
         self._write_state_json(state)
         if self._journal is not None:

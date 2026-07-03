@@ -51,8 +51,13 @@ from arnold.pipeline.native.hooks import (
     NullNativeRuntimeHooks,
 )
 from arnold.pipeline.native.ir import (
+    CompositionEdge,
+    CompositionNode,
+    CompositionNodeKind,
+    NativeCompositionGraph,
     NativeDecision,
     NativeInstruction,
+    NativeInvocable,
     NativeLoopGuard,
     NativePhase,
     NativePipeline,
@@ -66,6 +71,12 @@ from arnold.pipeline.native.runtime import (
     run_native_pipeline,
 )
 from arnold.pipeline.native.trace import NativeTraceHooks
+from arnold.pipeline.native.validator import (
+    RoutingPurityDiagnostic,
+    RoutingPurityReport,
+    validate_decision_body,
+    validate_pipeline_purity,
+)
 
 __all__ = [
     "NATIVE_CURSOR_VERSION",
@@ -73,9 +84,14 @@ __all__ = [
     "NativeCursorCorruptError",
     "CursorUpgradeError",
     "CursorUpgradeResult",
+    "CompositionEdge",
+    "CompositionNode",
+    "CompositionNodeKind",
+    "NativeCompositionGraph",
     "NativeDecision",
     "NativeExecutionResult",
     "NativeInstruction",
+    "NativeInvocable",
     "NativeLoopGuard",
     "NativePhase",
     "NativePipeline",
@@ -84,6 +100,8 @@ __all__ = [
     "NativeRuntimeError",
     "NativeRuntimeHooks",
     "NativeTraceHooks",
+    "RoutingPurityDiagnostic",
+    "RoutingPurityReport",
     "NullNativeRuntimeHooks",
     "ParallelInstruction",
     "ParallelMapInstruction",
@@ -113,5 +131,7 @@ __all__ = [
     "run_native_pipeline",
     "step",
     "upgrade_graph_cursor_to_native",
+    "validate_decision_body",
+    "validate_pipeline_purity",
     "workflow",
 ]

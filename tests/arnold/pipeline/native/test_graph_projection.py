@@ -16,12 +16,13 @@ from arnold.pipeline.native import (
     NativeCompileError,
     compile_pipeline,
     decision,
+    parallel_map,
     phase,
     pipeline,
     project_graph,
     workflow,
 )
-from arnold.pipeline.types import ParallelStage, Pipeline, Stage
+from arnold.pipeline.types import ParallelStage, Pipeline, Stage, StepContext
 from arnold.workflow.validator import validate
 
 
@@ -1991,8 +1992,8 @@ class TestSubpipelineProjection:
     must project into public topology nodes with stable child IDs where available,
     correct edge routing, and proper duplicate-name fallback.
 
-    Child workflow calls use assignment syntax (``state = child_wf(ctx)``, not
-    ``state = yield child_wf(ctx)``) — the compiler lowers direct calls into
+    Child workflow calls use yield syntax (``state = yield child_wf(ctx)``) —
+    the compiler lowers yielded ``@workflow``/``@pipeline`` callables into
     ``subpipeline`` ops.
     """
 
@@ -2012,7 +2013,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2039,7 +2040,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2061,7 +2062,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2091,7 +2092,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             state = yield after(ctx)
             return state
 
@@ -2128,7 +2129,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2155,7 +2156,7 @@ class TestSubpipelineProjection:
         @pipeline
         def parent(ctx: object) -> dict:
             state = yield before(ctx)
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2192,7 +2193,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2223,7 +2224,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2248,7 +2249,7 @@ class TestSubpipelineProjection:
 
         @pipeline(name="parent_pipe")
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2278,8 +2279,8 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2294,6 +2295,68 @@ class TestSubpipelineProjection:
         # Both contain the child name
         assert "child_wf" in names[0]
         assert "child_wf" in names[1]
+
+    def test_repeated_same_child_with_authored_ids_uses_call_site_path_identity(self) -> None:
+        @phase
+        def child_step(ctx: object) -> dict:
+            return {"child": "ok"}
+
+        @workflow
+        def child_wf(ctx: object) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: object) -> dict:
+            state = yield child_wf(ctx, id="child.first")
+            state = yield child_wf(ctx, id="child.second")
+            return state
+
+        graph = project_graph(compile_pipeline(parent), key_mode="phase")
+        assert list(graph.stages.keys()) == [
+            "child_wf__child.first",
+            "child_wf__child.second",
+        ]
+
+    def test_subpipeline_step_run_uses_declared_io_mapping_and_output_bindings(
+        self, tmp_path
+    ) -> None:
+        @phase
+        def child_step(ctx: dict) -> dict:
+            assert "extra" not in ctx["state"]
+            return {"bar": ctx["state"]["foo"] * 2, "ignored": "nope"}
+
+        @pipeline(
+            inputs={
+                "type": "object",
+                "properties": {"foo": {"type": "integer"}},
+                "required": ["foo"],
+            },
+            outputs={
+                "type": "object",
+                "properties": {"bar": {"type": "integer"}},
+                "required": ["bar"],
+            },
+        )
+        def child_wf(ctx: dict) -> dict:
+            state = yield child_step(ctx)
+            return state
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield child_wf(ctx, outputs={"bar": "child_bar"})
+            return state
+
+        graph = project_graph(compile_pipeline(parent))
+        stage = list(graph.stages.values())[0]
+        result = stage.step.run(
+            StepContext(
+                artifact_root=str(tmp_path),
+                state={"foo": 3, "extra": 9},
+                inputs={},
+            )
+        )
+        assert result.outputs == {"child_bar": 6}
 
     def test_two_different_children_with_same_stable_id_get_pc_fallback(self) -> None:
         """Two distinct children sharing the same stable_id get pc-disambiguated."""
@@ -2318,8 +2381,8 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = wf_one(ctx)
-            state = wf_two(ctx)
+            state = yield wf_one(ctx)
+            state = yield wf_two(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2349,8 +2412,8 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2386,7 +2449,7 @@ class TestSubpipelineProjection:
         @pipeline
         def parent(ctx: object) -> dict:
             state = yield before(ctx)
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             state = yield after(ctx)
             return state
 
@@ -2422,7 +2485,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             if route(ctx) == "a":
                 state = yield path_a(ctx)
             else:
@@ -2458,7 +2521,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             while guard(ctx) == "again":
                 state = yield loop_body(ctx)
             return state
@@ -2494,7 +2557,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             for branch in p_func([branch_a, branch_b], name="batch"):
                 state = yield branch(ctx)
             return state
@@ -2519,7 +2582,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2542,7 +2605,7 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
@@ -2566,12 +2629,71 @@ class TestSubpipelineProjection:
 
         @pipeline
         def parent(ctx: object) -> dict:
-            state = child_wf(ctx)
+            state = yield child_wf(ctx)
             return state
 
         prog = compile_pipeline(parent)
         graph = project_graph(prog)
         assert graph.native_program is prog
+
+
+class TestParallelMapProjection:
+    def test_parallel_map_becomes_dynamic_fanout_stage(self) -> None:
+        @phase
+        def mapper(ctx: dict) -> dict:
+            return {"item": ctx["item"]}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(items="checks", step=mapper, name="batch")
+            return state
+
+        graph = project_graph(compile_pipeline(parent), key_mode="phase")
+        assert list(graph.stages.keys()) == ["batch"]
+        stage = graph.stages["batch"]
+        assert stage.step.kind == "native_parallel_map"
+        assert stage.step.parallel_map.items_ref == "checks"
+        # name="batch" is a display label (metadata-only per SD2); call_site_path
+        # is driven by explicit id= (none provided here).
+        assert stage.step.call_site_path == ()
+        assert stage.step.fanout_metadata.join_contract.result_kind == "collect"
+
+    def test_parallel_map_stage_run_preserves_item_order_and_paths(self, tmp_path) -> None:
+        seen_paths: list[str] = []
+
+        @phase
+        def mapper(ctx: dict) -> dict:
+            seen_paths.append("/".join(ctx["call_site_path"]))
+            return {"slug": ctx["state"]["slug"]}
+
+        def reducer(results: list[dict[str, str]]) -> dict:
+            return {"slugs": [item["slug"] for item in results]}
+
+        @pipeline
+        def parent(ctx: dict) -> dict:
+            state = yield parallel_map(
+                items="checks",
+                step=mapper,
+                reducer=reducer,
+                path_template="item/{slug}",
+                name="batch",
+            )
+            return state
+
+        graph = project_graph(compile_pipeline(parent), key_mode="phase")
+        stage = graph.stages["batch"]
+        result = stage.step.run(
+            StepContext(
+                artifact_root=str(tmp_path),
+                state={"checks": [{"slug": "a"}, {"slug": "b"}]},
+                inputs={"checks": [{"slug": "a"}, {"slug": "b"}]},
+            )
+        )
+        # name="batch" is a display label (metadata-only per SD2); the runtime
+        # call_site_path for each item is driven by path_template + item identity,
+        # not by the display name.
+        assert seen_paths == ["item/a", "item/b"]
+        assert result.outputs == {"slugs": ["a", "b"]}
 
 
 # ──────────────────────────────────────────────────────────────────────
