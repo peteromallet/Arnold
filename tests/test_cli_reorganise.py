@@ -243,6 +243,7 @@ def test_reorganise_apply_writes_previewed_candidate_with_in_place_backup(
             spacing="balanced",
             existing_group_policy="semantic_preserve",
             force_regroup=False,
+            replace_original=False,
         )
     )
     capsys.readouterr()
@@ -261,6 +262,7 @@ def test_reorganise_apply_writes_previewed_candidate_with_in_place_backup(
             existing_group_policy="preserve",
             force_regroup=True,
             manifest=str(tmp_path / "reorganisation_preview_manifest.json"),
+            replace_original=True,
         )
     )
 
@@ -290,6 +292,7 @@ def test_reorganise_apply_refuses_stale_source_graph(
             spacing="balanced",
             existing_group_policy="semantic_preserve",
             force_regroup=False,
+            replace_original=False,
         )
     )
     capsys.readouterr()
@@ -310,6 +313,7 @@ def test_reorganise_apply_refuses_stale_source_graph(
             existing_group_policy="semantic_preserve",
             force_regroup=False,
             manifest=str(tmp_path / "reorganisation_preview_manifest.json"),
+            replace_original=True,
         )
     )
 
@@ -318,4 +322,50 @@ def test_reorganise_apply_refuses_stale_source_graph(
     assert apply_code == 1
     assert "stale preview manifest: source canonical hash changed" in captured.err
     assert workflow_path.read_bytes() == changed_source_bytes
+    assert not workflow_path.with_name("workflow.json.bak").exists()
+
+
+def test_reorganise_apply_requires_explicit_destination_or_replace_original(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workflow_path = _write_workflow(tmp_path)
+    out_path = tmp_path / "cleaned.json"
+
+    preview_code = _cmd_reorganise(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            assess=False,
+            preview=True,
+            apply=False,
+            out=str(out_path),
+            sidecar=None,
+            spacing="balanced",
+            existing_group_policy="semantic_preserve",
+            force_regroup=False,
+            replace_original=False,
+        )
+    )
+    capsys.readouterr()
+
+    apply_code = _cmd_reorganise(
+        argparse.Namespace(
+            workflow=str(workflow_path),
+            assess=False,
+            preview=False,
+            apply=True,
+            out=None,
+            sidecar=None,
+            spacing="balanced",
+            existing_group_policy="semantic_preserve",
+            force_regroup=False,
+            manifest=str(tmp_path / "reorganisation_preview_manifest.json"),
+            replace_original=False,
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert preview_code == 0
+    assert apply_code == 2
+    assert "--apply requires --out DESTINATION.json or --replace-original" in captured.err
     assert not workflow_path.with_name("workflow.json.bak").exists()

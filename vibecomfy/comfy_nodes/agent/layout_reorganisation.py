@@ -33,7 +33,7 @@ REORGANISATION_DECISION_RESULTS: frozenset[str] = frozenset(
     {"none", "offer_reorganisation", "prepare_candidate"}
 )
 
-_DEFAULT_MODE: ReorganiseAutoMode = "suggest"
+_DEFAULT_MODE: ReorganiseAutoMode = "off"
 _OVERLAP_REGRESSION_THRESHOLD = 0
 _BACKWARD_RATIO_REGRESSION_THRESHOLD = 0.05
 _SPACING_REGRESSION_THRESHOLD = 0.15

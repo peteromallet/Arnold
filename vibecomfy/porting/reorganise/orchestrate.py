@@ -658,6 +658,19 @@ def preview_reorganise_workflow(
             second_stage_ok = False
         if validation_report.ok and second_stage_ok:
             compiled = compile_layout_plan(plan, facts, options=opts.compile_options)
+            if not compiled.ok:
+                fallback_compile_options = _small_wrapper_node_only_fallback_options(
+                    facts,
+                    opts.compile_options,
+                )
+                if fallback_compile_options is not None:
+                    fallback_compiled = compile_layout_plan(
+                        plan,
+                        facts,
+                        options=fallback_compile_options,
+                    )
+                    if fallback_compiled.ok:
+                        compiled = fallback_compiled
             if compiled.ok:
                 compile_result = compiled
             else:
@@ -1095,6 +1108,31 @@ def _bool_text(value: bool) -> str:
     return "true" if value else "false"
 
 
+def _small_wrapper_node_only_fallback_options(
+    facts: GraphInventoryFacts,
+    options: LayoutCompileOptions,
+) -> LayoutCompileOptions | None:
+    if options.grouping_policy != "auto":
+        return None
+    node_count = len(facts.canonical_refs)
+    root_node_count = next(
+        (scope.node_count for scope in facts.summary.scopes if scope.scope_path == ""),
+        node_count,
+    )
+    nested_scope_count = sum(1 for scope in facts.summary.scopes if scope.scope_path)
+    if not nested_scope_count or root_node_count > 12:
+        return None
+    return LayoutCompileOptions(
+        spacing_preset=options.spacing_preset,
+        existing_group_policy=options.existing_group_policy,
+        grouping_policy="none",
+        force_regroup=options.force_regroup,
+        pinned_refs=options.pinned_refs,
+        preserve_node_sizes=options.preserve_node_sizes,
+        minimize_setget_helpers=options.minimize_setget_helpers,
+    )
+
+
 def _compile_failure_diagnostics(
     compile_result: LayoutCompileResult,
 ) -> tuple[ReorganiseDiagnostic, ...]:
@@ -1381,6 +1419,8 @@ def _container_parent_sections(facts: GraphInventoryFacts) -> dict[str, LayoutSe
     for fact in facts.canonical_refs:
         if _is_subgraph_container_class(fact.class_type):
             by_parent_scope.setdefault(fact.ref.scope_path, []).append(fact)
+    subgraph_id_by_scope = _subgraph_definition_id_by_scope(facts)
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
 
     result: dict[str, LayoutSection] = {}
     for scope in sorted(
@@ -1389,6 +1429,31 @@ def _container_parent_sections(facts: GraphInventoryFacts) -> dict[str, LayoutSe
     ):
         parent_scope = _parent_scope(scope)
         candidates = sorted(by_parent_scope.get(parent_scope, ()), key=lambda item: _ref_sort_key(item.ref))
+        definition_id = subgraph_id_by_scope.get(scope)
+        if definition_id:
+            explicit = tuple(
+                fact
+                for fact in sorted(facts.canonical_refs, key=lambda item: _ref_sort_key(item.ref))
+                if fact.ref.scope_path == parent_scope and fact.class_type == definition_id
+            )
+            if explicit:
+                candidates = list(explicit)
+        if not candidates:
+            fallback_refs = _uuid_like_subgraph_container_refs(facts, parent_scope)
+            child_scopes = sorted(
+                (
+                    item.scope_path
+                    for item in facts.summary.scopes
+                    if item.scope_path and _parent_scope(item.scope_path) == parent_scope
+                ),
+                key=_scope_sort_key,
+            )
+            if scope in child_scopes:
+                index = child_scopes.index(scope)
+                if index < len(fallback_refs):
+                    fact = canonical_by_ref.get(fallback_refs[index])
+                    if fact is not None:
+                        candidates = [fact]
         if not candidates:
             continue
         container_ref = candidates[0].ref
@@ -1400,6 +1465,53 @@ def _container_parent_sections(facts: GraphInventoryFacts) -> dict[str, LayoutSe
             role_hint=ROLE_HINT_SUBGRAPH_CONTAINER,
         )
     return result
+
+
+def _subgraph_definition_id_by_scope(facts: GraphInventoryFacts) -> dict[str, str]:
+    definitions = facts.sidecar_envelope.get("definitions")
+    rows: dict[str, str] = {}
+    for definition in _iter_subgraph_definitions(definitions):
+        name = definition.get("name")
+        definition_id = definition.get("id")
+        if isinstance(name, str) and isinstance(definition_id, str):
+            rows[name] = definition_id
+    result: dict[str, str] = {}
+    for scope in facts.summary.scopes:
+        if not scope.scope_path:
+            continue
+        scope_name = scope.scope_path.rsplit(":", 1)[0]
+        definition_id = rows.get(scope_name)
+        if definition_id:
+            result[scope.scope_path] = definition_id
+    return result
+
+
+def _iter_subgraph_definitions(definitions: Any) -> tuple[Mapping[str, Any], ...]:
+    if isinstance(definitions, Mapping):
+        subgraphs = definitions.get("subgraphs")
+        if isinstance(subgraphs, Sequence) and not isinstance(subgraphs, (str, bytes)):
+            return tuple(item for item in subgraphs if isinstance(item, Mapping))
+        if isinstance(definitions.get("nodes"), Sequence):
+            return (definitions,)
+        return tuple(item for item in definitions.values() if isinstance(item, Mapping))
+    if isinstance(definitions, Sequence) and not isinstance(definitions, (str, bytes)):
+        return tuple(item for item in definitions if isinstance(item, Mapping))
+    return ()
+
+
+def _uuid_like_subgraph_container_refs(
+    facts: GraphInventoryFacts,
+    parent_scope: str,
+) -> tuple[CanonicalNodeRef, ...]:
+    return tuple(
+        fact.ref
+        for fact in sorted(facts.canonical_refs, key=lambda item: _ref_sort_key(item.ref))
+        if fact.ref.scope_path == parent_scope and _looks_like_uuid(fact.class_type)
+    )
+
+
+def _looks_like_uuid(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", value))
 
 
 def _effective_role(ref: CanonicalNodeRef, canonical_by_ref: Mapping[CanonicalNodeRef, Any], hints: Mapping[CanonicalNodeRef, Any]) -> RoleHint:

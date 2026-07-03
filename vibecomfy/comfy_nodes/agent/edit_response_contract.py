@@ -715,7 +715,6 @@ def _build_batch_repl_response(
     context: TurnContext,
 ) -> dict[str, Any]:
     turn_identity = TurnIdentity.from_context(context)
-    stage_snapshots = _stage_snapshot_payloads(context)
     canonical_route = _canonical_agent_edit_route(state.route)
     route_blocks_apply = _route_blocks_apply(state.route)
     has_candidate = (
@@ -754,6 +753,7 @@ def _build_batch_repl_response(
         has_candidate=has_candidate,
         apply_eligibility=response_apply_eligibility,
     )
+    stage_snapshots = _stage_snapshot_payloads(context)
     compatibility_fields = _build_compatibility_response_fields(state)
     candidate_payload = _build_candidate_payload(
         state,
@@ -911,7 +911,6 @@ def _build_dev_success_response(
     contract: str,
 ) -> dict[str, Any]:
     turn_identity = TurnIdentity.from_context(context)
-    stage_snapshots = _stage_snapshot_payloads(context)
     plan_allows_candidate = _plan_validation_allows_candidate(state, context)
     eligibility = derive_apply_eligibility(
         context,
@@ -951,6 +950,7 @@ def _build_dev_success_response(
         has_candidate=has_candidate,
         apply_eligibility=eligibility,
     )
+    stage_snapshots = _stage_snapshot_payloads(context)
     compatibility_fields = _build_compatibility_response_fields(state)
     public_outcome_kind = public_outcome.get("kind") if isinstance(public_outcome, Mapping) else None
     if _has_enough_grounded_facts_for_dev_narrative(state):

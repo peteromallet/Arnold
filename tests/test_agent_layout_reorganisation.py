@@ -74,8 +74,8 @@ def _append_link(
     ui["links"].append([link_id, source_id, source_slot, target_id, target_slot, socket_type])
 
 
-def test_default_mode_is_suggest_and_invalid_config_fails_closed_visibly() -> None:
-    assert read_reorganise_auto_config({}).mode == "suggest"
+def test_default_mode_is_off_and_invalid_config_fails_closed_visibly() -> None:
+    assert read_reorganise_auto_config({}).mode == "off"
 
     invalid = read_reorganise_auto_config({REORGANISE_AUTO_ENV: "surprise"})
 
@@ -98,7 +98,11 @@ def test_small_prompt_edit_returns_none_without_layout_noise() -> None:
     after = deepcopy(before)
     after["nodes"][1]["widgets_values"] = [20, 12345]
 
-    decision = decide_post_edit_reorganisation(before, after, env={})
+    decision = decide_post_edit_reorganisation(
+        before,
+        after,
+        env={REORGANISE_AUTO_ENV: "suggest"},
+    )
 
     assert decision.result == "none"
     assert decision.result in REORGANISATION_DECISION_RESULTS
@@ -123,7 +127,11 @@ def test_one_node_addition_outside_existing_groups_offers_reorganisation() -> No
         },
     )
 
-    decision = decide_post_edit_reorganisation(before, after, env={})
+    decision = decide_post_edit_reorganisation(
+        before,
+        after,
+        env={REORGANISE_AUTO_ENV: "suggest"},
+    )
 
     assert decision.result == "offer_reorganisation"
     assert "candidate_boxes_outside_groups" in decision.reason_codes
@@ -143,8 +151,20 @@ def test_off_mode_suppresses_branch_addition_reorganisation_offer() -> None:
     assert decision.reason_codes == ("mode_off",)
 
 
-def test_branch_addition_offers_reorganisation_in_default_suggest_mode() -> None:
+def test_branch_addition_does_not_offer_reorganisation_by_default() -> None:
     decision = decide_post_edit_reorganisation(_base_ui(), _branch_addition_ui(), env={})
+
+    assert decision.result == "none"
+    assert decision.features is None
+    assert decision.reason_codes == ("mode_off",)
+
+
+def test_branch_addition_offers_reorganisation_in_explicit_suggest_mode() -> None:
+    decision = decide_post_edit_reorganisation(
+        _base_ui(),
+        _branch_addition_ui(),
+        env={REORGANISE_AUTO_ENV: "suggest"},
+    )
 
     assert decision.result == "offer_reorganisation"
     assert "meaningful_graph_growth" in decision.reason_codes
@@ -188,7 +208,11 @@ def test_output_path_addition_offers_reorganisation() -> None:
     after["groups"][0]["bounding"] = [50, 50, 1000, 330]
     after["groups"][0]["nodes"].append(4)
 
-    decision = decide_post_edit_reorganisation(before, after, env={})
+    decision = decide_post_edit_reorganisation(
+        before,
+        after,
+        env={REORGANISE_AUTO_ENV: "suggest"},
+    )
 
     assert decision.result == "offer_reorganisation"
     assert "output_path_added" in decision.reason_codes

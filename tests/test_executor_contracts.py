@@ -2496,6 +2496,8 @@ class TestClassifierDecisionTable:
             assert example in system
         assert 'route="reorganise"' in system
         assert 'task="layout_reorganise"' in system
+        assert 'Do not choose route="reorganise" just because the canvas is messy' in system
+        assert "only when the user explicitly asks" in system
 
     def test_system_prompt_routes_named_external_edit_to_adapt(self) -> None:
         msgs = build_classify_messages("Switch to generating 16 frames with Hotshot")

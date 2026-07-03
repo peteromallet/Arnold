@@ -17,6 +17,7 @@ from vibecomfy.porting.reorganise import (
 )
 
 _SPACING_PRESETS = ("compact", "balanced", "wide")
+_GROUPING_POLICIES = ("auto", "none", "preserve_existing", "stage", "wall")
 _EXISTING_GROUP_POLICIES = (
     "preserve",
     "rename_only",
@@ -83,13 +84,20 @@ def _cmd_reorganise(args: argparse.Namespace) -> int:
 
 def _apply_preview_manifest(args: argparse.Namespace) -> int:
     workflow_path = Path(args.workflow)
+    replace_original = bool(getattr(args, "replace_original", False))
+    if args.out and replace_original:
+        print("--apply accepts either --out DESTINATION.json or --replace-original, not both.", file=sys.stderr)
+        return 2
+    if not args.out and not replace_original:
+        print("--apply requires --out DESTINATION.json or --replace-original.", file=sys.stderr)
+        return 2
     manifest_path = _resolve_manifest_path(workflow_path, args.out, args.manifest)
     try:
         manifest = _load_manifest(manifest_path)
         candidate_path = _candidate_path_from_manifest(manifest_path, manifest)
         _verify_manifest_source_freshness(workflow_path, manifest)
         candidate_sha256 = _verify_candidate_artifact(candidate_path, manifest)
-        destination_path = Path(args.out) if args.out else workflow_path
+        destination_path = workflow_path if replace_original else Path(args.out)
         backup_path = _write_previewed_candidate(
             candidate_path=candidate_path,
             destination_path=destination_path,
@@ -128,7 +136,9 @@ def _compile_options_from_args(args: argparse.Namespace) -> LayoutCompileOptions
     return LayoutCompileOptions(
         spacing_preset=args.spacing,
         existing_group_policy=existing_group_policy,
+        grouping_policy=getattr(args, "grouping_policy", "auto"),
         force_regroup=force_regroup,
+        minimize_setget_helpers=not bool(getattr(args, "no_minimize_setget_helpers", False)),
     )
 
 
@@ -444,13 +454,23 @@ def _render_report(
 
 def _write_json(path: Path, payload: Mapping[str, Any] | list[Any]) -> None:
     path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n",
+        json.dumps(_json_safe(payload), indent=2, sort_keys=True, ensure_ascii=True) + "\n",
         encoding="utf-8",
     )
 
 
 def _emit_json(payload: Mapping[str, Any]) -> None:
-    print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True))
+    print(json.dumps(_json_safe(payload), indent=2, sort_keys=True, ensure_ascii=True))
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 def _file_sha256(path: Path) -> str:
@@ -483,7 +503,15 @@ def register(subparsers) -> None:
         "--out",
         help=(
             "Candidate UI JSON path for --preview, or destination path for "
-            "--apply. Omit with --apply to update the workflow in place."
+            "--apply."
+        ),
+    )
+    parser.add_argument(
+        "--replace-original",
+        action="store_true",
+        help=(
+            "With --apply, replace the source workflow in place using the exact "
+            "previewed candidate and create a sibling .bak backup."
         ),
     )
     parser.add_argument(
@@ -510,8 +538,19 @@ def register(subparsers) -> None:
         help="How the compiler should treat existing UI groups.",
     )
     parser.add_argument(
+        "--grouping-policy",
+        choices=_GROUPING_POLICIES,
+        default="auto",
+        help="When to generate layout groups; auto avoids over-grouping small clean graphs.",
+    )
+    parser.add_argument(
         "--force-regroup",
         action="store_true",
         help="Force existing groups to be rebuilt by the layout compiler.",
+    )
+    parser.add_argument(
+        "--no-minimize-setget-helpers",
+        action="store_true",
+        help="Keep Set/Get helper nodes at normal size in large workflow layouts.",
     )
     parser.set_defaults(func=_cmd_reorganise)

@@ -944,11 +944,76 @@ def _headless_gate_context() -> GateContext:
         _gate_context_var.reset(token)
 
 
-def test_batch_response_default_suggest_adds_reorganisation_advisory_without_second_candidate(
+def test_batch_response_default_off_does_not_add_reorganisation_advisory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("VIBECOMFY_REORGANISE_AUTO", raising=False)
+    monkeypatch.delenv("VIBECOMFY_NARRATOR_ROUTE", raising=False)
+    monkeypatch.delenv("VIBECOMFY_NARRATOR_MODEL", raising=False)
+    before = _layout_reorganisation_base_ui()
+    after = _layout_reorganisation_branch_ui()
+    before_hash = payload_hash(before)
+    after_hash = payload_hash(after)
+    state = AgentEditState(
+        task="add a preview branch",
+        graph=before,
+        request_payload={"task": "add a preview branch", "graph": before},
+        schema_provider=_batch_repl_provider(),
+        baseline_graph_hash=before_hash,
+        submit_graph_hash=before_hash,
+        submit_structural_graph_hash=structural_graph_hash(before),
+        submitted_client_graph_hash=before_hash,
+        submitted_client_structural_graph_hash=structural_graph_hash(before),
+        session_dir=tmp_path,
+        turn_dir=tmp_path,
+        request_path=tmp_path / "request.json",
+        original_ui_path=tmp_path / "original.ui.json",
+        before_py_path=tmp_path / "before.py",
+        after_py_path=tmp_path / "after.py",
+        projection_path=tmp_path / "projection.txt",
+        model_request_path=tmp_path / "model_request.json",
+        model_response_path=tmp_path / "model_response.json",
+        candidate_ui_path=tmp_path / "candidate.ui.json",
+        messages_path=tmp_path / "messages.jsonl",
+        narrative_context_path=tmp_path / "narrative_context.json",
+        narrative_request_path=tmp_path / "narrative_request.json",
+        narrative_response_path=tmp_path / "narrative_response.json",
+        narrative_validation_path=tmp_path / "narrative_validation.json",
+    )
+    state.route = "dev"
+    state.ui_payload = after
+    state.batch_exit_mode = "done"
+    state.batch_done_summary = "Added the preview branch."
+    context = TurnContext(session_id="default-no-reorganise", turn_id="0001")
+    for gate_name in list(context.gate_results):
+        context.set_gate(gate_name, True)
+
+    response = _build_batch_repl_response(state, context)
+
+    assert response["ok"] is True
+    assert response["outcome"]["kind"] == "candidate"
+    assert response["candidate"] is not None
+    assert response["candidate"]["graph"] == after
+    assert payload_hash(response["candidate"]["graph"]) == after_hash
+    assert payload_hash(response["graph"]) == after_hash
+    assert payload_hash(before) == before_hash
+    assert response["candidate_graph_hash"] == after_hash
+    assert "layout_reorganisation" not in response["change_details"]
+    assert "layout_reorganisation" not in response
+    assert "/reorganise_comfy_workflow" not in response["message"]
+    assert response["apply_allowed"] is True
+    narrative_context = json.loads(
+        (tmp_path / "narrative_context.json").read_text(encoding="utf-8")
+    )
+    assert "layout_reorganisation" not in narrative_context["change_details"]
+
+
+def test_batch_response_explicit_suggest_adds_reorganisation_advisory_without_second_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VIBECOMFY_REORGANISE_AUTO", "suggest")
     monkeypatch.delenv("VIBECOMFY_NARRATOR_ROUTE", raising=False)
     monkeypatch.delenv("VIBECOMFY_NARRATOR_MODEL", raising=False)
     before = _layout_reorganisation_base_ui()

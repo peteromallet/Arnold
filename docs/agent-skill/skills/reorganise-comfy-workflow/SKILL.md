@@ -40,7 +40,13 @@ Apply only an existing preview manifest:
 vibecomfy reorganise workflow.json --apply --manifest reorganisation_preview_manifest.json --out cleaned.json
 ```
 
-Omit `--out` only when the user explicitly wants to update the source file in place. In-place apply preserves a sibling `.bak`. Apply refuses stale source graphs by checking the preview manifest source hashes and writes the exact previewed candidate instead of recomputing a new layout.
+Replacing the source workflow is deliberately explicit:
+
+```bash
+vibecomfy reorganise workflow.json --apply --manifest reorganisation_preview_manifest.json --replace-original
+```
+
+In-place apply preserves a sibling `.bak`. Apply refuses stale source graphs by checking the preview manifest source hashes and writes the exact previewed candidate instead of recomputing a new layout.
 
 Useful options:
 
@@ -76,8 +82,8 @@ Post-edit reorganisation is controlled by:
 VIBECOMFY_REORGANISE_AUTO=off|suggest|candidate
 ```
 
-- `off`: do not inspect successful edits for a follow-up layout offer.
-- `suggest`: default. After a successful applyable functional candidate, attach
+- `off`: default. Do not inspect successful edits for a follow-up layout offer.
+- `suggest`: After a successful applyable functional candidate, attach
   compact `layout_reorganisation` advisory metadata and mention
   `/reorganise_comfy_workflow` when deterministic before/after layout evidence
   shows the result may be harder to review. The functional candidate remains
@@ -99,6 +105,13 @@ hints must not override a concrete edit request.
   fields. Reorganisation must never add, remove, rewire, or retarget runtime
   nodes, links, widgets, prompts, or generated API payloads.
 - Use `reorganisation_report.md` for the user-facing summary and `structural_noop_evidence.json` for safety evidence.
+- After a successful preview, tell the user where the organised `.json` and
+  artifacts were written, and offer to open that output folder for review.
+- Also offer a manifest-backed replace-original option. Make clear that replacing
+  the original requires `--apply --manifest reorganisation_preview_manifest.json
+  --replace-original`; this writes the exact previewed candidate and creates a
+  sibling `.bak` backup of the original workflow. Do not describe replacement as
+  happening by omission of `--out`.
 - If parse, validation, compile, stale-source, invalid-ref, duplicate-ownership, or structural-drift checks fail, report that no candidate is available.
 - Do not call semantic providers for CLI assessment or default preview. Provider-backed planning is an explicitly injected orchestration path, not the default skill behavior.
 - If the user asks for functional graph changes after layout cleanup, hand off to `edit-comfy-workflow`.

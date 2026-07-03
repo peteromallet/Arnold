@@ -400,13 +400,27 @@ def _compile_options_from_payload(payload: Mapping[str, Any]) -> LayoutCompileOp
         if isinstance(payload.get("existing_group_policy"), str)
         else "semantic_preserve"
     )
+    grouping_policy = (
+        payload.get("grouping_policy")
+        if payload.get("grouping_policy") in {"auto", "none", "preserve_existing", "stage", "wall"}
+        else "auto"
+    )
     force_regroup = bool(payload.get("force_regroup"))
     if force_regroup:
         existing_group_policy = "force_regroup"
+    raw_minimize_setget = payload.get(
+        "minimize_setget_helpers",
+        payload.get("minimise_setget_helpers", True),
+    )
+    minimize_setget_helpers = (
+        raw_minimize_setget if isinstance(raw_minimize_setget, bool) else True
+    )
     return LayoutCompileOptions(
         spacing_preset=spacing,
         existing_group_policy=existing_group_policy,
+        grouping_policy=grouping_policy,
         force_regroup=force_regroup,
+        minimize_setget_helpers=minimize_setget_helpers,
     )
 
 

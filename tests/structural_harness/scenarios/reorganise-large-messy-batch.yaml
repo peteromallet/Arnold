@@ -1,0 +1,35 @@
+name: reorganise-large-messy-batch
+tier: 6
+description: "Workflow reorganisation: a batch of four large messy UI workflows reorganises into logical left-to-right layouts with visual contact-sheet evidence"
+mode: structural
+agents:
+  - id: builder
+    dispatcher: fake
+tags:
+  - reorganise
+  - workflow-layout
+  - visual
+  - structural
+  - large-workflow
+  - batch
+assessment:
+  enforced:
+    - "layout_observation.json records four cases."
+    - "Each case records structural_noop=true and matching structural hashes before/after."
+    - "Each case records after_metrics.overlap_count equal to 0."
+    - "Each case records after_metrics.group_signal_strength at least 1.0 and after_metrics.group_coherence at least 0.65."
+    - "layout_before_contact.png and layout_after_contact.png are present for image-understanding review."
+    - "actions.jsonl records reorganise.batch_preview and reorganise.batch_observe_layout."
+  graded:
+    - "After layouts should read as logical left-to-right workflow walls, not scattered helper islands."
+    - "Prompt and conditioning should appear together, sampler passes should read first-before-second, and decode/output should be final."
+  observed:
+    - "vision_prompt.txt asks image-understanding to assess logical and aesthetic layout quality across the batch."
+extras:
+  flow_kind: workflow_reorganisation_structural
+  required_frozen_evidence:
+    - evidence/layout_observation.json
+    - evidence/layout_before_contact.png
+    - evidence/layout_after_contact.png
+    - evidence/vision_prompt.txt
+    - evidence/actions.jsonl

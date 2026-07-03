@@ -53,6 +53,7 @@ from tests.structural_harness.actors import (
 )
 from tests.structural_harness.actors_m4 import _M4_BUILDERS
 from tests.structural_harness.actors_m5 import _M5_BUILDERS
+from tests.structural_harness.actors_reorganise import _REORGANISE_BUILDERS
 
 try:
     from sisypy import ActorRun, FakeProjectAdapter, Scenario, universal_checks
@@ -375,6 +376,8 @@ class VibeComfyProjectAdapter(FakeProjectAdapter):
             builder = _M5_BUILDERS.get(scenario.name)
         if builder is None:
             builder = _M6_BUILDERS.get(scenario.name)
+        if builder is None:
+            builder = _REORGANISE_BUILDERS.get(scenario.name)
         if builder is not None:
             manifest = builder(frozen_root)
             git_diff_path = self._capture_workspace_git_diff(scenario.name, frozen_root)

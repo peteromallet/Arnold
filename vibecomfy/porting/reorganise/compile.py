@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from math import hypot
 from types import MappingProxyType
@@ -70,6 +71,7 @@ ExistingGroupPolicy = Literal[
     "dissolve_with_warning",
     "force_regroup",
 ]
+GroupingPolicy = Literal["auto", "none", "preserve_existing", "stage", "wall"]
 SectionTemplate = Literal[
     "single",
     "pair",
@@ -99,7 +101,7 @@ EXISTING_GROUP_NODE_COVERAGE_WEIGHT = 0.15
 
 # Compile-local huge workflow defaults. These deliberately stay outside
 # LayoutPlan v1 so the plan remains semantic-only.
-COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD = 32
+COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD = 20
 COMPILE_HUGE_WORKFLOW_EDGE_THRESHOLD = 48
 COMPILE_HUGE_WORKFLOW_PROJECTION_TOKEN_THRESHOLD = 4000
 COMPILE_LARGE_SECTION_CLUSTER_SIZE = 10
@@ -264,9 +266,11 @@ def _candidate_schema_hash() -> str:
 class LayoutCompileOptions:
     spacing_preset: SpacingPreset = "balanced"
     existing_group_policy: ExistingGroupPolicy = "semantic_preserve"
+    grouping_policy: GroupingPolicy = "auto"
     force_regroup: bool = False
     pinned_refs: tuple[CanonicalNodeRef, ...] = ()
     preserve_node_sizes: bool = True
+    minimize_setget_helpers: bool = True
 
     def __post_init__(self) -> None:
         if self.spacing_preset not in {"compact", "balanced", "wide"}:
@@ -281,15 +285,19 @@ class LayoutCompileOptions:
             "force_regroup",
         }:
             raise ValueError(f"unknown existing group policy: {self.existing_group_policy!r}")
+        if self.grouping_policy not in {"auto", "none", "preserve_existing", "stage", "wall"}:
+            raise ValueError(f"unknown grouping policy: {self.grouping_policy!r}")
         object.__setattr__(self, "pinned_refs", tuple(self.pinned_refs))
 
     def to_json(self) -> dict[str, Any]:
         return {
             "spacing_preset": self.spacing_preset,
             "existing_group_policy": self.existing_group_policy,
+            "grouping_policy": self.grouping_policy,
             "force_regroup": self.force_regroup,
             "pinned_refs": [ref.to_json() for ref in self.pinned_refs],
             "preserve_node_sizes": self.preserve_node_sizes,
+            "minimize_setget_helpers": self.minimize_setget_helpers,
         }
 
 
@@ -679,12 +687,16 @@ def compile_layout_plan(
         opts,
         classification,
     )
+    should_apply_existing_policy = (
+        not _large_workflow_soft_quality_gate(facts)
+        and _effective_grouping_policy(facts, opts) != "none"
+    )
     group_layouts, policy_issues = _apply_existing_group_policy(
         group_layouts,
         facts,
         opts,
         classification,
-    )
+    ) if should_apply_existing_policy else (group_layouts, ())
     candidate_patch = _candidate_patch(node_layouts, group_layouts, facts, opts)
     report = _build_report(
         node_layouts=node_layouts,
@@ -757,6 +769,7 @@ def _compile_sections(
 ) -> tuple[_CompileSection, ...]:
     section_defs = {section.id: section for section in plan.sections}
     generated_defs: dict[str, _GeneratedSection] = {}
+    huge_mode = _large_workflow_soft_quality_gate(facts)
     helper_refs = {fact.ref for fact in facts.canonical_refs if fact.is_helper}
     canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
 
@@ -774,8 +787,33 @@ def _compile_sections(
         helper_targets[placement.helper] = _helper_section_id(placement, primary_owned)
 
     owned: dict[CanonicalNodeRef, str] = dict(primary_owned)
+    if huge_mode:
+        prompt_generated = _GeneratedSection(
+            kind=SECTION_KIND_CONDITIONING,
+            title="Prompt / Conditioning",
+            role_hint=ROLE_HINT_CONDITIONING,
+        )
+        for ref, section_id in tuple(owned.items()):
+            section = section_defs.get(section_id)
+            title = (section.title if section is not None and section.title is not None else section_id).lower()
+            if section is not None and (
+                section.kind == SECTION_KIND_CONDITIONING
+                or _huge_prompt_prep_title(title)
+            ):
+                owned[ref] = "__huge_prompt_conditioning__"
+                generated_defs["__huge_prompt_conditioning__"] = prompt_generated
     for helper_ref in helper_refs:
         owned[helper_ref] = helper_targets.get(helper_ref, "__helpers__")
+
+    if huge_mode and _can_preserve_existing_groups(options):
+        for ref, generated in _huge_existing_group_ownership(facts, classification).items():
+            if ref in helper_refs:
+                continue
+            owned[ref] = generated[0]
+            generated_defs.setdefault(generated[0], generated[1])
+        for ref, generated in _huge_existing_label_ownership(facts, classification).items():
+            owned[ref] = generated[0]
+            generated_defs.setdefault(generated[0], generated[1])
 
     unassigned = tuple(
         fact.ref
@@ -801,6 +839,14 @@ def _compile_sections(
             if ref in owned:
                 continue
             fact = canonical_by_ref.get(ref)
+            if huge_mode and _is_prompt_text_ref(ref, canonical_by_ref):
+                owned[ref] = "__huge_prompt_conditioning__"
+                generated_defs["__huge_prompt_conditioning__"] = _GeneratedSection(
+                    kind=SECTION_KIND_CONDITIONING,
+                    title="Prompt / Conditioning",
+                    role_hint=ROLE_HINT_CONDITIONING,
+                )
+                continue
             hint = classification.hint_for(ref)
             role = hint.role_hint if hint is not None else fact.role_hint if fact is not None else ROLE_HINT_UNKNOWN
             owned[ref] = _section_for_role(role, section_defs)
@@ -843,17 +889,477 @@ def _compile_sections(
             if generated is not None
             else _title_for(section_id, kind)
         )
-        sections.append(
-            _CompileSection(
-                id=section_id,
-                kind=kind,
-                title=title,
-                role_hint=section.role_hint if section is not None else generated.role_hint if generated is not None else None,
-                node_refs=tuple(sorted(refs, key=_ref_sort_key)),
-                parent_id=section.parent_id if section is not None else None,
+        compiled = _CompileSection(
+            id=section_id,
+            kind=kind,
+            title=title,
+            role_hint=section.role_hint if section is not None else generated.role_hint if generated is not None else None,
+            node_refs=tuple(sorted(refs, key=_ref_sort_key)),
+            parent_id=section.parent_id if section is not None else None,
+        )
+        sections.extend(
+            _split_huge_section_for_wall(
+                compiled,
+                facts,
+                enabled=huge_mode,
             )
         )
     return tuple(sections)
+
+
+def _huge_existing_group_ownership(
+    facts: GraphInventoryFacts,
+    classification: ClassificationReport,
+) -> dict[CanonicalNodeRef, tuple[str, _GeneratedSection]]:
+    helper_refs = {fact.ref for fact in facts.canonical_refs if fact.is_helper}
+    ownership: dict[CanonicalNodeRef, tuple[str, _GeneratedSection]] = {}
+    for group, score in _scored_existing_groups(facts, classification):
+        if score.containment <= 0.0 or score.score < 0.5:
+            continue
+        primary_refs = tuple(ref for ref in score.member_refs if ref not in helper_refs)
+        if not primary_refs:
+            continue
+        section_id, generated = _huge_existing_group_section(group, score, primary_refs, facts)
+        for ref in primary_refs:
+            ownership[ref] = (section_id, generated)
+    return ownership
+
+
+def _huge_existing_label_ownership(
+    facts: GraphInventoryFacts,
+    classification: ClassificationReport,
+) -> dict[CanonicalNodeRef, tuple[str, _GeneratedSection]]:
+    label_refs = {fact.ref for fact in facts.canonical_refs if _is_label_ref(fact.ref, facts)}
+    if not label_refs:
+        return {}
+
+    rects = _node_rects_by_ref(facts.node_furniture)
+    ownership: dict[CanonicalNodeRef, tuple[str, _GeneratedSection]] = {}
+    scored_groups = tuple(_scored_existing_groups(facts, classification))
+    existing_sections: list[tuple[GroupFact, _ExistingGroupScore, tuple[CanonicalNodeRef, ...], str, _GeneratedSection]] = []
+    for group, score in scored_groups:
+        primary_refs = tuple(ref for ref in score.member_refs if ref not in label_refs)
+        if not primary_refs:
+            continue
+        section_id, generated = _huge_existing_group_section(group, score, primary_refs, facts)
+        existing_sections.append((group, score, primary_refs, section_id, generated))
+
+    for ref in sorted(label_refs, key=_ref_sort_key):
+        semantic = _semantic_label_section(ref, facts, existing_sections)
+        if semantic is not None:
+            ownership[ref] = semantic
+
+    for group, score, primary_refs, section_id, generated in existing_sections:
+        if score.containment <= 0.0 or score.score < 0.5:
+            continue
+        group_rect = _group_rect(group.bounding)
+        contained_refs = _contained_group_refs(group.scope_path, group_rect, rects, set())
+        explicit_refs = _group_node_refs(facts, group.scope_path, group.nodes)
+        candidate_refs = explicit_refs if explicit_refs is not None and explicit_refs else contained_refs
+        group_label_refs = tuple(ref for ref in candidate_refs if ref in label_refs and ref not in ownership)
+        if not group_label_refs:
+            continue
+        for ref in group_label_refs:
+            ownership[ref] = (section_id, generated)
+    for ref in sorted((ref for ref in label_refs if ref not in ownership), key=_ref_sort_key):
+        nearest = _nearest_existing_section_for_label(ref, rects, existing_sections)
+        if nearest is not None:
+            ownership[ref] = nearest
+    return ownership
+
+
+def _nearest_existing_section_for_label(
+    ref: CanonicalNodeRef,
+    rects: Mapping[CanonicalNodeRef, _ExistingGroupRect],
+    existing_sections: Sequence[tuple[GroupFact, _ExistingGroupScore, tuple[CanonicalNodeRef, ...], str, _GeneratedSection]],
+) -> tuple[str, _GeneratedSection] | None:
+    label_rect = rects.get(ref)
+    if label_rect is None:
+        return None
+    label_center = _existing_rect_center(label_rect)
+    candidates: list[tuple[float, str, _GeneratedSection]] = []
+    for group, score, primary_refs, section_id, generated in existing_sections:
+        if score.containment <= 0.0 or score.score < 0.5:
+            continue
+        center = _existing_group_or_refs_center(group, primary_refs, rects)
+        if center is None:
+            continue
+        candidates.append((_distance_sq(label_center, center), section_id, generated))
+    if not candidates:
+        return None
+    _distance, section_id, generated = min(candidates, key=lambda item: (item[0], item[1]))
+    return (section_id, generated)
+
+
+def _existing_group_or_refs_center(
+    group: GroupFact,
+    refs: Sequence[CanonicalNodeRef],
+    rects: Mapping[CanonicalNodeRef, _ExistingGroupRect],
+) -> tuple[float, float] | None:
+    group_rect = _group_rect(group.bounding)
+    if group_rect is not None:
+        return _existing_rect_center(group_rect)
+    centers = [_existing_rect_center(rects[ref]) for ref in refs if ref in rects]
+    if not centers:
+        return None
+    return (
+        sum(center[0] for center in centers) / len(centers),
+        sum(center[1] for center in centers) / len(centers),
+    )
+
+
+def _existing_rect_center(rect: _ExistingGroupRect) -> tuple[float, float]:
+    return (rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)
+
+
+def _distance_sq(left: tuple[float, float], right: tuple[float, float]) -> float:
+    return (left[0] - right[0]) ** 2 + (left[1] - right[1]) ** 2
+
+
+def _semantic_label_section(
+    ref: CanonicalNodeRef,
+    facts: GraphInventoryFacts,
+    existing_sections: Sequence[tuple[GroupFact, _ExistingGroupScore, tuple[CanonicalNodeRef, ...], str, _GeneratedSection]],
+) -> tuple[str, _GeneratedSection] | None:
+    text = _label_text(ref, facts)
+    if not text:
+        return None
+    lowered = text.lower()
+    if any(token in lowered for token in ("prompt", "enhance")):
+        return (
+            "__huge_prompt_conditioning__",
+            _GeneratedSection(
+                kind=SECTION_KIND_CONDITIONING,
+                title="Prompt / Conditioning",
+                role_hint=ROLE_HINT_CONDITIONING,
+            ),
+        )
+    preferences: tuple[str, ...] = ()
+    if "lora" in lowered:
+        preferences = ("lora",)
+    elif "model" in lowered:
+        preferences = ("model",)
+    elif "video" in lowered or "size" in lowered or "setting" in lowered:
+        preferences = ("setting", "video")
+    elif "sampler" in lowered:
+        preferences = ("sampler",)
+    if not preferences:
+        return None
+    for group, _score, _primary_refs, section_id, generated in existing_sections:
+        title = str(group.title or generated.title or "").lower()
+        if any(token in title for token in preferences):
+            return (section_id, generated)
+    return None
+
+
+def _label_text(ref: CanonicalNodeRef, facts: GraphInventoryFacts) -> str:
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
+    furniture_by_ref = {fact.ref: fact for fact in facts.node_furniture}
+    fact = canonical_by_ref.get(ref)
+    furniture = furniture_by_ref.get(ref)
+    return " ".join(
+        part
+        for part in (
+            str(getattr(fact, "title", "") or ""),
+            str(getattr(furniture, "title", "") or ""),
+        )
+        if part
+    )
+
+
+def _huge_existing_group_section(
+    group: GroupFact,
+    score: _ExistingGroupScore,
+    primary_refs: Sequence[CanonicalNodeRef],
+    facts: GraphInventoryFacts,
+) -> tuple[str, _GeneratedSection]:
+    title = group.title if isinstance(group.title, str) and group.title else ""
+    normalized = title.lower()
+    if _huge_prompt_prep_title(normalized) or _prompt_text_refs(primary_refs, facts):
+        return (
+            "__huge_prompt_conditioning__",
+            _GeneratedSection(
+                kind=SECTION_KIND_CONDITIONING,
+                title="Prompt / Conditioning",
+                role_hint=ROLE_HINT_CONDITIONING,
+            ),
+        )
+    section_id = _existing_group_section_id(group.scope_path, group.index)
+    return (
+        section_id,
+        _GeneratedSection(
+            kind=_huge_existing_group_kind(score, normalized),
+            title=title or _title_for(section_id, score.section_kind),
+        ),
+    )
+
+
+def _huge_prompt_prep_title(title: str) -> bool:
+    return (
+        "conditioning" in title
+        or "prompt" in title
+        or "text to video" in title
+        or "text-to-video" in title
+        or "enhance" in title
+    )
+
+
+def _prompt_text_refs(
+    refs: Sequence[CanonicalNodeRef],
+    facts: GraphInventoryFacts,
+) -> tuple[CanonicalNodeRef, ...]:
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
+    return tuple(
+        ref
+        for ref in refs
+        if _is_prompt_text_ref(ref, canonical_by_ref)
+    )
+
+
+def _is_prompt_text_ref(
+    ref: CanonicalNodeRef,
+    canonical_by_ref: Mapping[CanonicalNodeRef, Any],
+) -> bool:
+    fact = canonical_by_ref.get(ref)
+    if fact is None:
+        return False
+    class_type = str(getattr(fact, "class_type", "")).lower()
+    title = str(getattr(fact, "title", "") or "").lower()
+    text = f"{class_type} {title}"
+    if any(token in text for token in ("prompt", "textgenerate", "text generate", "enhance")):
+        return True
+    if "stringconcatenate" in class_type:
+        return True
+    if "primitivestring" in class_type:
+        return True
+    return False
+
+
+def _huge_existing_group_kind(score: _ExistingGroupScore, title: str) -> SectionKind:
+    if "input" in title:
+        return SECTION_KIND_UTILITY
+    if "setting" in title:
+        return SECTION_KIND_UTILITY
+    if "sampler" in title:
+        return SECTION_KIND_SAMPLING
+    if "latent" in title or "prepare" in title:
+        return SECTION_KIND_LATENT
+    if "decode" in title:
+        return SECTION_KIND_DECODE
+    return score.section_kind
+
+
+def _split_huge_section_for_wall(
+    section: _CompileSection,
+    facts: GraphInventoryFacts,
+    *,
+    enabled: bool,
+) -> tuple[_CompileSection, ...]:
+    if not enabled or section.kind == SECTION_KIND_CONTAINER or len(section.node_refs) <= 6:
+        return (section,)
+    if section.id == "__huge_prompt_conditioning__":
+        return (section,)
+    if section.id.startswith("__existing_"):
+        return (section,)
+
+    buckets: dict[tuple[str, str, SectionKind], list[CanonicalNodeRef]] = {}
+    for ref in section.node_refs:
+        bucket_id, title, kind = _wall_bucket_for_ref(section, ref, facts)
+        buckets.setdefault((bucket_id, title, kind), []).append(ref)
+    buckets = _merge_label_wall_buckets(buckets, facts)
+    if len(buckets) <= 1:
+        return (section,)
+
+    split: list[_CompileSection] = []
+    for (bucket_id, title, kind), refs in sorted(
+        buckets.items(),
+        key=lambda item: (_wall_bucket_sort_key(item[0][0]), item[0][0]),
+    ):
+        ordered_refs = tuple(sorted(refs, key=_ref_sort_key))
+        chunks = _wall_bucket_chunks(bucket_id, ordered_refs)
+        for index, chunk in enumerate(chunks):
+            suffix = f"_{index + 1}" if len(chunks) > 1 else ""
+            split.append(
+                _CompileSection(
+                    id=f"{section.id}__{bucket_id}{suffix}",
+                    kind=kind,
+                    title=f"{title} {index + 1}" if len(chunks) > 1 else title,
+                    role_hint=section.role_hint,
+                    node_refs=chunk,
+                    parent_id=section.parent_id,
+                )
+            )
+    return tuple(split)
+
+
+def _merge_label_wall_buckets(
+    buckets: Mapping[tuple[str, str, SectionKind], Sequence[CanonicalNodeRef]],
+    facts: GraphInventoryFacts,
+) -> dict[tuple[str, str, SectionKind], list[CanonicalNodeRef]]:
+    merged = {key: list(refs) for key, refs in buckets.items()}
+    label_keys = [key for key in merged if key[0] == "labels"]
+    if not label_keys:
+        return merged
+    target_keys = [key for key in merged if key[0] != "labels" and key[0] != "setget"]
+    if not target_keys:
+        target_keys = [key for key in merged if key[0] != "labels"]
+    if not target_keys:
+        return merged
+
+    rects = _node_rects_by_ref(facts.node_furniture)
+    for label_key in label_keys:
+        label_refs = merged.pop(label_key, [])
+        for ref in label_refs:
+            target_key = _nearest_wall_bucket_for_ref(ref, target_keys, merged, rects)
+            if target_key is None:
+                merged.setdefault(label_key, []).append(ref)
+            else:
+                merged.setdefault(target_key, []).append(ref)
+    return merged
+
+
+def _nearest_wall_bucket_for_ref(
+    ref: CanonicalNodeRef,
+    target_keys: Sequence[tuple[str, str, SectionKind]],
+    buckets: Mapping[tuple[str, str, SectionKind], Sequence[CanonicalNodeRef]],
+    rects: Mapping[CanonicalNodeRef, _ExistingGroupRect],
+) -> tuple[str, str, SectionKind] | None:
+    rect = rects.get(ref)
+    if rect is None:
+        return target_keys[0] if target_keys else None
+    center = _existing_rect_center(rect)
+    candidates: list[tuple[float, tuple[str, str, SectionKind]]] = []
+    for key in target_keys:
+        bucket_center = _refs_center(buckets.get(key, ()), rects)
+        if bucket_center is None:
+            continue
+        candidates.append((_distance_sq(center, bucket_center), key))
+    if not candidates:
+        return target_keys[0] if target_keys else None
+    return min(candidates, key=lambda item: (item[0], item[1][0]))[1]
+
+
+def _refs_center(
+    refs: Sequence[CanonicalNodeRef],
+    rects: Mapping[CanonicalNodeRef, _ExistingGroupRect],
+) -> tuple[float, float] | None:
+    centers = [_existing_rect_center(rects[ref]) for ref in refs if ref in rects]
+    if not centers:
+        return None
+    return (
+        sum(center[0] for center in centers) / len(centers),
+        sum(center[1] for center in centers) / len(centers),
+    )
+
+
+def _wall_bucket_chunks(
+    bucket_id: str,
+    refs: Sequence[CanonicalNodeRef],
+) -> tuple[tuple[CanonicalNodeRef, ...], ...]:
+    max_sizes = {
+        "setget": 10_000,
+        "labels": 6,
+        "settings": 5,
+    }
+    max_size = max_sizes.get(bucket_id, 8)
+    return tuple(
+        tuple(refs[index : index + max_size])
+        for index in range(0, len(refs), max_size)
+    )
+
+
+def _wall_bucket_for_ref(
+    section: _CompileSection,
+    ref: CanonicalNodeRef,
+    facts: GraphInventoryFacts,
+) -> tuple[str, str, SectionKind]:
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
+    fact = canonical_by_ref.get(ref)
+    class_type = str(getattr(fact, "class_type", "")).lower()
+    title = str(getattr(fact, "title", "") or "").lower()
+    text = f"{class_type} {title}"
+
+    if any(token in class_type for token in ("setnode", "getnode")):
+        return ("setget", "Set / Get Helpers", SECTION_KIND_UTILITY)
+    if any(token in class_type for token in ("markdown", "note")):
+        return ("labels", "Labels / Notes", SECTION_KIND_UTILITY)
+    if any(token in text for token in ("width", "height", "fps", "frame", "setting", "constant", "primitive")):
+        return ("settings", "Settings", SECTION_KIND_UTILITY)
+
+    if section.kind == SECTION_KIND_LOADERS:
+        if any(token in text for token in ("lora", "patch", "power lora")):
+            return ("lora", "LoRA / Model Patching", SECTION_KIND_LOADERS)
+        if any(token in text for token in ("clip", "text projection", "embedding")):
+            return ("clip", "CLIP / Text Models", SECTION_KIND_LOADERS)
+        if "vae" in text:
+            return ("vae", "VAE Resources", SECTION_KIND_LOADERS)
+        if any(token in text for token in ("image", "resize", "preprocess", "reference")):
+            return ("input", "Input / Image Prep", SECTION_KIND_UTILITY)
+        return ("models", "Models", SECTION_KIND_LOADERS)
+
+    if section.kind == SECTION_KIND_UTILITY:
+        if any(token in text for token in ("note", "markdown", "about")):
+            return ("labels", "Labels / Notes", SECTION_KIND_UTILITY)
+        if _is_prompt_text_ref(ref, canonical_by_ref):
+            return ("prompt", "Prompt / Text", SECTION_KIND_CONDITIONING)
+        if any(token in text for token in ("width", "height", "fps", "frame", "setting", "constant", "primitive")):
+            return ("settings", "Settings", SECTION_KIND_UTILITY)
+        return ("setget", "Set / Get Helpers", SECTION_KIND_UTILITY)
+
+    if section.kind == SECTION_KIND_CUSTOM:
+        if any(token in text for token in ("prompt", "text", "string", "enhance")):
+            return ("prompt", "Prompt / Text", SECTION_KIND_CONDITIONING)
+        if any(token in text for token in ("image", "resize", "preprocess", "latent")):
+            return ("prep", "Image / Latent Prep", SECTION_KIND_LATENT)
+        if any(token in text for token in ("nag", "guider", "cfg", "condition")):
+            return ("conditioning", "Conditioning", SECTION_KIND_CONDITIONING)
+        return ("custom", "Custom", SECTION_KIND_CUSTOM)
+
+    if section.kind == SECTION_KIND_LATENT:
+        if any(token in text for token in ("image", "resize", "preprocess")):
+            return ("imageprep", "Image / Latent Prep", SECTION_KIND_LATENT)
+        return ("latent", "Latent", SECTION_KIND_LATENT)
+
+    if section.kind == SECTION_KIND_SAMPLING:
+        if "scheduler" in text or "sigma" in text or "noise" in text:
+            return ("sampling_settings", "Sampling Settings", SECTION_KIND_SAMPLING)
+        return ("samplers", "Samplers", SECTION_KIND_SAMPLING)
+
+    if section.kind == SECTION_KIND_POSTPROCESS:
+        if any(token in text for token in ("upscale", "resize")):
+            return ("upscale", "Upscale / Resize", SECTION_KIND_POSTPROCESS)
+        return ("postprocess", "Postprocess", SECTION_KIND_POSTPROCESS)
+
+    return (_slugify_title(section.title), section.title, section.kind)
+
+
+def _wall_bucket_sort_key(bucket_id: str) -> int:
+    order = {
+        "models": 0,
+        "clip": 1,
+        "vae": 2,
+        "lora": 3,
+        "input": 4,
+        "settings": 5,
+        "labels": 6,
+        "setget": 7,
+        "prompt": 10,
+        "conditioning": 11,
+        "prep": 12,
+        "imageprep": 13,
+        "latent": 14,
+        "sampling_settings": 20,
+        "samplers": 21,
+        "upscale": 30,
+        "postprocess": 31,
+        "custom": 40,
+    }
+    return order.get(bucket_id, 999)
+
+
+def _slugify_title(title: str) -> str:
+    slug = "".join(ch.lower() if ch.isalnum() else "_" for ch in title).strip("_")
+    return slug or "group"
 
 
 def _compile_section_topologies(
@@ -969,9 +1475,13 @@ def _layout_sections(
     spacing = _spacing(options.spacing_preset)
     furniture_by_ref = {fact.ref: fact for fact in facts.node_furniture}
     canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
-    pinned_refs = _effective_pinned_refs(facts, options, classification)
+    huge_mode = _large_workflow_soft_quality_gate(facts)
+    if huge_mode:
+        spacing = _huge_wall_spacing(spacing)
+    layout_options = _huge_wall_layout_options(options) if huge_mode else options
+    pinned_refs = set() if huge_mode else _effective_pinned_refs(facts, layout_options, classification)
     topology_by_section = {topology.section_id: topology for topology in section_topologies}
-    placements = _section_placements(sections, section_topologies, facts, spacing, furniture_by_ref, options)
+    placements = _section_placements(sections, section_topologies, facts, spacing, furniture_by_ref, layout_options)
     node_layouts: list[CompiledNodeLayout] = []
     for section in sorted(
         sections,
@@ -980,10 +1490,16 @@ def _layout_sections(
         placement = placements[section.id]
         x = placement.x
         y = placement.y
-        local_layout = _local_section_layout(section, facts, furniture_by_ref, options, spacing, plan)
+        local_layout = _local_section_layout(section, facts, furniture_by_ref, layout_options, spacing, plan)
         for ref in section.node_refs:
             furniture = furniture_by_ref.get(ref)
-            width, height = _node_size(furniture, preserve=options.preserve_node_sizes)
+            width, height = _node_size_for_ref(
+                ref,
+                facts,
+                furniture,
+                preserve=layout_options.preserve_node_sizes,
+                minimize_setget_helpers=layout_options.minimize_setget_helpers,
+            )
             local_x, local_y = local_layout.offsets[ref]
             node_x = x + spacing.group_padding + local_x
             node_y = y + spacing.group_padding + DEFAULT_GROUP_HEADER_HEIGHT + local_y
@@ -1011,9 +1527,121 @@ def _layout_sections(
             )
             node_layouts.append(layout)
     node_layouts = list(_apply_floating_helper_positions(plan, node_layouts, spacing))
-    node_layouts = list(_resolve_node_collisions(node_layouts, facts, spacing))
+    if not huge_mode:
+        node_layouts = list(_resolve_node_collisions(node_layouts, facts, spacing))
     group_layouts = _compiled_group_layouts(sections, node_layouts, facts, spacing)
+    group_layouts = _filter_group_layouts_for_policy(group_layouts, facts, layout_options)
     return tuple(sorted(node_layouts, key=lambda layout: _ref_sort_key(layout.ref))), group_layouts
+
+
+def _filter_group_layouts_for_policy(
+    group_layouts: Sequence[CompiledGroupLayout],
+    facts: GraphInventoryFacts,
+    options: LayoutCompileOptions,
+) -> tuple[CompiledGroupLayout, ...]:
+    policy = _effective_grouping_policy(facts, options)
+    if policy in {"stage", "wall"}:
+        return tuple(group_layouts)
+    existing_keys = _existing_group_node_keys(facts)
+    if policy == "preserve_existing":
+        return tuple(
+            group
+            for group in group_layouts
+            if (
+                group.scope_path,
+                tuple(sorted(group.node_refs, key=_ref_sort_key)),
+            )
+            in existing_keys
+        )
+    return ()
+
+
+def _effective_grouping_policy(
+    facts: GraphInventoryFacts,
+    options: LayoutCompileOptions,
+) -> GroupingPolicy:
+    if options.grouping_policy != "auto":
+        return options.grouping_policy
+    if _large_workflow_soft_quality_gate(facts):
+        return "wall"
+    existing_count = sum(len(scope.groups) for scope in facts.scope_furniture)
+    node_count = len(facts.canonical_refs)
+    root_node_count = next(
+        (scope.node_count for scope in facts.summary.scopes if scope.scope_path == ""),
+        node_count,
+    )
+    nested_scope_count = sum(1 for scope in facts.summary.scopes if scope.scope_path)
+    branch_count = sum(len(scope.parallel_branch_candidates) for scope in facts.scope_topologies)
+    helper_count = len(facts.helper_nodes)
+    if existing_count > 0:
+        return "stage"
+    overlap_count = _existing_primary_overlap_count(facts)
+    if nested_scope_count and root_node_count <= 12 and overlap_count == 0:
+        return "none"
+    if overlap_count > 0:
+        return "stage"
+    if node_count >= 15 or (node_count >= 12 and branch_count >= 4) or helper_count >= 3:
+        return "stage"
+    return "none"
+
+
+def _existing_primary_overlap_count(facts: GraphInventoryFacts) -> int:
+    helper_refs = {fact.ref for fact in facts.canonical_refs if fact.is_helper}
+    rects = {
+        ref: _CompileRect(
+            key=json.dumps(ref.to_json(), ensure_ascii=True),
+            ref=ref,
+            x=rect.x,
+            y=rect.y,
+            width=rect.width,
+            height=rect.height,
+        )
+        for ref, rect in _node_rects_by_ref(facts.node_furniture).items()
+        if ref not in helper_refs
+    }
+    return len(_rect_overlap_pairs(rects))
+
+
+def _existing_group_node_keys(
+    facts: GraphInventoryFacts,
+) -> set[tuple[str, tuple[CanonicalNodeRef, ...]]]:
+    keys: set[tuple[str, tuple[CanonicalNodeRef, ...]]] = set()
+    helper_refs = {fact.ref for fact in facts.canonical_refs if fact.is_helper}
+    rects = _node_rects_by_ref(facts.node_furniture)
+    for scope in facts.scope_furniture:
+        for group in scope.groups:
+            explicit_refs = _group_node_refs(facts, group.scope_path, group.nodes)
+            if explicit_refs is None:
+                group_rect = _group_rect(group.bounding)
+                refs = _contained_group_refs(group.scope_path, group_rect, rects, helper_refs)
+            else:
+                refs = tuple(ref for ref in explicit_refs if ref not in helper_refs)
+            if refs:
+                keys.add((group.scope_path, tuple(sorted(refs, key=_ref_sort_key))))
+    return keys
+
+
+def _huge_wall_layout_options(options: LayoutCompileOptions) -> LayoutCompileOptions:
+    return LayoutCompileOptions(
+        spacing_preset=options.spacing_preset,
+        existing_group_policy=options.existing_group_policy,
+        grouping_policy="wall",
+        force_regroup=options.force_regroup,
+        pinned_refs=options.pinned_refs,
+        preserve_node_sizes=False,
+        minimize_setget_helpers=options.minimize_setget_helpers,
+    )
+
+
+def _huge_wall_spacing(spacing: _Spacing) -> _Spacing:
+    return _Spacing(
+        section_gap_x=max(140, round(spacing.section_gap_x * 0.38)),
+        island_gap_x=max(1800, round(spacing.island_gap_x * 0.55)),
+        band_gap_y=max(320, round(spacing.band_gap_y * 0.45)),
+        section_gap_y=max(44, round(spacing.section_gap_y * 0.55)),
+        node_gap_y=max(60, round(spacing.node_gap_y * 0.46)),
+        group_padding=max(32, round(spacing.group_padding * 0.7)),
+    )
 
 
 def _section_placements(
@@ -1025,14 +1653,52 @@ def _section_placements(
     options: LayoutCompileOptions,
 ) -> dict[str, _SectionPlacement]:
     topology_by_section = {topology.section_id: topology for topology in section_topologies}
-    effective_ranks = _effective_section_ranks(sections, section_topologies)
+    use_measured_offsets = _large_workflow_soft_quality_gate(facts)
+    effective_ranks = (
+        _wall_section_ranks(sections)
+        if use_measured_offsets
+        else _effective_section_ranks(sections, section_topologies)
+    )
     raw_band_by_section = {
-        section.id: _section_band(section, facts)
+        section.id: (
+            _huge_wall_band(section)
+            if use_measured_offsets
+            else _section_band(section, facts)
+        )
         for section in sections
     }
-    band_y_index = _normalized_band_indices(sections, topology_by_section, raw_band_by_section)
+    if use_measured_offsets:
+        band_y_offsets = _band_y_offsets(
+            sections,
+            topology_by_section,
+            effective_ranks,
+            raw_band_by_section,
+            facts,
+            furniture_by_ref,
+            options,
+            spacing,
+        )
+        rank_x_offsets = _rank_x_offsets(
+            sections,
+            topology_by_section,
+            effective_ranks,
+            facts,
+            furniture_by_ref,
+            options,
+            spacing,
+        )
+    else:
+        band_y_offsets = _fixed_band_y_offsets(
+            sections,
+            topology_by_section,
+            raw_band_by_section,
+            spacing,
+        )
+        rank_x_offsets = {}
     next_y_by_lane: dict[tuple[str, int, int, int], int] = {}
     row_by_lane: dict[tuple[str, int, int, int], int] = {}
+    x_by_lane: dict[tuple[str, int, int, int], int] = {}
+    placed_lanes: list[tuple[str, int, int, int, int, int, int]] = []
     placements: dict[str, _SectionPlacement] = {}
     for section in sorted(
         sections,
@@ -1045,21 +1711,237 @@ def _section_placements(
         ),
     ):
         topology = _topology_for(section, topology_by_section)
+        island_index = 0 if use_measured_offsets else topology.island_index
         rank = effective_ranks[section.id]
         band = raw_band_by_section[section.id]
-        lane = (topology.scope_path, topology.island_index, rank, band)
+        lane = (topology.scope_path, island_index, rank, band)
         row = row_by_lane.get(lane, 0)
-        base_y = band_y_index[(topology.scope_path, topology.island_index, band)] * spacing.band_gap_y
+        base_y = band_y_offsets[(topology.scope_path, island_index, band)]
         y = base_y + next_y_by_lane.get(lane, 0)
-        x = topology.island_index * spacing.island_gap_x + rank * spacing.section_gap_x
+        section_width, section_height = _estimated_section_size(
+            section,
+            facts,
+            furniture_by_ref,
+            options,
+            spacing,
+        )
+        if lane in x_by_lane:
+            x = x_by_lane[lane]
+        elif use_measured_offsets:
+            x = _compact_wall_lane_x(
+                placed_lanes,
+                scope_path=topology.scope_path,
+                island_index=island_index,
+                rank=rank,
+                y=y,
+                height=section_height,
+                fallback=rank_x_offsets[(topology.scope_path, island_index, rank)],
+                gap_x=spacing.section_gap_x,
+            )
+            x_by_lane[lane] = x
+        else:
+            x = topology.island_index * spacing.island_gap_x + rank * spacing.section_gap_x
+            x_by_lane[lane] = x
         placements[section.id] = _SectionPlacement(rank=rank, band=band, row=row, x=x, y=y)
+        placed_lanes.append(
+            (
+                topology.scope_path,
+                island_index,
+                rank,
+                x,
+                y,
+                section_width,
+                section_height,
+            )
+        )
         next_y_by_lane[lane] = (
             next_y_by_lane.get(lane, 0)
-            + _estimated_section_height(section, facts, furniture_by_ref, options, spacing)
+            + section_height
             + spacing.section_gap_y
         )
         row_by_lane[lane] = row + 1
     return placements
+
+
+def _compact_wall_lane_x(
+    placed_lanes: Sequence[tuple[str, int, int, int, int, int, int]],
+    *,
+    scope_path: str,
+    island_index: int,
+    rank: int,
+    y: int,
+    height: int,
+    fallback: int,
+    gap_x: int,
+) -> int:
+    """Pack a huge-workflow rank against the actual vertical skyline.
+
+    A single max-width column is too conservative for the Comfy wall layout:
+    wide helper/settings groups lower in the left resource column should not
+    force prompt/sampling groups on the top row far to the right. This keeps
+    left-to-right rank order while only reserving horizontal space for earlier
+    ranks that overlap the current lane's vertical interval.
+    """
+    y2 = y + height
+    overlapping_right_edges = [
+        placed_x + placed_width + gap_x
+        for (
+            placed_scope,
+            placed_island,
+            placed_rank,
+            placed_x,
+            placed_y,
+            placed_width,
+            placed_height,
+        ) in placed_lanes
+        if placed_scope == scope_path
+        and placed_island == island_index
+        and placed_rank < rank
+        and _vertical_intervals_overlap(y, y2, placed_y, placed_y + placed_height)
+    ]
+    if not overlapping_right_edges:
+        return fallback
+    return min(fallback, max(overlapping_right_edges))
+
+
+def _vertical_intervals_overlap(a1: int, a2: int, b1: int, b2: int) -> bool:
+    return a1 < b2 and b1 < a2
+
+
+def _wall_section_ranks(sections: Sequence[_CompileSection]) -> dict[str, int]:
+    return {section.id: _wall_section_rank(section) for section in sections}
+
+
+def _wall_section_rank(section: _CompileSection) -> int:
+    """Semantic left-to-right ranks for huge Comfy workflow walls.
+
+    Huge workflows are easier to read when broad functional groups form columns:
+    resources/settings on the left, then conditioning, latent/sampling, decode,
+    and output. Topology still informs local node ordering inside each group, but
+    the group wall follows the visual convention users expect in shared Comfy
+    graphs.
+    """
+    title = (section.title or "").lower()
+    if "input" in title or "setting" in title or "model" in title or "lora" in title:
+        return 0
+    if "prompt" in title or "conditioning" in title or "enhance" in title:
+        return 1
+    if "latent" in title or "prepare" in title:
+        return 2
+    if "first" in title and "sampler" in title:
+        return 3
+    if "sampler" in title or "sampling" in title or "optional" in title:
+        return 4
+    if "decode" in title or "postprocess" in title:
+        return 5
+    if "output" in title or "save" in title:
+        return 6
+    if "set / get helpers" in title:
+        return 0
+    if "label" in title or "note" in title:
+        return 7
+    bucket_id = _wall_bucket_id_from_section_id(section.id)
+    if bucket_id in {"models", "clip", "vae", "lora", "input", "settings"}:
+        return 0
+    if bucket_id in {"labels", "prompt", "conditioning"}:
+        return 1
+    if bucket_id == "setget":
+        return 0
+    if bucket_id in {"custom", "prep", "imageprep", "latent"}:
+        return 2
+    if bucket_id in {"sampling_settings", "samplers"}:
+        return 3
+    if bucket_id in {"upscale", "postprocess"}:
+        return 5
+    if section.kind == SECTION_KIND_OUTPUT or "output" in title or "save" in title:
+        return 6
+    if section.kind in {SECTION_KIND_DECODE, SECTION_KIND_POSTPROCESS}:
+        return 5
+    if section.kind in {SECTION_KIND_SAMPLING, SECTION_KIND_BRANCH}:
+        return 3
+    if section.kind in {SECTION_KIND_LATENT, SECTION_KIND_CONTROL}:
+        return 2
+    if section.kind == SECTION_KIND_CONDITIONING:
+        return 1
+    if section.kind == SECTION_KIND_CUSTOM:
+        return 1
+    if section.kind in {SECTION_KIND_LOADERS, SECTION_KIND_UTILITY, SECTION_KIND_CONTAINER}:
+        return 0
+    return 1
+
+
+def _huge_wall_band(section: _CompileSection) -> int:
+    title = (section.title or "").lower()
+    bucket_id = _wall_bucket_id_from_section_id(section.id)
+    if "set / get" in title or "helper" in title or bucket_id == "setget":
+        return 0
+    if "label" in title or "note" in title or bucket_id == "labels":
+        return 1
+    return 0
+
+
+def _wall_bucket_id_from_section_id(section_id: str) -> str:
+    if "__" not in section_id:
+        return ""
+    bucket_id = section_id.rsplit("__", 1)[1]
+    return re.sub(r"_\d+$", "", bucket_id)
+
+
+def _fixed_band_y_offsets(
+    sections: Sequence[_CompileSection],
+    topology_by_section: Mapping[str, CompiledSectionTopology],
+    raw_band_by_section: Mapping[str, int],
+    spacing: _Spacing,
+) -> dict[tuple[str, int, int], int]:
+    bands_by_island: dict[tuple[str, int], set[int]] = {}
+    for section in sections:
+        topology = _topology_for(section, topology_by_section)
+        bands_by_island.setdefault((topology.scope_path, topology.island_index), set()).add(
+            raw_band_by_section[section.id]
+        )
+
+    offsets: dict[tuple[str, int, int], int] = {}
+    for island_key, bands in sorted(bands_by_island.items()):
+        for index, band in enumerate(sorted(bands)):
+            offsets[(*island_key, band)] = index * spacing.band_gap_y
+    return offsets
+
+
+def _rank_x_offsets(
+    sections: Sequence[_CompileSection],
+    topology_by_section: Mapping[str, CompiledSectionTopology],
+    effective_ranks: Mapping[str, int],
+    facts: GraphInventoryFacts,
+    furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
+    options: LayoutCompileOptions,
+    spacing: _Spacing,
+) -> dict[tuple[str, int, int], int]:
+    rank_widths_by_island: dict[tuple[str, int], dict[int, int]] = {}
+    for section in sections:
+        topology = _topology_for(section, topology_by_section)
+        rank = effective_ranks[section.id]
+        estimated_width, _estimated_height = _estimated_section_size(
+            section,
+            facts,
+            furniture_by_ref,
+            options,
+            spacing,
+        )
+        rank_widths = rank_widths_by_island.setdefault(
+            (topology.scope_path, 0),
+            {},
+        )
+        rank_widths[rank] = max(rank_widths.get(rank, 0), estimated_width)
+
+    offsets: dict[tuple[str, int, int], int] = {}
+    island_base_x = 0
+    for island_key, rank_widths in sorted(rank_widths_by_island.items()):
+        x = island_base_x
+        for rank in sorted(rank_widths):
+            offsets[(*island_key, rank)] = x
+            x += rank_widths[rank] + spacing.section_gap_x
+        island_base_x = x + spacing.island_gap_x
+    return offsets
 
 
 def _effective_section_ranks(
@@ -1150,22 +2032,50 @@ def _is_model_pipe_section(section: _CompileSection, facts: GraphInventoryFacts)
     return False
 
 
-def _normalized_band_indices(
+def _band_y_offsets(
     sections: Sequence[_CompileSection],
     topology_by_section: Mapping[str, CompiledSectionTopology],
+    effective_ranks: Mapping[str, int],
     raw_band_by_section: Mapping[str, int],
+    facts: GraphInventoryFacts,
+    furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
+    options: LayoutCompileOptions,
+    spacing: _Spacing,
 ) -> dict[tuple[str, int, int], int]:
-    bands_by_island: dict[tuple[str, int], set[int]] = {}
+    lane_heights: dict[tuple[str, int, int, int], int] = {}
     for section in sections:
         topology = _topology_for(section, topology_by_section)
-        bands_by_island.setdefault((topology.scope_path, topology.island_index), set()).add(
-            raw_band_by_section[section.id]
+        band = raw_band_by_section[section.id]
+        rank = effective_ranks[section.id]
+        estimated_height = _estimated_section_height(
+            section,
+            facts,
+            furniture_by_ref,
+            options,
+            spacing,
         )
-    indices: dict[tuple[str, int, int], int] = {}
-    for island_key, bands in sorted(bands_by_island.items()):
-        for index, band in enumerate(sorted(bands)):
-            indices[(*island_key, band)] = index
-    return indices
+        lane_key = (topology.scope_path, 0, band, rank)
+        lane_heights[lane_key] = (
+            lane_heights.get(lane_key, 0)
+            + estimated_height
+            + spacing.section_gap_y
+        )
+
+    bands_by_island: dict[tuple[str, int], dict[int, int]] = {}
+    for (scope_path, island_index, band, _rank), lane_height in lane_heights.items():
+        band_heights = bands_by_island.setdefault((scope_path, island_index), {})
+        band_heights[band] = max(
+            band_heights.get(band, 0),
+            max(0, lane_height - spacing.section_gap_y),
+        )
+
+    offsets: dict[tuple[str, int, int], int] = {}
+    for island_key, band_heights in sorted(bands_by_island.items()):
+        y = 0
+        for band in sorted(band_heights):
+            offsets[(*island_key, band)] = y
+            y += band_heights[band] + spacing.band_gap_y
+    return offsets
 
 
 def _estimated_section_height(
@@ -1175,11 +2085,22 @@ def _estimated_section_height(
     options: LayoutCompileOptions,
     spacing: _Spacing,
 ) -> int:
+    return _estimated_section_size(section, facts, furniture_by_ref, options, spacing)[1]
+
+
+def _estimated_section_size(
+    section: _CompileSection,
+    facts: GraphInventoryFacts,
+    furniture_by_ref: Mapping[CanonicalNodeRef, NodeFurnitureFact],
+    options: LayoutCompileOptions,
+    spacing: _Spacing,
+) -> tuple[int, int]:
     local_layout = _local_section_layout(section, facts, furniture_by_ref, options, spacing, None)
     return (
+        local_layout.width + spacing.group_padding * 2,
         DEFAULT_GROUP_HEADER_HEIGHT
         + spacing.group_padding * 2
-        + local_layout.height
+        + local_layout.height,
     )
 
 
@@ -1193,7 +2114,13 @@ def _local_section_layout(
 ) -> _LocalSectionLayout:
     refs = tuple(section.node_refs)
     sizes = {
-        ref: _node_size(furniture_by_ref.get(ref), preserve=options.preserve_node_sizes)
+        ref: _node_size_for_ref(
+            ref,
+            facts,
+            furniture_by_ref.get(ref),
+            preserve=options.preserve_node_sizes,
+            minimize_setget_helpers=options.minimize_setget_helpers,
+        )
         for ref in refs
     }
     if not refs:
@@ -1223,6 +2150,9 @@ def _select_section_template(
     refs = tuple(section.node_refs)
     if len(refs) == 1:
         return "single"
+    title = (section.title or "").lower()
+    if "setting" in title or _constant_like_refs(refs, facts):
+        return "row"
     if _note_refs(refs, facts):
         return "notes_sidebar"
     if section.kind == SECTION_KIND_BRANCH and _parallel_branch_candidate(refs, facts) is not None:
@@ -1242,6 +2172,28 @@ def _select_section_template(
     if len(refs) <= 4:
         return "row"
     return "grid"
+
+
+def _constant_like_refs(
+    refs: Sequence[CanonicalNodeRef],
+    facts: GraphInventoryFacts,
+) -> bool:
+    if len(refs) < 2:
+        return False
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
+    constant_count = 0
+    for ref in refs:
+        fact = canonical_by_ref.get(ref)
+        class_type = str(getattr(fact, "class_type", "")).lower()
+        title = str(getattr(fact, "title", "") or "").lower()
+        if (
+            "constant" in class_type
+            or "primitive" in class_type
+            or title in {"fps", "width", "height"}
+            or "length" in title
+        ):
+            constant_count += 1
+    return constant_count == len(refs)
 
 
 def _offsets_for_template(
@@ -1316,6 +2268,8 @@ def _use_large_section_clusters(
 ) -> bool:
     if section.kind == SECTION_KIND_CONTAINER or len(section.node_refs) < 2:
         return False
+    if len(section.node_refs) <= COMPILE_LARGE_SECTION_CLUSTER_SIZE:
+        return False
     if len(section.node_refs) >= COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD:
         return True
     if len(edges) >= COMPILE_HUGE_WORKFLOW_EDGE_THRESHOLD:
@@ -1347,23 +2301,31 @@ def _large_section_cluster_offsets(
     sizes: Mapping[CanonicalNodeRef, tuple[int, int]],
     spacing: _Spacing,
 ) -> dict[CanonicalNodeRef, tuple[int, int]]:
-    clusters_by_row = _large_section_clusters(refs, edges, facts)
+    clusters = tuple(cluster for row in _large_section_clusters(refs, edges, facts) for cluster in row)
     offsets: dict[CanonicalNodeRef, tuple[int, int]] = {}
     row_y = 0
+    row_x = 0
     cluster_gap_x = max(spacing.section_gap_x, spacing.node_gap_y * 2)
     cluster_gap_y = max(spacing.section_gap_y, spacing.node_gap_y)
-    for row in clusters_by_row:
-        cluster_x = 0
-        row_height = 0
-        for cluster in row:
-            y = 0
-            cluster_width = max((sizes[ref][0] for ref in cluster), default=0)
-            for ref in cluster:
-                offsets[ref] = (cluster_x, row_y + y)
-                y += sizes[ref][1] + spacing.node_gap_y
-            row_height = max(row_height, max(0, y - spacing.node_gap_y))
-            cluster_x += cluster_width + cluster_gap_x
-        row_y += row_height + cluster_gap_y
+    row_width_budget = max(spacing.island_gap_x, spacing.section_gap_x * 8)
+    row_height = 0
+    for cluster in clusters:
+        cluster_width = max((sizes[ref][0] for ref in cluster), default=0)
+        cluster_height = max(
+            0,
+            sum(sizes[ref][1] for ref in cluster)
+            + max(0, len(cluster) - 1) * spacing.node_gap_y,
+        )
+        if row_x and row_x + cluster_width > row_width_budget:
+            row_y += row_height + cluster_gap_y
+            row_x = 0
+            row_height = 0
+        y = 0
+        for ref in cluster:
+            offsets[ref] = (row_x, row_y + y)
+            y += sizes[ref][1] + spacing.node_gap_y
+        row_height = max(row_height, cluster_height)
+        row_x += cluster_width + cluster_gap_x
     return offsets
 
 
@@ -2025,6 +2987,14 @@ def _compile_gate_metrics_and_issues(
     minimum_gutter, gutter_violations = _compiled_minimum_gutter(primary_rects, group_rects)
     helper_distance_max, helper_distance_violations = _compiled_helper_distance_violations(facts, node_rects, helper_refs)
     idempotence_delta, idempotence_detail = _compiled_idempotence_delta(facts, candidate_patch)
+    large_workflow_soft_quality_gate = _large_workflow_soft_quality_gate(facts)
+    root_node_count = next(
+        (scope.node_count for scope in facts.summary.scopes if scope.scope_path == ""),
+        len(primary_rects),
+    )
+    nested_scope_count = sum(1 for scope in facts.summary.scopes if scope.scope_path)
+    small_visible_wrapper = bool(nested_scope_count and root_node_count <= 12)
+    node_only_small_layout = not group_layouts and (len(primary_rects) <= 14 or small_visible_wrapper)
 
     metrics = (
         AssessmentMetric(
@@ -2108,7 +3078,7 @@ def _compile_gate_metrics_and_issues(
             AssessmentIssue(
                 code=COMPILE_ISSUE_BACKWARD_EDGE_RATIO_HIGH,
                 message="Compiled edge direction frequently moves backward on the x axis.",
-                severity="error",
+                severity="warning" if large_workflow_soft_quality_gate or node_only_small_layout else "error",
                 detail={
                     "backward_edges": backward_count,
                     "measured_edges": measured_edges,
@@ -2122,7 +3092,7 @@ def _compile_gate_metrics_and_issues(
             AssessmentIssue(
                 code=COMPILE_ISSUE_CROSSING_PROXY_HIGH,
                 message="Compiled edge crossing proxy exceeded the threshold.",
-                severity="error",
+                severity="warning" if large_workflow_soft_quality_gate or node_only_small_layout else "error",
                 refs=tuple(ref for pair in crossings for edge in pair for ref in (edge.source, edge.target)),
                 detail={
                     "count": len(crossings),
@@ -2139,7 +3109,7 @@ def _compile_gate_metrics_and_issues(
             AssessmentIssue(
                 code=COMPILE_ISSUE_MINIMUM_GUTTER,
                 message="Compiled layout violates minimum node or group gutters.",
-                severity="error",
+                severity="warning" if node_only_small_layout else "error",
                 refs=tuple(
                     ref
                     for violation in gutter_violations
@@ -2158,7 +3128,7 @@ def _compile_gate_metrics_and_issues(
             AssessmentIssue(
                 code=COMPILE_ISSUE_HELPER_DISTANCE_HIGH,
                 message="Compiled helper node is too far from its connected layout context.",
-                severity="error",
+                severity="warning" if large_workflow_soft_quality_gate else "error",
                 refs=tuple(violation["helper_ref"] for violation in helper_distance_violations),
                 detail={
                     "max_distance": round(helper_distance_max, 2),
@@ -2193,6 +3163,31 @@ def _compile_gate_metrics_and_issues(
             )
         )
     return metrics, tuple(issues)
+
+
+def _large_workflow_soft_quality_gate(facts: GraphInventoryFacts) -> bool:
+    """Allow huge graphs to preview with visible quality warnings.
+
+    Large public Comfy graphs often contain long-range helper/set-get edges and
+    crosslinks that cannot satisfy the small-graph crossing/backward/helper
+    thresholds on the first deterministic pass. Those remain warnings; hard
+    geometry failures and structural changes still block candidates.
+    """
+    node_count = len(facts.canonical_refs)
+    root_node_count = next(
+        (scope.node_count for scope in facts.summary.scopes if scope.scope_path == ""),
+        node_count,
+    )
+    nested_scope_count = sum(1 for scope in facts.summary.scopes if scope.scope_path)
+    if nested_scope_count and root_node_count <= 12:
+        return False
+    edge_count = sum(len(topology.effective_edges) for topology in facts.scope_topologies)
+    return (
+        node_count >= COMPILE_HUGE_WORKFLOW_NODE_THRESHOLD
+        or edge_count >= COMPILE_HUGE_WORKFLOW_EDGE_THRESHOLD
+        or _facts_projection_token_estimate(facts)
+        >= COMPILE_HUGE_WORKFLOW_PROJECTION_TOKEN_THRESHOLD
+    )
 
 
 def _node_rects(node_layouts: Sequence[CompiledNodeLayout]) -> dict[CanonicalNodeRef, _CompileRect]:
@@ -2902,7 +3897,7 @@ def _group_for_section(
         y=top,
         width=right - left,
         height=bottom - top,
-        color=_ROLE_COLORS.get(section.kind, _ROLE_COLORS[SECTION_KIND_CUSTOM]),
+        color=_group_color_for_section(section),
         template=template,
     )
 
@@ -2927,8 +3922,26 @@ def _group_for_container(
         y=top,
         width=right - left,
         height=bottom - top,
-        color=_ROLE_COLORS.get(section.kind, _ROLE_COLORS[SECTION_KIND_CUSTOM]),
+        color=_group_color_for_section(section),
         template=None,
+    )
+
+
+def _group_color_for_section(section: _CompileSection) -> str:
+    if _is_support_section(section):
+        return "#a8adb4"
+    return _ROLE_COLORS.get(section.kind, _ROLE_COLORS[SECTION_KIND_CUSTOM])
+
+
+def _is_support_section(section: _CompileSection) -> bool:
+    title = (section.title or "").lower()
+    bucket_id = _wall_bucket_id_from_section_id(section.id)
+    return (
+        "set / get" in title
+        or "helper" in title
+        or "label" in title
+        or "note" in title
+        or bucket_id in {"setget", "labels"}
     )
 
 
@@ -3154,7 +4167,48 @@ def _section_placement_sort_key(
 
 def _section_semantic_sort_key(section: _CompileSection) -> tuple[Any, ...]:
     node_ranks = tuple(_ref_sort_key(ref) for ref in section.node_refs)
-    return (_common_scope(section.node_refs), section.kind, section.id, node_ranks)
+    return (
+        _common_scope(section.node_refs),
+        _section_title_sort_rank(section.title),
+        section.kind,
+        section.id,
+        node_ranks,
+    )
+
+
+def _section_title_sort_rank(title: str) -> int:
+    lowered = title.lower()
+    if "model" in lowered:
+        return 0
+    if "lora" in lowered or "vae" in lowered or "clip" in lowered:
+        return 1
+    if "input" in lowered:
+        return 2
+    if "setting" in lowered:
+        return 3
+    if "conditioning" in lowered:
+        return 10
+    if "prompt" in lowered:
+        return 11
+    if "latent" in lowered or "prepare" in lowered:
+        return 20
+    if "first" in lowered and "sampler" in lowered:
+        return 30
+    if "sampler" in lowered or "sampling" in lowered:
+        return 31
+    if "optional" in lowered:
+        return 32
+    if "decode" in lowered:
+        return 40
+    if "postprocess" in lowered:
+        return 41
+    if "output" in lowered or "save" in lowered:
+        return 50
+    if "set / get" in lowered:
+        return 80
+    if "label" in lowered or "note" in lowered:
+        return 81
+    return 60
 
 
 def _plan_parent_id(
@@ -3478,6 +4532,42 @@ def _node_size(
     return (DEFAULT_NODE_WIDTH, DEFAULT_NODE_HEIGHT)
 
 
+def _node_size_for_ref(
+    ref: CanonicalNodeRef,
+    facts: GraphInventoryFacts,
+    furniture: NodeFurnitureFact | None,
+    *,
+    preserve: bool,
+    minimize_setget_helpers: bool,
+) -> tuple[int, int]:
+    width, height = _node_size(furniture, preserve=preserve)
+    if (
+        minimize_setget_helpers
+        and _large_workflow_soft_quality_gate(facts)
+        and _is_setget_ref(ref, facts)
+    ):
+        return (max(120, round(width * 0.48)), max(44, round(height * 0.44)))
+    return (width, height)
+
+
+def _is_setget_ref(ref: CanonicalNodeRef, facts: GraphInventoryFacts) -> bool:
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
+    fact = canonical_by_ref.get(ref)
+    if fact is None:
+        return False
+    class_type = str(getattr(fact, "class_type", "")).lower()
+    return any(token in class_type for token in ("setnode", "getnode"))
+
+
+def _is_label_ref(ref: CanonicalNodeRef, facts: GraphInventoryFacts) -> bool:
+    canonical_by_ref = {fact.ref: fact for fact in facts.canonical_refs}
+    fact = canonical_by_ref.get(ref)
+    if fact is None:
+        return False
+    class_type = str(getattr(fact, "class_type", "")).lower()
+    return any(token in class_type for token in ("markdown", "note", "annotation"))
+
+
 def _pos(value: Any) -> tuple[int, int] | None:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)) and len(value) >= 2:
         left, top = value[0], value[1]
@@ -3551,12 +4641,20 @@ def _preserved_existing_ownership(
             group_refs = tuple(ref for ref in primary_refs if ref in unassigned and ref not in ownership)
             if not group_refs or len(group_refs) != len(primary_refs):
                 continue
-            section_id = _existing_group_section_id(group.scope_path, group.index)
-            title = group.title if isinstance(group.title, str) and group.title else _title_for(section_id, SECTION_KIND_CUSTOM)
-            generated = _GeneratedSection(
-                kind=group_score.section_kind,
-                title=title,
-            )
+            if _prompt_text_refs(group_refs, facts):
+                section_id = "__huge_prompt_conditioning__"
+                generated = _GeneratedSection(
+                    kind=SECTION_KIND_CONDITIONING,
+                    title="Prompt / Conditioning",
+                    role_hint=ROLE_HINT_CONDITIONING,
+                )
+            else:
+                section_id = _existing_group_section_id(group.scope_path, group.index)
+                title = group.title if isinstance(group.title, str) and group.title else _title_for(section_id, SECTION_KIND_CUSTOM)
+                generated = _GeneratedSection(
+                    kind=group_score.section_kind,
+                    title=title,
+                )
             for ref in sorted(group_refs, key=_ref_sort_key):
                 ownership[ref] = (section_id, generated)
     return ownership
@@ -3567,17 +4665,17 @@ def _score_existing_group(
     group: GroupFact,
     classification: ClassificationReport,
 ) -> _ExistingGroupScore | None:
-    refs = _group_node_refs(facts, group.scope_path, group.nodes)
-    if refs is None:
-        return None
     helper_refs = {fact.ref for fact in facts.canonical_refs if fact.is_helper}
-    member_refs = tuple(ref for ref in refs if ref not in helper_refs)
-    if not member_refs:
-        return None
-
     rects = _node_rects_by_ref(facts.node_furniture)
     group_rect = _group_rect(group.bounding)
     contained_refs = _contained_group_refs(group.scope_path, group_rect, rects, helper_refs)
+    refs = _group_node_refs(facts, group.scope_path, group.nodes)
+    if refs is None:
+        return None
+    member_refs = tuple(ref for ref in refs if ref not in helper_refs) if refs else contained_refs
+    if not member_refs:
+        return None
+
     member_set = set(member_refs)
     contained_set = set(contained_refs)
     containment = _ratio_float(len(member_set & contained_set), len(member_refs))
