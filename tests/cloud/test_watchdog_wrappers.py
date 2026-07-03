@@ -15,6 +15,8 @@ import tempfile
 import time
 from pathlib import Path
 
+import pytest
+
 from arnold_pipelines.megaplan.cloud import repair_lock
 from arnold_pipelines.megaplan.cloud.redact import REDACTION
 
@@ -260,6 +262,19 @@ def _run_watchdog_shell(script: str, *, path_prefix: Path | None = None) -> subp
         env=env,
         check=False,
     )
+
+
+def _read_incident_event_payloads(root: Path) -> list[dict[str, object]]:
+    events_path = root / ".megaplan" / "incident-ledger" / "events.jsonl"
+    if not events_path.exists():
+        return []
+    payloads: list[dict[str, object]] = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        payloads.append(json.loads(stripped)["payload"])
+    return payloads
 
 
 def _run_discover(
@@ -1202,7 +1217,7 @@ def test_repair_data_init_preserves_legacy_top_level_shape_via_contract(tmp_path
         "outcome": "repairing",
         "schema_version": 1,
         "target": {"target_id": "demo-session:demo-plan", "authoritative_source": "marker"},
-        "incident_id": "",
+        "incident_id": "inc-demo-session",
         "attempt_ids": [],
         "verification": {},
         "discord_escalation": {},
@@ -2371,6 +2386,7 @@ def test_watchdog_allows_concurrent_repairs_for_different_sessions(tmp_path: Pat
             _extract_wrapper_function("kimi_dispatch_marker_set"),
             _extract_wrapper_function("kimi_operator_running"),
             _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
             _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
@@ -2431,6 +2447,7 @@ def test_watchdog_dispatch_skips_duplicate_same_session_repair(
             _extract_wrapper_function("kimi_dispatch_marker_set"),
             _extract_wrapper_function("kimi_operator_running"),
             _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
             _extract_wrapper_function("dispatch_kimi_repair"),
             f"MARKER_DIR={str(marker_dir)!r}",
             f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
@@ -2462,6 +2479,310 @@ sleep 0.1
     assert "repair loop already active; skipping dispatch session=demo-a" in log_path.read_text(
         encoding="utf-8"
     )
+
+
+def test_watchdog_kimi_dispatch_emits_incident_dispatch_statuses(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repair_dir = marker_dir / "repair-data"
+    repair_dir.mkdir()
+    (repair_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"incident_id": "inc-600"}),
+        encoding="utf-8",
+    )
+    log_path = tmp_path / "watchdog.log"
+    repair_bin = tmp_path / "fake-repair-loop"
+    repair_bin.write_text("#!/usr/bin/env bash\nsleep 5\n", encoding="utf-8")
+    repair_bin.chmod(repair_bin.stat().st_mode | stat.S_IXUSR)
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("safe_name"),
+            _extract_wrapper_function("repair_pidfile_path"),
+            _extract_wrapper_function("repair_loop_pid_matches_session"),
+            _extract_wrapper_function("kimi_dispatch_marker_path"),
+            _extract_wrapper_function("kimi_pgid_path"),
+            _extract_wrapper_function("kimi_dispatch_marker_set"),
+            _extract_wrapper_function("kimi_operator_running"),
+            _extract_wrapper_function("repair_loop_busy_state"),
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("dispatch_kimi_repair"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"PRIMARY_REPAIR_BIN={str(repair_bin)!r}",
+            f"PRIMARY_REPAIR_BASENAME={repair_bin.name!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            """
+log() { printf '%s\n' "$*" >> "$LOG"; }
+dispatch_kimi_repair demo-session __WORKSPACE__ /tmp/spec.yaml
+echo "first:${REPAIR_DISPATCH_RESULT:-unset}"
+sleep 0.2
+dispatch_kimi_repair demo-session __WORKSPACE__ /tmp/spec.yaml
+echo "second:${REPAIR_DISPATCH_RESULT:-unset}"
+if [[ -f "$(kimi_pgid_path demo-session)" ]]; then
+  demo_pgid="$(cat "$(kimi_pgid_path demo-session)")"
+  kill -- "-$demo_pgid" 2>/dev/null || kill "$demo_pgid" 2>/dev/null || true
+fi
+""".replace("__WORKSPACE__", shlex.quote(str(workspace))).strip(),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines() == ["first:dispatched", "second:busy"]
+    payloads = _read_incident_event_payloads(workspace)
+    assert [payload["outcome"] for payload in payloads] == ["dispatched", "busy"]
+    assert all(payload["type"] == "dispatch" for payload in payloads)
+    assert payloads[0]["decision"]["repair_actor"] == "immediate_repair"
+
+
+def test_watchdog_meta_dispatch_emits_incident_statuses(tmp_path: Path) -> None:
+    marker_dir = tmp_path / "markers"
+    marker_dir.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    repair_dir = marker_dir / "repair-data"
+    repair_dir.mkdir(parents=True)
+    (repair_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"incident_id": "inc-601"}),
+        encoding="utf-8",
+    )
+    meta_dir = repair_dir / "meta"
+    meta_dir.mkdir()
+    (meta_dir / "existing-001.json").write_text(
+        json.dumps({"meta_repair_id": "existing-001", "session": "demo-session"}),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / "report.tsv"
+    log_path = tmp_path / "watchdog.log"
+    fake_bin = tmp_path / "arnold-meta-repair-loop"
+    fake_bin.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_bin.chmod(0o755)
+
+    script = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        log_path=str(log_path),
+        extra_lines=[
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"dispatch_meta_repair demo-session {str(workspace)!r} /tmp/spec.yaml {str(report_path)!r}",
+            'echo "disabled:${REPAIR_DISPATCH_RESULT:-unset}"',
+        ],
+    )
+    script = script.replace("META_REPAIR_ENABLED_FLAG=1", "META_REPAIR_ENABLED_FLAG=0")
+
+    result = subprocess.run(["bash", "-lc", script], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "disabled:disabled" in result.stdout
+
+    script_recursive = _build_meta_dispatch_script(
+        marker_dir,
+        report_path,
+        meta_repair_bin=str(fake_bin),
+        log_path=str(log_path),
+        extra_lines=[
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            f"dispatch_meta_repair demo-session {str(workspace)!r} /tmp/spec.yaml {str(report_path)!r}",
+            'echo "recursive:${REPAIR_DISPATCH_RESULT:-unset}"',
+        ],
+    )
+    result_recursive = subprocess.run(
+        ["bash", "-lc", script_recursive],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result_recursive.returncode == 0, result_recursive.stderr
+    assert "recursive:recursive" in result_recursive.stdout
+    payloads = _read_incident_event_payloads(workspace)
+    assert [payload["outcome"] for payload in payloads] == ["disabled", "recursion_blocked"]
+    assert all(payload["decision"]["repair_actor"] == "meta_repair" for payload in payloads)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "script_body", "expected_outcome"),
+    [
+        (
+            "stale",
+            """
+session_health_status() { echo stale; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+repair_unhealthy_session() { return 0; }
+dispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+mechanical_relaunch_attempted_previously() { return 1; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+""",
+            "stale",
+        ),
+        (
+            "stopped",
+            """
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+dispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+mechanical_relaunch_attempted_previously() { return 0; }
+kimi_dispatch_failed_previously() { return 1; }
+kimi_dispatch_marker_set() { :; }
+kimi_dispatch_marker_clear() { :; }
+""",
+            "stopped",
+        ),
+        (
+            "unhealthy",
+            """
+session_health_status() { echo alive; }
+plan_phase_health_status() { echo unhealthy_plan; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+dispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+""",
+            "unhealthy",
+        ),
+        (
+            "progress_stall",
+            """
+session_health_status() { echo alive; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo progress_stall:demo-plan iteration=9; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+repair_unintended_stop() { return 0; }
+dispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+""",
+            "progress_stall",
+        ),
+        (
+            "chain_health_failure",
+            """
+session_health_status() { echo dead; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=chain_large_file_push_rejection
+  CHAIN_HEALTH_SUMMARY=chain cycle detected
+  CHAIN_HEALTH_ARTIFACT_PATH=/tmp/chain-health.json
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+dispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+""",
+            "chain_health_failure",
+        ),
+        (
+            "state_mismatch",
+            """
+session_health_status() { echo stopped; }
+plan_phase_health_status() { echo ok; }
+plan_progress_stall_status() { echo ok; }
+chain_health_status() {
+  CHAIN_HEALTH_STATUS=ok
+  CHAIN_HEALTH_SUMMARY=
+  CHAIN_HEALTH_ARTIFACT_PATH=
+  CHAIN_HEALTH_LOG_MESSAGE=
+}
+plan_attention_status_env() {
+  cat <<'EOF'
+PLAN_STATUS_STATE_MISMATCH=1
+PLAN_STATUS_STATE_MISMATCH_SUMMARY='plan/chain mismatch detected'
+EOF
+}
+dispatch_kimi_repair() { REPAIR_DISPATCH_RESULT=dispatched; return 0; }
+""",
+            "state_mismatch",
+        ),
+    ],
+)
+def test_launch_chain_tick_emits_incident_detection_outcomes(
+    tmp_path: Path,
+    case_name: str,
+    script_body: str,
+    expected_outcome: str,
+) -> None:
+    marker_dir = tmp_path / f"markers-{case_name}"
+    marker_dir.mkdir()
+    repair_dir = marker_dir / "repair-data"
+    repair_dir.mkdir()
+    workspace = tmp_path / f"workspace-{case_name}"
+    workspace.mkdir()
+    spec_path = workspace / ".megaplan" / "initiatives" / "demo-chain" / "chain.yaml"
+    spec_path.parent.mkdir(parents=True, exist_ok=True)
+    spec_path.write_text("milestones: []\n", encoding="utf-8")
+    (repair_dir / "demo-session.repair-data.json").write_text(
+        json.dumps({"incident_id": f"inc-{case_name}"}),
+        encoding="utf-8",
+    )
+    report_path = tmp_path / f"report-{case_name}.tsv"
+    log_path = tmp_path / f"watchdog-{case_name}.log"
+
+    script = "\n\n".join(
+        [
+            _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
+            _extract_wrapper_function("launch_chain_tick"),
+            f"MARKER_DIR={str(marker_dir)!r}",
+            f"REPAIR_DATA_DIR={str(repair_dir)!r}",
+            f"LOG={str(log_path)!r}",
+            f"WRAPPER_REPO_ROOT={str(REPO_ROOT)!r}",
+            f"SRC_DIR={str(REPO_ROOT)!r}",
+            """
+report_item() { :; }
+log() { printf '%s\n' "$*" >> "$LOG"; }
+session_terminal_status() { return 0; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
+repair_needs_human_path() { printf '%s\n' "$REPAIR_DATA_DIR/$1.needs-human.json"; }
+repair_needs_human_matches_current_plan() { return 1; }
+workspace_has_other_alive_session() { return 1; }
+notify_needs_human() { return 0; }
+resolve_relaunch_command() { echo RELAUNCH; }
+repair_loop_busy_state() { echo none; }
+plan_attention_status_env() { return 0; }
+plan_terminal_status() { echo none; }
+ensure_install_or_repair() { return 0; }
+tmux() { return 1; }
+""".strip(),
+            script_body.strip(),
+            (
+                f"launch_chain_tick demo-session {str(workspace)!r} "
+                f"{str(spec_path)!r} {str(report_path)!r} chain '' ''"
+            ),
+        ]
+    )
+
+    result = _run_watchdog_shell(script)
+    assert result.returncode == 0, result.stderr
+    payloads = _read_incident_event_payloads(workspace)
+    assert payloads[0]["type"] == "detection"
+    assert payloads[0]["outcome"] == expected_outcome
 
 
 def test_repair_loop_serializes_same_session_invocations_and_cleans_pidfile_on_term(
@@ -3475,13 +3796,19 @@ report_item() {
 }
 log() { printf '%s\n' "$*" >> "$LOG"; }
 session_health_status() { echo stopped; }
+session_terminal_status() { return 0; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH >&2; return 1; }
+notify_needs_human() {
+  report_item "$1" "$2" "observe" "needs_human" "$7" "$3" "$4"
+  log "needs-human webhook unset"
+}
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
@@ -3924,13 +4251,19 @@ report_item() {
 }
 log() { :; }
 session_health_status() { echo stopped; }
+session_terminal_status() { return 0; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
+notify_needs_human() {
+  report_item "$1" "$2" "observe" "needs_human" "$7" "$3" "$4"
+  log "needs-human webhook unset"
+}
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
@@ -4133,13 +4466,19 @@ report_item() {
 }
 log() { printf '%s\n' "$*" >> "$LOG"; }
 session_health_status() { echo stopped; }
+session_terminal_status() { return 0; }
 plan_phase_health_status() { echo ok; }
 plan_progress_stall_status() { echo ok; }
 kimi_operator_running() { return 1; }
+resolve_existing_remote_spec() { printf '%s\n' "$3"; }
 dispatch_kimi_repair() { echo DISPATCH >&2; return 0; }
 repair_unhealthy_session() { echo REPAIR >&2; return 0; }
 ensure_install_or_repair() { return 0; }
 resolve_relaunch_command() { echo RELAUNCH; }
+notify_needs_human() {
+  report_item "$1" "$2" "observe" "needs_human" "$7" "$3" "$4"
+  log "needs-human webhook unset"
+}
 safe_name() { printf '%s\n' "$1"; }
 tmux() { echo TMUX >&2; return 1; }
 """.strip(),
@@ -9175,6 +9514,7 @@ def _build_meta_dispatch_script(
         _extract_wrapper_function("meta_dispatch_marker_clear"),
         _extract_wrapper_function("repair_loop_busy_state"),
         _extract_wrapper_function("check_meta_repair_recursion_guard"),
+        _extract_wrapper_function("emit_watchdog_incident_bridge_event"),
         _extract_wrapper_function("dispatch_meta_repair"),
         _extract_wrapper_function("kimi_dispatch_marker_path"),
         _extract_wrapper_function("kimi_pgid_path"),

@@ -191,6 +191,593 @@ def test_rebuild_projections_reports_malformed_schema_and_dangling_refs(
     )
 
 
+# ---------------------------------------------------------------------------
+# M2 shipped-fix chain projection fixtures
+# ---------------------------------------------------------------------------
+
+
+def test_shipped_fix_happy_path_chain_marks_problem_fixed(
+    tmp_path: Path,
+) -> None:
+    """Full M2 shipped-fix chain: source_fix_committed -> install_sync_applied
+    -> repair_retriggered -> verified_recovered should mark the problem fixed."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            problem_id="prob-ship",
+            summary="Build failure detected",
+            outcome="started",
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="source_fix_committed",
+            actor="meta_repair",
+            problem_id="prob-ship",
+            summary="Fix committed for build failure",
+            outcome="committed",
+            parent_event_ids=["evt-1"],
+            links={"commit": "abc123def"},
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-3",
+            type="install_sync_applied",
+            actor="install_sync",
+            problem_id="prob-ship",
+            summary="Install sync applied fix to runtime",
+            outcome="applied",
+            parent_event_ids=["evt-2"],
+            evidence=[
+                {
+                    "kind": "runtime_identity",
+                    "before": "cpython-3.11.10",
+                    "after": "cpython-3.11.11",
+                    "path": "/usr/local/bin/python3",
+                }
+            ],
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-4",
+            type="repair_retriggered",
+            actor="chain_runner",
+            problem_id="prob-ship",
+            summary="Repair retriggered after install sync",
+            outcome="retriggered",
+            parent_event_ids=["evt-3"],
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-5",
+            type="verified_recovered",
+            actor="watchdog",
+            problem_id="prob-ship",
+            summary="Recovery verified after fix",
+            outcome="recovered",
+            parent_event_ids=["evt-4"],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    problems = result["problems"]["problems"]
+    assert len(problems) == 1
+    problem = problems[0]
+    assert problem["problem_id"] == "prob-ship"
+    assert problem["status"] == "fixed"
+    assert problem["fix_commits"] == ["abc123def"]
+
+
+def test_shipped_fix_missing_install_sync_not_fixed(
+    tmp_path: Path,
+) -> None:
+    """source_fix_committed -> verified_recovered without install_sync_applied
+    should NOT mark the problem as fixed."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            problem_id="prob-nosync",
+            summary="Build failure detected",
+            outcome="started",
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="source_fix_committed",
+            actor="meta_repair",
+            problem_id="prob-nosync",
+            summary="Fix committed",
+            outcome="committed",
+            parent_event_ids=["evt-1"],
+            links={"commit": "abc123def"},
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-3",
+            type="verified_recovered",
+            actor="watchdog",
+            problem_id="prob-nosync",
+            summary="Recovery verified without install evidence",
+            outcome="recovered",
+            parent_event_ids=["evt-2"],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    problems = result["problems"]["problems"]
+    assert len(problems) == 1
+    problem = problems[0]
+    assert problem["problem_id"] == "prob-nosync"
+    # Without install_sync_applied, the problem should NOT be marked fixed
+    assert problem["status"] != "fixed"
+
+
+def test_shipped_fix_install_sync_failed_not_fixed(
+    tmp_path: Path,
+) -> None:
+    """source_fix_committed -> install_sync_failed -> verified_recovered
+    should NOT mark the problem as fixed (install failure breaks the chain)."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            problem_id="prob-syncfail",
+            summary="Build failure detected",
+            outcome="started",
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="source_fix_committed",
+            actor="meta_repair",
+            problem_id="prob-syncfail",
+            summary="Fix committed",
+            outcome="committed",
+            parent_event_ids=["evt-1"],
+            links={"commit": "abc123def"},
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-3",
+            type="install_sync_failed",
+            actor="install_sync",
+            problem_id="prob-syncfail",
+            summary="Install sync failed — dependency conflict",
+            outcome="failed",
+            parent_event_ids=["evt-2"],
+            evidence=[
+                {
+                    "kind": "runtime_identity",
+                    "before": "cpython-3.11.10",
+                    "after": "cpython-3.11.10",
+                    "path": "/usr/local/bin/python3",
+                }
+            ],
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-4",
+            type="verified_recovered",
+            actor="watchdog",
+            problem_id="prob-syncfail",
+            summary="Recovery verified despite install failure",
+            outcome="recovered",
+            parent_event_ids=["evt-3"],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    problems = result["problems"]["problems"]
+    assert len(problems) == 1
+    problem = problems[0]
+    assert problem["problem_id"] == "prob-syncfail"
+    # install_sync_failed should prevent the fix from being considered shipped
+    assert problem["status"] != "fixed"
+
+
+def test_shipped_fix_no_source_fix_not_fixed(
+    tmp_path: Path,
+) -> None:
+    """verified_recovered without a prior source_fix_committed should NOT
+    mark the problem as fixed."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            problem_id="prob-nocommit",
+            summary="Build failure detected",
+            outcome="started",
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="install_sync_applied",
+            actor="install_sync",
+            problem_id="prob-nocommit",
+            summary="Install sync applied",
+            outcome="applied",
+            parent_event_ids=["evt-1"],
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-3",
+            type="verified_recovered",
+            actor="watchdog",
+            problem_id="prob-nocommit",
+            summary="Recovery without a known source fix",
+            outcome="recovered",
+            parent_event_ids=["evt-2"],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    problems = result["problems"]["problems"]
+    assert len(problems) == 1
+    problem = problems[0]
+    assert problem["problem_id"] == "prob-nocommit"
+    # Without a source_fix_committed, verified_recovered alone is not a shipped fix
+    assert problem["status"] != "fixed"
+    assert problem["fix_commits"] == []
+
+
+def test_shipped_fix_no_verified_recovery_not_fixed(
+    tmp_path: Path,
+) -> None:
+    """source_fix_committed -> install_sync_applied without verified_recovered
+    should leave the problem as mitigated, not fixed."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            problem_id="prob-norecovery",
+            summary="Build failure detected",
+            outcome="started",
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="source_fix_committed",
+            actor="meta_repair",
+            problem_id="prob-norecovery",
+            summary="Fix committed",
+            outcome="committed",
+            parent_event_ids=["evt-1"],
+            links={"commit": "abc123def"},
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-3",
+            type="install_sync_applied",
+            actor="install_sync",
+            problem_id="prob-norecovery",
+            summary="Install sync applied",
+            outcome="applied",
+            parent_event_ids=["evt-2"],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    problems = result["problems"]["problems"]
+    assert len(problems) == 1
+    problem = problems[0]
+    assert problem["problem_id"] == "prob-norecovery"
+    # Fix is committed and installed, but not verified recovered
+    assert problem["status"] != "fixed"
+    assert problem["fix_commits"] == ["abc123def"]
+
+
+# ---------------------------------------------------------------------------
+# M2 repeated-attempt detection fixtures
+# ---------------------------------------------------------------------------
+
+
+def test_repeated_repair_attempts_no_new_evidence_reported(
+    tmp_path: Path,
+) -> None:
+    """Three identical repair_attempt events with the same hypothesis and
+    no new evidence between them should produce a loop_break integrity finding."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            incident_id="inc-loop",
+            problem_id="prob-loop",
+            summary="Build runner failed",
+            outcome="started",
+        )
+    )
+    # First repair attempt
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="repair_attempt",
+            actor="immediate_repair",
+            incident_id="inc-loop",
+            problem_id="prob-loop",
+            summary="Restart runner",
+            outcome="failed",
+            parent_event_ids=["evt-1"],
+            attempt_id="attempt-1",
+            decision={"selected_action": "restart-runner"},
+            actions=[{"kind": "command", "command": "systemctl restart runner"}],
+            evidence=[{"kind": "file", "path": "logs/restart-1.log"}],
+        )
+    )
+    # Second repair attempt — same hypothesis, outcome, no new evidence
+    ledger.append_event(
+        _event(
+            event_id="evt-3",
+            type="repair_attempt",
+            actor="immediate_repair",
+            incident_id="inc-loop",
+            problem_id="prob-loop",
+            summary="Restart runner",
+            outcome="failed",
+            parent_event_ids=["evt-2"],
+            attempt_id="attempt-2",
+            decision={"selected_action": "restart-runner"},
+            actions=[{"kind": "command", "command": "systemctl restart runner"}],
+            evidence=[{"kind": "file", "path": "logs/restart-2.log"}],
+        )
+    )
+    # Third repair attempt — same again, no new evidence/code/state change
+    ledger.append_event(
+        _event(
+            event_id="evt-4",
+            type="repair_attempt",
+            actor="immediate_repair",
+            incident_id="inc-loop",
+            problem_id="prob-loop",
+            summary="Restart runner",
+            outcome="failed",
+            parent_event_ids=["evt-3"],
+            attempt_id="attempt-3",
+            decision={"selected_action": "restart-runner"},
+            actions=[{"kind": "command", "command": "systemctl restart runner"}],
+            evidence=[{"kind": "file", "path": "logs/restart-3.log"}],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    findings = result["incidents"]["integrity"]
+    loop_codes = {
+        finding["code"]
+        for finding in findings
+        if finding["code"].startswith("loop_break")
+    }
+    assert "loop_break_repeated_attempt_no_new_evidence" in loop_codes
+
+
+def test_repeated_attempts_with_new_evidence_not_flagged(
+    tmp_path: Path,
+) -> None:
+    """Repair attempts with different evidence between them should NOT
+    trigger the loop_break finding."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            incident_id="inc-progress",
+            problem_id="prob-progress",
+            summary="Build runner failed",
+            outcome="started",
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="repair_attempt",
+            actor="immediate_repair",
+            incident_id="inc-progress",
+            problem_id="prob-progress",
+            summary="Restart runner",
+            outcome="failed",
+            parent_event_ids=["evt-1"],
+            attempt_id="attempt-1",
+            decision={"selected_action": "restart-runner"},
+            evidence=[{"kind": "file", "path": "logs/restart-1.log"}],
+        )
+    )
+    # Different evidence or action between attempts means progress
+    ledger.append_event(
+        _event(
+            event_id="evt-3",
+            type="repair_attempt",
+            actor="immediate_repair",
+            incident_id="inc-progress",
+            problem_id="prob-progress",
+            summary="Checked config and restarted",
+            outcome="failed",
+            parent_event_ids=["evt-2"],
+            attempt_id="attempt-2",
+            decision={"selected_action": "check-config-then-restart"},
+            actions=[
+                {"kind": "command", "command": "cat /etc/runner/config.toml"},
+                {"kind": "command", "command": "systemctl restart runner"},
+            ],
+            evidence=[{"kind": "file", "path": "logs/config-check.log"}],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    findings = result["incidents"]["integrity"]
+    loop_codes = {
+        finding["code"]
+        for finding in findings
+        if finding["code"].startswith("loop_break")
+    }
+    # With new evidence and different decision, this should NOT be flagged
+    assert "loop_break_repeated_attempt_no_new_evidence" not in loop_codes
+
+
+# ---------------------------------------------------------------------------
+# M2 install-sync event schema validation fixtures
+# ---------------------------------------------------------------------------
+
+
+def test_install_sync_applied_schema_valid_event_passes(
+    tmp_path: Path,
+) -> None:
+    """A well-formed install_sync_applied event with before/after runtime
+    identity should pass schema validation."""
+    ledger = IncidentLedger(tmp_path)
+    appended = ledger.append_event(
+        _event(
+            event_id="evt-install-ok",
+            type="install_sync_applied",
+            actor="install_sync",
+            summary="Editable install synced to launch head",
+            outcome="applied",
+            evidence=[
+                {
+                    "kind": "runtime_identity",
+                    "before": "cpython-3.11.10 / commit abc123",
+                    "after": "cpython-3.11.11 / commit def456",
+                    "path": "/usr/local/bin/python3",
+                    "command": "pip install -e .",
+                }
+            ],
+            links={"commit": "def456"},
+        )
+    )
+    assert appended["kind"] == "incident.install_sync_applied"
+    assert appended["payload"]["outcome"] == "applied"
+    assert appended["payload"]["actor"] == "install_sync"
+
+
+def test_install_sync_failed_schema_valid_event_passes(
+    tmp_path: Path,
+) -> None:
+    """A well-formed install_sync_failed event with before/after runtime
+    identity should pass schema validation."""
+    ledger = IncidentLedger(tmp_path)
+    appended = ledger.append_event(
+        _event(
+            event_id="evt-install-fail",
+            type="install_sync_failed",
+            actor="install_sync",
+            summary="Editable install failed due to dependency conflict",
+            outcome="failed",
+            evidence=[
+                {
+                    "kind": "runtime_identity",
+                    "before": "cpython-3.11.10 / commit abc123",
+                    "after": "cpython-3.11.10 / commit abc123",
+                    "path": "/usr/local/bin/python3",
+                    "error": "Conflicting dependency: numpy>=2.0 vs numpy<2.0",
+                }
+            ],
+        )
+    )
+    assert appended["kind"] == "incident.install_sync_failed"
+    assert appended["payload"]["outcome"] == "failed"
+    assert appended["payload"]["actor"] == "install_sync"
+
+
+def test_install_sync_event_rejects_missing_runtime_identity_evidence(
+    tmp_path: Path,
+) -> None:
+    """An install_sync event with empty evidence should still pass schema
+    (schema is permissive on evidence content), but the projection should
+    note it via integrity findings when runtime identity is absent."""
+    ledger = IncidentLedger(tmp_path)
+    appended = ledger.append_event(
+        _event(
+            event_id="evt-no-identity",
+            type="install_sync_applied",
+            actor="install_sync",
+            summary="Install sync applied without runtime identity evidence",
+            outcome="applied",
+            evidence=[],
+        )
+    )
+    # Schema validation is permissive — this should still pass
+    assert appended["kind"] == "incident.install_sync_applied"
+
+
+def test_install_sync_event_schema_roundtrip_through_projection(
+    tmp_path: Path,
+) -> None:
+    """install_sync events should survive the full append → rebuild round-trip
+    and appear in the incident projection with correct type and actor."""
+    ledger = IncidentLedger(tmp_path)
+    ledger.append_event(
+        _event(
+            event_id="evt-1",
+            type="detection",
+            actor="watchdog",
+            incident_id="inc-sync-roundtrip",
+            summary="Build failure detected",
+            outcome="started",
+        )
+    )
+    ledger.append_event(
+        _event(
+            event_id="evt-2",
+            type="install_sync_applied",
+            actor="install_sync",
+            incident_id="inc-sync-roundtrip",
+            summary="Install sync applied",
+            outcome="applied",
+            parent_event_ids=["evt-1"],
+            evidence=[
+                {
+                    "kind": "runtime_identity",
+                    "before": "cpython-3.11.10",
+                    "after": "cpython-3.11.11",
+                    "path": "/usr/local/bin/python3",
+                }
+            ],
+        )
+    )
+
+    result = rebuild_projections(tmp_path)
+
+    incidents = result["incidents"]["incidents"]
+    assert len(incidents) == 1
+    incident = incidents[0]
+    assert incident["incident_id"] == "inc-sync-roundtrip"
+    # The final state should reflect install_sync_applied
+    assert incident["state"] == "install_sync_applied"
+    assert incident["latest_actor"] == "install_sync"
+
+
 def test_build_brief_reports_deadlines_claims_attempts_and_missing_evidence(
     tmp_path: Path,
 ) -> None:

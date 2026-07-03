@@ -2420,6 +2420,10 @@ if not attempts and isinstance(existing.get("iterations"), list):
     attempts = [item for item in existing.get("iterations") if isinstance(item, dict)]
 repair_run_count = int(existing.get("repair_run_count") or 0) + 1
 
+# Derive a stable incident_id from the session so the incident bridge and
+# watchdog can both reference the same incident across repair cycles.
+incident_id = str(existing.get("incident_id") or "").strip() or f"inc-{session}"
+
 payload = {
     "session": session,
     "workspace": workspace,
@@ -2474,7 +2478,7 @@ payload = {
 }
 resolver_output = failure_context_payload.get("resolver_output")
 payload["initial_facts"]["resolver_output"] = resolver_output or {}
-payload = merge_additive_fields(payload, target=resolver_output or {})
+payload = merge_additive_fields(payload, target=resolver_output or {}, incident_id=incident_id)
 save_repair_data(data_path, payload)
 PY
 }
