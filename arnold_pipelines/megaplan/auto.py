@@ -2579,7 +2579,7 @@ def _auto_resume_prep_clarification(plan_dir: Path | None, *, log) -> bool:
             {
                 "source": "auto_approve_prep_clarification",
                 "timestamp": stamp,
-                "text": (
+                "note": (
                     "Unattended auto-approve run: prep clarification halt was "
                     "converted into planner assumptions so the cloud chain can "
                     "continue. Questions:\n"

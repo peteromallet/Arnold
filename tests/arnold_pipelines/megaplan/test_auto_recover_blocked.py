@@ -147,7 +147,7 @@ def test_drive_auto_approve_resumes_prep_clarification(
     assert "clarification" not in state
     notes = state["meta"]["notes"]
     assert notes[-1]["source"] == "auto_approve_prep_clarification"
-    assert "structured params" in notes[-1]["text"]
+    assert "structured params" in notes[-1]["note"]
     assert state["meta"]["overrides"][-1]["action"] == "auto-resume-clarify"
 
 
