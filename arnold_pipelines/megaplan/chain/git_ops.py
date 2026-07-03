@@ -582,15 +582,23 @@ def _remote_branch_exists(root: Path, branch: str, *, writer) -> bool:
 def _clear_megaplan_index_safety_bits(root: Path, writer) -> bool:
     """Make tracked .megaplan runtime files resettable before branch checkout."""
     proc = subprocess.run(
-        ["git", "ls-files", "-z", ".megaplan"],
+        ["git", "ls-files", "-v", "-z", ".megaplan"],
         cwd=str(root),
         capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="surrogateescape",
         check=False,
         timeout=120,
     )
     if proc.returncode != 0 or not proc.stdout:
         return False
-    paths = [path.decode("utf-8", errors="surrogateescape") for path in proc.stdout.split(b"\0") if path]
+    paths: list[str] = []
+    for entry in proc.stdout.split("\0"):
+        if not entry:
+            continue
+        if entry.startswith(("S ", "h ")):
+            paths.append(entry[2:])
     if not paths:
         return False
     writer("[chain] clearing .megaplan skip-worktree/assume-unchanged bits before cleanup\n")
