@@ -1234,13 +1234,53 @@ def _history_tail_summary(plan_state: dict[str, object]) -> dict[str, object]:
     return {"last_entries": last_entries, "consecutive_execute_blocked": consecutive}
 
 
+def _artifact_batch_number(path: pathlib.Path | None, prefix: str, suffix: str) -> int | None:
+    if path is None:
+        return None
+    name = path.name
+    if not (name.startswith(prefix) and name.endswith(suffix)):
+        return None
+    middle = name[len(prefix) : len(name) - len(suffix)]
+    return int(middle) if middle.isdigit() else None
+
+
+def _prefer_authoritative_execute_artifacts(
+    output_summary: dict[str, object],
+    execution_summary: dict[str, object],
+) -> dict[str, object]:
+    output_path_raw = output_summary.get("path")
+    execution_path_raw = execution_summary.get("path")
+    output_path = pathlib.Path(str(output_path_raw)) if output_path_raw else None
+    execution_path = pathlib.Path(str(execution_path_raw)) if execution_path_raw else None
+    output_batch = _artifact_batch_number(output_path, "execute_batch_", "_output.json")
+    execution_batch = _artifact_batch_number(execution_path, "execution_batch_", ".json")
+    if (
+        output_batch is None
+        or execution_batch is None
+        or output_batch != execution_batch
+        or not execution_summary.get("status_counts")
+    ):
+        return output_summary
+    return {
+        "path": output_summary.get("path"),
+        "status": "superseded_by_execution_batch",
+        "superseded_by": execution_summary.get("path"),
+        "batch_number": output_batch,
+    }
+
+
 def _collect_execute_attempt_context(plan_dir: pathlib.Path, plan_state: dict[str, object]) -> dict[str, object]:
     output_path = _newest_artifact(plan_dir, "execute_batch_*_output.json")
     execution_path = _newest_artifact(plan_dir, "execution_batch_*.json")
+    output_summary = _summarize_execute_batch_artifact(output_path)
+    execution_summary = _summarize_execute_batch_artifact(execution_path)
     context: dict[str, object] = {
         "plan_dir": str(plan_dir),
-        "execute_batch_output": _summarize_execute_batch_artifact(output_path),
-        "execution_batch": _summarize_execute_batch_artifact(execution_path),
+        "execute_batch_output": _prefer_authoritative_execute_artifacts(
+            output_summary,
+            execution_summary,
+        ),
+        "execution_batch": execution_summary,
         "plan_history": _history_tail_summary(plan_state),
     }
     finalize_path = plan_dir / "finalize.json"
