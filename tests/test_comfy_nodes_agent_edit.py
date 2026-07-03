@@ -6159,6 +6159,55 @@ def test_handle_agent_edit_batch_repl_nudges_after_three_discovery_only_turns(
     assert 'clarify("...")' in nudged_prompt
 
 
+def test_handle_agent_edit_batch_repl_converges_repeated_discovery_to_existing_tweak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _batch_repl_provider()
+    monkeypatch.setenv("VIBECOMFY_AGENT_EDIT_BATCH_REPL", "1")
+    calls = 0
+    saw_direct_tweak_feedback = False
+
+    def _fake_batch_client(messages):
+        nonlocal calls, saw_direct_tweak_feedback
+        calls += 1
+        prompt_text = json.dumps(messages)
+        if "Direct existing-node tweak fallback applies here" in prompt_text:
+            saw_direct_tweak_feedback = True
+        if calls <= 3:
+            return {
+                "batch": 'search(focus_types=["SaveImage"])',
+                "message": "Looking up the save node schema.",
+            }
+        assert saw_direct_tweak_feedback
+        return {
+            "batch": 'saveimage.filename_prefix = "after"\ndone()',
+            "message": "Changing the existing save prefix.",
+        }
+
+    result = handle_agent_edit(
+        {
+            "graph": _ui_graph(),
+            "task": "Change the output format prefix.",
+            "session_id": "batch-discovery-existing-tweak",
+            "max_batches": 6,
+        },
+        schema_provider=provider,
+        deepseek_client=_fake_batch_client,
+        session_root=tmp_path,
+    )
+
+    assert result["ok"] is True
+    assert result["graph_unchanged"] is False
+    assert result["outcome"]["kind"] == "candidate"
+    assert result["outcome"]["changes"] == [
+        {"uid": "2", "field_path": "filename_prefix", "old": "before", "new": "after"}
+    ]
+    assert result["debug"]["batch_repl"]["exit_mode"] == "done"
+    assert calls == 4
+    assert saw_direct_tweak_feedback is True
+
+
 def test_handle_agent_edit_batch_repl_discovery_nudge_suppressed_after_landed_edit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
