@@ -723,3 +723,4 @@ Tool read_file returned error (0.81s): {"content": "", "total_lines": 0, "file_s
   [tool] (｡◕‿◕｡) 📖 /workspace/incident-control...
   [done] ┊ 📖 read      ...t-20260703-1919/gate_output.json  1.6s (2.0s)
 [hermes-worker] Read JSON from template file: /workspace/incident-control-plane/Arnold/.megaplan/plans/m1-ledger-core-and-incident-20260703-1919/gate_output.json
+Captured execution baseline: 0 pre-existing uncommitted paths. Unchanged paths will be excluded from ownership audits.
